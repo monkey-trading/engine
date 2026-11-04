@@ -49,3 +49,16 @@ def test_launch_flow_reads_the_cap_study():
     assert btc.fill_weights.sum() == pytest.approx(1.0)
     # Ten times the flow is ten times the notional.
     assert flow.market_flows(10.0)["BTC-USD"].fill_notional_per_day == pytest.approx(10 * btc.fill_notional_per_day)
+
+
+def test_a_ratio_divides_the_year_totals_and_bootstraps_them_together():
+    # Notional 10 in every hour; dollars 1 in stratum 0's hours and 3 in stratum 1's, which hold a
+    # quarter of the year: (0.75 * 1 + 0.25 * 3) / 10 = 0.15.
+    num = {0: np.ones(5), 1: np.full(5, 3.0)}
+    den = {0: np.full(5, 10.0), 1: np.full(5, 10.0)}
+    est = stats.ratio([(num, den, {0: 6570, 1: 2190}, 8760)])
+    assert est.year == pytest.approx(0.15)
+    assert est.year_lo == pytest.approx(0.15) and est.year_hi == pytest.approx(0.15)
+    # Hours whose dollars move with their notional keep the ratio exact under resampling.
+    est = stats.ratio([({0: np.array([1.0, 2.0, 4.0])}, {0: np.array([10.0, 20.0, 40.0])}, {0: 8755}, 8755)])
+    assert est.year_lo == pytest.approx(0.1) and est.year_hi == pytest.approx(0.1)

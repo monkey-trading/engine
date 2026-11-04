@@ -85,8 +85,8 @@ def ratio(parts: list[tuple[dict[int, np.ndarray], dict[int, np.ndarray], dict[i
         for k in n_vals:
             nv, dv = np.asarray(n_vals[k], dtype=float), np.asarray(d_vals[k], dtype=float)
             idx = rng.integers(0, len(nv), size=(BOOTSTRAP, len(nv)))
-            rnum += pop[k] * nv[idx].mean(axis=1)
-            rden += pop[k] * dv[idx].mean(axis=1)
+            rnum += pop[k] * nv[idx].mean(axis=1) * HOURS_PER_YEAR / year_hours
+            rden += pop[k] * dv[idx].mean(axis=1) * HOURS_PER_YEAR / year_hours
     reps = rnum / np.where(rden == 0, np.nan, rden)
     lo, hi = np.nanpercentile(reps, [2.5, 97.5])
     return Estimate(num / den if den else float("nan"), float(lo), float(hi))

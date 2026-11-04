@@ -31,6 +31,9 @@ POSITIONS = {
     "retained NAV": {m: UTILISATION_L1 * max(FLOORS[m], CAP_SHARE[m] * economics.RETAINED_FLOOR) for m in MARKETS},
 }
 PAIR_NOTIONAL = 50e6  # a side, the operator's paired positions: $1M of margin at 1%
+# Detecting skimming: a one-sided 0.1% test with 90% power, against an honest node whose fills sit
+# about half the venues' gap (0.4 to 0.5 bps on the live recording) from a monitor's reference.
+Z_ALPHA, Z_POWER, HONEST_SD_BPS = 3.09, 1.28, 0.5
 PRODUCTION = {"lag_s": 3.0, "hold_s": 5.0, "extra_bps": 0.0, "decide_s": 0.25}
 
 NUMERIC = {"lag_s", "extra_bps", "decide_s", "pnl", "gross", "spread", "fee", "positions", "units_traded", "win_share",
@@ -159,6 +162,14 @@ def latency_tables(rows, y: Year):
         sens.append({"variant": f"decide every {decide:g} s", **est_dict(y.total(sel, lambda r, m: r["pnl"] * POSITIONS["launch"][m]))})
     sel = select(rows, attack="latency", decide_s=0.25, stress=False, lag_s=3.0, extra_bps=0.0, launder=True)
     sens.append({"variant": "no stress spreads", **est_dict(y.total(sel, lambda r, m: r["pnl"] * POSITIONS["launch"][m]))})
+    for launder in (True, False):
+        sel = select(rows, attack="latency", decide_s=0.25, stress=True, lag_s=3.0, extra_bps=0.0, launder=launder)
+        for m in MARKETS:
+            take = y.total(sel, lambda r, mm: r["pnl"] * POSITIONS["launch"][mm], (m,))
+            positions = y.total(sel, lambda r, mm: r["positions"], (m,))
+            wins = y.total(sel, lambda r, mm: r["positions"] * r["win_share"], (m,))
+            sens.append({"variant": f"{m}, {'laundered' if launder else 'add-on paid'}: {positions.day:,.0f} positions a day, "
+                                    f"{wins.year / positions.year:.0%} winning", **est_dict(take)})
     return table, sens
 
 
@@ -177,7 +188,11 @@ def skim_tables(rows, y: Year, flows):
                         continue
                     usd = y.total(sel, lambda r, m: r["usd"])
                     bps = y.ratio(sel, lambda r, m: r["usd"], lambda r, m: r["notional"])
-                    detect = np.mean([(3.09 * r["sd_bps"] / r["mean_bps"]) ** 2 for r in sel if r["mean_bps"] > 0])
+                    # Fills a one-sided test at 0.1% needs to catch the skim nine times in ten, with an
+                    # honest node's fills scattered HONEST_SD_BPS around the venue reference too: a
+                    # count-weighted mean over the sampled hours, so a rough guide, not a bound.
+                    detect = np.mean([((Z_ALPHA + Z_POWER) * np.hypot(r["sd_bps"], HONEST_SD_BPS) / r["mean_bps"]) ** 2
+                                      for r in sel if r["mean_bps"] > 0])
                     table.append({"kind": kind, "lag_s": lag, "delay_s": delay, "flow": scale,
                                   "bps_of_notional": bps.year * 1e4, "bps_lo": bps.year_lo * 1e4, "bps_hi": bps.year_hi * 1e4,
                                   "usd_day": usd.day, "usd_day_lo": usd.day_lo, "usd_day_hi": usd.day_hi,
@@ -202,6 +217,7 @@ def hold_tables(rows, y: Year):
             row = {"lag_s": lag, "hold_s": H, "held_bps": held.year / n * 1e4, "held_bps_lo": held.year_lo / n * 1e4,
                    "held_bps_hi": held.year_hi / n * 1e4, "without_bps": without.year / n * 1e4,
                    "added_bps": (held.year - without.year) / n * 1e4,
+                   "now_bps": y.total(sel, lambda r, m: r["now"]).year / n * 1e4,
                    "kill_share": kill.year / n,
                    "held_bps_top1pct": float(np.mean([r["held"] for r in top]) * 1e4),
                    "kill_share_top1pct": float(np.mean([r["kill_share"] for r in top]))}
@@ -254,8 +270,10 @@ def stress_day(rows):
             key, value = "skim, sequenced, launch flow", r["usd"]
         elif r["attack"] == "hold" and r["lag_s"] == 3 and r["hold_s"] == 5:
             key, value = "held sync, loss a kill avoids, per use per $1M", (r["held"] - r["without"]) * 1e6
-        elif r["attack"] == "unprice" and r["spell_s"] == 60 and r["margin"] in (0.01, 0.1) and (r["kind"] == "best" or r["trigger"] == 0.002):
-            key, value = f"unpriced pairs, 60 s, {r['kind']}", r["payoff"] * PAIR_NOTIONAL
+        elif r["attack"] == "unprice" and r["margin"] in (0.01, 0.1) and (
+                (r["kind"] == "best" and r["spell_s"] == 60) or (r["kind"] == "causal" and r["spell_s"] == 300 and r["trigger"] == 0.004)):
+            rule = "best 60 s spell" if r["kind"] == "best" else "causal, 40 bps trigger, 300 s spells"
+            key, value = f"unpriced pairs, {rule}", r["payoff"] * PAIR_NOTIONAL
         if key:
             hour = datetime.fromtimestamp(int(r["hour"]), timezone.utc).strftime("%H:00")
             out.append({"market": r["market"], "hour_utc": hour, "measure": key, "usd": value})
@@ -263,9 +281,9 @@ def stress_day(rows):
 
 
 def held_per_day(rows, y: Year, market: str, kills: int, lag=3.0, hold_s=5.0) -> stats.Estimate:
-    """What the held sync adds a day on one market at `kills` restarts a day, over closing the same
-    positions at once: as many uses as make that many kills, at the year's mean added value per use
-    and kill share."""
+    """What the kill option adds a day on one market at `kills` restarts a day, over keeping the
+    same trades without it: as many uses as make that many kills, at the year's mean loss a kill
+    avoids per use and kill share."""
     sel = select(rows, attack="hold", lag_s=lag, hold_s=hold_s)
     held = y.total(sel, lambda r, m: (r["held"] - r["without"]) * POSITIONS["launch"][m], (market,))
     kill = y.total(sel, lambda r, m: r["kill_share"], (market,))
@@ -296,13 +314,19 @@ def headline(rows, y: Year, calibration: dict | None):
     sk = select(rows, attack="skim", kind="sequenced", lag_s=3.0, delay_s=0.0)
     for scale, flow in ((1.0, "launch"), (10.0, "10x")):
         add("skimming client fills (3 s look-back, no delay)", "house", flow, y.total(select(sk, scale=scale), lambda r, m: r["usd"]))
-    closes = select(rows, attack="skim", kind="causal", lag_s=3.0, delay_s=10.0, scale=1.0)
-    est = y.total(closes, lambda r, m: 0.5 * r["usd"])
-    for scale, flow in ((1.0, "launch"), (10.0, "10x")):
-        add("censoring closes for 10 s (closes are half the fills)", "house", flow, est.scaled(scale))
+    # Censoring: what holding each close 10 s adds over its worst index at arrival, on the same
+    # fills, hour by hour; closes are half the fills. Neither measure keeps one index path, so
+    # only the difference is reported, at launch flow.
+    paired = defaultdict(dict)
+    for r in select(rows, attack="skim", lag_s=3.0, scale=1.0):
+        if (r["kind"], r["delay_s"]) in (("causal", 10.0), ("bound", 0.0)):
+            paired[(r["market"], r["hour"], r["stratum"])][r["kind"]] = r["usd"]
+    diff = [{"market": m, "hour": hr, "stratum": st, "usd": 0.5 * (v["causal"] - v["bound"])} for (m, hr, st), v in paired.items()]
+    add("censoring closes for 10 s, over pricing them at arrival", "house", "launch", y.total(diff, lambda r, m: r["usd"]),
+        "half the fills are closes; the same fills priced both ways")
     est = held_per_day(rows, y, "BTC-USD", 4)
     for flow in ("launch", "10x"):
-        add("held sync, 4 restarts a day (BTC-USD), over closing at once", "own", flow, est)
+        add("held sync's kill option, 4 restarts a day (BTC-USD)", "own", flow, est)
     # The causal rule's best spell and trigger over the sample: chosen after the fact, so mildly
     # optimistic for the operator; a rule that loses is not run, so it counts as nothing.
     up = select(rows, attack="unprice", kind="causal", margin=0.01)
@@ -457,6 +481,9 @@ def write_report(results: Path, tables: dict, summary: dict):
           "estimate over the sampled hours with its 95% bootstrap interval in brackets; a day is a year "
           "over 365. The README explains the method and the limits.", ""]
     md += ["## Headline, production values", "",
+           "Each row is a rate. The house holds $107M at #134's liquidity floor, so a take from the house above "
+           "about $107M stops being the house's money: past it, the operator's balances are claims on clients' "
+           "deposits in the vault, and a year at the laundered rate is not reachable.", "",
            md_table(["Attack", "Pays", "Flow", "A day", "A year", "Operator's take a day"],
                     [[h["attack"], h["who_pays"], h["flow"], f"{money(h['day'])} ({money(h['day_lo'])} to {money(h['day_hi'])})",
                       f"{money(h['year'])} ({money(h['year_lo'])} to {money(h['year_hi'])})",
@@ -479,17 +506,18 @@ def write_report(results: Path, tables: dict, summary: dict):
            md_table(["Variant", "A day"], [[r["variant"], f"{money(r['day'])} ({money(r['day_lo'])} to {money(r['day_hi'])})"] for r in t["latency_sensitivity"]]), ""]
     md += ["## Skimming and censoring client fills", "",
            "The house's gain from choosing each client fill's moment in its window, in bps of the fill "
-           "notional and dollars a day; `fills to detect` is how many fills a monitor comparing fills "
-           "with venue prices needs to reject an honest node at 0.1% (one-sided).", ""]
+           "notional and dollars a day; `fills to detect` is about how many fills a monitor comparing fills "
+           "with venue prices needs to catch it nine times in ten at a 0.1% false alarm, with an honest node's "
+           "fills scattered 0.5 bps around the reference.", ""]
     body = [[r["kind"], f"{r['lag_s']:g} s", f"{r['delay_s']:g} s", f"{r['flow']:g}x",
              f"{r['bps_of_notional']:.2f} ({r['bps_lo']:.2f} to {r['bps_hi']:.2f})",
              f"{money(r['usd_day'])} ({money(r['usd_day_lo'])} to {money(r['usd_day_hi'])})", f"{r['fills_to_detect']:.0f}"]
             for r in t["skim"] if r["flow"] == 1.0 or r["kind"] == "sequenced"]
     md += [md_table(["Measure", "Lag", "Delay", "Flow", "bps of notional", "A day", "Fills to detect"], body), ""]
     md += ["## Held sync", "", md_table(
-        ["Lag", "Hold", "Value a use (bps)", "Without the kill (bps)", "Added by the kill (bps)", "Kill share", "Value a use, top 1% hours (bps)", "Added a day, BTC-USD, 4 restarts"],
+        ["Lag", "Hold", "Value a use (bps)", "Same trade, no kill (bps)", "Kill option (bps)", "Closing at once (bps)", "Kill share", "Value a use, top 1% hours (bps)", "Kill option a day, BTC-USD, 4 restarts"],
         [[f"{r['lag_s']:g} s", f"{r['hold_s']:g} s", f"{r['held_bps']:.2f} ({r['held_bps_lo']:.2f} to {r['held_bps_hi']:.2f})",
-          f"{r['without_bps']:.2f}", f"{r['added_bps']:.2f}", f"{r['kill_share']:.2f}", f"{r['held_bps_top1pct']:.2f}",
+          f"{r['without_bps']:.2f}", f"{r['added_bps']:.2f}", f"{r['now_bps']:.2f}", f"{r['kill_share']:.2f}", f"{r['held_bps_top1pct']:.2f}",
           money(r["btc_4_kills_day"]) if r["kill_share"] > 0.005 else "no kill needed"] for r in t["hold"]]), ""]
     md += ["## Unpricing across moves", "", "Dollars a year from $50M a side of pairs, by spell length.", "",
            md_table(["Rule", "Spell", "Trigger (bps in 5 s)", "Markets", "Margin", "A year", "Paying spells a year", "Unpriced time a year"],

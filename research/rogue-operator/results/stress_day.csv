@@ -71,27 +71,27 @@ SOL-USD,15:00,"skim, sequenced, launch flow",2497.359086891822
 SOL-USD,20:00,"skim, sequenced, launch flow",1785.0993016259324
 SOL-USD,21:00,"skim, sequenced, launch flow",21154.81563283155
 SOL-USD,22:00,"skim, sequenced, launch flow",10981.291374307635
-BTC-USD,15:00,"unpriced pairs, 60 s, best",0.0
-BTC-USD,15:00,"unpriced pairs, 60 s, causal",-2456.8405031147686
-BTC-USD,20:00,"unpriced pairs, 60 s, best",389645.2368558155
-BTC-USD,20:00,"unpriced pairs, 60 s, causal",-172737.07028212197
-BTC-USD,21:00,"unpriced pairs, 60 s, best",890821.1418809218
-BTC-USD,21:00,"unpriced pairs, 60 s, causal",11676506.117133044
-BTC-USD,22:00,"unpriced pairs, 60 s, best",198470.3393844719
-BTC-USD,22:00,"unpriced pairs, 60 s, causal",-196663.31808125644
-ETH-USD,15:00,"unpriced pairs, 60 s, best",137754.5019617819
-ETH-USD,15:00,"unpriced pairs, 60 s, causal",-560887.9088456541
-ETH-USD,20:00,"unpriced pairs, 60 s, best",405080.8557654235
-ETH-USD,20:00,"unpriced pairs, 60 s, causal",-473839.42523669475
-ETH-USD,21:00,"unpriced pairs, 60 s, best",1983098.433032561
-ETH-USD,21:00,"unpriced pairs, 60 s, causal",23158905.050752006
-ETH-USD,22:00,"unpriced pairs, 60 s, best",511362.96910331445
-ETH-USD,22:00,"unpriced pairs, 60 s, causal",-940723.6102555873
-SOL-USD,15:00,"unpriced pairs, 60 s, best",0.0
-SOL-USD,15:00,"unpriced pairs, 60 s, causal",-557782.3943280166
-SOL-USD,20:00,"unpriced pairs, 60 s, best",0.0
-SOL-USD,20:00,"unpriced pairs, 60 s, causal",-743033.7807098407
-SOL-USD,21:00,"unpriced pairs, 60 s, best",0.0
-SOL-USD,21:00,"unpriced pairs, 60 s, causal",-9767585.832465455
-SOL-USD,22:00,"unpriced pairs, 60 s, best",0.0
-SOL-USD,22:00,"unpriced pairs, 60 s, causal",-3733062.487326463
+BTC-USD,15:00,"unpriced pairs, best 60 s spell",0.0
+BTC-USD,15:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",0.0
+BTC-USD,20:00,"unpriced pairs, best 60 s spell",389645.2368558155
+BTC-USD,20:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",27326.30973462099
+BTC-USD,21:00,"unpriced pairs, best 60 s spell",890821.1418809218
+BTC-USD,21:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",10402697.660070615
+BTC-USD,22:00,"unpriced pairs, best 60 s spell",198470.3393844719
+BTC-USD,22:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",-35387.92091127024
+ETH-USD,15:00,"unpriced pairs, best 60 s spell",137754.5019617819
+ETH-USD,15:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",73376.57113587615
+ETH-USD,20:00,"unpriced pairs, best 60 s spell",405080.8557654235
+ETH-USD,20:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",200068.57022740092
+ETH-USD,21:00,"unpriced pairs, best 60 s spell",1983098.433032561
+ETH-USD,21:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",24573645.771688223
+ETH-USD,22:00,"unpriced pairs, best 60 s spell",511362.96910331445
+ETH-USD,22:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",149700.73366780317
+SOL-USD,15:00,"unpriced pairs, best 60 s spell",0.0
+SOL-USD,15:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",-117992.13342684828
+SOL-USD,20:00,"unpriced pairs, best 60 s spell",0.0
+SOL-USD,20:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",-287846.2634501078
+SOL-USD,21:00,"unpriced pairs, best 60 s spell",0.0
+SOL-USD,21:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",-3717810.2542860704
+SOL-USD,22:00,"unpriced pairs, best 60 s spell",0.0
+SOL-USD,22:00,"unpriced pairs, causal, 40 bps trigger, 300 s spells",-1512763.3943141443

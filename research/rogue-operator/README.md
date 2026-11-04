@@ -16,15 +16,18 @@ client flow of #111 and #134 and Secure TSC on, each attack takes:
 | Latency arbitrage, toxicity score laundered | $81.2M ($74.8M to $88.2M) | the same | $65.0M | the exposure cap alone |
 | Latency arbitrage, if the toxicity add-on were paid | $10.5M ($9.1M to $12.1M) | the same | $8.4M | the 3 s lag and the add-on |
 | Skimming client fills | $796k ($722k to $878k) | $5.94M ($5.41M to $6.52M) | $159k | the 3 s lag |
-| Censoring closes beyond the lag | nothing beyond skimming | nothing | — | no momentum to ride |
-| Held sync, four restarts a day | $2k | the same | $2k | the 5 s alert |
+| Censoring closes 10 s, over skimming them at arrival | -$18k (-$46k to $10k) | not measured | — | no momentum detected |
+| Held sync's kill option, four restarts a day | $2k | the same | $2k | the 5 s alert |
 | Unpricing across moves, $50M of pairs | $156k (-$3k to $431k); $35M on 2025-10-10 | the same | $125k | the 1% margin; not the spell's length |
 | Altering Databento quotes, every RWA fill | up to $1.80M | up to $18.0M | $360k | the divergence bound |
 | Choosing the venue, if `min_sources` were 1 | $806k | $8.06M | $161k | the venues' half-gap |
 | All the crypto attacks together, score laundered | | | $65.2M ($60.0M to $71.1M) | |
 | All the crypto attacks together, add-on paid | | | $8.7M ($7.4M to $10.2M) | |
 
-The 95% intervals are a stratified bootstrap of the sampled hours. The combined rows are the
+The 95% intervals are a stratified bootstrap of the sampled hours. Each row is a rate: the house
+holds $107M at #134's liquidity floor, so at the laundered rate it is empty in about a day and a
+half, and past that the operator's balances are claims on clients' deposits in the vault. The
+combined rows are the
 operator's take from its own latency arbitrage, held syncs and pairs on the three crypto markets
 plus its share of skimming every client fill there, at once. Against this, the operator's
 20% of distributions is worth $169k a day at launch flow, $61.7M a year, and ten times that at
@@ -47,15 +50,19 @@ quotes cost clients and pay the house, so the operator receives only its 20% of 
   the take, grow with the operator's capital. At 2% margin every rule tried loses money over the
   year, and the best of them makes $0.3M on that day.
 - **Skimming costs clients 0.45 bps of what they fill** ($796k a day at launch flow; 0.34 bps and
-  $5.9M at 10x), each fill priced at the worst index of its last 3 s. The operator's 20% roughly doubles its
-  honest income. A monitor comparing fills with venue prices needs about 80 fills, under a minute of
-  BTC-USD flow, to tell it from an honest node; without one, nothing ever shows it.
-- **Censoring beyond the lag gains nothing on average.** After a fast minute, the next 5 s to 5
-  minutes show no momentum in a year of data (every interval includes zero), so delaying a close or
-  a deposit past what the operator can see is a coin toss. Delaying closes 10 s takes no more than
-  skimming them without delay.
-- **The held sync is worth little.** A hold no longer than the lag never needs a kill; at 5 s a kill
-  avoids 0.13 bps a use, about $2k a day on BTC-USD at four restarts.
+  $5.9M at 10x), each fill priced at the worst index of its last 3 s. The operator's 20% roughly
+  doubles its honest income. A monitor that rebuilds the index from venue data and compares fills
+  with it would catch it nine times in ten within a few hundred fills on average, minutes of launch
+  flow, allowing for an honest node's fills scattering half a basis point; without a monitor,
+  nothing shows it.
+- **Censoring beyond the lag shows no gain.** After a fast minute, the next 5 s to 5 minutes show
+  no momentum in the year's sample: every interval includes zero, though the widest span several
+  bps either way, so a small edge is not ruled out. Holding closes 10 s and then taking the worst
+  index of the last 3 s takes $18k a day less (-$46k to $10k) than taking each close's worst index
+  at arrival.
+- **The held sync's kill option is worth little.** A hold no longer than the lag never needs a
+  kill; at 5 s a kill avoids 0.13 bps a use against keeping the same trade, about $2k a day on
+  BTC-USD at four restarts.
 - **Removal comes too late for an exit.** If stakers act the day an attack starts, an operator past
   its minimum term keeps operating about 15 days, so any attack taking over $4.1M an operating day
   pays; one inside its 90-day minimum term, over $630k. Under daily rotation a member with 5% of the
@@ -179,12 +186,13 @@ grid is kept only for checks. `derive/grids.py` stores the grids delta-encoded i
 SHA-256 of the raw file it came from in `grids.json`.
 
 **A live recording.** To see how far the proxy is from the engine's real index,
-`fetch/record_books.py` recorded both venues' top of book and trades on the three pairs for seven
-hours on 2026-11-04 (Coinbase's `level2` and `market_trades` channels, Kraken's `book` at depth 10 and
-`trade`, as the node's adapters subscribe). `derive/calibrate.py` compares the two-venue book-mid
-index with the Coinbase trade proxy over each whole hour: their moves over each horizon, their
-variation at 250 ms, the worst index a 3 s look-back offers, the venues' half-gap, and the share of
-time the venues diverge past the divergence triggers (`results/calibration.json`).
+`fetch/record_books.py` recorded both venues' top of book and trades on the three pairs on
+2026-11-04 (Coinbase's `level2` and `market_trades` channels, Kraken's `book` at depth 10 and
+`trade`, as the node's adapters subscribe), one whole UTC hour in all. `derive/calibrate.py`
+compares the two-venue book-mid index with the Coinbase trade proxy over each whole hour: their
+moves over each horizon, their variation at 250 ms, the worst index a 3 s look-back offers, the
+venues' half-gap, and the share of time the venues diverge past the divergence triggers
+(`results/calibration.json`).
 
 **Client flow.** The flow #111 and #134 model (`research/cap-calibration`): a steady $182M of margin
 opened a day, each market's share of the #111 market mix, each position at the market's maximum
@@ -205,14 +213,14 @@ client flow. `run.py simulate` spreads the hours over three workers; it is deter
 client arrivals are seeded by the hour).
 
 **Latency arbitrage** (`model/latency.py`). Holding the index `lag` behind the venues means the
-operator always knows the engine's next `lag` seconds of index. Every 250 ms it chooses a position of
-`-1`, `0` or `+1` units by a receding-horizon dynamic programme over the index it knows, given the
-spread each fill pays: the stress level's minimum from the fast-move trigger, replayed on the hour
-(`model/stress.py`), any extra spread in the sweep, and 3 bps if the account pays the top toxicity
-tier. Each position then pays the profit fee on a positive result. The size is 69% of the market's
-cap, so the utilisation trigger (70%) never fires: $6.9M a market at launch, under the $10M floor
-#134 records as #111's outcome, and $22.2M, $14.8M and $7.4M at #134's retained NAV. One account per $2M keeps every
-fill in BTC-USD's zero size tier.
+operator always knows the engine's next `lag` seconds of index. Every 250 ms it chooses a position
+of `-1`, `0` or `+1` units by a receding-horizon dynamic programme over the index it knows, given
+the spread each fill pays: the stress level's minimum from the fast-move trigger, replayed on the
+hour (`model/stress.py`), any extra spread in the sweep, and 3 bps if the account pays the top
+toxicity tier. Each position then pays the profit fee on a positive result. The size is 69% of the
+market's cap, so the utilisation trigger (70%) never fires: $6.9M a market at launch, under the $10M
+floor #134 records as #111's outcome, and $22.2M, $14.8M and $7.4M at #134's retained NAV. One
+account per $2M keeps every fill in BTC-USD's zero size tier.
 
 **Skimming and censoring** (`model/skim.py`). Client fills arrive as a Poisson process at the flow
 rate, each a buy or a sell with even odds and a size from the flow model. An order arriving at `a`
@@ -227,14 +235,15 @@ know the window's worst moment until it has passed.
 **The held sync** (`model/hold.py`). Every 10 s the operator opens a position at the stale index in
 the direction the venues have already moved, then holds the sync for `hold` seconds. If the best
 close it can then show loses, it kills the node and the trade never happened; otherwise it commits.
-Compared with closing at once, the hold adds the option on the next `hold` seconds; each kill is a
-restart every client sees.
+The kill option's value is the loss it avoids against keeping the same trade; the table also
+gives closing at once, without the hold. Each kill is a restart every client sees.
 
 **Unpricing** (`model/unprice.py`). The operator holds pairs: long in one account, short the same
 notional in another, at the margin floor. Per dollar a side, a repricing after a move `J` pays
 `0.9 (J - s) - min(J + s, m)`, where `m` is the margin rate and `s` the stress minimum both closes pay
-once the move reads as fast; `crates/core/tests/rogue_operator.rs` checks this through
-`Engine::apply`. Two rules: `best`, the hour's single best spell of at most `spell` seconds, chosen in
+once the move reads as fast; `crates/core/tests/rogue_operator.rs` checks it through
+`Engine::apply` with no stress spread (`s = 0`) on the `V21` harness, the latest without access
+screening. Two rules: `best`, the hour's single best spell of at most `spell` seconds, chosen in
 hindsight; and `causal`, which unprices once the venues have moved `trigger` in 5 s, counts the move
 from the engine's last index 3 s earlier, and prices again as soon as the pair pays 0.3% past
 break-even or at the spell's end. The pairs are $50M a side: $1M of margin a side at 1%.
@@ -289,9 +298,9 @@ pays cuts the take sharply, and the lag then decides how much is left, because o
 than the round trip pay. Deciding every 0.1 s instead of 0.25 s takes 8% more ($88.0M), every 1 s
 20% less ($64.7M); the fast-move trigger's 2 and 10 bps cost the operator 4% ($84.2M without them).
 At #134's retained NAV the caps are larger and the laundered take is $162M a day ($19.5M with the
-add-on paid). By market, BTC-USD takes $19.0M of the $81.2M, ETH-USD $31.5M and SOL-USD $30.7M:
-SOL-USD's cent tick is 0.5 to 0.7 bps of its price, so its trade proxy overstates its index's
-variation most (`results/calibration.json`).
+add-on paid). By market, BTC-USD takes $19.0M of the $81.2M (70,836 positions a day, 84% of them
+winning), ETH-USD $31.5M and SOL-USD $30.7M. On the live recording the proxy overstates BTC-USD's
+index variation by about a third and slightly understates SOL-USD's (below).
 
 **Laundering.** The toxicity score is the notional-weighted average of an account's markouts (#130).
 A round trip at the zero tier, a buy and a sell of the same size at the same index, pays no spread
@@ -299,7 +308,10 @@ and no fee, and adds two markouts that cancel while adding their notional to the
 it pulls the score toward zero for nothing. In the engine test, an account that makes 10 bps on
 $500k every cycle passes the first tier and pays the add-on within 40 cycles; the same account
 washing about $11M a cycle never pays it, and its washes cost exactly nothing. Fresh accounts work
-too: each starts at the neutral prior, $5.6M of history, and costs only a deposit.
+too: each starts at the neutral prior, $5.6M of history, and costs only a deposit. Request limits
+do not stop it: the production template allows each account 10 requests a second, and the
+arbitrage decides four times a second per market, washes included, across as many accounts as it
+likes.
 
 ### Skimming and censoring
 
@@ -316,10 +328,11 @@ too: each starts at the neutral prior, $5.6M of history, and costs only a deposi
 
 Skimming takes about half a basis point of every dollar clients fill at a 3 s lag, and about 40% of
 that at 1 s. At ten times the flow, orders crowd the index's path and each takes less (0.34 bps),
-but the total still grows sevenfold. Delaying orders beyond the lag adds nothing achievable: the
-operator, waiting 10 or 30 s and taking the worst index of its last 3 s, gets what it gets with no
-delay, and only hindsight, which it does not have, would gain from the longer window. That matches
-the momentum measurement:
+but the total still grows sevenfold. Waiting longer than the lag shows no gain: an operator that
+holds each order 10 or 30 s and then takes the worst index of its last 3 s gets no more than taking
+each order's worst index at arrival (both measures price each order on its own, so they compare with
+each other, not with the sequenced rows), and only hindsight, which it does not have, would gain from
+the longer window. The momentum measurement agrees, within wide intervals:
 
 | A trailing minute that moved at least | Next 5 s | Next 30 s | Next 60 s | Next 5 min |
 |---|---|---|---|---|
@@ -444,7 +457,7 @@ None of these changes a genesis value; each is for the owner to decide.
 ## Limits
 
 - **The index is a proxy.** Coinbase's last trade stands in for the two-venue book-mid index. The
-  live recording measures the gap between them on seven calm hours; its ratios are reported, not
+  live recording measures the gap between them on one whole UTC hour; its ratios are reported, not
   applied, and a busy window may differ.
 - **Three markets of 37.** BTC-USD, ETH-USD and SOL-USD carry 77% of launch flow; no public tick data
   covers the vendors that price the rest. The Databento figure for them is a bound, not a simulation.
@@ -456,8 +469,8 @@ None of these changes a genesis value; each is for the owner to decide.
   without such a day misses.
 - **The operator's best response is approximated.** Latency arbitrage decides on a 250 ms grid (a
   10 ms grid would take more), skimming keeps clients in arrival order (reordering them would take
-  more), and the unpricing rule is one simple trigger. Each is achievable, so the true capacity is
-  at least what is measured.
+  more), and the unpricing rule is one simple trigger. Each is achievable, so against the same
+  index the operator could take at least what is measured; the proxy's error, above, cuts both ways.
 - **The engine is simplified.** The model leaves out the divergence trigger (the historical sample
   has no Kraken book; live, the venues never came near it), the size spread past the first tier,
   financing, and rounding. The two mechanisms the conclusions rest on, laundering a toxicity score
