@@ -88,6 +88,22 @@ fn a_repeated_stamp_keeps_the_stricter_bound() {
 }
 
 #[test]
+fn peeking_a_deadline_leaves_it_to_be_taken_when_the_quote_goes() {
+    let at = Instant::now();
+    let (mut probe, payloads) = pinged(at, &[0]);
+    let max_delay = MS * 2_000;
+    probe.answered(&payloads[0]);
+    probe.note_read("BTC", 1_000, max_delay);
+    let bound = (at + max_delay).into_std();
+    assert_eq!(probe.peek_not_after("BTC", 1_000), Some(bound));
+    assert_eq!(probe.peek_not_after("BTC", 1_001), None, "a stamp no quote carries has no bound");
+    assert_eq!(probe.peek_not_after("ETH", 1_000), None, "another symbol's is untouched");
+    // The read did not consume it: the quote that waited on it still carries it when it goes.
+    assert_eq!(probe.take_not_after("BTC", 1_000), bound);
+    assert_eq!(probe.peek_not_after("BTC", 1_000), None, "taken at last");
+}
+
+#[test]
 fn taking_a_quote_forgets_the_older_and_keeps_the_newer() {
     let at = Instant::now();
     let (mut probe, payloads) = pinged(at, &[0]);
