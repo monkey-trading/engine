@@ -110,3 +110,85 @@ async fn reads_carry_a_user_agent() {
     let _ = server.await;
     assert_eq!(agents.lock().unwrap().as_slice(), [concat!("engine-checkpoints/", env!("CARGO_PKG_VERSION"))],);
 }
+
+#[tokio::test]
+async fn the_registry_operator_is_read_at_the_pinned_finalized_block_only_while_rotation_is_off() {
+    const VAULT: Address = Address::repeat_byte(0x11);
+    const REGISTRY: Address = Address::repeat_byte(0x22);
+    const PINNED: B256 = B256::repeat_byte(0x33);
+    /// The registry the vault names, and whether its rotation is on.
+    type Registry = Arc<Mutex<(Address, bool)>>;
+    async fn answer(State(registry): State<Registry>, Json(request): Json<Value>) -> Json<Value> {
+        let (named, rotation) = *registry.lock().unwrap();
+        let call = &request["params"][0];
+        let input = call["input"].as_str().or(call["data"].as_str()).unwrap();
+        let selector: [u8; 4] = hex::decode(&input[2..10]).unwrap().try_into().unwrap();
+        let to: Address = call["to"].as_str().unwrap().parse().unwrap();
+        // Every read is at the observation's block, by hash.
+        if request["params"][1]["blockHash"] != format!("{PINNED:#x}") {
+            return Json(json!({"jsonrpc":"2.0","id":request["id"],"error":{"code":-32000,"message":"unpinned read"}}));
+        }
+        let word = |bytes: &[u8]| format!("{:0>64}", hex::encode(bytes));
+        let result = match (to, selector) {
+            (VAULT, registryCall::SELECTOR) => word(named.as_slice()),
+            (REGISTRY, rotationEnabledCall::SELECTOR) => word(&[u8::from(rotation)]),
+            (REGISTRY, operatorInEffectCall::SELECTOR) => {
+                [word(&[0xc2; 20]), word(&[0xa2; 20]), word(&[0x44; 32]), word(&1_793_000_000u64.to_be_bytes())]
+                    .concat()
+            }
+            other => panic!("unexpected read {other:?}"),
+        };
+        Json(json!({"jsonrpc":"2.0","id":request["id"],"result":format!("0x{result}")}))
+    }
+    let registry: Registry = Arc::new(Mutex::new((REGISTRY, false)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new().route("/", post(answer)).with_state(registry.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let cfg: CheckpointSection = toml::from_str(&format!(
+        "rpc_url='http://{address}'\nrelayer='0x{}'\nretry_interval='1ms'\nrpc_timeout='2s'",
+        "01".repeat(20)
+    ))
+    .unwrap();
+    let domain = CheckpointDomain { chain_id: 31337, vault: engine_core::types::AccountId(VAULT.0.0) };
+    let rpc = CheckpointRpc::read_only(&cfg, domain, Address::ZERO, FinalityTag::Finalized, 0).unwrap();
+    let observation = |view| Observation {
+        view,
+        state: VaultState {
+            height: 100,
+            signer: engine_core::types::AccountId([1; 20]),
+            checkpoint: None,
+            balance: engine_core::Fixed::ZERO,
+            deposits: 0,
+            deposited: engine_core::Fixed::ZERO,
+            distributions_paid: engine_core::Fixed::ZERO,
+        },
+        lifecycle: Some(LifecycleEvidence {
+            height: 100,
+            block_hash: PINNED,
+            signer: engine_core::types::AccountId([1; 20]),
+            signer_epoch: 1,
+            withdrawals_paused: false,
+            total_withdrawn: engine_core::Fixed::ZERO,
+            checkpoint_seq: None,
+            checkpoint_root: None,
+            approvals: Vec::new(),
+        }),
+    };
+    let finalized = observation(View::Finalized);
+    assert_eq!(
+        rpc.registry_operator_at(&finalized).await.unwrap(),
+        Some(RegistryOperator { admin_key: engine_core::types::AccountId([0xa2; 20]), since: 1_793_000_000_000 })
+    );
+    // While rotation is on, elections move the key; a vault with no registry has none to name.
+    *registry.lock().unwrap() = (REGISTRY, true);
+    assert_eq!(rpc.registry_operator_at(&finalized).await.unwrap(), None);
+    *registry.lock().unwrap() = (Address::ZERO, false);
+    assert_eq!(rpc.registry_operator_at(&finalized).await.unwrap(), None);
+    // A view finality has not fixed, or one pinned to no block, is refused before any read.
+    *registry.lock().unwrap() = (REGISTRY, false);
+    assert!(rpc.registry_operator_at(&observation(View::Latest)).await.is_err());
+    let unpinned = Observation { lifecycle: None, ..finalized };
+    assert!(rpc.registry_operator_at(&unpinned).await.is_err());
+    server.abort();
+}

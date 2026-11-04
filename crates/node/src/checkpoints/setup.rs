@@ -8,7 +8,7 @@ use engine_core::types::AccountId;
 use tokio::sync::mpsc;
 
 use crate::checkpoints::{
-    ApprovalRegistry, CheckpointChain, CheckpointRpc, Observation, Poster, RelayerGas, View, Work,
+    ApprovalRegistry, CheckpointChain, CheckpointRpc, Observation, Poster, RegistryOperator, RelayerGas, View, Work,
 };
 use crate::config::{EvmCustodySection, FinalityTag, NodeConfig};
 use crate::custody::BalanceQuorum;
@@ -30,6 +30,8 @@ pub(crate) struct Setup {
     pub observation: Observation,
     pub parent: crate::log::CheckpointParent,
     pub posted_seq: Option<u64>,
+    /// The registry's operator in effect at `observation`, while rotation is off.
+    pub registry_operator: Option<RegistryOperator>,
 }
 
 impl std::fmt::Display for Unregistered {
@@ -86,7 +88,8 @@ async fn await_finality_boundary<C: CheckpointChain>(
     .context("checkpoint startup awaits custody finality beyond its finality budget")?
 }
 
-/// Connects the checkpoint endpoint and reads its rollback anchor before log recovery.
+/// Connects the checkpoint endpoint and reads its rollback anchor, and the registry's operator at
+/// the same finalized block, before log recovery.
 /// Error cases:
 /// - configuration, transport, or vault reads fail
 /// - the vault names another signer (`Unregistered`)
@@ -116,6 +119,7 @@ pub(crate) async fn connect(
     };
     let state = await_finality_boundary(&chain, AccountId(key.address()), checkpoints.retry_interval, evm).await?;
     chain.authenticate_reservation(&state).await?;
+    let registry_operator = chain.registry_operator_at(&state).await?;
     let parent = match &state.state.checkpoint {
         Some((seq, root)) => crate::log::CheckpointParent { has_checkpoint: true, seq: *seq, root: root.parse()? },
         None => Default::default(),
@@ -137,7 +141,16 @@ pub(crate) async fn connect(
         }),
     };
     let (tx, rx) = mpsc::channel(64);
-    Ok(Some(Setup { poster, tx, rx, posted_seq, parent, approvals: Default::default(), observation: state }))
+    Ok(Some(Setup {
+        poster,
+        tx,
+        rx,
+        posted_seq,
+        parent,
+        approvals: Default::default(),
+        observation: state,
+        registry_operator,
+    }))
 }
 
 #[cfg(test)]

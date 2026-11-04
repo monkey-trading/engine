@@ -172,6 +172,14 @@ You are the standby of a promoted candidate. Move quickly: the clock in "How a t
 10. **The admin key.** From the promotion's effective time (7 days plus the margin), your admin key is
     the operator's: `curl -sf $API/v1/operator | jq .operator`. Until then admin commands stay with the old
     key, which may be dead. Sign with your own key and the config's chain and vault, without `--rotated`.
+    With `[benchmarks]`, this node's start holds for a snapshot the old key signs. If that key is
+    dead the hold never ends, since the staking mirror that would bring your key in waits behind it.
+    Run the whole governance fallback instead ("When no standby qualifies", steps 2 to 6) with your
+    own candidate and key: turning rotation off un-names the release the registry named, and a
+    config with `operator.rotation_enabled = true` is refused once it is off, so the timelock names a
+    release whose config has your admin key and `operator.rotation_enabled = false`, that release
+    starts with `new-key`, and the timelock installs your key and calls `setSigner`. Schedule the
+    calls together: each waits the timelock's delay while the exit period runs.
 
 ## When no standby qualifies
 
@@ -189,31 +197,35 @@ shortened:
    approval of this contract call. Check: `rotationEnabled()` prints `false`; the node mirrors it.
 3. **Name the fallback's release.** `setCurrentRelease(<fallback digest>, <fallback config hash>)`
    (deploy-and-rollback.md, section 2, step 1). **Changes the live system.** Needs the owner's approval.
-4. **Boot the fallback** on its own host with the published log (a standby's copy or a mirror's)
-   and `new-key`, verify its attestation, and have the timelock call `setSigner($NEW)`
-   (key-recovery.md, "New keys", steps 3 to 5). It then resumes at the last checkpoint the old key
-   signed.
-5. **Install the fallback's operator.** With rotation off, the timelock alone can seat the new
+4. **Install the fallback's operator.** With rotation off, the timelock alone can seat the new
    operator's admin key, so admin commands work even if the failed operator's key is gone
    ([key-recovery.md](key-recovery.md), "The key is lost"). Pattern in reference.md
    with `TARGET=$REGISTRY` and
    `DATA=$(cast calldata 'installOperator(address,address,bytes,bytes32)' <candidate> <admin key> <fallback digest> <fallback config hash>)`.
    **Changes the live system.** Needs the owner's approval. The registry reverts while rotation is
    on; on chain the installation takes effect at once, and the engine mirrors it: its key signs
-   admin commands seven days after the mirror is logged, with no further step. Check:
-   `operatorInEffect()` names the new key; `curl -sf $API/v1/operator | jq .operator` shows it from
-   then. The installation leaves the failed operator's candidacy listed and approved; to upgrade
-   once rotation is on again, the installed operator needs a candidacy of its own
-   ([operator-candidate.md](operator-candidate.md), section 5). If the failed operator holds the
-   one place past a full candidate cap, the installed operator lists only after the timelock
-   withdraws the failed operator's approval or raises the cap.
-6. **Boot with the old key in config; restart to the new.** Recovery refuses a config naming a key
-   the log has not rotated to, so the fallback node boots with the failed operator's key in its
-   config — it signs nothing there — and only after the installation has applied (seven days) does
-   a config naming the new key pass recovery, at a restart. If a benchmark snapshot hold is active
-   while the old key is gone, no snapshot can be signed to release it: the hold has no signer, and
-   the installation's mirror waits behind it. Plan the fallback around a live snapshot hold; it is
-   a known gap that the hold admits only operator-signed snapshots.
+   admin commands seven days after the mirror is logged, with no further step. Schedule it no later
+   than step 5's `setSigner`, and execute it first. Check: `operatorInEffect()` names the new key;
+   `curl -sf $API/v1/operator | jq .operator` shows it from then. The installation leaves the failed
+   operator's candidacy listed and approved; to upgrade once rotation is on again, the installed
+   operator needs a candidacy of its own ([operator-candidate.md](operator-candidate.md), section 5).
+   If the failed operator holds the one place past a full candidate cap, the installed operator
+   lists only after the timelock withdraws the failed operator's approval or raises the cap.
+5. **Boot the fallback** on its own host with the published log (a standby's copy or a mirror's)
+   and `new-key`, verify its attestation, and have the timelock call `setSigner($NEW)`
+   (key-recovery.md, "New keys", steps 3 to 5). Once the installation is final it resumes at the
+   last checkpoint the old key signed. A node the vault names before then refuses with
+   `log_recovery_failed` (`the log records operator …`); start it again once the installation is
+   final.
+6. **The fallback's config names the new admin key.** Its hash is the config hash steps 3 and 4
+   name, so the key is fixed with the release. Recovery admits a config naming the key the registry
+   installed, read at the vault's finalized block, before the log has mirrored the installation.
+   Until that key is due, seven days after its mirror is logged, no benchmark snapshot hold waits
+   on the failed key (`benchmark_sync_skipped`): the node sequences, the mirror lands, and financing
+   uses the last applied rates. A node already holding for a snapshot when the installation becomes
+   final stays held: restart it. Start the benchmark worker under the new key once the effective
+   time of the pending rotation `curl -sf $API/v1/operator | jq .pending_rotation` shows has
+   passed: from then a hold waits for that key's snapshot.
 
 The fallback must be decided before it is needed: a host, a built and approved release, an archive
 mirror it can read, the fallback operator's admin key, and the people who can sign the timelock

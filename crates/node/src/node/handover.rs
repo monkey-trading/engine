@@ -1,12 +1,15 @@
-//! The incumbent's election watcher: alerts while an election naming another operator is mirrored
-//! and unhanded.
+//! The registry's rotation switch against the config at start, and the incumbent's election
+//! watcher: alerts while an election naming another operator is mirrored and unhanded.
 
 use std::time::Duration;
 
+use anyhow::bail;
 use engine_core::types::Millis;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info, warn};
 
+use crate::checkpoints::CheckpointChain;
+use crate::config::NodeConfig;
 use crate::sequencer::Request;
 use crate::trusted_time::TrustedClock;
 use engine_core::types::AccountId;
@@ -37,6 +40,36 @@ pub(super) fn episode(
         true => Episode::Overdue,
         false => Episode::Elected,
     }
+}
+
+/// Checks `operator.rotation_enabled` against the vault's registry before the keys, setting
+/// `chain_read` once the chain answers.
+/// Error cases:
+/// - `operator.rotation_enabled = true` while the vault's registry has rotation off, or without
+///   `[checkpoints]` EVM custody to read it
+/// - the chain cannot be read, or, while rotation is on, the registry names another API hostname
+pub(super) async fn check_rotation(cfg: &NodeConfig, chain_read: &mut bool) -> anyhow::Result<()> {
+    if let Some(vault) = crate::handover::vault_reader(cfg)? {
+        let on = vault.rotation_enabled().await?;
+        *chain_read = true;
+        info!(alert_resolved = "secrets_start_failed", "the node read the chain");
+        if cfg.operator.rotation_enabled && !on {
+            bail!("operator.rotation_enabled = true, but the vault's registry has rotation off");
+        }
+        if on && !cfg.operator.rotation_enabled {
+            warn!(
+                "the vault's registry has rotation on, but operator.rotation_enabled is false: an election naming another operator moves the admin key this node does not expect"
+            );
+        }
+        // While rotation is on, the certificate the enclave orders names the API hostname the
+        // registry records for the operator in effect.
+        if on {
+            crate::handover::check_operator_hostname(cfg, &vault).await?;
+        }
+    } else if cfg.operator.rotation_enabled {
+        bail!("operator.rotation_enabled = true needs [checkpoints] with EVM custody to read the registry");
+    }
+    Ok(())
 }
 
 /// Watches the mirrored election an incumbent with sealed keys runs under: raises `operator_elected`

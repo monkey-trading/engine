@@ -14,7 +14,7 @@ pub(crate) mod setup;
 pub(crate) mod signature;
 pub(crate) use rpc::{CheckpointRpc, Takeover};
 mod chain;
-pub(crate) use chain::{CheckpointChain, CurrentRelease, HandoverSource};
+pub(crate) use chain::{CheckpointChain, CurrentRelease, HandoverSource, RegistryOperator};
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};

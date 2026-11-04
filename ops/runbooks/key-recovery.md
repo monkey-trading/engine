@@ -173,7 +173,9 @@ it is recorded in the log, and changing it in the config for a log that has begu
   delivered — treat both as compromise.
 - **The key is lost.** No other key can sign an admin command or a rotation while rotation is off.
   Keep two copies of the key in separate places. With rotation on, only an election replaces the
-  operator ([operator-candidate.md](operator-candidate.md)); with rotation off, the governance
+  operator ([operator-candidate.md](operator-candidate.md)), and a node holding for a benchmark
+  snapshot the lost key would sign stays held: run the whole fallback in [standby.md](standby.md),
+  which turns rotation off and names a release of its own. With rotation off, the governance
   fallback in [standby.md](standby.md) restores the node, and its `installOperator` step seats a
   new admin key the timelock alone can name.
 
@@ -211,7 +213,8 @@ one handing over, or whose key the log records — under the registry's rotation
 has no business in another operator's enclave. A rotated operator therefore keeps its old key until a release's config names the
 new one, and an upgrade's new release takes a moved bundle only under the signature of the operator
 its own config names; a bundle signed before a rotation is refused there, and the operator delivers
-again.
+again. A fallback node whose config names the key the registry installed takes that key alone too,
+from before the log mirrors the installation.
 
 **See what an enclave holds.** This changes nothing. Check: the sealed version is the newest you
 delivered. A lower one means the host restored an older sealed file: treat the host as suspect, and

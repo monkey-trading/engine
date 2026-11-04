@@ -415,6 +415,7 @@ async fn the_delivery_authority_does_not_hold_the_sequencer_open() {
     let authority = Authority::Log {
         tx: tx.downgrade(),
         configured: AccountId([1; 20]),
+        installed: None,
         trusted: Arc::new(crate::test_support::trusted(Arc::new(crate::clock::SystemClock))),
     };
     let (_keeps_the_channel_open, receiver) = watch::channel(authority);

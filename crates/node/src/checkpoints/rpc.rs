@@ -21,7 +21,7 @@ use tokio::time::timeout;
 use crate::checkpoints::emission_budget::budget_from_cap;
 use crate::checkpoints::{
     AcceptedCheckpoint, ApprovalId, ApprovalStatus, CheckpointChain, CurrentRelease, HandoverSource, LifecycleEvidence,
-    Observation, VaultState, View,
+    Observation, RegistryOperator, VaultState, View,
 };
 use crate::config::{CheckpointSection, FinalityTag, redact};
 use crate::custody::BalanceQuorum;
@@ -214,6 +214,36 @@ impl CheckpointRpc {
         Ok(rotationEnabledCall::abi_decode_returns(
             &self.call(registry, rotationEnabledCall {}.abi_encode(), at).await?,
         )?)
+    }
+
+    /// The operator the vault's registry names in effect at the pinned block of a finalized
+    /// observation, while rotation is off; `None` while rotation is on, when elections move the key,
+    /// or for a vault that follows no registry.
+    /// Error cases:
+    /// - the observation is not finalized and pinned, or an RPC call or decoding fails
+    /// - the seating time passes `i64` milliseconds
+    pub(crate) async fn registry_operator_at(&self, at: &Observation) -> anyhow::Result<Option<RegistryOperator>> {
+        ensure!(at.view == View::Finalized, "the registry's operator requires a finalized observation");
+        let evidence =
+            at.lifecycle.as_ref().context("the registry's operator requires a pinned canonical observation")?;
+        let block = BlockId::hash_canonical(evidence.block_hash);
+        let vault = Address::from(self.domain.vault.0);
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), block).await?)?;
+        if registry.is_zero()
+            || rotationEnabledCall::abi_decode_returns(
+                &self.call(registry, rotationEnabledCall {}.abi_encode(), block).await?,
+            )?
+        {
+            return Ok(None);
+        }
+        let in_effect = operatorInEffectCall::abi_decode_returns(
+            &self.call(registry, operatorInEffectCall {}.abi_encode(), block).await?,
+        )?;
+        let since = i64::try_from(in_effect.since)
+            .ok()
+            .and_then(|seconds| seconds.checked_mul(1000))
+            .context("the registry's seating time is out of range")?;
+        Ok(Some(RegistryOperator { admin_key: engine_core::types::AccountId(in_effect.adminKey.0.0), since }))
     }
 
     /// Executes a read at one canonical block hash.

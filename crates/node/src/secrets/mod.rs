@@ -17,8 +17,9 @@
 //! attested config names: reading the vault can itself take a delivered key, so no log can be
 //! authenticated yet, and a host could forge one naming any operator. Once the node serves it is the
 //! key the log records, or a rotation's that has come due, as `POST /v1/admin` checks it; while the
-//! registry elects operators, or on a node a pending rotation names the successor, its own configured
-//! key alone, since an elected operator's secrets are its own. A node whose config still
+//! registry elects operators, or on a node a pending rotation names the successor, or whose config
+//! names the key the finalised registry installed before the log mirrored it, its own configured key
+//! alone, since an elected or installed operator's secrets are its own. A node whose config still
 //! names a key the log has since rotated away from takes that key until the log opens; what a bundle
 //! can do bounds this (below).
 //!

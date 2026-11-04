@@ -2,8 +2,9 @@
 
 use alloy::primitives::U256;
 use anyhow::{Context, ensure};
-use engine_core::Fixed;
 use engine_core::emissions::TokenUnits;
+use engine_core::types::{AccountId, Millis};
+use engine_core::{Engine, Fixed};
 
 use crate::checkpoints::{
     APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalId, ApprovalStatus, LifecycleEvidence, Observation, VaultState,
@@ -29,6 +30,29 @@ pub(crate) struct HandoverSource {
     pub release: [u8; 32],
     pub api_hostname: String,
     pub handover_endpoint: String,
+}
+
+/// The operator the vault's registry names in effect at a finalized block while rotation is off,
+/// when only the timelock's `installOperator` seats another, and when it was seated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RegistryOperator {
+    pub admin_key: AccountId,
+    /// The block time the registry seated it, in milliseconds.
+    pub since: Millis,
+}
+
+impl RegistryOperator {
+    /// This operator's key, when `engine`'s log records another and its staking scan has not passed
+    /// the seating: the scan's frontier time, before which every registry event has been mirrored,
+    /// is no later than the seating's. The log may already hold the installation, whose handover then
+    /// waits out its notice; an earlier installation of the same key tells nothing, since the
+    /// timelock may install a key again. A log whose scan records no frontier time cannot tell, and
+    /// reads as scanned.
+    pub(crate) fn unscanned(self, engine: &Engine) -> Option<AccountId> {
+        let frontier = engine.staking().and_then(|staking| staking.completed_through).and_then(|through| through.time);
+        let recorded = engine.operator().is_some_and(|operator| operator.address == self.admin_key);
+        (frontier.is_some_and(|time| self.since >= time) && !recorded).then_some(self.admin_key)
+    }
 }
 
 /// Chain access, kept separate from the authorized enclave signer lifecycle.

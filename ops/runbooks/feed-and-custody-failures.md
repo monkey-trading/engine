@@ -167,7 +167,18 @@ section 5). It does not affect prices.
   the owner may set a rate by hand, which is an admin command and a financing decision for every
   holder: `$ENGINE admin … set-benchmark-rate <NAME> <bps a year>`.
 - `benchmark_sync_pending` (Warning): the node is waiting for the worker's signed history before it
-  catches up. Start the worker.
+  catches up. Start the worker. If the operator key is gone, no worker can sign: once the registry's
+  installation of another key is final, restart the node, which then ends the hold at its first
+  stamp. The registry installs only while rotation is off, so with rotation on, run the whole
+  fallback ([standby.md](standby.md), "When no standby qualifies"): turning rotation off also
+  un-names the release the registry named.
+- `benchmark_sync_skipped` (Warning): the registry installed an operator in place of the key the log
+  records, which the fallback presumes gone, and the installed key signs nothing until seven days
+  after its mirror is logged. Waiting for a snapshot would also hold back that mirror, so the node
+  sequences without one, and financing uses the last applied rates. It resolves when a snapshot
+  applies. Start the worker under the installed key once the effective time of the pending rotation
+  `curl -sf $API/v1/operator | jq .pending_rotation` shows has passed: from then a hold waits for
+  its snapshot.
 
 ### Trusted time
 

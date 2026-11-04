@@ -202,6 +202,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   cut-back operator or a heartbeat behind the copy with the copy unchanged
 - `src/node/mod.rs` — startup, task supervision, and shutdown
 - `src/node/ticker.rs` — the `Tick` command at `node.tick`, so sessions and rollovers fire without traffic
+- `src/node/handover.rs` — the registry's rotation switch checked against the config at start, and the
+  incumbent's election watcher
 - `src/node/keys.rs` — this start's enclave keys and their attestation, and the check that the log
   reaches the final checkpoint of the release that handed the keys over
 - `src/node/keys/tests.rs` — sealed, new, refused, and unsealed keys, the vault's current release,
@@ -338,7 +340,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/alerts/retirement_tests.rs` — benchmark retirement, catalogue changes, and resolution state
 - `src/sequencer/alerts/retirement_webhook_tests.rs` — retirement pages through the durable webhook router
 - `src/sequencer/alerts/undated_tests.rs` — scalar fallback, independent incidents, and durable webhook recovery
-- `src/sequencer/benchmark_schedule.rs` — changed rollover notifications and publisher synchronization when due
+- `src/sequencer/benchmark_schedule.rs` — changed rollover notifications, publisher synchronization when due, and
+  the end, at its next stamp, of a hold no snapshot can end while an installation supersedes the log's key
 - `src/sequencer/tests/benchmark_schedule.rs` — schedule changes, durable watches, and due-time synchronization
 - `src/sequencer/tests/mod.rs` — sequencer, activation, recovery, and replay tests
 - `src/sequencer/tests/replay.rs` — root, sequence, and pre-event log replay tests
@@ -349,7 +352,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   whose genesis did not apply in full, is not the config's, or is one no current config can give,
   is refused at recovery
 - `src/sequencer/tests/operator.rs` — recovery, activation, and replay with the operator the log
-  records
+  records; recovery under the key the registry installed, and benchmark holds while it supersedes the
+  log's
 - `src/sequencer/tests/rotation.rs` — an operator rotation through the sequencer, and recovery after it
 - `src/sequencer/batch_tests.rs` — batching: a batch ends after `MAX_BATCH` requests of any kind
 - `src/sequencer/margin_tests.rs` — the margin and solvency dev scenario on the dev genesis (a
@@ -675,7 +679,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/test_keys.rs` — the published test keys from `config/test-keys.toml`, which a node
   with real attestation refuses, and their tests
 - `src/checkpoints/mod.rs` — posting, retry, signed-parent commitment checks, and collateral reconciliation
-- `src/checkpoints/chain.rs` — the chain access the worker reads and posts through, the vault's current release included
+- `src/checkpoints/chain.rs` — the chain access the worker reads and posts through, the vault's current release included,
+  and the registry's operator in effect and whether the log's staking scan has passed its seating
 - `src/checkpoints/relayer_gas.rs` — the relayer's balance read on each retry, its metric, and `checkpoint_relayer_low`
 - `src/checkpoints/tests/relayer_gas.rs` — the alert firing while the balance is below the minimum and resolving once it is refilled
 - `src/checkpoints/sweep.rs` — bounded approval pages and the sweep of further pages at one finalized block
@@ -693,14 +698,15 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/tests/receipts.rs` — immutable prefix coverage and refusal of unproved aggregate equality
 - `src/checkpoints/signature.rs` — shared strict checkpoint signature and domain verification
 - `src/checkpoints/rpc.rs` — pinned-block vault reads and transaction relay through a signing RPC
-- `src/checkpoints/rpc/tests.rs` — sampled ancestry and durable relayer request regressions
+- `src/checkpoints/rpc/tests.rs` — sampled ancestry and durable relayer request regressions, and the
+  registry's operator read at the pinned finalized block
 - `src/checkpoints/rpc/submission.rs` — bounded locked crash-durable nonce/hash reservations
 - `src/checkpoints/rpc/submission/posting.rs` — persisted reservation and exact transaction retry transitions, and the next nonce for a send that reverted
 - `src/checkpoints/rpc/submission/progress.rs` — canonical finalized obsolete nonce-consumer proofs
 - `src/checkpoints/rpc/submission/tests.rs` — response-loss, restart, identity, and reservation regressions
 - `src/checkpoints/rpc/submission/tests/fakes.rs` — isolated relay and canonical transaction RPC fixtures
 - `src/checkpoints/rpc/submission/tests/nonce_progress.rs` — free, obsolete, and resurfaced nonce regressions
-- `src/checkpoints/setup.rs` — finalized chain anchor lookup and pending-inclusion startup wait
+- `src/checkpoints/setup.rs` — finalized chain anchor and registry operator lookup and pending-inclusion startup wait
 - `src/checkpoints/tests.rs` — signature mutations, rollback, retry, and reconciliation tests
 - `src/checkpoints/tests/latest.rs` — the worker reports the vault's latest included checkpoint ahead of the finalized one, and when its signer is retired
 - `src/checkpoints/tests/collateral.rs` — shortfall, ledger-difference, surplus, and uncredited-deposit deadline tests
@@ -776,7 +782,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/stats/distributions.rs` — the bounded history of closed distribution epochs behind `GET /v1/monkey/distributions`
 - `src/custody/tests/election_scenario/staking_reads.rs` — the staking reads dev scenario
 - `src/api/admin_tests/delivery_authority.rs` — who a running node takes deliveries from: the key in
-  effect by trusted time, and a named successor's own
+  effect by trusted time, and a named or installed successor's own
 - `src/api/admin_tests/election.rs` — the operator route and the admin route after an election, published keys included
 - `src/api/admin_tests/notice.rs` — the V49 dev scenario: stress parameters and a market's markup refused with no notice and before its time, applied at it through `engine admin` and TLS, and replayed
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
@@ -2254,7 +2260,8 @@ command line, and a host that could set one would choose the secret.
   its contents. A running node takes the key the log records or a rotation's that has come due, as
   `POST /v1/admin` does, by trusted time, so a host's clock brings no rotation in early; while the
   registry has rotation on it takes only its own config's key, so an elected key reaches into no other
-  operator's enclave. A node that
+  operator's enclave, and so does a node whose config names the key the registry installed, until
+  that key is the log's. A node that
   has not yet recovered its log takes the key its attested config names, since reading the vault can
   take a delivered key, so no log can be authenticated yet. That is the one key that can end a hold, so
   a rotated operator keeps its old key until a release's config names the new one; a redelivery under

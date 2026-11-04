@@ -219,11 +219,13 @@ impl Sequencer {
         }
     }
 
-    /// Sequences the queued required commands at `ts`, checkpointing after each group.
+    /// Sequences the queued required commands at `ts`, checkpointing after each group, once any
+    /// benchmark hold no snapshot can end has ended (see `lift_unsigned_hold`).
     /// Error cases:
     /// - the engine rejects any of them
     /// - the log cannot be written
     pub(super) fn sequence_queued(&mut self, ts: Millis) -> anyhow::Result<()> {
+        self.lift_unsigned_hold(ts);
         let mut queued = std::mem::take(&mut self.required).into_iter();
         while let Some((what, cmds)) = queued.next() {
             info!(what, commands = cmds.len(), "sequencing required commands");

@@ -2,8 +2,9 @@
 
 use super::*;
 
+use crate::checkpoints::RegistryOperator;
 use crate::secrets::Authority;
-use engine_core::election::RegistryElection;
+use engine_core::election::{RegistryElection, RegistryInstallation};
 
 #[tokio::test]
 async fn a_running_node_takes_deliveries_from_the_key_in_effect_and_no_other() {
@@ -16,6 +17,7 @@ async fn a_running_node_takes_deliveries_from_the_key_in_effect_and_no_other() {
         |clock: std::sync::Arc<dyn crate::clock::Clock>, tx: &tokio::sync::mpsc::Sender<_>| Authority::Log {
             tx: tx.downgrade(),
             configured: old,
+            installed: None,
             trusted: std::sync::Arc::new(crate::test_support::trusted(clock)),
         };
 
@@ -81,6 +83,7 @@ async fn rotation_on_without_an_election_keeps_the_log_key_in_effect() {
     let authority = Authority::Log {
         tx: node.state.tx.downgrade(),
         configured: old,
+        installed: None,
         trusted: std::sync::Arc::new(crate::test_support::trusted(node.state.clock.clone())),
     };
     assert!(authority.admits(rotated).await.unwrap(), "the key the log records");
@@ -179,6 +182,7 @@ async fn a_historical_election_does_not_narrow_deliveries_once_rotation_returns(
     let authority = Authority::Log {
         tx: node.state.tx.downgrade(),
         configured: incumbent,
+        installed: None,
         trusted: std::sync::Arc::new(crate::test_support::trusted(node.state.clock.clone())),
     };
     assert!(authority.admits(next).await.unwrap(), "the key the log records");
@@ -197,6 +201,7 @@ async fn a_named_successor_takes_deliveries_from_its_own_key_and_not_the_outgoin
     let successor = Authority::Log {
         tx: node.state.tx.downgrade(),
         configured: own,
+        installed: None,
         trusted: std::sync::Arc::new(crate::test_support::trusted(node.stamps.clone())),
     };
     assert!(!successor.admits(own).await.unwrap(), "no rotation names this node yet");
@@ -236,6 +241,7 @@ async fn an_unbounded_clock_does_not_bring_a_pending_key_in_early() {
         let authority = Authority::Log {
             tx: node.state.tx.downgrade(),
             configured: node.state.operator.address,
+            installed: None,
             trusted: std::sync::Arc::new(trusted),
         };
         assert!(!authority.admits(next).await.unwrap(), "the pending key on the host's word");
@@ -256,6 +262,7 @@ async fn an_elected_key_takes_no_deliveries_on_the_incumbents_node() {
     let authority = Authority::Log {
         tx: node.state.tx.downgrade(),
         configured: incumbent,
+        installed: None,
         trusted: std::sync::Arc::new(crate::test_support::trusted(node.state.clock.clone())),
     };
     assert!(!authority.admits(elected).await.unwrap(), "the elected key once it is due");
@@ -266,4 +273,46 @@ async fn an_elected_key_takes_no_deliveries_on_the_incumbents_node() {
     assert_eq!(status, StatusCode::OK);
     assert!(!authority.admits(elected).await.unwrap(), "the key the log now records");
     assert!(authority.admits(incumbent).await.unwrap(), "this node's own key after the handover");
+}
+
+// A fallback node whose config names the key the registry installed takes deliveries from that key
+// alone, from before the log has mirrored the installation through its notice: the failed key it
+// replaces reaches into no successor's enclave.
+#[tokio::test]
+async fn an_installed_successor_takes_deliveries_from_its_own_key_and_not_the_failed_one() {
+    let node = Node::staking("delivery-installed").await;
+    let failed = node.state.operator.address;
+    let own = AccountId([0x55; 20]);
+    let progress = Command::StakingProgress {
+        block: 10,
+        block_hash: engine_core::eip712::B256::repeat_byte(1),
+        block_time: Some(NOW - 60_000),
+    };
+    assert!(
+        !node.state.submit(progress).await.unwrap().iter().any(|event| matches!(event, Event::AdminRejected { .. }))
+    );
+    let authority = |installed| Authority::Log {
+        tx: node.state.tx.downgrade(),
+        configured: own,
+        installed,
+        trusted: std::sync::Arc::new(crate::test_support::trusted(node.stamps.clone())),
+    };
+    let unread = authority(None);
+    assert!(!unread.admits(own).await.unwrap(), "a key no registry read names");
+    assert!(unread.admits(failed).await.unwrap(), "the key the log records");
+
+    let successor = authority(Some(RegistryOperator { admin_key: own, since: NOW - 30_000 }));
+    assert!(successor.admits(own).await.unwrap(), "the installed key before its mirror");
+    assert!(!successor.admits(failed).await.unwrap(), "the failed key before the mirror");
+    let install = RegistryInstallation {
+        candidate: AccountId([0xc2; 20]),
+        admin_key: own,
+        block: 11,
+        chain_ref: "0x01:0".into(),
+    };
+    let events = node.state.submit(Command::InstallOperator(install)).await.unwrap();
+    assert!(events.iter().any(|event| matches!(event, Event::OperatorInstalled { .. })), "{events:?}");
+    assert!(successor.admits(own).await.unwrap(), "the installed key during its notice");
+    assert!(!successor.admits(failed).await.unwrap(), "the failed key during the notice");
+    assert!(!successor.admits(AccountId([7; 20])).await.unwrap(), "a stranger");
 }

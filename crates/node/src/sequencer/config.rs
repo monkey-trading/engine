@@ -47,4 +47,8 @@ pub struct SequencerConfig<'a> {
     pub(crate) history_sealing: Option<crate::snapshot::sealing::Endpoint>,
     /// Told whether each checkpoint attempt signed (see `Gate::signing`).
     pub(crate) checkpoint_signing: Option<watch::Sender<bool>>,
+    /// The registry's operator in effect, while rotation is off, at the finalized block the
+    /// checkpoint setup read: recovery admits a config naming its key before the log has mirrored
+    /// its installation, and no benchmark hold waits on the key it replaced.
+    pub(crate) registry_operator: Option<crate::checkpoints::RegistryOperator>,
 }
