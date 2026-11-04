@@ -111,10 +111,11 @@ fn an_endpoint_without_tls_is_refused_for_every_venue() {
 fn a_production_build_refuses_a_genesis_market_its_venues_cannot_price() {
     let mut cfg = with_vendors();
     cfg.feeds.provider = FeedProvider::Venues;
-    // US 500 prices from futures here, so its contracts are the instruments a venue quotes.
+    // US 500 prices from futures here, through three contracts that Massive quotes two of.
     let from = DateTime::from_timestamp_millis(0).expect("in range");
     let us500 = cfg.genesis.markets.iter_mut().find(|market| market.id == 20).expect("US 500");
-    us500.contracts = ["ESZ6", "ESH7"].map(|contract| FuturesContract { contract: contract.into(), from }).to_vec();
+    us500.contracts =
+        ["ESZ6", "ESH7", "ESM7"].map(|contract| FuturesContract { contract: contract.into(), from }).to_vec();
     // A dev build prices what it can.
     cfg.refuse_unmet_min_sources(false).unwrap();
 
@@ -124,9 +125,10 @@ fn a_production_build_refuses_a_genesis_market_its_venues_cannot_price() {
         assert!(!err.contains(met), "{met}: {err}");
     }
     for unmet in [
-        "market 20 (US500) contract ESH7 has 1 (massive) of 2",
         "market 20 (US500) contract ESZ6 has 1 (massive) of 2",
-        // Nothing quotes it.
+        "market 20 (US500) contract ESH7 has 1 (massive) of 2",
+        // Listed, and quoted by none.
+        "market 20 (US500) contract ESM7 has no venue of 2",
         "market 23 (DE40) has no venue of 2",
         // Its symbol names a contract, GCZ6, that a market not priced from futures never takes.
         "market 30 (XAU-USD) has no venue of 2",
@@ -135,13 +137,14 @@ fn a_production_build_refuses_a_genesis_market_its_venues_cannot_price() {
         assert!(err.contains(unmet), "{unmet}: {err}");
     }
 
-    // A second venue on one contract leaves the other short.
-    let venues = cfg.feeds.venues.as_mut().unwrap();
-    let esz6 = VenueSymbol { market: 20, symbol: "ESZ6".into(), contract: Some("ESZ6".into()) };
-    venues.connections[5].symbols.push(esz6);
+    // A second venue on the contracts it quotes meets them, and leaves the unquoted one short.
+    let tradermade = &mut cfg.feeds.venues.as_mut().unwrap().connections[5];
+    for contract in ["ESZ6", "ESH7"] {
+        tradermade.symbols.push(VenueSymbol { market: 20, symbol: contract.into(), contract: Some(contract.into()) });
+    }
     let err = cfg.refuse_unmet_min_sources(true).unwrap_err().to_string();
-    assert!(!err.contains("contract ESZ6"), "{err}");
-    assert!(err.contains("market 20 (US500) contract ESH7 has 1 (massive) of 2"), "{err}");
+    assert!(!err.contains("contract ESZ6") && !err.contains("contract ESH7"), "{err}");
+    assert!(err.contains("market 20 (US500) contract ESM7 has no venue of 2"), "{err}");
 
     // With every market's min_sources met, nothing is refused; the mock feed's sources are no venues.
     cfg.genesis.markets.retain(|market| [1, 2, 10].contains(&market.id));

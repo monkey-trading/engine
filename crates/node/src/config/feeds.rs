@@ -271,24 +271,6 @@ impl VenuesSection {
         }
         Ok(())
     }
-
-    /// The venues quoting each instrument of `market` its listing names: each of its contracts for
-    /// a market priced from futures, and the market itself (`None`) for one that is not. A symbol
-    /// for an instrument the listing does not name can never price the market, so it counts for
-    /// none.
-    pub(super) fn venues_quoting<'a>(&'a self, market: &MarketSpec) -> BTreeMap<Option<&'a str>, BTreeSet<Venue>> {
-        let named = |contract: Option<&str>| match contract {
-            None => market.contracts.is_empty(),
-            Some(contract) => market.contracts.iter().any(|listed| listed.contract == contract),
-        };
-        let mut quoting: BTreeMap<Option<&str>, BTreeSet<Venue>> = BTreeMap::new();
-        for conn in &self.connections {
-            for s in conn.symbols.iter().filter(|s| s.market == market.id && named(s.contract.as_deref())) {
-                quoting.entry(s.contract.as_deref()).or_default().insert(conn.venue);
-            }
-        }
-        quoting
-    }
 }
 
 impl VenueConnection {
@@ -306,4 +288,27 @@ impl VenueConnection {
         }
         Ok(())
     }
+}
+
+/// Each instrument `market`'s listing names, with the venues among `connections` that quote it:
+/// every one of its contracts, rolled off or not, for a market priced from futures, and the market
+/// itself (`None`) for one that is not. An instrument no venue quotes maps to none, and a symbol for
+/// an instrument the listing does not name can never price the market, so it counts for none.
+pub(super) fn venues_quoting<'a>(
+    connections: &[VenueConnection],
+    market: &'a MarketSpec,
+) -> BTreeMap<Option<&'a str>, BTreeSet<Venue>> {
+    let instruments: Vec<Option<&str>> = match market.contracts.as_slice() {
+        [] => vec![None],
+        contracts => contracts.iter().map(|listed| Some(listed.contract.as_str())).collect(),
+    };
+    instruments
+        .into_iter()
+        .map(|instrument| {
+            let quotes = |conn: &&VenueConnection| {
+                conn.symbols.iter().any(|s| s.market == market.id && s.contract.as_deref() == instrument)
+            };
+            (instrument, connections.iter().filter(quotes).map(|conn| conn.venue).collect())
+        })
+        .collect()
 }

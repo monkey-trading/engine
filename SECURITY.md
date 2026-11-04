@@ -299,7 +299,9 @@ is `wss://` on the venue's own domain, its certificate checked against roots com
 binary, so the host can delay or drop a source's quotes but not alter them. Certificate validity is
 judged by the host clock and revocation is not checked, so a host holding a venue key that has
 expired or been revoked could pose as that venue. A production build refuses a config in which fewer
-venues quote a genesis market, or one of its futures contracts, than its `min_sources`.
+venues quote a genesis market, or any futures contract its genesis listing names, than its
+`min_sources`; a market listed or relisted after genesis is watched only by the `market_unfed`,
+`market_no_price` and `futures_roll_overdue` alerts.
 A price's age under a hostile host is bounded on the monotonic clock, not the wall clock. The host
 carries every byte and sets the wall clock, so it can hold back a venue's TLS stream and set its clock
 back to match, and a quote's venue stamp then looks fresh: the drift bound alone would let prices run

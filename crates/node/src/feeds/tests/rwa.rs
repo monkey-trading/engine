@@ -1,6 +1,7 @@
 //! The RWA price feeds' dev scenario offline: loopback stand-ins for Massive and TraderMade, the
-//! vendors reached over TLS that price these markets, price an FX pair from both, and an index and
-//! a commodity from front futures contracts and a US share from Massive alone, through the sequencer.
+//! vendors reached over TLS that price these markets, each reached over TLS a test CA certifies,
+//! price an FX pair from both, and an index and a commodity from front futures contracts and a US
+//! share from Massive alone, through the sequencer.
 //! The share's market is closed while the vendors start quoting it; once setup is done, a signed
 //! relisting opens it two seconds on, and another rolls the index onto its next contract. The log
 //! then replays with `engine replay`'s checks.
@@ -21,10 +22,10 @@ use tokio::task::{AbortHandle, JoinHandle};
 use crate::clock::now_ms;
 use crate::config::{ApiKey, Genesis, Venue, VenueConnection, VenueSymbol};
 use crate::feeds::tests::fake::{WAIT, fast, listen};
-use crate::feeds::tests::rwa_support::{Applied, around_the_clock, events_of, listing, priced, wait_for};
+use crate::feeds::tests::rwa_support::{Applied, TlsFront, around_the_clock, events_of, listing, priced, wait_for};
 use crate::feeds::tests::scenario::Node;
 use crate::feeds::tests::vendors::{KEY, Prices, serve_massive, serve_tradermade};
-use crate::feeds::venue::{self, tls_config};
+use crate::feeds::venue;
 use crate::replay_path;
 use crate::test_support::dev_config;
 
@@ -143,11 +144,15 @@ fn prices(venue: Venue, open_at: Arc<AtomicI64>) -> Prices {
     })
 }
 
-/// Starts the loopback vendors and the four feeds that read them: Massive's FX, futures, and
-/// stocks feeds, and TraderMade. Aborting the returned tasks stops them all.
+/// Starts the loopback vendors, a TLS front for each, and the four feeds that read them over TLS:
+/// Massive's FX, futures, and stocks feeds, and TraderMade. Aborting the returned tasks stops them
+/// all.
 async fn start_vendors(node: &Node, open_at: &Arc<AtomicI64>) -> Vec<AbortHandle> {
-    let (massive, massive_url) = listen().await;
-    let (tradermade, tradermade_url) = listen().await;
+    let (massive, massive_plain) = listen().await;
+    let (tradermade, tradermade_plain) = listen().await;
+    let tls = TlsFront::new();
+    let (massive_url, massive_front) = tls.relay(&massive_plain).await;
+    let (tradermade_url, tradermade_front) = tls.relay(&tradermade_plain).await;
     let futures = [(US500, "ESZ6", Some("ESZ6")), (US500, "ESH7", Some("ESH7")), (GOLD, "GCZ6", Some("GCZ6"))];
     let feeds = [
         (Venue::Massive, format!("{massive_url}/forex"), vec![(EURUSD, "EUR-USD", None)]),
@@ -161,6 +166,7 @@ async fn start_vendors(node: &Node, open_at: &Arc<AtomicI64>) -> Vec<AbortHandle
     ]
     .iter()
     .map(JoinHandle::abort_handle)
+    .chain([massive_front, tradermade_front])
     .collect();
     for (venue, url, symbols) in feeds {
         let symbols = symbols
@@ -174,8 +180,7 @@ async fn start_vendors(node: &Node, open_at: &Arc<AtomicI64>) -> Vec<AbortHandle
         let api_key = Some(ApiKey::from_env("VENDOR_API_KEY", |_| Some(KEY.into())).expect("a key"));
         let api_key_env = Some("VENDOR_API_KEY".into());
         let conn = VenueConnection { venue, url, api_key_env, api_key_secret: None, symbols };
-        let feed =
-            tokio::spawn(venue::run(conn, api_key, fast(WAIT), tls_config().expect("tls config"), node.tx.clone()));
+        let feed = tokio::spawn(venue::run(conn, api_key, fast(WAIT), tls.client.clone(), node.tx.clone()));
         tasks.push(feed.abort_handle());
     }
     tasks

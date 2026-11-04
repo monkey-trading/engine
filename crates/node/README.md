@@ -884,14 +884,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   between the startup query and the next, re-anchoring to the mark after a split they never
   followed, and restarting from a split market's mark
 - `src/feeds/tests/scenario.rs` — the crypto feeds' dev scenario through the sequencer and engine
-- `src/feeds/tests/rwa.rs` — the RWA price feeds' dev scenario: loopback vendors price FX, index,
-  commodity, and share markets through the sequencer, across a market open and a futures roll,
-  and the log replays
+- `src/feeds/tests/rwa.rs` — the RWA price feeds' dev scenario: loopback vendors behind TLS price
+  FX, index, commodity, and share markets through the sequencer, across a market open and a futures
+  roll, and the log replays
 - `src/feeds/tests/vendors.rs` — loopback Massive and TraderMade vendors
 - `src/feeds/tests/hours.rs` — quotes held back while a market is closed and for a contract the
   market does not take, without silence alerts
-- `src/feeds/tests/rwa_support.rs` — schedules open around the clock, signed relistings, and a
-  record of every applied command, for the RWA feed tests
+- `src/feeds/tests/rwa_support.rs` — schedules open around the clock, signed relistings, a record
+  of every applied command, and TLS fronts a test CA certifies, for the RWA feed tests
 - `src/throttle.rs` — holds a repeating alert to one a minute, counting the ones it held back
 - `src/clock.rs` — the wall and monotonic clocks the sequencer stamps and checks with, and the pace
   sequenced time keeps with monotonic time (`StampPace`)
@@ -919,8 +919,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `tests/fixtures/`, and checks that `engine replay` fails on a log it cannot verify
 - `tests/common/access.rs` — shared explicit signed declarations, screening and financial scenario inputs
 - `tests/production_node_template.rs` — loads `ops/runbooks/production-node.toml` assembled with the
-  benchmark publishers and the production genesis, checks it holds what a production build requires,
-  and that every placeholder carries a marker
+  benchmark publishers and the production genesis, checks it holds what a production build requires
+  but for the markets short of `min_sources` TLS venues, which it names, and that every placeholder
+  carries a marker
 - `tests/production_genesis/` — loads `config/production-genesis.toml` as a dev node's genesis,
   checks the launch values and quote currencies, and steps it through weeks with holidays and early
   closes (`main.rs`); checks each market reaches every divergence stress level with screened house
@@ -2496,8 +2497,8 @@ venue's own domain, since only a source reached over TLS that ends in the enclav
 A Massive connection names one of its `/forex`, `/futures`, or `/stocks` feeds; a symbol for a
 market priced from futures names the `contract` it quotes, one listed in the market's `contracts`,
 and the feed sends quotes for each contract the market takes now. A production build refuses a
-config in which fewer venues quote a genesis market, or one of its contracts, than its
-`min_sources`:
+config in which fewer venues quote a genesis market, or any contract its genesis listing names,
+rolled off or not, than its `min_sources`:
 
 ```toml
 [[feeds.venues.connections]]
@@ -2621,8 +2622,8 @@ cargo test -p engine-node --features production --lib production_build
 # node renews it without a restart; a stopped CA raises certificate_expiring
 ./scripts/dev-acme.sh
 
-# Dev scenario: loopback market-data vendors price FX, index and commodity futures, and a share,
-# two vendors each, across a market open and a futures roll, and the log replays
+# Dev scenario: loopback market-data vendors behind TLS price FX from two vendors, and index and
+# commodity futures and a share from one, across a market open and a futures roll, and the log replays
 ./scripts/dev-rwa-feeds.sh
 # Dev scenario: a signed dividend and four-for-one split through the TLS API, restart and replay
 ./scripts/dev-corporate-actions.sh

@@ -1,7 +1,7 @@
 //! The production node template. Assembled as the deploy runbook says, with the benchmark
 //! publishers and the production genesis, it loads and validates as a node config, and it holds what
-//! a production build requires of one. Every placeholder carries a marker, so none is mistaken for a
-//! value.
+//! a production build requires of one but for the futures and share markets' second TLS source,
+//! open in #621. Every placeholder carries a marker, so none is mistaken for a value.
 
 use std::fs;
 use std::path::Path;
@@ -36,7 +36,8 @@ fn the_template_with_the_production_genesis_loads_as_a_node_config() {
 #[test]
 fn the_template_holds_what_a_production_build_requires() {
     let cfg = assembled("production");
-    // The refusals of a production build, which `NodeConfig::load` applies only when built with it.
+    // The refusals of a production build, which `NodeConfig::load` applies only when built with it,
+    // but for the venues' coverage of each market's min_sources (below).
     assert_eq!(cfg.tee.provider, TeeProvider::ConfigfsTsm);
     assert_eq!(cfg.custody.provider, CustodyProvider::Evm);
     assert_eq!(cfg.feeds.provider, FeedProvider::Venues);
@@ -55,6 +56,21 @@ fn the_template_holds_what_a_production_build_requires() {
     assert!(sealing.secrets.is_some(), "[tee.sealing.secrets] takes the delivery");
     let text = template();
     assert!(!text.contains("api_key_env =") && !text.contains("url_env ="), "the environment is refused");
+}
+
+#[test]
+fn a_production_build_refuses_the_template_until_its_futures_and_shares_have_a_second_tls_source() {
+    let err = assembled("min-sources").refuse_unmet_min_sources(true).unwrap_err().to_string();
+    // Crypto from Coinbase and Kraken, and FX from Massive and TraderMade, meet min_sources 2.
+    for met in [1, 2, 3, 10, 11, 12, 13] {
+        assert!(!err.contains(&format!("market {met} (")), "market {met}: {err}");
+    }
+    // US 500 and Apple have Massive alone, and every other futures and share market no venue yet.
+    assert!(err.contains("market 20 (US500) contract ESZ6 has 1 (massive) of 2"), "{err}");
+    assert!(err.contains("market 40 (AAPL) has 1 (massive) of 2"), "{err}");
+    for short in (20..=25).chain(30..=33).chain(40..=59) {
+        assert!(err.contains(&format!("market {short} (")), "market {short}: {err}");
+    }
 }
 
 #[test]

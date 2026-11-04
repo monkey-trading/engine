@@ -195,10 +195,11 @@ symbols = [
 
 # Index and commodity futures. A symbol names the contract it quotes, one of the market's `contracts`
 # in config/production-genesis.toml, and the feed sends each contract the market takes now. Shown
-# for US500 (market 20); every other futures market (21 to 25, 30 to 33) needs its own contracts.
-# Only a source reached over TLS may set a price, and of the integrated vendors only Massive quotes
-# futures and US shares, so these markets and the share markets below have one source of the two
-# their min_sources needs: a production build refuses the config until each has a second (#621).
+# for US500 (market 20); every other futures market (21 to 25, 30 to 33) needs its own contracts,
+# every one its listing names, rolled off or not. Only a source reached over TLS may set a price.
+# Massive's futures feed covers CME, CBOT, NYMEX and COMEX contracts, so it is one of the two sources
+# markets 20 to 22, 25 and 30 to 32 need, and no integrated vendor quotes DE40 (Eurex), UK100 or
+# BRENT (ICE): a production build refuses the config until each market has its min_sources (#621).
 [[feeds.venues.connections]]
 venue = "massive"
 url = "wss://socket.massive.com/futures"
@@ -210,7 +211,7 @@ symbols = [
   { market = 20, symbol = "ESU7", contract = "ESU7" },
   { market = 20, symbol = "ESZ7", contract = "ESZ7" },
   { market = 20, symbol = "ESH8", contract = "ESH8" },
-] # OWNER: add markets 21 to 25 and 30 to 33, and a second TLS source for every futures market
+] # OWNER: add markets 21, 22, 25 and 30 to 32, a second TLS source for each, and sources for 23, 24, 33
 
 # US shares, shown for AAPL (market 40).
 [[feeds.venues.connections]]
