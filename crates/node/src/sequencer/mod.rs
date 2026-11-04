@@ -226,7 +226,7 @@ impl Sequencer {
                     }
                 }
                 if taken < MAX_BATCH && handover_stop.is_none() {
-                    next = rx.try_recv().ok();
+                    next = self.next_queued(&mut rx);
                 }
             }
             batch.timing = sequenced.then_some(started);

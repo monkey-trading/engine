@@ -16,6 +16,8 @@
 //! publishing in `finish_sync` before anything of the new segment is released. The on-disk order
 //! is what an inline seal gives: the old segment is listed before the new one takes its name.
 
+mod hold;
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -38,13 +40,7 @@ use crate::stats::background::Job as StatsJob;
 /// Batches whose sync may be pending at once. A disk that stalls longer than that many batches
 /// takes the sequencer's next request down with it, rather than letting what cannot be released
 /// pile up.
-const MAX_IN_FLIGHT: usize = 64;
-
-/// How long the oldest batch may wait for its sync before the sequencer stops taking requests and
-/// raises Critical `log_sync_held`. An honest disk syncs in milliseconds; a host that holds the sync
-/// keeps every command behind it unreleased while it decides whether to let the batch reach the
-/// log, so the hold is paged and nothing more is stamped behind it.
-const MAX_SYNC_HOLD: Duration = Duration::from_secs(5);
+pub(super) const MAX_IN_FLIGHT: usize = 64;
 
 /// The requests of a batch that wait for its entries to be durable.
 #[derive(Default)]
@@ -125,6 +121,25 @@ impl Shared {
             done = self.ready.wait(done).unwrap_or_else(PoisonError::into_inner);
         }
     }
+
+    /// `wait`, for at most `limit`: `None` when no result arrived in time.
+    fn wait_for(&self, limit: Duration) -> Option<anyhow::Result<()>> {
+        let until = Instant::now() + limit;
+        let mut done = self.done.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(result) = done.pop_front() {
+                return Some(result);
+            }
+            if self.closed.load(Ordering::Acquire) {
+                return Some(Err(anyhow::anyhow!("the log sync thread ended")));
+            }
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return None;
+            }
+            done = self.ready.wait_timeout(done, left).unwrap_or_else(PoisonError::into_inner).0;
+        }
+    }
 }
 
 /// The sync thread and the batches waiting on it.
@@ -133,6 +148,8 @@ pub(super) struct Pipeline {
     shared: Arc<Shared>,
     in_flight: VecDeque<Release>,
     /// Whether the oldest batch's sync is held past `MAX_SYNC_HOLD`: one `log_sync_held` episode.
+    /// It starts set, so the first check with no hold past the bound resolves an episode an earlier
+    /// run left open; the router discards a resolution with no open episode.
     held: bool,
 }
 
@@ -158,13 +175,13 @@ impl Pipeline {
         });
         let worker = shared.clone();
         std::thread::Builder::new().name("log-sync".into()).spawn(move || run_syncs(&queue, &worker, sync))?;
-        Ok(Self { jobs, shared, in_flight: VecDeque::new(), held: false })
+        Ok(Self { jobs, shared, in_flight: VecDeque::new(), held: true })
     }
 
     /// Ends the `log_sync_held` episode, if one is open: no batch in flight is past the bound.
     fn end_hold(&mut self) {
         if std::mem::take(&mut self.held) {
-            info!(alert_resolved = "log_sync_held", "the held log sync finished: sequencing resumes");
+            info!(alert_resolved = "log_sync_held", "no log sync is held past the bound: sequencing runs");
         }
     }
 }
@@ -380,77 +397,6 @@ impl Sequencer {
         self.finish(release)
     }
 
-    /// The next request, releasing batches as their syncs finish meanwhile. With `MAX_IN_FLIGHT`
-    /// batches pending, or the oldest one's sync held past `MAX_SYNC_HOLD`, it takes no request
-    /// until a sync is done; a hold past the bound raises Critical `log_sync_held` once, resolved
-    /// when no batch in flight is past it.
-    /// Error cases:
-    /// - a sync failed, or its thread ended
-    pub(super) async fn next_request(&mut self, rx: &mut mpsc::Receiver<Request>) -> anyhow::Result<Option<Request>> {
-        loop {
-            let Some(pipeline) = self.pipeline.as_mut() else { return Ok(rx.recv().await) };
-            let Some(oldest) = pipeline.in_flight.front() else {
-                pipeline.end_hold();
-                return Ok(rx.recv().await);
-            };
-            let (deadline, through) = (oldest.staged + MAX_SYNC_HOLD, oldest.last_seq);
-            let (pending, shared) = (pipeline.in_flight.len(), pipeline.shared.clone());
-            if tokio::time::Instant::now() >= deadline {
-                if !std::mem::replace(&mut pipeline.held, true) {
-                    error!(
-                        alert = "log_sync_held",
-                        "the log sync of the batch through seq {} has been held for over {MAX_SYNC_HOLD:?}: \
-                         sequencing stops until it finishes",
-                        through.map_or_else(|| "none".to_owned(), |seq| seq.to_string())
-                    );
-                }
-                let done = shared.next().await;
-                self.complete(done)?;
-                continue;
-            }
-            pipeline.end_hold();
-            if pending >= MAX_IN_FLIGHT {
-                tokio::select! {
-                    biased;
-                    done = shared.next() => self.complete(done)?,
-                    () = tokio::time::sleep_until(deadline) => {}
-                }
-                continue;
-            }
-            tokio::select! {
-                biased;
-                done = shared.next() => self.complete(done)?,
-                () = tokio::time::sleep_until(deadline) => {}
-                request = rx.recv() => return Ok(request),
-            }
-        }
-    }
-
-    /// Waits until every batch in flight is durable and released.
-    /// Error cases:
-    /// - a sync failed, or its thread ended
-    pub(super) async fn settle_async(&mut self) -> anyhow::Result<()> {
-        while let Some(pipeline) = self.pipeline.as_ref().filter(|pipeline| !pipeline.in_flight.is_empty()) {
-            let shared = pipeline.shared.clone();
-            let done = shared.next().await;
-            self.complete(done)?;
-        }
-        Ok(())
-    }
-
-    /// `settle_async` for a caller that cannot wait on the runtime. The sequencer's thread is
-    /// blocked meanwhile, as an inline sync would.
-    /// Error cases:
-    /// - as `settle_async`
-    pub(super) fn settle(&mut self) -> anyhow::Result<()> {
-        while let Some(pipeline) = self.pipeline.as_ref().filter(|pipeline| !pipeline.in_flight.is_empty()) {
-            let shared = pipeline.shared.clone();
-            let done = shared.wait();
-            self.complete(done)?;
-        }
-        Ok(())
-    }
-
     /// Makes everything written so far durable, then releases it: the batches in flight first, so
     /// the stream stays in log order, then what is buffered. For a caller that must not go on
     /// before that, and for the sequencer when it has no thread for the syncs.
@@ -464,5 +410,7 @@ impl Sequencer {
     }
 }
 
+#[cfg(test)]
+mod hold_tests;
 #[cfg(test)]
 mod tests;
