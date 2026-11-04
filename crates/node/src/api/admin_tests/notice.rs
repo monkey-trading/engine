@@ -76,7 +76,8 @@ async fn dev_scenario_stress_parameters_and_a_markup_move_only_after_a_seven_day
     node.admin_at(&url, &["set-params", params]).await.unwrap();
     node.admin_at(&url, &["upsert-market", market]).await.unwrap();
     let (_, markets) = node.get("/v1/markets").await;
-    assert!(markets.as_array().unwrap().iter().any(|m| m["id"] == 1), "{markets}");
+    let listed = markets.as_array().unwrap().iter().find(|m| m["id"] == 1).expect("market 1 is listed");
+    assert_eq!(listed["financing"]["markup_bps"].to_string(), markup, "{markets}");
 
     // 5. The log holds each command with the operator's signature, and replays to the same state.
     let entries = node.entries();

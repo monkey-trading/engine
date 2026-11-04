@@ -145,8 +145,8 @@ impl Engine {
     /// Error cases:
     /// - before `V35`, or before parameters are set
     /// - a notice naming no rate, a rate outside its valid range or outside ±50% of its launch value
-    /// - stress parameters before `V50`, or ones the parameters in force would fail
-    ///   `ProtocolParams::validate_for` or `ProtocolParams::check_closing_spread` with
+    /// - stress parameters before `V50`, or ones that, with the other parameters in force, fail
+    ///   `ProtocolParams::validate_for` or `ProtocolParams::check_closing_spread`
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_params(&mut self, notice: &ParamsNotice) -> Result<(), String> {
         self.require_bounds_protocol("a parameter notice")?;
@@ -253,7 +253,8 @@ impl Engine {
     /// Error cases:
     /// - a changed rate outside ±50% of its launch value
     /// - a changed rate no notice names, or whose notice takes effect later than the sequenced time
-    /// - from `V50`, changed stress parameters no notice names, or whose notice takes effect later
+    /// - from `V50`, changed stress parameters no notice names, or whose notice takes effect later than the
+    ///   sequenced time
     pub(crate) fn check_rate_changes(&self, params: &ProtocolParams) -> Result<(), String> {
         let Some(current) = &self.params else { return Ok(()) };
         // Recorded with the first parameters under `V35`, or at its activation over them.

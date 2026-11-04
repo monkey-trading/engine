@@ -99,7 +99,7 @@ jobs:
                   areas+=" rust" ;;
                 # The deposit and checkpoint scenarios deploy the vault.
                 contracts/*) areas+=" contracts scenarios" ;;
-                # The test job runs the corporate-action and operator bounds scenarios.
+                # The test job runs the corporate-action, operator bounds and parameter notice scenarios.
                 scripts/dev-corporate-actions.sh | scripts/dev-operator-bounds.sh | scripts/dev-params-notice.sh) areas+=" rust" ;;
                 # The browser verifier's jobs build its package and run its scenario.
                 scripts/dev-* | scripts/build-wasm-verifier.sh) areas+=" scenarios" ;;

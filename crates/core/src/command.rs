@@ -400,7 +400,7 @@ impl AdminCommand {
 
     /// Whether the operator may sign this command: listings, parameters, benchmark rates, stress
     /// floors, reduce-only, the emission schedule, corporate actions, the staking config, and from `V35`
-    /// parameter notices and operator rotations. The
+    /// parameter notices and operator rotations, and from `V50` markup notices. The
     /// node alone sequences the others, from its config and build.
     pub fn is_operator_command(&self) -> bool {
         match self {

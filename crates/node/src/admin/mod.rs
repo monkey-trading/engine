@@ -219,17 +219,7 @@ impl AdminAction {
                 spec.validate().map_err(anyhow::Error::msg).with_context(|| file.display().to_string())?;
                 AdminCommand::UpsertMarket(spec)
             }
-            AdminAction::SetParams { file } => {
-                let params: ProtocolParams = input::read_toml(&file)?;
-                // The node runs the latest version, so these are the parameters it would apply.
-                params
-                    .validate_for(ProtocolVersion::LATEST)
-                    .and_then(|()| params.check_closing_spread())
-                    .and_then(|()| params.check_notional_weighting())
-                    .map_err(anyhow::Error::msg)
-                    .with_context(|| file.display().to_string())?;
-                AdminCommand::SetParams(params)
-            }
+            AdminAction::SetParams { file } => AdminCommand::SetParams(read_params(&file)?),
             AdminAction::SetBenchmarkRate { benchmark, annual_bps } => {
                 AdminCommand::SetBenchmarkRate { benchmark, annual_bps }
             }
@@ -238,7 +228,7 @@ impl AdminAction {
             AdminAction::SetStressFloor { level, market } => AdminCommand::SetStressFloor { market, level },
             AdminAction::SetReduceOnly { reduce_only, market } => AdminCommand::SetReduceOnly { market, reduce_only },
             AdminAction::AnnounceParams { profit_fee_bps, closeout_level_bps, stress_from, effective_at } => {
-                let stress = stress_from.map(|file| input::read_toml(&file).map(|params| StressSettings::of(&params)));
+                let stress = stress_from.map(|file| read_params(&file).map(|params| StressSettings::of(&params)));
                 AdminCommand::AnnounceParams(ParamsNotice {
                     profit_fee_bps,
                     closeout_level_bps,
@@ -427,6 +417,18 @@ pub(crate) async fn submit(node: &NodeApi, req: &AdminRequest) -> anyhow::Result
 ///   `CALL_TIMEOUT`
 /// - a status other than 200, reported with the node's error body
 /// - a reply that is not the expected JSON
+/// The parameters in `file`, checked as the node runs the latest version would apply them.
+fn read_params(file: &Path) -> anyhow::Result<ProtocolParams> {
+    let params: ProtocolParams = input::read_toml(file)?;
+    params
+        .validate_for(ProtocolVersion::LATEST)
+        .and_then(|()| params.check_closing_spread())
+        .and_then(|()| params.check_notional_weighting())
+        .map_err(anyhow::Error::msg)
+        .with_context(|| file.display().to_string())?;
+    Ok(params)
+}
+
 async fn call<T: DeserializeOwned>(
     node: &NodeApi,
     method: Method,

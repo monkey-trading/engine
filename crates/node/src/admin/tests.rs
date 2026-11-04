@@ -230,6 +230,9 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
     let wide = write("wide.toml", &toml::to_string(&wide).unwrap());
     let err = action(&["set-params", &wide]).command().unwrap_err();
     assert!(format!("{err:#}").contains("reach the price"), "{err:#}");
+    // A notice's file is checked before signing too.
+    let err = action(&["announce-params", "--stress-from", &wide, "--effective-at", at]).command().unwrap_err();
+    assert!(format!("{err:#}").contains("reach the price"), "{err:#}");
     // The latest version takes a divergence trigger only as a share of each market's bound.
     let absolute = toml::to_string(&dev_config().genesis.params)
         .unwrap()
