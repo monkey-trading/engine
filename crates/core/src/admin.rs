@@ -412,11 +412,11 @@ impl Engine {
         if matches!(cmd, AdminCommand::InitEmissions(_)) {
             return Err("the operator signs the emission schedule".into());
         }
-        if matches!(cmd, AdminCommand::AnnounceParams(_) | AdminCommand::RotateOperator { .. }) {
+        if matches!(
+            cmd,
+            AdminCommand::AnnounceParams(_) | AdminCommand::AnnounceMarkup { .. } | AdminCommand::RotateOperator { .. }
+        ) {
             return Err("the operator signs a parameter notice or a rotation".into());
-        }
-        if matches!(cmd, AdminCommand::AnnounceMarkup { .. }) {
-            return Err("the operator signs a markup notice".into());
         }
         self.admin(cmd, events)
     }

@@ -410,14 +410,10 @@ pub(crate) async fn submit(node: &NodeApi, req: &AdminRequest) -> anyhow::Result
     call(node, Method::POST, "/v1/admin", Some(serde_json::to_string(req)?)).await
 }
 
-/// Makes one HTTP/1.1 call to the node over TLS pinned to its key, and parses its JSON reply.
+/// The parameters in `file`, checked as the node, which runs the latest version, would apply them.
 /// Error cases:
-/// - the node URL is not an `https://host:port` URL: another scheme, or a path or query
-/// - the node cannot be reached, its TLS key is not the pinned one, or it does not answer within
-///   `CALL_TIMEOUT`
-/// - a status other than 200, reported with the node's error body
-/// - a reply that is not the expected JSON
-/// The parameters in `file`, checked as the node runs the latest version would apply them.
+/// - a file that cannot be read or parsed
+/// - parameters that fail `validate_for`, `check_closing_spread` or `check_notional_weighting`
 fn read_params(file: &Path) -> anyhow::Result<ProtocolParams> {
     let params: ProtocolParams = input::read_toml(file)?;
     params
@@ -429,6 +425,13 @@ fn read_params(file: &Path) -> anyhow::Result<ProtocolParams> {
     Ok(params)
 }
 
+/// Makes one HTTP/1.1 call to the node over TLS pinned to its key, and parses its JSON reply.
+/// Error cases:
+/// - the node URL is not an `https://host:port` URL: another scheme, or a path or query
+/// - the node cannot be reached, its TLS key is not the pinned one, or it does not answer within
+///   `CALL_TIMEOUT`
+/// - a status other than 200, reported with the node's error body
+/// - a reply that is not the expected JSON
 async fn call<T: DeserializeOwned>(
     node: &NodeApi,
     method: Method,
