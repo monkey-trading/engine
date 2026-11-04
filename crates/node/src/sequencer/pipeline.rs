@@ -22,7 +22,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{Context, bail};
 use engine_core::event::Event;
@@ -34,7 +34,7 @@ use crate::history::marks::MarkSample;
 use crate::log::SyncJob;
 use crate::sequencer::checkpoints::publish::After;
 use crate::sequencer::house::HouseState;
-use crate::sequencer::{Sequencer, StreamBody, StreamMsg};
+use crate::sequencer::{Request, Sequencer, StreamBody, StreamMsg};
 use crate::stats::background::Job as StatsJob;
 
 /// Batches whose sync may be pending at once. A disk that stalls longer than that many batches
@@ -121,25 +121,6 @@ impl Shared {
             done = self.ready.wait(done).unwrap_or_else(PoisonError::into_inner);
         }
     }
-
-    /// `wait`, for at most `limit`: `None` when no result arrived in time.
-    fn wait_for(&self, limit: Duration) -> Option<anyhow::Result<()>> {
-        let until = Instant::now() + limit;
-        let mut done = self.done.lock().unwrap_or_else(PoisonError::into_inner);
-        loop {
-            if let Some(result) = done.pop_front() {
-                return Some(result);
-            }
-            if self.closed.load(Ordering::Acquire) {
-                return Some(Err(anyhow::anyhow!("the log sync thread ended")));
-            }
-            let left = until.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return None;
-            }
-            done = self.ready.wait_timeout(done, left).unwrap_or_else(PoisonError::into_inner).0;
-        }
-    }
 }
 
 /// The sync thread and the batches waiting on it.
@@ -151,6 +132,8 @@ pub(super) struct Pipeline {
     /// It starts set, so the first check with no hold past the bound resolves an episode an earlier
     /// run left open; the router discards a resolution with no open episode.
     held: bool,
+    /// A request received past the oldest batch's deadline, kept until the hold clears.
+    kept: Option<Request>,
 }
 
 impl Pipeline {
@@ -175,7 +158,7 @@ impl Pipeline {
         });
         let worker = shared.clone();
         std::thread::Builder::new().name("log-sync".into()).spawn(move || run_syncs(&queue, &worker, sync))?;
-        Ok(Self { jobs, shared, in_flight: VecDeque::new(), held: true })
+        Ok(Self { jobs, shared, in_flight: VecDeque::new(), held: true, kept: None })
     }
 
     /// Ends the `log_sync_held` episode, if one is open: no batch in flight is past the bound.

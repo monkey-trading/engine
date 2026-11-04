@@ -3,8 +3,8 @@
 
 use std::time::Duration;
 
-use anyhow::Context;
 use tokio::sync::mpsc;
+use tokio::time::{Instant, sleep_until};
 use tracing::error;
 
 use crate::sequencer::pipeline::MAX_IN_FLIGHT;
@@ -24,7 +24,7 @@ impl Sequencer {
     /// passed, or `None` with nothing in flight.
     /// Error cases:
     /// - a finished sync failed, or its thread ended
-    fn check_hold(&mut self) -> anyhow::Result<Option<(tokio::time::Instant, bool)>> {
+    fn check_hold(&mut self) -> anyhow::Result<Option<(Instant, bool)>> {
         while let Some(done) = self.pipeline.as_ref().and_then(|pipeline| pipeline.shared.pop()) {
             self.complete(done)?;
         }
@@ -34,7 +34,7 @@ impl Sequencer {
             return Ok(None);
         };
         let (deadline, through) = (oldest.staged + MAX_SYNC_HOLD, oldest.last_seq);
-        let held = tokio::time::Instant::now() >= deadline;
+        let held = Instant::now() >= deadline;
         if !held {
             pipeline.end_hold();
         } else if !std::mem::replace(&mut pipeline.held, true) {
@@ -52,12 +52,13 @@ impl Sequencer {
     /// and releases what finished.
     /// Error cases:
     /// - a sync failed, or its thread ended
-    async fn await_sync(&mut self, deadline: tokio::time::Instant, held: bool) -> anyhow::Result<()> {
-        let shared = self.pipeline.as_ref().map(|pipeline| pipeline.shared.clone()).context("no sync thread")?;
+    async fn await_sync(&mut self, deadline: Instant, held: bool) -> anyhow::Result<()> {
+        let shared =
+            self.pipeline.as_ref().map(|pipeline| pipeline.shared.clone()).expect("check_hold found a batch in flight");
         tokio::select! {
             biased;
             done = shared.next() => self.complete(done)?,
-            () = tokio::time::sleep_until(deadline), if !held => {}
+            () = sleep_until(deadline), if !held => {}
         }
         Ok(())
     }
@@ -65,7 +66,8 @@ impl Sequencer {
     /// The next request, releasing batches as their syncs finish meanwhile. With `MAX_IN_FLIGHT`
     /// batches pending, or the oldest one's sync held past `MAX_SYNC_HOLD`, it takes no request
     /// until a sync is done, and it wakes at the deadline with nothing arriving, so a hold pages on
-    /// a quiet node too.
+    /// a quiet node too. A request received past the deadline, before the timer fired, is kept and
+    /// handed out once the hold clears.
     /// Error cases:
     /// - a sync failed, or its thread ended
     pub(in crate::sequencer) async fn next_request(
@@ -73,27 +75,55 @@ impl Sequencer {
         rx: &mut mpsc::Receiver<Request>,
     ) -> anyhow::Result<Option<Request>> {
         loop {
-            let Some((deadline, held)) = self.check_hold()? else { return Ok(rx.recv().await) };
-            let pipeline = self.pipeline.as_ref().expect("a deadline means a batch in flight");
+            let Some((deadline, held)) = self.check_hold()? else {
+                let kept = self.pipeline.as_mut().and_then(|pipeline| pipeline.kept.take());
+                return Ok(match kept {
+                    Some(request) => Some(request),
+                    None => rx.recv().await,
+                });
+            };
+            let pipeline = self.pipeline.as_mut().expect("check_hold found a batch in flight");
             if held || pipeline.in_flight.len() >= MAX_IN_FLIGHT {
                 self.await_sync(deadline, held).await?;
                 continue;
+            }
+            if let Some(request) = pipeline.kept.take() {
+                return Ok(Some(request));
             }
             let shared = pipeline.shared.clone();
             tokio::select! {
                 biased;
                 done = shared.next() => self.complete(done)?,
-                () = tokio::time::sleep_until(deadline) => {}
-                request = rx.recv() => return Ok(request),
+                () = sleep_until(deadline) => {}
+                request = rx.recv() => match request {
+                    Some(request) => {
+                        if let Some(request) = self.admit(request, deadline) {
+                            return Ok(Some(request));
+                        }
+                    }
+                    None => return Ok(None),
+                },
             }
         }
+    }
+
+    /// `request`, received while the oldest batch's deadline was `deadline`, if that has not passed;
+    /// otherwise it is kept for `next_request` to hand out once the hold clears. A timer can fire
+    /// after its deadline, so the receive arm can win a race the bound must not lose.
+    pub(in crate::sequencer) fn admit(&mut self, request: Request, deadline: Instant) -> Option<Request> {
+        if Instant::now() < deadline {
+            return Some(request);
+        }
+        let pipeline = self.pipeline.as_mut().expect("a deadline means a batch in flight");
+        pipeline.kept = Some(request);
+        None
     }
 
     /// A request already queued, for the batch being drained, unless the oldest batch's sync is
     /// held past `MAX_SYNC_HOLD`: the drain then ends, and `next_request` waits for the sync.
     pub(in crate::sequencer) fn next_queued(&self, rx: &mut mpsc::Receiver<Request>) -> Option<Request> {
         let oldest = self.pipeline.as_ref().and_then(|pipeline| pipeline.in_flight.front());
-        if oldest.is_some_and(|oldest| tokio::time::Instant::now() >= oldest.staged + MAX_SYNC_HOLD) {
+        if oldest.is_some_and(|oldest| Instant::now() >= oldest.staged + MAX_SYNC_HOLD) {
             return None;
         }
         rx.try_recv().ok()
@@ -110,20 +140,16 @@ impl Sequencer {
     }
 
     /// `settle_async` for a caller that cannot wait on the runtime. The sequencer's thread is
-    /// blocked meanwhile, as an inline sync would.
+    /// blocked meanwhile, as an inline sync would. Production reaches it only with the pipeline
+    /// drained — setup, before `run` submits a batch, and the end of `run`, after `settle_async` —
+    /// so it carries no hold bound.
     /// Error cases:
     /// - as `settle_async`
     pub(in crate::sequencer) fn settle(&mut self) -> anyhow::Result<()> {
-        while let Some((deadline, held)) = self.check_hold()? {
-            let shared = self.pipeline.as_ref().map(|pipeline| pipeline.shared.clone()).context("no sync thread")?;
-            let done = if held {
-                Some(shared.wait())
-            } else {
-                shared.wait_for(deadline.saturating_duration_since(tokio::time::Instant::now()))
-            };
-            if let Some(done) = done {
-                self.complete(done)?;
-            }
+        while let Some(pipeline) = self.pipeline.as_ref().filter(|pipeline| !pipeline.in_flight.is_empty()) {
+            let shared = pipeline.shared.clone();
+            let done = shared.wait();
+            self.complete(done)?;
         }
         Ok(())
     }

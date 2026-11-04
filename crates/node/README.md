@@ -224,8 +224,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/checkpoints/publish/tests.rs` — with the syncs on their own thread, a checkpoint and its approvals wait for their batch's sync, a failed sync posts nothing, and a post owed a queue slot defers the next checkpoint
 - `src/api/state/durable_tests.rs` — a proof, a dashboard view and a fallback view are answered only once the log holds the state they read
 - `src/sequencer/pipeline/tests.rs` — a batch leaves only after its sync and the next is sequenced meanwhile, a failed sync releases nothing and stops the sequencer, and a full pipeline takes no request
-- `src/sequencer/pipeline/hold.rs` — waiting on the log-sync thread: no request, new or drained, while the oldest batch's sync is held past 5 s, and every wait on a sync waking at that bound to raise Critical `log_sync_held` once and resolve it
-- `src/sequencer/pipeline/hold_tests.rs` — the held-sync bound: one page, nothing stamped, a quiet node and a settling one paged at the deadline, a finished sync never paged, and an earlier run's episode resolved
+- `src/sequencer/pipeline/hold.rs` — waiting on the log-sync thread: no request, new, drained, or received past the deadline, while the oldest batch's sync is held past 5 s, and every wait on a sync while the sequencer runs waking at that bound to raise Critical `log_sync_held` once and resolve it
+- `src/sequencer/pipeline/hold_tests.rs` — the held-sync bound: one page, nothing stamped, a quiet node and a settling one paged at the deadline, a request arriving past it kept, a finished sync never paged, and an earlier run's episode resolved
 - `src/sequencer/wait_bench.rs` — what a price waits behind at 100k accounts, per occurrence, and the channel-to-stamp wait budget under reads and checkpoints
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release

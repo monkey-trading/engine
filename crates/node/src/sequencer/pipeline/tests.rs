@@ -176,7 +176,7 @@ async fn a_failed_sync_releases_nothing_and_stops_the_sequencer() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_full_pipeline_takes_no_request_until_a_sync_is_done() {
-    let (mut seq, permits) = crate::sequencer::pipeline::hold_tests::held_sequencer("pipeline-bounded");
+    let (mut seq, permits, _entered) = crate::sequencer::pipeline::hold_tests::held_sequencer("pipeline-bounded");
     // One batch per tick, each waiting on the held sync, as `run` would stage them.
     for _ in 0..MAX_IN_FLIGHT {
         seq.sequence(Command::Tick).unwrap().unwrap();
