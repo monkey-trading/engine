@@ -5,7 +5,7 @@ use alloy::primitives::utils::parse_ether;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::config::SeedRelaySection;
-use crate::seed_relay::schedule::draw_deadline;
+use crate::seed_relay::schedule::{draw_deadline, last_final_turn};
 use crate::seed_relay::state::{prove_mix, synthetic_state};
 use crate::test_support::{Alert, capture_alerts_and_resolutions};
 
