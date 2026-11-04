@@ -57,6 +57,37 @@ live terms from `margin_tiers` in `curl -sf $API/v1/markets`.
 The books are safe throughout; what is at stake is the house's exposure at the gap. Keep the time the
 price returned, and `bad_debt` pages after it, for the owner.
 
+### Tightening `max_age_ms`
+
+A change to a market's `max_age_ms` is checked, when it is sequenced, against the quotes the market
+holds. While the market, or a market quoted in the currency it converts, has open positions, it
+applies only if those quotes, at their age then, still price it under the shorter limit; otherwise
+it is refused with "price rules it cannot price under" (or, for a held market that converts at the
+one being changed, "which the price rules cannot price under"). A venue's quote keeps the venue's
+own timestamp, and the feed's repeat rule only delays a repeat of an unchanged price, so a quiet mid
+leaves quotes older than a tighter limit even though the venues are healthy.
+
+1. Check that the market is open and priced: `engine_market_priced` reads 1 for it, as under
+   [Find what is down](#find-what-is-down). A closed market holds old quotes and refuses every
+   tightening until it opens. `market_no_price` only fires after `alerts.no_price_after`, so its
+   silence proves nothing.
+2. Sign the change with `upsert-market` as under [Futures markets](#futures-markets). **Changes the
+   live system.** Needs the owner's approval of the exact spec. If it is refused, wait for the venues
+   to quote again, which moves the mid or fires the repeat, and sign the same change once more.
+3. For a large cut, tighten in steps, each signed after the venues have quoted again, so each step
+   still prices the market from quotes that have arrived since the last. **Changes the live system.**
+   Each step is its own `upsert-market`, so each needs the owner's approval of its exact spec, or
+   one approval naming the whole sequence of limits.
+4. Failing that, make every held market the refusal names reduce-only first, the edited market and
+   any market that converts at it ([reduce-only.md](reduce-only.md)), then sign the change again: the
+   check then does not apply. **Changes the live system.** Needs the owner's approval of the
+   reduce-only commands, the change, and the commands below. Then check, as in step 1, that
+   `engine_market_priced` reads 1 for the edited market and each market that converts at it. The
+   `mark` in `/v1/markets` is the last stored value and stays after pricing is lost, so it proves
+   nothing. If one reads 0, restore the previous limit, which is always accepted, and wait for the
+   venues to quote again: loosening discards quotes stale under the tighter limit. Either way, resume
+   normal trading as in [reduce-only.md](reduce-only.md#resume-normal-trading).
+
 ### Find what is down
 
 ```sh

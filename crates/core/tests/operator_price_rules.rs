@@ -66,6 +66,24 @@ fn an_upsert_that_leaves_a_market_with_open_positions_unpriced_is_refused() {
 }
 
 #[test]
+fn a_max_age_tightening_refused_for_aged_quotes_applies_once_fresh_quotes_arrive() {
+    let (mut h, _) = with_position();
+    // No venue has quoted for 600 ms, so the quotes the market prices from are that old: counted
+    // under the limit in force, but past the tighter one, so the change would leave it unpriced.
+    h.advance(600);
+    let tighter = btc_with(&h, |spec| spec.price_rules.max_age_ms = 400);
+    assert_eq!(
+        op(&mut h, tighter.clone()),
+        rejected("market 1 has open positions, so price rules it cannot price under need it reduce-only first")
+    );
+    assert_eq!(h.engine.markets()[&BTC].spec.price_rules.max_age_ms, 1_000);
+    // The same change, signed again once the venues have quoted, finds quotes inside 400 ms.
+    h.quotes(BTC, &["100000", "100000", "100000"]);
+    assert_eq!(op(&mut h, tighter).last(), Some(&Event::AdminApplied));
+    assert_eq!(h.engine.markets()[&BTC].spec.price_rules.max_age_ms, 400);
+}
+
+#[test]
 fn tighter_price_rules_that_still_price_the_market_are_accepted() {
     let (mut h, _) = with_position();
     let same_sources = btc_with(&h, |spec| spec.price_rules.min_sources = 3);
