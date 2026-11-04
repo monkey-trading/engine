@@ -1808,7 +1808,8 @@ strings. `GET /v1/monkey/distributions?limit=&before=` pages the closed distribu
 (`limit` 1 to 200, 50 by default; `before` an epoch number, as a page's `next`): each has its `epoch`, the
 `close_seq` and `close_ms` of the command that closed it, `ended_ms`, `nav`, `floor`, `excess_usdc_units`,
 `allocated_usdc_units`, `stakers_usdc_units` with the number of `stakers` paid, `operator_shares` (every
-recipient with its `amount`, none while rotation is off) and `skipped` (the range of earlier epochs no command
+recipient with its `amount`: before `V50` none for a close with rotation off, and from `V50` each account
+whose time in office in the epoch earned a part) and `skipped` (the range of earlier epochs no command
 saw the end of, which that close distributed nothing for). It states where its data begins like the other
 answers, and `retained_from_epoch` names the oldest epoch held, with `truncated` true once `[stats] distribution_limit`
 (5000 by default) has dropped older epochs. `GET /v1/stats/series?metric=&market=&resolution=(1m|1h|1d)&from_ms=&to_ms=&limit=` pages a

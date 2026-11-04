@@ -242,13 +242,31 @@ fn v50_starts_counting_at_its_activation_and_the_close_it_runs_with_keeps_the_ol
     assert_eq!(shares(&events), vec![(CANDIDATE, excess(&events) / 5)]);
     assert_eq!(office(&h), TimeInOffice { since: end, served: Default::default() });
 
-    // Activated six hours into the next epoch, the count starts there: the candidate serves all of it.
+    // Activated six hours into the next epoch, the count starts there: the key in effect serves all of it.
     let mut h = rotating(1_000_000_000);
     stake(&mut h, STAKER_A, 1);
     h.advance(6 * HOUR_MS);
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V50 });
     let events = close(&mut h);
     assert_eq!(shares(&events), vec![(operator().address, 200_000_000)]);
+}
+
+#[test]
+fn an_activation_from_before_v47_seats_the_candidate_already_in_effect_before_counting() {
+    // Under `V46` an election hands its key over but records no candidate. Activated straight from
+    // there, `V50` seats it, so the time from the activation is the candidate's, not its key's address.
+    let mut h = at(ProtocolVersion::V46, 1_000_000_000);
+    switch(&mut h, true);
+    seat(&mut h, 1, CANDIDATE, key());
+    stake(&mut h, STAKER_A, 1);
+    assert_eq!(h.engine.operator().map(|operator| operator.address), Some(key()));
+    assert_eq!(h.engine.operator_candidate(), None);
+    h.advance(6 * HOUR_MS);
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V50 });
+    assert_eq!(h.engine.operator_candidate(), Some(CANDIDATE));
+    let events = close(&mut h);
+    assert_eq!(shares(&events), vec![(CANDIDATE, 200_000_000)]);
+    assert_eq!(leaf(&h, key()), 0);
 }
 
 #[test]

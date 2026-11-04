@@ -606,7 +606,8 @@ no one served, while rotation was off, and the parts' rounding go to stakers, so
 never passes the excess, and with rotation on throughout the parts sum to the fifth less under a
 unit per operator. A handover in the close's own command leaves the whole epoch to the outgoing
 operator, and the count restarts at every close, including one that distributes nothing. The epoch
-the activation's own command closes still pays under V47's rule. Before V50 nothing records time in
+the activation's own command closes still pays under V47's rule, and an activation from before V47
+first seats the candidate of an election already in effect, which those rules never recorded. Before V50 nothing records time in
 office, and the staking state encodes as before, so earlier logs replay unchanged. Its session is in
 `examples/reference_log/v50.rs`.
 
