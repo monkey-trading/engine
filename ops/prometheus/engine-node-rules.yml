@@ -1,6 +1,7 @@
 # Alerting rules for the operator's Prometheus, which runs outside the enclave. They page on what
-# the node cannot page itself: a node whose metrics stop answering, and alert pages that its
-# webhook keeps failing or refuses, or that the node drops. They also escalate an API certificate
+# the node cannot page itself: a node whose metrics stop answering, alert pages that its webhook
+# keeps failing or refuses, or that the node drops, and a log sync held on a disk that also holds
+# the alert outbox. They also escalate an API certificate
 # that is missing or about to expire, past the node's own Warnings. Route them through Alertmanager
 # to a receiver other than the node's own webhook. The rules assume the scrape job is named `engine`;
 # scrape a Certificate Transparency watcher (`engine ct-watch`, which serves the same alert metrics)
@@ -61,6 +62,15 @@ groups:
           summary: "Engine node {{ $labels.instance }} refused pages at its durable alert outbox size bound"
 
       # Escalates the node's Warnings certificate_pending and certificate_expiring. A node with
+      # A log sync held past the 5 s bound: the node's own page commits to the alert outbox on the
+      # same disk, so a hold of the whole disk can stall it; this gauge is served from memory.
+      - alert: EngineLogSyncHeld
+        expr: engine_log_sync_held == 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Engine node {{ $labels.instance }} has a log sync held past 5 s and takes no request"
+
       # [api.tls.acme] has a CA certificate within a minute of boot, so half an hour pending is a
       # failed issuance; a node without the section, and a Certificate Transparency watcher, export
       # 0 for pending and never fire.

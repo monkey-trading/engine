@@ -16,6 +16,8 @@
 //! publishing in `finish_sync` before anything of the new segment is released. The on-disk order
 //! is what an inline seal gives: the old segment is listed before the new one takes its name.
 
+mod hold;
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -24,7 +26,7 @@ use std::time::Instant;
 
 use anyhow::{Context, bail};
 use engine_core::event::Event;
-use tokio::sync::{Notify, mpsc, oneshot, watch};
+use tokio::sync::{Notify, oneshot, watch};
 use tracing::error;
 
 use crate::benchmarks::BenchmarkSchedule;
@@ -57,6 +59,8 @@ pub(super) struct Release {
     job: Arc<SyncJob>,
     batch: Batch,
     last_seq: Option<u64>,
+    /// When the batch was staged: the hold bound runs from here.
+    staged: tokio::time::Instant,
     outbox: Vec<Arc<StreamMsg>>,
     marks: Vec<MarkSample>,
     house: Option<(Vec<oneshot::Sender<HouseState>>, HouseState)>,
@@ -124,6 +128,12 @@ pub(super) struct Pipeline {
     jobs: Sender<Arc<SyncJob>>,
     shared: Arc<Shared>,
     in_flight: VecDeque<Release>,
+    /// Whether the oldest batch's sync is held past `MAX_SYNC_HOLD`: one `log_sync_held` episode.
+    /// It starts set, so the first check with no hold past the bound resolves an episode an earlier
+    /// run left open; the router discards a resolution with no open episode.
+    held: bool,
+    /// A request received past the oldest batch's deadline, kept until the hold clears.
+    kept: Option<Request>,
 }
 
 impl Pipeline {
@@ -148,7 +158,7 @@ impl Pipeline {
         });
         let worker = shared.clone();
         std::thread::Builder::new().name("log-sync".into()).spawn(move || run_syncs(&queue, &worker, sync))?;
-        Ok(Self { jobs, shared, in_flight: VecDeque::new() })
+        Ok(Self { jobs, shared, in_flight: VecDeque::new(), held: true, kept: None })
     }
 }
 
@@ -268,6 +278,7 @@ impl Sequencer {
             job,
             batch,
             last_seq: self.engine.last_seq(),
+            staged: tokio::time::Instant::now(),
             outbox: std::mem::take(&mut self.outbox),
             marks: self.marks.take_pending(),
             house: self.house.take_answer(&self.engine, self.progress.params_seq),
@@ -283,7 +294,7 @@ impl Sequencer {
     /// Error cases:
     /// - a checkpoint cannot be posted
     fn finish(&mut self, release: Release) -> anyhow::Result<()> {
-        let Release { job, batch, last_seq, outbox, marks, house, schedule, stats, after } = release;
+        let Release { job, batch, last_seq, staged: _, outbox, marks, house, schedule, stats, after } = release;
         self.marks.deliver_stats(stats);
         self.log.finish_sync(&job);
         self.run_after(after)?;
@@ -362,54 +373,6 @@ impl Sequencer {
         self.finish(release)
     }
 
-    /// The next request, releasing batches as their syncs finish meanwhile. With `MAX_IN_FLIGHT`
-    /// batches pending it takes no request until one is done.
-    /// Error cases:
-    /// - a sync failed, or its thread ended
-    pub(super) async fn next_request(&mut self, rx: &mut mpsc::Receiver<Request>) -> anyhow::Result<Option<Request>> {
-        loop {
-            let Some(pipeline) = self.pipeline.as_ref().filter(|pipeline| !pipeline.in_flight.is_empty()) else {
-                return Ok(rx.recv().await);
-            };
-            let (pending, shared) = (pipeline.in_flight.len(), pipeline.shared.clone());
-            if pending >= MAX_IN_FLIGHT {
-                let done = shared.next().await;
-                self.complete(done)?;
-                continue;
-            }
-            tokio::select! {
-                biased;
-                done = shared.next() => self.complete(done)?,
-                request = rx.recv() => return Ok(request),
-            }
-        }
-    }
-
-    /// Waits until every batch in flight is durable and released.
-    /// Error cases:
-    /// - a sync failed, or its thread ended
-    pub(super) async fn settle_async(&mut self) -> anyhow::Result<()> {
-        while let Some(pipeline) = self.pipeline.as_ref().filter(|pipeline| !pipeline.in_flight.is_empty()) {
-            let shared = pipeline.shared.clone();
-            let done = shared.next().await;
-            self.complete(done)?;
-        }
-        Ok(())
-    }
-
-    /// `settle_async` for a caller that cannot wait on the runtime. The sequencer's thread is
-    /// blocked meanwhile, as an inline sync would.
-    /// Error cases:
-    /// - as `settle_async`
-    pub(super) fn settle(&mut self) -> anyhow::Result<()> {
-        while let Some(pipeline) = self.pipeline.as_ref().filter(|pipeline| !pipeline.in_flight.is_empty()) {
-            let shared = pipeline.shared.clone();
-            let done = shared.wait();
-            self.complete(done)?;
-        }
-        Ok(())
-    }
-
     /// Makes everything written so far durable, then releases it: the batches in flight first, so
     /// the stream stays in log order, then what is buffered. For a caller that must not go on
     /// before that, and for the sequencer when it has no thread for the syncs.
@@ -423,5 +386,7 @@ impl Sequencer {
     }
 }
 
+#[cfg(test)]
+mod hold_tests;
 #[cfg(test)]
 mod tests;
