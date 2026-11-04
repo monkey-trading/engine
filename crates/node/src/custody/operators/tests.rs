@@ -311,7 +311,9 @@ async fn a_lens_call_that_fails_keeps_its_own_episode_at_warning_under_the_opera
     reader.read().await.unwrap_err();
     assert_eq!(reader.quorum.lost_operations(), ["lens_candidates_0"]);
     assert_eq!((logs.warnings("custody_rpc_quorum_lost"), logs.critical("custody_rpc_quorum_lost")), (1, 0));
-    assert_eq!(logs.count("quorum=\"operators\""), logs.count("alert=\"custody_rpc_quorum_lost\""));
+    // Every quorum and provider alert the reader's quorum raised names it.
+    assert_eq!(logs.count("quorum=\"operators\""), logs.count("alert=\"custody_rpc_"));
+    assert!(logs.count("alert=\"custody_rpc_provider_failed\"") > 0);
 }
 
 #[tokio::test]
