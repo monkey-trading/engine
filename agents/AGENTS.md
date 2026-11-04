@@ -365,7 +365,7 @@ an index: load only the rule whose hint matches the current action.
   and checks the build's download retries.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node, failing alert pages, a webhook
-  left off for want of its delivered URL, or a
+  left off for want of its delivered URL, a log sync held past 5 s, or a
   missing or expiring API certificate. `runbooks/` holds the operator's procedures (`README.md`
   indexes them): deploy and rollback, reduce-only, restart and recovery, key recovery, corporate
   actions, incident response, withdrawal stalls and `checkpoint_backlog`, feed, custody and

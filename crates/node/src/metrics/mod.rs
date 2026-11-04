@@ -116,6 +116,7 @@ pub struct Metrics {
     pub queue_depth: Gauge,
     pub access_pending_deposits: Gauge,
     pub withdrawals_paused: Gauge,
+    pub log_sync_held: Gauge,
     pub withdrawals_verdict_seq: Gauge,
     pub fills: Family<MarketLabel, Counter>,
     pub rejections: Family<RejectionLabels, Counter>,
@@ -150,6 +151,7 @@ impl Metrics {
             queue_depth: Gauge::default(),
             access_pending_deposits: Gauge::default(),
             withdrawals_paused: Gauge::default(),
+            log_sync_held: Gauge::default(),
             withdrawals_verdict_seq: Gauge::default(),
             fills: Family::default(),
             rejections: Family::default(),
@@ -187,6 +189,13 @@ impl Metrics {
             "access_pending_deposits",
             "Deposits awaiting automatic source screening retry",
             metrics.access_pending_deposits.clone(),
+        );
+        r.register(
+            "log_sync_held",
+            "1 while the oldest unsynced log batch has waited past the 5 s hold bound and the sequencer takes no \
+             request; served from memory, so it reports a hold even while the disk keeps the alert outbox from \
+             committing the page",
+            metrics.log_sync_held.clone(),
         );
         r.register(
             "withdrawals_paused",

@@ -29,8 +29,10 @@ async fn a_sync_held_past_the_bound_pages_once_and_stamps_nothing_until_it_finis
     let taken = timeout(Duration::from_secs(1), seq.next_request(&mut rx)).await.expect("inside the bound");
     assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
     assert!(alerts.try_recv().is_err(), "no page inside the bound");
+    // The first look resolved whatever episode an earlier run left open; that is not this hold's.
+    while resolved.try_recv().is_ok() {}
     // Past it, the request waits behind the held sync, and the hold pages once however often the
-    // sequencer looks.
+    // sequencer looks; the gauge reports it from memory.
     tokio::time::advance(MAX_SYNC_HOLD).await;
     tx.send(query()).await.unwrap();
     for _ in 0..2 {
@@ -41,6 +43,8 @@ async fn a_sync_held_past_the_bound_pages_once_and_stamps_nothing_until_it_finis
     assert_eq!(page.get("alert").map(String::as_str), Some("log_sync_held"));
     assert_eq!(page.get("level").map(String::as_str), Some("ERROR"), "a held sync is Critical");
     assert!(alerts.try_recv().is_err(), "one page per hold");
+    assert_eq!(seq.metrics.log_sync_held.get(), 1, "the gauge reports the hold");
+    assert!(resolved.try_recv().is_err(), "nothing resolves while the sync is held");
     // A batch staged behind the held one, while the thread is inside the first sync, is a job of its
     // own and inside its own bound: once the held sync finishes, the episode ends while that batch's
     // sync is still waiting for its verdict. The sync finishes on the real disk, so real time resumes.
@@ -52,6 +56,8 @@ async fn a_sync_held_past_the_bound_pages_once_and_stamps_nothing_until_it_finis
     assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
     let end = resolved.try_recv().expect("the finished sync resolves the hold");
     assert_eq!(end.get("alert_resolved").map(String::as_str), Some("log_sync_held"));
+    assert!(resolved.try_recv().is_err(), "one resolution for the hold");
+    assert_eq!(seq.metrics.log_sync_held.get(), 0, "the gauge clears with the hold");
     assert_eq!(seq.pipeline.as_ref().unwrap().in_flight.len(), 1, "the successor's sync is still pending");
     assert!(alerts.try_recv().is_err(), "the release does not page again");
 }
@@ -97,6 +103,7 @@ async fn the_drain_takes_no_queued_request_past_the_bound() {
     tokio::time::advance(MAX_SYNC_HOLD).await;
     tx.send(query()).await.unwrap();
     assert!(seq.next_queued(&mut rx).is_none(), "past it the drain ends and the request waits");
+    assert!(seq.pipeline.as_ref().unwrap().kept.is_none(), "a request never received is not kept");
 }
 
 #[tokio::test(start_paused = true)]

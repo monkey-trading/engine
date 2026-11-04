@@ -27,7 +27,7 @@ use std::time::Instant;
 use anyhow::{Context, bail};
 use engine_core::event::Event;
 use tokio::sync::{Notify, oneshot, watch};
-use tracing::{error, info};
+use tracing::error;
 
 use crate::benchmarks::BenchmarkSchedule;
 use crate::history::marks::MarkSample;
@@ -40,7 +40,7 @@ use crate::stats::background::Job as StatsJob;
 /// Batches whose sync may be pending at once. A disk that stalls longer than that many batches
 /// takes the sequencer's next request down with it, rather than letting what cannot be released
 /// pile up.
-pub(super) const MAX_IN_FLIGHT: usize = 64;
+const MAX_IN_FLIGHT: usize = 64;
 
 /// The requests of a batch that wait for its entries to be durable.
 #[derive(Default)]
@@ -159,13 +159,6 @@ impl Pipeline {
         let worker = shared.clone();
         std::thread::Builder::new().name("log-sync".into()).spawn(move || run_syncs(&queue, &worker, sync))?;
         Ok(Self { jobs, shared, in_flight: VecDeque::new(), held: true, kept: None })
-    }
-
-    /// Ends the `log_sync_held` episode, if one is open: no batch in flight is past the bound.
-    fn end_hold(&mut self) {
-        if std::mem::take(&mut self.held) {
-            info!(alert_resolved = "log_sync_held", "no log sync is held past the bound: sequencing runs");
-        }
     }
 }
 

@@ -1,11 +1,12 @@
 //! Waiting on the log-sync thread: a request is taken only while the oldest unsynced batch is
-//! inside `MAX_SYNC_HOLD`, and every wait on a pending sync wakes at that bound to page a hold.
+//! inside `MAX_SYNC_HOLD`, and every wait on a pending sync while the sequencer runs wakes at that
+//! bound to page a hold.
 
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
-use tracing::error;
+use tracing::{error, info};
 
 use crate::sequencer::pipeline::MAX_IN_FLIGHT;
 use crate::sequencer::{Request, Sequencer};
@@ -28,16 +29,19 @@ impl Sequencer {
         while let Some(done) = self.pipeline.as_ref().and_then(|pipeline| pipeline.shared.pop()) {
             self.complete(done)?;
         }
-        let Some(pipeline) = self.pipeline.as_mut() else { return Ok(None) };
-        let Some(oldest) = pipeline.in_flight.front() else {
-            pipeline.end_hold();
+        let oldest = self.pipeline.as_ref().and_then(|pipeline| pipeline.in_flight.front());
+        let Some((deadline, through)) = oldest.map(|oldest| (oldest.staged + MAX_SYNC_HOLD, oldest.last_seq)) else {
+            self.end_hold();
             return Ok(None);
         };
-        let (deadline, through) = (oldest.staged + MAX_SYNC_HOLD, oldest.last_seq);
         let held = Instant::now() >= deadline;
+        let pipeline = self.pipeline.as_mut().expect("a batch in flight means a pipeline");
         if !held {
-            pipeline.end_hold();
+            self.end_hold();
         } else if !std::mem::replace(&mut pipeline.held, true) {
+            // The gauge is set first: the page commits to the alert outbox on the same disk, so a
+            // whole-disk hold can stall it, while the metrics listener serves from memory.
+            self.metrics.log_sync_held.set(1);
             error!(
                 alert = "log_sync_held",
                 "the log sync of the batch through seq {} has been held for over {MAX_SYNC_HOLD:?}: \
@@ -46,6 +50,14 @@ impl Sequencer {
             );
         }
         Ok(Some((deadline, held)))
+    }
+
+    /// Ends the `log_sync_held` episode, if one is open: no batch in flight is past the bound.
+    fn end_hold(&mut self) {
+        if self.pipeline.as_mut().is_some_and(|pipeline| std::mem::take(&mut pipeline.held)) {
+            self.metrics.log_sync_held.set(0);
+            info!(alert_resolved = "log_sync_held", "no log sync is held past the bound: sequencing runs");
+        }
     }
 
     /// Waits for the oldest batch's sync to finish, or for its deadline when that has not passed,
@@ -110,7 +122,7 @@ impl Sequencer {
     /// `request`, received while the oldest batch's deadline was `deadline`, if that has not passed;
     /// otherwise it is kept for `next_request` to hand out once the hold clears. A timer can fire
     /// after its deadline, so the receive arm can win a race the bound must not lose.
-    pub(in crate::sequencer) fn admit(&mut self, request: Request, deadline: Instant) -> Option<Request> {
+    pub(super) fn admit(&mut self, request: Request, deadline: Instant) -> Option<Request> {
         if Instant::now() < deadline {
             return Some(request);
         }
@@ -120,13 +132,20 @@ impl Sequencer {
     }
 
     /// A request already queued, for the batch being drained, unless the oldest batch's sync is
-    /// held past `MAX_SYNC_HOLD`: the drain then ends, and `next_request` waits for the sync.
-    pub(in crate::sequencer) fn next_queued(&self, rx: &mut mpsc::Receiver<Request>) -> Option<Request> {
+    /// held past `MAX_SYNC_HOLD`, before or after the receive: the drain then ends, and
+    /// `next_request` waits for the sync and hands out a request it kept.
+    pub(in crate::sequencer) fn next_queued(&mut self, rx: &mut mpsc::Receiver<Request>) -> Option<Request> {
         let oldest = self.pipeline.as_ref().and_then(|pipeline| pipeline.in_flight.front());
-        if oldest.is_some_and(|oldest| Instant::now() >= oldest.staged + MAX_SYNC_HOLD) {
+        let deadline = oldest.map(|oldest| oldest.staged + MAX_SYNC_HOLD);
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             return None;
         }
-        rx.try_recv().ok()
+        let request = rx.try_recv().ok()?;
+        // A receive can wait out a sender finishing its send: past the deadline, the request is kept.
+        match deadline {
+            Some(deadline) => self.admit(request, deadline),
+            None => Some(request),
+        }
     }
 
     /// Waits until every batch in flight is durable and released, paging a hold past the bound.

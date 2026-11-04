@@ -160,9 +160,13 @@ then let the sync finish or kill the node: replies, stream entries, and signed w
 only once their batch is durable, so until then nobody outside has seen it, and a batch the
 restarted log lacks never happened. Once the oldest unsynced batch has waited 5 s for its sync,
 the sequencer takes no further request and raises Critical `log_sync_held`, so nothing is stamped
-behind a held batch and a hold of the disk alone pages within 5 s (the snapshot capture's sync at a
-checkpoint and a handover's segment seal run on the sequencer's thread outside this bound: a hold
-there stops sequencing too and pages as `sequencer_stalled`); the hold lasts only as long as
+behind a held batch and a hold of the disk alone is raised within 5 s. The webhook page commits to the
+alert outbox on the same disk first, so a hold of the whole disk delays it and a kill during the hold
+loses it; the `engine_log_sync_held` gauge, served from memory on the metrics listener, reports the
+hold meanwhile (`EngineLogSyncHeld`), though a host that holds the disk can also answer for the
+listener. The snapshot capture's sync, the checkpoint's catalog maintenance, a rotation's catalog
+fold, and a handover's segment seal write on the sequencer's thread outside this bound: a hold there
+stops sequencing too and pages as `sequencer_stalled`. The hold lasts only as long as
 the host stalls every reply and every new stream entry, which every client sees, and the signed heartbeats keep
 naming the old head unless the host holds the network too. It can also cut the log back to any
 entry after the latest checkpoint the vault has finalized and restart the node, erasing commands
