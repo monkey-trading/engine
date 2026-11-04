@@ -24,14 +24,15 @@ The script builds `git archive` of the commit, so uncommitted changes never reac
 sets `SOURCE_DATE_EPOCH` to the commit time. It writes:
 
 - `vmlinuz` — Linux 6.18 LTS from `x86_64_defconfig` plus [kernel.config](kernel.config): SEV-SNP
-  guest and configfs-tsm built in, no loadable modules, no SysRq or KGDB, and no drivers for
-  devices the image does not use (USB, ATA, SCSI, sound, graphics, other NICs, PCI hotplug,
-  virtio console and RNG, keyboard, mouse, and virtual terminals)
+  guest and configfs-tsm built in, no loadable modules, no SysRq or KGDB, no CPU frequency
+  scaling, and no drivers for devices the image does not use (USB, ATA, SCSI, sound, graphics,
+  other NICs, PCI hotplug, virtio console and RNG, keyboard, mouse, and virtual terminals)
 - `initramfs.cpio.gz` — [init](init), busybox, and the static `engine` binary
 - `OVMF.fd` — edk2's `AmdSevX64` firmware, which checks the kernel, initramfs, and command line
   against the hashes QEMU places in the launch, so the measurement covers all three
 - `measurement.json` — the SEV-SNP launch digest, with the guest shape it assumes (vCPU count and
-  type, guest features, VMM, and kernel command line) and the guest policy a verifier requires
+  type, guest features, VMM, and kernel command line) and the guest policy a verifier requires;
+  the guest features are `0x201`, which turns on Secure TSC ("The guest's clock" below)
 - `SHA256SUMS` — the SHA-256 of the four files above
 
 Every input is pinned in the [Dockerfile](Dockerfile): base images by digest, Debian packages by a
@@ -57,6 +58,8 @@ The `production` cargo feature of `engine-node` makes `NodeConfig::load` refuse 
 whose API would serve only its self-signed certificate, whatever the rest of the config says.
 The image's default `production` variant builds with it. The `dev` variant leaves it off and has a
 different measurement; it runs the image on mock custody and prices, without a chain or live venues.
+It launches with the same guest features and kernel command line, so on SEV-SNP it needs Secure TSC
+too.
 
 ## What the guest exposes
 
@@ -77,10 +80,10 @@ The engine takes input from the host through seven paths:
   endpoint over HTTPS, the ACME CA's directory over HTTPS, alert webhooks, Roughtime replies it
   verifies under each server's key, and
   the DNS answers that pick their addresses, from the resolvers DHCP names;
-- the clock, which stamps every sequenced command, bounded by the signed Roughtime readings. The
-  guest launches without Secure TSC (`guest_features` is `0x1` in `measurement.json`), so the host
-  can still scale the monotonic clock that times those readings, the age of a sample, the pace of
-  sequenced time, and the pings that bound how far behind a venue's stream is;
+- the wall clock, which stamps every sequenced command, bounded by the signed Roughtime readings.
+  The monotonic clock that times those readings, the age of a sample, the pace of sequenced time,
+  and the pings that bound how far behind a venue's stream is runs on the guest's TSC, which the
+  host cannot scale ("The guest's clock" below);
 - the data disk, an ext4 filesystem on the first virtio disk, mounted at `/data` with `nosuid`,
   `nodev`, and `noexec`. It holds `config.toml`, read once at boot, the log, the account history
   index, the alert outbox, the custody deposit cursor, and the sealed keys, which `node.log_dir`,
@@ -105,6 +108,56 @@ so stopping the VM loses nothing a client was told. The guest ignores an ACPI sh
 so every stop is a hard stop: the engine does not drain its queue or write the final checkpoint
 it writes on SIGTERM, and commands after the last checkpoint wait for the next one to be signed.
 
+## The guest's clock
+
+Every bound the node keeps in monotonic time rests on that clock's rate: a price's age, the pace of
+sequenced time, the age of a trusted time sample, the Roughtime round trips that place it, and
+through them `time.max_drift` (`SECURITY.md`). The image keeps that rate out of the host's hands in
+three parts, none of them yet run on SEV-SNP hardware (#108):
+
+- **Secure TSC.** Every vCPU launches with SEV_FEATURES `0x201`: SNPActive (bit 0) and SecureTSC
+  (bit 9). The guest's RDTSC, RDTSCP, and TSC MSR then read the processor's TSC scaled by the
+  GUEST_TSC_SCALE in the guest's encrypted VMSA, plus its GUEST_TSC_OFFSET, and the processor's own
+  TSC ratio and the hypervisor's TSC offset do not apply (AMD64 APM vol. 2, 15.36.18). The firmware
+  sets the scale of each vCPU it launches from the TSC frequency the host asks for, and the kernel
+  takes the values for the vCPUs it starts itself from the firmware's TSC_INFO answer (SEV-SNP
+  firmware ABI, 7.9 and 8.18.2.2). The kernel reads the guest TSC's frequency from the
+  GUEST_TSC_FREQ MSR, corrected by the TSC_FACTOR the firmware writes in the secrets page, and stops
+  the guest if the host intercepts that read or RDTSC (Linux `arch/x86/coco/sev/`). So the host
+  picks the frequency at launch, but cannot make the guest count in another or change it afterwards.
+- **The kernel times on the TSC.** With Secure TSC the kernel marks the TSC reliable, so it never
+  checks the TSC against another clock or across vCPUs. `no-kvmclock` on the measured command line
+  keeps out kvm-clock, whose scale sits in memory the host writes and which outranks the TSC
+  whenever the host's CPUID hides the invariant TSC. The kernel has no CPU frequency scaling and no
+  ACPI processor driver ([kernel.config](kernel.config)), so nothing the host supplies can mark the
+  TSC unstable after the TSC clocksource has registered: no frequency change, and no ACPI C-state
+  the TSC stops in.
+- **The node checks.** At boot the host can still have the kernel mark the TSC unstable, through
+  CPUID leaves naming another hypervisor (the firmware checks only the standard and extended
+  leaves) or firmware tables; the kernel would then time on the HPET or the ACPI timer, which QEMU
+  emulates. And at launch the host picks the frequency the firmware scales the TSC to, and can ask
+  for one so low the hardware cannot count in it. So a node with real attestation
+  (`tee.provider = "configfs_tsm"`) reads the clocksource
+  (`/sys/devices/system/clocksource/clocksource0/current_clocksource`) and the GUEST_TSC_FREQ MSR
+  before it opens its keys, and refuses to start with the Critical `clocksource_unprotected`
+  unless the kernel times on the TSC in a frequency the hardware reports as 1000 MHz or more:
+  under that the firmware has rounded the host's request below what the hardware counts in, and
+  the kernel calibrates the TSC against clocks the host emulates. The 0.1% a whole-MHz reading can
+  round a frequency by at 1000 MHz or more is the most a bound resting on the clock's rate gives
+  up; it rests on the APM's statement that the MSR reports the guest TSC's effective frequency,
+  confirmed only on SEV-SNP hardware (#108).
+
+The attestation report carries no SEV features of its own (ABI, Table 27), but the launch
+measurement covers each vCPU's VMSA, SEV_FEATURES included; the firmware measures the VMSA as if its
+TSC scale and offset were zero, since it sets them afterwards (ABI, 8.18.2.2). A launch without
+Secure TSC therefore measures to another digest, and a verifier requires the release's
+`guest_features` to include both bits (see below).
+
+The `dev` variant launches with the same features and command line. Under plain QEMU, as
+[scripts/check-image.sh](../scripts/check-image.sh) boots it, there is no SEV-SNP and so no Secure
+TSC: the guest times on whatever clock QEMU gives it, which the check does not rely on, and its
+mock TEE skips the node's check.
+
 ## Attestation
 
 `GET /v1/attestation` returns the quote, its 64 bytes of report data, and the attestation bundle the
@@ -124,6 +177,8 @@ of these hold:
 
 - its signature verifies against the VCEK certificate chain from AMD's key distribution service up
   to AMD's root key; without this, the fields below prove nothing;
+- the release's `guest_features`, `measurement.json`'s, include SNPActive and SecureTSC (`0x201`);
+  the report does not carry them, but the launch digest it is matched against below covers them;
 - the guest policy at offset `0x08` (8 bytes, little-endian) equals `measurement.json`'s `policy`,
   which keeps debug and the migration agent off; the launch digest does not cover the policy;
 - the reported TCB (firmware and microcode security versions) is at or above the minimum the
@@ -186,9 +241,13 @@ the fields.
 
 ## Boot on an SEV-SNP host
 
-Untested on hardware. The host needs SEV-SNP enabled in firmware, a KVM host kernel with SNP
-support, and QEMU 9.1 or later. The launch flags must match `measurement.json`, and `cbitpos` is
-51 on Milan and later. The guest kernel refuses virtio devices without `iommu_platform=on`.
+Untested on hardware. The host needs SEV-SNP enabled in firmware, a processor that reports Secure
+TSC (CPUID Fn8000_001F_EAX bit 8), a KVM host kernel that offers it to SNP guests (Linux 6.18's
+does), and a QEMU whose `sev-snp-guest` object has the `secure-tsc` property: it is on QEMU's
+`master` branch (commit `a26f9b975d5c`) and in no release up to 11.1.3. KVM sets the guest's TSC
+frequency to the host's unless `tsc-frequency` names another. The launch flags must match
+`measurement.json`, and `cbitpos` is 51 on Milan and later. The guest kernel refuses virtio devices
+without `iommu_platform=on`.
 
 ```bash
 # The data disk: a config whose node.listen is 0.0.0.0:8080, tee.provider is "configfs_tsm",
@@ -204,7 +263,7 @@ mke2fs -t ext4 -d disk data.img 1G
 
 qemu-system-x86_64 -enable-kvm -cpu EPYC-v4 -smp 4 -m 4G -nographic -no-reboot \
   -machine q35,confidential-guest-support=sev0 \
-  -object sev-snp-guest,id=sev0,policy=0x30000,cbitpos=51,reduced-phys-bits=1,kernel-hashes=on \
+  -object sev-snp-guest,id=sev0,policy=0x30000,cbitpos=51,reduced-phys-bits=1,kernel-hashes=on,secure-tsc=on \
   -bios OVMF.fd -kernel vmlinuz -initrd initramfs.cpio.gz \
   -append "$(jq -r .cmdline measurement.json)" \
   -drive if=none,id=data,format=raw,file=data.img \
@@ -248,6 +307,7 @@ kernel only in an SEV-SNP launch (under plain QEMU it finds no bootable option),
    name = "v0.1.0" # the release this manifest verifies
    launch_digest = "0x…"        # measurement.json's launch_digest
    policy = "0x30000"           # measurement.json's policy
+   guest_features = "0x201"     # measurement.json's guest_features: SNPActive and SecureTSC
 
    [minimum_tcb] # the lowest reported TCB a quote from this release is accepted at
    boot_loader = 0
@@ -260,9 +320,9 @@ kernel only in an SEV-SNP launch (under plain QEMU it finds no bootable option),
    ```
 
    A verifier checks a node's quote against the release's launch digest, its policy, one of its
-   config hashes, and reads that config to see what the node runs with. A processor name the
-   key-distribution service knows (the CPU generation's codename, for example `Milan`, `Genoa`,
-   or `Turin`) passes as `--processor`.
+   config hashes, and reads that config to see what the node runs with; it refuses a release whose
+   guest features lack Secure TSC. A processor name the key-distribution service knows (the CPU
+   generation's codename, for example `Milan`, `Genoa`, or `Turin`) passes as `--processor`.
 5. Attach the browser verifier from the same run, the files `scripts/build-wasm-verifier.sh` wrote:
    `engine_verify_bg.wasm`, its glue `engine_verify.js`, the TypeScript types `engine_verify.d.ts`
    and `engine_verify_bg.wasm.d.ts`, and `package.json`, with their `SHA256SUMS` attached as

@@ -60,7 +60,8 @@ an index: load only the rule whose hint matches the current action.
   known-answer vectors (`tests/vectors.json`) the browser verifier replays. No IO and no runtime.
   Its `README.md` lists every file.
 - **crates/verify/** — `engine-verify`: SEV-SNP attestation verification against a list of release
-  manifests, with the attestation, collateral, extra root, and time passed in (no IO, no clock, no
+  manifests, each of which must launch with Secure TSC (`guest_features`), with the attestation,
+  collateral, extra root, and time passed in (no IO, no clock, no
   C code); names the release that admitted the quote and the validity window of the dates it
   checked. Signatures on RustCrypto (`p384`, `rsa`: RSASSA-PSS/SHA-384 and ECDSA P-384/SHA-384
   only). Holds the attestation and bundle types the node builds, the relayed collateral document,
@@ -117,7 +118,8 @@ an index: load only the rule whose hint matches the current action.
   optional checkpoint snapshots authenticated by pinned attested signers for suffix recovery,
   packed proof storage (`authenticated/`), dense account-history lists (`history/authenticated/`),
   and authenticated segment metadata (`log/catalog.rs`),
-  TEE attestation (configfs-tsm for TDX and SEV-SNP; the report data is the hash of a bundle of the
+  TEE attestation (configfs-tsm for TDX and SEV-SNP, given only to a guest whose kernel times on the
+  TSC; the report data is the hash of a bundle of the
   enclave address, the config file's SHA-256, and the TLS key's hash), attestation verification
   (`verify/`: `engine verify-attestation` loads or fetches (`verify/fetch.rs`) what `engine-verify`
   checks and passes the system clock; `engine replay --attestation` requires every checkpoint
@@ -266,11 +268,13 @@ an index: load only the rule whose hint matches the current action.
   values); a deployment's node sections complete it into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
-- **image/** — the reproducible confidential VM image for AMD SEV-SNP: `Dockerfile` (static
-  `engine`, kernel, busybox initramfs, OVMF, and the launch measurement, every input pinned),
+- **image/** — the reproducible confidential VM image for AMD SEV-SNP, launched with Secure TSC:
+  `Dockerfile` (static `engine`, kernel, busybox initramfs, OVMF, and the launch measurement, every
+  input pinned),
   `init`, `kernel.config`, the `sev-snp-measure` pins, `apt.conf` (the Debian snapshot's apt
   settings), and `retry`, which repeats each download after a failure. Its `README.md` covers the
-  build, what the guest exposes, the attestation layout, booting on a host, and the release steps.
+  build, what the guest exposes, the guest's clock, the attestation layout, booting on a host, and
+  the release steps.
 - **research/** — studies that set protocol parameters from data, outside the build and CI except the close-spread study's `fixtures/` and the benchmark-cap study's `fixtures/` and `results/refused.csv`.
   `cap-calibration/` calibrates the house exposure-cap floors by Monte Carlo (#111): scripts that
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
@@ -483,8 +487,9 @@ Run from the repo root:
   the release manifest and requires every checkpoint signer to be the enclave address it names
 - Verify an enclave's attestation: `cargo run -p engine-node -- verify-attestation
   --attestation <attestation.json> --release <release.toml> --processor <name>`; the quote's
-  certificate chain must reach a vendor root pinned in the binary, and the measurement, policy,
-  reported TCB, and configuration must match the release; a mock quote never verifies;
+  certificate chain must reach a vendor root pinned in the binary, the release must launch with
+  Secure TSC, and the measurement, policy, reported TCB, and configuration must match it; a mock
+  quote never verifies;
   `--collateral <file or URL>` takes the chain and revocation list from a node's
   `/v1/attestation/collateral` instead of the vendor
 - Contracts, from `contracts/`: `forge soldeer install` (once, fetches the pinned dependencies),

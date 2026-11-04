@@ -26,8 +26,14 @@ ARG EDK2_COMMIT=2970e5699ba6267f3384ffab20f96647578aebc8
 # The guest the launch measurement is computed for. The VM must launch with the same values.
 ARG VCPUS=4
 ARG VCPU_TYPE=EPYC-v4
-ARG GUEST_FEATURES=0x1
-ARG CMDLINE="console=ttyS0 ip=dhcp panic=-1"
+# SEV_FEATURES of every vCPU: SNPActive (bit 0) and SecureTSC (bit 9), so the guest's TSC is the
+# processor's, scaled by a factor the firmware sets, which the host cannot change. Each VMSA's
+# SEV_FEATURES is in the launch measurement, so a launch without Secure TSC measures differently.
+ARG GUEST_FEATURES=0x201
+# no-kvmclock: kvm-clock's scale is in memory the host writes, and it outranks the TSC when the
+# host hides the invariant TSC. The kernel has no ACPI processor driver (kernel.config), so nothing
+# reads the host's C-states after boot to mark the TSC unstable.
+ARG CMDLINE="console=ttyS0 ip=dhcp panic=-1 no-kvmclock"
 # The SEV-SNP guest policy a verifier requires: SMT allowed, debug and migration agent off. The
 # launch digest does not cover it, so the report must be checked for it separately.
 ARG POLICY=0x30000

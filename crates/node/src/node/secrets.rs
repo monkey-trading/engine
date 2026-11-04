@@ -22,6 +22,7 @@ use crate::config::{ApiKey, NamedSecret, NodeConfig, SecretUse, Values, VenueCon
 use crate::handover::fetch_secrets;
 use crate::node::keys::{KeyStart, attestor_for, sealer};
 use crate::secrets::{Authority, Listener, SignedBundle};
+use crate::tee::clock::GuestClock;
 use crate::tee::secrets::{Replaced, SecretStore};
 use crate::telemetry::Telemetry;
 
@@ -137,7 +138,8 @@ pub(crate) async fn startup(
              {reason}"
         );
     }
-    let attestor = attestor_for(cfg.tee.provider);
+    let attestor = attestor_for(cfg.tee.provider, &GuestClock::default())
+        .inspect_err(|e| error!(alert = "clocksource_unprotected", "refusing to serve: {e:#}"))?;
     let operator = cfg.operator()?.address;
     let (authority, taking) = watch::channel(Authority::Configured(operator));
     let listener =
@@ -270,7 +272,7 @@ impl<'a> Moving<'a> {
         let (cfg, address, start, store, operator, named) =
             (self.cfg, self.address, self.start, self.store, self.operator, self.named);
         Box::pin(async move {
-            let attestor = attestor_for(cfg.tee.provider);
+            let attestor = attestor_for(cfg.tee.provider, &GuestClock::default())?;
             let sealer = sealer(cfg.tee.provider, start)?;
             let signed = fetch_secrets(cfg, address, sealer.as_ref(), attestor.as_ref(), operator, named).await?;
             store.replace(signed)

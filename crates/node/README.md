@@ -41,7 +41,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   reconciliation that pauses withdrawal signatures while trading continues
 - Attestation through Linux configfs-tsm, covering TDX and SEV-SNP, or a clearly marked mock: the
   report data is the SHA-256 of a served bundle of the enclave address, the config file's SHA-256,
-  and the TLS key's hash
+  and the TLS key's hash; with configfs-tsm a start refuses, raising `clocksource_unprotected`,
+  unless the guest kernel times on the TSC, the clock Secure TSC keeps the host from scaling, in
+  the frequency the hardware reports
 - A `production` cargo feature that refuses mock TEE, custody, and feed providers, and an API
   without `[api.tls.acme]`, at config load
 - Trusted time: every stamp is checked against signed Roughtime readings that independent servers
@@ -521,8 +523,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/test_tracing.rs` — the tracing setup the test collectors share: one process-wide
   interested subscriber, so no callsite can be cached uninteresting and a collector never
   silently misses an alert or line
-- `src/tee/mod.rs` — the enclave key, signatures, and attestation providers; the attestation and its
-  bundle are `engine-verify`'s
+- `src/tee/clock.rs` — the start check that the guest kernel times on the TSC, in the frequency
+  the hardware reports; the attestation and its bundle are `engine-verify`'s
+- `src/tee/mod.rs` — the enclave key, signatures, and attestation providers; the attestation and
+  its bundle are `engine-verify`'s
 - `src/tee/keys.rs` — the key set a restart keeps and an upgrade hands over: the signing key, the
   TLS key, the ACME account, the certificate, and the predecessor's final checkpoint
 - `src/tee/sealing.rs` — the sealed key file, AES-256-GCM under the platform's derived key, and the

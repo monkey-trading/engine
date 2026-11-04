@@ -268,6 +268,7 @@ release_toml() {
 name = "dev-production-secrets"
 launch_digest = "0x$1"
 policy = "0x0"
+guest_features = "0x201"
 [minimum_tcb]
 boot_loader = 0
 tee = 0

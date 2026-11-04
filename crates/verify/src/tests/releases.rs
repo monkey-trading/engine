@@ -59,6 +59,7 @@ fn each_release_check_refuses_a_quote_outside_it() {
             (|r: &mut ReleaseManifest| r.launch_digest = [0x1e; 48]) as fn(&mut ReleaseManifest),
             "the quote's launch measurement matches no release launch digest",
         ),
+        ("guest features", |r| r.guest_features = 0x1, "the release launches without Secure TSC"),
         ("policy", |r| r.policy = POLICY + 1, "the quote's guest policy 0x0000000000030000 differs"),
         ("TCB", |r| r.minimum_tcb.microcode = 206, "the quote's reported TCB"),
         ("config", |r| r.config_hashes.clear(), "the bundle's configuration hash matches no release configuration"),
@@ -68,6 +69,37 @@ fn each_release_check_refuses_a_quote_outside_it() {
         let err = verify(&attestation, &[release], &collateral, now()).unwrap_err();
         assert!(err.to_string().starts_with(message), "{what}: {err:#}");
     }
+}
+
+#[test]
+fn a_launch_without_secure_tsc_verifies_against_no_release() {
+    // A launch without Secure TSC measures to its own digest. A manifest naming that digest is
+    // still refused unless its guest_features carry Secure TSC: the verifier checks the features
+    // the manifest states, and the digest link comes from reproducing the launch measurement.
+    let enclave = enclave();
+    let chain = test_chain(enclave.chip_id, REPORTED_TCB);
+    let collateral = collateral_of(&chain, &crl_revoking(&chain, &[]));
+    let digest = [0x5f; 48];
+    let report = forged_report(&chain, digest, enclave.bundle.report_data(), enclave.chip_id);
+    let attestation = attestation(&enclave.bundle, &report);
+    let launched_with = |guest_features| ReleaseManifest { launch_digest: digest, guest_features, ..release() };
+
+    // No features, SNPActive alone, with DebugSwap, SecureTSC alone, and every other bit up to 9.
+    for features in [0x0, 0x1, 0x21, 0x200, 0x1ff, 0x3fe] {
+        let err = verify(&attestation, &[launched_with(features)], &collateral, now()).unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            format!("the release launches without Secure TSC: its guest features 0x{features:x} lack 0x201")
+        );
+    }
+    for features in [GUEST_FEATURES, 0x221, 0x3ff] {
+        verify(&attestation, &[launched_with(features)], &collateral, now())
+            .unwrap_or_else(|err| panic!("guest features 0x{features:x} refused: {err:#}"));
+    }
+    // Independent of the features check: the image's own release names another digest, and against
+    // this quote that stays a plain launch-digest mismatch.
+    let err = verify(&attestation, &[release()], &collateral, now()).unwrap_err();
+    assert_eq!(format!("{err:#}"), "the quote's launch measurement matches no release launch digest");
 }
 
 // ── Helpers ──

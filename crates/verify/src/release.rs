@@ -1,6 +1,7 @@
 //! The release manifest a verifier checks an attestation against: what a published release
-//! measured at launch, the guest policy and minimum TCB it requires, and the configuration
-//! hashes it runs with. A release publishes it alongside its image files.
+//! measured at launch and the SEV features that measurement covers, the guest policy and minimum
+//! TCB it requires, and the configuration hashes it runs with. A release publishes it alongside its
+//! image files.
 
 use std::collections::BTreeMap;
 
@@ -15,6 +16,7 @@ use crate::report::Tcb;
 /// name = "v0.1.0"
 /// launch_digest = "0x…"    # 48 bytes, measurement.json's launch_digest
 /// policy = "0x30000"       # the guest policy, measurement.json's policy
+/// guest_features = "0x201" # each vCPU's SEV_FEATURES, measurement.json's guest_features
 ///
 /// [minimum_tcb]
 /// boot_loader = 0
@@ -36,6 +38,10 @@ pub struct ReleaseManifest {
     /// The guest policy the release launches with, `measurement.json`'s policy.
     #[serde(deserialize_with = "deserialize_u64_hex")]
     pub policy: u64,
+    /// The SEV_FEATURES every vCPU launches with, `measurement.json`'s guest features. The report
+    /// does not carry them; the launch digest covers each vCPU's, so it holds them to this value.
+    #[serde(deserialize_with = "deserialize_u64_hex")]
+    pub guest_features: u64,
     /// The lowest reported TCB a quote from this release is accepted at.
     pub minimum_tcb: MinimumTcb,
     /// SHA-256 of each configuration file the release runs with, by the file's published name.
@@ -133,6 +139,7 @@ mod tests {
 name = "test-release-v1"
 launch_digest = "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
 policy = "0x30000"
+guest_features = "0x201"
 
 [minimum_tcb]
 boot_loader = 0
@@ -155,6 +162,7 @@ microcode = 115
         assert_eq!(manifest.launch_digest[0], 1);
         assert_eq!(manifest.launch_digest[47], 0x30);
         assert_eq!(manifest.policy, 0x30000);
+        assert_eq!(manifest.guest_features, 0x201);
         assert_eq!(manifest.minimum_tcb.snp, 8);
         assert_eq!(manifest.config_name(&[0xaa; 32]), Some("node.toml"));
         assert_eq!(manifest.config_name(&[0xbb; 32]), None);
@@ -167,9 +175,17 @@ microcode = 115
         let renamed_key = MANIFEST.replacen("name = ", "title = ", 1);
         let extra_key = MANIFEST.replacen("snp = 8", "snp = 8\nother = 1", 1);
         let bad_hex = MANIFEST.replacen("launch_digest = \"0x01", "launch_digest = \"0xzz", 1);
-        for manifest in
-            [long_digest.as_str(), bad_policy.as_str(), renamed_key.as_str(), extra_key.as_str(), bad_hex.as_str()]
-        {
+        let no_features = MANIFEST.replacen("guest_features = \"0x201\"\n", "", 1);
+        let bad_features = MANIFEST.replacen("guest_features = \"0x201\"", "guest_features = \"0xsecure\"", 1);
+        for manifest in [
+            long_digest.as_str(),
+            bad_policy.as_str(),
+            renamed_key.as_str(),
+            extra_key.as_str(),
+            bad_hex.as_str(),
+            no_features.as_str(),
+            bad_features.as_str(),
+        ] {
             assert!(toml::from_str::<ReleaseManifest>(manifest).is_err(), "accepted {manifest}");
         }
     }

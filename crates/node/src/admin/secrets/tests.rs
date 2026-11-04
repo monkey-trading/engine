@@ -20,7 +20,7 @@ fn manifest(name: &str, launch_digest: [u8; 48], config: [u8; 32]) -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("release.toml");
     let text = format!(
-        "name = 'test-release'\nlaunch_digest = '0x{}'\npolicy = '0x0'\n\
+        "name = 'test-release'\nlaunch_digest = '0x{}'\nguest_features = '0x201'\npolicy = '0x0'\n\
          [minimum_tcb]\nboot_loader = 0\ntee = 0\nsnp = 0\nmicrocode = 0\n\
          [config_hashes]\n'node.toml' = '0x{}'\n",
         hex::encode(launch_digest),
@@ -280,6 +280,7 @@ fn a_hardware_quote_must_match_the_manifest_and_a_mock_one_never_does() {
     let release = |digest: [u8; 48], policy: u64, tcb: engine_verify::MinimumTcb| ReleaseManifest {
         name: "hardware".into(),
         launch_digest: digest,
+        guest_features: engine_verify::fixtures::GUEST_FEATURES,
         policy,
         minimum_tcb: tcb,
         config_hashes: [("node.toml".to_owned(), CONFIG)].into_iter().collect(),

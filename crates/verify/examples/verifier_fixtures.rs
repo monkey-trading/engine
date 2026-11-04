@@ -43,7 +43,7 @@ fn main() -> anyhow::Result<()> {
     other_chip[0] ^= 1;
     let good = collateral_of(&chain, &crl_revoking(&chain, &[]));
     let foreign = RelayedCollateral { vcek: vcek_for(&chain, other_chip, REPORTED_TCB).der().to_vec(), ..good.clone() };
-    let files: [(&str, Vec<u8>); 15] = [
+    let files: [(&str, Vec<u8>); 16] = [
         ("root.pem", pem(&chain.ark).into_bytes()),
         ("attestation.json", report(LAUNCH_DIGEST, &bundle)?.into_bytes()),
         ("mock.json", serde_json::to_vec(&mock)?),
@@ -53,6 +53,12 @@ fn main() -> anyhow::Result<()> {
         ("release.toml", release_toml().into_bytes()),
         ("previous-release.toml", previous_release().into_bytes()),
         ("high-tcb-release.toml", release_toml().replace("microcode = 115", "microcode = 206").into_bytes()),
+        (
+            "no-secure-tsc-release.toml",
+            release_toml()
+                .replace(&format!("guest_features = \"0x{GUEST_FEATURES:x}\""), "guest_features = \"0x1\"")
+                .into_bytes(),
+        ),
         ("collateral.json", good.to_json()),
         ("collateral-revoked.json", collateral_of(&chain, &crl_revoking(&chain, &[ask_serial])).to_json()),
         ("collateral-foreign-vcek.json", foreign.to_json()),
@@ -93,6 +99,8 @@ fn cases() -> serde_json::Value {
             case("an altered measurement", "altered-measurement.json", release, "collateral.json", false),
             case("a corrupted report signature", "corrupted-signature.json", release, "collateral.json", false),
             case("a TCB below the minimum", "attestation.json", &["high-tcb-release.toml"], "collateral.json", false),
+            case("a release without Secure TSC", "attestation.json", &["no-secure-tsc-release.toml"],
+                "collateral.json", false),
             case("a revoked intermediate", "attestation.json", release, "collateral-revoked.json", false),
             case("a VCEK for another chip", "attestation.json", release, "collateral-foreign-vcek.json", false),
             case("a stale revocation list", "attestation.json", release, "collateral-stale.json", false),

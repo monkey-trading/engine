@@ -21,6 +21,10 @@ differently from another.
   revoking the intermediate, the report's signature by the VCEK, the report data binding the served
   bundle, and the first release in the list whose launch digest, guest policy, minimum TCB, and
   configuration hashes admit the quote
+- A release whose `guest_features` lack SNPActive or SecureTSC admits no quote — the verifier
+  checks the features the manifest states; the report carries no
+  SEV features, but the launch digest covers every vCPU's, so a quote that matches a release's
+  digest launched with that release's features
 - The result names the release, the enclave address, the configuration, and the TLS key hash, and
   carries the validity window: the span of times at which every date check passes
 - With one release, a refusal says which check failed; with several, it names each release's
@@ -59,7 +63,8 @@ differently from another.
 - `src/tests/chain.rs` — the vendor's own intermediates, altered signatures, unsupported
   algorithms, and the revocation list's freshness, issuer, and serial scope
 - `src/tests/ask-*.pem` — the vendor's intermediates, which those tests verify against the roots
-- `src/tests/releases.rs` — release lists: which release is named and how each refuses
+- `src/tests/releases.rs` — release lists: which release is named and how each refuses, and a
+  launch without Secure TSC admitted by none
 - `src/tests/signature.rs` — each branch of the certificate signature check, and the 2048-bit RSA
   minimum at its boundary
 - `examples/verifier_fixtures.rs` — writes the attestation fixtures `scripts/dev-wasm-verifier.sh`

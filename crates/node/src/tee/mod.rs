@@ -26,6 +26,7 @@ use k256::elliptic_curve::Generate;
 use sha2::Sha256;
 use sha3::{Digest, Keccak256};
 
+pub(crate) mod clock;
 pub(crate) mod keys;
 pub(crate) mod sealing;
 pub(crate) mod secrets;

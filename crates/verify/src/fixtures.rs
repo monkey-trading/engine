@@ -32,6 +32,8 @@ pub const VCEK_SERIAL: u64 = 0x8A11CE;
 
 pub const PROCESSOR: &str = "TestProc";
 pub const POLICY: u64 = 0x30000;
+/// SNPActive and SecureTSC, as the image launches with.
+pub const GUEST_FEATURES: u64 = 0x201;
 pub const REPORTED_TCB: Tcb = Tcb { boot_loader: 4, tee: 0, snp: 8, microcode: 205 };
 /// The platform's committed TCB, below the reported one as after a firmware update not yet committed.
 pub const COMMITTED_TCB: Tcb = Tcb { boot_loader: 3, tee: 0, snp: 7, microcode: 200 };
@@ -281,6 +283,7 @@ pub fn release_toml() -> String {
 name = "test-release-v1"
 launch_digest = "0x{}"
 policy = "0x{:x}"
+guest_features = "0x{:x}"
 
 [minimum_tcb]
 boot_loader = 3
@@ -293,6 +296,7 @@ microcode = 115
 "#,
         hex::encode(LAUNCH_DIGEST),
         POLICY,
+        GUEST_FEATURES,
         hex::encode([0xc0; 32])
     )
 }

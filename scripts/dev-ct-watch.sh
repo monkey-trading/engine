@@ -151,6 +151,7 @@ cat > "$work/release.toml" <<EOF
 name = "dev-release"
 launch_digest = "0x$(printf '00%.0s' $(seq 1 48))"
 policy = "0x30000"
+guest_features = "0x201"
 [minimum_tcb]
 boot_loader = 0
 tee = 0

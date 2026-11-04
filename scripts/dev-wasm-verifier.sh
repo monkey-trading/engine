@@ -4,9 +4,9 @@
 # check every fixture and vector with both the package under Node and the `engine` CLI:
 #   1. the test-signed report verifies and names its release, also from a list that starts with the
 #      previous release; a mock quote, an unlisted configuration hash, an altered measurement, a
-#      corrupted report signature, a TCB below the minimum, a revoked intermediate, a VCEK for
-#      another chip, a stale or not yet valid revocation list, and a release list that does not
-#      admit the quote fail;
+#      corrupted report signature, a TCB below the minimum, a release without Secure TSC, a revoked
+#      intermediate, a VCEK for another chip, a stale or not yet valid revocation list, and a
+#      release list that does not admit the quote fail;
 #   2. the verified enclave address is the vectors' signer: each signed response and stream
 #      connection ends as its vector records, and answers from any other key, an unattested signer,
 #      fail;
