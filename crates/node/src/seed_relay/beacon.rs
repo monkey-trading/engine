@@ -145,7 +145,9 @@ impl BeaconApi {
     /// Error cases:
     /// - the transport fails mid-body, or the body is longer than `limit`
     async fn body(&self, mut response: Response, limit: usize) -> anyhow::Result<Vec<u8>> {
-        let mut bytes = Vec::new();
+        // The length the node declares, never past `limit`, saves regrowing a state's buffer.
+        let declared = response.content_length().map_or(0, |length| usize::try_from(length).unwrap_or(limit));
+        let mut bytes = Vec::with_capacity(declared.min(limit));
         while let Some(chunk) = response
             .chunk()
             .await

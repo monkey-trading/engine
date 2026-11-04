@@ -51,7 +51,8 @@ const GENESIS: u64 = 1_700_000_000;
 /// The address the protocol writes each block's parent beacon root from.
 const SYSTEM: Address = alloy::primitives::address!("fffffffffffffffffffffffffffffffffffffffe");
 const FULU: [u8; 4] = [6, 0, 0, 0];
-const ALIAS_OFFSET: U256 = U256::from_limbs([0x1111, 0, 0x1111_0000_0000, 0]);
+/// What Arbitrum adds to an Ethereum contract's address as its messages' sender.
+const ALIAS_OFFSET: Address = alloy::primitives::address!("1111000000000000000000000000000000001111");
 
 #[tokio::test]
 #[ignore = "dev scenario: needs Anvil, Python 3 and `forge build`; run by scripts/dev-seed-relay.sh"]
@@ -59,8 +60,9 @@ async fn dev_scenario_three_daily_seeds_reach_arbitrum_and_a_missing_one_alerts(
     let (_guard, mut alerts, _) = capture_alerts_and_resolutions();
     // Turn `first`'s deadline is an hour after the chains start.
     let first = last_final_turn(GENESIS) + 10;
-    let ethereum = Chain::start(1, draw_deadline(first) - 3600).await;
-    let arbitrum = Chain::start(42161, draw_deadline(first) - 3600).await;
+    // Local chain ids: Anvil applies a public network's hardfork schedule by its id and the time.
+    let ethereum = Chain::start(31337, draw_deadline(first) - 3600).await;
+    let arbitrum = Chain::start(31338, draw_deadline(first) - 3600).await;
     let (relay, receiver, inbox) = deploy_pair(&ethereum, &arbitrum).await;
     let beacon = Beacon::default();
     let server = beacon.serve().await;
@@ -296,6 +298,10 @@ async fn bridge(ethereum: RpcClient, arbitrum: RpcClient, inbox: Address, receiv
     let mut from = 0u64;
     loop {
         let head: U64 = ethereum.request("eth_blockNumber", ()).await.unwrap();
+        if head.to::<u64>() < from {
+            sleep(Duration::from_millis(100)).await;
+            continue;
+        }
         let filter = Filter::new()
             .address(inbox)
             .event_signature(TicketCreated::SIGNATURE_HASH)
@@ -334,7 +340,7 @@ fn node_config(ethereum: &Chain, arbitrum: &Chain, relay: Address, receiver: Add
         .collect();
     cfg.seed_relay = Some(
         toml::from_str(&format!(
-            "chain_id = 1\nrpc_url = '{}'\nrelayer = '{}'\nbeacon_api = '{beacon}'\nrelay = '{relay}'\n\
+            "chain_id = 31337\nrpc_url = '{}'\nrelayer = '{}'\nbeacon_api = '{beacon}'\nrelay = '{relay}'\n\
              receiver = '{receiver}'\npoll_interval = '1s'\nrpc_timeout = '5s'\nstate_timeout = '30s'\n\
              resend_after = '1h'\nl2_max_fee_per_gas = '1'\nmin_balance = '0.1'\n{providers}",
             ethereum.url, ethereum.accounts[1],
@@ -383,7 +389,8 @@ fn free_port() -> u16 {
 
 /// Arbitrum's alias of an Ethereum contract's address.
 fn alias(address: Address) -> Address {
-    let sum = U256::from_be_slice(address.as_slice()).wrapping_add(ALIAS_OFFSET);
+    let offset = U256::from_be_slice(ALIAS_OFFSET.as_slice());
+    let sum = U256::from_be_slice(address.as_slice()).wrapping_add(offset);
     Address::from_slice(&sum.to_be_bytes::<32>()[12..])
 }
 

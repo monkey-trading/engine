@@ -37,6 +37,7 @@ use alloy::sol_types::SolCall;
 use anyhow::{Context, bail, ensure};
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::gauge::Gauge;
+use tokio::task::spawn_blocking;
 use tokio::time::{Instant, MissedTickBehavior, interval};
 use tracing::field::Empty;
 use tracing::{Instrument, Span, debug, error, info, info_span, warn};
@@ -50,7 +51,7 @@ use crate::seed_relay::abi::{ISeedReceiver, ISeedRelay};
 use crate::seed_relay::beacon::BeaconApi;
 use crate::seed_relay::ethereum::{Ethereum, RelayIdentity};
 use crate::seed_relay::schedule::{SECONDS_PER_SLOT, SLOTS_PER_EPOCH, draw_deadline, last_final_turn, seed_epoch};
-use crate::seed_relay::state::{MixProof, prove_mix};
+use crate::seed_relay::state::{MixProof, prove_mixes};
 
 /// The Arbitrum gas a relay's ticket buys: `receiveSeed` costs at most about 70,000 (the forge gas
 /// report), so twice that, with room.
@@ -268,7 +269,7 @@ impl<C: SeedChains> SeedRelayer<C> {
             return;
         }
         if let Err(error) = self.relay(&view, &open).await {
-            self.fail(format!("relaying turn {open:?}'s seed failed: {error:#}"));
+            self.fail(format!("relaying the seeds of turns {open:?} failed: {error:#}"));
         }
     }
 
@@ -363,6 +364,9 @@ impl<C: SeedChains> SeedRelayer<C> {
         let root = header.root();
         let timestamp = self.anchor(&header, root, view.genesis).await?;
         let state = self.chains.state(header.slot).await?;
+        // Hashing a mainnet state takes seconds of CPU, kept off the runtime's workers.
+        let epochs: Vec<u64> = ready.iter().map(|&(_, epoch)| epoch).collect();
+        let proofs = spawn_blocking(move || prove_mixes(&state, &epochs)).await.context("the proof task")??;
         let submission = self.chains.submission_cost(identity.inbox).await?;
         let fees = ISeedRelay::Fees {
             maxSubmissionCost: submission,
@@ -370,8 +374,7 @@ impl<C: SeedChains> SeedRelayer<C> {
             maxFeePerGas: self.l2_max_fee_per_gas,
         };
         let value = submission + U256::from(L2_GAS_LIMIT) * self.l2_max_fee_per_gas;
-        for (turn, epoch) in ready {
-            let proof = prove_mix(&state, epoch)?;
+        for ((turn, epoch), proof) in ready.into_iter().zip(proofs) {
             ensure!(
                 proof.state_root == header.state_root,
                 "the state at slot {} hashes to {}, not the header's {}",

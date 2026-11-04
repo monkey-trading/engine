@@ -155,17 +155,26 @@ impl Field {
 
 /// `MixProof` for the mix at the end of `epoch`, from a serialized Fulu state.
 /// Error cases:
-/// - the bytes are not a Fulu state, or one past the slot at which `randao_mixes` reuses the epoch's
-///   index, or one whose epoch has not ended
+/// - see `prove_mixes`
 pub fn prove_mix(state: &[u8], epoch: u64) -> anyhow::Result<MixProof> {
+    Ok(prove_mixes(state, &[epoch])?.remove(0))
+}
+
+/// A `MixProof` for the mix at the end of each of `epochs`, from a serialized Fulu state hashed once.
+/// Error cases:
+/// - the bytes are not a Fulu state, or one past the slot at which `randao_mixes` reuses an epoch's
+///   index, or one where an epoch has not ended
+pub fn prove_mixes(state: &[u8], epochs: &[u64]) -> anyhow::Result<Vec<MixProof>> {
     let fields = split(state)?;
     let slot = u64::from_le_bytes(fields[SLOT_FIELD].try_into().context("slot")?);
-    let first_after = |epochs: u64| epoch.checked_add(epochs)?.checked_mul(SLOTS_PER_EPOCH);
-    ensure!(first_after(1).is_some_and(|end| slot >= end), "the state's slot {slot} is not past epoch {epoch}");
-    ensure!(
-        first_after(EPOCHS_PER_HISTORICAL_VECTOR).is_none_or(|reuse| slot < reuse),
-        "the state's slot {slot} has reused epoch {epoch}'s mix index"
-    );
+    for &epoch in epochs {
+        let first_after = |epochs: u64| epoch.checked_add(epochs)?.checked_mul(SLOTS_PER_EPOCH);
+        ensure!(first_after(1).is_some_and(|end| slot >= end), "the state's slot {slot} is not past epoch {epoch}");
+        ensure!(
+            first_after(EPOCHS_PER_HISTORICAL_VECTOR).is_none_or(|reuse| slot < reuse),
+            "the state's slot {slot} has reused epoch {epoch}'s mix index"
+        );
+    }
     let roots = FULU.iter().zip(&fields).map(|(field, bytes)| field.root(bytes)).collect::<anyhow::Result<Vec<_>>>()?;
     let (state_root, top_to_fork) = branch(roots.clone(), STATE_DEPTH, FORK_FIELD)?;
     let (_, top_to_mixes) = branch(roots.clone(), STATE_DEPTH, RANDAO_MIXES_FIELD)?;
@@ -174,18 +183,24 @@ pub fn prove_mix(state: &[u8], epoch: u64) -> anyhow::Result<MixProof> {
     let fork_leaves = vec![pack(&fork[..4])[0], pack(&fork[4..8])[0], pack(&fork[8..])[0]];
     let (fork_root, fork_proof) = branch(fork_leaves, FORK_DEPTH, 1)?;
     ensure!(fork_root == roots[FORK_FIELD], "the fork's branch does not give the fork's root");
-    let index = (epoch % EPOCHS_PER_HISTORICAL_VECTOR) as usize;
+    let fork_version: [u8; 4] = fork[4..8].try_into().context("fork version")?;
+    let fork_proof: Vec<B256> = fork_proof.into_iter().chain(top_to_fork).collect();
     let mixes = pack(fields[RANDAO_MIXES_FIELD]);
-    let mix = B256::from(mixes[index]);
-    let (_, mix_proof) = branch(mixes, MIXES_DEPTH, index)?;
-    Ok(MixProof {
-        slot,
-        state_root: B256::from(state_root),
-        fork_version: fork[4..8].try_into().context("fork version")?,
-        fork_proof: fork_proof.into_iter().chain(top_to_fork).collect(),
-        mix,
-        mix_proof: mix_proof.into_iter().chain(top_to_mixes).collect(),
-    })
+    epochs
+        .iter()
+        .map(|&epoch| {
+            let index = (epoch % EPOCHS_PER_HISTORICAL_VECTOR) as usize;
+            let (_, mix_proof) = branch(mixes.clone(), MIXES_DEPTH, index)?;
+            Ok(MixProof {
+                slot,
+                state_root: B256::from(state_root),
+                fork_version,
+                fork_proof: fork_proof.clone(),
+                mix: B256::from(mixes[index]),
+                mix_proof: mix_proof.into_iter().chain(top_to_mixes.iter().copied()).collect(),
+            })
+        })
+        .collect()
 }
 
 /// The state's fields' serializations, in order: each fixed field in place, and each variable one
