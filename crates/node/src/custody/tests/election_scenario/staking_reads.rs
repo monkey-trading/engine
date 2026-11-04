@@ -20,7 +20,7 @@ use engine_core::types::{AccountId, Millis, Side};
 use k256::ecdsa::SigningKey;
 use serde_json::Value;
 
-use super::chain::{Chain, delegateCall, setParametersCall, votesCall};
+use super::chain::{Chain, delegateCall, redelegateCall, setParametersCall, votesCall};
 use super::node::Node;
 use super::operator_share::{FLOOR_UNITS, TRADER_KEY, allocated_of, closed_epoch, declare, next_epoch, round_trip};
 use super::{DIGEST_A, address, dev_parameters, monkey};
@@ -84,7 +84,8 @@ async fn dev_scenario_the_operator_list_and_distribution_history_are_signed_read
     chain.govern(approvals).await;
     for (index, (account, _)) in candidates.iter().enumerate() {
         let to = if index < APPROVED { candidates[(index * 3) % APPROVED].0 } else { candidates[0].0 };
-        chain.send(*account, chain.staking, delegateCall { candidate: to }.abi_encode()).await;
+        let call = delegateCall { candidate: to, amount: monkey(STAKE) };
+        chain.send(*account, chain.staking, call.abi_encode()).await;
     }
     let staked = monkey(STAKE * REGISTERED as u64);
     node.wait("every stake to mirror", move |e| {
@@ -153,9 +154,15 @@ async fn dev_scenario_the_operator_list_and_distribution_history_are_signed_read
         assert_eq!(proof.entitled.0, *total);
     }
 
-    // 6. Ten stakers delegate again, to the second candidate: a later answer shows the new votes.
-    for (account, _) in &candidates[10..20] {
-        chain.send(*account, chain.staking, delegateCall { candidate: candidates[1].0 }.abi_encode()).await;
+    // 6. Ten stakers move their delegation to the second candidate, those not already there: a later
+    //    answer shows the new votes.
+    for (index, (account, _)) in candidates.iter().enumerate().take(20).skip(10) {
+        let from = candidates[(index * 3) % APPROVED].0;
+        if from == candidates[1].0 {
+            continue;
+        }
+        let call = redelegateCall { from, to: candidates[1].0, amount: monkey(STAKE) };
+        chain.send(*account, chain.staking, call.abi_encode()).await;
     }
     let target = chain.view(chain.staking, votesCall { candidate: candidates[1].0 }).await;
     let moved = wait_for_list(&node, &mut answers, |list| list["candidates"][1]["votes"] == target.to_string()).await;

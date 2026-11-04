@@ -51,7 +51,6 @@ sol! {
     function delegate(address candidate, uint256 amount) external;
     function undelegate(address candidate, uint256 amount) external;
     function redelegate(address from, address to, uint256 amount) external;
-    function votes(address candidate) external view returns (uint256);
     function delegationsOf(address account) external view returns (Delegation[]);
     function registrationDigest(address candidate, address adminKey) external view returns (bytes32);
     function register(Registration registration, bytes signature) external;
