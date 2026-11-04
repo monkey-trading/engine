@@ -139,10 +139,13 @@ async fn a_sync_that_finished_inside_the_bound_is_no_hold() {
 
 #[tokio::test(start_paused = true)]
 async fn a_restart_resolves_an_episode_an_earlier_run_left_open() {
-    // The sequencer's first look at the pipeline, here the flush its setup makes, finds nothing
-    // held and resolves whatever episode the router restored.
+    // The running sequencer's first look at the pipeline finds nothing held and resolves whatever
+    // episode the router restored.
     let (_guard, _alerts, mut resolved) = capture_alerts_and_resolutions();
-    let (_seq, _permits, _entered) = held_sequencer("pipeline-held-restart");
+    let (mut seq, _permits, _entered) = held_sequencer("pipeline-held-restart");
+    let (tx, mut rx) = mpsc::channel(4);
+    tx.send(query()).await.unwrap();
+    assert!(matches!(seq.next_request(&mut rx).await.unwrap(), Some(Request::Query(_))));
     let end = resolved.try_recv().expect("the first look with nothing held resolves a leftover episode");
     assert_eq!(end.get("alert_resolved").map(String::as_str), Some("log_sync_held"));
 }
