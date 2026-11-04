@@ -43,6 +43,8 @@ struct Provider {
     down: bool,
     /// Fails the lens calls with this selector only, as a provider that caps the gas of one.
     fails: Option<[u8; 4]>,
+    /// Fails the `candidates` pages from this start, as a gas cap only the later pages reach.
+    fail_from: Option<usize>,
 }
 
 /// `index`'s candidate: addresses and registration order run opposite ways, so a list in the lens's
@@ -56,8 +58,8 @@ fn row(index: usize, total: usize) -> Row {
         bond: U256::from(2_000u64) * U256::from(10).pow(U256::from(18)),
         release: B256::repeat_byte(byte),
         registration: (total - index) as u64,
-        apiHostname: format!("api-{index}.example"),
-        handoverEndpoint: format!("handover-{index}.example:9443"),
+        apiHostname: format!("api-{index}.example").into_bytes().into(),
+        handoverEndpoint: format!("handover-{index}.example:9443").into_bytes().into(),
         votes: U256::from(index as u64 + 1) * U256::from(10).pow(U256::from(18)),
         eligible: index.is_multiple_of(2),
         role: u8::from(index == 1) * 2,
@@ -117,7 +119,7 @@ impl Provider {
             overview: overview(count),
             rows: (0..count).map(|index| row(index, count)).collect(),
         };
-        Self { model, calls: Arc::default(), down: false, fails: None }
+        Self { model, calls: Arc::default(), down: false, fails: None, fail_from: None }
     }
 
     fn calls(&self) -> Vec<[u8; 4]> {
@@ -169,6 +171,10 @@ impl VaultReader for Provider {
             s if s == overviewCall::SELECTOR => overviewCall::abi_encode_returns(&model.overview).into(),
             s if s == candidatesCall::SELECTOR => {
                 let call = candidatesCall::abi_decode(&data)?;
+                anyhow::ensure!(
+                    self.fail_from.is_none_or(|from| call.start < U256::from(from)),
+                    "the page is over the gas cap"
+                );
                 let start = usize::try_from(call.start)?.min(model.rows.len());
                 let end = usize::try_from(call.limit)?.saturating_add(start).min(model.rows.len());
                 candidatesCall::abi_encode_returns(&model.rows[start..end].to_vec()).into()
@@ -180,7 +186,9 @@ impl VaultReader for Provider {
 
 /// A reader over three providers, honest or as `tweak` leaves them, and its feed.
 fn reader(providers: [Provider; 3], stale_after: Duration) -> (OperatorsReader<Provider>, OperatorsFeed) {
-    let quorum = Quorum::new(providers.into_iter().enumerate().map(|(i, p)| (format!("p{i}"), p)).collect()).unwrap();
+    let quorum = Quorum::new(providers.into_iter().enumerate().map(|(i, p)| (format!("p{i}"), p)).collect())
+        .unwrap()
+        .named("operators", false);
     OperatorsReader::new(quorum, (CHAIN_ID, USDC), (REGISTRY, LENS), Duration::from_secs(60), stale_after)
 }
 
@@ -292,16 +300,71 @@ async fn one_provider_that_lost_the_blocks_state_does_not_stop_the_read() {
 }
 
 #[tokio::test]
-async fn each_lens_call_keeps_its_own_quorum_episode_and_none_pages_critical() {
-    let mut providers = honest(3);
+async fn a_lens_call_that_fails_keeps_its_own_episode_at_warning_under_the_operators_quorum() {
+    let mut providers = honest(CANDIDATE_LIMIT);
     providers.iter_mut().for_each(|provider| provider.fails = Some(candidatesCall::SELECTOR));
+    let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
     let (reader, _) = reader(providers, Duration::from_secs(60));
-    // The registry and the overview win their votes; the pages never do.
-    assert!(format!("{:#}", reader.read().await.unwrap_err()).contains("quorum lost for lens_candidates"));
-    assert_eq!(reader.quorum.lost_operations(), ["lens_candidates"]);
-    assert_eq!(reader.quorum.lost_operations().len(), 1, "a call that wins its vote ends no other call's episode");
+    // The registry and the overview win their votes; the first page never does.
+    assert!(format!("{:#}", reader.read().await.unwrap_err()).contains("quorum lost for lens_candidates_0"));
+    assert_eq!(reader.quorum.lost_operations(), ["lens_candidates_0"]);
     reader.read().await.unwrap_err();
-    assert_eq!(reader.quorum.lost_operations(), ["lens_candidates"]);
+    assert_eq!(reader.quorum.lost_operations(), ["lens_candidates_0"]);
+    assert_eq!((logs.warnings("custody_rpc_quorum_lost"), logs.critical("custody_rpc_quorum_lost")), (1, 0));
+    assert_eq!(logs.count("quorum=\"operators\""), logs.count("alert=\"custody_rpc_quorum_lost\""));
+}
+
+#[tokio::test]
+async fn a_page_that_wins_its_vote_ends_no_other_pages_episode() {
+    // The first page answers and the second never does, as under a gas cap that the larger one hits.
+    let mut providers = honest(CANDIDATE_LIMIT);
+    for provider in &mut providers {
+        provider.fail_from = Some(25);
+    }
+    let (reader, _) = reader(providers, Duration::from_secs(60));
+    reader.read().await.unwrap_err();
+    reader.read().await.unwrap_err();
+    assert_eq!(
+        reader.quorum.lost_operations(),
+        ["lens_candidates_1"],
+        "page 0 winning again resolves nothing of page 1"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_read_leaves_the_last_list_up_and_a_later_one_replaces_it() {
+    let providers = honest(2);
+    let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
+    let (mut reader, feed) = reader(providers.clone(), Duration::from_secs(60));
+    reader.refresh().await;
+    let first = feed.current().expect("the first read serves");
+    assert_eq!(first.candidate_count(), 2);
+    // Every provider now loses the block's state.
+    let down: Vec<_> = providers.iter().cloned().map(|provider| Provider { down: true, ..provider }).collect();
+    reader.quorum = Quorum::new(down.into_iter().enumerate().map(|(i, p)| (format!("p{i}"), p)).collect())
+        .unwrap()
+        .named("operators", false);
+    reader.refresh().await;
+    assert_eq!(*feed.current().expect("the failed read leaves the list up"), *first);
+    assert_eq!((logs.warnings("operators_read_failed"), logs.critical("operators_read_failed")), (1, 0));
+}
+
+#[tokio::test]
+async fn a_candidate_whose_endpoint_is_not_utf8_is_listed_and_the_others_still_read() {
+    let mut providers = honest(3);
+    for provider in &mut providers {
+        provider.model.rows[1].handoverEndpoint = vec![b'h', 0xff, b':'].into();
+        provider.model.rows[1].apiHostname = vec![0xc3].into();
+    }
+    let (reader, _) = reader(providers, Duration::from_secs(60));
+    let list = json_of(&reader.read().await.unwrap());
+    let candidates = list["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 3);
+    // Registration order runs opposite to the lens's, so the second row listed is the second last.
+    let bad = candidates.iter().find(|c| c["address"] == format!("{:#x}", Address::repeat_byte(2))).unwrap();
+    assert_eq!(bad["handover_endpoint"], "h\u{fffd}:");
+    assert_eq!(bad["api_hostname"], "\u{fffd}");
+    assert!(candidates.iter().filter(|c| c["api_hostname"].as_str().unwrap().ends_with(".example")).count() == 2);
 }
 
 #[tokio::test]

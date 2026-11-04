@@ -30,6 +30,8 @@ use crate::verify::{Expected, SentRequest, verify_response_files};
 /// Candidates registered, and approved by the timelock, under a cap raised to the registry's limit.
 const REGISTERED: usize = 40;
 const APPROVED: usize = 35;
+/// The chain the scenario runs on, which the node signs its answers for.
+const CHAIN_ID: u64 = 31337;
 /// What each candidate stakes, and bonds of it.
 const STAKE: u64 = 2_000;
 const BOND: u64 = 1_000;
@@ -46,8 +48,9 @@ async fn dev_scenario_the_operator_list_and_distribution_history_are_signed_read
     let enclave = Arc::new(EnclaveKey::generate());
     let mut chain = Chain::start(Address::from(enclave.address()), address(&deployer)).await;
     chain.deploy_lens().await;
+    let signer = AccountId(enclave.address());
     let mut node = Node::start_posting_checkpoints(&chain, enclave).await;
-    let mut answers = Answers::new();
+    let mut answers = Answers::new(signer, AccountId(chain.vault.into()));
 
     // 1. The house holds the floor and a client a million, both final.
     chain.fund(None, U256::from(FLOOR_UNITS)).await;
@@ -177,24 +180,24 @@ async fn dev_scenario_the_operator_list_and_distribution_history_are_signed_read
 struct Answers {
     n: u32,
     dir: Option<PathBuf>,
+    /// The deployment the node signs for: its enclave address, and the vault on the scenario's chain.
+    signer: AccountId,
+    vault: AccountId,
 }
 
 impl Answers {
-    fn new() -> Self {
+    fn new(signer: AccountId, vault: AccountId) -> Self {
         let dir = std::env::var_os("STAKING_READS_ANSWERS").map(PathBuf::from);
         if let Some(dir) = &dir {
             std::fs::create_dir_all(dir).unwrap();
         }
-        Self { n: 0, dir }
+        Self { n: 0, dir, signer, vault }
     }
 
     /// Writes what `engine verify-response` needs about the deployment.
     fn finish(&self) {
         let Some(dir) = &self.dir else { return };
-        let cfg = crate::test_support::dev_config();
-        let signer = AccountId(EnclaveKey::test_key().address());
-        std::fs::write(dir.join("deployment"), format!("{signer} {} {}\n", cfg.custody.chain_id, cfg.custody.vault))
-            .unwrap();
+        std::fs::write(dir.join("deployment"), format!("{} {CHAIN_ID} {}\n", self.signer, self.vault)).unwrap();
     }
 }
 
@@ -216,11 +219,10 @@ impl Node {
             (dir.join(format!("{}.headers", answers.n)), dir.join(format!("{}.body", answers.n)));
         std::fs::write(&header_file, saved).unwrap();
         std::fs::write(&body_file, &body).unwrap();
-        let cfg = crate::test_support::dev_config();
         let expected = Expected {
-            signer: AccountId(EnclaveKey::test_key().address()),
-            chain_id: cfg.custody.chain_id,
-            vault: cfg.custody.vault.parse().unwrap(),
+            signer: answers.signer,
+            chain_id: CHAIN_ID,
+            vault: answers.vault,
             challenge: crate::verify::parse_challenge_arg(&challenge).unwrap(),
         };
         let request = SentRequest { method: "GET", path_and_query: path, body: &[] };

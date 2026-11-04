@@ -56,6 +56,9 @@ contract RegistryLens {
         Role role;
     }
 
+    /// @notice The registry's `parameters` getter reverted, so the lens has none to return.
+    error ParametersUnreadable();
+
     /// @notice The registry this lens reads.
     OperatorRegistry public immutable registry;
 
@@ -87,7 +90,7 @@ contract RegistryLens {
     /// of nine values does not fit the stack.
     function _parameters() private view returns (OperatorRegistry.Parameters memory) {
         (bool ok, bytes memory out) = address(registry).staticcall(abi.encodeCall(registry.parameters, ()));
-        require(ok, "registry parameters unreadable");
+        if (!ok) revert ParametersUnreadable();
         return abi.decode(out, (OperatorRegistry.Parameters));
     }
 

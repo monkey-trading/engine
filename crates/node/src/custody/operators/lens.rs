@@ -50,8 +50,8 @@ sol! {
         uint256 bond;
         bytes32 release;
         uint64 registration;
-        string apiHostname;
-        string handoverEndpoint;
+        bytes apiHostname;
+        bytes handoverEndpoint;
         uint256 votes;
         bool eligible;
         uint8 role;
@@ -60,6 +60,10 @@ sol! {
     function candidates(uint256 start, uint256 limit) external view returns (Row[]);
     function registry() external view returns (address);
 }
+
+// The hostname and endpoint are `string` in the contract, which encodes as `bytes` does, and the
+// registry checks their length only: decoding them as `bytes` keeps one candidate's invalid UTF-8
+// from failing the read of every page it sits in.
 
 /// The most listed candidates the registry allows (`OperatorRegistry.CANDIDATE_LIMIT`).
 pub(crate) const CANDIDATE_LIMIT: usize = 100;
@@ -280,8 +284,8 @@ fn candidate(row: &Row) -> anyhow::Result<CandidateView> {
         self_bond: units(row.bond, "a self-bond")?,
         release: row.release,
         registration: row.registration,
-        api_hostname: row.apiHostname.clone(),
-        handover_endpoint: row.handoverEndpoint.clone(),
+        api_hostname: String::from_utf8_lossy(&row.apiHostname).into_owned(),
+        handover_endpoint: String::from_utf8_lossy(&row.handoverEndpoint).into_owned(),
         votes: units(row.votes, "a candidate's votes")?,
         eligible: row.eligible,
         role,

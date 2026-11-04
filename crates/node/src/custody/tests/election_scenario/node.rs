@@ -28,6 +28,7 @@ use tower::ServiceExt;
 
 use super::chain::Chain;
 use super::{COOLDOWN_SECS, DISTRIBUTION_EPOCH_SECS, T0_SECS};
+use crate::api::Signing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, router};
 use crate::checkpoints::staking_scenario::access::Source;
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
@@ -42,6 +43,7 @@ use crate::log::{CheckpointDomain, CheckpointParent, Manifest};
 use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{CHECKPOINT_EVERY, dev_config, sample_around, scratch_dir, sequencer_config};
+use crate::trusted_time::{Sample, TrustedClock};
 
 /// Commands between the checkpoints a scenario that posts them signs: few enough to reach one with
 /// a handful of ticks, and more than the custody watcher's progress after each post sequences, so
@@ -62,6 +64,8 @@ pub(super) struct Node {
     /// The operator list's reader, when the chain has a lens.
     operators: Option<JoinHandle<anyhow::Result<()>>>,
     history: JoinHandle<anyhow::Result<()>>,
+    /// The trusted time sample the API's signing reads, kept current as the clock moves.
+    samples: watch::Sender<Option<Sample>>,
     key: Arc<EnclaveKey>,
     posting: bool,
 }
@@ -209,6 +213,7 @@ impl Node {
             config_sha256: [0; 32],
             tls_public_key_sha256: [0; 32],
         };
+        let (samples, samples_rx) = watch::channel(Some(sample_around(clock.as_ref())));
         let unlimited = |_: RateLimit| Quota::per_second(NonZeroU32::MAX);
         let state = ApiState {
             tx,
@@ -232,7 +237,13 @@ impl Node {
             collateral: None,
             listing: Default::default(),
             operators: feed,
-            signing: crate::test_support::signing(),
+            signing: Arc::new(Signing::new(
+                key.clone(),
+                31337,
+                operator.vault,
+                Duration::from_secs(5),
+                TrustedClock::new(clock.clone(), samples_rx, dev_config().time.max_drift),
+            )),
         };
         Node {
             state,
@@ -244,6 +255,7 @@ impl Node {
             access: source,
             operators,
             history: history_task,
+            samples,
             key,
             posting: post_checkpoints,
         }
@@ -253,6 +265,7 @@ impl Node {
     pub(super) async fn advance_to(&mut self, ms: Millis) {
         let by = u64::try_from(ms - self.clock.now_ms()).expect("time only moves forward");
         self.clock.advance(Duration::from_millis(by));
+        self.samples.send_replace(Some(sample_around(self.clock.as_ref())));
         self.state.tx.send(Request::TimeSample(sample_around(self.clock.as_ref()))).await.unwrap();
         self.state.clock = Arc::new(crate::clock::test_clock::TestClock::at(ms));
     }

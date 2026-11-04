@@ -408,7 +408,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking, operator election, operator's share, standby and handover dev scenarios, the enclave key
+  deposit finality scenarios, the MONKEY staking, operator election, operator's share, staking reads, standby and handover dev scenarios, the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing

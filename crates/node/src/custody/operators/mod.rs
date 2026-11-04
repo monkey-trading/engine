@@ -33,6 +33,11 @@ use crate::custody::rpc::VaultRpc;
 /// gas cap (one call for all 100 costs about 4M gas).
 const PAGE: usize = 25;
 
+/// The quorum operation each page of candidates votes under: a page that wins its vote ends no other
+/// page's alert. At the registry's limit of 100 there are four.
+const PAGE_OPERATIONS: [&str; lens::CANDIDATE_LIMIT.div_ceil(PAGE)] =
+    ["lens_candidates_0", "lens_candidates_1", "lens_candidates_2", "lens_candidates_3"];
+
 /// A list and when it was read.
 struct Read {
     list: Arc<OperatorList>,
@@ -121,21 +126,27 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
         ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             ticks.tick().await;
-            match self.read().await {
-                Ok(list) => {
-                    debug!(
-                        block = list.block.number,
-                        candidates = list.candidate_count(),
-                        "operator list read at a final block"
-                    );
-                    info!(alert_resolved = "operators_read_failed", "the operator list reads again");
-                    self.reads.send_replace(Some(Arc::new(Read { list: Arc::new(list), at: Instant::now() })));
-                }
-                Err(error) => warn!(
-                    alert = "operators_read_failed",
-                    "the operator list cannot be read at a final block; the last one stays up until it is stale: {error:#}"
-                ),
+            self.refresh().await;
+        }
+    }
+
+    /// One attempt: a list read replaces the one served, and a read that fails is a Warning that leaves
+    /// it up.
+    pub(super) async fn refresh(&self) {
+        match self.read().await {
+            Ok(list) => {
+                debug!(
+                    block = list.block.number,
+                    candidates = list.candidate_count(),
+                    "operator list read at a final block"
+                );
+                info!(alert_resolved = "operators_read_failed", "the operator list reads again");
+                self.reads.send_replace(Some(Arc::new(Read { list: Arc::new(list), at: Instant::now() })));
             }
+            Err(error) => warn!(
+                alert = "operators_read_failed",
+                "the operator list cannot be read at a final block; the last one stays up until it is stale: {error:#}"
+            ),
         }
     }
 
@@ -186,7 +197,9 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
             let start = U256::from(rows.len());
             let limit = U256::from(PAGE);
             let page = candidatesCall::abi_decode_returns_validate(
-                &self.call("lens_candidates", at, candidatesCall { start, limit }.abi_encode()).await?,
+                &self
+                    .call(PAGE_OPERATIONS[rows.len() / PAGE], at, candidatesCall { start, limit }.abi_encode())
+                    .await?,
             )
             .context("decoding a page of the lens's candidates")?;
             ensure!(
