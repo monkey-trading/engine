@@ -202,7 +202,11 @@ shortened:
    on; on chain the installation takes effect at once, and the engine mirrors it: its key signs
    admin commands seven days after the mirror is logged, with no further step. Check:
    `operatorInEffect()` names the new key; `curl -sf $API/v1/operator | jq .operator` shows it from
-   then.
+   then. The installation leaves the failed operator's candidacy listed and approved; to upgrade
+   once rotation is on again, the installed operator needs a candidacy of its own
+   ([operator-candidate.md](operator-candidate.md), section 5). If the failed operator holds the
+   one place past a full candidate cap, the installed operator lists only after the timelock
+   withdraws the failed operator's approval or raises the cap.
 6. **Boot with the old key in config; restart to the new.** Recovery refuses a config naming a key
    the log has not rotated to, so the fallback node boots with the failed operator's key in its
    config — it signs nothing there — and only after the installation has applied (seven days) does

@@ -237,7 +237,8 @@ the release it leaves, so moving back needs a new approval. The running release 
    executed); `ElectionPending` (an election or promotion that replaces you or names you waits to
    take effect: upgrade after it takes effect, or let the successor run its own release);
    `CandidateCapReached` (your candidacy was delisted and the list is full, past the one place the
-   operator in effect may take beyond the cap).
+   operator in effect may take beyond the cap; after an installation, the operator it replaced may
+   hold that place, and the timelock frees one by withdrawing an approval or raising the cap).
    Check: the third field of `operatorInEffect()` and `cast call $VAULT 'currentRelease()(bytes32)'`
    both equal `cast keccak $(cast concat-hex $DIGEST $CONFIG_HASH)`.
 4. **Fold the change into the vault's generation** (anyone may; `B` waits for it up to a minute,
@@ -258,6 +259,15 @@ To roll back before `B` takes the keys, the timelock approves `A` again (section
 move the candidacy back to `A` (steps 3 and 4) and make `A` restart-safe again as in
 deploy-and-rollback.md, section 4. A candidate that is not the operator moves its release the same
 way, steps 2 and 3, with no effect on the vault.
+
+An operator the timelock installed ([standby.md](standby.md), "When no standby qualifies")
+upgrades the same way once it is a registered candidate: register first (section 1), since
+`setRelease` reverts `NotRegistered` for an operator with no candidacy. Until its first move, the
+registry names the release the installation named, and that move withdraws the approval of both
+that release and the candidacy's. Releases the timelock approved for the candidacy before the
+installation stay approved, so withdraw any the operator should not move to. The installation
+changes no candidacy: the operator it replaced keeps its release, approvals and listing, and its
+moves no longer reach the vault.
 
 ## Open questions
 

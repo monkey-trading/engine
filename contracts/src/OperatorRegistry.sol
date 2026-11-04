@@ -421,8 +421,10 @@ contract OperatorRegistry {
     /// so no release holds the keys without the timelock's delay. When the caller is the operator in
     /// effect, its operator release moves too: while rotation is on the vault names the new release
     /// at once, the running release hands it the keys and the log, and `syncRelease` folds the change
-    /// into the vault's generation. A move is one-way: the approval of the release the candidacy
-    /// leaves is withdrawn, so moving back needs the timelock to approve it again, as naming a
+    /// into the vault's generation. An operator the timelock installed moves the same way. A move
+    /// is one-way: the approval of each release it leaves is withdrawn — the candidacy's, and for
+    /// the operator in effect the one it ran, which a deployment or an installation may have named
+    /// apart from its candidacy — so moving back needs the timelock to approve it again, as naming a
     /// release does while rotation is off. A candidate whose registered release was unapproved is
     /// listed again, under the candidate cap. While an election or promotion waits to take effect,
     /// neither the operator it replaces nor the candidate it names may move: the election keeps the
@@ -435,13 +437,12 @@ contract OperatorRegistry {
         _settle();
         bool operator = msg.sender == current.candidate;
         if (pending.effectiveAt != 0 && (operator || msg.sender == pending.candidate)) revert ElectionPending();
-        bytes32 left = registered.release;
-        if (left != release) {
-            delete releaseApproved[keccak256(abi.encode(msg.sender, left))];
-            emit ReleaseApprovalChanged(msg.sender, left, false);
-        }
+        _leave(msg.sender, registered.release, release);
         registered.release = release;
-        if (operator) current.release = release;
+        if (operator) {
+            _leave(msg.sender, current.release, release);
+            current.release = release;
+        }
         emit CandidateReleaseChanged(msg.sender, release, launchDigest, configHash);
         if (listed[msg.sender] == 0) _enlist(msg.sender);
     }
@@ -559,7 +560,9 @@ contract OperatorRegistry {
     /// is gone and no election can move, since an election needs rotation on and the minimum term
     /// (#502). Rotation must be off — while it is on, elections and promotions move the role — so a
     /// pending election is already cancelled. The installed operator takes effect at once; the engine
-    /// mirrors this with its seven-day log notice before its key signs.
+    /// mirrors this with its seven-day log notice before its key signs. No candidacy changes: the
+    /// replaced operator keeps its release, approvals and listing, and the installed candidate,
+    /// when registered, keeps its own and moves with `setRelease` like any operator in effect.
     function installOperator(address candidate, address adminKey, bytes calldata launchDigest, bytes32 configHash)
         external
         onlyGovernance
@@ -750,15 +753,26 @@ contract OperatorRegistry {
     /// @dev Adds registered `candidate` to `candidateList`, refusing a full approved cap. Only
     /// approved candidates count toward the cap, so unapproved registrations cannot fill it. The
     /// operator in effect may take one place beyond it, so a full list never blocks its listing,
-    /// and with it its upgrade. The exemption reads the pending-or-current operator, not the
-    /// settled `current`: an election past its time that nobody settled yet has already moved the
-    /// operator in effect, and entry points that enlist do not settle first.
+    /// and with it its upgrade — unless an operator an installation replaced took that place
+    /// first: the list stays bounded at the cap plus one, and the timelock frees a place by
+    /// withdrawing an approval or raising the cap. The exemption reads the pending-or-current
+    /// operator, not the settled `current`: an election past its time that nobody settled yet has
+    /// already moved the operator in effect, and entry points that enlist do not settle first.
     function _enlist(address candidate) private {
         Parameters memory p = parameters;
         uint256 places = uint256(p.maxCandidates) + (candidate == _named().candidate ? 1 : 0);
         if (candidateList.length >= places) revert CandidateCapReached(p.maxCandidates);
         candidateList.push(candidate);
         listed[candidate] = candidateList.length;
+    }
+
+    /// @dev Withdraws `candidate`'s approval of `left`, a release its move to `release` leaves,
+    /// reporting the withdrawal when there was an approval to withdraw.
+    function _leave(address candidate, bytes32 left, bytes32 release) private {
+        bytes32 key = keccak256(abi.encode(candidate, left));
+        if (left == release || !releaseApproved[key]) return;
+        delete releaseApproved[key];
+        emit ReleaseApprovalChanged(candidate, left, false);
     }
 
     /// @dev Removes `candidate` from `candidateList`, keeping it registered.

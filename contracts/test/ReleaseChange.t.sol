@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.36;
 
+import {Vm} from "forge-std/Test.sol";
+
 import {OperatorRegistry} from "../src/OperatorRegistry.sol";
 import {Vault} from "../src/Vault.sol";
 import {RegistryTest} from "./helpers/RegistryTest.sol";
 
-/// A candidate's move to a release the timelock approved for it, and the operator in effect's
-/// upgrade through it while rotation is on.
+/// A candidate's move to a release the timelock approved for it, the operator in effect's upgrade
+/// through it while rotation is on, and how moves meet the timelock's installation of an operator.
 contract ReleaseChangeTest is RegistryTest {
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -78,6 +80,7 @@ contract ReleaseChangeTest is RegistryTest {
         _candidate(deployerKey, MIN_BOND, 1);
         _setRotation(true);
         assertEq(vault.currentRelease(), _release(0), "the deployment's release, not the candidacy's");
+        vm.recordLogs();
         vm.prank(deployerKey);
         registry.setRelease(_digest(1), CONFIG);
         assertEq(registry.operatorInEffect().release, _release(1));
@@ -86,6 +89,11 @@ contract ReleaseChangeTest is RegistryTest {
         assertTrue(_approved(deployerKey, 1));
         assertEq(registry.candidateCount(), 1);
         assertEq(registry.candidateList(0), deployerKey);
+        // The deployment's release was never approved, so the move withdrew nothing to report.
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(logs[i].topics[0] != OperatorRegistry.ReleaseApprovalChanged.selector, "no approval changed");
+        }
     }
 
     function test_AMoveWhileRotationIsOffIsTheReleaseRotationNamesWhenItTurnsOn() public {
@@ -326,6 +334,130 @@ contract ReleaseChangeTest is RegistryTest {
         assertEq(source.release, _release(3), "the successor hands over from the release bob runs");
     }
 
+    function test_AnInstalledOperatorMovesOnceRegisteredAndUpgradesLikeAnElectedOne() public {
+        // Installed with no candidacy, carol has nothing to move: with rotation off the timelock
+        // names its release.
+        _install(carol, 7);
+        uint64 since = registry.operatorInEffect().since;
+        _approve(carol, 8);
+        vm.expectRevert(OperatorRegistry.NotRegistered.selector);
+        vm.prank(carol);
+        registry.setRelease(_digest(8), CONFIG);
+
+        // Registered on the installed release, it upgrades with rotation on as an elected operator.
+        _candidate(carol, MIN_BOND, 7);
+        _setRotation(true);
+        vault.syncRelease();
+        assertEq(vault.currentRelease(), _release(7));
+        uint64 generation = vault.releaseGeneration();
+        vm.expectEmit(address(registry));
+        emit OperatorRegistry.ReleaseApprovalChanged(carol, _release(7), false);
+        vm.expectEmit(address(registry));
+        emit OperatorRegistry.CandidateReleaseChanged(carol, _release(8), _digest(8), CONFIG);
+        vm.prank(carol);
+        registry.setRelease(_digest(8), CONFIG);
+        OperatorRegistry.Operator memory operator = registry.operatorInEffect();
+        assertEq(operator.candidate, carol);
+        assertEq(operator.adminKey, _key(carol));
+        assertEq(operator.release, _release(8));
+        assertEq(operator.since, since, "an upgrade does not restart the installed term");
+        assertEq(vault.currentRelease(), _release(8), "the vault names the upgrade at once");
+        vault.syncRelease();
+        assertEq(vault.releaseGeneration(), generation + 1);
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseNotApproved.selector, _release(7)));
+        vm.prank(carol);
+        registry.setRelease(_digest(7), CONFIG);
+    }
+
+    function test_AMoveLeavesTheReleaseAnInstallationNamedApartFromTheCandidacy() public {
+        // carol's candidacy holds release 6; the timelock also approved 7 for it and installs it on
+        // 7. A move back to the candidacy's release needs no new approval, since the timelock approved
+        // it for carol, and leaves 7, which then keeps no approval.
+        _candidate(carol, MIN_BOND, 6);
+        _approve(carol, 7);
+        _install(carol, 7);
+        _setRotation(true);
+        assertEq(vault.currentRelease(), _release(7), "the vault names the installed release");
+        vm.expectEmit(address(registry));
+        emit OperatorRegistry.ReleaseApprovalChanged(carol, _release(7), false);
+        vm.prank(carol);
+        registry.setRelease(_digest(6), CONFIG);
+        assertEq(vault.currentRelease(), _release(6));
+        assertTrue(_approved(carol, 6), "the candidacy's own release keeps its approval");
+        assertFalse(_approved(carol, 7), "the installed release left keeps no approval");
+        assertEq(registry.candidateCount(), 1);
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseNotApproved.selector, _release(7)));
+        vm.prank(carol);
+        registry.setRelease(_digest(7), CONFIG);
+        assertEq(vault.currentRelease(), _release(6));
+    }
+
+    function test_InstallingAnotherOperatorLeavesTheReplacedCandidacyAsItWas() public {
+        // The registered deployer moved to release 2 as the operator in effect, and holds an
+        // approval of 3; the timelock then installs carol on release 8.
+        _candidate(deployerKey, MIN_BOND, 1);
+        _approve(deployerKey, 2);
+        vm.prank(deployerKey);
+        registry.setRelease(_digest(2), CONFIG);
+        _approve(deployerKey, 3);
+        _install(carol, 8);
+        assertEq(registry.candidateOf(deployerKey).release, _release(2));
+        assertTrue(_approved(deployerKey, 2));
+        assertTrue(_approved(deployerKey, 3));
+        assertEq(registry.candidateCount(), 1);
+        assertEq(registry.candidateList(0), deployerKey);
+        // Its moves now change only its candidacy; rotation names the installed release.
+        vm.prank(deployerKey);
+        registry.setRelease(_digest(3), CONFIG);
+        assertEq(registry.candidateOf(deployerKey).release, _release(3));
+        assertEq(registry.operatorInEffect().release, _release(8));
+        _setRotation(true);
+        assertEq(vault.currentRelease(), _release(8));
+    }
+
+    function test_ThePlaceBeyondTheCapFollowsTheOperatorAnInstallationSeats() public {
+        // The deployer's candidacy is delisted and the list fills; carol is registered, unlisted.
+        _candidate(deployerKey, MIN_BOND, 1);
+        _withdraw(deployerKey, 1);
+        _fill();
+        _register(carol, 5);
+        _install(carol, 5);
+        // The replaced operator no longer takes the place beyond the full cap.
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.CandidateCapReached.selector, MAX_CANDIDATES));
+        vm.prank(address(governance));
+        registry.setReleaseApproval(deployerKey, _digest(1), CONFIG, true);
+        // The installed operator does, so the full list does not block its upgrade.
+        _setRotation(true);
+        _approve(carol, 6);
+        vm.prank(carol);
+        registry.setRelease(_digest(6), CONFIG);
+        assertEq(registry.candidateCount(), MAX_CANDIDATES + 1);
+        assertEq(vault.currentRelease(), _release(6));
+    }
+
+    function test_AReplacedOperatorInThePlaceBeyondTheCapHoldsTheListAtTheCapPlusOne() public {
+        // The deployer took the place beyond a full cap while it was the operator in effect.
+        _candidate(deployerKey, MIN_BOND, 1);
+        _withdraw(deployerKey, 1);
+        _fill();
+        _approve(deployerKey, 2);
+        vm.prank(deployerKey);
+        registry.setRelease(_digest(2), CONFIG);
+        assertEq(registry.candidateCount(), MAX_CANDIDATES + 1);
+        // Once the timelock installs carol, carol cannot list past that place.
+        _register(carol, 5);
+        _install(carol, 5);
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.CandidateCapReached.selector, MAX_CANDIDATES));
+        vm.prank(address(governance));
+        registry.setReleaseApproval(carol, _digest(5), CONFIG, true);
+        assertEq(registry.candidateCount(), MAX_CANDIDATES + 1);
+        // The timelock frees it by withdrawing the replaced operator's approval; carol then lists.
+        _withdraw(deployerKey, 2);
+        _approve(carol, 5);
+        assertEq(registry.candidateCount(), MAX_CANDIDATES + 1);
+        assertEq(registry.candidateList(MAX_CANDIDATES), carol);
+    }
+
     /// @dev A move succeeds exactly when the release is approved for the caller, and reaches the
     /// vault exactly when the caller is the operator in effect with rotation on.
     function testFuzz_AMoveLandsExactlyWhenApprovedAndReachesTheVaultOnlyFromTheOperator(
@@ -361,6 +493,36 @@ contract ReleaseChangeTest is RegistryTest {
         _govern(
             address(registry),
             abi.encodeCall(OperatorRegistry.setReleaseApproval, (candidate, _digest(seed), CONFIG, true))
+        );
+    }
+
+    function _withdraw(address candidate, uint256 seed) internal {
+        _govern(
+            address(registry),
+            abi.encodeCall(OperatorRegistry.setReleaseApproval, (candidate, _digest(seed), CONFIG, false))
+        );
+    }
+
+    /// @dev Registers `candidate` with release `seed` and a minimum bond, unapproved and so unlisted.
+    function _register(address candidate, uint256 seed) internal {
+        _stake(candidate, MIN_BOND);
+        bytes memory authorization = _authorization(candidate);
+        vm.prank(candidate);
+        registry.register(_registration(_key(candidate), MIN_BOND, seed), authorization);
+    }
+
+    /// @dev Fills the candidate list to the cap with approved candidates.
+    function _fill() internal {
+        for (uint256 i = 0; i < MAX_CANDIDATES; ++i) {
+            _candidate(makeAddr(string(abi.encode("filler", i))), MIN_BOND, 100 + i);
+        }
+    }
+
+    /// @dev The timelock installs `candidate`, with its test admin key, on release `seed`.
+    function _install(address candidate, uint256 seed) internal {
+        _govern(
+            address(registry),
+            abi.encodeCall(OperatorRegistry.installOperator, (candidate, _key(candidate), _digest(seed), CONFIG))
         );
     }
 
