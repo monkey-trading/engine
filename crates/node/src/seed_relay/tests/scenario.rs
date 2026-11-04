@@ -61,8 +61,8 @@ async fn dev_scenario_three_daily_seeds_reach_arbitrum_and_a_missing_one_alerts(
     // Turn `first`'s deadline is an hour after the chains start.
     let first = last_final_turn(GENESIS) + 10;
     // Local chain ids: Anvil applies a public network's hardfork schedule by its id and the time.
-    let ethereum = Chain::start(31337, draw_deadline(first) - 3600).await;
-    let arbitrum = Chain::start(31338, draw_deadline(first) - 3600).await;
+    let ethereum = Chain::start(31337, draw_deadline(first).unwrap() - 3600).await;
+    let arbitrum = Chain::start(31338, draw_deadline(first).unwrap() - 3600).await;
     let (relay, receiver, inbox) = deploy_pair(&ethereum, &arbitrum).await;
     let beacon = Beacon::default();
     let server = beacon.serve().await;
@@ -74,12 +74,12 @@ async fn dev_scenario_three_daily_seeds_reach_arbitrum_and_a_missing_one_alerts(
     // The schedule the relayer picks turns by is the contracts'.
     for turn in [first + 1, first + 4] {
         assert_eq!(arbitrum.view(receiver, seedEpochCall { turn }).await, seed_epoch(turn, GENESIS).unwrap());
-        assert_eq!(arbitrum.view(receiver, drawDeadlineCall { turn }).await, draw_deadline(turn));
+        assert_eq!(arbitrum.view(receiver, drawDeadlineCall { turn }).await, draw_deadline(turn).unwrap());
     }
 
     // Day by day, the two turns after the final one are relayed once their epochs are finalized.
     for (day, relayed) in [(0, vec![first + 1, first + 2]), (1, vec![first + 3])] {
-        advance(&ethereum, &arbitrum, &beacon, draw_deadline(first + day) + 3600).await;
+        advance(&ethereum, &arbitrum, &beacon, draw_deadline(first + day).unwrap() + 3600).await;
         for turn in relayed {
             let seed = arbitrum.wait_for_seed(receiver, turn).await;
             assert_eq!(seed, B256::from(dev_mix(seed_epoch(turn, GENESIS).unwrap())), "turn {turn}");
@@ -112,10 +112,10 @@ async fn dev_scenario_three_daily_seeds_reach_arbitrum_and_a_missing_one_alerts(
     // too: those lines are dropped first.
     while alerts.try_recv().is_ok() {}
     server.1.abort();
-    advance(&ethereum, &arbitrum, &beacon, draw_deadline(first + 2) + 3600).await;
+    advance(&ethereum, &arbitrum, &beacon, draw_deadline(first + 2).unwrap() + 3600).await;
     let failed = wait_for("seed_relay_failed", next(&mut alerts, "seed_relay_failed")).await;
     assert!(failed["message"].contains(&format!("[{}]", first + 4)), "{failed:?}");
-    arbitrum.warp(draw_deadline(first + 4) + 60).await;
+    arbitrum.warp(draw_deadline(first + 4).unwrap() + 60).await;
     let missing = wait_for("seed_missing", next(&mut alerts, "seed_missing")).await;
     assert_eq!(missing["level"], "ERROR");
     assert!(missing["message"].contains(&format!("turn {}'s seed", first + 4)), "{missing:?}");

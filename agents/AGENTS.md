@@ -259,7 +259,7 @@ an index: load only the rule whose hint matches the current action.
   `checkpointSigner` and `signerEpoch`, keeping the highest seq per epoch so a restarted node refuses a truncated
   log before writing anything; the posting interval is config, an hour by default, on its own relayer sender.
   `src/SeedSchedule.sol` fixes each daily operator turn's seed epoch
-  (the beacon epoch ending two days before its draw deadline, a day before its 22:30 UTC boundary);
+  (the beacon epoch holding the time two days before its draw deadline, which is a day before its 22:30 UTC boundary);
   `src/SeedRelay.sol` on Ethereum proves that epoch's RANDAO mix from an EIP-4788 beacon block root, its
   header, and SSZ branches to the state's `fork.current_version` (one of the versions it was deployed
   with) and to `randao_mixes`, and sends it through Arbitrum's inbox as a retryable ticket;

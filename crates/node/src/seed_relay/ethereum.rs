@@ -10,7 +10,7 @@ use std::future::{Future, IntoFuture};
 use std::time::Duration;
 
 use alloy::eips::BlockNumberOrTag;
-use alloy::primitives::{Address, B256, Bytes, U64, U256};
+use alloy::primitives::{Address, B256, Bytes, U64, U256, address};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::{Block, TransactionReceipt, TransactionRequest};
 use alloy::sol_types::{SolCall, SolInterface};
@@ -25,7 +25,7 @@ use crate::config::{SecretUrl, SeedRelaySection, redact};
 use crate::seed_relay::abi::{IInbox, ISeedRelay};
 
 /// The EIP-4788 beacon block root contract.
-pub(crate) const BEACON_ROOTS: Address = alloy::primitives::address!("000F3df6D732807Ef1319fB7B8bB8522d0Beac02");
+pub(crate) const BEACON_ROOTS: Address = address!("000F3df6D732807Ef1319fB7B8bB8522d0Beac02");
 /// What a relay's gas limit adds to its estimate.
 const GAS_MARGIN_DIVISOR: u64 = 4;
 
@@ -97,7 +97,9 @@ impl Endpoint {
         let call = self.client.request::<_, Bytes>("eth_call", (request, BlockNumberOrTag::Latest));
         match timeout(self.timeout, call.into_future()).await {
             Ok(Ok(value)) => Ok(Some(value)),
-            Ok(Err(RpcError::ErrorResp(_))) => Ok(None),
+            // The beacon root contract reverts, with no data, for a time it holds no entry for; any other
+            // error answer is the endpoint's own failure.
+            Ok(Err(RpcError::ErrorResp(payload))) if payload.message.contains("revert") => Ok(None),
             Ok(Err(error)) => Err(self.explain("eth_call", &error)),
             Err(_) => Err(anyhow!("eth_call timed out")),
         }
@@ -213,12 +215,39 @@ impl Ethereum {
         Ok(U256::from(fee.context("the latest block has no base fee")?))
     }
 
-    /// Sends `input` to the relay with `value`, from the relayer, through the signing endpoint.
+    /// Sends `input` to the relay with `value`, from the relayer, through the signing endpoint, at twice
+    /// the latest base fee plus the endpoint's priority fee. In place of `replacing` while that one still
+    /// waits for a block, it takes that transaction's nonce and outbids its fees by a quarter.
     /// Error cases:
-    /// - the gas estimate reverts, naming the relay's reason, or the send fails
-    pub(crate) async fn send(&self, input: Vec<u8>, value: U256) -> anyhow::Result<B256> {
-        let tx = TransactionRequest::default().from(self.relayer).to(self.relay).value(value).input(input.into());
-        let tx = TransactionRequest { chain_id: Some(self.chain_id), ..tx };
+    /// - a fee or the pending transaction cannot be read, the gas estimate reverts, naming the relay's
+    ///   reason, or the send fails
+    pub(crate) async fn send(&self, input: Vec<u8>, value: U256, replacing: Option<B256>) -> anyhow::Result<B256> {
+        let tip: U256 = self
+            .signer
+            .wait("eth_maxPriorityFeePerGas", self.signer.client.request("eth_maxPriorityFeePerGas", ()))
+            .await?;
+        let tip: u128 = tip.saturating_to();
+        let mut fees = (self.base_fee().await?.saturating_to::<u128>().saturating_mul(2).saturating_add(tip), tip);
+        let mut nonce = None;
+        if let Some(hash) = replacing {
+            let pending: Option<TransactionRequest> = self
+                .signer
+                .wait("eth_getTransactionByHash", self.signer.client.request("eth_getTransactionByHash", (hash,)))
+                .await?;
+            if let Some(pending) = pending {
+                nonce = pending.nonce;
+                fees.0 = fees.0.max(outbid(pending.max_fee_per_gas));
+                fees.1 = fees.1.max(outbid(pending.max_priority_fee_per_gas));
+            }
+        }
+        let tx = TransactionRequest::default()
+            .from(self.relayer)
+            .to(self.relay)
+            .value(value)
+            .input(input.into())
+            .max_fee_per_gas(fees.0)
+            .max_priority_fee_per_gas(fees.1);
+        let tx = TransactionRequest { chain_id: Some(self.chain_id), nonce, ..tx };
         let estimate: U64 =
             self.signer.wait("eth_estimateGas", self.signer.client.request("eth_estimateGas", (tx.clone(),))).await?;
         let estimate: u64 = estimate.to();
@@ -303,4 +332,9 @@ impl Ethereum {
             failures.join("; ")
         )
     }
+}
+
+/// A fee a quarter above `fee`, which a replacement must pay to displace the transaction paying it.
+fn outbid(fee: Option<u128>) -> u128 {
+    fee.map_or(0, |fee| fee.saturating_add(fee / 4).saturating_add(1))
 }

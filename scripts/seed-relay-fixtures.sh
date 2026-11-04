@@ -81,7 +81,6 @@ witness() {
 witness "$epoch" > "$work/witness.json"
 first="$(check_mix "$epoch" "$(jq -er '.seed' "$work/witness.json")")"
 
-
 # The EIP-4788 entry that holds the state's block root: the next block's execution payload.
 child_slot="$(first_block_from $((state_slot + 1)))"
 child="$(execution_at_slot "$child_slot")"

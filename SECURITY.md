@@ -94,8 +94,10 @@ turn's draw deadline, from which its answer for the turn is final. What it still
 - Its relayers, for liveness: nothing relays by itself, and a turn that reaches its deadline without a
   seed raises `seed_missing`.
 - The beacon state's layout. The relay's indices are those of the 64-field `BeaconState` from
-  Electra on, so a fork that changes it is refused until a new relay and receiver are deployed, and
-  turns draw from the fallback meanwhile. Epochs are counted from 12-second slots.
+  Electra on, and it accepts only the fork versions it was deployed with; the relayer hashes only
+  Fulu states. Any later fork stops relays until a node release reads its state and, unless its
+  version was listed at deployment, a new relay and receiver are deployed; turns draw from the
+  fallback meanwhile. Epochs are counted from 12-second slots.
 The relayer's beacon node, Ethereum providers and signing endpoint are host-reached and untrusted:
 each read it acts on is a strict majority's or is checked again on chain, so a wrong answer costs a
 relay, never a wrong seed.

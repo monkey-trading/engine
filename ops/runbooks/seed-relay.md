@@ -39,23 +39,28 @@ Check, before relying on the relay:
 - `cast call $SEED_RELAY 'acceptedFork(bytes4)(bool)' <the current fork version> --rpc-url $L1_RPC`
   prints `true`; the version is the state's `fork.current_version`, `0x06000000` for Fulu on mainnet.
 - `curl -sf $BEACON/eth/v1/beacon/headers/finalized | jq .data.header.message.slot` prints a slot.
-- The node's `engine_seed_latest_turn` metric is the current turn or one past it, and
-  `engine_seed_relayer_balance_eth` is above `seed_relay.min_balance`.
+- The node's `engine_seed_latest_turn` metric is three past the turn in progress (the turn whose
+  draw deadline last passed and the two after it all have seeds), or two past it in the minutes after a
+  draw deadline before the next seed lands, and `engine_seed_relayer_balance_eth` is above
+  `seed_relay.min_balance`. A node running as a standby serves no metrics: read its relayer's alerts.
 
 ## When `seed_relay_failed` fires
 
 This node's relayer could not relay a turn the receiver lacks. Another member's may still have, and
 the alert ends once both upcoming turns have their seeds. The message names the turn and the cause:
 
-- **The beacon API failed or refused** (a status, a timeout, or "serves a … state"): check the node
+- **The beacon API failed or refused** (a status or a timeout): check the node
   with the `curl` above and `curl -sfo /dev/null -w '%{http_code}' -H 'Accept: application/octet-stream'
   $BEACON/eth/v2/debug/beacon/states/<slot>`.
 - **No majority of Ethereum providers agree**: the message lists each provider's answer. Replace a
   failing provider through a config change, which is a new release ([deploy-and-rollback.md](deploy-and-rollback.md)).
-- **A relay reverted, or its estimate names `ForkNotAccepted`**: a fork has changed the beacon
-  state, and the relay refuses its states until a relay that knows the new layout is deployed with a
-  receiver that names it. That is a new deployment; take it to the owner. Until then turns draw from
-  the fallback.
+- **"reverted"**: a relay this node sent reverted on Ethereum, and the relayer builds a new one at
+  the next poll. If it repeats, the next attempt's gas estimate fails with the relay's reason, which
+  the message names.
+- **"this node reads Fulu states only", "the relay refuses fork", or `ForkNotAccepted`**: Ethereum
+  has forked. Relaying resumes only with a node release that reads the new fork's state and, unless
+  the relay was deployed with the new fork's version, a new relay and a receiver that names it. Both
+  are the owner's to schedule; until then every turn draws from the fallback.
 - **"has not reached Arbitrum"**: the relay was sent to Ethereum but no seed arrived within
   `resend_after`, and the relayer relays it again. Look up the relay transaction's retryable ticket on
   Arbitrum. If the ticket exists but its automatic redemption failed, anyone may redeem it with

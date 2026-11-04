@@ -25,8 +25,9 @@ interface IInbox {
 /// @dev The proof, against a beacon block root the EIP-4788 contract holds:
 /// - the header hashes to that root (`hash_tree_root` of a `BeaconBlockHeader`);
 /// - its state's `fork.current_version` is one this relay was deployed to accept, each a fork whose
-///   `BeaconState` is the 64-leaf tree below; a fork that changes that layout is refused until a new
-///   relay is deployed, since the same generalized index would then name another field;
+///   `BeaconState` is the 64-leaf tree below; any other fork is refused, since one that changed the
+///   layout would make the same generalized index name another field, so a fork whose version was not
+///   listed at deployment stops relays until a new relay and receiver are deployed;
 /// - its slot is past the epoch's last slot, and before the slot at which `randao_mixes` reuses the
 ///   epoch's index, so the state holds that epoch's final mix;
 /// - `randao_mixes[epoch % 65536]` is the seed.

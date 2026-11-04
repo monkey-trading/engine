@@ -78,7 +78,7 @@ impl BeaconApi {
     /// - the request fails, times out, answers other than 200, or answers more than 64 KiB or not a
     ///   header
     pub(crate) async fn finalized_header(&self) -> anyhow::Result<BeaconBlockHeader> {
-        let url = self.url("eth/v1/beacon/headers/finalized")?;
+        let url = self.url("eth/v1/beacon/headers/finalized");
         let body =
             self.read(self.http.get(url), self.timeout, MAX_HEADER_BYTES).await.context("the finalized header")?;
         let answer: HeaderAnswer = serde_json::from_slice(&body).context("decoding the finalized header")?;
@@ -90,12 +90,16 @@ impl BeaconApi {
     /// - the request fails, takes longer than `state_timeout`, answers other than 200, names another
     ///   fork, or answers more than `MAX_STATE_BYTES`
     pub(crate) async fn state(&self, slot: u64) -> anyhow::Result<Vec<u8>> {
-        let url = self.url(&format!("eth/v2/debug/beacon/states/{slot}"))?;
+        let url = self.url(&format!("eth/v2/debug/beacon/states/{slot}"));
         let request = self.http.get(url).header(ACCEPT, "application/octet-stream");
         let read = async {
             let response = self.send(request).await?;
             let version = response.headers().get("eth-consensus-version").and_then(|v| v.to_str().ok());
-            ensure!(version == Some("fulu"), "the beacon node serves a {version:?} state, not a Fulu one");
+            // A fork's state needs a node release that reads it, and a relay that accepts its version.
+            ensure!(
+                version == Some("fulu"),
+                "the beacon node serves a {version:?} state; this node reads Fulu states only"
+            );
             self.body(response, MAX_STATE_BYTES).await
         };
         timeout(self.state_timeout, read)
@@ -104,15 +108,12 @@ impl BeaconApi {
             .with_context(|| format!("the state at slot {slot}"))
     }
 
-    /// `path` under the configured base.
-    /// Error cases:
-    /// - the joined URL does not parse
-    fn url(&self, path: &str) -> anyhow::Result<Url> {
-        let mut base = self.base.clone();
-        if !base.path().ends_with('/') {
-            base.set_path(&format!("{}/", base.path()));
-        }
-        base.join(path).context("joining the beacon API path")
+    /// `path` under the configured base, keeping the base's query, where a delivered key may sit.
+    fn url(&self, path: &str) -> Url {
+        let mut url = self.base.clone();
+        let joined = format!("{}/{path}", url.path().trim_end_matches('/'));
+        url.set_path(&joined);
+        url
     }
 
     /// The body of a request that must answer within `deadline` and with at most `limit` bytes.
@@ -157,5 +158,35 @@ impl BeaconApi {
             bytes.extend_from_slice(&chunk);
         }
         Ok(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A key may sit in the base URL's path or its query; every route keeps both.
+    #[test]
+    fn routes_keep_the_base_path_and_query() {
+        let mut cfg: SeedRelaySection = toml::from_str(
+            "chain_id = 1\nrpc_url = 'http://127.0.0.1:4'\n\
+             relayer = '0x2222222222222222222222222222222222222222'\n\
+             beacon_api = 'https://beacon.example/node/?api_key={beacon_key}'\n\
+             relay = '0x4444444444444444444444444444444444444444'\n\
+             receiver = '0x5555555555555555555555555555555555555555'\n\
+             poll_interval = '60s'\nrpc_timeout = '10s'\nstate_timeout = '300s'\nresend_after = '1h'\n\
+             l2_max_fee_per_gas = '0.1'\nmin_balance = '0.05'\nproviders = []",
+        )
+        .unwrap();
+        cfg.beacon_api.deliver_test_key("K");
+        let api = BeaconApi::new(&cfg).unwrap();
+        assert_eq!(
+            api.url("eth/v1/beacon/headers/finalized").as_str(),
+            "https://beacon.example/node/eth/v1/beacon/headers/finalized?api_key=K"
+        );
+        assert_eq!(
+            api.url("eth/v2/debug/beacon/states/7").as_str(),
+            "https://beacon.example/node/eth/v2/debug/beacon/states/7?api_key=K"
+        );
     }
 }

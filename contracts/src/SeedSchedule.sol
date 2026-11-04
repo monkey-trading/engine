@@ -48,8 +48,10 @@ abstract contract SeedSchedule {
 
     /// @notice The beacon epoch whose RANDAO mix seeds turn `turn`.
     function seedEpoch(uint64 turn) public view returns (uint64) {
-        uint64 time = drawDeadline(turn) - RELAY_WINDOW;
-        if (time < beaconGenesisTime) revert TurnBeforeGenesis(turn);
-        return (time - beaconGenesisTime) / SECONDS_PER_EPOCH;
+        // In 256 bits, so a turn too early for its seed time is refused by name rather than underflowing.
+        uint256 time = uint256(turn) * 1 days + BOUNDARY_OFFSET;
+        uint256 lead = uint256(DRAW_LEAD) + RELAY_WINDOW + beaconGenesisTime;
+        if (time < lead) revert TurnBeforeGenesis(turn);
+        return uint64((time - lead) / SECONDS_PER_EPOCH);
     }
 }

@@ -39,6 +39,11 @@ contract SeedReceiverTest is Test {
         vm.expectRevert(abi.encodeWithSelector(SeedSchedule.TurnBeforeGenesis.selector, uint64(18599)));
         receiver.seedEpoch(18599);
         assertEq(receiver.seedEpoch(18600), (uint64(18600) * 1 days - 178200 - GENESIS) / 384);
+        // Turns whose boundary is within three days of the Unix epoch are refused the same way.
+        for (uint64 turn = 0; turn < 3; ++turn) {
+            vm.expectRevert(abi.encodeWithSelector(SeedSchedule.TurnBeforeGenesis.selector, turn));
+            receiver.seedEpoch(turn);
+        }
     }
 
     function test_RecordsASeedFromTheAliasedRelay() public {

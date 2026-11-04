@@ -5,6 +5,7 @@ use alloy::primitives::utils::parse_ether;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::config::SeedRelaySection;
+use crate::seed_relay::schedule::draw_deadline;
 use crate::seed_relay::state::{prove_mix, synthetic_state};
 use crate::test_support::{Alert, capture_alerts_and_resolutions};
 
@@ -25,7 +26,7 @@ async fn each_open_turn_without_a_seed_is_relayed_once_from_one_proven_state() {
     let sent = fake.sent.lock().unwrap().clone();
     assert_eq!(sent.len(), 2);
     let anchor = GENESIS + 12 * (fake.header.slot + 1);
-    for ((input, value), turn) in sent.iter().zip([FINAL + 1, FINAL + 2]) {
+    for ((input, value, replacing), turn) in sent.iter().zip([FINAL + 1, FINAL + 2]) {
         let call = ISeedRelay::relayCall::abi_decode(input).unwrap();
         let epoch = seed_epoch(turn, GENESIS).unwrap();
         assert_eq!(call.turn, turn);
@@ -35,6 +36,7 @@ async fn each_open_turn_without_a_seed_is_relayed_once_from_one_proven_state() {
         assert_eq!((call.witness.forkProof.len(), call.witness.seedProof.len()), (8, 22));
         assert_eq!(call.fees.gasLimit, U256::from(L2_GAS_LIMIT));
         assert_eq!(*value, SUBMISSION + U256::from(L2_GAS_LIMIT) * fee());
+        assert_eq!(*replacing, None);
     }
     assert_eq!(*fake.states.lock().unwrap(), 1, "both turns are proven from one download");
     // Within `resend_after`, a turn this node relayed waits for Arbitrum.
@@ -57,9 +59,15 @@ async fn a_relay_not_on_arbitrum_by_resend_after_alerts_and_goes_out_again() {
     let fake = Fake::new(slot_past(FINAL + 2));
     let mut relayer = relayer(&fake);
     relayer.poll().await;
+    let first = fake.hashes.lock().unwrap().clone();
+    // The first turn's relay is in a block; the second's still waits for one.
+    fake.receipts.lock().unwrap().insert(first[0], Some(true));
     tokio::time::advance(Duration::from_secs(3601)).await;
     relayer.poll().await;
-    assert_eq!(fake.sent.lock().unwrap().len(), 4);
+    let sent = fake.sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 4);
+    assert_eq!(sent[2].2, None, "a relay in a block is sent again at a new nonce");
+    assert_eq!(sent[3].2, Some(first[1]), "a pending relay is replaced at its nonce");
     assert!(named(&mut alerts, "seed_relay_failed").iter().any(|a| a["message"].contains("has not reached Arbitrum")));
     // Once both turns have their seeds the episode ends.
     fake.seeds(|seeds| seeds[1..].fill(B256::repeat_byte(9)));
@@ -132,6 +140,56 @@ async fn nothing_is_sent_through_a_relay_and_receiver_that_are_not_each_others()
     let fake = Arc::new(fake);
     relayer(&fake).poll().await;
     assert!(fake.sent.lock().unwrap().is_empty());
+    assert!(named(&mut alerts, "seed_relay_failed")[0]["message"].contains("genesis is"));
+    let fake = Fake::new(slot_past(FINAL + 2));
+    fake.view.lock().unwrap().relay = Address::repeat_byte(0x67);
+    relayer(&fake).poll().await;
+    assert!(fake.sent.lock().unwrap().is_empty());
+    assert!(named(&mut alerts, "seed_relay_failed")[0]["message"].contains("the receiver takes seeds from"));
+}
+
+#[tokio::test]
+async fn a_receiver_read_that_fails_alerts_and_relays_nothing() {
+    let (_guard, mut alerts, _) = capture_alerts_and_resolutions();
+    let fake = Fake::new(slot_past(FINAL + 2));
+    *fake.receiver_error.lock().unwrap() = Some("decoding a seed".to_owned());
+    relayer(&fake).poll().await;
+    assert!(fake.sent.lock().unwrap().is_empty());
+    assert!(named(&mut alerts, "seed_relay_failed")[0]["message"].contains("reading the seed receiver failed"));
+}
+
+#[tokio::test]
+async fn a_failed_send_proves_from_the_same_state_until_another_block_is_final() {
+    let fake = Fake::new(slot_past(FINAL + 2));
+    let mut relayer = relayer(&fake);
+    *fake.send_error.lock().unwrap() = Some("insufficient funds".to_owned());
+    relayer.poll().await;
+    relayer.poll().await;
+    assert_eq!(*fake.states.lock().unwrap(), 1, "the state is downloaded once while its block is the final one");
+    // A later finalized block brings a new state.
+    let later = Fake::at(slot_past(FINAL + 2) + 32);
+    *fake.later.lock().unwrap() = Some((later.header, later.state, later.roots));
+    *fake.send_error.lock().unwrap() = None;
+    relayer.poll().await;
+    assert_eq!(*fake.states.lock().unwrap(), 2);
+    assert_eq!(fake.sent.lock().unwrap().len(), 2);
+}
+
+/// Numbers the host's network supplies past what the clock holds fail the relay, never panic.
+#[tokio::test]
+async fn a_slot_or_turn_past_the_clock_fails_without_a_panic() {
+    let (_guard, mut alerts, _) = capture_alerts_and_resolutions();
+    let mut fake = Fake::at(slot_past(FINAL + 2));
+    fake.header.slot = u64::MAX;
+    let fake = Arc::new(fake);
+    relayer(&fake).poll().await;
+    assert!(fake.sent.lock().unwrap().is_empty());
+    assert!(named(&mut alerts, "seed_relay_failed")[0]["message"].contains("past the clock"));
+    let fake = Fake::new(slot_past(FINAL + 2));
+    fake.view.lock().unwrap().final_turn = last_final_turn(u64::MAX);
+    relayer(&fake).poll().await;
+    assert!(fake.sent.lock().unwrap().is_empty());
+    assert!(named(&mut alerts, "seed_relay_failed")[0]["message"].contains("no seed epoch"));
 }
 
 #[tokio::test]
@@ -189,9 +247,13 @@ struct Fake {
     accepts: bool,
     balance: Mutex<U256>,
     states: Mutex<usize>,
-    sent: Mutex<Vec<(Vec<u8>, U256)>>,
+    sent: Mutex<Vec<(Vec<u8>, U256, Option<B256>)>>,
     hashes: Mutex<Vec<B256>>,
     receipts: Mutex<BTreeMap<B256, Option<bool>>>,
+    /// A later finalized block, its state and its EIP-4788 entries, once the beacon node moves on.
+    later: Mutex<Option<(BeaconBlockHeader, Vec<u8>, BTreeMap<u64, B256>)>>,
+    receiver_error: Mutex<Option<String>>,
+    send_error: Mutex<Option<String>>,
 }
 
 impl Fake {
@@ -214,7 +276,7 @@ impl Fake {
         let cfg = cfg();
         Self {
             view: Mutex::new(ReceiverView {
-                time: draw_deadline(FINAL) + 3600,
+                time: draw_deadline(FINAL).unwrap() + 3600,
                 relay: cfg.relay,
                 genesis: GENESIS,
                 first: FINAL - 3,
@@ -231,6 +293,9 @@ impl Fake {
             sent: Mutex::new(Vec::new()),
             hashes: Mutex::new(Vec::new()),
             receipts: Mutex::new(BTreeMap::new()),
+            later: Mutex::new(None),
+            receiver_error: Mutex::new(None),
+            send_error: Mutex::new(None),
         }
     }
 
@@ -245,6 +310,9 @@ impl Fake {
 
 impl SeedChains for Arc<Fake> {
     async fn receiver(&self) -> anyhow::Result<ReceiverView> {
+        if let Some(error) = self.receiver_error.lock().unwrap().clone() {
+            bail!("{error}");
+        }
         Ok(self.view.lock().unwrap().clone())
     }
 
@@ -253,16 +321,21 @@ impl SeedChains for Arc<Fake> {
     }
 
     async fn finalized_header(&self) -> anyhow::Result<BeaconBlockHeader> {
-        Ok(self.header)
+        Ok(self.later.lock().unwrap().as_ref().map_or(self.header, |later| later.0))
     }
 
     async fn beacon_root(&self, timestamp: u64) -> anyhow::Result<Option<B256>> {
-        Ok(self.roots.get(&timestamp).copied())
+        let later = self.later.lock().unwrap();
+        Ok(later.as_ref().map_or(&self.roots, |later| &later.2).get(&timestamp).copied())
     }
 
     async fn state(&self, slot: u64) -> anyhow::Result<Vec<u8>> {
-        assert_eq!(slot, self.header.slot);
         *self.states.lock().unwrap() += 1;
+        if let Some((header, state, _)) = self.later.lock().unwrap().as_ref() {
+            assert_eq!(slot, header.slot);
+            return Ok(state.clone());
+        }
+        assert_eq!(slot, self.header.slot);
         Ok(self.state.clone())
     }
 
@@ -279,9 +352,12 @@ impl SeedChains for Arc<Fake> {
         Ok(*self.balance.lock().unwrap())
     }
 
-    async fn send(&self, input: Vec<u8>, value: U256) -> anyhow::Result<B256> {
+    async fn send(&self, input: Vec<u8>, value: U256, replacing: Option<B256>) -> anyhow::Result<B256> {
+        if let Some(error) = self.send_error.lock().unwrap().clone() {
+            bail!("{error}");
+        }
         let mut sent = self.sent.lock().unwrap();
-        sent.push((input, value));
+        sent.push((input, value, replacing));
         let hash = B256::from(U256::from(sent.len()));
         self.hashes.lock().unwrap().push(hash);
         Ok(hash)
