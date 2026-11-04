@@ -148,7 +148,8 @@ def lane_rows(out: dict, variant: str, n: int, grid: np.ndarray) -> list[dict]:
         rows.append(
             {"variant": variant, "markets": n, "floor": float(capital)}
             | {key: stats[key] for key in STAT_KEYS}
-            | {"distributed_mean": float(out["distributed"][:, lane].mean()), "min_cash_p01": float(np.quantile(lowest, 0.01))}
+            | {"distributed_mean": float(out["distributed"][:, lane].mean()), "min_cash_p01": float(np.quantile(lowest, 0.01)),
+               "spread_income_mean": (float(out["spread_income"][:, lane].mean()) if "spread_income" in out else 0.0)}
         )
     return rows
 

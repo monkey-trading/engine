@@ -1,0 +1,72 @@
+{
+ "year": [
+  {
+   "lag_s": 1.0,
+   "margin": 0.01,
+   "seconds_per_day": 0.5647058823529412,
+   "seconds_per_day_hi": 1.2006853226727583,
+   "mean_excess": 0.008519852204291124
+  },
+  {
+   "lag_s": 1.0,
+   "margin": 0.02,
+   "seconds_per_day": 0.3079383209594518,
+   "seconds_per_day_hi": 0.9037121644774414,
+   "mean_excess": 0.009854828444404938
+  },
+  {
+   "lag_s": 1.0,
+   "margin": 0.05,
+   "seconds_per_day": 0.0,
+   "seconds_per_day_hi": 0.0,
+   "mean_excess": 0.0
+  },
+  {
+   "lag_s": 3.0,
+   "margin": 0.01,
+   "seconds_per_day": 2.9359223300970876,
+   "seconds_per_day_hi": 4.701359223300971,
+   "mean_excess": 0.00483786018015232
+  },
+  {
+   "lag_s": 3.0,
+   "margin": 0.02,
+   "seconds_per_day": 0.7520274129069103,
+   "seconds_per_day_hi": 2.1354654483152484,
+   "mean_excess": 0.010669268379282887
+  },
+  {
+   "lag_s": 3.0,
+   "margin": 0.05,
+   "seconds_per_day": 0.0,
+   "seconds_per_day_hi": 0.0,
+   "mean_excess": 0.0
+  }
+ ],
+ "stress_hours": {
+  "1.0s@0.01": {
+   "seconds": 748.0,
+   "excess_sum": 2.0600362247089072
+  },
+  "1.0s@0.02": {
+   "seconds": 128.0,
+   "excess_sum": 0.42183676276505394
+  },
+  "1.0s@0.05": {
+   "seconds": 1.0,
+   "excess_sum": 0.005771251196103267
+  },
+  "3.0s@0.01": {
+   "seconds": 1517.0,
+   "excess_sum": 5.2567053540419035
+  },
+  "3.0s@0.02": {
+   "seconds": 360.0,
+   "excess_sum": 1.3544675030750888
+  },
+  "3.0s@0.05": {
+   "seconds": 3.0,
+   "excess_sum": 0.009114416091239693
+  }
+ }
+}
