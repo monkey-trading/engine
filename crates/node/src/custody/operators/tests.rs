@@ -280,7 +280,7 @@ async fn a_provider_that_lies_is_outvoted_and_two_that_lie_differently_leave_no_
     providers[1].model.overview.totalStaked = U256::from(2u64);
     let (no_majority, _) = reader(providers, Duration::from_secs(60));
     let error = no_majority.read().await.unwrap_err();
-    assert!(format!("{error:#}").contains("quorum lost for contract_call"), "{error:#}");
+    assert!(format!("{error:#}").contains("quorum lost for lens_overview"), "{error:#}");
 }
 
 #[tokio::test]

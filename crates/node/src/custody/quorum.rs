@@ -110,9 +110,9 @@ impl<R> Quorum<R> {
                     if alerts.providers.insert((index, operation, "custody_rpc_provider_failed")) {
                         warn!(
                             alert = "custody_rpc_provider_failed",
-                            quorum = self.name,
                             provider = name,
                             operation,
+                            quorum = self.name,
                             "provider failed: {cause:#}"
                         );
                     }
@@ -125,9 +125,9 @@ impl<R> Quorum<R> {
                         } else if alerts.providers.insert((index, operation, "custody_rpc_provider_disagreed")) {
                             warn!(
                                 alert = "custody_rpc_provider_disagreed",
-                                quorum = self.name,
                                 provider = name,
                                 operation,
+                                quorum = self.name,
                                 "provider disagrees with custody quorum"
                             );
                         }
@@ -141,15 +141,15 @@ impl<R> Quorum<R> {
                 if self.critical {
                     error!(
                         alert = "custody_rpc_quorum_lost",
-                        quorum,
                         operation,
+                        quorum,
                         "custody requires {required} identical votes; crediting paused, trading continues"
                     );
                 } else {
                     warn!(
                         alert = "custody_rpc_quorum_lost",
-                        quorum,
                         operation,
+                        quorum,
                         "custody requires {required} identical votes; the {quorum} read is paused, trading continues"
                     );
                 }
@@ -157,7 +157,7 @@ impl<R> Quorum<R> {
             bail!("custody RPC quorum lost for {operation}: need {} identical votes", self.required);
         };
         if alerts.lost.remove(operation) {
-            info!(alert_resolved = "custody_rpc_quorum_lost", quorum = self.name, operation, "custody quorum restored");
+            info!(alert_resolved = "custody_rpc_quorum_lost", operation, quorum = self.name, "custody quorum restored");
         }
         let voters = answers
             .iter()
@@ -464,6 +464,6 @@ fn resolve(
     alert: &'static str,
 ) {
     if alerts.providers.remove(&(index, operation, alert)) {
-        info!(alert_resolved = alert, quorum, provider = name, operation, "provider recovered");
+        info!(alert_resolved = alert, provider = name, operation, quorum, "provider recovered");
     }
 }
