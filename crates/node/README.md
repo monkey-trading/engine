@@ -217,7 +217,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   registry, set up before the node runs
 - `src/sequencer/mod.rs` — the sequencer, checkpoints, and metrics
 - `src/sequencer/config.rs` — the sequencer's construction config
-- `src/sequencer/pipeline.rs` — group commit: a batch's data sync runs on the `log-sync` thread while the next requests are sequenced, and each batch's replies, stream messages, signed withdrawals, mark reports, house reads, stats jobs and checkpoint posts are released in batch order once its sync is done; a failed sync stops the sequencer
+- `src/sequencer/pipeline.rs` — group commit: a batch's data sync runs on the `log-sync` thread while the next requests are sequenced, and each batch's replies, stream messages, signed withdrawals, mark reports, house reads, stats jobs and checkpoint posts are released in batch order once its sync is done; a segment rotation's seal — the completed segment's fsync, its durable manifest listing, and the staged next segment's exclusive link — rides the batch that crosses the boundary, publishing before anything of the new segment is released; a failed sync stops the sequencer
 - `src/sequencer/checkpoints/publish.rs` — a signed checkpoint reaches the poster, and its approvals the nonce-use queries, only once its batch is durable
 - `src/sequencer/checkpoints/publish/tests.rs` — with the syncs on their own thread, a checkpoint and its approvals wait for their batch's sync, a failed sync posts nothing, and a post owed a queue slot defers the next checkpoint
 - `src/api/state/durable_tests.rs` — a proof, a dashboard view and a fallback view are answered only once the log holds the state they read
@@ -306,7 +306,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log/suffix.rs` — recovery that replays only the suffix after a catalog-located checkpoint
 - `src/log/truncate.rs` — takeover truncation of a standby's copy at the checkpoint a promotion
   resumes from, dropping the unsigned tail
-- `src/log/writer.rs` — appends, flushes, segment rotation, catalog folds, and catalog collection
+- `src/log/writer/mod.rs` — appends, flushes, segment rotation, catalog folds, and catalog collection
+- `src/log/writer/seal.rs` — sealing a completed segment: its fsync, durable manifest listing, and
+  the staged next segment's exclusive link, inline or deferred as a `SealWork` riding the pipeline
 - `src/log/view.rs` — manifest accessors over full listings and the lazy catalog
 - `src/log/archive.rs` — completed-segment bytes for the archive, checked against the catalog
 - `src/log/append_integrity.rs` — reopening the active segment for append only after its prefix rechecks
@@ -356,7 +358,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log/checked.rs` — reads a completed segment in chunks checked against its listing
 - `src/log/tests/mod.rs` — log format, segment, and writer tests
 - `src/log/tests/durability.rs` — writer durability and rotation: per-batch sync, reopened segments,
-  staging, and opening the log while a writer rotates
+  staging, opening the log while a writer rotates, and a deferred rotation seal publishing with its
+  sync, chaining within one sync, counting a seal riding an unfinished sync, never covered by group
+  commit, and recovering from a crash before the seal as a crash mid-rotation does
 - `src/log/tests/reader.rs` — reader tests: offsets, following the writer, flushed entries only,
   and the checks on what it reads
 - `src/api/mod.rs` — REST routes, read handlers and the request span

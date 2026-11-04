@@ -20,6 +20,7 @@ use crate::log::catalog::{CheckpointLocator, Completion, LazyCatalogView};
 use crate::log::catalog_head::CatalogDomain;
 use crate::log::catalog_owner::CatalogOwner;
 use crate::log::checked::{self, CheckedChunks};
+use crate::log::writer::seal::SealWork;
 use crate::log::{ActivePrefix, LogEntry, Offset, ReadAuthority, offset_of, parse_line, read_lines};
 
 pub const MANIFEST: &str = "manifest.jsonl";
@@ -95,6 +96,16 @@ pub struct LogWriter {
     /// The catalog could not take a completed segment; its warning has been raised once.
     pub(super) catalog_failing: bool,
     pub(super) catalog_owner: Option<CatalogOwner>,
+    /// Whether rotation defers its seal to the log-sync thread (`pipeline_log_syncs`).
+    pub(super) seals_deferred: bool,
+    /// Segments rotated but not yet listed: each `SealWork` rides the next `SyncJob` as the job's
+    /// `seals`, and `finish_sync` publishes it once the sync thread has run it. The manifest length
+    /// counts each of them from defer time on.
+    pub(super) pending_seals: Vec<SealWork>,
+    /// Seals `begin_sync` has taken into sync jobs that have not published yet: with
+    /// `pending_seals`, they keep a direct flush or a checkpoint capture from treating the
+    /// manifest as settled before the old segment's completion is out.
+    pub(super) taken_seals: u64,
     /// File syncs since the writer opened, for sync-budget assertions in tests.
     #[cfg(test)]
     pub(super) syncs: usize,
@@ -319,6 +330,9 @@ impl SegmentedLog {
             begun: None,
             catalog_failing: false,
             catalog_owner: self.catalog_owner,
+            seals_deferred: false,
+            pending_seals: Vec::new(),
+            taken_seals: 0,
             #[cfg(test)]
             syncs: 0,
         })

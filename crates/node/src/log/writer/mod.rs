@@ -5,19 +5,23 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, ensure};
+use anyhow::Context;
 use tracing::{info, warn};
 
+pub(super) mod seal;
+
 use crate::log::catalog::{CheckpointLocator, LazyCatalogView};
-use crate::log::segments::{Segment, command_seq, listing_line, segment_name};
-use crate::log::{ActivePrefix, CatalogBoundary, LogEntry, LogWriter, Offset, SegmentInfo, offset_of};
+use crate::log::segments::{Segment, command_seq, segment_name};
+use crate::log::writer::seal::SealWork;
+use crate::log::{ActivePrefix, CatalogBoundary, LogEntry, LogWriter, Offset, offset_of};
 
 /// Catalog garbage collection runs once per checkpoint on the sequencer thread; each turn consumes
 /// whole receipts, so a few turns drain what one checkpoint's folds retire.
 const MAX_CATALOG_GC_TURNS: usize = 8;
 
-/// A batch's bytes written to the operating system and waiting to reach storage. `sync` can run on
-/// any thread; `LogWriter::finish_sync` publishes the batch once it has.
+/// A batch's bytes written to the operating system and waiting to reach storage, with the segment
+/// seals rotation deferred to this job. `sync` can run on any thread; `LogWriter::finish_sync`
+/// publishes the batch and the seals once it has.
 pub(crate) struct SyncJob {
     file: Option<fs::File>,
     dir: Option<fs::File>,
@@ -25,25 +29,30 @@ pub(crate) struct SyncJob {
     segment: Option<u64>,
     last: Option<Offset>,
     active: Option<ActivePrefix>,
+    seals: Vec<SealWork>,
 }
 
 impl SyncJob {
-    /// Whether the job has nothing to sync: no bytes were appended since the last sync.
+    /// Whether the job has nothing to sync: no bytes were appended since the last sync and no
+    /// segment seal waits on it.
     pub(crate) fn is_empty(&self) -> bool {
-        self.file.is_none() && self.dir.is_none()
+        self.file.is_none() && self.dir.is_none() && self.seals.is_empty()
     }
 
     /// Whether syncing `next`, queued after this job, makes syncing this one unnecessary: `next`
     /// syncs the data of the same segment, which holds this job's entries, and this one has no
-    /// directory to sync.
+    /// directory or seal of its own.
     pub(crate) fn covered_by(&self, next: &SyncJob) -> bool {
-        self.dir.is_none() && next.file.is_some() && self.segment == next.segment
+        self.seals.is_empty() && self.dir.is_none() && next.file.is_some() && self.segment == next.segment
     }
 
-    /// Syncs the segment's data and, if asked for, the directory.
+    /// Syncs each deferred segment seal, then the segment's data and, if asked for, the directory.
     /// Error cases:
-    /// - either sync fails
+    /// - a seal, or either sync, fails
     pub(crate) fn sync(&self) -> anyhow::Result<()> {
+        for seal in &self.seals {
+            seal.run()?;
+        }
         if let Some(file) = &self.file {
             file.sync_data().context("syncing log")?;
         }
@@ -219,10 +228,13 @@ impl LogWriter {
             }
         }
         let last = self.last;
+        // A seal not yet published means the view still holds the previous segment as the active
+        // one; publishing the new segment's prefix here would contradict it.
         let active = self
             .open
             .as_ref()
             .filter(|(segment, _)| segment.bytes > 0)
+            .filter(|_| self.pending_seals.is_empty() && self.taken_seals == 0)
             .and_then(|(segment, _)| last.map(|last| ActivePrefix { info: segment.info(), last }));
         self.manifest.send_modify(|published| {
             published.flushed = last;
@@ -266,13 +278,17 @@ impl LogWriter {
         let active = segment
             .filter(|segment| segment.bytes > 0)
             .and_then(|segment| last.map(|last| ActivePrefix { info: segment.info(), last }));
-        Ok(SyncJob { file, dir, epoch: self.appended, segment: segment.map(|s| s.first_seq), last, active })
+        let seals = std::mem::take(&mut self.pending_seals);
+        self.taken_seals += seals.len() as u64;
+        Ok(SyncJob { file, dir, epoch: self.appended, segment: segment.map(|s| s.first_seq), last, active, seals })
     }
 
     /// Takes `job`, which has run, as done: its entries are durable, so the writer no longer counts
-    /// them unsynced and the manifest publishes them as flushed. A job older than what an inline
-    /// flush already published changes nothing, and one whose segment has since been completed
-    /// leaves the manifest's active prefix as the completion set it.
+    /// them unsynced and the manifest publishes them as flushed. The job's deferred seals publish
+    /// first, each listing its segment as completed and clearing the active prefix, so the manifest
+    /// never carries a new segment's active prefix ahead of its predecessor's completion. A job
+    /// older than what an inline flush already published changes nothing, and one whose segment has
+    /// since been completed leaves the manifest's active prefix as the completion set it.
     pub(crate) fn finish_sync(&mut self, job: &SyncJob) {
         if job.epoch == self.appended {
             self.unsynced = false;
@@ -281,6 +297,10 @@ impl LogWriter {
         if job.file.is_some() {
             self.syncs += 1;
         }
+        for seal in &job.seals {
+            self.list_deferred(seal);
+        }
+        self.taken_seals -= job.seals.len() as u64;
         let current = self.open.as_ref().map(|(segment, _)| segment.first_seq);
         self.manifest.send_if_modified(|published| {
             if published.flushed > job.last {
@@ -307,9 +327,11 @@ impl LogWriter {
     }
 
     /// Starts the segment for `first_seq`, first syncing and listing the current one, if any. The
-    /// new file takes its segment name only once the old one is listed, which `LogReader` relies on.
-    /// Creating it is the only step that needs a new file descriptor, so it runs first: if it fails
-    /// while a segment is open, that segment keeps taking appends and the next command retries.
+    /// new file takes its segment name only once the old one is listed, which `LogReader` relies
+    /// on. With deferred seals (`pipeline_log_syncs`) the listing, the link, and their fsyncs ride
+    /// the next `SyncJob` instead of running here; the on-disk order is unchanged. Creating it is
+    /// the only step that needs a new file descriptor, so it runs first: if it fails while a
+    /// segment is open, that segment keeps taking appends and the next command retries.
     /// Error cases:
     /// - the new segment cannot be created and no segment is open
     /// - a segment by the new name already exists
@@ -372,99 +394,22 @@ impl LogWriter {
             }
             Err(e) => return Err(e).with_context(|| format!("creating {}", staged.display())),
         };
-        let published = self.complete_and_link(&staged, &path);
-        // The staging name only held the new file until its link to `path`.
-        let removed = fs::remove_file(&staged).with_context(|| format!("removing {}", staged.display()));
-        published?;
-        removed?;
-        self.open = Some((Segment::empty(first_seq), BufWriter::new(file)));
-        // A flush syncs only the segment's data, so its name is made durable here.
-        self.dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))?;
+        if self.seals_deferred {
+            self.defer_segment_seal(&staged, &path)?;
+            self.open = Some((Segment::empty(first_seq), BufWriter::new(file)));
+        } else {
+            let published = self.complete_and_link(&staged, &path);
+            // The staging name only held the new file until its link to `path`.
+            let removed = fs::remove_file(&staged).with_context(|| format!("removing {}", staged.display()));
+            published?;
+            removed?;
+            self.open = Some((Segment::empty(first_seq), BufWriter::new(file)));
+            // A flush syncs only the segment's data, so its name is made durable here.
+            self.dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))?;
+        }
         if std::mem::take(&mut self.rotation_failing) {
             info!(alert_resolved = "log_rotation_failed", "log segments rotate again");
         }
-        Ok(())
-    }
-
-    /// Lists the open segment, if any, as completed: flushes and syncs it, appends its listing to
-    /// the manifest, and folds it into the catalog. A handover seals the log's tail so the archive
-    /// and the successor it hands the keys to hold the segment the final checkpoint is in. A full
-    /// live catalog is folded first, as rotation does; a catalog that still cannot take the
-    /// segment degrades to the plain manifest, which remains authoritative.
-    /// Error cases:
-    /// - the segment cannot be flushed, synced, or listed, or the manifest update fails
-    pub(crate) fn seal_open_segment(&mut self) -> anyhow::Result<Option<SegmentInfo>> {
-        if self.catalog_owner.is_some()
-            && self.manifest.borrow().catalog.as_ref().is_some_and(|catalog| catalog.live_full())
-        {
-            // A failed fold is not fatal: the append below degrades to the plain manifest, which
-            // remains authoritative.
-            if let Err(e) = self.fold_catalog(None) {
-                warn!(alert = "log_catalog_unavailable", "folding the full catalog before the seal failed: {e:#}");
-            }
-        }
-        let Some((segment, out)) = self.open.as_mut() else { return Ok(None) };
-        out.flush().context("flushing log segment")?;
-        out.get_ref().sync_all().context("syncing log segment")?;
-        let listed = segment.info();
-        // List before taking the open segment: a failure leaves the segment open, so sequencing
-        // goes on with a log that still opens.
-        self.list(&listed)?;
-        let (segment, _) = self.open.take().expect("the open segment is listed");
-        info!(
-            file = %listed.file,
-            first_seq = listed.first_seq,
-            last_seq = listed.last_seq,
-            bytes = listed.bytes,
-            sha256 = %listed.sha256,
-            "log segment completed"
-        );
-        let catalog = self.manifest.borrow().catalog.clone();
-        match catalog.map(|c| c.append(listed.clone(), segment.checkpoints.into())).transpose() {
-            Ok(next) => {
-                self.manifest.send_modify(|m| {
-                    match next {
-                        Some(next) => m.catalog = Some(Arc::new(next)),
-                        None => Arc::make_mut(&mut m.segments).push(listed.clone()),
-                    }
-                    m.active = None;
-                });
-            }
-            Err(e) => {
-                warn!(alert = "log_catalog_unavailable", "the sealed segment publishes without the catalog: {e:#}");
-                // The archive serves the catalog when one is present: drop it so the plain manifest
-                // lists the sealed segment until the catalog recovers.
-                self.manifest.send_modify(|m| {
-                    m.catalog = None;
-                    Arc::make_mut(&mut m.segments).push(listed.clone());
-                    m.active = None;
-                });
-            }
-        }
-        Ok(Some(listed))
-    }
-
-    /// Lists the open segment, if any, then links the staged file as the next segment at `path`.
-    /// Error cases:
-    /// - a segment by that name already exists, the open segment cannot be synced or listed, or the
-    ///   link fails
-    fn complete_and_link(&mut self, staged: &Path, path: &Path) -> anyhow::Result<()> {
-        ensure!(!path.exists(), "{} already exists", path.display());
-        self.seal_open_segment()?;
-        // hard_link fails if an untrusted host races an existing destination into place.
-        fs::hard_link(staged, path).with_context(|| format!("exclusively publishing {}", path.display()))
-    }
-
-    /// Appends one listing to the manifest, durably, after the listed segment's directory entry.
-    /// Error cases:
-    /// - the directory or the manifest cannot be synced, or the manifest cannot be written
-    fn list(&mut self, listed: &SegmentInfo) -> anyhow::Result<()> {
-        self.dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))?;
-        ensure!(self.manifest_file.metadata()?.len() == self.manifest_len, "manifest length changed before listing");
-        let line = listing_line(listed)?;
-        self.manifest_file.write_all(&line).context("writing manifest")?;
-        self.manifest_file.sync_all().context("syncing manifest")?;
-        self.manifest_len = self.manifest_len.checked_add(line.len() as u64).context("manifest length overflow")?;
         Ok(())
     }
 }
