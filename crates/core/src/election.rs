@@ -24,6 +24,20 @@
 //! no election installed earns in its key's address, which is the candidate identity the registry
 //! gives its initial operator.
 //!
+//! From `V48` the mirror also records the last operator the timelock installed (`install_operator`),
+//! the fallback for a failed operator whose key is gone (#502): the registry installs at once,
+//! behind the timelock's delay, so an installed handover takes effect seven days after it is logged
+//! and waits no finalised frontier. It replaces any pending rotation, and a signed `RotateOperator`
+//! is refused while one waits, as it is for an elected handover. Turning rotation on drops an
+//! installed handover still waiting, as it does a signed rotation: while rotation is on, only an
+//! election moves the key. The registry installs only while rotation is off, so an installation
+//! never races an uncancelled election. An installation also supersedes the elections the mirror
+//! retains: the last election is marked cancelled — its epoch still orders later elections — and
+//! the superseded candidate and handover are dropped, so neither a later election's cancellation
+//! nor the share's settlement can bring back what the registry no longer names. An installed
+//! operator was seated by no election, so the operator's share credits its key's address, as for
+//! any operator no election installed.
+//!
 //! #359 §8's registry path for the operator to change its own key is not built yet; the decision
 //! recorded for it: the change takes the same seven-day notice, each change waits the full notice,
 //! and it neither resets nor holds an open election — the mirrored election stands, and where the
@@ -38,9 +52,9 @@ use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MAX_STAMP_MS, Millis};
 
 /// The registry as the engine mirrors it: whether rotation is on, the last election, the election a
-/// successor superseded before it took effect, kept to restore if the successor is cancelled, and
-/// from `V47` the candidate seated by the last election to take effect. Left out of the encoding while
-/// empty.
+/// successor superseded before it took effect, kept to restore if the successor is cancelled, from
+/// `V47` the candidate seated by the last election to take effect, and from `V48` the last operator
+/// the timelock installed. Left out of the encoding while empty.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorElection {
@@ -58,6 +72,21 @@ pub struct OperatorElection {
     /// earlier rule records who the one in effect elected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seated: Option<SeatedCandidate>,
+    /// From `V48`, the last operator the timelock installed, and when its key takes effect. The
+    /// registry installs at once, so no finalised frontier gates the handover.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed: Option<InstalledOperator>,
+}
+
+/// From `V48`, an operator the timelock installed, and the key it was installed under, which a
+/// pending rotation carries while the installed handover waits out the log's seven-day notice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstalledOperator {
+    pub candidate: AccountId,
+    pub admin_key: AccountId,
+    /// When the key takes effect in sequenced time: seven days after the installation was logged.
+    pub effective_at: Millis,
 }
 
 /// From `V47`, a candidate an election seated, and the key it was elected under, which it earns the
@@ -99,6 +128,18 @@ pub struct RegistryElection {
     pub admin_key: AccountId,
     /// The registry's effective time, in milliseconds.
     pub effective_at: Millis,
+    /// The finalised Ethereum block the event was mirrored from.
+    pub block: u64,
+    /// `<tx hash>:<log index>`, credited once.
+    pub chain_ref: String,
+}
+
+/// The registry's finalised `OperatorInstalled` event, as the node mirrors it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryInstallation {
+    pub candidate: AccountId,
+    pub admin_key: AccountId,
     /// The finalised Ethereum block the event was mirrored from.
     pub block: u64,
     /// `<tx hash>:<log index>`, credited once.
@@ -150,7 +191,8 @@ impl Engine {
         }
         self.credit_registry_mirror(chain_ref, block);
         self.operator_election.rotation_enabled = enabled;
-        // A rotation the old key signed while rotation was off gives way to the elections.
+        // A rotation the old key signed, or the timelock installed, while rotation was off gives
+        // way to the elections: while rotation is on, only an election moves the key.
         if enabled && self.operator_bounds.rotation.is_some_and(|rotation| !self.is_elected(rotation)) {
             self.operator_bounds.rotation = None;
         }
@@ -219,6 +261,49 @@ impl Engine {
         events.push(Event::OperatorElected { epoch, candidate, admin_key, effective_at });
     }
 
+    /// Mirrors the registry's `OperatorInstalled` event: records the installation, and from `V48` a
+    /// pending rotation to its key when that is not the key in effect, replacing any pending
+    /// rotation. The registry installs at once, behind the timelock's delay, so the handover takes
+    /// effect seven days after it is logged and waits no finalised frontier.
+    pub(crate) fn install_operator(&mut self, installation: &RegistryInstallation, events: &mut Vec<Event>) {
+        let RegistryInstallation { candidate, admin_key, block, ref chain_ref } = *installation;
+        let reason = self.registry_mirror_refusal(chain_ref).or_else(|| {
+            let zero = AccountId([0; 20]);
+            if self.protocol_version < ProtocolVersion::V48 {
+                Some(format!("an operator installation needs protocol {:?}", ProtocolVersion::V48))
+            } else if self.operator_election.rotation_enabled {
+                Some("an installation while rotation is on".into())
+            } else if self.operator.is_none() {
+                Some("no operator is recorded".into())
+            } else if candidate == zero || admin_key == zero {
+                Some("an installation names a nonzero candidate and key".into())
+            } else {
+                None
+            }
+        });
+        if let Some(reason) = reason {
+            events.push(Event::ElectionRejected { chain_ref: chain_ref.clone(), reason });
+            return;
+        }
+        self.credit_registry_mirror(chain_ref, block);
+        let effective_at = self.now + NOTICE_MS;
+        let operator = self.operator.expect("checked above").address;
+        // The installation supersedes the elections the mirror retains. A later election's
+        // cancellation restores only what the registry still names, so a superseded election's
+        // handover must not come back, nor its candidate seat the operator's share once the
+        // installed operator holds the role: the registry names an operator no election seated.
+        // The epoch stays recorded, so a later election still must move forward.
+        if let Some(last) = self.operator_election.last.as_mut() {
+            last.cancelled = true;
+        }
+        self.operator_election.prior = None;
+        self.operator_election.seated = None;
+        self.operator_election.installed = Some(InstalledOperator { candidate, admin_key, effective_at });
+        self.operator_bounds.rotation =
+            (admin_key != operator).then_some(PendingRotation { address: admin_key, effective_at });
+        events.push(Event::OperatorInstalled { candidate, admin_key, effective_at });
+    }
+
     /// The pending rotation that hands over before a command stamped `ts`: its time has come and,
     /// for an elected key, the staking mirror's finalised frontier has reached the registry's
     /// effective time.
@@ -279,6 +364,13 @@ impl Engine {
     pub(crate) fn is_elected(&self, rotation: PendingRotation) -> bool {
         self.operator_election.last.is_some_and(|last| {
             !last.cancelled && last.admin_key == rotation.address && last.effective_at == rotation.effective_at
+        })
+    }
+
+    /// Whether `rotation` is the one the last installation recorded.
+    pub(crate) fn is_installed(&self, rotation: PendingRotation) -> bool {
+        self.operator_election.installed.is_some_and(|installed| {
+            installed.admin_key == rotation.address && installed.effective_at == rotation.effective_at
         })
     }
 

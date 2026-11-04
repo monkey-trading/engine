@@ -228,6 +228,7 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         | Event::DistributionEpochsSkipped { .. }
         | Event::RotationSwitched { .. }
         | Event::OperatorElected { .. }
+        | Event::OperatorInstalled { .. }
         | Event::ElectionRejected { .. }
         | Event::CatchUpDeferred { .. } => bail!("event is not an account-history kind"),
     };

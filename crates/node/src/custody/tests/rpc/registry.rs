@@ -1,7 +1,7 @@
 //! Operator registry logs decode, beside the staking contract's, only from the configured registry.
 use super::*;
 use crate::custody::evm::StakingEventKind;
-use crate::custody::registry::{Elected, RotationChanged};
+use crate::custody::registry::{Elected, OperatorInstalled, RotationChanged};
 
 const STAKING: Address = Address::repeat_byte(0x5a);
 const REGISTRY: Address = Address::repeat_byte(0x6b);
@@ -46,6 +46,16 @@ fn registry_logs_decode_to_mirrorable_events_with_effective_times_in_millisecond
             admin_key: AccountId([0xa1; 20]),
             effective_at: 1_793_000_000_000,
         }
+    );
+    let installed = OperatorInstalled {
+        candidate: Address::repeat_byte(0xc2),
+        adminKey: Address::repeat_byte(0xa2),
+        release: B256::repeat_byte(4),
+    };
+    let event = rpc.decode_staking(&emitted(REGISTRY, installed.encode_log_data())).unwrap();
+    assert_eq!(
+        event.kind,
+        StakingEventKind::Installed { candidate: AccountId([0xc2; 20]), admin_key: AccountId([0xa2; 20]) }
     );
 }
 

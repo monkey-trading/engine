@@ -193,12 +193,24 @@ shortened:
    and `new-key`, verify its attestation, and have the timelock call `setSigner($NEW)`
    (key-recovery.md, "New keys", steps 3 to 5). It then resumes at the last checkpoint the old key
    signed.
+5. **Install the fallback's operator.** With rotation off, the timelock alone can seat the new
+   operator's admin key, so admin commands work even if the failed operator's key is gone
+   ([key-recovery.md](key-recovery.md), "The key is lost"). Pattern in reference.md
+   with `TARGET=$REGISTRY` and
+   `DATA=$(cast calldata 'installOperator(address,address,bytes,bytes32)' <candidate> <admin key> <fallback digest> <fallback config hash>)`.
+   **Changes the live system.** Needs the owner's approval. The registry reverts while rotation is
+   on; on chain the installation takes effect at once, and the engine mirrors it: its key signs
+   admin commands seven days after the mirror is logged, with no further step. Check:
+   `operatorInEffect()` names the new key; `curl -sf $API/v1/operator | jq .operator` shows it from
+   then.
+6. **Boot with the old key in config; restart to the new.** Recovery refuses a config naming a key
+   the log has not rotated to, so the fallback node boots with the failed operator's key in its
+   config — it signs nothing there — and only after the installation has applied (seven days) does
+   a config naming the new key pass recovery, at a restart. If a benchmark snapshot hold is active
+   while the old key is gone, no snapshot can be signed to release it: the hold has no signer, and
+   the installation's mirror waits behind it. Plan the fallback around a live snapshot hold; it is
+   a known gap that the hold admits only operator-signed snapshots.
 
 The fallback must be decided before it is needed: a host, a built and approved release, an archive
-mirror it can read, and the people who can sign the timelock calls.
-
-**The admin key is not part of this.** While rotation is off, the key the log records changes only
-by a `rotate-operator` signed by that key. If the failed operator's key is gone, the fallback runs
-the node and the books but nothing can send an admin command (reduce-only, corporate actions) until
-an election with rotation on, which needs the 90-day minimum term to have passed. The owner decides
-this before launch ([operator-candidate.md](operator-candidate.md), "Open questions").
+mirror it can read, the fallback operator's admin key, and the people who can sign the timelock
+calls.

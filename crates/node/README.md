@@ -751,7 +751,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/fakes/files.rs` — temporary directories and custody test configurations
 - `src/custody/tests/fakes/logs.rs` — log lines captured from a test's tasks, for alert assertions
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
-- `src/custody/registry.rs` — the operator registry's rotation switch and election events, decoded for the staking mirror
+- `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, and the staking contract's deployer checked against the configured registry
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, and the latest checkpoint

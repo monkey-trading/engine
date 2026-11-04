@@ -14,15 +14,17 @@ use crate::custody::evm::StakingEventKind;
 sol! {
     event RotationChanged(bool enabled, bool electionCancelled);
     event Elected(uint64 indexed epoch, address indexed candidate, address adminKey, bytes32 release, uint64 effectiveAt);
+    event OperatorInstalled(address indexed candidate, address indexed adminKey, bytes32 indexed release);
 }
 
 /// The topics of the registry events the engine mirrors.
-pub(super) const SIGNATURES: [B256; 2] = [RotationChanged::SIGNATURE_HASH, Elected::SIGNATURE_HASH];
+pub(super) const SIGNATURES: [B256; 3] =
+    [RotationChanged::SIGNATURE_HASH, Elected::SIGNATURE_HASH, OperatorInstalled::SIGNATURE_HASH];
 
-/// The engine's view of a registry log: a rotation switch, or an election with its effective time
-/// in milliseconds.
+/// The engine's view of a registry log: a rotation switch, an election with its effective time
+/// in milliseconds, or an installation the timelock made.
 /// Error cases:
-/// - the log is neither event, or does not decode
+/// - the log is none of the events, or does not decode
 /// - an effective time whose milliseconds pass `i64`
 pub(super) fn decode(log: &Log) -> anyhow::Result<StakingEventKind> {
     match log.topic0() {
@@ -44,6 +46,13 @@ pub(super) fn decode(log: &Log) -> anyhow::Result<StakingEventKind> {
                 candidate: AccountId(event.candidate.into()),
                 admin_key: AccountId(event.adminKey.into()),
                 effective_at,
+            })
+        }
+        Some(&OperatorInstalled::SIGNATURE_HASH) => {
+            let event = OperatorInstalled::decode_log(&log.inner).context("decoding OperatorInstalled")?.data;
+            Ok(StakingEventKind::Installed {
+                candidate: AccountId(event.candidate.into()),
+                admin_key: AccountId(event.adminKey.into()),
             })
         }
         other => bail!("unexpected registry event {other:?}"),

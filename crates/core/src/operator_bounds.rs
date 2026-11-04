@@ -199,6 +199,8 @@ impl Engine {
     /// - from `V37`, while rotation is on, when only an election moves the key
     /// - from `V37`, while an uncancelled elected handover waits to take effect, even with rotation
     ///   off: only that handover moves the key until it applies or the registry cancels it
+    /// - from `V48`, while an installed handover waits to take effect, even with rotation off: only
+    ///   that handover moves the key until it applies
     /// - the zero address, or the address already operating
     pub(crate) fn rotate_operator(&mut self, address: AccountId) -> Result<(), String> {
         self.require_bounds_protocol("an operator rotation")?;
@@ -211,6 +213,11 @@ impl Engine {
         }
         if self.operator_bounds.rotation.is_some_and(|rotation| self.is_elected(rotation)) {
             return Err("while an elected handover waits, only it moves the operator key".into());
+        }
+        if self.protocol_version >= ProtocolVersion::V48
+            && self.operator_bounds.rotation.is_some_and(|rotation| self.is_installed(rotation))
+        {
+            return Err("while an installed handover waits, only it moves the operator key".into());
         }
         self.operator_bounds.rotation = Some(PendingRotation { address, effective_at: self.now + NOTICE_MS });
         Ok(())

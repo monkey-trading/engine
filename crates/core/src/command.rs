@@ -13,7 +13,7 @@ use crate::benchmark::BenchmarkBatch;
 use crate::close_spread::CloseSpreadCeiling;
 use crate::corporate::CorporateAction;
 use crate::deposits::{CustodyCheckpoint, DepositReceipt, DepositUpdate, LegacyDeposit};
-use crate::election::RegistryElection;
+use crate::election::{RegistryElection, RegistryInstallation};
 use crate::emissions::{EmissionSchedule, TokenUnits};
 use crate::market::MarketSpec;
 use crate::operator_bounds::ParamsNotice;
@@ -165,6 +165,11 @@ pub enum Command {
     /// From `V37`, the operator registry's `Elected` event, finalised, credited once under its
     /// chain reference.
     ElectOperator(RegistryElection),
+    /// From `V48`, the operator registry's `OperatorInstalled` event, finalised: the timelock
+    /// installed `candidate`, whose `admin_key` takes effect seven days after the command is
+    /// logged, credited once under its chain reference. The registry installs only while rotation
+    /// is off; a mirror while it is on is refused.
+    InstallOperator(RegistryInstallation),
     /// From `V41`, registers `session_key` to place and cancel orders for `account` until
     /// `expires_at`, capped at `MAX_SESSION_KEY_EXPIRY_MS` ahead, or until revoked; only the
     /// account key's signature authorises it.

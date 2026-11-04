@@ -201,7 +201,10 @@ decides.
   `RotationActive`, the registry has no call that changes a registered release, and the operator in
   effect cannot deregister. The only registered releases are the ones candidates registered before.
   Turning rotation off, upgrading, and turning it on again makes the vault name the registry's
-  (old) operator release again. So a new release for the operator in effect has no path today other
+  (old) operator release again — unless the timelock also `installOperator`s the operator with the
+  new release while rotation is off, the same call as the failed-operator fallback
+  ([standby.md](standby.md), "When no standby qualifies"), naming the upgraded release for the same
+  candidate. While rotation stays on, a new release for the operator in effect has no path other
   than a second candidacy winning an election (14-day epoch, 90-day minimum term).
 - **The first election needs a registered incumbent** (section 2). The contracts accept an election
   that leaves `handoverSource()` empty, and the successor then cannot start.

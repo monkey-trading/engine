@@ -31,7 +31,7 @@ use crate::corporate::CorporateEntitlement;
 use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
 use crate::election::OperatorElection;
 use crate::emissions::{EmissionLedger, Emissions, PeriodResult, TokenUnits};
-use crate::event::{Event, Reject};
+use crate::event::Event;
 use crate::fixed::Rounding;
 use crate::merkle::state::{Changed, StateTree, is_zero};
 use crate::operator_bounds::OperatorBounds;
@@ -157,7 +157,7 @@ pub struct Engine {
     #[serde(default, skip_serializing_if = "OperatorBounds::is_default")]
     pub(crate) operator_bounds: OperatorBounds,
     /// From `V37`, the mirrored operator registry: whether rotation is on, and the last election;
-    /// from `V47`, the candidate seated.
+    /// from `V47`, the candidate seated; from `V48`, the last operator the timelock installed.
     #[serde(default, skip_serializing_if = "OperatorElection::is_default")]
     pub(crate) operator_election: OperatorElection,
     /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once
@@ -374,6 +374,7 @@ impl Engine {
                     self.switch_rotation(*enabled, *election_cancelled, *block, chain_ref, &mut events)
                 }
                 Command::ElectOperator(election) => self.elect_operator(election, &mut events),
+                Command::InstallOperator(installation) => self.install_operator(installation, &mut events),
                 Command::RegisterSessionKey { account, session_key, expires_at, auth } => {
                     self.register_session_key(*account, *session_key, *expires_at, auth.as_ref(), &mut events)
                 }
@@ -473,28 +474,5 @@ impl Engine {
                 let pnl = usd(pos.unrealised(price, self.protocol_version), Rounding::Down);
                 (equity + pnl, margin + market.spec.margin_for(notional, self.charge_rounding()))
             })
-    }
-
-    /// The FX index a fill in `market_id` converts at now: its FX market's live index, or `None` for
-    /// a USD market.
-    /// Error cases:
-    /// - the FX market's schedule is closed at the sequenced time, or it has no valid index, or one
-    ///   that cannot convert the currency
-    /// - the market has no FX mark yet, so a position in it could not be valued
-    pub fn live_fx(&self, market_id: MarketId) -> Result<Option<Fixed>, Reject> {
-        let market = &self.markets[&market_id];
-        let currency = market.spec.quote_currency;
-        let Some(fx_market) = currency.fx_market() else { return Ok(None) };
-        // Listing checks the FX market is listed, and no market is ever removed.
-        let fx = self.markets.get(&fx_market).expect("an FX market is listed before markets that use it");
-        let no_price = Reject::NoFxPrice { fx_market };
-        // The schedule, not the stored flag, which only the FX market's own commands refresh.
-        if !fx.spec.schedule.is_open(self.now) || market.fx_mark.is_none() {
-            return Err(no_price);
-        }
-        match fx.index(self.now) {
-            Ok(index) if currency.converts_at(index.mid) => Ok(Some(index.mid)),
-            _ => Err(no_price),
-        }
     }
 }
