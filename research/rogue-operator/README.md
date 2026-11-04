@@ -74,8 +74,8 @@ quotes cost clients and pay the house, so the operator receives only its 20% of 
   three days of every client's commands.
 
 The owner's decision #614 responds to these results: no market quotes a zero spread, a toxicity score
-that round trips cannot dilute starts every new wallet on a cautious tier, and the profit fee falls
-with holding time; #615 calibrates them.
+that round trips cannot dilute only ever worsens an account's price, benefits earned with volume make
+a fresh wallet cost something, and the profit fee falls with holding time; #615 calibrates them.
 
 Where extraction stops paying, against the break-even of each removal route, and whether production
 values meet it:
