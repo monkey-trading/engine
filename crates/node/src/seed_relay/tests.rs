@@ -237,6 +237,12 @@ async fn a_state_that_is_not_the_headers_or_a_fork_the_relay_refuses_is_not_sent
 /// What the fake Inbox asks for a ticket's submission.
 const SUBMISSION: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
+/// A relay the fake sent: its input, value, and the transaction it replaced.
+type SentRelay = (Vec<u8>, U256, Option<B256>);
+
+/// A finalized block, its state and its EIP-4788 entries.
+type Finalized = (BeaconBlockHeader, Vec<u8>, BTreeMap<u64, B256>);
+
 /// Chains that answer from fixed values and record what is sent.
 struct Fake {
     view: Mutex<ReceiverView>,
@@ -247,11 +253,11 @@ struct Fake {
     accepts: bool,
     balance: Mutex<U256>,
     states: Mutex<usize>,
-    sent: Mutex<Vec<(Vec<u8>, U256, Option<B256>)>>,
+    sent: Mutex<Vec<SentRelay>>,
     hashes: Mutex<Vec<B256>>,
     receipts: Mutex<BTreeMap<B256, Option<bool>>>,
     /// A later finalized block, its state and its EIP-4788 entries, once the beacon node moves on.
-    later: Mutex<Option<(BeaconBlockHeader, Vec<u8>, BTreeMap<u64, B256>)>>,
+    later: Mutex<Option<Finalized>>,
     receiver_error: Mutex<Option<String>>,
     send_error: Mutex<Option<String>>,
 }
