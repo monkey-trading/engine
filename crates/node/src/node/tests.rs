@@ -227,6 +227,19 @@ pub(crate) fn read_log_and_history(cfg: &NodeConfig) -> anyhow::Result<(Replayed
     plan.finish_with_log(log, Arc::new(key))
 }
 
+/// Replays into `stats` and checks history, for a scenario that serves both from its own node.
+/// Error cases:
+/// - the log or history index cannot be read or verified
+pub(crate) fn read_log_and_history_recording(
+    cfg: &NodeConfig,
+    signer: Option<AccountId>,
+    parent: Option<crate::log::CheckpointParent>,
+    stats: &crate::stats::Stats,
+) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
+    let scratch = marks_store(cfg)?;
+    super::read_log_and_history_authorities(cfg, signer, parent, Default::default(), &scratch, stats, |_| {})
+}
+
 /// Replays and checks history while exposing the same entries for the on-chain anchor check.
 /// Error cases:
 /// - the log or history index cannot be read or verified

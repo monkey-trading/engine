@@ -423,7 +423,6 @@ async fn serve_node(
     let certificates = CertificateTask::configured(&cfg.api, tls.key, &metrics, sealed)?;
     let metrics_app = metrics::router(metrics);
     tasks.spawn(async move { ("metrics", axum::serve(metrics_listener, metrics_app).await.context("metrics server")) });
-
     let listener = TcpListener::bind(cfg.node.listen).await.with_context(|| format!("binding {}", cfg.node.listen))?;
     let limits = Arc::new(ApiLimits::new(&cfg.api));
     let app = router(ApiState {
@@ -447,6 +446,7 @@ async fn serve_node(
         emission_budget,
         collateral: served,
         listing: Default::default(),
+        operators: ticker::start_operators(&cfg.custody, &cfg.api, &mut tasks)?,
         signing: Arc::new(Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval, trusted_clock)),
     });
     info!(listen = %listener.local_addr()?, "api up over TLS");
@@ -494,7 +494,7 @@ async fn serve_node(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 pub(crate) mod paired_tests;

@@ -60,7 +60,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   backfill seeds the depth a fresh log cannot have
 - Dashboard data: the House and MONKEY pages' series, position maps, MONKEY totals and activity,
   held in memory and rebuilt from the log's replay at start (`GET /v1/stats/series`,
-  `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity`, and more in `/v1/house`)
+  `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity`, `/v1/monkey/distributions`, and more in `/v1/house`)
 - Signed answers: every `/v1` response a client relies on carries the attested enclave key's
   signature over the request and its body, the client's challenge, the node's time, which it signs
   only while trusted time bounds it, the log head, and the status and body; a `signed=1` stream
@@ -771,6 +771,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, and the staking contract's deployer checked against the configured registry
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, and the latest checkpoint
 - `src/api/operator.rs` — `GET /v1/operator`: the key in effect, its pending rotation, whether rotation is on, and the last election
+- `src/api/operator_list.rs` — `GET /v1/operators`: the list `custody/operators/` last read, 404 without a lens and 503 before the first read or once it is stale
+- `src/custody/operators/` — the operator list's reader over its own custody quorum: `lens.rs` is the `RegistryLens` ABI and the checks that make the list, `mod.rs` the reader, its loop and the feed the API serves from, `tests.rs` the stand-in providers
+- `src/stats/distributions.rs` — the bounded history of closed distribution epochs behind `GET /v1/monkey/distributions`
+- `src/custody/tests/election_scenario/staking_reads.rs` — the staking reads dev scenario
 - `src/api/admin_tests/delivery_authority.rs` — who a running node takes deliveries from: the key in
   effect by trusted time, and a named successor's own
 - `src/api/admin_tests/election.rs` — the operator route and the admin route after an election, published keys included
@@ -1388,7 +1392,7 @@ at the sequencer/core boundary and does not perform a physical payout or HTTP ca
 
 Endpoints: `GET /v1/health`, `GET /v1/attestation`, `GET /v1/attestation/collateral`,
 `GET /v1/markets`, `GET /v1/markets/{id}/marks`, `GET /v1/house`, `GET /v1/house/state`, `GET /v1/house/positions`,
-`GET /v1/monkey`, `GET /v1/monkey/activity`, `GET /v1/stats/series`, `GET /v1/operator`,
+`GET /v1/monkey`, `GET /v1/monkey/activity`, `GET /v1/monkey/distributions`, `GET /v1/stats/series`, `GET /v1/operator`, `GET /v1/operators`,
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
 `GET /v1/accounts/{address}/history`, `GET /v1/accounts/{address}/proof`,
 `GET /v1/accounts/{address}/emissions`, `POST /v1/orders`, `POST /v1/orders/cancel`,
@@ -1794,7 +1798,14 @@ totals (`emissions`), the stake (`staking`) and the distribution state (`distrib
 `excess_usd` is what the engine would distribute at the last scan, in USD, and the amounts of USDC
 are named `_usdc_units`, whole base units). `GET /v1/monkey/activity?limit=&before=`
 pages the newest loss allocations, stakes and unstakes, newest first, with ids and `next` as decimal
-strings. `GET /v1/stats/series?metric=&market=&resolution=(1m|1h|1d)&from_ms=&to_ms=&limit=` pages a
+strings. `GET /v1/monkey/distributions?limit=&before=` pages the closed distribution epochs, newest first
+(`limit` 1 to 200, 50 by default; `before` an epoch number, as a page's `next`): each has its `epoch`, the
+`close_seq` and `close_ms` of the command that closed it, `ended_ms`, `nav`, `floor`, `excess_usdc_units`,
+`allocated_usdc_units`, `stakers_usdc_units` with the number of `stakers` paid, `operator_shares` (every
+recipient with its `amount`, none while rotation is off) and `skipped` (the range of earlier epochs no command
+saw the end of, which that close distributed nothing for). It states where its data begins like the other
+answers, and `retained_from_epoch` names the oldest epoch held, with `truncated` true once `[stats] distribution_limit`
+(5000 by default) has dropped older epochs. `GET /v1/stats/series?metric=&market=&resolution=(1m|1h|1d)&from_ms=&to_ms=&limit=` pages a
 metric's buckets oldest first: `nav`, `cash`, `withdrawal_queue`, `total_staked`, `total_allocated`,
 `cumulative_distributed`, `long` and `short` (per market), `volume` (per market or all),
 `monkey_per_loss` and `distributed_per_epoch`. The series, activity and MONKEY answers state where their data begins
@@ -1959,7 +1970,18 @@ it applies the command; recovery restores both from the replay it already runs, 
 it starts at, which carries them. The answer waits for the batch before it to be flushed, so it never
 shows what a crash could take back.
 `GET /v1/operator` returns the key in effect, the pending rotation and its time, whether rotation is
-on, and the last election. A refused registry mirror raises a Critical `election_rejected` alert and
+on, and the last election. `GET /v1/operators` lists the registry's approved candidates (at most 100, by
+registration order) with each one's address, `admin_key`, `enclave`, `self_bond`, `release`, `registration`,
+`api_hostname`, `handover_endpoint`, `votes`, `eligible` and `role` (`candidate`, `elected` or `operator`), and the
+registry's `rotation_enabled`, `parameters`, open epoch, `total_staked`, `operator_in_effect`, `named_operator`
+and `pending_election`. It is read through `RegistryLens` (`contracts/src/RegistryLens.sol`) over the custody
+quorum, in an `overview` call and pages of 25 candidates at one block the providers' majority declares final
+(`custody.evm.withdrawal_finality_tag`), every `api.operators_interval` (60 s by default, at least 1 s); the answer
+names that `block`'s number, hash and time. The lens's return data must be identical across a strict majority,
+executed in the canonical block by hash, on the configured chain and token, and the lens must name the configured
+registry; an inconsistent answer is not served. A failed read raises the `operators_read_failed` Warning and leaves the last list
+up for `custody.evm.finality_stalled_after`, after which the route answers 503 until a read succeeds. Without
+`custody.evm.staking.registry.lens` the route answers 404 and the node runs as before. Building the answer from the lens's return data at 100 candidates takes about 80 µs for the quorum's votes, the decode and the checks and about 100 µs for its 46 KB of JSON (`operators::tests::build_cost_at_the_registry_limit`); a read makes six lens calls to each provider, none on the sequencer's thread. A 200-epoch page of `/v1/monkey/distributions` from a full history of 100,000 epochs takes about 4 µs under the record's lock and 130 µs with its 63 KB of JSON (`stats::tests::distributions::page_cost_from_a_full_history`). A refused registry mirror raises a Critical `election_rejected` alert and
 holds the staking mirror behind it. With real attestation, `rotate-operator` and the admin route refuse an address that `config/test-keys.toml` lists, and the route refuses a request such a key signs unless it is the configured operator's, and the route admits a pending rotation's key only once its time has come by the node's clock. `engine replay` prints the operator a log records. A node
 whose `tee.provider` is not `mock` refuses to start with an operator key that
 `config/test-keys.toml` lists, in either SEC1 encoding: the repository publishes those keys' private

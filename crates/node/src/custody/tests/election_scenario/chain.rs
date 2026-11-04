@@ -51,13 +51,14 @@ sol! {
     function delegate(address candidate, uint256 amount) external;
     function undelegate(address candidate, uint256 amount) external;
     function redelegate(address from, address to, uint256 amount) external;
-    function votes(address candidate) external view returns (uint256);
     function delegationsOf(address account) external view returns (Delegation[]);
     function registrationDigest(address candidate, address adminKey) external view returns (bytes32);
     function register(Registration registration, bytes signature) external;
     function setReleaseApproval(address candidate, bytes launchDigest, bytes32 configHash, bool approved) external;
     function setRotation(bool enabled) external;
     function closeEpoch() external returns (uint64);
+    function setParameters(Parameters parameters) external;
+    function votes(address candidate) external view returns (uint256);
     function operatorInEffect() external view returns (Operator);
     function depositToHouse(uint256 amount) external returns (uint256);
     function depositFor(address account, uint256 amount) external returns (uint256);
@@ -81,6 +82,8 @@ pub(super) struct Chain {
     pub(super) governance: Address,
     pub(super) registry: Address,
     pub(super) staking: Address,
+    /// The `RegistryLens` beside the registry, once a scenario deploys one.
+    pub(super) lens: Option<Address>,
     salts: u64,
 }
 
@@ -137,6 +140,7 @@ impl Chain {
             governance,
             registry: Address::ZERO,
             staking: Address::ZERO,
+            lens: None,
             salts: 0,
         };
         chain.monkey = chain.view(vault, monkeyCall {}).await;
@@ -160,6 +164,20 @@ impl Chain {
         chain.registry = deploy(&chain.provider, from, "OperatorRegistry.sol/OperatorRegistry.json", &args).await;
         chain.staking = chain.view(chain.registry, stakingCall {}).await;
         chain
+    }
+
+    /// Deploys the registry lens beside the registry.
+    pub(super) async fn deploy_lens(&mut self) {
+        let args = self.registry.abi_encode();
+        self.lens = Some(deploy(&self.provider, self.accounts[0], "RegistryLens.sol/RegistryLens.json", &args).await);
+    }
+
+    /// A fresh account no key is held for: Anvil signs for it, and it holds gas.
+    pub(super) async fn impersonated(&self, seed: &str) -> Address {
+        let account = Address::from_slice(&alloy::primitives::keccak256(seed.as_bytes())[12..]);
+        self.rpc("anvil_setBalance", json!([account, "0xde0b6b3a7640000"])).await;
+        self.rpc("anvil_impersonateAccount", json!([account])).await;
+        account
     }
 
     /// Mints `amount` MONKEY to `account` as the vault, its only minter, in place of a proven

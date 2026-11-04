@@ -131,7 +131,8 @@ Rebuilt from the log. None changes the books.
 | --- | --- | --- |
 | `custody_rpc_provider_failed` | Warning | One custody provider failed an operation; the quorum holds. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Custody RPC providers". |
 | `custody_rpc_provider_disagreed` | Warning | One custody provider disagrees with the quorum. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Custody RPC providers". |
-| `custody_rpc_quorum_lost` | Critical | No custody answer has a majority: crediting is paused. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Quorum lost". |
+| `custody_rpc_quorum_lost` | Critical | No custody answer has a majority: crediting is paused (a Warning with `quorum=operators`: only the operator list is paused). See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Quorum lost". |
+| `operators_read_failed` | Warning | The operator list cannot be read at a final block (no provider quorum, a wrong chain or token, or an inconsistent lens). `/v1/operators` serves the last list until `custody.evm.finality_stalled_after`, then answers 503. The reader's quorum alerts above carry `quorum=operators` and page at Warning. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Custody RPC providers". |
 | `custody_rpc_failed` | Warning | A deposit poll failed on a read. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Custody RPC providers". |
 | `custody_chain_unsettled` | Warning | The chain's answers lag; the poll retries. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Custody RPC providers". |
 | `custody_chain_inconsistent` | Critical | The chain's answers contradict the config or the cursor. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Custody RPC providers". |

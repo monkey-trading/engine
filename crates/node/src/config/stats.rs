@@ -25,6 +25,10 @@ pub struct StatsSection {
     /// Most MONKEY events (allocations, stakes, unstakes) the activity feed keeps, newest first.
     #[serde(default = "default_activity_limit")]
     pub activity_limit: usize,
+    /// Most closed distribution epochs `GET /v1/monkey/distributions` keeps, newest first. 5000 by
+    /// default, about 100 days of half-hour epochs.
+    #[serde(default = "default_distribution_limit")]
+    pub distribution_limit: usize,
     /// How far from a market's mark the close-out map reaches, in basis points each way.
     #[serde(default = "default_closeout_range_bps")]
     pub closeout_range_bps: u32,
@@ -50,6 +54,8 @@ pub(crate) const VOLUME_WINDOW_HOURS: u64 = 24;
 pub(crate) const MAX_COVERED_BPS: u64 = 1_000_000;
 /// The most activity entries the feed may keep.
 pub(crate) const MAX_ACTIVITY: usize = 100_000;
+/// The most closed distribution epochs the history may keep.
+pub(crate) const MAX_DISTRIBUTIONS: usize = 100_000;
 
 impl Default for StatsSection {
     fn default() -> Self {
@@ -58,6 +64,7 @@ impl Default for StatsSection {
             retention_1h: default_retention_1h(),
             retention_1d: None,
             activity_limit: default_activity_limit(),
+            distribution_limit: default_distribution_limit(),
             closeout_range_bps: default_closeout_range_bps(),
             closeout_bucket_bps: default_closeout_bucket_bps(),
             profit_range_bps: default_profit_range_bps(),
@@ -78,7 +85,7 @@ impl StatsSection {
     /// non-empty map.
     /// Error cases:
     /// - a retention is zero or too long to count in milliseconds
-    /// - `activity_limit` is zero or over 100000
+    /// - `activity_limit` or `distribution_limit` is zero or over 100000
     /// - a range or a bucket width is zero, a bucket is wider than its range, or a range holds more
     ///   than 400 buckets each way
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -108,6 +115,10 @@ impl StatsSection {
             "stats.retention_1h must cover the {VOLUME_WINDOW_HOURS} hours of volume `GET /v1/house` sums"
         );
         ensure!((1..=MAX_ACTIVITY).contains(&self.activity_limit), "stats.activity_limit must be 1 to {MAX_ACTIVITY}");
+        ensure!(
+            (1..=MAX_DISTRIBUTIONS).contains(&self.distribution_limit),
+            "stats.distribution_limit must be 1 to {MAX_DISTRIBUTIONS}"
+        );
         for (name, range, bucket) in [
             ("closeout", self.closeout_range_bps, self.closeout_bucket_bps),
             ("profit", self.profit_range_bps, self.profit_bucket_bps),
@@ -143,6 +154,10 @@ fn default_retention_1h() -> Duration {
 }
 
 fn default_activity_limit() -> usize {
+    5_000
+}
+
+fn default_distribution_limit() -> usize {
     5_000
 }
 

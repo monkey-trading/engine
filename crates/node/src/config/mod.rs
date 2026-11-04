@@ -49,6 +49,7 @@ pub(crate) use stats::VOLUME_WINDOW_HOURS;
 mod api;
 pub use api::{ApiSection, RateLimit};
 mod api_defaults;
+use api_defaults::MIN_OPERATORS_INTERVAL;
 mod checkpoints;
 pub use checkpoints::CheckpointSection;
 mod telemetry;

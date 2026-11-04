@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use super::api_defaults::{default_heartbeat_interval, default_quote_interval, default_quote_max_markets};
+use super::api_defaults::{
+    default_heartbeat_interval, default_operators_interval, default_quote_interval, default_quote_max_markets,
+};
 use super::stats::{default_stats_interval, default_stats_light_interval};
 use super::{ApiTlsSection, FreshAccountBudgets, ProxyProtocolSection};
 
@@ -64,6 +66,10 @@ pub struct ApiSection {
     /// second; five seconds by default.
     #[serde(default = "default_stats_light_interval", with = "humantime_serde")]
     pub stats_light_interval: Duration,
+    /// How often `GET /v1/operators` reads the registry through the custody quorum, when
+    /// `custody.evm.staking.registry.lens` is set. At least one second; 60 seconds by default.
+    #[serde(default = "default_operators_interval", with = "humantime_serde")]
+    pub operators_interval: Duration,
     /// Browser origins (`scheme://host[:port]`) that may read the REST API and open the stream. Empty
     /// by default, which sends no CORS headers and refuses a stream upgrade that carries any `Origin`
     /// (a client that sends none still connects). The

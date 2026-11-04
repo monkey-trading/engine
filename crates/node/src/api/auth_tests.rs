@@ -8,8 +8,7 @@ use std::time::Duration;
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::Request as HttpRequest;
-use engine_core::auth::MAX_EXPIRY_AHEAD_MS;
-use engine_core::auth::RequestAuth;
+use engine_core::auth::{MAX_EXPIRY_AHEAD_MS, RequestAuth};
 use engine_core::command::{
     CancelAllRequest, CancelRequest, CloseAllRequest, Command, OrderKind, OrderRequest, WithdrawalRequest,
 };
@@ -415,6 +414,7 @@ impl Node {
             emission_budget: None,
             collateral: None,
             listing: Default::default(),
+            operators: None,
             signing: crate::test_support::signing(),
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));

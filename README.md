@@ -263,7 +263,7 @@ volume traded to the cash, NAV and gross exposure it already gives. `GET /v1/hou
 gives a market's positions as aggregates only: USD by the move from the mark that would close each
 account out (the account's other positions held at their marks) and by profit. `GET /v1/monkey`
 gives the emission schedule and totals, the stake, and the distribution state, and
-`GET /v1/monkey/activity` pages the newest allocations, stakes and unstakes. `GET /v1/stats/series`
+`GET /v1/monkey/activity` pages the newest allocations, stakes and unstakes, and `GET /v1/monkey/distributions` the closed distribution epochs. `GET /v1/stats/series`
 serves bucketed series (NAV, cash, each market's long and short, the withdrawal queue, volume,
 MONKEY per dollar of realised loss, stake, allocation and distributions) at 1m, 1h and 1d, each
 answer stating where its data begins. A node holds these in memory and rebuilds them from the log

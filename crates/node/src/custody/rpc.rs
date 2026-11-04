@@ -208,6 +208,15 @@ impl VaultReader for VaultRpc {
         .await
     }
 
+    /// `data` called on the contract `to` and executed in the canonical block `at`, the vault's
+    /// reads' way: by hash, so a node on another chain errors instead of answering for its own.
+    /// Error cases:
+    /// - the call fails, reverts, or times out, or the endpoint does not hold the block as canonical
+    async fn contract_call(&self, at: BlockRef, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
+        let request = TransactionRequest::default().to(to).input(data.into());
+        self.deadline("eth_call", self.client.request("eth_call", (request, BlockId::hash_canonical(at.hash)))).await
+    }
+
     /// Both mirrorable staking events from the configured contract, and the operator registry's
     /// rotation switches and elections, sorted by block and log index.
     /// Without a staking contract the answer is empty.

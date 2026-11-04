@@ -19,6 +19,7 @@ mod history;
 mod house_state;
 mod marks;
 mod operator;
+mod operator_list;
 mod origin;
 pub(crate) mod reissue;
 mod signing;
@@ -133,6 +134,9 @@ pub struct ApiState {
     pub marks: crate::history::marks::Reader,
     /// The dashboard series, position maps and MONKEY activity, derived from the log in memory.
     pub stats: crate::stats::Stats,
+    /// The operator list the custody quorum last read, when `custody.evm.staking.registry.lens` is
+    /// configured; `None` answers `/v1/operators` 404.
+    pub operators: Option<crate::custody::OperatorsFeed>,
     /// The archive manifest listing proven so far, extended as segments complete.
     pub listing: Arc<tokio::sync::Mutex<Option<crate::log::catalog::CatalogListing>>>,
     /// The emission period budget the configured vault's MONKEY cap was derived from, which an
@@ -267,9 +271,11 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/house/positions", get(stats::positions))
         .route("/v1/monkey", get(stats::monkey))
         .route("/v1/monkey/activity", get(stats::activity))
+        .route("/v1/monkey/distributions", get(stats::distributions))
         .route("/v1/stats/series", get(stats::series))
         .route("/v1/house/state", get(house_state::house_state))
         .route("/v1/operator", get(operator::operator))
+        .route("/v1/operators", get(operator_list::operators))
         .route("/v1/accounts/{address}", get(account))
         .route("/v1/accounts/{address}/nonce", get(nonce))
         .route("/v1/accounts/{address}/eligibility", get(access::eligibility))

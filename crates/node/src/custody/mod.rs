@@ -36,6 +36,10 @@ pub(crate) mod pending;
 use crate::custody::evm::DepositWatcher;
 mod quorum;
 use crate::custody::quorum::Quorum;
+mod operators;
+#[cfg(test)]
+pub(crate) use operators::tests as tests_support;
+pub use operators::{OperatorList, OperatorsFeed, OperatorsReader, Unavailable};
 mod registry;
 mod rpc;
 pub(crate) mod staking;

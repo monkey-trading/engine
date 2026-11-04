@@ -1,5 +1,5 @@
 //! The House and MONKEY pages' data beyond `/v1/house`: `GET /v1/monkey`, `GET /v1/house/positions`,
-//! `GET /v1/stats/series` and `GET /v1/monkey/activity`. Each reads the in-memory record on the
+//! `GET /v1/stats/series`, `GET /v1/monkey/activity` and `GET /v1/monkey/distributions`. Each reads the in-memory record on the
 //! sequencer's thread, between batches, and is signed like every other `/v1` answer.
 
 use axum::Json;
@@ -10,10 +10,12 @@ use tracing::Span;
 use tracing::field::display;
 
 use crate::api::{ApiError, ApiResult, ApiState};
-use crate::stats::{ActivityPage, MonkeyView, PositionsView, SeriesPage, SeriesQuery};
+use crate::stats::{ActivityPage, DistributionsPage, MonkeyView, PositionsView, SeriesPage, SeriesQuery};
 
 /// Activity entries per page when the request sets no limit.
 const DEFAULT_ACTIVITY_LIMIT: usize = 50;
+/// Distribution epochs per page when the request sets no limit.
+const DEFAULT_DISTRIBUTIONS_LIMIT: usize = 50;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +46,14 @@ pub(super) struct ActivityParams {
     limit: Option<usize>,
     /// Only entries older than this id, as a previous page's `next`: a decimal string.
     before: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DistributionsParams {
+    limit: Option<usize>,
+    /// Only epochs before this one, as a previous page's `next`.
+    before: Option<u64>,
 }
 
 /// One page of a metric's series, oldest first, with where its data begins.
@@ -107,5 +117,19 @@ pub(super) async fn activity(
         .map_err(|_| ApiError::BadRequest("before must be an id from a previous page".to_owned()))?;
     let stats = s.stats.clone();
     let page = s.query_durable(move |_| stats.activity(before, limit)).await?;
+    page.map(Json).map_err(ApiError::BadRequest)
+}
+
+/// The closed distribution epochs before `before`, newest first, with where the history begins.
+/// Error cases:
+/// - the limit is outside range
+/// - the sequencer has stopped
+pub(super) async fn distributions(
+    State(s): State<ApiState>,
+    Query(params): Query<DistributionsParams>,
+) -> ApiResult<DistributionsPage> {
+    let limit = params.limit.unwrap_or(DEFAULT_DISTRIBUTIONS_LIMIT);
+    let stats = s.stats.clone();
+    let page = s.query_durable(move |engine| stats.distributions(engine, params.before, limit)).await?;
     page.map(Json).map_err(ApiError::BadRequest)
 }

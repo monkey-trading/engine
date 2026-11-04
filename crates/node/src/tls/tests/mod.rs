@@ -359,6 +359,7 @@ impl TestNode {
             emission_budget: None,
             collateral: None,
             listing: Default::default(),
+            operators: None,
             signing: crate::test_support::signing(),
         };
         let server = tokio::spawn(serve(listener, tls.acceptors, router(state), limits, api));
@@ -424,6 +425,7 @@ fn api() -> ApiSection {
         quote_max_markets: NonZeroUsize::new(4).unwrap(),
         stats_interval: Duration::from_secs(60),
         stats_light_interval: Duration::from_secs(5),
+        operators_interval: Duration::from_secs(60),
         allowed_origins: Vec::new(),
         tls: None,
         proxy_protocol: None,

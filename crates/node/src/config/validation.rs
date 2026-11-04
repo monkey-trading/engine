@@ -14,8 +14,8 @@ use tracing_subscriber::{EnvFilter, registry};
 
 use crate::config::feeds::venues_quoting;
 use crate::config::{
-    AuthMode, CustodyProvider, FeedProvider, HistorySection, MIN_QUOTE_INTERVAL, MIN_STATS_INTERVAL, NodeConfig,
-    PRODUCTION_BUILD, StatsSection, TeeProvider,
+    AuthMode, CustodyProvider, FeedProvider, HistorySection, MIN_OPERATORS_INTERVAL, MIN_QUOTE_INTERVAL,
+    MIN_STATS_INTERVAL, NodeConfig, PRODUCTION_BUILD, StatsSection, TeeProvider,
 };
 use crate::sequencer::genesis::check_genesis;
 use crate::trusted_time::NO_SAMPLE_GRACE;
@@ -116,7 +116,8 @@ impl NodeConfig {
     /// - `node.tick`, `node.checkpoint_every`, `node.segment_commands`, `feeds.interval`,
     ///   `time.max_drift`, `time.interval`, or an `api` timeout is zero, or `time.interval` plus
     ///   twice `time.max_drift` is not under 60s
-    /// - `api.heartbeat_interval` is under one second
+    /// - `api.heartbeat_interval` or `api.operators_interval` is under one second, or the latter is not under
+    ///   `custody.evm.finality_stalled_after` when a registry lens is set
     /// - `api.quote_interval` is under 100 ms
     /// - `api.stats_interval` or `api.stats_light_interval` is under one second, or too long to count in
     ///   milliseconds
@@ -202,6 +203,15 @@ impl NodeConfig {
         StatsSection::millis(self.api.stats_interval).context("api.stats_interval")?;
         ensure!(self.api.stats_light_interval >= MIN_STATS_INTERVAL, "api.stats_light_interval must be at least 1s");
         StatsSection::millis(self.api.stats_light_interval).context("api.stats_light_interval")?;
+        ensure!(self.api.operators_interval >= MIN_OPERATORS_INTERVAL, "api.operators_interval must be at least 1s");
+        if let Some(evm) =
+            self.custody.evm.as_ref().filter(|evm| evm.staking.as_ref().is_some_and(|s| s.registry.lens.is_some()))
+        {
+            ensure!(
+                self.api.operators_interval < evm.finality_stalled_after,
+                "api.operators_interval must be under custody.evm.finality_stalled_after, or the operator list is stale between reads"
+            );
+        }
         self.api.validate_origins()?;
         self.api.validate_fresh_accounts()?;
         self.api.validate_proxy_protocol()?;

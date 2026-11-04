@@ -128,6 +128,10 @@ cursor_path = "/data/staking-cursor.json"
 
 [custody.evm.staking.registry]
 contract = "0x4444444444444444444444444444444444444444" # REPLACE
+# The RegistryLens beside the registry, which GET /v1/operators reads through the custody quorum.
+# Absent, that route answers 404; a node's config is part of its release, so a lens added later
+# needs a new release.
+# lens = "0x5555555555555555555555555555555555555555" # REPLACE
 
 [checkpoints]
 # A separate endpoint from the custody providers. It signs and funds the relayer's transactions,

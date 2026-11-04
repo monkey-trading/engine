@@ -253,6 +253,7 @@ fn section(per_second: u32, burst: u32) -> ApiSection {
         quote_max_markets: NonZeroUsize::new(4).unwrap(),
         stats_interval: Duration::from_secs(60),
         stats_light_interval: Duration::from_secs(5),
+        operators_interval: Duration::from_secs(60),
         allowed_origins: Vec::new(),
         tls: None,
         proxy_protocol: None,
