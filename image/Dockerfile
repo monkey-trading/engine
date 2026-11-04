@@ -31,9 +31,9 @@ ARG VCPU_TYPE=EPYC-v4
 # SEV_FEATURES is in the launch measurement, so a launch without Secure TSC measures differently.
 ARG GUEST_FEATURES=0x201
 # no-kvmclock: kvm-clock's scale is in memory the host writes, and it outranks the TSC when the
-# host hides the invariant TSC. idle=halt: no ACPI C-states, so a host that hides the invariant TSC
-# cannot have its tables offer one that marks the TSC unstable after boot.
-ARG CMDLINE="console=ttyS0 ip=dhcp panic=-1 no-kvmclock idle=halt"
+# host hides the invariant TSC. The kernel has no ACPI processor driver (kernel.config), so nothing
+# reads the host's C-states after boot to mark the TSC unstable.
+ARG CMDLINE="console=ttyS0 ip=dhcp panic=-1 no-kvmclock"
 # The SEV-SNP guest policy a verifier requires: SMT allowed, debug and migration agent off. The
 # launch digest does not cover it, so the report must be checked for it separately.
 ARG POLICY=0x30000

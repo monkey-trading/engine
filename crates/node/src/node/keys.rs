@@ -18,12 +18,10 @@ use crate::checkpoints::CheckpointChain;
 use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::{current_release, ensure_named, vault_reader};
 use crate::log::Checkpoint;
+use crate::tee::clock::GuestClock;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::{KeyStore, MockSealer, Release, Sealer, file_for};
-use crate::tee::{
-    Attestation, AttestationBundle, Attestor, CURRENT_CLOCKSOURCE, ConfigfsTsm, EnclaveKey, MockAttestor,
-    attest_bundle, require_tsc_clocksource,
-};
+use crate::tee::{Attestation, AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
 use crate::tls::TlsIdentity;
 use engine_core::types::AccountId;
 
@@ -59,14 +57,15 @@ pub(super) struct Keys {
 
 /// This start's keys, attested.
 /// Error cases:
-/// - with real attestation, the guest kernel does not time on the TSC (alert
-///   `clocksource_unprotected`)
+/// - with real attestation, the guest kernel does not time on the TSC in the frequency the
+///   hardware reports (alert `clocksource_unprotected`)
 /// - the keys cannot be obtained (see `obtain`), or the attestor cannot produce a quote
 pub(super) async fn attested(cfg: &NodeConfig, start: &KeyStart) -> anyhow::Result<Keys> {
     if cfg.tee.provider == TeeProvider::Mock {
         warn!("mock TEE: attestation reports are not backed by hardware");
     }
-    let attestor = attestor_for(cfg.tee.provider);
+    let attestor = attestor_for(cfg.tee.provider, &GuestClock::default())
+        .inspect_err(|e| error!(alert = "clocksource_unprotected", "refusing to serve: {e:#}"))?;
     let (enclave, tls, store) = obtain(cfg, start, attestor.as_ref())
         .await
         .inspect_err(|e| error!(alert = "enclave_key_failed", "refusing to serve: {e:#}"))?;
@@ -218,11 +217,17 @@ async fn obtain_with(
     Ok((keys.enclave_key()?, TlsIdentity::new(keys.tls_key()?)?, Some(store)))
 }
 
-/// The source of `provider`'s quotes.
-pub(super) fn attestor_for(provider: TeeProvider) -> Box<dyn Attestor> {
+/// The source of `provider`'s quotes. With real attestation nothing is attested before the guest
+/// clock proves protected (`image/README.md`, "The guest's clock").
+/// Error cases:
+/// - with `ConfigfsTsm`, `clock` is not the TSC in the frequency the hardware reports
+pub(super) fn attestor_for(provider: TeeProvider, clock: &GuestClock) -> anyhow::Result<Box<dyn Attestor>> {
     match provider {
-        TeeProvider::Mock => Box::new(MockAttestor),
-        TeeProvider::ConfigfsTsm => Box::new(ConfigfsTsm::default()),
+        TeeProvider::Mock => Ok(Box::new(MockAttestor)),
+        TeeProvider::ConfigfsTsm => {
+            clock.require_protected()?;
+            Ok(Box::new(ConfigfsTsm::default()))
+        }
     }
 }
 

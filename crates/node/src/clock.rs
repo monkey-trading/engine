@@ -27,7 +27,8 @@ pub trait Clock: Send + Sync {
     ///
     /// Every bound on a price's age rests on its rate, which the host cannot scale in the enclave
     /// image: it launches with Secure TSC, which a verifier requires of a release, and a node with
-    /// real attestation starts only once the kernel times on that TSC (`tee::require_tsc_clocksource`).
+    /// real attestation starts only once the kernel times on that TSC in the frequency the hardware
+    /// reports (`tee::clock::GuestClock`).
     fn instant(&self) -> Instant;
 }
 

@@ -323,13 +323,18 @@ once the TLS source's quote ages out. Every part of this rests on the monotonic 
 the Roughtime round trips that place trusted time and with them `time.max_drift`. The enclave image
 launches with Secure TSC: the guest's TSC is the processor's, scaled to the frequency the host asks
 for at launch by a factor the SEV-SNP firmware sets and the host cannot change afterwards, and the
-guest kernel reads that frequency from the hardware, so the guest's monotonic clock keeps true
-time's rate whatever frequency the host asked for. The launch measurement covers the setting, and a
-verifier refuses a release that launches without it. The kernel times on that TSC: kvm-clock, whose
-scale the host writes, is off; nothing the host supplies after boot can mark the TSC unstable, since
-the kernel has no frequency scaling and reads ACPI C-states only at boot; and a node with real
-attestation refuses to start when the host has had the kernel mark it unstable at boot, which moves
-the kernel to a clock the host emulates (`image/README.md`, "The guest's clock").
+guest kernel reads that frequency from the hardware. A node refuses to start when the hardware
+reports the guest TSC's frequency as under 1000 MHz, where the firmware has rounded the host's
+request below what the hardware counts in and the kernel calibrates against clocks the host
+emulates; at 1000 MHz or more the whole-MHz reading rounds the true frequency by at most 0.1%. The
+launch measurement covers the setting, and a verifier refuses a release whose stated
+`guest_features` lack it; the launch digest ties the statement to the launch, reproduced by
+rebuilding `measurement.json`.
+The kernel times on that TSC: kvm-clock, whose scale the host writes, is off; nothing the host
+supplies after boot can mark the TSC unstable, since the kernel has no frequency scaling and no
+ACPI processor driver; and a node with real attestation refuses to start when the host has had the
+kernel mark it unstable at boot, which moves the kernel to a clock the host emulates
+(`image/README.md`, "The guest's clock").
 The
 Certificate Transparency watcher (`engine ct-watch`) checks tree head signatures but not consistency
 or inclusion proofs, so a log that shows different views to different clients can hide a certificate

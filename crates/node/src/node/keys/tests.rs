@@ -179,6 +179,23 @@ async fn a_restart_attests_the_same_signing_key_and_tls_key() {
     assert_eq!(restarted.attestation.bundle, first.attestation.bundle, "a restart attests other keys");
 }
 
+#[tokio::test]
+async fn real_attestation_refuses_an_unprotected_clock_before_any_key_is_obtained() {
+    let (_guard, mut alerts) = capture_alerts();
+    // The mock TEE reads neither the clocksource nor the MSR (the existing mock start above passes
+    // without both); real attestation checks them before opening keys.
+    let mut cfg = dev_config();
+    cfg.tee.provider = TeeProvider::ConfigfsTsm;
+    cfg.tee.use_published_mock_key = false;
+    // The host running these tests has no Secure TSC guest, so the check refuses before `obtain`
+    // touches a key; the message names what the clock failed on.
+    let err = attested(&cfg, &start(true)).await.err().expect("started on a clock Secure TSC does not protect");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("clocksource") || msg.contains("msr"), "{msg}");
+    let alert = alerts.try_recv().expect("the refusal raised an alert");
+    assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("clocksource_unprotected", "ERROR"));
+}
+
 #[test]
 fn the_first_start_after_a_handover_needs_the_log_to_end_at_the_predecessors_checkpoint() {
     let root = format!("0x{}", "ab".repeat(32));

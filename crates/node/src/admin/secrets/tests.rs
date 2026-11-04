@@ -280,6 +280,7 @@ fn a_hardware_quote_must_match_the_manifest_and_a_mock_one_never_does() {
     let release = |digest: [u8; 48], policy: u64, tcb: engine_verify::MinimumTcb| ReleaseManifest {
         name: "hardware".into(),
         launch_digest: digest,
+        guest_features: engine_verify::fixtures::GUEST_FEATURES,
         policy,
         minimum_tcb: tcb,
         config_hashes: [("node.toml".to_owned(), CONFIG)].into_iter().collect(),

@@ -21,7 +21,8 @@ differently from another.
   revoking the intermediate, the report's signature by the VCEK, the report data binding the served
   bundle, and the first release in the list whose launch digest, guest policy, minimum TCB, and
   configuration hashes admit the quote
-- A release whose `guest_features` lack SNPActive or SecureTSC admits no quote; the report carries no
+- A release whose `guest_features` lack SNPActive or SecureTSC admits no quote — the verifier
+  checks the features the manifest states; the report carries no
   SEV features, but the launch digest covers every vCPU's, so a quote that matches a release's
   digest launched with that release's features
 - The result names the release, the enclave address, the configuration, and the TLS key hash, and

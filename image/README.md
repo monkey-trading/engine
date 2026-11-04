@@ -128,17 +128,24 @@ three parts, none of them yet run on SEV-SNP hardware (#108):
 - **The kernel times on the TSC.** With Secure TSC the kernel marks the TSC reliable, so it never
   checks the TSC against another clock or across vCPUs. `no-kvmclock` on the measured command line
   keeps out kvm-clock, whose scale sits in memory the host writes and which outranks the TSC
-  whenever the host's CPUID hides the invariant TSC. While the host hides it, two things could still
-  mark the TSC unstable after boot: a CPU frequency change, and an ACPI C-state the TSC stops in.
-  The kernel has no frequency scaling ([kernel.config](kernel.config)), and `idle=halt` keeps ACPI
-  C-states from being read again after boot.
+  whenever the host's CPUID hides the invariant TSC. The kernel has no CPU frequency scaling and no
+  ACPI processor driver ([kernel.config](kernel.config)), so nothing the host supplies can mark the
+  TSC unstable after the TSC clocksource has registered: no frequency change, and no ACPI C-state
+  the TSC stops in.
 - **The node checks.** At boot the host can still have the kernel mark the TSC unstable, through
   CPUID leaves naming another hypervisor (the firmware checks only the standard and extended
-  leaves), firmware tables, or ACPI C-states the processor driver reads once; the kernel would then
-  time on the HPET or the ACPI timer, which QEMU emulates. So a node with real attestation
-  (`tee.provider = "configfs_tsm"`) reads
-  `/sys/devices/system/clocksource/clocksource0/current_clocksource` before it opens its keys, and
-  unless it is `tsc` refuses to start with the Critical `clocksource_unprotected`.
+  leaves) or firmware tables; the kernel would then time on the HPET or the ACPI timer, which QEMU
+  emulates. And at launch the host picks the frequency the firmware scales the TSC to, and can ask
+  for one so low the hardware cannot count in it. So a node with real attestation
+  (`tee.provider = "configfs_tsm"`) reads the clocksource
+  (`/sys/devices/system/clocksource/clocksource0/current_clocksource`) and the GUEST_TSC_FREQ MSR
+  before it opens its keys, and refuses to start with the Critical `clocksource_unprotected`
+  unless the kernel times on the TSC in a frequency the hardware reports as 1000 MHz or more:
+  under that the firmware has rounded the host's request below what the hardware counts in, and
+  the kernel calibrates the TSC against clocks the host emulates. The 0.1% a whole-MHz reading can
+  round a frequency by at 1000 MHz or more is the most a bound resting on the clock's rate gives
+  up; it rests on the APM's statement that the MSR reports the guest TSC's effective frequency,
+  confirmed only on SEV-SNP hardware (#108).
 
 The attestation report carries no SEV features of its own (ABI, Table 27), but the launch
 measurement covers each vCPU's VMSA, SEV_FEATURES included; the firmware measures the VMSA as if its

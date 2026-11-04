@@ -14,7 +14,6 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::path::{Path, PathBuf};
 
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
@@ -27,6 +26,7 @@ use k256::elliptic_curve::Generate;
 use sha2::Sha256;
 use sha3::{Digest, Keccak256};
 
+pub(crate) mod clock;
 pub(crate) mod keys;
 pub(crate) mod sealing;
 pub(crate) mod secrets;
@@ -35,8 +35,6 @@ pub(crate) mod snp;
 
 /// Mints each quote's report entry name.
 static NEXT_REPORT: AtomicU64 = AtomicU64::new(0);
-/// Where the guest kernel names the clocksource its monotonic and wall clocks read.
-pub(crate) const CURRENT_CLOCKSOURCE: &str = "/sys/devices/system/clocksource/clocksource0/current_clocksource";
 
 /// A source of hardware attestation quotes over caller-chosen report data.
 pub trait Attestor: Send + Sync {
@@ -287,21 +285,6 @@ pub(crate) fn checkpoint_digest(chain_id: u64, vault: &[u8; 20], seq: u64, root:
     h.finalize().into()
 }
 
-/// Checks that the guest kernel times on the TSC, which Secure TSC keeps the host from scaling. A
-/// host can make the kernel mark the TSC unstable at boot, and the kernel then times on a clock the
-/// host emulates (`image/README.md`, "The guest's clock").
-/// Error cases:
-/// - `path` cannot be read, or names another clocksource
-pub(crate) fn require_tsc_clocksource(path: &Path) -> anyhow::Result<()> {
-    let current = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    ensure!(
-        current.trim_end() == "tsc",
-        "the guest kernel times on {:?}, not on the TSC that Secure TSC protects",
-        current.trim_end()
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,29 +379,6 @@ mod tests {
             assert_ne!(other.report_data(), base, "a changed {what} left the report data unchanged");
             assert_eq!(other.report_data()[32..], [0u8; 32]);
         }
-    }
-
-    #[test]
-    fn only_the_tsc_passes_the_clocksource_check() {
-        let dir = crate::test_support::scratch_dir("tsc-clocksource");
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("current_clocksource");
-        // The kernel writes the name and a newline.
-        std::fs::write(&path, "tsc\n").unwrap();
-        require_tsc_clocksource(&path).expect("the TSC passes");
-        // kvm-clock's scale is the host's to write; the others the host emulates; tsc-early is
-        // the boot clock, gone once the TSC registers.
-        for other in ["kvm-clock", "hpet", "acpi_pm", "jiffies", "tsc-early", ""] {
-            std::fs::write(&path, format!("{other}\n")).unwrap();
-            let err = require_tsc_clocksource(&path).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                format!("the guest kernel times on {other:?}, not on the TSC that Secure TSC protects")
-            );
-        }
-        let missing = dir.join("missing");
-        let err = require_tsc_clocksource(&missing).unwrap_err();
-        assert_eq!(err.to_string(), format!("reading {}", missing.display()));
     }
 
     // ── Helpers ──

@@ -58,7 +58,8 @@ an index: load only the rule whose hint matches the current action.
   known-answer vectors (`tests/vectors.json`) the browser verifier replays. No IO and no runtime.
   Its `README.md` lists every file.
 - **crates/verify/** — `engine-verify`: SEV-SNP attestation verification against a list of release
-  manifests, each of which must launch with Secure TSC (`guest_features`), with the attestation, collateral, extra root, and time passed in (no IO, no clock, no
+  manifests, each of which must launch with Secure TSC (`guest_features`), with the attestation,
+  collateral, extra root, and time passed in (no IO, no clock, no
   C code); names the release that admitted the quote and the validity window of the dates it
   checked. Signatures on RustCrypto (`p384`, `rsa`: RSASSA-PSS/SHA-384 and ECDSA P-384/SHA-384
   only). Holds the attestation and bundle types the node builds, the relayed collateral document,

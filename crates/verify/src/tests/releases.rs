@@ -73,8 +73,9 @@ fn each_release_check_refuses_a_quote_outside_it() {
 
 #[test]
 fn a_launch_without_secure_tsc_verifies_against_no_release() {
-    // A launch without Secure TSC measures to its own digest, so its quote matches only a release
-    // naming that digest with the features it launched with, and every such release is refused.
+    // A launch without Secure TSC measures to its own digest. A manifest naming that digest is
+    // still refused unless its guest_features carry Secure TSC: the verifier checks the features
+    // the manifest states, and the digest link comes from reproducing the launch measurement.
     let enclave = enclave();
     let chain = test_chain(enclave.chip_id, REPORTED_TCB);
     let collateral = collateral_of(&chain, &crl_revoking(&chain, &[]));
@@ -95,7 +96,8 @@ fn a_launch_without_secure_tsc_verifies_against_no_release() {
         verify(&attestation, &[launched_with(features)], &collateral, now())
             .unwrap_or_else(|err| panic!("guest features 0x{features:x} refused: {err:#}"));
     }
-    // The release the image builds launches with Secure TSC, so the other launch does not match it.
+    // Independent of the features check: the image's own release names another digest, and against
+    // this quote that stays a plain launch-digest mismatch.
     let err = verify(&attestation, &[release()], &collateral, now()).unwrap_err();
     assert_eq!(format!("{err:#}"), "the quote's launch measurement matches no release launch digest");
 }
