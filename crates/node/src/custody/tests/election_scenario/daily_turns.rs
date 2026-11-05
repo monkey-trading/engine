@@ -28,7 +28,7 @@ use engine_core::turns::SetMember;
 use engine_core::types::{AccountId, Millis};
 use serde_json::{Value, json};
 
-use super::chain::{Chain, delegateCall, setRotationCall};
+use super::chain::{Chain, Parameters, delegateCall, setParametersCall, setRotationCall};
 use super::node::Node;
 use super::{DIGEST_A, DIGEST_B, FINALITY_MARGIN_SECS, T0_SECS, address, monkey};
 use crate::checkpoints::scenario::deploy;
@@ -59,12 +59,12 @@ const DIGEST_C: [u8; 48] = [0xc1; 48];
 /// Each member's stake, all of it delegated to itself, in whole MONKEY, and its self-bond.
 const STAKES: [u64; 3] = [50_000, 30_000, 20_000];
 const BOND: u64 = 2_000;
-/// The close that adopts the rotation set, and when the set takes effect: seven days and the
-/// finality margin later.
-const SET_CLOSE_SECS: u64 = T0_SECS + 3 * 3_600;
+/// The close that adopts the rotation set, at the end of the registry's first one-day epoch, and when
+/// the set takes effect: seven days and the finality margin later.
+const SET_CLOSE_SECS: u64 = T0_SECS + DAY_SECS + 3 * 3_600;
 const SET_EFFECTIVE_SECS: u64 = SET_CLOSE_SECS + 7 * DAY_SECS + FINALITY_MARGIN_SECS;
-/// The first turn whose draw deadline finds the set in effect: Wed 28 Oct 2026, from 22:30 UTC.
-const FIRST_TURN: u64 = 20_754;
+/// The first turn whose draw deadline finds the set in effect: Thu 29 Oct 2026, from 22:30 UTC.
+const FIRST_TURN: u64 = 20_755;
 const TURNS: u64 = 5;
 const DAY_SECS: u64 = 86_400;
 
@@ -89,15 +89,18 @@ async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
         deploy(&chain.provider, chain.accounts[0], "OperatorSchedule.sol/OperatorSchedule.json", &schedule_args).await;
     chain.schedule = Some(schedule);
 
-    // 1. A, B and C stake and register with their handover endpoints; the timelock names the vault,
-    //    the registry and the schedule to each other, approves the three releases, and turns rotation
-    //    on; each member delegates its whole stake to itself.
+    // 1. A, B and C stake and register with their handover endpoints; the timelock lengthens the
+    //    election epoch to the day a schedule needs, names the vault, the registry and the schedule to
+    //    each other, approves the three releases, and turns rotation on; each member delegates its
+    //    whole stake to itself.
     chain.impersonate(a).await;
     for (member, stake) in members.iter().zip(STAKES) {
         chain.stake(member.candidate, monkey(stake)).await;
         chain.register_serving(member.candidate, &member.key, monkey(BOND), member.digest, &member.endpoint).await;
     }
+    let daily = Parameters { epochLength: DAY_SECS, ..super::dev_parameters().0 };
     let mut calls = vec![
+        (chain.registry, setParametersCall { parameters: daily }.abi_encode()),
         (chain.registry, setVaultCall { vault_: chain.vault }.abi_encode()),
         (chain.vault, setRegistryCall { registry_: chain.registry }.abi_encode()),
         (chain.registry, setScheduleCall { schedule_: schedule }.abi_encode()),
