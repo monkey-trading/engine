@@ -87,17 +87,133 @@ contract OperatorScheduleTest is ScheduleTest {
         registry.closeEpoch();
     }
 
-    function test_NoSetIsAdoptedWhileOneWaits() public {
+    function test_EveryCloseQueuesItsSetToTakeEffectAtItsOwnTime() public {
+        address[3] memory members = [alice, bob, carol];
+        uint256[3] memory stakes = [uint256(30_000e18), 20_000e18, 15_000e18];
+        for (uint256 i = 0; i < 3; ++i) {
+            _candidate(members[i], stakes[i], i + 1);
+            _delegate(members[i], members[i]);
+        }
+        _setRotation(true);
+        // A close with everyone unlisted adopts nothing and leaves the next closes a day apart.
+        for (uint256 i = 0; i < 3; ++i) {
+            _list(members[i], i + 1, false);
+        }
+        _closeNext();
+        assertEq(schedule.setCount(), 0);
+        uint64[3] memory effectiveAt;
+        for (uint256 i = 0; i < 3; ++i) {
+            // Each close lists one member alone, so its set names it.
+            _list(members[i], i + 1, true);
+            _closeNext();
+            _list(members[i], i + 1, false);
+            effectiveAt[i] = uint64(block.timestamp + 7 days + FINALITY_MARGIN);
+            (, uint64 adoptedAt, address[] memory adopted,) = schedule.setOf(uint32(i + 1));
+            assertEq(adoptedAt, effectiveAt[i]);
+            assertEq(adopted.length, 1);
+            assertEq(adopted[0], members[i]);
+        }
+        assertEq(effectiveAt[1] - effectiveAt[0], EPOCH);
+        assertEq(schedule.setCount(), 3);
+        assertEq(schedule.pendingSetId(), 1, "the earliest waiting set is next");
+        for (uint256 i = 0; i < 3; ++i) {
+            _list(members[i], i + 1, true);
+        }
+
+        _relay(_nextTurn() + 1, keccak256("seed"));
+        for (uint256 i = 0; i < 3; ++i) {
+            vm.warp(effectiveAt[i]);
+            assertEq(schedule.currentSetId(), i + 1);
+            assertEq(schedule.pendingSetId(), i < 2 ? i + 2 : 0);
+            // The one turn whose deadline falls while this set is in effect draws its member.
+            uint64 turn = uint64((effectiveAt[i] - schedule.BOUNDARY_OFFSET() - 1) / 1 days + 2);
+            assertGe(schedule.drawDeadline(turn), effectiveAt[i]);
+            assertEq(_draw(turn), members[i]);
+            assertEq(schedule.turnOf(turn).setId, i + 1);
+        }
+    }
+
+    function test_ALateCloseAndThePromptOneAfterItQueueBoth() public {
         _candidate(alice, 30_000e18, 1);
         _delegate(alice, alice);
         _setRotation(true);
         _closeNext();
-        assertEq(schedule.setCount(), 1);
-        vm.warp(block.timestamp + EPOCH);
-        vm.recordLogs();
+        // Called a second before two epochs have ended, the close leaves the next one due at once.
+        vm.warp(uint256(registry.openEpochStart()) + 2 * EPOCH - 1);
+        registry.closeEpoch();
+        vm.warp(block.timestamp + 1);
+        registry.closeEpoch();
+        assertEq(schedule.setCount(), 3);
+        (, uint64 second,,) = schedule.setOf(2);
+        (, uint64 third,,) = schedule.setOf(3);
+        assertEq(third, second + 1);
+        assertEq(schedule.pendingSetId(), 1);
+    }
+
+    function test_ALaterSetNeverTakesEffectBeforeAnEarlierOne() public {
+        _candidate(alice, 30_000e18, 1);
+        _delegate(alice, alice);
+        _setRotation(true);
         _closeNext();
-        assertEq(vm.getRecordedLogs().length, 1, "only EpochClosed");
-        assertEq(schedule.setCount(), 1);
+        // A late close with the finality margin, then a prompt one a second later without it.
+        vm.warp(uint256(registry.openEpochStart()) + 2 * EPOCH - 1);
+        registry.closeEpoch();
+        (, uint64 late,,) = schedule.setOf(2);
+        OperatorRegistry.Parameters memory quick = _parameters();
+        quick.finalityMargin = 0;
+        vm.prank(address(governance));
+        registry.setParameters(quick);
+        vm.warp(block.timestamp + 1);
+        assertLt(block.timestamp + 7 days, late, "its own notice would end before the late close's set");
+        (address[] memory kept, uint256[] memory weights) = _one(alice);
+        vm.expectEmit(address(schedule));
+        emit OperatorSchedule.RotationSetAdopted(3, _closingEpoch(), late, true, kept, _keys(kept), weights);
+        registry.closeEpoch();
+        assertEq(schedule.setAt(late), 3);
+    }
+
+    function test_ACloseBelowQuorumDerivesFromTheLatestSetEvenWhileItWaits() public {
+        address[] memory pair = new address[](2);
+        uint256[] memory stakes = new uint256[](2);
+        (pair[0], pair[1], stakes[0], stakes[1]) = (alice, bob, 30_000e18, 25_000e18);
+        _rotate(pair, stakes);
+        _candidate(carol, 25_000e18, 3);
+        _delegate(carol, carol);
+        _closeNext();
+        assertEq(schedule.pendingSetId(), 2);
+        // 420k delegated to no candidate: 80k of 500k is under the quorum, and every member keeps
+        // the eligibility share.
+        _stake(voter, 420_000e18);
+        _delegate(voter, dave);
+        address[] memory three = new address[](3);
+        uint256[] memory weights = new uint256[](3);
+        (three[0], three[1], three[2]) = (alice, bob, carol);
+        (weights[0], weights[1], weights[2]) = (30_000e18, 25_000e18, 25_000e18);
+        vm.warp(uint256(registry.openEpochStart()) + EPOCH);
+        uint64 effectiveAt = uint64(block.timestamp + 7 days + FINALITY_MARGIN);
+        vm.expectEmit(address(schedule));
+        emit OperatorSchedule.RotationSetAdopted(3, _closingEpoch(), effectiveAt, false, three, _keys(three), weights);
+        registry.closeEpoch();
+    }
+
+    function test_WhileAScheduleIsNamedEpochsLastADayAtLeast() public {
+        OperatorRegistry.Parameters memory hourly = _parameters();
+        hourly.epochLength = 1 hours;
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.EpochTooShort.selector, 1 hours, 1 days));
+        vm.prank(address(governance));
+        registry.setParameters(hourly);
+
+        _deployRegistry();
+        OperatorSchedule own = new OperatorSchedule(registry, receiver);
+        vm.prank(address(governance));
+        registry.setParameters(hourly);
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.EpochTooShort.selector, 1 hours, 1 days));
+        vm.prank(address(governance));
+        registry.setSchedule(own);
+        vm.prank(address(governance));
+        registry.setParameters(_parameters());
+        vm.prank(address(governance));
+        registry.setSchedule(own);
     }
 
     function test_AnEmptySetIsNotAdoptedWithoutMembersInEffect() public {
@@ -196,6 +312,38 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(schedule.turnOf(turn + 2).seed, keccak256(abi.encode(schedule.turnOf(turn + 1).seed, turn + 2)));
     }
 
+    function test_TheFallbackSeedDoesNotDependOnLaterDraws() public {
+        _rotateOne(alice);
+        uint64 turn = _nextTurn() + 1;
+        bytes32 seed = keccak256("seed");
+        _relay(turn, seed);
+        _draw(turn);
+        SeedReceiver forked = new SeedReceiver(makeAddr("forked relay"), GENESIS);
+        vm.prank(address(governance));
+        schedule.setSeedReceiver(forked);
+        assertEq(schedule.seedAnchor(), seed);
+        uint256 before = vm.snapshotState();
+        _draw(turn + 1);
+        _draw(turn + 2);
+        bytes32 afterADraw = schedule.turnOf(turn + 2).seed;
+        vm.revertToState(before);
+        _draw(turn + 2);
+        assertEq(schedule.turnOf(turn + 2).seed, afterADraw, "drawing turn + 1 or not leaves turn + 2's seed");
+        assertEq(afterADraw, keccak256(abi.encode(seed, turn + 2)));
+    }
+
+    function test_AReceiverReplacedBeforeAnyDrawLeavesNoFallback() public {
+        _rotateOne(alice);
+        SeedReceiver forked = new SeedReceiver(makeAddr("forked relay"), GENESIS);
+        vm.prank(address(governance));
+        schedule.setSeedReceiver(forked);
+        assertEq(schedule.seedAnchor(), bytes32(0));
+        uint64 turn = _nextTurn() + 1;
+        vm.warp(schedule.drawDeadline(turn));
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.NoSeed.selector, turn));
+        schedule.draw(turn);
+    }
+
     function test_TheFallbackNeedsADrawnTurn() public {
         _rotateOne(alice);
         uint64 turn = _nextTurn() + 1;
@@ -264,6 +412,44 @@ contract OperatorScheduleTest is ScheduleTest {
         vm.warp(schedule.drawDeadline(turn + 1));
         vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.NoAvailableMember.selector, turn + 1));
         schedule.draw(turn + 1);
+    }
+
+    function test_AScanDrawsTheOnlyAvailableMember() public {
+        _candidate(alice, 30_000e18, 1);
+        _candidate(bob, 30_000e18, 2);
+        vm.prank(address(governance));
+        registry.setRotation(true);
+        address[] memory pair = new address[](2);
+        uint256[] memory weights = new uint256[](2);
+        (pair[0], pair[1], weights[0], weights[1]) = (alice, bob, 99, 1);
+        vm.prank(address(registry));
+        schedule.adopt(1, uint64(block.timestamp), pair, _keys(pair), weights, true);
+        MockSeedReceiver mock = new MockSeedReceiver();
+        vm.prank(address(governance));
+        schedule.setSeedReceiver(SeedReceiver(address(mock)));
+        vm.prank(address(governance));
+        registry.setReleaseApproval(alice, _digest(1), CONFIG, false);
+
+        uint64 turn = _nextTurn() + 1;
+        vm.warp(schedule.drawDeadline(turn));
+        uint256 scanned = 0;
+        for (uint256 i = 0; i < 40; ++i) {
+            mock.answerWith(keccak256(abi.encode("seed", i)));
+            uint256 before = vm.snapshotState();
+            assertEq(schedule.draw(turn), bob);
+            uint16 position = schedule.turnOf(turn).position;
+            assertLt(position, schedule.MAX_DRAW_POSITIONS() + 2);
+            assertEq(schedule.memberAt(1, mock.answer(), turn, position), bob);
+            if (position >= schedule.MAX_DRAW_POSITIONS()) ++scanned;
+            vm.revertToState(before);
+        }
+        assertGt(scanned, 0, "some seeds leave every weighted position to alice");
+        assertLt(scanned, 40, "some find bob among them");
+
+        vm.prank(address(governance));
+        registry.setReleaseApproval(bob, _digest(2), CONFIG, false);
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.NoAvailableMember.selector, turn));
+        schedule.draw(turn);
     }
 
     function test_AMemberKeepsItsGenerationWhileItStaysNamed() public {
@@ -468,6 +654,26 @@ contract OperatorScheduleTest is ScheduleTest {
             2, _closingEpoch(), uint64(block.timestamp + 7 days + FINALITY_MARGIN), false, kept, _keys(kept), weights
         );
         registry.closeEpoch();
+    }
+
+    function test_TheOperatorBeforeTheTurnsMayLeaveOnceTurnsNameOthers() public {
+        // The deployment's operator registers without votes, so the set names alice alone.
+        _candidate(deployerKey, MIN_BOND, 0);
+        uint32 setId = _rotateOne(alice);
+        (,, address[] memory members,) = schedule.setOf(setId);
+        assertEq(members.length, 1);
+        _assertCannotLeave(deployerKey, "named while no turn names anyone");
+        uint64 turn = _nextTurn() + 1;
+        _relay(turn, keccak256("seed"));
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        _assertCannotLeave(deployerKey, "the source of the turn in effect");
+        _draw(turn + 1);
+        vm.warp(schedule.boundary(turn + 1));
+        assertEq(registry.namedOperator().candidate, alice);
+        vm.prank(deployerKey);
+        registry.deregister();
+        assertEq(registry.candidateOf(deployerKey).adminKey, address(0));
     }
 
     function test_AMemberMayLeaveOnceAnInstallationEndsTheTurns() public {
@@ -764,6 +970,12 @@ contract OperatorScheduleTest is ScheduleTest {
         );
     }
 
+    /// @dev Approves, or withdraws approval of, `candidate`'s release `seed` straight from the timelock.
+    function _list(address candidate, uint256 seed, bool approved) internal {
+        vm.prank(address(governance));
+        registry.setReleaseApproval(candidate, _digest(seed), CONFIG, approved);
+    }
+
     function _keys(address[] memory members) internal view returns (address[] memory keys) {
         keys = new address[](members.length);
         for (uint256 i = 0; i < members.length; ++i) {
@@ -823,15 +1035,21 @@ contract OperatorScheduleFuzzTest is ScheduleTest {
         for (uint256 i = 0; i < size; ++i) {
             total += weights[i];
         }
-        uint256 point = uint256(keccak256(abi.encode(seed, turn, position))) % total;
         address expected;
-        uint256 cumulative = 0;
-        for (uint256 i = 0; i < size; ++i) {
-            cumulative += weights[i];
-            if (cumulative > point) {
-                expected = members[i];
-                break;
+        if (position < schedule.MAX_DRAW_POSITIONS()) {
+            uint256 point = uint256(keccak256(abi.encode(seed, turn, position))) % total;
+            uint256 cumulative = 0;
+            for (uint256 i = 0; i < size; ++i) {
+                cumulative += weights[i];
+                if (cumulative > point) {
+                    expected = members[i];
+                    break;
+                }
             }
+        } else {
+            // Past the weighted positions, the scan walks the members in order from a seeded start.
+            uint256 start = uint256(keccak256(abi.encode(seed, turn, schedule.MAX_DRAW_POSITIONS()))) % size;
+            expected = members[(start + position - schedule.MAX_DRAW_POSITIONS()) % size];
         }
         assertEq(schedule.memberAt(setId, seed, turn, position), expected);
     }

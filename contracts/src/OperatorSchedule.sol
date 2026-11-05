@@ -13,27 +13,33 @@ interface IGenerations {
 }
 
 /// @title OperatorSchedule
-/// @notice Names the operator by daily turns, for a registry that names this schedule. Each election
-/// close while rotation is on adopts a rotation set, seven days plus the finality margin before it
-/// takes effect, and at most one set waits at a time. With a quorum the set is the close's eligible
-/// candidates weighted by their votes; without one it is the set in effect less the members no longer
-/// eligible or registered under another admin key, their weights unchanged. A set holds each member's
-/// admin key as adopted. An empty set replaces one with members, and no turn is drawn from it.
+/// @notice Names the operator by daily turns, for a registry that names this schedule. Every election
+/// close while rotation is on adopts a rotation set, which takes effect seven days plus the finality
+/// margin after its close, and no earlier than the set adopted before it; sets waiting to take effect
+/// queue in close order. With a quorum the set is the close's eligible candidates weighted by their
+/// votes; without one it is the latest adopted set less the members no longer eligible or registered
+/// under another admin key, their weights unchanged. A set holds each member's admin key as adopted.
+/// An empty set replaces one with members, and no turn is drawn from it.
 /// @notice Anyone draws turn `n` from its draw deadline, a day before its boundary at 22:30 UTC on day
-/// `n`, until that boundary, from the set in effect at the deadline, so the moment of the draw picks
-/// nothing. Position by position, the turn's seed picks a member with probability proportional to its
-/// weight, with replacement, and the first one the registry still lists under the admin key the set
-/// adopted takes the turn. A member the registry names at the draw, on the release it runs, keeps the
-/// generation the vault holds for it; any other member, and a member whose release moves, takes a new
-/// one from the vault, so a node never reopens keys sealed for an earlier holding.
+/// `n`, until that boundary. The seed and the set, the one in effect at the deadline, are fixed by
+/// then, so the moment of the draw picks neither. Position by position, the turn's seed picks a member
+/// with probability proportional to its weight, with replacement, and the first one the registry lists
+/// under the admin key the set adopted takes the turn; after 64 positions a scan of every member, from
+/// an index the seed fixes, takes the first available, so a turn goes undrawn only when no member is
+/// available. Availability is read at the draw: a deregistration or a withdrawn approval landing in the
+/// window lets whoever draws choose by drawing before or after it. A member the registry names at the
+/// draw, on the release it runs, keeps the generation the vault holds for it; any other member, and a
+/// member whose release moves, takes a new one from the vault, so a node never reopens keys sealed for
+/// an earlier holding.
 /// @notice A turn names its member from its boundary, and the last turn drawn keeps naming its member
 /// after it ends until another turn starts or the registry's timelock installs an operator. Turning
 /// rotation off stops draws and adoptions; turns already drawn stand.
 /// @dev Seeds come from `seedReceiver`, which the registry's timelock replaces when an Ethereum fork
 /// needs a new relay and receiver. A turn the receiver has no seed for, because no seed was relayed at
-/// or before it, draws from `keccak256(abi.encode(s, turn))`, where `s` is the last drawn turn's seed;
-/// only that refusal falls back, and any other failure of the read reverts the draw, so a caller
-/// cannot pick the fallback by limiting gas. Not upgradeable.
+/// or before it, draws from `keccak256(abi.encode(seedAnchor, turn))`, where `seedAnchor` is the last
+/// drawn turn's seed when the receiver was replaced, so no later draw changes it; only that refusal
+/// falls back, and any other failure of the read reverts the draw, so a caller cannot pick the
+/// fallback by limiting gas. Not upgradeable.
 contract OperatorSchedule is SeedSchedule {
     /// @notice A rotation set's member, its admin key as adopted, and the sum of the weights up to
     /// and including its own.
@@ -79,6 +85,10 @@ contract OperatorSchedule is SeedSchedule {
 
     /// @notice The last turn drawn, zero before any; it only increases.
     uint64 public lastDrawnTurn;
+
+    /// @notice The last drawn turn's seed when the receiver was last replaced, which the fallback
+    /// hashes; zero while none had been drawn, when the fallback refuses.
+    bytes32 public seedAnchor;
 
     mapping(uint32 setId => RotationSet) private sets;
     mapping(uint64 turn => Turn) private turns;
@@ -130,20 +140,22 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @notice Replaces the seed receiver for every turn drawn from now on: the registry's timelock
-    /// names a new one when an Ethereum fork needs a new relay. A receiver with no seed relayed yet
-    /// draws from the fallback over this schedule's last seed.
+    /// names a new one when an Ethereum fork needs a new relay. Until the new receiver has a seed
+    /// relayed, turns draw from the fallback over the last drawn turn's seed, which this call fixes as
+    /// `seedAnchor`.
     function setSeedReceiver(SeedReceiver receiver) external {
         if (msg.sender != address(registry.governance())) revert UnauthorizedGovernance();
         if (address(receiver).code.length == 0) revert ZeroAddress();
         seedReceiver = receiver;
+        seedAnchor = turns[lastDrawnTurn].seed;
         emit SeedReceiverChanged(address(receiver));
     }
 
-    /// @notice Adopts the rotation set a close of `epoch` makes, to take effect at `effectiveAt`.
+    /// @notice Adopts the rotation set a close of `epoch` makes, to take effect at `effectiveAt`, or
+    /// when the latest adopted set does if that is later, so sets take effect in the order adopted.
     /// `candidates` are the registry's eligible candidates, with their admin keys and votes. With
-    /// `quorum` the set is those with votes; without, the set in effect less members not among them
-    /// under the key the set adopted. Nothing is adopted while a set waits to take effect, nor an
-    /// empty set while the set in effect has no members.
+    /// `quorum` the set is those with votes; without, the latest adopted set less members not among
+    /// them under the key that set adopted. An empty set is adopted only after a set with members.
     function adopt(
         uint64 epoch,
         uint64 effectiveAt,
@@ -152,10 +164,12 @@ contract OperatorSchedule is SeedSchedule {
         uint256[] calldata weights,
         bool quorum
     ) external onlyRegistry {
-        if (pendingSetId() != 0) return;
-        (address[] memory members, address[] memory keys, uint256[] memory kept) =
-            quorum ? _withVotes(candidates, adminKeys, weights) : _stillEligible(candidates, adminKeys);
-        if (members.length == 0 && sets[currentSetId()].members.length == 0) return;
+        (address[] memory members, address[] memory keys, uint256[] memory kept) = quorum
+            ? _withVotes(candidates, adminKeys, weights)
+            : _stillEligible(candidates, adminKeys);
+        RotationSet storage latest = sets[setCount];
+        if (members.length == 0 && latest.members.length == 0) return;
+        if (effectiveAt < latest.effectiveAt) effectiveAt = latest.effectiveAt;
         _record(epoch, effectiveAt, quorum, members, keys, kept);
     }
 
@@ -199,9 +213,11 @@ contract OperatorSchedule is SeedSchedule {
         }
     }
 
-    /// @notice The member position `position` of `turn`'s draw from set `setId` picks with `seed`:
-    /// the first whose cumulative weight exceeds `keccak256(abi.encode(seed, turn, position))` modulo
-    /// the set's total weight.
+    /// @notice The member position `position` of `turn`'s draw from set `setId` picks with `seed`.
+    /// Below `MAX_DRAW_POSITIONS`, the first whose cumulative weight exceeds
+    /// `keccak256(abi.encode(seed, turn, position))` modulo the set's total weight; from it on, the
+    /// scan's: the member `position - MAX_DRAW_POSITIONS` places after the one at index
+    /// `keccak256(abi.encode(seed, turn, MAX_DRAW_POSITIONS))` modulo the member count, wrapping.
     function memberAt(uint32 setId, bytes32 seed, uint64 turn, uint16 position) public view returns (address) {
         Member[] storage members = sets[setId].members;
         if (members.length == 0) revert EmptySet(setId);
@@ -221,10 +237,10 @@ contract OperatorSchedule is SeedSchedule {
         return setAt(uint64(block.timestamp));
     }
 
-    /// @notice The set waiting to take effect, zero when none is.
-    function pendingSetId() public view returns (uint32) {
-        uint32 latest = setCount;
-        return latest != 0 && block.timestamp < sets[latest].effectiveAt ? latest : 0;
+    /// @notice The next set to take effect, the earliest of those waiting, zero when none waits.
+    function pendingSetId() external view returns (uint32) {
+        uint32 next = currentSetId() + 1;
+        return next <= setCount ? next : 0;
     }
 
     /// @notice Set `setId`'s close epoch, effective time, members and their weights.
@@ -328,15 +344,15 @@ contract OperatorSchedule is SeedSchedule {
         _trim(members, keys, kept, count);
     }
 
-    /// @dev The members of the set in effect still among the eligible `candidates` under the admin
-    /// key the set adopted, with their weights in the set.
+    /// @dev The members of the latest adopted set still among the eligible `candidates` under the
+    /// admin key that set adopted, with their weights in it.
     function _stillEligible(address[] calldata candidates, address[] calldata adminKeys)
         private
         view
         returns (address[] memory members, address[] memory keys, uint256[] memory kept)
     {
         (members, keys, kept) = _arrays(candidates.length);
-        Member[] storage inEffect = sets[currentSetId()].members;
+        Member[] storage inEffect = sets[setCount].members;
         uint256 count = 0;
         uint256 below = 0;
         for (uint256 j = 0; j < inEffect.length; ++j) {
@@ -370,7 +386,7 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @dev Turn `turn`'s final seed: the receiver's, or, only when it refuses with `NoRelayedSeed`,
-    /// the hash of the last drawn turn's seed with `turn`.
+    /// the hash of `seedAnchor` with `turn`.
     function _seed(uint64 turn) private view returns (bytes32) {
         try seedReceiver.seedOf(turn) returns (bytes32 seed) {
             return seed;
@@ -381,35 +397,43 @@ contract OperatorSchedule is SeedSchedule {
                 }
             }
         }
-        uint64 last = lastDrawnTurn;
-        if (last == 0) revert NoSeed(turn);
-        return keccak256(abi.encode(turns[last].seed, turn));
+        bytes32 anchor = seedAnchor;
+        if (anchor == 0) revert NoSeed(turn);
+        return keccak256(abi.encode(anchor, turn));
     }
 
-    /// @dev The first position whose member the registry lists under the admin key the set adopted.
+    /// @dev The first position whose member the registry lists under the admin key the set adopted:
+    /// the weighted positions, then the scan's, one for each member.
     function _pick(uint32 setId, bytes32 seed, uint64 turn)
         private
         view
         returns (uint16 position, Member memory member)
     {
         Member[] storage members = sets[setId].members;
-        for (;; ++position) {
-            if (position == MAX_DRAW_POSITIONS) revert NoAvailableMember(turn);
+        uint256 end = MAX_DRAW_POSITIONS + members.length;
+        for (; position < end; ++position) {
             member = members[_index(members, seed, turn, position)];
             if (registry.isListed(member.candidate) && registry.keyHolder(member.adminKey) == member.candidate) {
                 return (position, member);
             }
         }
+        revert NoAvailableMember(turn);
     }
 
-    /// @dev The index of the first of `members`, which must not be empty, whose cumulative weight
-    /// exceeds the position's point.
+    /// @dev The index of the member `position` picks from `members`, which must not be empty: for a
+    /// weighted position the first whose cumulative weight exceeds the position's point, for a scan
+    /// position the scan's start plus its place in the scan.
     function _index(Member[] storage members, bytes32 seed, uint64 turn, uint16 position)
         private
         view
         returns (uint256 low)
     {
-        uint256 high = members.length - 1;
+        uint256 count = members.length;
+        if (position >= MAX_DRAW_POSITIONS) {
+            uint256 start = uint256(keccak256(abi.encode(seed, turn, MAX_DRAW_POSITIONS))) % count;
+            return (start + position - MAX_DRAW_POSITIONS) % count;
+        }
+        uint256 high = count - 1;
         uint256 r = uint256(keccak256(abi.encode(seed, turn, position))) % members[high].cumulative;
         while (low < high) {
             uint256 mid = (low + high) / 2;

@@ -148,6 +148,10 @@ contract OperatorRegistry {
     /// operator in effect may take, it bounds the gas of a close, which reads every candidate.
     uint256 public constant CANDIDATE_LIMIT = 100;
 
+    /// @notice The shortest epoch while a schedule is named: with the notice, it bounds how many
+    /// rotation sets wait at once, since every close adopts one.
+    uint64 public constant MIN_SCHEDULED_EPOCH = 1 days;
+
     uint256 private constant BPS = 10_000;
     uint256 private constant MAX_HOSTNAME_BYTES = 253;
     uint256 private constant MAX_ENDPOINT_BYTES = 512;
@@ -269,6 +273,7 @@ contract OperatorRegistry {
     error ScheduleAlreadySet(address schedule);
     error ScheduleNamesTurns();
     error TurnsPending(uint64 until);
+    error EpochTooShort(uint64 epochLength, uint64 minimum);
 
     /// @param monkey_ The MONKEY token the staking contract holds.
     /// @param cooldownSeconds_ The staking contract's unstake cooldown, in seconds, which also keeps
@@ -400,16 +405,19 @@ contract OperatorRegistry {
     }
 
     /// @notice Removes the caller's candidacy; its self-bond stays locked for one cooldown. The
-    /// operator in effect, a candidate elected and waiting to take effect, and, while a turn names
-    /// the operator or drawn turns run, the member of the turn in effect, its source, or the member
-    /// of the last drawn turn cannot leave.
+    /// operator in effect while no turn names one, a candidate elected and waiting to take effect,
+    /// and, while a turn names the operator or drawn turns run, the member of the turn in effect, its
+    /// source, or the member of the last drawn turn cannot leave.
     function deregister() external {
         Candidate memory registered = candidates[msg.sender];
         if (registered.adminKey == address(0)) revert NotRegistered();
         _settle();
+        (Operator memory turn,,) = _turn();
+        bool turnNamed = turn.candidate != address(0);
         if (
-            msg.sender == current.candidate || (pending.effectiveAt != 0 && msg.sender == pending.candidate)
-                || _holdsRunningTurn(msg.sender)
+            (!turnNamed && msg.sender == current.candidate)
+                || (pending.effectiveAt != 0 && msg.sender == pending.candidate)
+                || _holdsRunningTurn(msg.sender, turnNamed)
         ) revert OperatorCannotLeave();
         if (listed[msg.sender] != 0) _delist(msg.sender);
         delete keyHolder[registered.adminKey];
@@ -471,10 +479,13 @@ contract OperatorRegistry {
     }
 
     /// @notice Names the schedule whose turns name the operator, from which on closes adopt rotation
-    /// sets instead of electing. Set once, while rotation is off, to a schedule built for this registry.
+    /// sets instead of electing. Set once, while rotation is off and the epoch is at least
+    /// `MIN_SCHEDULED_EPOCH`, to a schedule built for this registry.
     function setSchedule(OperatorSchedule schedule_) external onlyGovernance {
         if (address(schedule) != address(0)) revert ScheduleAlreadySet(address(schedule));
         if (rotationSwitch) revert RotationActive();
+        uint64 epochLength = parameters.epochLength;
+        if (epochLength < MIN_SCHEDULED_EPOCH) revert EpochTooShort(epochLength, MIN_SCHEDULED_EPOCH);
         if (schedule_.registry() != this) revert InvalidSchedule();
         schedule = schedule_;
         emit ScheduleSet(address(schedule_));
@@ -518,11 +529,14 @@ contract OperatorRegistry {
         emit RotationChanged(enabled, cancelled);
     }
 
-    /// @notice Sets the parameters, each within the bounds fixed at deployment. A lower candidate cap
-    /// removes no listed candidate; it refuses new approvals, and approved re-registrations, until the
-    /// count is under it.
+    /// @notice Sets the parameters, each within the bounds fixed at deployment, and, with a schedule
+    /// named, an epoch of at least `MIN_SCHEDULED_EPOCH`. A lower candidate cap removes no listed
+    /// candidate; it refuses new approvals, and approved re-registrations, until the count is under it.
     function setParameters(Parameters calldata parameters_) external onlyGovernance {
         _checkBounds(parameters_);
+        if (address(schedule) != address(0) && parameters_.epochLength < MIN_SCHEDULED_EPOCH) {
+            revert EpochTooShort(parameters_.epochLength, MIN_SCHEDULED_EPOCH);
+        }
         parameters = parameters_;
         emit ParametersChanged(parameters_);
     }
@@ -711,13 +725,13 @@ contract OperatorRegistry {
         named = Operator(candidate, member.adminKey, member.release, since);
     }
 
-    /// @dev Whether `candidate` holds a turn while turns still matter: a turn names the operator, or
-    /// a drawn turn has not ended. After an installation past the last turn's end neither holds.
-    function _holdsRunningTurn(address candidate) private view returns (bool) {
+    /// @dev Whether `candidate` holds a turn while turns still matter: a turn names the operator
+    /// (`turnNamed`), or a drawn turn has not ended. After an installation past the last turn's end
+    /// neither holds.
+    function _holdsRunningTurn(address candidate, bool turnNamed) private view returns (bool) {
         OperatorSchedule turns = schedule;
         if (address(turns) == address(0)) return false;
-        (Operator memory turn,,) = _turn();
-        return (turn.candidate != address(0) || turns.turnsRunUntil() > block.timestamp) && turns.holdsTurn(candidate);
+        return (turnNamed || turns.turnsRunUntil() > block.timestamp) && turns.holdsTurn(candidate);
     }
 
     /// @dev The operator elections name: a pending promotion from the moment it is made, a pending

@@ -12,8 +12,9 @@ import {Vault} from "../src/Vault.sol";
 import {ScheduleTest} from "./helpers/ScheduleTest.sol";
 
 /// @notice Random stake, closes, draws, relays, receiver swaps, release moves, approvals, eligibility
-/// changes, rotation switches, installations, syncs, timelock releases and clock moves over four
-/// candidates, recording every generation handed out and every naming the vault puts in effect.
+/// and margin changes, rotation switches, installations, syncs, timelock releases and clock moves
+/// over four candidates, recording every generation handed out and every naming the vault puts in
+/// effect.
 contract ScheduleHandler is Test {
     bytes32 internal constant CONFIG = keccak256("candidate config");
 
@@ -150,6 +151,22 @@ contract ScheduleHandler is Test {
     /// @dev Raises the eligibility share past every candidate's, so closes adopt empty sets, or
     /// restores it.
     function toggleEligibility() external observed {
+        OperatorRegistry.Parameters memory p = _parameters();
+        p.eligibilityBps = p.eligibilityBps == 10_000 ? 500 : 10_000;
+        vm.prank(governance);
+        registry.setParameters(p);
+    }
+
+    /// @dev Drops the finality margin to nothing or restores it, so a close's own notice may end
+    /// before an earlier set's.
+    function toggleMargin() external observed {
+        OperatorRegistry.Parameters memory p = _parameters();
+        p.finalityMargin = p.finalityMargin == 0 ? 1 hours : 0;
+        vm.prank(governance);
+        registry.setParameters(p);
+    }
+
+    function _parameters() internal view returns (OperatorRegistry.Parameters memory) {
         (
             uint64 epochLength,
             uint64 finalityMargin,
@@ -159,17 +176,8 @@ contract ScheduleHandler is Test {
             uint256 minSelfBond,
             uint64 livenessTimeout
         ) = registry.parameters();
-        vm.prank(governance);
-        registry.setParameters(
-            OperatorRegistry.Parameters(
-                epochLength,
-                finalityMargin,
-                eligibilityBps == 10_000 ? 500 : 10_000,
-                quorumBps,
-                maxCandidates,
-                minSelfBond,
-                livenessTimeout
-            )
+        return OperatorRegistry.Parameters(
+            epochLength, finalityMargin, eligibilityBps, quorumBps, maxCandidates, minSelfBond, livenessTimeout
         );
     }
 
@@ -344,6 +352,17 @@ contract OperatorScheduleInvariantTest is ScheduleTest {
         for (uint256 i = 0; i < handler.drawnCount(); ++i) {
             uint64 turn = handler.drawnTurns(i);
             assertEq(schedule.turnOf(turn).candidate, handler.drawnMember(turn));
+        }
+    }
+
+    /// @notice Sets take effect in the order adopted, so the set in effect at any time is the latest
+    /// whose effective time has come.
+    function invariant_SetsTakeEffectInAdoptionOrder() public view {
+        uint64 previous = 0;
+        for (uint32 id = 1; id <= schedule.setCount(); ++id) {
+            (, uint64 effectiveAt,,) = schedule.setOf(id);
+            assertGe(effectiveAt, previous);
+            previous = effectiveAt;
         }
     }
 
