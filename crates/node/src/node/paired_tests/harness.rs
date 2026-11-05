@@ -114,7 +114,7 @@ impl Node {
     ) -> Result<Self> {
         let key = Arc::new(EnclaveKey::test_key());
         let parent = gate.as_ref().map(|(parent, _)| *parent);
-        let (log, plan) = read_log_and_history_observe(&cfg, Some(AccountId(key.address())), parent, |_| {})?;
+        let (log, plan) = read_log_and_history_observe(&cfg, parent, |_| {}).await?;
         let snapshot_seq = log.snapshot_sequence();
         let (stream, _) = broadcast::channel(2);
         let (withdrawals, custody) = mpsc::unbounded_channel();

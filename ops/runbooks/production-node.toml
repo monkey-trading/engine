@@ -146,6 +146,14 @@ rpc_timeout = "10s"
 [checkpoints.relayer_gas]
 min_balance = "0.01" # REPLACE
 
+[log_heads]
+# The LogHeads companion contract the enclave posts its newest released (seq, link) to. The
+# checkpoint endpoint funds a second relayer dedicated to these posts; it must differ from the
+# checkpoint relayer, whose nonce tracking assumes it alone uses its account.
+contract = "0x7777777777777777777777777777777777777777" # REPLACE: the LogHeads deployment for this vault
+relayer = "0x8888888888888888888888888888888888888888" # REPLACE: funded by the checkpoint endpoint
+interval = "1h" # OWNER: the truncation window is the interval plus chain inclusion
+
 [feeds]
 provider = "venues"
 interval = "200ms"

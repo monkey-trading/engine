@@ -61,7 +61,10 @@ fn legacy_history(dir: &Path, recorded: u8, version: ProtocolVersion) -> Sequenc
     for trigger in params.stress_levels.iter_mut().filter_map(|level| level.trigger.as_mut()) {
         trigger.divergence_share_bps = None;
     }
-    let events = seq.stamp(LEGACY_START, Command::Admin(AdminCommand::SetParams(params))).unwrap();
+    let events = seq
+        .stamp(LEGACY_START, Command::Admin(AdminCommand::SetParams(params)))
+        .unwrap()
+        .expect("trusted time admits the stamp");
     assert!(events.contains(&Event::AdminApplied), "{events:?}");
     seq.stamp(LEGACY_START, Command::HouseCapital { amount: Fixed::ONE, chain_ref: "genesis".into() }).unwrap();
     assert!(seq.engine.is_credited("genesis"));
@@ -80,7 +83,7 @@ fn legacy_history(dir: &Path, recorded: u8, version: ProtocolVersion) -> Sequenc
         setup.push(AdminCommand::ActivateProtocol { version });
     }
     for command in setup {
-        let events = seq.stamp(LEGACY_START, Command::Admin(command)).unwrap();
+        let events = seq.stamp(LEGACY_START, Command::Admin(command)).unwrap().expect("trusted time admits the stamp");
         assert!(events.contains(&Event::AdminApplied), "{events:?}");
     }
     seq.flush().unwrap();

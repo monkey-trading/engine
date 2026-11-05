@@ -237,7 +237,11 @@ impl Sequencer {
                     self.required.extend(queued);
                     return Ok(());
                 }
-                let events = self.stamp(ts, cmd)?;
+                let Some(events) = self.stamp(ts, cmd)? else {
+                    // Frozen mid-request: the remaining required commands wait for a restart, like
+                    // stamps the clock refuses.
+                    return Ok(());
+                };
                 if let Some(reason) = rejection(&events) {
                     bail!("{what}: rejected: {reason}");
                 }

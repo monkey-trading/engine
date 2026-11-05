@@ -35,7 +35,7 @@ mod evm;
 pub(crate) mod pending;
 use crate::custody::evm::DepositWatcher;
 mod quorum;
-use crate::custody::quorum::Quorum;
+pub(crate) use crate::custody::quorum::Quorum;
 mod operators;
 #[cfg(test)]
 pub(crate) use operators::tests as tests_support;
@@ -43,7 +43,8 @@ pub use operators::{OperatorList, OperatorsFeed, OperatorsReader, Unavailable};
 mod registry;
 mod rpc;
 pub(crate) mod staking;
-use crate::custody::rpc::VaultRpc;
+pub(crate) use crate::custody::evm::VaultReader;
+pub(crate) use crate::custody::rpc::VaultRpc;
 mod sizing;
 mod stall;
 mod watchdog;
@@ -95,6 +96,15 @@ impl BalanceQuorum {
     pub(crate) async fn balance(&self, account: Address) -> anyhow::Result<U256> {
         self.0.finalized_balance(account).await
     }
+}
+
+/// Builds the strict-majority vault reader the log-head check polls independently of the custody
+/// deposit watcher; it runs its own identity admission and votes reads across the same providers.
+/// Error cases:
+/// - EVM custody without its `[custody.evm]` section, or `custody.vault` does not parse
+pub(crate) fn heads_reader(cfg: &CustodySection) -> anyhow::Result<Quorum<VaultRpc>> {
+    let evm = cfg.evm.as_ref().context("log heads need [custody.evm]")?;
+    Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)
 }
 
 /// A connected custody provider, ready to run.

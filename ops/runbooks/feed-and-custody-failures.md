@@ -244,19 +244,26 @@ restart, and no release. See [key-recovery.md](key-recovery.md), "Secrets".
 
 ## Checkpoint endpoint
 
-`[checkpoints].rpc_url` is a separate endpoint from the custody providers. It carries the relayer's
-transactions: it must support `eth_sendTransaction`, `eth_getTransactionByHash` and `eth_getTransactionCount`, hold the funded
+`[checkpoints].rpc_url` is a separate endpoint from the custody providers. It carries the
+relayer's transactions: it must support `eth_sendTransaction`, `eth_getTransactionByHash` and `eth_getTransactionCount`, hold the funded
 relayer account, and serve historical nonce reads. It has no authority over funds.
 
 If it is down or the relayer cannot pay, posts fail with `checkpoint_post_failed` and the checkpoints
 queue (the queue is bounded; a full queue raises `checkpoint_backlog`). Trading continues, and no
 withdrawal is authorised until posting resumes.
 
+With `[log_heads]`, the same endpoint also funds a second relayer, `log_heads.relayer`, dedicated to
+the log-head posts; it must differ from the checkpoint relayer, whose nonce tracking assumes it
+alone uses its account. Its failures raise `log_head_read_failed` or `log_head_post_failed`
+(Warning) and retry; checkpoints and trading are unaffected, but while posts fail the truncation
+window stays the unposted tail.
+
 1. Check the endpoint: `cast block-number --rpc-url <checkpoint endpoint>` and
    `cast balance <relayer> --rpc-url <checkpoint endpoint>`. The relayer needs gas on Arbitrum One;
    with `[checkpoints.relayer_gas]` set, `checkpoint_relayer_low` warns below its `min_balance`, read
    at a block the custody providers agree is final, and `engine_checkpoint_relayer_balance_eth`
-   exports the balance.
+   exports the balance. With `[log_heads]`, check the second relayer the same way; no alert
+   watches its balance.
 2. Fund the account or restore the endpoint. The queued checkpoints post in order when it works.
 3. If the endpoint is gone for good, a new one with a funded relayer is a config change and a new
    release. Mind the clock: while checkpoints are not accepted, `staleAfter` (deposits refused) and

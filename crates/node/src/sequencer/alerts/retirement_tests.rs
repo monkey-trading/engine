@@ -222,5 +222,5 @@ fn recover_at(dir: &Path, at: i64) -> Sequencer {
 fn apply_admin(seq: &mut Sequencer, at: i64, command: AdminCommand) -> Vec<Event> {
     let key = SigningKey::from_bytes((&[0x42; 32]).into()).unwrap();
     let request = sign(&key, &seq.operator, command, seq.engine.next_request_nonce(seq.operator.address), at + 60_000);
-    seq.stamp(at, Command::SignedAdmin(Box::new(request))).unwrap()
+    seq.stamp(at, Command::SignedAdmin(Box::new(request))).unwrap().expect("trusted time admits the stamp")
 }

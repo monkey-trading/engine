@@ -164,7 +164,7 @@ pub(crate) fn old_genesis_log(
     let opening = setup.map(Command::Admin).into_iter().chain(genesis).collect();
     for commands in [opening, after].into_iter().filter(|commands: &Vec<Command>| !commands.is_empty()) {
         for cmd in commands {
-            let events = seq.stamp(ts, cmd).unwrap();
+            let events = seq.stamp(ts, cmd).unwrap().expect("trusted time admits the stamp");
             assert_eq!(rejection(&events), None, "{version:?} applies every command");
         }
         seq.checkpoint().unwrap();

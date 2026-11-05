@@ -216,10 +216,12 @@ impl Sequencer {
         parent: Option<crate::log::CheckpointParent>,
         mut observe: impl FnMut(&LogEntry),
     ) -> anyhow::Result<ReplayedLog> {
-        Self::read_log_with_authorities(dir, domain, signer, parent, Default::default(), &mut observe, None, None)
+        Self::read_log_with_authorities(dir, domain, signer, parent, Default::default(), &mut observe, None, None, None)
     }
 
     /// Replays accepted history while requiring the current signer for the unanchored tail.
+    /// `capture`, when set, records the cumulative command-prefix digest at that seq from the
+    /// replayed bytes for the posted-head check.
     /// Error cases:
     /// - trusted history is inconsistent, or ordinary replay/recovery validation fails
     #[allow(clippy::too_many_arguments)]
@@ -232,10 +234,14 @@ impl Sequencer {
         mut observe: impl FnMut(&LogEntry),
         marks: Option<crate::history::marks::MarkSink>,
         stats: Option<crate::stats::Stats>,
+        capture: Option<u64>,
     ) -> anyhow::Result<ReplayedLog> {
         let mut replay = parent
             .map_or_else(|| Replay::with_trust(domain, signer), |parent| Replay::with_recovery(domain, signer, parent));
         replay.set_authorities(authorities)?;
+        if let Some(seq) = capture {
+            replay.capture_link_at(seq);
+        }
         if let Some(sink) = marks {
             replay.sample_marks_with(sink);
         }
@@ -379,6 +385,7 @@ impl Sequencer {
             pipeline: None,
             after_sync: Vec::new(),
             house: house::Latest::recovered(last_checkpoint_offset.zip(last_signed_checkpoint.clone())),
+            log_heads: cfg.log_heads,
         };
         sequencer.marks.take_recovered(replayed_last_marks);
         {

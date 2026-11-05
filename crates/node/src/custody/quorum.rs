@@ -19,6 +19,8 @@ use crate::custody::chain::BlockLink;
 use crate::custody::evm::{BlockRef, Finality, HeadSupport, StakingEvent, VaultDeposit, VaultIdentity, VaultReader};
 use crate::custody::rpc::{InvalidRpcResponse, VaultRpc};
 
+mod posted_head;
+
 /// Independent providers and their alert identities; the watcher owns the reader.
 pub(crate) struct Quorum<R> {
     pub(super) providers: Vec<(String, R)>,

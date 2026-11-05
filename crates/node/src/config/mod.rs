@@ -52,6 +52,7 @@ mod api_defaults;
 use api_defaults::MIN_OPERATORS_INTERVAL;
 mod checkpoints;
 pub use checkpoints::CheckpointSection;
+pub use checkpoints::LogHeadsSection;
 mod telemetry;
 pub use crate::config::telemetry::*;
 mod proxy;
@@ -113,6 +114,9 @@ pub struct NodeConfig {
     pub operator: OperatorSection,
     pub custody: CustodySection,
     pub checkpoints: Option<CheckpointSection>,
+    /// On-chain log-head commitments (#541): posts the newest released head so a truncated log
+    /// cannot restart unnoticed; reads the head through the custody RPC quorum.
+    pub log_heads: Option<LogHeadsSection>,
     pub feeds: FeedsSection,
     pub time: TimeSection,
     pub history: HistorySection,

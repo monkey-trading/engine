@@ -136,6 +136,67 @@ fn api_over(node: &Gated) -> crate::api::ApiState {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_released_head_announced_is_the_batchs_own_not_a_later_one() {
+    let dir = scratch_dir("pipeline-head-watch");
+    let (stream, _) = broadcast::channel(256);
+    let (withdrawals, _custody) = mpsc::unbounded_channel();
+    let clock = Arc::new(crate::clock::test_clock::TestClock::default());
+    let cfg = crate::sequencer::SequencerConfig {
+        clock: clock.clone(),
+        ..sequencer_config(&dir, watch::channel(Manifest::default()).0)
+    };
+    let mut seq = Sequencer::recover(cfg, Arc::new(crate::tee::EnclaveKey::test_key()), stream, withdrawals).unwrap();
+    let (heads_tx, heads) = watch::channel(crate::log_heads::Head::default());
+    seq.log_heads = Some(crate::log_heads::Publisher { tx: heads_tx, freeze: Default::default() });
+    let syncs = Arc::new(AtomicUsize::new(0));
+    let counted = syncs.clone();
+    let (permits, verdicts): (StdSender<()>, StdReceiver<()>) = channel();
+    let verdicts = Mutex::new(verdicts);
+    seq.pipeline_with_syncs(move |job| {
+        verdicts.lock().unwrap().recv().unwrap();
+        counted.fetch_add(1, Ordering::SeqCst);
+        job.sync()
+    })
+    .unwrap();
+    let weighting = dev_config().genesis.params.toxicity.notional.expect("the dev config weighs by notional");
+    seq.carry_toxicity_notional(weighting).unwrap();
+    seq.activate_protocol().unwrap();
+    seq.genesis(&dev_config().genesis).unwrap();
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    // Two batches staged while both syncs are held; the second's head must not leak into the first's
+    // release, though the first batch finishes after the second is staged. The expected heads are
+    // read off the sequencer's own link state before each stage, not off the release under test.
+    seq.sequence(Command::Tick).unwrap().unwrap();
+    let first_head = crate::log_heads::Head { seq: seq.engine.last_seq().unwrap(), link: seq.command_prefix.into() };
+    let first = seq.stage(Batch::default()).unwrap();
+    assert_eq!(first.head, first_head, "a release carries the head its batch made durable");
+    seq.submit(first).unwrap();
+    seq.sequence(Command::Tick).unwrap().unwrap();
+    let second_head = crate::log_heads::Head { seq: seq.engine.last_seq().unwrap(), link: seq.command_prefix.into() };
+    let second = seq.stage(Batch::default()).unwrap();
+    seq.submit(second).unwrap();
+    assert_eq!(second_head.seq, first_head.seq + 1);
+
+    let sync_counted = |count: usize| {
+        for _ in 0..200 {
+            if syncs.load(Ordering::SeqCst) == count {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("the sync thread finished {count} syncs");
+    };
+    permits.send(()).unwrap();
+    sync_counted(1);
+    seq.complete(Ok(())).unwrap();
+    assert_eq!(*heads.borrow(), first_head, "the first release announces the first batch's head");
+    permits.send(()).unwrap();
+    sync_counted(2);
+    seq.complete(Ok(())).unwrap();
+    assert_eq!(*heads.borrow(), second_head);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_batch_is_released_only_after_its_sync_and_the_next_is_sequenced_meanwhile() {
     let node = Gated::start("pipeline-gated");
     // The genesis commands reached storage in line, before the loop ran.

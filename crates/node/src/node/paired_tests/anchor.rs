@@ -116,13 +116,14 @@ async fn recover(cfg: &NodeConfig, finalized: &Checkpoint) -> anyhow::Result<Opt
     let key = EnclaveKey::test_key();
     let parent = CheckpointParent { has_checkpoint: true, seq: finalized.seq, root: finalized.root.parse()? };
     let mut anchor = None;
-    let (log, _plan) = read_log_and_history_observe(cfg, Some(AccountId(key.address())), Some(parent), |entry| {
+    let (log, _plan) = read_log_and_history_observe(cfg, Some(parent), |entry| {
         if let LogEntry::Checkpoint(checkpoint) = entry
             && checkpoint.seq == parent.seq
         {
             anchor = Some(checkpoint.clone());
         }
-    })?;
+    })
+    .await?;
     let poster = Poster {
         registry: None,
         chain: Finalized(VaultState {

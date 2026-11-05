@@ -10,7 +10,7 @@ use alloy::primitives::{Address, B256, U256};
 use anyhow::bail;
 use engine_core::access::AccessPolicy;
 use engine_core::auth::{ClientAuth, Operator};
-use engine_core::command::{Command, Sequenced};
+use engine_core::command::Command;
 use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
@@ -22,7 +22,7 @@ use crate::config::EvmCustodySection;
 use crate::custody::chain::BlockLink;
 use crate::custody::cursor::Cursor;
 use crate::custody::evm::{
-    Beneficiary, BlockRef, DepositWatcher, Finality, StakingEvent, VaultDeposit, VaultIdentity, VaultReader,
+    Beneficiary, BlockRef, DepositWatcher, Finality, PostedHead, StakingEvent, VaultDeposit, VaultIdentity, VaultReader,
 };
 use crate::log::{LogEntry, Manifest};
 use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal};
@@ -90,6 +90,17 @@ pub(super) struct ChainState {
     pub(super) latency: Option<Duration>,
     /// How long a header read takes, in the runtime's time.
     pub(super) header_latency: Option<Duration>,
+    /// The latest block to report, when a test lags this provider behind the majority.
+    pub(super) latest: Option<(u64, B256)>,
+    /// The posted log head this endpoint's LogHeads contract holds, the vault's signer epoch, and
+    /// the block the post landed at: the head is only visible at and after that block.
+    pub(super) posted: Option<(u64, B256)>,
+    pub(super) epoch: u64,
+    pub(super) posted_block: Option<u64>,
+    /// The blocks `log_head` was asked at, so a test pins the read at the agreed latest block.
+    pub(super) head_reads: Vec<(u64, B256)>,
+    /// Refuse every log-head read, as a faulty provider would.
+    pub(super) refuse_head_reads: bool,
     /// Refuse log reads over more blocks than this, like a provider's result cap.
     pub(super) log_range_cap: Option<u64>,
     /// Staking event reads refused for covering more blocks than `log_range_cap`.
@@ -248,6 +259,28 @@ impl VaultReader for FakeChain {
         }
         Ok(Some(REGISTRY))
     }
+
+    async fn latest_block(&self) -> anyhow::Result<(u64, B256)> {
+        let chain = self.0.lock().unwrap();
+        if chain.failing {
+            bail!("connection refused");
+        }
+        Ok(chain.latest.unwrap_or((chain.head, chain.hash_at(chain.head))))
+    }
+
+    async fn log_head(&self, _contract: Address, at: BlockRef) -> anyhow::Result<PostedHead> {
+        let mut chain = self.0.lock().unwrap();
+        chain.head_reads.push((at.number, at.hash));
+        let tip = chain.latest.map_or(chain.head, |(number, _)| number);
+        if chain.refuse_head_reads || at.number > tip {
+            bail!("block {} is not served here", at.number);
+        }
+        if chain.hash_at(at.number) != at.hash {
+            bail!("block {} is not canonical", at.hash);
+        }
+        let head = chain.posted.filter(|_| chain.posted_block.is_none_or(|block| at.number >= block));
+        Ok(PostedHead { epoch: chain.epoch, head })
+    }
 }
 
 impl ChainState {
@@ -363,51 +396,6 @@ impl Node {
     }
 }
 
-/// A sequencer over an in-memory engine that answers sync requests only when `answer_syncs`,
-/// as when its fsync fails otherwise.
-pub(super) fn engine_sequencer(answer_syncs: bool) -> mpsc::Sender<Request> {
-    refusing_sequencer(answer_syncs, 0)
-}
-
-/// `engine_sequencer` that also drops its first `refusals` commands unapplied, with their
-/// replies, and keeps running, as the node's sequencer does while trusted time refuses stamps.
-pub(super) fn refusing_sequencer(answer_syncs: bool, refusals: usize) -> mpsc::Sender<Request> {
-    let (tx, mut rx) = mpsc::channel::<Request>(64);
-    tokio::spawn(async move {
-        let (mut engine, mut seq, mut refusals) = (Engine::new(), 0, refusals);
-        while let Some(request) = rx.recv().await {
-            match request {
-                Request::Submit { .. } if refusals > 0 => refusals -= 1,
-                Request::Submit { cmd, reply } => {
-                    let events = engine.apply(&Sequenced { seq, ts: 0, cmd }).unwrap();
-                    seq += 1;
-                    if let Some(reply) = reply {
-                        let _ = reply.send(events);
-                    }
-                }
-                Request::Query(query) => query(&engine),
-                Request::Sync(reply) if answer_syncs => {
-                    let _ = reply.send(engine.last_seq());
-                }
-                Request::Sync(_) => {}
-                Request::CheckpointStatus { .. } => unreachable!("no checkpoint worker in this test"),
-                Request::WatchBenchmarkSchedule(_) => unreachable!("only the API watches benchmark schedules"),
-                Request::HouseState(_) => unreachable!("only the API reads the house state"),
-                Request::ReissueWithdrawal { .. } => unreachable!("only the API asks for a reissue"),
-                Request::AccountPayouts { .. }
-                | Request::EntitlementClaim { .. }
-                | Request::DistributionClaim { .. } => {
-                    unreachable!("only the API asks for payouts and claims")
-                }
-                Request::FinalCheckpoint(_) => unreachable!("only a handover asks for the final checkpoint"),
-                Request::Quote { .. } => unreachable!("custody sends no quotes"),
-                Request::TimeSample(_) => unreachable!("custody sends no time samples"),
-            }
-        }
-    });
-    tx
-}
-
 /// The dev operator, recorded in the deployment domain the fake node signs checkpoints under.
 pub(super) fn operator() -> Operator {
     Operator { chain_id: CHAIN_ID, vault: TRADER, ..dev_config().operator().unwrap() }
@@ -485,6 +473,9 @@ pub(super) async fn wait_for_polls(chain: &FakeChain, polls: u64) {
         sleep(Duration::from_millis(5)).await;
     }
 }
+
+mod sequencer;
+pub(crate) use sequencer::{engine_sequencer, refusing_sequencer};
 
 mod files;
 pub(super) use files::{evm_toml, scratch};

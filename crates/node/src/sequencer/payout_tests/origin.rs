@@ -183,6 +183,7 @@ fn a_new_key_refuses_old_key_checkpoints_the_vault_never_accepted() {
             |_| {},
             None,
             None,
+            None,
         )
     };
     let error = read(&accepted).err().unwrap();

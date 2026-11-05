@@ -54,6 +54,64 @@ fn unsigned_requests_need_the_mock_tee_and_mock_custody() {
 }
 
 #[test]
+fn log_heads_need_checkpoints_a_distinct_relayer_and_a_real_contract() {
+    const CHECKPOINTS: &str = "\n[checkpoints]\nrpc_url = \"http://127.0.0.1:8545\"\
+        \nrelayer = \"0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\nretry_interval = \"5s\"\n\
+        rpc_timeout = \"5s\"";
+    const OTHER_RELAYER: &str = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
+    let anvil = std::fs::read_to_string(ANVIL).unwrap();
+    let heads = |contract: &str, relayer: &str| {
+        format!("\n[log_heads]\ncontract = \"{contract}\"\nrelayer = \"{relayer}\"\ninterval = \"1h\"")
+    };
+    // [log_heads] without [checkpoints] is refused.
+    let cfg: NodeConfig =
+        toml::from_str(&format!("{}{}", anvil, heads("0x00000000000000000000000000000000000000aa", OTHER_RELAYER)))
+            .unwrap();
+    let err = cfg.validate().unwrap_err();
+    assert!(err.to_string().contains("[log_heads] requires [checkpoints]"), "{err:#}");
+    // The checkpoint relayer cannot double as the log-head relayer: nonce tracking assumes one sender.
+    let cfg: NodeConfig = toml::from_str(&format!(
+        "{anvil}{CHECKPOINTS}{}",
+        heads("0x00000000000000000000000000000000000000aa", "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+    ))
+    .unwrap();
+    let err = cfg.validate().unwrap_err();
+    assert!(err.to_string().contains("must differ"), "{err:#}");
+    // The contract must be a real address.
+    let cfg: NodeConfig = toml::from_str(&format!(
+        "{anvil}{CHECKPOINTS}{}",
+        heads("0x0000000000000000000000000000000000000000", OTHER_RELAYER)
+    ))
+    .unwrap();
+    let err = cfg.validate().unwrap_err();
+    assert!(err.to_string().contains("contract"), "{err:#}");
+    // The relayer must be a real address too.
+    let cfg: NodeConfig = toml::from_str(&format!(
+        "{anvil}{CHECKPOINTS}{}",
+        heads("0x00000000000000000000000000000000000000aa", "0x0000000000000000000000000000000000000000")
+    ))
+    .unwrap();
+    let err = cfg.validate().unwrap_err();
+    assert!(err.to_string().contains("relayer must be non-zero"), "{err:#}");
+    // A zero interval would post on every retry tick.
+    let zero = heads("0x00000000000000000000000000000000000000aa", OTHER_RELAYER).replace("\"1h\"", "\"0s\"");
+    let cfg: NodeConfig = toml::from_str(&format!("{anvil}{CHECKPOINTS}{zero}")).unwrap();
+    let err = cfg.validate().unwrap_err();
+    assert!(err.to_string().contains("interval must be non-zero"), "{err:#}");
+    // A distinct relayer beside [checkpoints] validates.
+    let cfg: NodeConfig = toml::from_str(&format!(
+        "{anvil}{CHECKPOINTS}{}",
+        heads("0x00000000000000000000000000000000000000aa", OTHER_RELAYER)
+    ))
+    .unwrap();
+    cfg.validate().unwrap();
+    // Without an interval, heads post hourly: the owner's default.
+    let hourly = heads("0x00000000000000000000000000000000000000aa", OTHER_RELAYER).replace("\ninterval = \"1h\"", "");
+    let cfg: NodeConfig = toml::from_str(&format!("{anvil}{CHECKPOINTS}{hourly}")).unwrap();
+    assert_eq!(cfg.log_heads.unwrap().interval, std::time::Duration::from_secs(3600));
+}
+
+#[test]
 fn signed_requests_take_their_domain_from_the_custody_chain_and_vault() {
     let dev = std::fs::read_to_string(DEV).unwrap();
     assert_eq!(toml::from_str::<NodeConfig>(&dev).unwrap().client_auth().unwrap(), ClientAuth::Unsigned);

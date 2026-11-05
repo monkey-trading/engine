@@ -106,6 +106,12 @@ pub enum Request {
     /// and durable, and refused with the checkpoint gate's reason while it would withhold that
     /// checkpoint, the node going on sequencing.
     FinalCheckpoint(oneshot::Sender<anyhow::Result<()>>),
+    /// A detected on-chain log-head rollback freezes sequencing: `Submit` and `Quote` are refused
+    /// like a command whose stamp trusted time refuses, reads still answer, and the drain writes no
+    /// final checkpoint. The poster latches the freeze directly, ahead of this request, so what is
+    /// queued behind the detection is refused without waiting for the queue; the request remains
+    /// as the marker that orders the drain. Sent by the log-head poster before the node stops.
+    Freeze,
 }
 
 /// The source's evidence for a signed reissue request, and the request's digest it must name.

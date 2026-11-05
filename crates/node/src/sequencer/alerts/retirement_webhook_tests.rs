@@ -132,18 +132,18 @@ fn retire_with_rollover(log_dir: &Path, condition: &str, fired_earlier: bool) ->
         AdminCommand::SetParams(genesis.params),
         AdminCommand::UpsertMarket(market.clone()),
     ] {
-        let events = seq.stamp(START, Command::Admin(command))?;
+        let events = seq.stamp(START, Command::Admin(command))?.expect("trusted time admits the stamp");
         ensure!(events.contains(&Event::AdminApplied), "fixture command rejected: {events:?}");
     }
     if condition == "undated" {
-        let events = seq.stamp(
-            START,
-            Command::Admin(AdminCommand::SetBenchmarkRate { benchmark: "SOFR".into(), annual_bps: 100 }),
-        )?;
+        let events = seq
+            .stamp(START, Command::Admin(AdminCommand::SetBenchmarkRate { benchmark: "SOFR".into(), annual_bps: 100 }))?
+            .expect("trusted time admits the stamp");
         ensure!(events.contains(&Event::AdminApplied), "legacy rate setup: {events:?}");
     }
-    let activated =
-        seq.stamp(START, Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V18 }))?;
+    let activated = seq
+        .stamp(START, Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V18 }))?
+        .expect("trusted time admits the stamp");
     ensure!(activated.contains(&Event::AdminApplied), "V18 activation: {activated:?}");
     let mut rates = vec![BenchmarkRate {
         benchmark: "SONIA".into(),
@@ -159,29 +159,35 @@ fn retire_with_rollover(log_dir: &Path, condition: &str, fired_earlier: bool) ->
     }
     let batch =
         BenchmarkBatch { as_of: "2026-10-20".parse()?, checked: ["SOFR".to_owned(), "SONIA".to_owned()].into(), rates };
-    let events = seq.stamp(START, Command::Admin(AdminCommand::SetBenchmarkRates(batch)))?;
+    let events = seq
+        .stamp(START, Command::Admin(AdminCommand::SetBenchmarkRates(batch)))?
+        .expect("trusted time admits the stamp");
     ensure!(events.contains(&Event::AdminApplied), "dated replacement rate setup: {events:?}");
     let first_seq = seq.engine.last_seq().context("fixture commands sequenced")? + 1;
     if fired_earlier {
         let first = seq.engine.next_rollover().context("first rollover")?;
-        let events = seq.stamp(first + 1, Command::Tick)?;
+        let events = seq.stamp(first + 1, Command::Tick)?.expect("trusted time admits the stamp");
         ensure!(has_condition(&events, condition), "prior rollover must fire {condition}: {events:?}");
         ensure!(seq.benchmark_alerts.tracked.len() == 1, "only the active benchmark is tracked");
     }
     let retiring_seq = seq.engine.last_seq().context("before retirement")? + 1;
     let retiring_at = seq.engine.next_rollover().context("retiring command's rollover")? + 1;
     market.financing.benchmark = "SONIA".into();
-    let events = seq.stamp(retiring_at, Command::Admin(AdminCommand::UpsertMarket(market.clone())))?;
+    let events = seq
+        .stamp(retiring_at, Command::Admin(AdminCommand::UpsertMarket(market.clone())))?
+        .expect("trusted time admits the stamp");
     ensure!(events.contains(&Event::AdminApplied), "retiring market update applies: {events:?}");
     ensure!(has_condition(&events, condition), "retiring command emits the old-name rollover: {events:?}");
     ensure!(seq.engine.markets()[&market.id].spec.financing.benchmark == "SONIA", "last old-name use retired");
     ensure!(seq.benchmark_alerts.tracked.is_empty(), "old rollover events cannot reinsert the retired name");
 
     // Repeating the accepted update cannot repeat an already resolved retired episode.
-    let repeated = seq.stamp(retiring_at, Command::Admin(AdminCommand::UpsertMarket(market)))?;
+    let repeated = seq
+        .stamp(retiring_at, Command::Admin(AdminCommand::UpsertMarket(market)))?
+        .expect("trusted time admits the stamp");
     ensure!(repeated.contains(&Event::AdminApplied), "repeated catalogue update applies");
     let next = seq.engine.next_rollover().context("new benchmark's rollover")?;
-    seq.stamp(next + 1, Command::Tick)?;
+    seq.stamp(next + 1, Command::Tick)?.expect("trusted time admits the stamp");
     ensure!(seq.benchmark_alerts.tracked.len() == 1, "tracker is bounded by the active catalogue");
     ensure!(seq.benchmark_alerts.tracked.contains_key("SONIA"), "only the replacement benchmark remains");
     seq.flush()?;
@@ -310,7 +316,7 @@ fn firing_log_before_restart(log_dir: &Path, condition: &str) -> anyhow::Result<
             AdminCommand::SetOperator(seq.operator),
             AdminCommand::ActivateProtocol { version: ProtocolVersion::V17 },
         ] {
-            let events = seq.stamp(START, Command::Admin(command))?;
+            let events = seq.stamp(START, Command::Admin(command))?.expect("trusted time admits the stamp");
             ensure!(events.contains(&Event::AdminApplied), "legacy activation applies: {events:?}");
         }
     } else {
@@ -338,11 +344,11 @@ fn firing_log_before_restart(log_dir: &Path, condition: &str) -> anyhow::Result<
     let batch =
         BenchmarkBatch { as_of: "2026-10-20".parse()?, checked: ["SOFR".to_owned(), "SONIA".to_owned()].into(), rates };
     let cmd = retirement_signed(&seq, AdminCommand::SetBenchmarkRates(batch), START);
-    let events = seq.stamp(START, cmd)?;
+    let events = seq.stamp(START, cmd)?.expect("trusted time admits the stamp");
     ensure!(events.contains(&Event::AdminApplied), "dated replacement history installs");
     let firing_seq = seq.engine.last_seq().context("before firing")? + 1;
     let first = seq.engine.next_rollover().context("first rollover")?;
-    let events = seq.stamp(first + 1, Command::Tick)?;
+    let events = seq.stamp(first + 1, Command::Tick)?.expect("trusted time admits the stamp");
     ensure!(has_condition(&events, condition), "first rollover fires {condition}: {events:?}");
     ensure!(seq.benchmark_alerts.tracked.len() == 1, "old benchmark is locally tracked before restart");
     let next = seq.engine.next_rollover().context("next rollover after firing")?;

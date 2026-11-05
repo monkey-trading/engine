@@ -102,3 +102,42 @@ pub fn replay_path_with_attested(
     replayed.origin.require_attested(&attested_set)?;
     Ok(replayed)
 }
+
+/// Replays one exact finalized prefix with independently authenticated historical authorities.
+/// Error cases:
+/// - log, root, signature, authority, parent continuity, or finalized anchor validation fails
+pub(crate) fn replay_path_with_authorities(
+    path: &Path,
+    domain: CheckpointDomain,
+    signer: AccountId,
+    parent: crate::log::CheckpointParent,
+    authorities: crate::checkpoints::SignerHistory,
+) -> anyhow::Result<Replayed> {
+    let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
+    let mut replay = Replay::with_recovery(Some(domain), Some(signer), parent);
+    replay.set_authorities(authorities)?;
+    let mut anchored = !parent.has_checkpoint;
+    let mut visit = |entry: LogEntry| {
+        if let LogEntry::Checkpoint(cp) = &entry
+            && parent.has_checkpoint
+            && cp.seq == parent.seq
+        {
+            ensure!(
+                cp.root.parse::<engine_core::eip712::B256>()? == parent.root,
+                "public log differs from the finalized vault anchor"
+            );
+            anchored = true;
+        }
+        replay.apply(&entry)
+    };
+    if found.is_dir() {
+        SegmentedLog::open(path, &mut visit)?;
+    } else {
+        log::read_file(path, &mut visit)?;
+    }
+    ensure!(anchored, "public log is shorter than or omits the finalized vault anchor");
+    let replayed = replay.finish();
+    replayed.origin.require_recovery(domain, signer)?;
+    ensure!(replayed.commands > 0 && replayed.checkpoints > 0, "public log has no verified command/checkpoint");
+    Ok(replayed)
+}

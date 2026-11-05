@@ -29,6 +29,13 @@ impl Sequencer {
     /// readings it is made from, once the monotonic clock has passed that or while the run's stamps
     /// hold at its start.
     pub(super) fn admitted_ts(&mut self, quote: Option<Instant>) -> Option<Millis> {
+        if self.frozen() {
+            // A detected log rollback froze sequencing: stamps are refused, like an unadmitted
+            // clock, until the node stops. The poster's latch is read directly, so what was
+            // queued when it detected the rollback is refused without waiting for the `Freeze`
+            // request to dequeue.
+            return None;
+        }
         let (host_ms, now) = (self.clock.now_ms(), self.clock.instant());
         if let Some(not_after) = quote {
             if now > not_after {

@@ -13,7 +13,7 @@ use std::future::IntoFuture;
 use std::time::Duration;
 
 use alloy::eips::{BlockId, BlockNumberOrTag};
-use alloy::primitives::{Address, Bytes, U64, U256};
+use alloy::primitives::{Address, B256, Bytes, U64, U256};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::{Block, Filter, Header, Log, TransactionRequest};
 use alloy::sol;
@@ -21,16 +21,13 @@ use alloy::sol_types::{SolCall, SolEvent};
 use alloy::transports::http::reqwest::redirect::Policy;
 use alloy::transports::http::reqwest::{Certificate, Client};
 use anyhow::{Context, anyhow, bail, ensure};
-use engine_core::types::AccountId;
 use futures_util::{StreamExt, TryStreamExt, stream};
 use tokio::time::timeout;
 use tracing::debug;
 
 use crate::config::{EvmCustodySection, FinalityTag, SecretUrl, redact};
 use crate::custody::chain::BlockLink;
-use crate::custody::evm::{
-    Beneficiary, BlockRef, Finality, StakingEvent, StakingEventKind, VaultDeposit, VaultIdentity, VaultReader,
-};
+use crate::custody::evm::{BlockRef, Finality, PostedHead, StakingEvent, VaultDeposit, VaultIdentity, VaultReader};
 
 // The vault's ABI, as `contracts/src/Vault.sol` declares it.
 sol! {
@@ -39,6 +36,12 @@ sol! {
     event SurplusBooked(uint256 indexed id, uint256 amount);
     function depositCount() external view returns (uint256);
     function usdc() external view returns (address);
+    function signerEpoch() external view returns (uint64);
+}
+
+// The LogHeads companion contract's ABI, as `contracts/src/LogHeads.sol` declares it (#541).
+sol! {
+    function heads(uint64 epoch) external view returns (uint64 seq, bytes32 link);
 }
 
 // The staking contract's mirrorable events, and the registry that deployed it, as
@@ -48,6 +51,9 @@ sol! {
     event UnstakeCompleted(address indexed account, uint256 amount);
     function registry() external view returns (address);
 }
+
+mod decode;
+pub(super) use decode::decode_count;
 
 /// Historical vault events cannot authenticate a trader's funding address.
 pub(super) mod legacy {
@@ -215,6 +221,37 @@ impl VaultReader for VaultRpc {
     async fn contract_call(&self, at: BlockRef, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
         let request = TransactionRequest::default().to(to).input(data.into());
         self.deadline("eth_call", self.client.request("eth_call", (request, BlockId::hash_canonical(at.hash)))).await
+    }
+
+    /// The newest posted log head for the vault's current signer epoch, both calls in the canonical
+    /// block `at`; `None` before the epoch's first post.
+    /// Error cases:
+    /// - a call fails or times out, or an answer does not decode
+    async fn log_head(&self, contract: Address, at: BlockRef) -> anyhow::Result<PostedHead> {
+        let block = BlockId::hash_canonical(at.hash);
+        let epoch = signerEpochCall::abi_decode_returns(
+            &self.call(signerEpochCall {}.abi_encode(), block).await.context("reading the vault's signer epoch")?,
+        )
+        .context("decoding the vault's signer epoch")?;
+        let request = TransactionRequest::default().to(contract).input(headsCall { epoch }.abi_encode().into());
+        let out: Bytes = self.deadline("eth_call", self.client.request("eth_call", (request, block))).await?;
+        let returned = headsCall::abi_decode_returns(&out).context("decoding the log-head contract's head")?;
+        // Seq 0 is the unattested empty log: the contract initializes to it and nothing posts it.
+        Ok(PostedHead { epoch, head: (returned.seq > 0).then_some((returned.seq, returned.link)) })
+    }
+
+    /// The head block's height and hash.
+    /// Error cases:
+    /// - the request fails or times out, or the endpoint has no head
+    async fn latest_block(&self) -> anyhow::Result<(u64, B256)> {
+        let header: Option<Header> = self
+            .deadline(
+                "eth_getBlockByNumber",
+                self.client.request("eth_getBlockByNumber", (BlockNumberOrTag::Latest, false)),
+            )
+            .await?;
+        let header = header.ok_or(InvalidRpcResponse).context("the RPC has no latest block")?;
+        Ok((header.number, header.hash))
     }
 
     /// Both mirrorable staking events from the configured contract, and the operator registry's
@@ -387,94 +424,4 @@ impl VaultRpc {
     fn scrub(&self, text: &str) -> String {
         redact(text, &self.redactions)
     }
-
-    /// One vault deposit from its log.
-    /// Error cases:
-    /// - the log is removed, from another address, lacks its block, block hash, transaction, or
-    ///   index, or does not decode as either deposit event
-    pub(super) fn decode(&self, log: &Log) -> anyhow::Result<VaultDeposit> {
-        if log.removed || log.address() != self.vault {
-            bail!("unexpected log from {} (removed: {})", log.address(), log.removed);
-        }
-        let block = log.block_number.context("log without a block number")?;
-        let block_hash = log.block_hash.context("log without a block hash")?;
-        let tx_hash = log.transaction_hash.context("log without a transaction hash")?;
-        let log_index = log.log_index.context("log without a log index")?;
-        let (id, beneficiary, units, payer) = match log.topic0() {
-            Some(&Deposited::SIGNATURE_HASH) => {
-                let event = Deposited::decode_log(&log.inner).context("decoding Deposited")?.data;
-                (
-                    event.id,
-                    Beneficiary::Trader(AccountId(event.account.into())),
-                    event.amount,
-                    Some(AccountId(event.from.into())),
-                )
-            }
-            Some(&legacy::Deposited::SIGNATURE_HASH) => {
-                let event = legacy::Deposited::decode_log(&log.inner).context("decoding legacy Deposited")?.data;
-                (event.id, Beneficiary::Trader(AccountId(event.account.into())), event.amount, None)
-            }
-            Some(&HouseDeposited::SIGNATURE_HASH) => {
-                let event = HouseDeposited::decode_log(&log.inner).context("decoding HouseDeposited")?.data;
-                (event.id, Beneficiary::House, event.amount, Some(AccountId(event.from.into())))
-            }
-            // A surplus books existing holdings, not the caller's funds: it names no funding address,
-            // so screening holds it as unattributable rather than crediting it under the booker.
-            Some(&SurplusBooked::SIGNATURE_HASH) => {
-                let event = SurplusBooked::decode_log(&log.inner).context("decoding SurplusBooked")?.data;
-                (event.id, Beneficiary::House, event.amount, None)
-            }
-            other => bail!("unexpected event {other:?}"),
-        };
-        let id = u64::try_from(id).context("deposit id beyond u64")?;
-        Ok(VaultDeposit { block, block_hash, tx_hash, log_index, id, beneficiary, units, payer })
-    }
-
-    /// A staking or registry event's fields; a staking event's `account` is its only indexed topic.
-    /// Error cases:
-    /// - the log is removed, comes from neither configured contract, lacks its position, or does
-    ///   not decode
-    pub(super) fn decode_staking(&self, log: &Log) -> anyhow::Result<StakingEvent> {
-        let staking = self.staking.context("a staking event without a configured staking contract")?;
-        let from_registry = self.registry == Some(log.address());
-        if log.removed || (log.address() != staking && !from_registry) {
-            bail!("unexpected log from {} (removed: {})", log.address(), log.removed);
-        }
-        let block = log.block_number.context("log without a block number")?;
-        let block_hash = log.block_hash.context("log without a block hash")?;
-        let tx_hash = log.transaction_hash.context("log without a transaction hash")?;
-        let log_index = log.log_index.context("log without a log index")?;
-        let units = |units| {
-            crate::custody::staking::monkey_units(units)
-                .with_context(|| format!("staking event amount {units} exceeds u128"))
-        };
-        let kind = match log.topic0() {
-            _ if from_registry => crate::custody::registry::decode(log)?,
-            Some(&Staked::SIGNATURE_HASH) => {
-                let event = Staked::decode_log(&log.inner).context("decoding Staked")?.data;
-                StakingEventKind::Staked { account: AccountId(event.account.into()), amount: units(event.amount)? }
-            }
-            Some(&UnstakeCompleted::SIGNATURE_HASH) => {
-                let event = UnstakeCompleted::decode_log(&log.inner).context("decoding UnstakeCompleted")?.data;
-                StakingEventKind::UnstakeCompleted {
-                    account: AccountId(event.account.into()),
-                    amount: units(event.amount)?,
-                }
-            }
-            other => bail!("unexpected event {other:?}"),
-        };
-        Ok(StakingEvent { block, block_hash, tx_hash, log_index, kind })
-    }
-}
-
-/// The deposit count from `depositCount()`'s return data. Empty data means no code at that block:
-/// the vault was deployed later, since the identity check found it at the head, so it holds none.
-/// Error cases:
-/// - the data does not decode, or the count exceeds `u64`
-pub(super) fn decode_count(out: &Bytes) -> anyhow::Result<u64> {
-    if out.is_empty() {
-        return Ok(0);
-    }
-    let count = depositCountCall::abi_decode_returns(out).context("decoding depositCount")?;
-    u64::try_from(count).context("deposit count beyond u64")
 }

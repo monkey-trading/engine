@@ -23,14 +23,20 @@ use crate::snapshot::{self, RecoveryBase, head};
 
 impl Sequencer {
     /// Plans paired recovery or a strict log-derived migration without any persisted mutation.
+    /// `capture`, when set, is the on-chain posted head: the replayed suffix records the
+    /// cumulative command-prefix digest at its seq for the posted-head check, and a posted seq at or under the
+    /// snapshot base is verified against the on-disk prefix under the trusted authority before the
+    /// snapshot is accepted (a refusal is fatal, not a candidate rejection).
     /// Error cases:
-    /// - snapshots are absent, or no cache/full replay can verify the authoritative log
+    /// - snapshots are absent, no cache/full replay can verify the authoritative log, or the
+    ///   posted head conflicts with the log below the base
     pub(crate) fn read_paired_log(
         cfg: &NodeConfig,
         signer: Option<AccountId>,
         parent: Option<CheckpointParent>,
         authorities: crate::checkpoints::SignerHistory,
         stats: Option<crate::stats::Stats>,
+        capture: Option<crate::log_heads::Head>,
         mut observe: impl FnMut(&LogEntry),
     ) -> Result<(ReplayedLog, Plan)> {
         let snapshots = cfg.snapshots.as_ref().context("paired recovery requires snapshots config")?;
@@ -45,8 +51,21 @@ impl Sequencer {
         match candidates {
             Ok(paths) => {
                 for path in paths {
-                    match candidate(cfg, snapshots, &path, domain, signer, parent, stats.as_ref(), &mut observe) {
+                    match candidate(
+                        cfg,
+                        snapshots,
+                        &path,
+                        domain,
+                        signer,
+                        parent,
+                        stats.as_ref(),
+                        capture,
+                        &mut observe,
+                    ) {
                         Ok(recovered) => return Ok(recovered),
+                        // A posted head the log does not hold refuses startup; it is not a cache to
+                        // reject and fall back from — the fallback would serve the conflicting books.
+                        Err(error) if error.is::<crate::log_heads::prefix::Rollback>() => return Err(error),
                         Err(error) => snapshot::rejected(&path, &error),
                     }
                 }
@@ -59,6 +78,9 @@ impl Sequencer {
         );
         // A snapshot holds only checkpoints the current key signed; full replay authenticates the rest.
         replay.set_authorities(authorities)?;
+        if let Some(posted) = capture {
+            replay.capture_link_at(posted.seq);
+        }
         if let Some(stats) = stats {
             replay.record_stats_with(stats);
         }
@@ -77,8 +99,12 @@ impl Sequencer {
 }
 
 /// Accepts no later head as checkpoint C; every suffix entry still passes current strict Replay.
+/// A posted head at or under C is verified against the on-disk prefix before the snapshot is
+/// accepted; that refusal (see `log_heads::prefix::Rollback`) aborts recovery rather than falling
+/// back, so a forked prefix cannot be served from the snapshot.
 /// Error cases:
-/// - certificate, fixed metadata, prefix extension, boundary bytes, replay or availability fails
+/// - certificate, fixed metadata, prefix extension, boundary bytes, replay, the posted-head prefix
+///   check, or availability fails
 #[allow(clippy::too_many_arguments)]
 fn candidate(
     cfg: &NodeConfig,
@@ -88,10 +114,27 @@ fn candidate(
     signer: Option<AccountId>,
     parent: Option<CheckpointParent>,
     stats: Option<&crate::stats::Stats>,
+    capture: Option<crate::log_heads::Head>,
     observe: &mut impl FnMut(&LogEntry),
 ) -> Result<(ReplayedLog, Plan)> {
     let (snapshot, engine) = snapshot::read(snapshots, path, domain.chain_id, domain.vault)?;
     let at = snapshot.offset;
+    // The snapshot authenticates the state at its base; the on-chain posted head is independent
+    // evidence. A posted seq at or under the base is bound to this log by hashing and seal-checking
+    // the on-disk prefix through it — no engine apply, so snapshot recovery keeps its savings. The
+    // verified base prefix is the snapshot's own certified `command_prefix`, which
+    // `from_snapshot` seeds: nothing further to carry.
+    if let Some(posted) = capture.filter(|posted| posted.seq <= at.seq) {
+        let trusted = signer.context("snapshot recovery needs the trusted signer to verify the posted head")?;
+        crate::log_heads::prefix::verify(
+            &cfg.node.log_dir,
+            domain,
+            trusted,
+            posted,
+            at.seq,
+            snapshot.context.command_prefix,
+        )?;
+    }
     let pair = snapshot.pair.as_ref().context("engine-only cache requires full history migration")?;
     let expected = PrefixId {
         domain,
@@ -121,6 +164,9 @@ fn candidate(
     let h_seq = history_h.as_ref().and_then(|(history_h, _)| history_h.head.last_seq());
     let boundary = pair.catalog.clone();
     let mut replay = Replay::from_snapshot(engine, snapshot, domain, signer, parent)?;
+    if let Some(posted) = capture {
+        replay.capture_link_at(posted.seq);
+    }
     if let Some(stats) = stats {
         replay.record_stats_with(stats.clone());
     }

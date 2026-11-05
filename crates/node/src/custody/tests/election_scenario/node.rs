@@ -156,10 +156,11 @@ impl Node {
         history_cfg.custody.vault = format!("{:#x}", chain.vault);
         let (replayed, plan) = crate::node::tests::read_log_and_history_recording(
             &history_cfg,
-            Some(AccountId(key.address())),
+            &key,
             seq_cfg.checkpoints.as_ref().map(|_| seq_cfg.checkpoint_parent),
             &stats,
         )
+        .await
         .unwrap();
         let (replayed, mut history) = plan.finish_with_log(replayed, key.clone()).unwrap();
         seq_cfg.history_sealing = history.sealing();

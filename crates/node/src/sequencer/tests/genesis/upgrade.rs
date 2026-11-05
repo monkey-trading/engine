@@ -81,7 +81,7 @@ fn an_empty_legacy_genesis_takes_an_empty_registry_and_refuses_uncapped_listings
         0,
         trusted_now().latest_ms + 60_000,
     )));
-    let events = seq.stamp(trusted_now().latest_ms, listing).unwrap();
+    let events = seq.stamp(trusted_now().latest_ms, listing).unwrap().expect("trusted time admits the stamp");
     assert!(rejection(&events).is_some_and(|reason| reason.contains("no adopted close-spread ceiling")), "{events:?}");
 }
 
@@ -160,7 +160,7 @@ fn a_signed_adoption_after_the_carry_survives_restart_under_the_unchanged_config
         0,
         ts + 60_000,
     )));
-    let events = seq.stamp(ts, adopt).unwrap();
+    let events = seq.stamp(ts, adopt).unwrap().expect("trusted time admits the stamp");
     assert!(events.contains(&Event::AdminApplied), "{events:?}");
     drop(seq);
 

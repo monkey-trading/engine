@@ -169,9 +169,9 @@ async fn serve_node(
     let marks = marks::startup(&cfg, key.marks_key()).inspect_err(marks_failed)?;
     // The dashboard record recovery rebuilds from the log's replay and the sequencer then continues.
     let stats = Stats::new(&cfg).context("stats")?;
-    let (mut log, history_plan) = read_log_and_history_authorities(
+    let (mut log, history_plan, log_heads_pending) = read_log_and_history_authorities(
         &cfg,
-        Some(AccountId(key.address())),
+        &key,
         checkpoint_setup.as_ref().map(|setup| setup.parent),
         authorities,
         marks.shared.as_ref().expect("the marks store opens at startup"),
@@ -183,14 +183,15 @@ async fn serve_node(
                 anchor = Some(cp.clone());
             }
         },
-    )?;
+    )
+    .await?;
     keys::check_predecessor_head(store.as_deref(), log.last_seq(), log.last_checkpoint())
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
+    // Refuses a log the on-chain posted head does not hold (Critical `log_rollback` names the range).
+    let log_heads_setup = crate::log_heads::setup::startup(log_heads_pending, &log)?;
     log.prove_legacy_withdrawals(&cfg.custody)
         .await
-        .inspect_err(|e| error!(alert = "legacy_withdrawal_unproven", "refusing writable recovery: {e:#}"))?;
-
-    // The API also refuses an emission schedule with another budget than the vault's.
+        .inspect_err(|e| error!(alert = "legacy_withdrawal_unproven", "refusing writable recovery: {e:#}"))?; // The API also refuses an emission schedule with another budget than the vault's.
     let emission_budget = match &checkpoint_setup {
         Some(setup) => Some(emission_preflight(&setup.poster, log.emissions()).await?),
         None => None,
@@ -229,6 +230,7 @@ async fn serve_node(
         history_sealing: None,
         checkpoint_signing: Some(signing_tx),
         registry_operator,
+        log_heads: None,
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())
         .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?
@@ -242,6 +244,7 @@ async fn serve_node(
         .finish_with_log(log, key.clone())
         .inspect_err(|e| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}"))?;
     seq_cfg.history_sealing = history.sealing();
+    seq_cfg.log_heads = log_heads_setup.as_ref().map(|setup| setup.publisher());
     let published = crate::handover::Published::new(stream_tx.subscribe(), log.last_seq(), log.last_checkpoint());
     let mut seq = Sequencer::recover_from(log, seq_cfg, key.clone(), stream_tx.clone(), withdrawals_tx)
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
@@ -283,6 +286,9 @@ async fn serve_node(
             ("checkpoints", setup.poster.run_with_approvals(setup.rx, checkpoint_tx, recovery, setup.approvals).await)
         });
     }
+    if let Some(setup) = log_heads_setup {
+        tasks.spawn(setup.spawn(tx.clone()));
+    }
 
     // A successor's request stops sequencing through `drain_rx`, once the vault approves it; the
     // stop itself goes to the sequencer as a final-checkpoint request, which refuses while the
@@ -308,21 +314,14 @@ async fn serve_node(
     if store.is_some() && cfg.operator.rotation_enabled {
         // The incumbent pages when an election names another operator and, past the effective
         // time, when no successor has taken the keys.
-        let operator = cfg.operator()?.address;
-        let (watch_tx, watch_clock, watch_samples, max_drift) =
-            (tx.clone(), clock.clone(), samples_rx.clone(), cfg.time.max_drift);
-        tasks.spawn(async move {
-            (
-                "handover",
-                handover::watch_handover(
-                    watch_tx,
-                    operator,
-                    trusted_time::TrustedClock::new(watch_clock, watch_samples, max_drift),
-                    keys::RELEASE_CHECK_EVERY,
-                )
-                .await,
-            )
-        });
+        handover::spawn_watch(
+            &mut tasks,
+            tx.clone(),
+            cfg.operator()?.address,
+            clock.clone(),
+            samples_rx.clone(),
+            cfg.time.max_drift,
+        );
     }
 
     if let Some(authority) = &delivered.authority {

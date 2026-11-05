@@ -44,6 +44,25 @@ The engine mirrors `RotationChanged` and `Elected` from protocol V37 on the stak
 
 An approval key is `keccak256(abi.encodePacked(uint8(32), address account, uint64 nonce))`. Its value hash is `keccak256(abi.encode(address account, uint256 amountUsdc, uint64 nonce, uint64 approvedSeq))`. The compressed sparse Merkle tree hashes leaves as `keccak256(0x00 || key || valueHash)` and branches as `keccak256(0x01 || left || right)`. Siblings are supplied root-to-leaf, at most 256, and folded backwards with the key's bits from most significant to least significant. A single-leaf root takes an empty proof. Claims require an accepted checkpoint sequence at least as large as `approvedSeq`.
 
+## Log heads
+
+`LogHeads.sol` takes the enclave's newest released `(seq, link)` — where `link` is the cumulative
+command-prefix digest, a running hash over every command's sealed bytes that checkpoints do not
+reset, so a posted head commits to the whole history — under an `engine.log-head.v1` signature:
+`keccak256("engine.log-head.v1" ‖ uint64(chainId) ‖ vault ‖ uint64(epoch) ‖ uint64(seq) ‖ link ‖
+uint64(parentSeq) ‖ parentLink)`, packed. `post` is permissionless to relay; the recovered signer
+must be the vault's current `checkpointSigner`, and the digest binds the vault's current
+`signerEpoch`, so a rotation moves posts to a new epoch key. Every post names its parent — the
+previously accepted head of the same epoch — and the contract requires an exact match against the
+head it holds (`NotParent`) plus a strictly greater seq (`NotNewer`), so a longer divergent copy
+cannot overwrite the anchor without extending it; the first post of an epoch carries no parent and
+any seq. A node restarting from a log that does not reproduce the posted head refuses to start, so
+a truncation older than the posting interval plus inclusion cannot resume unnoticed. The contract
+has no admin: the vault reference is immutable, and a new vault deployment pairs with a new
+LogHeads. `LogHeads.t.sol` covers the signature vector, newest-per-epoch, the parent fence, fuzzed
+stale and replayed seqs, a forged signer and modified fields, another vault or chain, and rotation
+into a new epoch.
+
 ## Withdrawal authorization
 
 The domain is `EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)`, with name `EngineWithdrawal`, version `1`, the current chain id and this Vault address. OZ `EIP712` builds the domain separator. The exact typed struct is:

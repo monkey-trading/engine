@@ -70,6 +70,31 @@ pub trait VaultReader {
         let _ = (at, to, data);
         async { anyhow::bail!("this reader does not make contract calls") }
     }
+
+    /// The newest `(seq, link)` the LogHeads contract at `contract` holds for the vault's current
+    /// signer epoch, read in the canonical block `at`; `None` before the epoch's first post. A
+    /// reader that cannot read it refuses.
+    /// Error cases:
+    /// - the calls fail or time out, or an answer does not decode
+    fn log_head(&self, contract: Address, at: BlockRef) -> impl Future<Output = anyhow::Result<PostedHead>> + Send {
+        let _ = (contract, at);
+        async { anyhow::bail!("this reader does not read the log-head contract") }
+    }
+
+    /// The chain's latest block: its height and hash. A reader that cannot read it refuses.
+    /// Error cases:
+    /// - the request fails or times out, or the endpoint has no head
+    fn latest_block(&self) -> impl Future<Output = anyhow::Result<(u64, B256)>> + Send {
+        async { anyhow::bail!("this reader does not read the latest block") }
+    }
+}
+
+/// The vault's current signer epoch and, for it, the newest head the LogHeads contract holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PostedHead {
+    pub epoch: u64,
+    /// `(seq, link)`, or `None` before the epoch's first post.
+    pub head: Option<(u64, B256)>,
 }
 
 /// A block by height and hash.
