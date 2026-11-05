@@ -140,17 +140,14 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// While the operator registry has rotation on, this is instead the pending-or-current
     /// operator's release, which `syncRelease` folds into this contract's state.
     bytes32 public namedRelease;
-    /// @notice Raised by every `setCurrentRelease`, and by `syncRelease` when the effective release
-    /// changes on the registry's path: a node seals its keys under the generation it runs in and
-    /// opens only a copy sealed under the current one, so a release set current again takes the
-    /// keys afresh from the running release instead of reopening an old copy.
-    uint64 public releaseGeneration;
-    /// @notice The effective release the generation last synced at; the first `syncRelease` after an
-    /// election, a promotion, or the operator's own release move takes effect bumps the generation
-    /// when it differs. A node reads this beside `currentRelease()` and refuses to seal or hand over
-    /// keys until the two agree, so a key service never seals under a generation a later sync would
-    /// supersede.
-    bytes32 public syncedRelease;
+    /// @notice Generations handed out so far: each `setCurrentRelease`, each `syncRelease` that folds
+    /// a change, and each turn generation the registry's schedule reserves takes the next, so none
+    /// is handed out twice.
+    uint64 public generationCounter;
+    /// @dev The generation, time and release of the last fold by `setCurrentRelease` or `syncRelease`.
+    uint64 private foldedGeneration;
+    uint64 private foldedAt;
+    bytes32 private foldedRelease;
     /// @notice The operator registry this vault follows while rotation is on, set once by
     /// governance; the zero address behaves as rotation off.
     OperatorRegistry public registry;
@@ -313,6 +310,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     error RegistryAlreadySet(address registry);
     error RotationActive();
     error NotTheRegisteredEnclave(address signer, address enclave);
+    error UnauthorizedSchedule();
 
     /// @param governance_ The deployment's timelock, which alone rotates the signer, sets the
     /// release that holds its key, and unpauses.
@@ -373,9 +371,9 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// registered installs, so a promotion or election's standby is the only new signer.
     function setSigner(address signer) external onlyGovernance {
         if (signer == address(0)) revert ZeroAddress();
-        OperatorRegistry reg = registry;
-        if (address(reg) != address(0) && reg.rotationEnabled()) {
-            address enclave = reg.operatorEnclave();
+        (bool rotation,,,) = _rotation();
+        if (rotation) {
+            address enclave = registry.operatorEnclave();
             if (signer != enclave) revert NotTheRegisteredEnclave(signer, enclave);
         }
         address previous = checkpointSigner;
@@ -395,24 +393,52 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     }
 
     /// @notice The release that holds the enclave's keys: what governance named while rotation is
-    /// off, or the pending-or-current operator's while the registry has rotation on.
-    function currentRelease() public view returns (bytes32) {
-        OperatorRegistry reg = registry;
-        if (address(reg) != address(0) && reg.rotationEnabled()) return reg.operatorRelease();
-        return namedRelease;
+    /// off, or the registry's named operator's while the registry has rotation on.
+    function currentRelease() public view returns (bytes32 release) {
+        bool rotation;
+        (rotation, release,,) = _rotation();
+        if (!rotation) release = namedRelease;
+    }
+
+    /// @notice The generation of `currentRelease()`: a node seals its keys under the generation it
+    /// runs in and opens only a copy sealed under the current one, so a release named again takes
+    /// the keys afresh from the running release instead of reopening an old copy. While a turn of
+    /// the registry's schedule names the operator, the turn's; otherwise the last fold's.
+    function releaseGeneration() external view returns (uint64) {
+        (,, uint64 turn,) = _rotation();
+        return turn != 0 ? turn : foldedGeneration;
+    }
+
+    /// @notice The release the generation was folded at: `currentRelease()` while a turn names the
+    /// operator; otherwise the release `setCurrentRelease` or `syncRelease` last folded, or zero once
+    /// a turn has named the operator since that fold. A node reads this beside `currentRelease()`
+    /// and refuses to seal or hand over keys until the two agree, so a key service never seals under
+    /// a generation a later sync would supersede.
+    function syncedRelease() external view returns (bytes32) {
+        (, bytes32 release, uint64 turn, uint64 until) = _rotation();
+        if (turn != 0) return release;
+        return until > foldedAt ? bytes32(0) : foldedRelease;
     }
 
     /// @notice Folds a registry-driven release change into this contract's state, raising the
-    /// release generation: anyone calls it once an election or promotion moves the operator, or
-    /// the operator in effect moves its own release through the registry's `setRelease`. A node
-    /// seals its keys only after this, so they are sealed under the generation the release change
-    /// raised.
+    /// release generation: anyone calls it once an election or promotion moves the operator, the
+    /// operator in effect moves its own release through the registry's `setRelease`, or the
+    /// schedule's turns stop naming the operator. A node seals its keys only after this, so they are
+    /// sealed under the generation the release change raised. A no-op while a turn names the
+    /// operator, whose generation the schedule holds.
     function syncRelease() public {
-        bytes32 effective = currentRelease();
-        if (effective == syncedRelease) return;
-        syncedRelease = effective;
-        uint64 generation = ++releaseGeneration;
-        emit ReleaseSynced(effective, generation);
+        (bool rotation, bytes32 release, uint64 turn, uint64 until) = _rotation();
+        if (turn != 0) return;
+        if (!rotation) release = namedRelease;
+        if (release == foldedRelease && until <= foldedAt) return;
+        emit ReleaseSynced(release, _fold(release));
+    }
+
+    /// @notice Hands the registry's schedule the next generation, for a turn whose member was not
+    /// named under one already.
+    function reserveGeneration() external returns (uint64) {
+        if (msg.sender != address(registry.schedule())) revert UnauthorizedSchedule();
+        return ++generationCounter;
     }
 
     /// @notice Makes the release with SEV-SNP launch measurement `launchDigest`, running the config
@@ -422,13 +448,24 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// the operator in effect upgrades by moving to a release the timelock approved for it.
     function setCurrentRelease(bytes calldata launchDigest, bytes32 configHash) external onlyGovernance {
         if (launchDigest.length != 48) revert InvalidLaunchDigest();
-        OperatorRegistry reg = registry;
-        if (address(reg) != address(0) && reg.rotationEnabled()) revert RotationActive();
+        (bool rotation,,,) = _rotation();
+        if (rotation) revert RotationActive();
         bytes32 release = keccak256(abi.encodePacked(launchDigest, configHash));
         namedRelease = release;
-        syncedRelease = release;
-        uint64 generation = ++releaseGeneration;
-        emit CurrentReleaseChanged(release, generation, launchDigest, configHash);
+        emit CurrentReleaseChanged(release, _fold(release), launchDigest, configHash);
+    }
+
+    /// @dev The registry's `rotationState`: rotation off without a registry.
+    function _rotation() private view returns (bool, bytes32, uint64, uint64) {
+        OperatorRegistry reg = registry;
+        if (address(reg) == address(0)) return (false, 0, 0, 0);
+        return reg.rotationState();
+    }
+
+    /// @dev Makes `release` the folded release in the next generation.
+    function _fold(bytes32 release) private returns (uint64 generation) {
+        generation = ++generationCounter;
+        (foldedGeneration, foldedAt, foldedRelease) = (generation, uint64(block.timestamp), release);
     }
 
     /// @notice Independently pauses deposits (including house capital) and withdrawal claims. A

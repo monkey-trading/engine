@@ -1,0 +1,392 @@
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity 0.8.36;
+
+import {OperatorRegistry} from "./OperatorRegistry.sol";
+import {SeedReceiver} from "./SeedReceiver.sol";
+import {SeedSchedule} from "./SeedSchedule.sol";
+
+/// @dev The vault that hands a newly named member its generation.
+interface IGenerations {
+    function reserveGeneration() external returns (uint64);
+}
+
+/// @title OperatorSchedule
+/// @notice Names the operator by daily turns, for a registry that names this schedule. Each election
+/// close while rotation is on adopts a rotation set, seven days plus the finality margin before it
+/// takes effect, and at most one set waits at a time. With a quorum the set is the close's eligible
+/// candidates weighted by their votes; without one it is the set in effect less the members no longer
+/// eligible, their weights unchanged.
+/// @notice Anyone draws turn `n` from its draw deadline, a day before its boundary at 22:30 UTC on day
+/// `n`, until that boundary, from the set in effect. Position by position, the turn's seed picks a
+/// member with probability proportional to its weight, with replacement, and the first one still
+/// listed in the registry takes the turn. A member drawn for the turn after its own keeps its
+/// generation; any other member, and a member whose release moves, takes a new one from the vault, so
+/// a node never reopens keys sealed for an earlier holding.
+/// @notice A turn names its member from its boundary, and the last turn drawn keeps naming its member
+/// after it ends until another turn starts or the registry's timelock installs an operator. Turning
+/// rotation off stops draws and adoptions; turns already drawn stand.
+/// @dev Seeds come from `seedReceiver`, which the registry's timelock replaces when an Ethereum fork
+/// needs a new relay and receiver. A turn the receiver has no seed for, because no seed was relayed at
+/// or before it, draws from `keccak256(abi.encode(s, turn))`, where `s` is the last drawn turn's seed;
+/// only that refusal falls back, and any other failure of the read reverts the draw, so a caller
+/// cannot pick the fallback by limiting gas. Not upgradeable.
+contract OperatorSchedule is SeedSchedule {
+    /// @notice A rotation set's member and the sum of the weights up to and including its own.
+    struct Member {
+        address candidate;
+        uint256 cumulative;
+    }
+
+    struct RotationSet {
+        uint64 epoch;
+        uint64 effectiveAt;
+        Member[] members;
+    }
+
+    /// @notice A drawn turn. `prior` is the turn drawn before it, zero for the first; `reason` is 0
+    /// for a draw.
+    struct Turn {
+        address candidate;
+        uint16 position;
+        uint8 reason;
+        uint32 setId;
+        uint64 generation;
+        uint64 prior;
+        bytes32 seed;
+    }
+
+    /// @notice How many positions a draw tries before it refuses the turn.
+    uint16 public constant MAX_DRAW_POSITIONS = 64;
+
+    uint8 internal constant DRAWN = 0;
+
+    /// @notice The registry whose closes adopt sets and whose listing a drawn member needs.
+    OperatorRegistry public immutable registry;
+
+    /// @notice The receiver whose seeds turns are drawn from.
+    SeedReceiver public seedReceiver;
+
+    /// @notice Rotation sets adopted so far; set ids count from 1.
+    uint32 public setCount;
+
+    /// @notice The last turn drawn, zero before any; it only increases.
+    uint64 public lastDrawnTurn;
+
+    mapping(uint32 setId => RotationSet) private sets;
+    mapping(uint64 turn => Turn) private turns;
+
+    event RotationSetAdopted(
+        uint32 indexed setId,
+        uint64 indexed epoch,
+        uint64 effectiveAt,
+        bool quorum,
+        address[] candidates,
+        address[] adminKeys,
+        uint256[] weights
+    );
+    /// @notice Turn `turn` was drawn from set `setId` at `position`, naming `candidate`, whose
+    /// `adminKey` and `release` were registered at the draw, under `generation`.
+    event TurnAssigned(
+        uint64 indexed turn,
+        uint32 indexed setId,
+        uint16 position,
+        uint8 reason,
+        address candidate,
+        address adminKey,
+        bytes32 release,
+        uint64 generation
+    );
+    /// @notice Turn `turn`'s member moved its release, and the turn holds `generation` from now on.
+    event TurnGenerationMoved(uint64 indexed turn, uint64 generation);
+    event SeedReceiverChanged(address indexed receiver);
+
+    error UnauthorizedRegistry();
+    error UnauthorizedGovernance();
+    error ZeroAddress();
+    error RotationOff();
+    error NotDrawable(uint64 turn, uint64 opensAt, uint64 closesAt);
+    error AlreadyDrawn(uint64 turn);
+    error NoSetInEffect();
+    error NoSeed(uint64 turn);
+    error NoAvailableMember(uint64 turn);
+    error UnknownSet(uint32 setId);
+
+    constructor(OperatorRegistry registry_, SeedReceiver receiver_) SeedSchedule(receiver_.beaconGenesisTime()) {
+        registry = registry_;
+        seedReceiver = receiver_;
+    }
+
+    modifier onlyRegistry() {
+        if (msg.sender != address(registry)) revert UnauthorizedRegistry();
+        _;
+    }
+
+    /// @notice Replaces the seed receiver for every turn drawn from now on: the registry's timelock
+    /// names a new one when an Ethereum fork needs a new relay. A receiver with no seed relayed yet
+    /// draws from the fallback over this schedule's last seed.
+    function setSeedReceiver(SeedReceiver receiver) external {
+        if (msg.sender != address(registry.governance())) revert UnauthorizedGovernance();
+        if (address(receiver).code.length == 0) revert ZeroAddress();
+        seedReceiver = receiver;
+        emit SeedReceiverChanged(address(receiver));
+    }
+
+    /// @notice Adopts the rotation set a close of `epoch` makes, to take effect at `effectiveAt`.
+    /// `candidates` are the registry's eligible candidates, with their admin keys and votes. With
+    /// `quorum` the set is those with votes; without, the set in effect less members not among them.
+    /// Nothing is adopted while a set waits to take effect, or when the set would be empty.
+    function adopt(
+        uint64 epoch,
+        uint64 effectiveAt,
+        address[] calldata candidates,
+        address[] calldata adminKeys,
+        uint256[] calldata weights,
+        bool quorum
+    ) external onlyRegistry {
+        if (pendingSetId() != 0) return;
+        (address[] memory members, address[] memory keys, uint256[] memory kept) =
+            quorum ? _withVotes(candidates, adminKeys, weights) : _stillEligible(candidates, adminKeys);
+        if (members.length != 0) _record(epoch, effectiveAt, quorum, members, keys, kept);
+    }
+
+    /// @notice Draws turn `turn` from the set in effect: anyone may call from the turn's draw deadline
+    /// until its boundary, while the registry's rotation switch is on.
+    /// @return candidate The member drawn.
+    function draw(uint64 turn) external returns (address candidate) {
+        if (!registry.rotationSwitch()) revert RotationOff();
+        uint64 opensAt = drawDeadline(turn);
+        uint64 closesAt = boundary(turn);
+        if (block.timestamp < opensAt || block.timestamp >= closesAt) revert NotDrawable(turn, opensAt, closesAt);
+        if (turns[turn].candidate != address(0)) revert AlreadyDrawn(turn);
+        uint32 setId = currentSetId();
+        if (setId == 0) revert NoSetInEffect();
+        bytes32 seed = _seed(turn);
+        uint16 position = 0;
+        for (;; ++position) {
+            if (position == MAX_DRAW_POSITIONS) revert NoAvailableMember(turn);
+            candidate = memberAt(setId, seed, turn, position);
+            if (registry.isListed(candidate)) break;
+        }
+        uint64 last = lastDrawnTurn;
+        Turn storage previous = turns[last];
+        // Only the turn right after the member's own continues its holding; a gap may span an
+        // installation that moved the keys.
+        uint64 generation = previous.candidate == candidate && last + 1 == turn ? previous.generation : _reserve();
+        turns[turn] = Turn(candidate, position, DRAWN, setId, generation, last, seed);
+        lastDrawnTurn = turn;
+        OperatorRegistry.Candidate memory registered = registry.candidateOf(candidate);
+        emit TurnAssigned(turn, setId, position, DRAWN, candidate, registered.adminKey, registered.release, generation);
+    }
+
+    /// @notice Gives the turn in effect, and the last drawn turn, a new generation where `candidate` is
+    /// their member: the registry calls it when the candidate's release moves. Both share one.
+    function releaseMoved(address candidate) external onlyRegistry {
+        (uint64 inEffect, Turn memory current) = turnAt(uint64(block.timestamp));
+        uint64 last = lastDrawnTurn;
+        uint64 generation = 0;
+        if (inEffect != 0 && current.candidate == candidate) {
+            generation = _reserve();
+            _move(inEffect, generation);
+        }
+        if (last != inEffect && turns[last].candidate == candidate) {
+            if (generation == 0) generation = _reserve();
+            _move(last, generation);
+        }
+    }
+
+    /// @notice The member position `position` of `turn`'s draw from set `setId` picks with `seed`:
+    /// the first whose cumulative weight exceeds `keccak256(abi.encode(seed, turn, position))` modulo
+    /// the set's total weight.
+    function memberAt(uint32 setId, bytes32 seed, uint64 turn, uint16 position) public view returns (address) {
+        Member[] storage members = sets[setId].members;
+        uint256 count = members.length;
+        if (count == 0) revert UnknownSet(setId);
+        uint256 r = uint256(keccak256(abi.encode(seed, turn, position))) % members[count - 1].cumulative;
+        uint256 low = 0;
+        uint256 high = count - 1;
+        while (low < high) {
+            uint256 mid = (low + high) / 2;
+            if (members[mid].cumulative > r) high = mid;
+            else low = mid + 1;
+        }
+        return members[low].candidate;
+    }
+
+    /// @notice The set turns are drawn from now, zero before the first takes effect.
+    function currentSetId() public view returns (uint32) {
+        uint32 latest = setCount;
+        // Only the latest set can wait, and the one before it is then in effect.
+        if (latest != 0 && block.timestamp < sets[latest].effectiveAt) return latest - 1;
+        return latest;
+    }
+
+    /// @notice The set waiting to take effect, zero when none is.
+    function pendingSetId() public view returns (uint32) {
+        uint32 latest = setCount;
+        return latest != 0 && block.timestamp < sets[latest].effectiveAt ? latest : 0;
+    }
+
+    /// @notice Set `setId`'s close epoch, effective time, members and their weights.
+    function setOf(uint32 setId)
+        external
+        view
+        returns (uint64 epoch, uint64 effectiveAt, address[] memory candidates, uint256[] memory weights)
+    {
+        RotationSet storage set = sets[setId];
+        uint256 count = set.members.length;
+        candidates = new address[](count);
+        weights = new uint256[](count);
+        uint256 below = 0;
+        for (uint256 i = 0; i < count; ++i) {
+            Member memory member = set.members[i];
+            (candidates[i], weights[i], below) = (member.candidate, member.cumulative - below, member.cumulative);
+        }
+        return (set.epoch, set.effectiveAt, candidates, weights);
+    }
+
+    /// @notice Turn `turn` as drawn; zero when it was not.
+    function turnOf(uint64 turn) external view returns (Turn memory) {
+        return turns[turn];
+    }
+
+    /// @notice The latest drawn turn whose boundary is at or before `timestamp`, zero when none is.
+    function turnAt(uint64 timestamp) public view returns (uint64 turn, Turn memory) {
+        turn = lastDrawnTurn;
+        while (turn != 0 && boundary(turn) > timestamp) {
+            turn = turns[turn].prior;
+        }
+        return (turn, turns[turn]);
+    }
+
+    /// @notice The member `turnAt(timestamp)` names, its generation, and its turn's start and end;
+    /// zeros when no turn has started by then.
+    function namedAt(uint64 timestamp)
+        external
+        view
+        returns (address candidate, uint64 generation, uint64 since, uint64 until)
+    {
+        (uint64 turn, Turn memory named) = turnAt(timestamp);
+        if (turn == 0) return (address(0), 0, 0, 0);
+        since = boundary(turn);
+        return (named.candidate, named.generation, since, since + 1 days);
+    }
+
+    /// @notice When the last drawn turn ends, zero before any is drawn.
+    function turnsRunUntil() external view returns (uint64) {
+        uint64 last = lastDrawnTurn;
+        return last == 0 ? 0 : boundary(last) + 1 days;
+    }
+
+    /// @notice Whether `candidate` is the member of the turn in effect, of the turn before it, which
+    /// hands it the keys, or of the last drawn turn.
+    function holdsTurn(address candidate) external view returns (bool) {
+        (, Turn memory current) = turnAt(uint64(block.timestamp));
+        return candidate == current.candidate || candidate == turns[current.prior].candidate
+            || candidate == turns[lastDrawnTurn].candidate;
+    }
+
+    /// @notice The member of the turn drawn before `turn`, which hands `turn`'s member the keys; zero
+    /// for the first turn.
+    function sourceOf(uint64 turn) external view returns (address) {
+        return turns[turns[turn].prior].candidate;
+    }
+
+    /// @dev Stores the next set and reports it.
+    function _record(
+        uint64 epoch,
+        uint64 effectiveAt,
+        bool quorum,
+        address[] memory members,
+        address[] memory keys,
+        uint256[] memory weights
+    ) private {
+        uint32 setId = ++setCount;
+        RotationSet storage set = sets[setId];
+        (set.epoch, set.effectiveAt) = (epoch, effectiveAt);
+        uint256 cumulative = 0;
+        for (uint256 i = 0; i < members.length; ++i) {
+            cumulative += weights[i];
+            set.members.push(Member(members[i], cumulative));
+        }
+        emit RotationSetAdopted(setId, epoch, effectiveAt, quorum, members, keys, weights);
+    }
+
+    /// @dev The eligible candidates with votes, their admin keys and votes.
+    function _withVotes(address[] calldata candidates, address[] calldata adminKeys, uint256[] calldata weights)
+        private
+        pure
+        returns (address[] memory members, address[] memory keys, uint256[] memory kept)
+    {
+        (members, keys, kept) = _arrays(candidates.length);
+        uint256 count = 0;
+        for (uint256 i = 0; i < candidates.length; ++i) {
+            if (weights[i] == 0) continue;
+            (members[count], keys[count], kept[count]) = (candidates[i], adminKeys[i], weights[i]);
+            ++count;
+        }
+        _trim(members, keys, kept, count);
+    }
+
+    /// @dev The members of the set in effect still among the eligible `candidates`, with their
+    /// current admin keys and their weights in the set.
+    function _stillEligible(address[] calldata candidates, address[] calldata adminKeys)
+        private
+        view
+        returns (address[] memory members, address[] memory keys, uint256[] memory kept)
+    {
+        (members, keys, kept) = _arrays(candidates.length);
+        Member[] storage inEffect = sets[currentSetId()].members;
+        uint256 count = 0;
+        uint256 below = 0;
+        for (uint256 j = 0; j < inEffect.length; ++j) {
+            Member memory member = inEffect[j];
+            for (uint256 i = 0; i < candidates.length; ++i) {
+                if (candidates[i] != member.candidate) continue;
+                (members[count], keys[count], kept[count]) = (member.candidate, adminKeys[i], member.cumulative - below);
+                ++count;
+                break;
+            }
+            below = member.cumulative;
+        }
+        _trim(members, keys, kept, count);
+    }
+
+    function _arrays(uint256 length) private pure returns (address[] memory, address[] memory, uint256[] memory) {
+        return (new address[](length), new address[](length), new uint256[](length));
+    }
+
+    /// @dev Shortens the three arrays to their first `count` entries.
+    function _trim(address[] memory members, address[] memory keys, uint256[] memory kept, uint256 count) private pure {
+        assembly ("memory-safe") {
+            mstore(members, count)
+            mstore(keys, count)
+            mstore(kept, count)
+        }
+    }
+
+    /// @dev Turn `turn`'s final seed: the receiver's, or, only when it refuses with `NoRelayedSeed`,
+    /// the hash of the last drawn turn's seed with `turn`.
+    function _seed(uint64 turn) private view returns (bytes32) {
+        try seedReceiver.seedOf(turn) returns (bytes32 seed) {
+            return seed;
+        } catch (bytes memory reason) {
+            if (bytes4(reason) != SeedReceiver.NoRelayedSeed.selector) {
+                assembly ("memory-safe") {
+                    revert(add(reason, 32), mload(reason))
+                }
+            }
+        }
+        uint64 last = lastDrawnTurn;
+        if (last == 0) revert NoSeed(turn);
+        return keccak256(abi.encode(turns[last].seed, turn));
+    }
+
+    function _reserve() private returns (uint64) {
+        return IGenerations(address(registry.vault())).reserveGeneration();
+    }
+
+    function _move(uint64 turn, uint64 generation) private {
+        turns[turn].generation = generation;
+        emit TurnGenerationMoved(turn, generation);
+    }
+}

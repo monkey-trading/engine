@@ -58,7 +58,7 @@ contract StandbyPromotionTest is RegistryTest {
 
     function test_PromotionRevertsWhileAnElectionWaits() public {
         _standbys();
-        vm.warp(block.timestamp + MIN_TERM);
+        _lapsed();
         _closeNext();
         assertEq(registry.pendingElection().candidate, alice);
         // The liveness timeout has lapsed during the setup warps; only the pending election stops
@@ -140,7 +140,6 @@ contract StandbyPromotionTest is RegistryTest {
 
     function test_PromotionSettlesAnElectionWhoseTimeHasCome() public {
         _standbys();
-        vm.warp(block.timestamp + MIN_TERM);
         _closeNext();
         assertEq(registry.pendingElection().candidate, alice);
         // Alice's election takes effect; promotion then finds no other standby.
@@ -285,7 +284,6 @@ contract ElectionReleaseTimingTest is StandbyPromotionTest {
         _candidate(alice, 30_000e18, 1);
         _delegate(alice, alice);
         _setRotation(true);
-        vm.warp(block.timestamp + MIN_TERM);
         _closeNext();
         OperatorRegistry.Election memory pending = registry.pendingElection();
         assertEq(pending.candidate, alice);

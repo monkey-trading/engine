@@ -352,10 +352,10 @@ contract OperatorRegistryTest is RegistryTest {
 
     function test_ParametersChangeOnlyWithinTheirBounds() public {
         OperatorRegistry.Parameters memory changed = _parameters();
-        changed.marginBps = 2_500;
+        changed.quorumBps = 2_500;
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setParameters, (changed)));
-        (,,, uint16 marginBps,,,,,) = registry.parameters();
-        assertEq(marginBps, 2_500);
+        (,,, uint16 quorumBps,,,) = registry.parameters();
+        assertEq(quorumBps, 2_500);
         changed.epochLength = _maximums().epochLength + 1;
         vm.expectRevert(OperatorRegistry.ParameterOutOfBounds.selector);
         vm.prank(address(governance));
@@ -421,7 +421,6 @@ contract OperatorRegistryTest is RegistryTest {
     function test_WhileRotationIsOffACloseElectsNothing() public {
         _candidate(alice, 10_000e18, 1);
         _delegate(alice, alice);
-        vm.warp(block.timestamp + MIN_TERM);
         vm.recordLogs();
         _closeNext();
         assertEq(vm.getRecordedLogs().length, 1, "only EpochClosed");
@@ -437,7 +436,7 @@ contract OperatorRegistryTest is RegistryTest {
         _stake(voter, 5_000e18);
         _delegate(voter, alice);
         _setRotation(true);
-        vm.warp(block.timestamp + MIN_TERM);
+        vm.warp(block.timestamp + EPOCH);
         uint256 closeAt = block.timestamp;
         uint64 epoch = uint64((closeAt - registry.openEpochStart()) / EPOCH) + registry.openEpoch() - 1;
         vm.expectEmit(address(registry));
@@ -469,25 +468,22 @@ contract OperatorRegistryTest is RegistryTest {
         assertEq(registry.pendingElection().candidate, bob);
     }
 
-    function test_TheRoleMovesOnlyAfterTheIncumbentsMinimumTerm() public {
+    function test_TheFirstCloseAfterAnElectionTakesEffectMayMoveTheRole() public {
         uint64 effectiveAt = _elect(bob);
         _candidate(alice, 100_000e18, 1);
         _delegate(alice, alice);
-        // Bob's term starts at its effective time; until it has run, alice cannot replace it.
-        vm.warp(uint256(effectiveAt) + MIN_TERM - EPOCH);
-        _closeNext();
-        assertEq(registry.pendingElection().effectiveAt, 0);
-        vm.warp(uint256(effectiveAt) + MIN_TERM);
+        // Bob serves no term: the first close once its election has taken effect elects alice.
+        vm.warp(effectiveAt);
+        assertEq(_inEffect(), bob);
         _closeNext();
         assertEq(registry.pendingElection().candidate, alice);
     }
 
-    function test_AChallengerMustBeatTheIncumbentByTheMargin() public {
+    function test_AChallengerMustLeadTheIncumbent() public {
         uint64 effectiveAt = _elect(bob);
-        vm.warp(uint256(effectiveAt) + MIN_TERM);
-        uint256 bobVotes = staking.votes(bob);
-        // Exactly 10% more is not enough; one base unit beyond it is.
-        _candidate(alice, bobVotes * 11 / 10, 1);
+        vm.warp(effectiveAt);
+        // Bob registered first, so a tie keeps it; one base unit more elects alice.
+        _candidate(alice, staking.votes(bob), 1);
         _delegate(alice, alice);
         _closeNext();
         assertEq(registry.pendingElection().effectiveAt, 0);
@@ -499,7 +495,7 @@ contract OperatorRegistryTest is RegistryTest {
 
     function test_AnIneligibleIncumbentCountsNoVotes() public {
         uint64 effectiveAt = _elect(bob);
-        vm.warp(uint256(effectiveAt) + MIN_TERM);
+        vm.warp(effectiveAt);
         _candidate(alice, 15_000e18, 1);
         _delegate(alice, alice);
         _closeNext();
@@ -515,7 +511,6 @@ contract OperatorRegistryTest is RegistryTest {
         _candidate(alice, 10_000e18, 1);
         _delegate(alice, alice);
         _setRotation(true);
-        vm.warp(block.timestamp + MIN_TERM);
         // 10k of 60k delegated is under the 20% quorum; delegation to an address that is not a
         // candidate counts for nobody.
         _stake(voter, 50_000e18);
@@ -534,7 +529,6 @@ contract OperatorRegistryTest is RegistryTest {
         _delegate(alice, alice);
         _delegate(bob, bob);
         _setRotation(true);
-        vm.warp(block.timestamp + MIN_TERM);
         _closeNext();
         assertEq(registry.pendingElection().candidate, bob);
     }
@@ -576,7 +570,6 @@ contract OperatorRegistryTest is RegistryTest {
         assertEq(staking.votes(alice), 20_000e18 - 1);
         assertEq(staking.votes(bob), 20_000e18 + 1);
         _setRotation(true);
-        vm.warp(block.timestamp + MIN_TERM);
         _closeNext();
         assertEq(registry.pendingElection().candidate, bob);
     }
@@ -650,8 +643,8 @@ contract OperatorRegistryTest is RegistryTest {
     }
 
     function test_TheFallbackInstallsANewOperatorAfterAnElectionTookEffect() public {
-        // The failed operator won an election; its key is then gone, and no election can move the
-        // role back until rotation is off and its minimum term has passed.
+        // The failed operator won an election; its key is then gone, and no election moves the role
+        // while rotation is off.
         uint64 effectiveAt = _elect(bob);
         vm.warp(effectiveAt);
         assertEq(_inEffect(), bob);
@@ -733,7 +726,7 @@ contract OperatorRegistryTest is RegistryTest {
         uint64 effectiveAt = _elect(bob);
         vm.warp(effectiveAt);
         assertEq(_inEffect(), bob);
-        // Past bob's minimum term, a close elects alice; the snapshot now names bob, with bob's
+        // Once bob is in effect, a close elects alice; the snapshot now names bob, with bob's
         // own release, as the incumbent alice's successor hands over from.
         uint64 secondEffectiveAt = _electWith(alice, 30_000e18);
         assertGt(secondEffectiveAt, 0);
@@ -765,26 +758,23 @@ contract OperatorRegistryTest is RegistryTest {
         assertEq(registry.handoverSource().handoverEndpoint, "");
     }
 
-    function testFuzz_TheChallengerIsElectedExactlyWhenItBeatsTheMargin(uint256 incumbentStake, uint256 challengerStake)
-        public
-    {
+    function testFuzz_TheChallengerIsElectedExactlyWhenItLeads(uint256 incumbentStake, uint256 challengerStake) public {
         incumbentStake = bound(incumbentStake, MIN_BOND, 1e27);
         challengerStake = bound(challengerStake, MIN_BOND, 1e27);
         uint64 effectiveAt = _electWith(bob, incumbentStake);
-        vm.warp(uint256(effectiveAt) + MIN_TERM);
+        vm.warp(effectiveAt);
         _candidate(alice, challengerStake, 1);
         _delegate(alice, alice);
         uint256 total = staking.totalStaked();
         bool eligible = challengerStake * 10_000 >= uint256(ELIGIBILITY_BPS) * total;
         bool incumbentEligible = incumbentStake * 10_000 >= uint256(ELIGIBILITY_BPS) * total;
-        uint256 incumbentVotes = incumbentEligible ? incumbentStake : 0;
-        bool beats = challengerStake * 10_000 > incumbentVotes * (10_000 + MARGIN_BPS);
+        // The incumbent registered first, so it keeps a tie.
         bool leads = challengerStake > incumbentStake || !incumbentEligible;
         _closeNext();
-        assertEq(registry.pendingElection().candidate == alice, eligible && leads && beats);
+        assertEq(registry.pendingElection().candidate == alice, eligible && leads);
     }
 
-    /// @dev Elects `candidate`, staking and self-delegating 20k for it, past the deployer's term.
+    /// @dev Elects `candidate`, staking and self-delegating 20k for it, at the next close.
     function _elect(address candidate) internal returns (uint64) {
         return _electWith(candidate, 20_000e18);
     }
@@ -793,7 +783,6 @@ contract OperatorRegistryTest is RegistryTest {
         _candidate(candidate, stake, 2);
         _delegate(candidate, candidate);
         if (!registry.rotationEnabled()) _setRotation(true);
-        vm.warp(block.timestamp + MIN_TERM);
         _closeNext();
         OperatorRegistry.Election memory pending = registry.pendingElection();
         assertEq(pending.candidate, candidate);

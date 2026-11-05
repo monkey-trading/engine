@@ -213,7 +213,7 @@ contract RegistryHandler is Test {
     }
 
     function closeEpoch() external {
-        (uint64 epochLength,,,,,,,,) = registry.parameters();
+        (uint64 epochLength,,,,,,) = registry.parameters();
         if (block.timestamp < uint256(registry.openEpochStart()) + epochLength) return;
         bool enabled = registry.rotationEnabled();
         bool waiting = registry.pendingElection().effectiveAt != 0;
@@ -223,7 +223,7 @@ contract RegistryHandler is Test {
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] != OperatorRegistry.Elected.selector) continue;
             (,, uint64 effectiveAt) = abi.decode(logs[i].data, (address, bytes32, uint64));
-            (,, uint64 finalityMargin,,,,,,) = registry.parameters();
+            (, uint64 finalityMargin,,,,,) = registry.parameters();
             if (!enabled || waiting || effectiveAt != block.timestamp + registry.NOTICE() + finalityMargin) {
                 misplacedElections++;
             }
@@ -258,11 +258,6 @@ contract OperatorRegistryInvariantTest is RegistryTest {
 
     function setUp() public {
         _deployRegistry();
-        // A short minimum term, so the role can move within one run.
-        OperatorRegistry.Parameters memory quick = _parameters();
-        quick.minTerm = 2 days;
-        vm.prank(address(governance));
-        registry.setParameters(quick);
         handler = new RegistryHandler(registry, address(vault));
         targetContract(address(handler));
     }
