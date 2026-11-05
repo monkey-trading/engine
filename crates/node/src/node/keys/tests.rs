@@ -18,11 +18,13 @@ const DIGEST: [u8; 48] = [0x11; 48];
 struct Vault {
     current: Arc<Mutex<CurrentRelease>>,
     synced: Arc<Mutex<Option<[u8; 32]>>>,
+    /// The turn the finalised schedule names, at any time at or after its boundary.
+    scheduled: Arc<Mutex<Option<crate::checkpoints::ScheduledTurn>>>,
 }
 
 impl Vault {
     fn naming(current: CurrentRelease) -> Self {
-        Self { current: Arc::new(Mutex::new(current)), synced: Arc::new(Mutex::new(None)) }
+        Self { current: Arc::new(Mutex::new(current)), synced: Arc::new(Mutex::new(None)), scheduled: Arc::default() }
     }
 }
 
@@ -47,6 +49,14 @@ impl CheckpointChain for Vault {
     async fn current_release(&self, at: &Observation) -> anyhow::Result<CurrentRelease> {
         ensure!(at.view == View::Finalized, "the current release is read at finality");
         Ok(*self.current.lock().unwrap())
+    }
+
+    async fn scheduled_turn(
+        &self,
+        _at: &Observation,
+        now_ms: engine_core::types::Millis,
+    ) -> anyhow::Result<Option<crate::checkpoints::ScheduledTurn>> {
+        Ok(self.scheduled.lock().unwrap().clone().filter(|turn| turn.boundary <= now_ms))
     }
 
     fn reads_release_fold(&self) -> bool {
@@ -131,6 +141,43 @@ async fn a_running_node_alerts_once_the_vault_names_another_release_or_generatio
     *current.lock().unwrap() = CurrentRelease { id: [0x99; 32], generation: 4 };
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the same episode alerted again");
+    watch.abort();
+}
+
+#[tokio::test(start_paused = true)]
+async fn from_a_turns_boundary_the_turn_alone_names_a_release() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (sealed, incumbent) = (
+        Release { launch_digest: DIGEST, config_sha256: [0xc1; 32] },
+        Release { launch_digest: DIGEST, config_sha256: [0xc2; 32] },
+    );
+    // The finalised vault still names the incumbent; the turn trusted time has reached names this release.
+    let vault = Vault::naming(CurrentRelease { id: incumbent.id(), generation: 3 });
+    let boundary = 1_793_226_600_000;
+    *vault.scheduled.lock().unwrap() = Some(crate::checkpoints::ScheduledTurn {
+        turn: 20_754,
+        boundary,
+        candidate: AccountId([0xb0; 20]),
+        admin_key: AccountId([0xb1; 20]),
+        release: sealed.id(),
+        generation: 4,
+        source: None,
+    });
+    let scheduled = vault.scheduled.clone();
+    let every = Duration::from_secs(60);
+    let clock = Arc::new(crate::clock::SystemClock);
+    let sample =
+        crate::trusted_time::Sample { at: std::time::Instant::now(), earliest_ms: boundary, latest_ms: boundary + 1 };
+    let (_samples, samples_rx) = tokio::sync::watch::channel(Some(sample));
+    let trusted = crate::trusted_time::TrustedClock::new(clock, samples_rx, Duration::from_secs(1));
+    let watch = tokio::spawn(watch_release(vault, sealed, 4, every, trusted));
+    tokio::time::sleep(every * 3).await;
+    assert!(alerts.try_recv().is_err(), "the turn's member was paged before finality named it");
+    // The turn names another release: the vault's finalised one no longer counts.
+    scheduled.lock().unwrap().as_mut().unwrap().release = incumbent.id();
+    tokio::time::sleep(every).await;
+    let alert = alerts.try_recv().expect("a release the turn does not name raises Critical");
+    assert_eq!(alert["alert"].as_str(), "release_superseded");
     watch.abort();
 }
 
