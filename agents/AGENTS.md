@@ -239,8 +239,12 @@ an index: load only the rule whose hint matches the current action.
   operator in effect upgrades while rotation is on), the timelock approves releases, switches rotation
   (off at deployment, the deployer in effect), installs a new operator in effect while rotation is
   off (`installOperator`, the timelock-only fallback for a failed operator whose key is gone) and moves parameters within deployment bounds, and
-  anyone closes an election epoch, electing the top eligible candidate past quorum, minimum term and
-  margin to take effect seven days plus a finality margin later. Deployment gives that
+  anyone closes an election epoch, electing the top eligible candidate past quorum to take effect
+  seven days plus a finality margin later, or, once the timelock names `src/OperatorSchedule.sol`
+  (`setSchedule`), adopting a rotation set in it instead: anyone then draws each daily turn from the
+  set in effect a day before its boundary, weighted by votes and seeded from `SeedReceiver`, the turn's
+  member names the operator from its boundary in a generation the vault's one counter hands out, and
+  drawn turns stand after rotation turns off until `installOperator`. Deployment gives that
   timelock its multisig proposer. The timelock manages signer rotation, the current release that
   alone holds the signer's key (`setCurrentRelease`: the keccak of a launch measurement and config
   hash, in a new `releaseGeneration` each time), and independent deposit/withdrawal pauses; the
@@ -266,7 +270,8 @@ an index: load only the rule whose hint matches the current action.
   with) and to `randao_mixes`, and sends it through Arbitrum's inbox as a retryable ticket;
   `src/SeedReceiver.sol` on Arbitrum records it only from the relay's aliased address, for that epoch and
   before the draw deadline, and answers each turn's final seed, the last earlier seed hashed with the
-  turn number when none arrived. `test/fixtures/seed-relay/mainnet.json` is recorded mainnet data, which
+  turn number when none arrived; the schedule falls back to its own last seed only on the receiver's
+  `NoRelayedSeed`, and the timelock replaces the receiver after an Ethereum fork. `test/fixtures/seed-relay/mainnet.json` is recorded mainnet data, which
   `scripts/seed-relay-fixtures.sh` regenerates. `foundry.toml` enables the
   optimizer, without which the vault exceeds EIP-170's size limit.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
