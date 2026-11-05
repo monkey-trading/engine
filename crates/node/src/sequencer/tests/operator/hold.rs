@@ -101,3 +101,22 @@ fn a_rotation_back_to_a_formerly_installed_key_keeps_the_hold() {
     assert_ne!(installed.effective_at, pending.effective_at);
     assert!(holds(&mut seq, &clock), "the rotation back is not the installation's handover");
 }
+
+#[test]
+fn a_hold_that_spans_a_turns_boundary_takes_the_snapshot_the_turns_key_signs() {
+    // The log assigned a turn to the member key, and a benchmark hold waits across its boundary: the
+    // snapshot the member's key signs ends it, and the previous turn's key signs nothing.
+    let (dir, clock, _, member) = turn_log("turn-hold");
+    let recorded = dev_config().operator().unwrap();
+    let mut seq = recover_turns(&dir, clock.clone(), Operator { address: member, ..recorded }, B256::repeat_byte(0x54));
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.wait_for_benchmarks().unwrap();
+    assert_eq!(seq.engine.due_key(clock.now_ms()).map(|due| due.address), Some(member));
+    assert!(holds(&mut seq, &clock), "a due turn's key can sign the snapshot, so the hold stands");
+    let refused = seq.sequence(snapshot(&seq, &clock, RECORDED_SEED)).unwrap().expect("admitted");
+    assert!(matches!(refused.last(), Some(Event::AdminRejected { .. })), "{refused:?}");
+    assert!(seq.benchmark_sync, "the previous turn's key ended the hold");
+    let applied = seq.sequence(snapshot(&seq, &clock, INSTALLED_SEED)).unwrap().expect("admitted");
+    assert!(applied.contains(&Event::AdminApplied), "{applied:?}");
+    assert!(!seq.benchmark_sync, "the turn's key ended the hold");
+}
