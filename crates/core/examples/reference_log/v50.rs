@@ -14,7 +14,7 @@ use crate::v47::close;
 use crate::v48::INSTALLED_SEED;
 
 /// The seed of the candidate's admin key this part elects.
-const ELECTED_SEED: u8 = 0x5a;
+pub(crate) const ELECTED_SEED: u8 = 0x5a;
 const CANDIDATE: AccountId = AccountId([0x5b; 20]);
 
 /// `V50` activates with the installed operator of `V48`'s part in effect, and rotation turns on

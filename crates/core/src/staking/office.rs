@@ -10,6 +10,10 @@
 //! pays the excess they built up. The close splits `floor(excess / 5)` by that time: each account
 //! earns `floor(share · served / counted)`, where `counted` is all the time the open epoch counted,
 //! so the time rotation was off, which no one served, and the rounding go to stakers.
+//!
+//! From `V51`, once a daily turn has applied, the account in office is the turn's member from its
+//! `TurnTaken` to the end of its turn (`turns`), so the time before a member takes its turn, and an
+//! incumbent's time past its turn, are no one's.
 
 use std::collections::BTreeMap;
 
@@ -38,9 +42,15 @@ impl Engine {
         if self.protocol_version < ProtocolVersion::V50 {
             return;
         }
-        let (Some(holder), Some(staking)) = (self.operator_share_account(), self.staking.as_mut()) else { return };
+        // From `V51`, once a turn has applied, the member holds the office from its `TurnTaken` to the
+        // end of its turn.
+        let holder = match self.turn_office() {
+            Some(turn) => turn,
+            None => self.operator_share_account().map(|account| (account, Millis::MAX)),
+        };
+        let (Some((holder, until)), Some(staking)) = (holder, self.staking.as_mut()) else { return };
         let office = staking.office.as_mut().expect("V50 counts time in office once staking is initialised");
-        let served = self.now - from;
+        let served = self.now.min(until) - from;
         if served > 0 {
             *office.served.entry(holder).or_default() += served;
         }

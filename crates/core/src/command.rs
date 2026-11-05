@@ -21,6 +21,7 @@ use crate::params::{NotionalWeighting, ProtocolParams};
 use crate::price::SourceQuote;
 use crate::protocol::ProtocolVersion;
 use crate::staking::StakingConfig;
+use crate::turns::{RegistryRotationSet, RegistryTurn};
 use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -170,6 +171,18 @@ pub enum Command {
     /// logged, credited once under its chain reference. The registry installs only while rotation
     /// is off; a mirror while it is on is refused.
     InstallOperator(RegistryInstallation),
+    /// From `V51`, the operator schedule's `RotationSetAdopted` event, finalised, credited once under
+    /// its chain reference.
+    AdoptRotationSet(RegistryRotationSet),
+    /// From `V51`, the operator schedule's `TurnAssigned` event, finalised, credited once under its
+    /// chain reference.
+    AssignTurn(RegistryTurn),
+    /// From `V51`, the node's record that its enclave, running `release`, took the turn in effect: the
+    /// first command the turn's member sequences in it, sealed like every command.
+    TurnTaken {
+        turn: u64,
+        release: B256,
+    },
     /// From `V41`, registers `session_key` to place and cancel orders for `account` until
     /// `expires_at`, capped at `MAX_SESSION_KEY_EXPIRY_MS` ahead, or until revoked; only the
     /// account key's signature authorises it.
