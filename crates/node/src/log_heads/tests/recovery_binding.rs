@@ -26,50 +26,52 @@ fn command(oracle: &mut Engine, seq: u64) -> LogEntry {
 /// writes at its seq, and one more command — to a fresh log directory, returning the cumulative
 /// command-prefix digests after the first and second commands.
 fn log_with_shutdown_checkpoint(label: &str) -> (std::path::PathBuf, B256, B256, Checkpoint) {
+    log_with_checkpoint(label, 0)
+}
+
+/// Writes commands 0 and 1 with the checkpoint at seq `at` after its command, returning the
+/// cumulative command-prefix digests after each command and the checkpoint.
+fn log_with_checkpoint(label: &str, at: u64) -> (std::path::PathBuf, B256, B256, Checkpoint) {
     let key = EnclaveKey::test_key();
     let mut oracle = Engine::new();
     let mut command_prefix = [0u8; 32];
-    let mut prefixes = Vec::new();
-    let first = command(&mut oracle, 0);
-    command_prefix = crate::log::extend_command_prefix(
-        command_prefix,
-        crate::log::command_digest(match &first {
-            LogEntry::Command(entry) => entry,
-            _ => unreachable!(),
-        })
-        .unwrap(),
-    );
-    prefixes.push(B256::from(command_prefix));
-    let root = oracle.state_root();
-    let checkpoint = Checkpoint {
-        parent: None,
-        seq: 0,
-        root: format!("0x{}", hex::encode(root)),
-        signature: key.sign_checkpoint(DOMAIN.chain_id, &DOMAIN.vault.0, 0, &root),
-        signer: key.address_hex(),
-        domain: Some(DOMAIN),
-        deferred_withdrawals: false,
-    };
-    let second = command(&mut oracle, 1);
-    command_prefix = crate::log::extend_command_prefix(
-        command_prefix,
-        crate::log::command_digest(match &second {
-            LogEntry::Command(entry) => entry,
-            _ => unreachable!(),
-        })
-        .unwrap(),
-    );
-    prefixes.push(B256::from(command_prefix));
+    let (mut prefixes, mut entries, mut checkpoint) = (Vec::new(), Vec::new(), None);
+    for seq in 0..2 {
+        let entry = command(&mut oracle, seq);
+        command_prefix = crate::log::extend_command_prefix(
+            command_prefix,
+            crate::log::command_digest(match &entry {
+                LogEntry::Command(entry) => entry,
+                _ => unreachable!(),
+            })
+            .unwrap(),
+        );
+        prefixes.push(B256::from(command_prefix));
+        entries.push(entry);
+        if seq == at {
+            let root = oracle.state_root();
+            let signed = Checkpoint {
+                parent: None,
+                seq,
+                root: format!("0x{}", hex::encode(root)),
+                signature: key.sign_checkpoint(DOMAIN.chain_id, &DOMAIN.vault.0, seq, &root),
+                signer: key.address_hex(),
+                domain: Some(DOMAIN),
+                deferred_withdrawals: false,
+            };
+            entries.push(LogEntry::Checkpoint(signed.clone()));
+            checkpoint = Some(signed);
+        }
+    }
     let dir = crate::test_support::scratch_dir(label);
     std::fs::create_dir_all(&dir).unwrap();
-    let entries = vec![first, LogEntry::Checkpoint(checkpoint.clone()), second];
     let log = SegmentedLog::open(&dir, |_| Ok(())).unwrap();
     let mut writer = log.into_writer(10, tokio::sync::watch::channel(Default::default()).0).unwrap();
     for entry in &entries {
         writer.append(entry).unwrap();
     }
     writer.flush().unwrap();
-    (dir, prefixes[0], prefixes[1], checkpoint)
+    (dir, prefixes[0], prefixes[1], checkpoint.expect("the checkpoint seq is a command's"))
 }
 
 /// Reads `dir` as recovery does, capturing the link at `target` from the replayed bytes.
@@ -235,26 +237,35 @@ fn startup_checks_the_newest_head_of_this_keys_epochs_and_parents_only_on_the_cu
 }
 
 #[test]
-fn startup_anchors_the_stall_alarm_on_the_finalized_checkpoint_with_no_head_posted() {
-    // The vault finalized the checkpoint at seq 0, whose command is stamped at 0 ms. With no head
-    // of this key posted, the alarm counts from that stamp; with this log's head at seq 1, stamped
-    // at 1 ms, from the later of the two.
+fn startup_anchors_the_stall_alarm_on_the_later_of_the_head_and_the_finalized_checkpoint() {
+    // The checkpoint at seq 0 covers a command stamped at 0 ms. With no head of this key posted the
+    // alarm counts from that stamp, with nothing finalized from nothing, and with this log's head at
+    // seq 1, stamped at 1 ms, from the later of the two.
     let (dir, _, last_prefix, checkpoint) = log_with_shutdown_checkpoint("log-head-finalized-anchor");
     let rpc_dir = crate::test_support::scratch_dir("log-head-finalized-anchor-rpc");
     std::fs::create_dir_all(&rpc_dir).unwrap();
     let parent = crate::log::CheckpointParent { has_checkpoint: true, seq: 0, root: checkpoint.root.parse().unwrap() };
-    let start = |log: &crate::sequencer::ReplayedLog, posted| {
-        let pending = crate::log_heads::setup::Pending::for_test(posted, &rpc_dir);
-        crate::log_heads::setup::startup(Some(pending), log)
-            .unwrap()
-            .expect("[log_heads] is configured")
-            .poster
-            .anchored
-    };
     let unanchored = recover_from(&dir, None, None);
-    assert_eq!(start(&unanchored, None), Some((0, None)), "nothing anchors a log the vault has not finalized");
+    assert_eq!(anchored(&unanchored, None, &rpc_dir), Some((0, None)), "nothing anchors an unfinalized log");
     let finalized = recover_from(&dir, Some(parent), None);
-    assert_eq!(start(&finalized, None), Some((0, Some(0))), "the finalized checkpoint anchors it");
+    assert_eq!(anchored(&finalized, None, &rpc_dir), Some((0, Some(0))), "the finalized checkpoint anchors it");
     let posted = recover_from(&dir, Some(parent), Some(1));
-    assert_eq!(start(&posted, Some(Head { seq: 1, link: last_prefix })), Some((1, Some(1))));
+    assert_eq!(anchored(&posted, Some(Head { seq: 1, link: last_prefix }), &rpc_dir), Some((1, Some(1))));
+    // A head older than the finalized checkpoint — the common case, posted hourly while checkpoints
+    // finalize every few minutes: the checkpoint at seq 1, stamped at 1 ms, wins over the head at
+    // seq 0, stamped at 0 ms.
+    let (dir, first_prefix, _, checkpoint) = log_with_checkpoint("log-head-finalized-later", 1);
+    let parent = crate::log::CheckpointParent { has_checkpoint: true, seq: 1, root: checkpoint.root.parse().unwrap() };
+    let older = recover_from(&dir, Some(parent), Some(0));
+    assert_eq!(anchored(&older, Some(Head { seq: 0, link: first_prefix }), &rpc_dir), Some((0, Some(1))));
+}
+
+/// The poster's stall anchor after `startup` checks `log` against `posted`.
+fn anchored(
+    log: &crate::sequencer::ReplayedLog,
+    posted: Option<Head>,
+    rpc_dir: &std::path::Path,
+) -> Option<(u64, Option<engine_core::types::Millis>)> {
+    let pending = crate::log_heads::setup::Pending::for_test(posted, rpc_dir);
+    crate::log_heads::setup::startup(Some(pending), log).unwrap().expect("[log_heads] is configured").poster.anchored
 }

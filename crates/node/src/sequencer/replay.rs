@@ -71,8 +71,9 @@ pub struct Replayed {
     pub link_at: Option<engine_core::eip712::B256>,
     /// The sequenced time of the command at the posted head's seq: where the stall alarm starts.
     pub ts_at: Option<Millis>,
-    /// The sequenced time of the command the vault-finalized checkpoint covers, where the replay,
-    /// its snapshot, or the snapshot's prefix pass reached it: the stall alarm's other anchor.
+    /// The sequenced time of the command the vault-finalized checkpoint covers, where the replay or
+    /// its snapshot reached it, or, with `[log_heads]`, the snapshot's prefix pass did for one under
+    /// its base with no later head posted: the stall alarm's other anchor.
     pub anchor_ts: Option<Millis>,
 }
 

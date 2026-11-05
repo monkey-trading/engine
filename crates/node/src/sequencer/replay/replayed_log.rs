@@ -1,7 +1,7 @@
 //! A log read from disk and replayed, and what the log-head poster reads from it.
 
-use super::Replayed;
 use crate::log::SegmentedLog;
+use crate::sequencer::replay::Replayed;
 
 /// A log read from disk and replayed, before anything is written to it.
 pub struct ReplayedLog {

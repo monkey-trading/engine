@@ -170,8 +170,8 @@ async fn read_posted_with_retry(
 /// The startup gate and poster setup in one call: checks the posted head against the link the
 /// replay captured — accepting it seq-only at or under an attested snapshot base, which determines
 /// the content there — and builds the poster with the watch at the recovered head and its stall
-/// alarm started from the checked head. A detected rollback logs Critical `log_rollback` naming the
-/// range.
+/// alarm started from the later of the checked head's stamp and the vault-finalized checkpoint's. A
+/// detected rollback logs Critical `log_rollback` naming the range.
 /// Error cases:
 /// - the rollback check fails (its Critical names the range)
 pub(crate) fn startup(pending: Option<Pending>, log: &crate::sequencer::ReplayedLog) -> anyhow::Result<Option<Setup>> {

@@ -135,7 +135,7 @@ fn candidate(
     });
     let (mut posted_ts, mut anchor_ts) = (None, None);
     if posted.is_some() || anchor.is_some() {
-        let trusted = signer.context("snapshot recovery needs the trusted signer to verify the posted head")?;
+        let trusted = signer.context("snapshot recovery needs the trusted signer to verify the log's prefix")?;
         let (dir, certified, anchor) = (&cfg.node.log_dir, snapshot.context.command_prefix, anchor.map(|a| a.seq));
         let verified = crate::log_heads::prefix::verify(dir, domain, trusted, posted, anchor, at.seq, certified)?;
         (posted_ts, anchor_ts) = (verified.posted_ts, verified.anchor_ts);

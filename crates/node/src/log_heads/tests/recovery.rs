@@ -207,14 +207,17 @@ async fn a_restart_after_a_long_stop_gives_its_first_post_an_interval_to_land() 
 
 #[tokio::test(start_paused = true)]
 async fn a_restart_with_no_head_posted_counts_from_the_finalized_checkpoint() {
-    // No head of this key is posted: startup anchored on the vault-finalized checkpoint, stamped
-    // four intervals ago. Every post is lost, and the stall fires once the first post has had its
-    // interval, though a restart reset this process's own clock.
+    // The poster's side of a seq-0 anchor (recovery's is in `recovery_binding` and the paired
+    // tests): no head of this key is posted, and startup anchored on the vault-finalized checkpoint,
+    // stamped four intervals ago. Every post is lost: nothing pages while the first post has its
+    // interval, then the stall fires, though a restart reset this process's own clock.
     let chain = FakeChain::new(None);
     chain.fail_next_posts(usize::MAX);
     let (_guard, mut router) = crate::alerts::capture_until_dropped();
     let (tx, task) = restarted(chain, None);
-    tokio::time::sleep(Duration::from_secs(65)).await;
+    tokio::time::sleep(Duration::from_secs(55)).await;
+    assert!(!router.take().iter().any(|line| line.name == "log_head_stalled"), "the first post's interval runs first");
+    tokio::time::sleep(Duration::from_secs(10)).await;
     let lines = router.take();
     assert_eq!(
         lines.iter().filter(|line| line.name == "log_head_stalled" && line.severity.is_some()).count(),

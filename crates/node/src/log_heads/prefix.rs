@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use anyhow::Context;
+use anyhow::{Context, ensure};
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Millis};
 use tracing::error;
@@ -52,8 +52,10 @@ pub(crate) struct Verified {
 /// before an entry beyond it is processed, so a nonempty suffix never contaminates the comparison.
 /// Error cases:
 /// - the log cannot be opened or a seal is invalid, an unsealed span lacks the trusted authority,
-///   the log holds no command at the posted seq, the anchor, or the base, or the posted digest or
-///   the command prefix differs (the Critical names the cause)
+///   or the log holds no command at the posted seq, the anchor, or the base
+/// - the command prefix differs from the certified one, a rejected cache without a posted head
+/// - with a posted head, the posted digest or the command prefix differs: a `Rollback` (the
+///   Critical names the cause)
 pub(crate) fn verify(
     dir: &Path,
     domain: CheckpointDomain,
@@ -130,6 +132,12 @@ pub(crate) fn verify(
     if let Some(seq) = anchor {
         anchor_ts.with_context(|| format!("the log holds no command at the finalized checkpoint's seq {seq}"))?;
     }
+    // Without a posted head, a mismatch is a cache that is not this log's history, which recovery
+    // rejects and replays past; only a head on chain makes it a rollback.
+    ensure!(
+        posted.is_some() || command_prefix == certified_prefix,
+        "the log's command prefix through the snapshot base differs from the snapshot's certified prefix"
+    );
     if command_prefix != certified_prefix {
         error!(
             alert = "log_rollback",
@@ -227,9 +235,10 @@ mod tests {
             let stamp = i64::try_from(anchor).unwrap();
             assert_eq!(verified, Verified { base_prefix: at_one, posted_ts: None, anchor_ts: Some(stamp) });
         }
+        // With no head on chain, a foreign prefix is a cache recovery rejects, not a rollback.
         let foreign = [9; 32];
         let error = verify(&dir, DOMAIN, signer, None, Some(0), 1, foreign).unwrap_err();
-        assert!(error.is::<Rollback>(), "a foreign prefix refuses the start: {error:#}");
+        assert!(!error.is::<Rollback>() && format!("{error:#}").contains("certified prefix"), "{error:#}");
     }
 
     #[test]
