@@ -285,7 +285,7 @@ impl Engine {
         if self.protocol_version < ProtocolVersion::V51 {
             return None;
         }
-        self.daily_turns.assigned.values().filter(|assignment| assignment.applies_at <= ts).last().copied()
+        self.daily_turns.assigned.values().rev().find(|assignment| assignment.applies_at <= ts).copied()
     }
 
     /// Hands the operator's role to the due turn's key (see `due_turn`), before the command stamped

@@ -136,7 +136,7 @@ async fn events_stall_until_the_registry_binding_is_verified() {
         &mut AdaptiveSize::new(1_000),
         1..=3,
         &hashes_through(3),
-        false,
+        (false, true),
     )
     .await
     .unwrap_err();
@@ -153,7 +153,7 @@ async fn events_stall_until_the_registry_binding_is_verified() {
         &mut AdaptiveSize::new(1_000),
         1..=3,
         &hashes_through(3),
-        true,
+        (true, true),
     )
     .await
     .unwrap();

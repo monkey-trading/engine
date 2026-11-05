@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use alloy::eips::{BlockId, BlockNumberOrTag};
-use alloy::primitives::{Address, B256, Bytes, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
