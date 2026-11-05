@@ -137,7 +137,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// launch measurement and the SHA-256 of the config file it runs with. A node opens its sealed
     /// keys only while it is this release, and hands them only to this release, so no code or config
     /// receives the key without the timelock delay, and setting another release supersedes this one.
-    /// While the operator registry has rotation on, this is instead the pending-or-current
+    /// While the operator registry has rotation on, this is instead the registry's named
     /// operator's release, which `syncRelease` folds into this contract's state.
     bytes32 public namedRelease;
     /// @notice Generations handed out so far: each `setCurrentRelease`, each `syncRelease` that folds
