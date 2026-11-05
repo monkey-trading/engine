@@ -400,15 +400,16 @@ contract OperatorRegistry {
     }
 
     /// @notice Removes the caller's candidacy; its self-bond stays locked for one cooldown. The
-    /// operator in effect, a candidate elected and waiting to take effect, and the member of the turn
-    /// in effect, of the turn before it, or of the last drawn turn cannot leave.
+    /// operator in effect, a candidate elected and waiting to take effect, and, while a turn names
+    /// the operator or drawn turns run, the member of the turn in effect, its source, or the member
+    /// of the last drawn turn cannot leave.
     function deregister() external {
         Candidate memory registered = candidates[msg.sender];
         if (registered.adminKey == address(0)) revert NotRegistered();
         _settle();
         if (
             msg.sender == current.candidate || (pending.effectiveAt != 0 && msg.sender == pending.candidate)
-                || (address(schedule) != address(0) && schedule.holdsTurn(msg.sender))
+                || _holdsRunningTurn(msg.sender)
         ) revert OperatorCannotLeave();
         if (listed[msg.sender] != 0) _delist(msg.sender);
         delete keyHolder[registered.adminKey];
@@ -708,6 +709,15 @@ contract OperatorRegistry {
         if (candidate == address(0) || current.since >= until) return (named, 0, until);
         Candidate storage member = candidates[candidate];
         named = Operator(candidate, member.adminKey, member.release, since);
+    }
+
+    /// @dev Whether `candidate` holds a turn while turns still matter: a turn names the operator, or
+    /// a drawn turn has not ended. After an installation past the last turn's end neither holds.
+    function _holdsRunningTurn(address candidate) private view returns (bool) {
+        OperatorSchedule turns = schedule;
+        if (address(turns) == address(0)) return false;
+        (Operator memory turn,,) = _turn();
+        return (turn.candidate != address(0) || turns.turnsRunUntil() > block.timestamp) && turns.holdsTurn(candidate);
     }
 
     /// @dev The operator elections name: a pending promotion from the moment it is made, a pending

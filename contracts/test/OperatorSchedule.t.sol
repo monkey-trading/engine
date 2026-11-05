@@ -100,7 +100,7 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(schedule.setCount(), 1);
     }
 
-    function test_AnEmptySetIsNotAdopted() public {
+    function test_AnEmptySetIsNotAdoptedWithoutMembersInEffect() public {
         _setRotation(true);
         vm.recordLogs();
         _closeNext();
@@ -198,7 +198,8 @@ contract OperatorScheduleTest is ScheduleTest {
 
     function test_TheFallbackNeedsADrawnTurn() public {
         _rotateOne(alice);
-        uint64 turn = _nextTurn();
+        uint64 turn = _nextTurn() + 1;
+        vm.warp(schedule.drawDeadline(turn));
         vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.NoSeed.selector, turn));
         schedule.draw(turn);
     }
@@ -265,7 +266,7 @@ contract OperatorScheduleTest is ScheduleTest {
         schedule.draw(turn + 1);
     }
 
-    function test_OnlyTheNextTurnOfTheSameMemberKeepsItsGeneration() public {
+    function test_AMemberKeepsItsGenerationWhileItStaysNamed() public {
         uint32 setId = _rotateTwo(alice, bob);
         uint64 turn = _nextTurn() + 1;
         address[6] memory picks = [alice, alice, bob, alice, alice, alice];
@@ -279,11 +280,212 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(schedule.turnOf(turn + 2).generation, 2, "bob takes a new one");
         _draw(turn + 3);
         assertEq(schedule.turnOf(turn + 3).generation, 3, "alice after bob takes a new one");
-        // No draw for turn + 4: alice's holding may have moved in the gap.
+        // No draw for turn + 4: alice stays named across the gap, and her holding continues.
         _draw(turn + 5);
         assertEq(schedule.turnOf(turn + 5).prior, turn + 3);
-        assertEq(schedule.turnOf(turn + 5).generation, 4);
-        assertEq(vault.generationCounter(), 4);
+        assertEq(schedule.turnOf(turn + 5).generation, 3);
+        assertEq(vault.generationCounter(), 3);
+    }
+
+    function test_TheIncumbentsFirstTurnKeepsItsFoldedGeneration() public {
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (_digest(0), CONFIG)));
+        // The deployment's operator registers on the release it runs.
+        _candidate(deployerKey, 30_000e18, 0);
+        _delegate(deployerKey, deployerKey);
+        _setRotation(true);
+        _closeNext();
+        (, uint64 effectiveAt,,) = schedule.setOf(1);
+        vm.warp(effectiveAt);
+        uint64 turn = _nextTurn() + 1;
+        _relay(turn, keccak256("seed"));
+        assertEq(_draw(turn), deployerKey);
+        assertEq(schedule.turnOf(turn).generation, 1);
+        assertEq(schedule.sourceOf(turn), deployerKey);
+        assertEq(vault.generationCounter(), 1, "no generation reserved");
+        vm.warp(schedule.boundary(turn));
+        assertEq(vault.currentRelease(), _release(0));
+        assertEq(vault.releaseGeneration(), 1);
+        assertEq(vault.syncedRelease(), _release(0));
+    }
+
+    function test_TheIncumbentTakesANewGenerationWhenTheVaultFoldedAnotherRelease() public {
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (_digest(9), CONFIG)));
+        _candidate(deployerKey, 30_000e18, 0);
+        _delegate(deployerKey, deployerKey);
+        _setRotation(true);
+        assertEq(vault.currentRelease(), _release(0));
+        assertEq(vault.syncedRelease(), _release(9), "generation 1 was folded for another release");
+        _closeNext();
+        (, uint64 effectiveAt,,) = schedule.setOf(1);
+        vm.warp(effectiveAt);
+        uint64 turn = _nextTurn() + 1;
+        _relay(turn, keccak256("seed"));
+        _draw(turn);
+        assertEq(schedule.turnOf(turn).generation, 2);
+    }
+
+    function test_AnotherMemberOnTheSameReleaseTakesANewGeneration() public {
+        _candidate(alice, 30_000e18, 1);
+        _candidate(bob, 20_000e18, 1);
+        _delegate(alice, alice);
+        _delegate(bob, bob);
+        _setRotation(true);
+        _closeNext();
+        (, uint64 effectiveAt,,) = schedule.setOf(1);
+        vm.warp(effectiveAt);
+        uint64 turn = _nextTurn() + 1;
+        _relayPicking(turn, 1, alice);
+        _relayPicking(turn + 1, 1, bob);
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        assertEq(vault.syncedRelease(), _release(1));
+        _draw(turn + 1);
+        assertEq(schedule.turnOf(turn + 1).generation, 2, "a generation never passes between members");
+    }
+
+    function test_AnInstallationBetweenTurnsTakesANewGeneration() public {
+        _rotateOne(alice);
+        uint64 turn = _nextTurn() + 1;
+        _relay(turn, keccak256("seed"));
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        vm.prank(address(governance));
+        registry.setRotation(false);
+        vm.warp(schedule.turnsRunUntil());
+        vm.prank(address(governance));
+        registry.installOperator(carol, _key(carol), _digest(7), CONFIG);
+        vm.prank(address(governance));
+        registry.setRotation(true);
+        uint64 later = _nextTurn();
+        vm.warp(schedule.drawDeadline(later));
+        assertEq(schedule.draw(later), alice);
+        assertEq(schedule.turnOf(later).generation, 2, "the installed operator held the keys in between");
+        assertEq(schedule.sourceOf(later), carol);
+    }
+
+    function test_ATurnDrawsFromTheSetInEffectAtItsDeadline() public {
+        _rotateOne(alice);
+        _relay(_nextTurn() + 1, keccak256("seed"));
+        _candidate(bob, 20_000e18, 2);
+        _delegate(bob, bob);
+        // A set of bob alone, adopted while alice is unlisted.
+        vm.prank(address(governance));
+        registry.setReleaseApproval(alice, _digest(1), CONFIG, false);
+        _closeNext();
+        vm.prank(address(governance));
+        registry.setReleaseApproval(alice, _digest(1), CONFIG, true);
+        (, uint64 effectiveAt, address[] memory members,) = schedule.setOf(2);
+        assertEq(members.length, 1);
+        assertEq(members[0], bob);
+
+        // The turn whose window holds the set's effective time draws from the set before it,
+        // whenever in its window it is drawn.
+        uint64 turn = uint64((effectiveAt - schedule.BOUNDARY_OFFSET()) / 1 days + 1);
+        assertLt(schedule.drawDeadline(turn), effectiveAt);
+        assertEq(schedule.setAt(schedule.drawDeadline(turn)), 1);
+        vm.warp(effectiveAt - 1);
+        uint256 before = vm.snapshotState();
+        assertEq(schedule.draw(turn), alice);
+        vm.revertToState(before);
+        vm.warp(effectiveAt);
+        assertEq(schedule.currentSetId(), 2);
+        assertEq(schedule.draw(turn), alice);
+        assertEq(schedule.turnOf(turn).setId, 1);
+        assertEq(_draw(turn + 1), bob);
+        assertEq(schedule.turnOf(turn + 1).setId, 2);
+    }
+
+    function test_AnEmptyResultReplacesTheSetInEffect() public {
+        _rotateOne(alice);
+        uint64 turn = _nextTurn() + 1;
+        _relay(turn, keccak256("seed"));
+        _draw(turn);
+        // Alice unlisted: below quorum, and no member of the set in effect stays eligible.
+        vm.prank(address(governance));
+        registry.setReleaseApproval(alice, _digest(1), CONFIG, false);
+        uint64 effectiveAt = uint64(block.timestamp + 7 days + FINALITY_MARGIN);
+        address[] memory none = new address[](0);
+        vm.expectEmit(address(schedule));
+        emit OperatorSchedule.RotationSetAdopted(2, _closingEpoch(), effectiveAt, false, none, none, new uint256[](0));
+        registry.closeEpoch();
+        vm.warp(effectiveAt);
+        assertEq(schedule.currentSetId(), 2);
+        uint64 later = _nextTurn() + 1;
+        vm.warp(schedule.drawDeadline(later));
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.EmptySet.selector, 2));
+        schedule.draw(later);
+        assertEq(registry.namedOperator().candidate, alice, "the last member stays named");
+        // Another empty result changes nothing.
+        vm.recordLogs();
+        _closeNext();
+        assertEq(vm.getRecordedLogs().length, 1, "only EpochClosed");
+        assertEq(schedule.setCount(), 2);
+    }
+
+    function test_AQuorumCloseWithNoEligibleCandidateAdoptsAnEmptySet() public {
+        _rotateTwo(alice, bob);
+        OperatorRegistry.Parameters memory strict = _parameters();
+        strict.eligibilityBps = 10_000;
+        _govern(address(registry), abi.encodeCall(OperatorRegistry.setParameters, (strict)));
+        assertFalse(registry.isEligible(alice));
+        address[] memory none = new address[](0);
+        vm.expectEmit(address(schedule));
+        emit OperatorSchedule.RotationSetAdopted(
+            2, _closingEpoch(), uint64(block.timestamp + 7 days + FINALITY_MARGIN), true, none, none, new uint256[](0)
+        );
+        registry.closeEpoch();
+    }
+
+    function test_ADrawSkipsAMemberRegisteredUnderAnotherAdminKey() public {
+        uint32 setId = _rotateTwo(alice, bob);
+        vm.prank(bob);
+        registry.deregister();
+        vm.warp(block.timestamp + COOLDOWN);
+        uint256 newKey = uint256(keccak256("bob's next admin key"));
+        (uint8 v, bytes32 r, bytes32 sig) = vm.sign(newKey, _registrationDigest(registry, bob, vm.addr(newKey)));
+        OperatorRegistry.Registration memory registration = _registration(vm.addr(newKey), MIN_BOND, 2);
+        vm.prank(bob);
+        registry.register(registration, abi.encodePacked(r, sig, v));
+        assertTrue(registry.isListed(bob), "its release is still approved");
+
+        uint64 turn = _nextTurn() + 1;
+        bytes32 seed = _relayPicking(turn, setId, bob);
+        uint16 position = 1;
+        while (schedule.memberAt(setId, seed, turn, position) != alice) {
+            ++position;
+        }
+        vm.warp(schedule.drawDeadline(turn));
+        vm.expectEmit(address(schedule));
+        emit OperatorSchedule.TurnAssigned(turn, setId, position, 0, alice, _key(alice), _release(1), 1);
+        schedule.draw(turn);
+
+        // Below quorum the set carried over drops bob, whose key is no longer the one adopted.
+        _stake(voter, 300_000e18);
+        _delegate(voter, dave);
+        (address[] memory kept, uint256[] memory weights) = _one(alice);
+        vm.expectEmit(address(schedule));
+        emit OperatorSchedule.RotationSetAdopted(
+            2, _closingEpoch(), uint64(block.timestamp + 7 days + FINALITY_MARGIN), false, kept, _keys(kept), weights
+        );
+        registry.closeEpoch();
+    }
+
+    function test_AMemberMayLeaveOnceAnInstallationEndsTheTurns() public {
+        _rotateOne(alice);
+        uint64 turn = _nextTurn() + 1;
+        _relay(turn, keccak256("seed"));
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        vm.prank(address(governance));
+        registry.setRotation(false);
+        vm.warp(schedule.turnsRunUntil());
+        _assertCannotLeave(alice, "named after its turn ends");
+        vm.prank(address(governance));
+        registry.installOperator(carol, _key(carol), _digest(7), CONFIG);
+        assertTrue(schedule.holdsTurn(alice));
+        vm.prank(alice);
+        registry.deregister();
+        assertEq(registry.candidateOf(alice).adminKey, address(0));
     }
 
     function test_AReleaseMoveGivesTheTurnsTheMemberHoldsANewGeneration() public {
@@ -339,6 +541,7 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(registry.namedOperator().candidate, deployerKey);
 
         vm.warp(since);
+        assertTrue(schedule.holdsTurn(deployerKey), "the source of the turn in effect");
         (uint64 started, OperatorSchedule.Turn memory inEffect) = schedule.turnAt(since);
         assertEq(started, turn);
         assertEq(inEffect.candidate, alice);
@@ -362,7 +565,7 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(started, 0);
         assertEq(schedule.turnsRunUntil(), since + 2 days);
         assertEq(schedule.sourceOf(turn + 1), alice);
-        assertEq(schedule.sourceOf(turn), address(0));
+        assertEq(schedule.sourceOf(turn), deployerKey, "the first turn takes the keys from the operator before it");
         assertTrue(schedule.holdsTurn(alice));
         assertTrue(schedule.holdsTurn(bob));
         assertFalse(schedule.holdsTurn(carol));
@@ -503,10 +706,11 @@ contract OperatorScheduleTest is ScheduleTest {
     }
 
     /// @notice Reports, before refunds and with cold storage as in their own transactions, a close
-    /// adopting 100 members and a draw from them.
-    function test_GasOfAnAdoptionAndADrawAtAHundredMembers() public {
+    /// adopting the most members a set can hold, the candidate cap's limit plus the operator's place
+    /// beyond it, and a draw from them.
+    function test_GasOfAnAdoptionAndADrawAtTheMemberLimit() public {
         OperatorRegistry.Parameters memory wide = _parameters();
-        wide.maxCandidates = 100;
+        wide.maxCandidates = uint16(registry.CANDIDATE_LIMIT());
         wide.eligibilityBps = 0;
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setParameters, (wide)));
         for (uint256 i = 0; i < 100; ++i) {
@@ -514,12 +718,23 @@ contract OperatorScheduleTest is ScheduleTest {
             _candidate(member, MIN_BOND + i * 1e18, i + 1);
             _delegate(member, member);
         }
+        // The named operator takes the one place beyond the cap; no one else may.
+        _candidate(deployerKey, MIN_BOND, 0);
+        _delegate(deployerKey, deployerKey);
+        _stake(dave, MIN_BOND);
+        bytes memory authorization = _authorization(dave);
+        vm.prank(dave);
+        registry.register(_registration(_key(dave), MIN_BOND, 200), authorization);
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.CandidateCapReached.selector, 100));
+        vm.prank(address(governance));
+        registry.setReleaseApproval(dave, _digest(200), CONFIG, true);
+
         _setRotation(true);
         _cool();
         registry.closeEpoch();
         uint256 close = vm.lastCallGas().gasTotalUsed;
         (, uint64 effectiveAt, address[] memory members,) = schedule.setOf(1);
-        assertEq(members.length, 100);
+        assertEq(members.length, registry.CANDIDATE_LIMIT() + 1);
 
         vm.warp(effectiveAt);
         uint64 turn = _nextTurn() + 1;
@@ -528,10 +743,10 @@ contract OperatorScheduleTest is ScheduleTest {
         _cool();
         schedule.draw(turn);
         uint256 drawn = vm.lastCallGas().gasTotalUsed;
-        console.log("close adopting 100 members, gas:", close);
-        console.log("draw from 100 members, gas:", drawn);
-        assertLt(close, 10_000_000);
-        assertLt(drawn, 300_000);
+        console.log("close adopting 101 members, gas:", close);
+        console.log("draw from 101 members, gas:", drawn);
+        assertLt(close, 12_000_000);
+        assertLt(drawn, 400_000);
     }
 
     function _cool() internal {

@@ -11,9 +11,9 @@ import {Staking} from "../src/Staking.sol";
 import {Vault} from "../src/Vault.sol";
 import {ScheduleTest} from "./helpers/ScheduleTest.sol";
 
-/// @notice Random stake, closes, draws, relays, receiver swaps, release moves, approvals, rotation
-/// switches, installations, syncs, timelock releases and clock moves over four candidates, recording
-/// every generation handed out and every naming the vault puts in effect.
+/// @notice Random stake, closes, draws, relays, receiver swaps, release moves, approvals, eligibility
+/// changes, rotation switches, installations, syncs, timelock releases and clock moves over four
+/// candidates, recording every generation handed out and every naming the vault puts in effect.
 contract ScheduleHandler is Test {
     bytes32 internal constant CONFIG = keccak256("candidate config");
 
@@ -31,11 +31,15 @@ contract ScheduleHandler is Test {
     mapping(uint64 generation => bool) public handedOut;
     /// @notice Hand-outs of a generation handed out before.
     uint256 public reusedGenerations;
-    /// @notice Draws of the member of the turn before that did not keep its generation.
+    /// @notice Draws of the operator the registry named, on its release folded in the vault, that
+    /// did not keep the vault's generation.
     uint256 public misinherited;
-    /// @notice The release and turn member (zero for the vault's own fold) each generation was in
-    /// effect for, while the vault reported it folded.
-    mapping(uint64 generation => bytes32 naming) public namingOf;
+    /// @notice Draws whose source is not the operator the registry named at the draw.
+    uint256 public wrongSources;
+    /// @notice The release each generation was in effect for, while the vault reported it folded,
+    /// and the member of the turn that named it, if one did.
+    mapping(uint64 generation => bytes32 release) public releaseOf;
+    mapping(uint64 generation => address member) public memberOf;
     /// @notice Generations seen in effect for two different namings.
     uint256 public sharedGenerations;
     mapping(uint64 turn => address member) public drawnMember;
@@ -87,7 +91,7 @@ contract ScheduleHandler is Test {
     function draw() external observed {
         uint64 turn = _nextTurn();
         if (schedule.turnOf(turn).candidate != address(0)) vm.warp(schedule.drawDeadline(++turn));
-        try schedule.draw(turn) {} catch {}
+        _draw(turn);
     }
 
     function relay(bytes32 seed) external observed {
@@ -109,7 +113,7 @@ contract ScheduleHandler is Test {
     /// @dev Moves the clock, and a keeper then draws the turn open now.
     function warp(uint256 seconds_) external observed {
         vm.warp(block.timestamp + bound(seconds_, 1 hours, 2 days));
-        try schedule.draw(_nextTurn()) {} catch {}
+        _draw(_nextTurn());
     }
 
     function awaitSet() external observed {
@@ -143,6 +147,32 @@ contract ScheduleHandler is Test {
         registry.setReleaseApproval(account, digest, CONFIG, !approved);
     }
 
+    /// @dev Raises the eligibility share past every candidate's, so closes adopt empty sets, or
+    /// restores it.
+    function toggleEligibility() external observed {
+        (
+            uint64 epochLength,
+            uint64 finalityMargin,
+            uint16 eligibilityBps,
+            uint16 quorumBps,
+            uint16 maxCandidates,
+            uint256 minSelfBond,
+            uint64 livenessTimeout
+        ) = registry.parameters();
+        vm.prank(governance);
+        registry.setParameters(
+            OperatorRegistry.Parameters(
+                epochLength,
+                finalityMargin,
+                eligibilityBps == 10_000 ? 500 : 10_000,
+                quorumBps,
+                maxCandidates,
+                minSelfBond,
+                livenessTimeout
+            )
+        );
+    }
+
     /// @dev Acts on one call in three, so turns run for most of a run.
     function switchRotation(uint256 seed) external observed {
         if (seed % 3 != 0) return;
@@ -172,27 +202,34 @@ contract ScheduleHandler is Test {
         try vault.setCurrentRelease(_digest(600 + seed % 4), CONFIG) {} catch {}
     }
 
-    /// @dev Checks each generation the call handed out, and each drawn turn's inheritance.
+    /// @dev Draws `turn`, checking that it continues the named operator's holding in the vault's
+    /// generation, and otherwise takes a new one, and that its source is the operator named.
+    function _draw(uint64 turn) internal {
+        OperatorRegistry.Operator memory named = registry.namedOperator();
+        uint64 generation = vault.releaseGeneration();
+        bytes32 folded = vault.syncedRelease();
+        try schedule.draw(turn) returns (address candidate) {
+            OperatorSchedule.Turn memory drawn = schedule.turnOf(turn);
+            drawnMember[turn] = candidate;
+            drawnTurns.push(turn);
+            if (drawn.source != named.candidate) wrongSources++;
+            bytes32 release = registry.candidateOf(candidate).release;
+            if (candidate == named.candidate && release == named.release && folded == release) {
+                if (drawn.generation != generation) misinherited++;
+            } else {
+                _handOut(drawn.generation);
+            }
+        } catch {}
+    }
+
+    /// @dev Checks each generation a fold or a release move in the call handed out.
     function _record(Vm.Log[] memory logs) internal {
         uint64[] memory fresh = new uint64[](logs.length);
         uint256 count = 0;
         for (uint256 i = 0; i < logs.length; ++i) {
             bytes32 topic = logs[i].topics[0];
             uint64 generation;
-            if (logs[i].emitter == address(schedule) && topic == OperatorSchedule.TurnAssigned.selector) {
-                uint64 turn = uint64(uint256(logs[i].topics[1]));
-                address candidate;
-                (,, candidate,,, generation) =
-                    abi.decode(logs[i].data, (uint16, uint8, address, address, bytes32, uint64));
-                drawnMember[turn] = candidate;
-                drawnTurns.push(turn);
-                OperatorSchedule.Turn memory drawn = schedule.turnOf(turn);
-                OperatorSchedule.Turn memory prior = schedule.turnOf(drawn.prior);
-                if (drawn.prior + 1 == turn && prior.candidate == candidate) {
-                    if (generation != prior.generation) misinherited++;
-                    continue;
-                }
-            } else if (logs[i].emitter == address(schedule) && topic == OperatorSchedule.TurnGenerationMoved.selector) {
+            if (logs[i].emitter == address(schedule) && topic == OperatorSchedule.TurnGenerationMoved.selector) {
                 generation = abi.decode(logs[i].data, (uint64));
             } else if (logs[i].emitter == address(vault) && topic == Vault.ReleaseSynced.selector) {
                 generation = abi.decode(logs[i].data, (uint64));
@@ -208,9 +245,13 @@ contract ScheduleHandler is Test {
             // A release move gives the two turns it touches one generation.
             if (repeated) continue;
             fresh[count++] = generation;
-            if (handedOut[generation]) reusedGenerations++;
-            handedOut[generation] = true;
+            _handOut(generation);
         }
+    }
+
+    function _handOut(uint64 generation) internal {
+        if (handedOut[generation]) reusedGenerations++;
+        handedOut[generation] = true;
     }
 
     /// @dev Records the naming the vault puts in effect now, and the last drawn turn.
@@ -221,11 +262,15 @@ contract ScheduleHandler is Test {
         bytes32 release = vault.currentRelease();
         if (vault.syncedRelease() != release) return;
         uint64 generation = vault.releaseGeneration();
-        address member = registry.operatorGeneration() != 0 ? registry.namedOperator().candidate : address(0);
-        bytes32 naming = keccak256(abi.encode(release, member));
-        bytes32 seen = namingOf[generation];
-        if (seen == 0) namingOf[generation] = naming;
-        else if (seen != naming) sharedGenerations++;
+        bytes32 seen = releaseOf[generation];
+        if (seen == 0) releaseOf[generation] = release;
+        else if (seen != release) sharedGenerations++;
+        if (registry.operatorGeneration() == 0) return;
+        // A turn may continue the vault's own fold, but a generation never passes between members.
+        address member = registry.namedOperator().candidate;
+        address before = memberOf[generation];
+        if (before == address(0)) memberOf[generation] = member;
+        else if (before != member) sharedGenerations++;
     }
 
     function _nextTurn() internal view returns (uint64) {
@@ -266,15 +311,15 @@ contract OperatorScheduleInvariantTest is ScheduleTest {
         targetContract(address(handler));
     }
 
-    /// @notice Every generation a fold, a draw or a release move hands out is new, and a member drawn
-    /// for the turn after its own keeps that turn's.
+    /// @notice Every generation a fold, a draw or a release move hands out is new, and a draw of the
+    /// operator the registry names, on its release the vault folded, keeps the vault's.
     function invariant_NoGenerationIsHandedOutTwice() public view {
         assertEq(handler.reusedGenerations(), 0);
         assertEq(handler.misinherited(), 0);
     }
 
-    /// @notice No generation the vault reports folded is ever in effect for two different releases
-    /// or holdings.
+    /// @notice No generation the vault reports folded is ever in effect for two different releases,
+    /// nor for the turns of two different members.
     function invariant_NoGenerationNamesTwoHoldings() public view {
         assertEq(handler.sharedGenerations(), 0);
     }
@@ -292,8 +337,10 @@ contract OperatorScheduleInvariantTest is ScheduleTest {
         assertTrue(registry.rotationEnabled());
     }
 
-    /// @notice A drawn turn keeps the member it was drawn with.
-    function invariant_DrawnTurnsKeepTheirMember() public view {
+    /// @notice A drawn turn keeps the member it was drawn with, and its source is the operator the
+    /// registry named at its draw.
+    function invariant_DrawnTurnsKeepTheirMemberAndSource() public view {
+        assertEq(handler.wrongSources(), 0);
         for (uint256 i = 0; i < handler.drawnCount(); ++i) {
             uint64 turn = handler.drawnTurns(i);
             assertEq(schedule.turnOf(turn).candidate, handler.drawnMember(turn));

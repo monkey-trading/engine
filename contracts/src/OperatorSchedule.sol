@@ -5,9 +5,11 @@ import {OperatorRegistry} from "./OperatorRegistry.sol";
 import {SeedReceiver} from "./SeedReceiver.sol";
 import {SeedSchedule} from "./SeedSchedule.sol";
 
-/// @dev The vault that hands a newly named member its generation.
+/// @dev The vault, whose generations a turn holds.
 interface IGenerations {
     function reserveGeneration() external returns (uint64);
+    function releaseGeneration() external view returns (uint64);
+    function syncedRelease() external view returns (bytes32);
 }
 
 /// @title OperatorSchedule
@@ -15,13 +17,15 @@ interface IGenerations {
 /// close while rotation is on adopts a rotation set, seven days plus the finality margin before it
 /// takes effect, and at most one set waits at a time. With a quorum the set is the close's eligible
 /// candidates weighted by their votes; without one it is the set in effect less the members no longer
-/// eligible, their weights unchanged.
+/// eligible or registered under another admin key, their weights unchanged. A set holds each member's
+/// admin key as adopted. An empty set replaces one with members, and no turn is drawn from it.
 /// @notice Anyone draws turn `n` from its draw deadline, a day before its boundary at 22:30 UTC on day
-/// `n`, until that boundary, from the set in effect. Position by position, the turn's seed picks a
-/// member with probability proportional to its weight, with replacement, and the first one still
-/// listed in the registry takes the turn. A member drawn for the turn after its own keeps its
-/// generation; any other member, and a member whose release moves, takes a new one from the vault, so
-/// a node never reopens keys sealed for an earlier holding.
+/// `n`, until that boundary, from the set in effect at the deadline, so the moment of the draw picks
+/// nothing. Position by position, the turn's seed picks a member with probability proportional to its
+/// weight, with replacement, and the first one the registry still lists under the admin key the set
+/// adopted takes the turn. A member the registry names at the draw, on the release it runs, keeps the
+/// generation the vault holds for it; any other member, and a member whose release moves, takes a new
+/// one from the vault, so a node never reopens keys sealed for an earlier holding.
 /// @notice A turn names its member from its boundary, and the last turn drawn keeps naming its member
 /// after it ends until another turn starts or the registry's timelock installs an operator. Turning
 /// rotation off stops draws and adoptions; turns already drawn stand.
@@ -31,9 +35,11 @@ interface IGenerations {
 /// only that refusal falls back, and any other failure of the read reverts the draw, so a caller
 /// cannot pick the fallback by limiting gas. Not upgradeable.
 contract OperatorSchedule is SeedSchedule {
-    /// @notice A rotation set's member and the sum of the weights up to and including its own.
+    /// @notice A rotation set's member, its admin key as adopted, and the sum of the weights up to
+    /// and including its own.
     struct Member {
         address candidate;
+        address adminKey;
         uint256 cumulative;
     }
 
@@ -44,7 +50,8 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @notice A drawn turn. `prior` is the turn drawn before it, zero for the first; `reason` is 0
-    /// for a draw.
+    /// for a draw; `source` is the operator the registry named at the draw, which hands the member
+    /// the keys.
     struct Turn {
         address candidate;
         uint16 position;
@@ -53,6 +60,7 @@ contract OperatorSchedule is SeedSchedule {
         uint64 generation;
         uint64 prior;
         bytes32 seed;
+        address source;
     }
 
     /// @notice How many positions a draw tries before it refuses the turn.
@@ -84,8 +92,8 @@ contract OperatorSchedule is SeedSchedule {
         address[] adminKeys,
         uint256[] weights
     );
-    /// @notice Turn `turn` was drawn from set `setId` at `position`, naming `candidate`, whose
-    /// `adminKey` and `release` were registered at the draw, under `generation`.
+    /// @notice Turn `turn` was drawn from set `setId` at `position`, naming `candidate` with the
+    /// `adminKey` the set adopted and the `release` it registered at the draw, under `generation`.
     event TurnAssigned(
         uint64 indexed turn,
         uint32 indexed setId,
@@ -109,7 +117,7 @@ contract OperatorSchedule is SeedSchedule {
     error NoSetInEffect();
     error NoSeed(uint64 turn);
     error NoAvailableMember(uint64 turn);
-    error UnknownSet(uint32 setId);
+    error EmptySet(uint32 setId);
 
     constructor(OperatorRegistry registry_, SeedReceiver receiver_) SeedSchedule(receiver_.beaconGenesisTime()) {
         registry = registry_;
@@ -133,8 +141,9 @@ contract OperatorSchedule is SeedSchedule {
 
     /// @notice Adopts the rotation set a close of `epoch` makes, to take effect at `effectiveAt`.
     /// `candidates` are the registry's eligible candidates, with their admin keys and votes. With
-    /// `quorum` the set is those with votes; without, the set in effect less members not among them.
-    /// Nothing is adopted while a set waits to take effect, or when the set would be empty.
+    /// `quorum` the set is those with votes; without, the set in effect less members not among them
+    /// under the key the set adopted. Nothing is adopted while a set waits to take effect, nor an
+    /// empty set while the set in effect has no members.
     function adopt(
         uint64 epoch,
         uint64 effectiveAt,
@@ -146,36 +155,32 @@ contract OperatorSchedule is SeedSchedule {
         if (pendingSetId() != 0) return;
         (address[] memory members, address[] memory keys, uint256[] memory kept) =
             quorum ? _withVotes(candidates, adminKeys, weights) : _stillEligible(candidates, adminKeys);
-        if (members.length != 0) _record(epoch, effectiveAt, quorum, members, keys, kept);
+        if (members.length == 0 && sets[currentSetId()].members.length == 0) return;
+        _record(epoch, effectiveAt, quorum, members, keys, kept);
     }
 
-    /// @notice Draws turn `turn` from the set in effect: anyone may call from the turn's draw deadline
-    /// until its boundary, while the registry's rotation switch is on.
+    /// @notice Draws turn `turn` from the set in effect at its draw deadline: anyone may call from the
+    /// deadline until the turn's boundary, while the registry's rotation switch is on.
     /// @return candidate The member drawn.
     function draw(uint64 turn) external returns (address candidate) {
         if (!registry.rotationSwitch()) revert RotationOff();
         uint64 opensAt = drawDeadline(turn);
-        uint64 closesAt = boundary(turn);
-        if (block.timestamp < opensAt || block.timestamp >= closesAt) revert NotDrawable(turn, opensAt, closesAt);
-        if (turns[turn].candidate != address(0)) revert AlreadyDrawn(turn);
-        uint32 setId = currentSetId();
-        if (setId == 0) revert NoSetInEffect();
-        bytes32 seed = _seed(turn);
-        uint16 position = 0;
-        for (;; ++position) {
-            if (position == MAX_DRAW_POSITIONS) revert NoAvailableMember(turn);
-            candidate = memberAt(setId, seed, turn, position);
-            if (registry.isListed(candidate)) break;
+        if (block.timestamp < opensAt || block.timestamp >= boundary(turn)) {
+            revert NotDrawable(turn, opensAt, boundary(turn));
         }
-        uint64 last = lastDrawnTurn;
-        Turn storage previous = turns[last];
-        // Only the turn right after the member's own continues its holding; a gap may span an
-        // installation that moved the keys.
-        uint64 generation = previous.candidate == candidate && last + 1 == turn ? previous.generation : _reserve();
-        turns[turn] = Turn(candidate, position, DRAWN, setId, generation, last, seed);
+        if (turns[turn].candidate != address(0)) revert AlreadyDrawn(turn);
+        uint32 setId = setAt(opensAt);
+        if (setId == 0) revert NoSetInEffect();
+        if (sets[setId].members.length == 0) revert EmptySet(setId);
+        bytes32 seed = _seed(turn);
+        (uint16 position, Member memory member) = _pick(setId, seed, turn);
+        candidate = member.candidate;
+        bytes32 release = registry.candidateOf(candidate).release;
+        OperatorRegistry.Operator memory named = registry.namedOperator();
+        uint64 generation = _generation(candidate, release, named);
+        turns[turn] = Turn(candidate, position, DRAWN, setId, generation, lastDrawnTurn, seed, named.candidate);
         lastDrawnTurn = turn;
-        OperatorRegistry.Candidate memory registered = registry.candidateOf(candidate);
-        emit TurnAssigned(turn, setId, position, DRAWN, candidate, registered.adminKey, registered.release, generation);
+        emit TurnAssigned(turn, setId, position, DRAWN, candidate, member.adminKey, release, generation);
     }
 
     /// @notice Gives the turn in effect, and the last drawn turn, a new generation where `candidate` is
@@ -199,25 +204,21 @@ contract OperatorSchedule is SeedSchedule {
     /// the set's total weight.
     function memberAt(uint32 setId, bytes32 seed, uint64 turn, uint16 position) public view returns (address) {
         Member[] storage members = sets[setId].members;
-        uint256 count = members.length;
-        if (count == 0) revert UnknownSet(setId);
-        uint256 r = uint256(keccak256(abi.encode(seed, turn, position))) % members[count - 1].cumulative;
-        uint256 low = 0;
-        uint256 high = count - 1;
-        while (low < high) {
-            uint256 mid = (low + high) / 2;
-            if (members[mid].cumulative > r) high = mid;
-            else low = mid + 1;
-        }
-        return members[low].candidate;
+        if (members.length == 0) revert EmptySet(setId);
+        return members[_index(members, seed, turn, position)].candidate;
     }
 
-    /// @notice The set turns are drawn from now, zero before the first takes effect.
+    /// @notice The set in effect at `timestamp`, zero before the first takes effect.
+    function setAt(uint64 timestamp) public view returns (uint32 setId) {
+        setId = setCount;
+        while (setId != 0 && sets[setId].effectiveAt > timestamp) {
+            --setId;
+        }
+    }
+
+    /// @notice The set in effect now, zero before the first takes effect.
     function currentSetId() public view returns (uint32) {
-        uint32 latest = setCount;
-        // Only the latest set can wait, and the one before it is then in effect.
-        if (latest != 0 && block.timestamp < sets[latest].effectiveAt) return latest - 1;
-        return latest;
+        return setAt(uint64(block.timestamp));
     }
 
     /// @notice The set waiting to take effect, zero when none is.
@@ -277,18 +278,18 @@ contract OperatorSchedule is SeedSchedule {
         return last == 0 ? 0 : boundary(last) + 1 days;
     }
 
-    /// @notice Whether `candidate` is the member of the turn in effect, of the turn before it, which
-    /// hands it the keys, or of the last drawn turn.
+    /// @notice Whether `candidate` is the member of the turn in effect, its source, which hands it
+    /// the keys, or the member of the last drawn turn.
     function holdsTurn(address candidate) external view returns (bool) {
         (, Turn memory current) = turnAt(uint64(block.timestamp));
-        return candidate == current.candidate || candidate == turns[current.prior].candidate
-            || candidate == turns[lastDrawnTurn].candidate;
+        return
+            candidate == current.candidate || candidate == current.source || candidate == turns[lastDrawnTurn].candidate;
     }
 
-    /// @notice The member of the turn drawn before `turn`, which hands `turn`'s member the keys; zero
-    /// for the first turn.
+    /// @notice The operator the registry named when `turn` was drawn, which hands its member the keys;
+    /// zero when it was not drawn.
     function sourceOf(uint64 turn) external view returns (address) {
-        return turns[turns[turn].prior].candidate;
+        return turns[turn].source;
     }
 
     /// @dev Stores the next set and reports it.
@@ -306,7 +307,7 @@ contract OperatorSchedule is SeedSchedule {
         uint256 cumulative = 0;
         for (uint256 i = 0; i < members.length; ++i) {
             cumulative += weights[i];
-            set.members.push(Member(members[i], cumulative));
+            set.members.push(Member(members[i], keys[i], cumulative));
         }
         emit RotationSetAdopted(setId, epoch, effectiveAt, quorum, members, keys, weights);
     }
@@ -327,8 +328,8 @@ contract OperatorSchedule is SeedSchedule {
         _trim(members, keys, kept, count);
     }
 
-    /// @dev The members of the set in effect still among the eligible `candidates`, with their
-    /// current admin keys and their weights in the set.
+    /// @dev The members of the set in effect still among the eligible `candidates` under the admin
+    /// key the set adopted, with their weights in the set.
     function _stillEligible(address[] calldata candidates, address[] calldata adminKeys)
         private
         view
@@ -342,8 +343,12 @@ contract OperatorSchedule is SeedSchedule {
             Member memory member = inEffect[j];
             for (uint256 i = 0; i < candidates.length; ++i) {
                 if (candidates[i] != member.candidate) continue;
-                (members[count], keys[count], kept[count]) = (member.candidate, adminKeys[i], member.cumulative - below);
-                ++count;
+                // A re-registration under another admin key leaves the set.
+                if (adminKeys[i] == member.adminKey) {
+                    (members[count], keys[count], kept[count]) =
+                    (member.candidate, member.adminKey, member.cumulative - below);
+                    ++count;
+                }
                 break;
             }
             below = member.cumulative;
@@ -379,6 +384,52 @@ contract OperatorSchedule is SeedSchedule {
         uint64 last = lastDrawnTurn;
         if (last == 0) revert NoSeed(turn);
         return keccak256(abi.encode(turns[last].seed, turn));
+    }
+
+    /// @dev The first position whose member the registry lists under the admin key the set adopted.
+    function _pick(uint32 setId, bytes32 seed, uint64 turn)
+        private
+        view
+        returns (uint16 position, Member memory member)
+    {
+        Member[] storage members = sets[setId].members;
+        for (;; ++position) {
+            if (position == MAX_DRAW_POSITIONS) revert NoAvailableMember(turn);
+            member = members[_index(members, seed, turn, position)];
+            if (registry.isListed(member.candidate) && registry.keyHolder(member.adminKey) == member.candidate) {
+                return (position, member);
+            }
+        }
+    }
+
+    /// @dev The index of the first of `members`, which must not be empty, whose cumulative weight
+    /// exceeds the position's point.
+    function _index(Member[] storage members, bytes32 seed, uint64 turn, uint16 position)
+        private
+        view
+        returns (uint256 low)
+    {
+        uint256 high = members.length - 1;
+        uint256 r = uint256(keccak256(abi.encode(seed, turn, position))) % members[high].cumulative;
+        while (low < high) {
+            uint256 mid = (low + high) / 2;
+            if (members[mid].cumulative > r) high = mid;
+            else low = mid + 1;
+        }
+    }
+
+    /// @dev The generation the drawn member's turn holds: the vault's in effect when the registry
+    /// names the member now on `release` and the vault has folded that release, so its holding
+    /// continues; a new one otherwise.
+    function _generation(address candidate, bytes32 release, OperatorRegistry.Operator memory named)
+        private
+        returns (uint64)
+    {
+        IGenerations vault = IGenerations(address(registry.vault()));
+        if (candidate == named.candidate && release == named.release && vault.syncedRelease() == release) {
+            return vault.releaseGeneration();
+        }
+        return vault.reserveGeneration();
     }
 
     function _reserve() private returns (uint64) {
