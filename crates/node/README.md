@@ -354,6 +354,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/tests/operator.rs` — recovery, activation, and replay with the operator the log
   records; recovery under the key the registry installed, and benchmark holds while it supersedes the
   log's
+- `src/sequencer/tests/operator/hold.rs` — which keys end a benchmark hold: a recorded key the
+  registry seats again over a due rotation, an installation's own due key, and a rotation back to a
+  formerly installed key
 - `src/sequencer/tests/rotation.rs` — an operator rotation through the sequencer, and recovery after it
 - `src/sequencer/batch_tests.rs` — batching: a batch ends after `MAX_BATCH` requests of any kind
 - `src/sequencer/margin_tests.rs` — the margin and solvency dev scenario on the dev genesis (a

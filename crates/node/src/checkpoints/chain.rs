@@ -42,16 +42,19 @@ pub(crate) struct RegistryOperator {
 }
 
 impl RegistryOperator {
-    /// This operator's key, when `engine`'s log records another and its staking scan has not passed
-    /// the seating: the scan's frontier time, before which every registry event has been mirrored,
-    /// is no later than the seating's. The log may already hold the installation, whose handover then
+    /// This operator's key, when `engine`'s log does not yet hand over to it as the registry has it
+    /// seated and its staking scan has not passed the seating: the scan's frontier time, before which
+    /// every registry event has been mirrored, is no later than the seating's. The log does not when
+    /// it records another key, or records this one with a signed rotation to another pending, which
+    /// the seating then supersedes. The log may already hold the installation, whose handover then
     /// waits out its notice; an earlier installation of the same key tells nothing, since the
     /// timelock may install a key again. A log whose scan records no frontier time cannot tell, and
     /// reads as scanned.
     pub(crate) fn unscanned(self, engine: &Engine) -> Option<AccountId> {
         let frontier = engine.staking().and_then(|staking| staking.completed_through).and_then(|through| through.time);
         let recorded = engine.operator().is_some_and(|operator| operator.address == self.admin_key);
-        (frontier.is_some_and(|time| self.since >= time) && !recorded).then_some(self.admin_key)
+        let superseded = engine.operator_bounds().rotation.is_some_and(|rotation| rotation.address != self.admin_key);
+        (frontier.is_some_and(|time| self.since >= time) && (!recorded || superseded)).then_some(self.admin_key)
     }
 }
 

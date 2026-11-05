@@ -78,7 +78,9 @@ remain, the owner decides whether to start the install anyway or let the exit ru
      host that deletes the file gets the same result as one that cannot read it, so only do this when
      the old keys are already unusable or retired.
 3. **Boot with new keys.** Put an empty file `new-key` on the data disk, beside `config.toml`, and
-   start the VM with the same image and the same config. The image removes the marker before it
+   start the VM with the same image and the same config, except after the rotation-on move to another
+   approved release: then the vault names that release, so boot its image and its config (the
+   candidacy's release `B`) with the preserved log, since the old release's start refuses. The image removes the marker before it
    starts the engine, so it applies once. `--new-key` refuses to run beside an existing file for the
    same release and generation.
    **Changes the live system.** Needs the owner's approval to deploy.

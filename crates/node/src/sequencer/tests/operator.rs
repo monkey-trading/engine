@@ -410,3 +410,5 @@ fn recover_installed(
         SequencerConfig { clock, genesis, operator, registry_operator: registry, ..sequencer_config(dir, manifest) };
     Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(16).0, mpsc::unbounded_channel().0)
 }
+
+mod hold;

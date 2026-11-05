@@ -150,7 +150,8 @@ async fn obtain_with(
             })
             .await
             .context(
-                "the vault never folded the release change into its generation; have the promoter call syncRelease",
+                "the vault's release change did not fold into its generation at finality within a minute; call syncRelease \
+                 (anyone may) and start again once its block is finalized",
             )??;
             Some(folded)
         }

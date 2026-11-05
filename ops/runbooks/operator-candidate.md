@@ -143,7 +143,11 @@ cast call $VAULT 'currentRelease()(bytes32)' --rpc-url $RPC
 ```
 
 Otherwise turning rotation on makes the vault name another release, and the running node's keys
-no longer open on a restart (`release_superseded`).
+no longer open on a restart (`release_superseded`). This is a precondition of every
+`setRotation(true)`, not only the first: `operatorInEffect().release` must equal `currentRelease()`.
+A rotation-off upgrade moves only the vault's release, so it must also move the registry's, by
+the candidacy's move to an approved `B` (section 5, steps 2 and 3) or, for an unregistered installed
+operator, `installOperator` again with `B`'s release.
 
 Check, once an election exists: `cast call $REGISTRY 'handoverSource()((address,bytes32,string,string))'
 --rpc-url $RPC` names the incumbent, its release, hostname and endpoint.
@@ -244,14 +248,17 @@ the release it leaves, so moving back needs a new approval. The running release 
    hold that place, and the timelock frees one by withdrawing an approval or raising the cap).
    Check: the third field of `operatorInEffect()` and `cast call $VAULT 'currentRelease()(bytes32)'`
    both equal `cast keccak $(cast concat-hex $DIGEST $CONFIG_HASH)`.
-4. **Fold the change into the vault's generation** (anyone may; `B` waits for it up to a minute,
-   then refuses, and `A` hands over no keys until it lands):
+4. **Fold the change into the vault's generation** (anyone may; `B` reads it at finality, waits up
+   to a minute, then refuses, and `A` hands over no keys until it lands):
 
    ```sh
    cast send $VAULT 'syncRelease()' --rpc-url $RPC --account <any>
    ```
 
-   Check: `releaseGeneration()` rose by one. `A` raises `release_superseded` (Critical) once the
+   Check, once the sync block is final: `cast call $VAULT 'syncedRelease()(bytes32)' --block finalized`
+   equals `cast call $VAULT 'currentRelease()(bytes32)' --block finalized`, and `releaseGeneration()`
+   at `--block finalized` rose by one. Do not start `B` on the latest block's reading: it checks at
+   finality and refuses if the sync block is not yet final. `A` raises `release_superseded` (Critical) once the
    block is `finalized`, and keeps sequencing; the page is expected.
 5. **Start `B` with a `predecessor` file**, as in [deploy-and-rollback.md](deploy-and-rollback.md),
    section 3, steps 3 to 7. The enclave address, the signer epoch and `$PIN` carry over. Do not

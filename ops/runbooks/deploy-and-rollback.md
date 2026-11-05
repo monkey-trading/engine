@@ -155,7 +155,11 @@ Use this for a new image, a new config, or both. The running release is `A`, the
 1. Prepare `B` (section 1). Check that the protocol-version note in "Know before you start" is
    settled, so you know whether this can be undone.
 2. **Name `B`.** Section 2, step 1, with `B`'s digest and config hash. With rotation on, follow
-   [operator-candidate.md](operator-candidate.md), section 5, steps 2 to 4, instead.
+   [operator-candidate.md](operator-candidate.md), section 5, steps 2 to 4, instead. With rotation
+   off, `setCurrentRelease` moves only the vault's release: also move the registry's operator
+   release (the candidacy's move to an approved `B`, or `installOperator` again), or the next
+   `setRotation(true)` makes the vault name `A` again. Before every `setRotation(true)`, check that
+   `operatorInEffect()`'s release (third field) equals `cast call $VAULT 'currentRelease()(bytes32)'`.
    **Changes the live system.** Needs the owner's approval of this contract call.
    Check: `A` raises `release_superseded` (Critical) within a minute of the block being `finalized`,
    and keeps sequencing. This page is expected; it says a restart of `A` would now find no keys.

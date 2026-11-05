@@ -66,8 +66,9 @@ different tool and is not covered here.
 
 ## Resume normal trading
 
-1. Confirm the cause is resolved (the market has a `mark`, the alert has resolved, the exposure is
-   under its cap).
+1. Confirm the cause is resolved (`engine_market_priced` reads 1 for the market, the alert has
+   resolved, the exposure is under its cap). The market's `mark` is the last stored value and
+   survives the loss of live pricing, so it does not show the market is priced.
 2. Send the same command with `false` and the same scope. **Changes the live system.** Needs the
    owner's approval of this admin command.
 

@@ -285,7 +285,9 @@ fn before_v35_the_rates_move_without_notice_or_bounds() {
 #[test]
 fn a_notice_and_a_rotation_are_refused_unsigned_and_before_parameters() {
     let late = notice(Some(1_200), None, common::start() + NOTICE_MS);
-    let (_, outcomes) = bare(vec![late.clone(), AdminCommand::RotateOperator { address: next_operator() }]);
+    let markup =
+        AdminCommand::AnnounceMarkup { market: BTC, markup_bps: 100, effective_at: common::start() + NOTICE_MS };
+    let (_, outcomes) = bare(vec![late.clone(), AdminCommand::RotateOperator { address: next_operator() }, markup]);
     for outcome in outcomes {
         assert_eq!(outcome, rejected("the operator signs a parameter notice or a rotation"));
     }

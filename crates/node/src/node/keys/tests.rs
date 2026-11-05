@@ -147,9 +147,10 @@ async fn a_superseded_release_alerts_before_the_vault_folds_the_change() {
     assert!(alerts.try_recv().is_err(), "the release the vault names raised an alert");
 
     // The operator moves to another release and the finalized block shows it, but nobody folded
-    // the change: the running release is already superseded and a restart finds no keys, so the
-    // watch must alert now rather than wait for anyone's syncRelease.
-    *current.lock().unwrap() = CurrentRelease { id: [0x99; 32], generation: 3 };
+    // the change: the vault reads the new release id at the old generation, and `synced` still names
+    // the old release. The running release is already superseded and a restart finds no keys, so the
+    // watch must alert now rather than wait for anyone's syncRelease, and not only on the generation.
+    *current.lock().unwrap() = CurrentRelease { id: [0x99; 32], generation: 2 };
     tokio::time::sleep(every).await;
     let alert = alerts.try_recv().expect("a superseded release raises Critical before the fold");
     assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("release_superseded", "ERROR"));
