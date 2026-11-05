@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use alloy::primitives::B256;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::{Json, Router, routing::post};
