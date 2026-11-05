@@ -132,6 +132,9 @@ contract = "0x4444444444444444444444444444444444444444" # REPLACE
 # Absent, that route answers 404; a node's config is part of its release, so a lens added later
 # needs a new release.
 # lens = "0x5555555555555555555555555555555555555555" # REPLACE
+# The OperatorSchedule the registry names, whose rotation sets and daily turns the watcher mirrors
+# from protocol V51. Absent, no turn is mirrored. Like the lens, it is part of the release.
+# schedule = "0x6666666666666666666666666666666666666666" # REPLACE
 
 [checkpoints]
 # A separate endpoint from the custody providers. It signs and funds the relayer's transactions,

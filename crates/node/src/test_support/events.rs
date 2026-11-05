@@ -222,6 +222,25 @@ pub fn every_event() -> Vec<Event> {
         Event::OperatorElected { epoch: 3, candidate: account, admin_key: account, effective_at: 1_793_000_000_000 },
         Event::OperatorInstalled { candidate: account, admin_key: account, effective_at: 1_793_000_000_000 },
         Event::ElectionRejected { chain_ref: "0xef:4".into(), reason: "rotation is off".into() },
+        Event::RotationSetAdopted { set: 1, epoch: 3, effective_at: 1_793_000_000_000 },
+        Event::TurnAssigned {
+            turn: 20_754,
+            position: 0,
+            reason: engine_core::turns::TurnReason::Draw,
+            candidate: account,
+            admin_key: account,
+            applies_at: 1_793_226_600_000,
+        },
+        Event::TurnRefused {
+            turn: 20_754,
+            position: 1,
+            cause: engine_core::turns::TurnReason::Skip,
+            candidate: account,
+            admin_key: account,
+            reason: "no notice".into(),
+        },
+        Event::TurnTaken { turn: 20_754, candidate: account, release: engine_core::eip712::B256::repeat_byte(1) },
+        Event::TurnTakenRejected { reason: "turn 20754 is not the turn in effect".into() },
         Event::CatchUpDeferred { due: 1_793_000_000_000 },
         Event::SessionKeyRegistered { account, session_key: account, expires_at: 1_500 },
         Event::SessionKeyRevoked { account, session_key: account },
@@ -280,6 +299,11 @@ pub fn every_event() -> Vec<Event> {
             | Event::OperatorElected { .. }
             | Event::OperatorInstalled { .. }
             | Event::ElectionRejected { .. }
+            | Event::RotationSetAdopted { .. }
+            | Event::TurnAssigned { .. }
+            | Event::TurnRefused { .. }
+            | Event::TurnTaken { .. }
+            | Event::TurnTakenRejected { .. }
             | Event::SessionKeyRegistered { .. }
             | Event::SessionKeyRevoked { .. }
             | Event::SessionKeyRejected { .. }

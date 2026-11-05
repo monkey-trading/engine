@@ -49,14 +49,13 @@ async fn sequence_admin(s: &ApiState, req: AdminRequest, seen: &mut Option<u64>)
         debug!("admin request refused: not an operator command");
         return Err(ApiError::BadRequest("the operator may not send this command".into()));
     }
-    // The key the log records, and the one a pending rotation hands over to: the engine decides at
-    // the sequenced time which of them applies. The pending key passes only once it is due by the
+    // The key the log records, and the one a pending rotation or a daily turn hands over to: the
+    // engine decides at the sequenced time which of them applies. The pending key passes only once it is due by the
     // node's clock, an elected one once the staking mirror has also reached the registry's time, so
     // no request the engine cannot yet authorise enters the log, where it could be copied and sent
     // again after the handover.
     let now = s.clock.now_ms();
-    let (recorded, due, last_seq) =
-        s.query(move |e| (e.operator().copied(), e.due_rotation(now), e.last_seq())).await?;
+    let (recorded, due, last_seq) = s.query(move |e| (e.operator().copied(), e.due_key(now), e.last_seq())).await?;
     *seen = last_seq;
     let current = recorded.unwrap_or(s.operator);
     let next = due.map(|rotation| Operator { address: rotation.address, ..current });

@@ -115,6 +115,8 @@ pub struct Sequencer {
     operator: Operator,
     /// The registry's operator in effect at startup, while rotation is off (see `hold_has_signer`).
     registry_operator: Option<crate::checkpoints::RegistryOperator>,
+    /// This enclave's release, which takes the daily turns the log assigns `operator` (see `take_turn`).
+    turn_release: Option<engine_core::eip712::B256>,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
     claims: claims::Claims,
@@ -309,6 +311,9 @@ impl Sequencer {
             return Ok(None);
         }
         let snapshot = matches!(&cmd, Command::SignedAdmin(req) if req.command.is_benchmark_snapshot());
+        if !self.benchmark_sync {
+            self.take_turn(ts)?;
+        }
         let Some(events) = self.stamp(ts, cmd)? else {
             // Frozen mid-request: refuse like an unadmitted stamp, dropping the reply.
             return Ok(None);
@@ -471,6 +476,7 @@ mod snapshots;
 pub use genesis::{GenesisProgress, genesis_commands};
 mod quotes;
 mod required;
+mod turns;
 
 #[cfg(test)]
 mod batch_tests;

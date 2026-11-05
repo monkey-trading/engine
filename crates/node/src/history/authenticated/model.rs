@@ -230,6 +230,11 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         | Event::OperatorElected { .. }
         | Event::OperatorInstalled { .. }
         | Event::ElectionRejected { .. }
+        | Event::RotationSetAdopted { .. }
+        | Event::TurnAssigned { .. }
+        | Event::TurnRefused { .. }
+        | Event::TurnTaken { .. }
+        | Event::TurnTakenRejected { .. }
         | Event::CatchUpDeferred { .. } => bail!("event is not an account-history kind"),
     };
     kind_id(kind)

@@ -99,6 +99,11 @@ pub struct RegistryCustodySection {
     /// through. Absent, that route answers 404.
     #[serde(default)]
     pub lens: Option<Address>,
+    /// The `OperatorSchedule` the registry names, whose rotation sets and turns the watcher mirrors
+    /// with the registry's events from `V51`. The watcher refuses a schedule whose `registry()` is not
+    /// the registry above. Absent, no turn is mirrored.
+    #[serde(default)]
+    pub schedule: Option<Address>,
 }
 
 /// Independently operated RPC service; its name identifies alerts without exposing credentials.
@@ -118,6 +123,7 @@ impl NodeConfig {
     ///   could rewrite every answer
     /// - a range, interval, or timeout in `[custody.evm]` is zero
     /// - `custody.evm.staking.registry.lens` is the token, the vault, the staking contract, or the registry
+    /// - `custody.evm.staking.registry.schedule` is any of those, or the lens
     /// - `genesis.house_capital` is not zero with EVM custody
     pub(super) fn validate_custody(&self) -> anyhow::Result<()> {
         let evm = match (self.custody.provider, &self.custody.evm) {
@@ -153,6 +159,20 @@ impl NodeConfig {
             {
                 bail!(
                     "custody.evm.staking.registry.lens must be the registry lens, not the token, vault, staking contract, or registry"
+                );
+            }
+            if let Some(schedule) = staking.registry.schedule
+                && [
+                    Some(evm.usdc),
+                    Some(vault),
+                    Some(staking.contract),
+                    Some(staking.registry.contract),
+                    staking.registry.lens,
+                ]
+                .contains(&Some(schedule))
+            {
+                bail!(
+                    "custody.evm.staking.registry.schedule must be the operator schedule, not the token, vault, staking contract, registry, or lens"
                 );
             }
         }

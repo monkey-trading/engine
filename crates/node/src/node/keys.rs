@@ -160,7 +160,14 @@ async fn obtain_with(
             None => None,
         },
     };
-    let generation = current.map_or(0, |current| current.generation);
+    // From a daily turn's boundary the vault names its member's release before finality shows it:
+    // the finalised schedule's turn at trusted time names this release's generation (`handover::turns`).
+    let turn = match vault {
+        Some(vault) if cfg.operator.rotation_enabled => scheduled_turn(cfg, vault, &release).await?,
+        _ => None,
+    };
+    let generation = turn.as_ref().map(|turn| turn.generation).or(current.map(|current| current.generation));
+    let generation = generation.unwrap_or(0);
     let sealed = file_for(dir, &release, generation).exists();
     ensure!(
         !sealed || (!start.new_key && start.predecessor.is_none()),
@@ -168,7 +175,7 @@ async fn obtain_with(
         dir.display()
     );
     // A predecessor checks this itself before it hands its keys over.
-    if let (Some(current), None) = (current, &start.predecessor) {
+    if let (Some(current), None, None) = (current, &start.predecessor, &turn) {
         ensure_named(current, &release).context(
             "refusing this release's keys: the vault names one release at a time, and governance has not \
              made this one current, or has since superseded it with an upgrade or config change",
@@ -184,7 +191,29 @@ async fn obtain_with(
         KeyStore::create(dir, sealer.as_ref(), cfg.file_sha256, generation, KeySet::generate()?)?
     } else if let Some(address) = &start.predecessor {
         let vault = vault.context("--predecessor needs [checkpoints]: the vault names the key")?;
-        crate::handover::take(cfg, address, sealer.as_ref(), attestor, vault).await?
+        // Trusted time has reached a turn's boundary when the schedule names this release for it.
+        let reached = turn.as_ref().map(|turn| turn.boundary);
+        crate::handover::take(cfg, address, sealer.as_ref(), attestor, vault, reached).await?
+    } else if let (Some(vault), Some(turn)) = (vault, &turn) {
+        // No sealed keys and no flag, and the schedule names this release for the turn trusted time
+        // has reached: take the keys from the operator the turn takes over from.
+        let source = turn.source.clone().filter(|source| !source.handover_endpoint.is_empty()).with_context(|| {
+            format!(
+                "turn {} names this release but no operator with a handover endpoint to take its keys from",
+                turn.turn
+            )
+        })?;
+        info!(turn = turn.turn, predecessor = %source.handover_endpoint, "daily turn: taking the keys from the incumbent");
+        let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+        let signers = crate::handover::vault_signers(vault, &at).await?;
+        let source = crate::handover::Source {
+            endpoint: source.handover_endpoint,
+            api_hostname: source.api_hostname,
+            release: source.release,
+            candidate: source.candidate,
+        };
+        crate::handover::sync_predecessor_log(cfg, &source, signers).await?;
+        crate::handover::take(cfg, &source.endpoint, sealer.as_ref(), attestor, vault, Some(turn.boundary)).await?
     } else if let Some(vault) = vault {
         // No sealed keys and no flag: while the registry has rotation on and the vault names this
         // release — so an election has taken effect naming this node the operator — take the keys
@@ -207,7 +236,7 @@ async fn obtain_with(
                     "the vault names this release through an election in effect: taking the keys from the \
                      operator it replaced"
                 );
-                crate::handover::take(cfg, &source.endpoint, sealer.as_ref(), attestor, vault).await?
+                crate::handover::take(cfg, &source.endpoint, sealer.as_ref(), attestor, vault, None).await?
             }
             None => bail!("{}", refusal(dir, generation)),
         }
@@ -216,6 +245,22 @@ async fn obtain_with(
     };
     let keys = store.keys();
     Ok((keys.enclave_key()?, TlsIdentity::new(keys.tls_key()?)?, Some(store)))
+}
+
+/// The turn the finalised schedule names for `release` once trusted time, from a one-off Roughtime
+/// sample, has reached its boundary; `None` when it names none (see `handover::turns`).
+/// Error cases:
+/// - no trusted time sample can be taken, or the vault cannot be read
+async fn scheduled_turn(
+    cfg: &NodeConfig,
+    vault: &impl CheckpointChain,
+    release: &Release,
+) -> anyhow::Result<Option<crate::checkpoints::ScheduledTurn>> {
+    let clock: Arc<dyn crate::clock::Clock> = Arc::new(crate::clock::SystemClock);
+    let sample = crate::trusted_time::sample_once(&cfg.time, &clock).await.context("taking a trusted time sample")?;
+    let reached = sample.earliest_ms.saturating_add(sample.at.elapsed().as_millis() as engine_core::types::Millis);
+    let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+    crate::handover::turns::scheduled_for(vault, &at, release, Some(reached)).await
 }
 
 /// The source of `provider`'s quotes. With real attestation nothing is attested before the guest
@@ -351,7 +396,9 @@ async fn named_release(vault: &impl CheckpointChain) -> anyhow::Result<CurrentRe
 /// `every`: a restart would then find no keys to open, so they must be handed to the release the
 /// vault names before this node stops. The read does not wait for the vault's generation to fold
 /// the change: the running release is superseded from the block the change reads at finality, and
-/// the fold can lag that by anyone's `syncRelease`. A failed read is retried.
+/// the fold can lag that by anyone's `syncRelease`. From a daily turn's boundary by `trusted` time,
+/// the finalised schedule naming this release in `generation` for that turn names it too, as the
+/// vault does from then (`handover::turns`). A failed read is retried.
 /// Error cases:
 /// - none; it runs until the node stops
 pub(super) async fn watch_release(
@@ -359,6 +406,7 @@ pub(super) async fn watch_release(
     sealed: Release,
     generation: u64,
     every: Duration,
+    trusted: crate::trusted_time::TrustedClock,
 ) -> anyhow::Result<()> {
     let mut superseded = false;
     let mut tick = tokio::time::interval(every);
@@ -371,7 +419,8 @@ pub(super) async fn watch_release(
                 continue;
             }
         };
-        let named = current.id == sealed.id() && current.generation == generation;
+        let named = (current.id == sealed.id() && current.generation == generation)
+            || scheduled_names(&vault, &sealed, generation, trusted.reached_ms()).await;
         if !named && !superseded {
             error!(
                 alert = "release_superseded",
@@ -386,6 +435,27 @@ pub(super) async fn watch_release(
             info!(alert_resolved = "release_superseded", "the vault names this release again");
         }
         superseded = !named;
+    }
+}
+
+/// Whether the finalised schedule names `sealed` in `generation` for the turn trusted time `reached_ms`
+/// has reached; `false` when it cannot be read.
+async fn scheduled_names(
+    vault: &impl CheckpointChain,
+    sealed: &Release,
+    generation: u64,
+    reached_ms: Option<engine_core::types::Millis>,
+) -> bool {
+    let turn = async {
+        let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+        crate::handover::turns::scheduled_for(vault, &at, sealed, reached_ms).await
+    };
+    match turn.await {
+        Ok(turn) => turn.is_some_and(|turn| turn.generation == generation),
+        Err(e) => {
+            warn!("reading the operator schedule failed: {e:#}");
+            false
+        }
     }
 }
 

@@ -20,7 +20,7 @@ use crate::config::NodeConfig;
 use crate::handover::evidence::{self, Quoting};
 use crate::handover::{
     Challenge, Confirm, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, confirm_digest, confirmed_digest,
-    ensure_named, folded_release, keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
+    keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
 };
 use crate::log::{CheckpointDomain, LogEntry, Manifest, SegmentInfo, segment_seq};
 use crate::tee::Attestor;
@@ -29,8 +29,9 @@ use crate::tee::sealing::{KeyStore, Release, Sealer};
 
 /// This release's keys, taken from the release whose handover listener is at `address`, reading the
 /// vault through `vault`, and sealed for this release in the vault's generation of it. The keys are
-/// accepted only if the vault already names their signing key and this release at finality: a
-/// handover moves the vault's signer, and never brings in a key a host-run enclave chose. The log
+/// accepted only if the vault already names their signing key, and names this release at finality or
+/// from the turn the finalised schedule names for it at `reached_ms`, a time true time has certainly
+/// reached (`turns`): a handover never brings in a key a host-run enclave chose. The log
 /// segments past the restored tip ride with the keys, each bound to its listing inside the
 /// ciphertext: every segment is hash-checked and chained to the tip before the confirmation goes
 /// out, and the last must reach the handed-over checkpoint. Without the predecessor's signed
@@ -50,6 +51,7 @@ pub(crate) async fn take(
     sealer: &dyn Sealer,
     attestor: &dyn Attestor,
     vault: &impl CheckpointChain,
+    reached_ms: Option<engine_core::types::Millis>,
 ) -> anyhow::Result<KeyStore> {
     let sealing = cfg.tee.sealing.as_ref().context("--predecessor needs [tee.sealing]")?;
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
@@ -113,7 +115,7 @@ pub(crate) async fn take(
         enclave.address_hex()
     );
     let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
-    let generation = ensure_named(folded_release(vault, &observation).await?, &release)?;
+    let generation = crate::handover::turns::named_generation(vault, &observation, &release, reached_ms).await?;
     let signers = crate::handover::vault_signers(vault, &observation).await?;
     let mut tip = log_tip;
     for listed in &tails {

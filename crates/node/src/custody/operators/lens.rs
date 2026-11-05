@@ -13,9 +13,7 @@ use serde::Serialize;
 sol! {
     struct Parameters {
         uint64 epochLength;
-        uint64 minTerm;
         uint64 finalityMargin;
-        uint16 marginBps;
         uint16 eligibilityBps;
         uint16 quorumBps;
         uint16 maxCandidates;
@@ -104,9 +102,7 @@ pub struct OperatorList {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct ParametersView {
     epoch_length_secs: u64,
-    min_term_secs: u64,
     finality_margin_secs: u64,
-    margin_bps: u16,
     eligibility_bps: u16,
     quorum_bps: u16,
     max_candidates: u16,
@@ -235,9 +231,7 @@ impl OperatorList {
             rotation_enabled: overview.rotationEnabled,
             parameters: ParametersView {
                 epoch_length_secs: p.epochLength,
-                min_term_secs: p.minTerm,
                 finality_margin_secs: p.finalityMargin,
-                margin_bps: p.marginBps,
                 eligibility_bps: p.eligibilityBps,
                 quorum_bps: p.quorumBps,
                 max_candidates: p.maxCandidates,

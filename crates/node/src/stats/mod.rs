@@ -16,6 +16,8 @@ mod activity;
 pub(crate) mod background;
 mod closeout;
 mod distributions;
+mod turns;
+pub(crate) use turns::TurnsPage;
 mod monkey;
 mod record;
 mod series;
@@ -76,6 +78,8 @@ pub(crate) struct Inner {
     activity: Activity,
     /// Every distribution epoch closed since the record began, as far as `[stats]` keeps them.
     distributions: Distributions,
+    /// The daily turns the log assigned, as far as the ring keeps them.
+    turns: turns::TurnHistory,
     /// The latest scan of either kind: the totals every scan takes.
     snapshot: Option<Snapshot>,
     /// The latest full scan: margin, the position maps and the distribution excess.
@@ -138,6 +142,7 @@ impl Inner {
             series: SeriesStore::new(settings.retention),
             activity: Activity::new(settings.activity_limit),
             distributions: Distributions::new(settings.distribution_limit),
+            turns: turns::TurnHistory::default(),
             snapshot: None,
             full: None,
             begin: None,

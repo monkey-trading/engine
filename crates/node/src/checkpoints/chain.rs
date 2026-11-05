@@ -32,6 +32,23 @@ pub(crate) struct HandoverSource {
     pub handover_endpoint: String,
 }
 
+/// The daily turn a schedule the vault's registry names had drawn as in effect at a time, as a
+/// finalized block reads it: the member, the release its candidacy holds at that block, the generation
+/// the schedule fixed for the turn, and the member the turn takes over from, whose handover endpoint
+/// the successor connects to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScheduledTurn {
+    pub turn: u64,
+    /// When the turn starts, in milliseconds.
+    pub boundary: Millis,
+    pub candidate: AccountId,
+    pub admin_key: AccountId,
+    pub release: [u8; 32],
+    pub generation: u64,
+    /// The operator the turn takes over from, unless it is the member itself.
+    pub source: Option<HandoverSource>,
+}
+
 /// The operator the vault's registry names in effect at a finalized block while rotation is off,
 /// when only the timelock's `installOperator` seats another, and when it was seated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,5 +245,14 @@ pub(crate) trait CheckpointChain: Send + Sync {
     /// Error cases: the chain cannot be read, or it reads no registry.
     async fn operator_hostname(&self) -> anyhow::Result<String> {
         anyhow::bail!("this checkpoint chain reads no registry")
+    }
+
+    /// The drawn turn whose boundary is the latest at or before `now_ms`, in the schedule the vault's
+    /// registry names, at the already pinned finalized observation; `None` when the registry names no
+    /// schedule or no such turn is drawn. A chain with no schedule reads `None`.
+    /// Error cases: the observation is not finalized and pinned, or the chain cannot be read
+    async fn scheduled_turn(&self, at: &Observation, now_ms: Millis) -> anyhow::Result<Option<ScheduledTurn>> {
+        let _ = (at, now_ms);
+        Ok(None)
     }
 }

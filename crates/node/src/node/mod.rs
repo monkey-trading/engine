@@ -231,6 +231,11 @@ async fn serve_node(
         checkpoint_signing: Some(signing_tx),
         registry_operator,
         log_heads: None,
+        // Only a rotating node with sealed keys holds a release the schedule can name.
+        turn_release: store
+            .as_ref()
+            .filter(|_| cfg.operator.rotation_enabled)
+            .map(|store| engine_core::eip712::B256::from(store.release().id())),
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())
         .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?
@@ -308,8 +313,8 @@ async fn serve_node(
         && let Some(vault) = crate::handover::vault_reader(&cfg)?
     {
         let (release, generation) = (store.release(), store.generation());
-        let every = keys::RELEASE_CHECK_EVERY;
-        tasks.spawn(async move { ("release", keys::watch_release(vault, release, generation, every).await) });
+        let (every, trusted) = (keys::RELEASE_CHECK_EVERY, trusted());
+        tasks.spawn(async move { ("release", keys::watch_release(vault, release, generation, every, trusted).await) });
     }
     if store.is_some() && cfg.operator.rotation_enabled {
         // The incumbent pages when an election names another operator and, past the effective

@@ -87,6 +87,14 @@ this crate and reproduce the signed state roots exactly.
   share the rest (`src/staking.rs`); from `V50` the fifth is split among the operators by their
   sequenced time in office during the epoch, and the time no one served goes to stakers
   (`src/staking/office.rs`)
+- From protocol `V51`, daily operator turns (`src/turns.rs`): a registry that names a schedule adopts
+  a rotation set at each election close and draws a turn for each 22:30 UTC boundary from it. The
+  schedule's finalised `RotationSetAdopted` and `TurnAssigned` events arrive as `adopt_rotation_set`
+  and `assign_turn` commands on the staking mirror, each credited once. A turn's admin key signs from
+  its boundary, or from its mirror when that is later; a turn whose key no set mirrored seven days
+  earlier names is credited and refused (`turn_refused`), keeping the key in effect. The member's node
+  logs `turn_taken` with its first command in the turn, and while turns run the operator's share
+  counts its time in office from then to the end of its turn
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -225,6 +233,9 @@ this crate and reproduce the signed state roots exactly.
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
 - `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record; from `V47`, the candidate seated and the account the operator's share goes to; from `V48`, the timelock-only installation the failed-key fallback mirrors
 - `tests/operator_election.rs` — the V37 elections: refusals, the effective time and its seven-day floor, cancellation, and the refused signed rotation
+- `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, `TurnTaken`, and the turn's time in office
+- `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
+- `tests/operator_share/daily_turns.rs` — `V51`: a member earns from its `TurnTaken` to its turn's end, and no one before or after
 - `tests/operator_install.rs` — `V48`: the timelock's installed operator: refusals, the seven-day log notice with no finalised frontier, replaced rotations, and the refused signed rotation
 - `tests/operator_share.rs` — `V47`: the operator's fifth of a distribution, with rotation on and off, an epoch that distributes nothing, a built-up sweep, an operator that also stakes, and the leaf's claim and exit proofs
 - `tests/operator_share/elections.rs` — who earns the share as elections, handovers, cancellations and signed rotations move the operator in effect
@@ -363,7 +374,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V50` parts (`v15.rs` to `v50.rs`)
+  `V15` to `V51` parts (`v15.rs` to `v51.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -610,6 +621,23 @@ the activation's own command closes still pays under V47's rule, and an activati
 first seats the candidate of an election already in effect, which those rules never recorded. Before V50 nothing records time in
 office, and the staking state encodes as before, so earlier logs replay unchanged. Its session is in
 `examples/reference_log/v50.rs`.
+
+Protocol V51 adds daily operator turns. A registry that names a schedule adopts a rotation set at
+each election close, every eligible candidate weighted by its delegated stake, taking effect seven
+days plus the finality margin later, and anyone draws each day's turn from the set in effect a day
+before its 22:30 UTC boundary. The engine mirrors the set and each turn assignment, with its position
+and its reason (the day's draw, a skip, or a promotion), and keeps the newest three sets. A turn's
+key signs from its boundary when it is mirrored before it, and otherwise from its mirror, so a
+reassignment after its boundary, and a promotion, which is mirrored only once finalised, apply from
+then; the key in effect moves before the command is authorised. A turn whose candidate and key no set
+mirrored at least seven days before the turn applies names, or whose turn is over when it is
+mirrored, is credited but refused, and the key in effect stays. `RotateOperator` stays refused while
+rotation is on, and an election is refused once a set is mirrored. The member's node logs
+`TurnTaken { turn, release }` with its first command in the turn, and while turns run the operator's
+share counts that member's time in office from it to the end of its turn: the time before a member
+takes its turn, and an incumbent's time past its turn, go to stakers. An installation ends the turns.
+Before V51 nothing records a set or a turn, and the state encodes as before, so earlier logs replay
+unchanged. Its session is in `examples/reference_log/v51.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

@@ -342,6 +342,11 @@ pub enum Event {
     /// seven days earlier names its key, or its turn is over.
     TurnRefused {
         turn: u64,
+        position: u16,
+        /// Why the schedule named it.
+        cause: TurnReason,
+        candidate: AccountId,
+        admin_key: AccountId,
         reason: String,
     },
     /// From `V51`, the turn's member started sequencing it, in an enclave running `release`.

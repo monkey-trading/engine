@@ -50,12 +50,13 @@ impl Sequencer {
     /// Whether a snapshot can end a benchmark hold at `ts`. An installation supersedes the keys the
     /// log knows: one the finalised registry made by startup that the log's scan has not reached
     /// supersedes all but its own, due or not, and the log's installed handover waiting out its
-    /// notice supersedes the key it records. Otherwise a key due by `ts` signs, since the engine hands
-    /// over before it authorises the snapshot, and the recorded key does. Installing another key is
+    /// notice supersedes the key it records. Otherwise a key due by `ts` signs, a daily turn's
+    /// included, since the engine hands over before it authorises the snapshot, and the recorded key
+    /// does. Installing another key is
     /// the fallback for a failed operator whose key is gone, and the installed key signs nothing
     /// before its notice has run.
     fn hold_has_signer(&self, ts: Millis) -> bool {
-        let due = self.engine.due_rotation(ts);
+        let due = self.engine.due_key(ts);
         if let Some(key) = self.registry_operator.and_then(|seated| seated.unscanned(&self.engine)) {
             return due.is_some_and(|due| due.address == key);
         }

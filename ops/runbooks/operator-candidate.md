@@ -8,13 +8,16 @@ effect. This runbook has four parts: standing for election, becoming the operato
 handing the node to the next operator, and upgrading while you are the operator. Running as a
 standby is in [standby.md](standby.md). Read [reference.md](reference.md) first.
 
-The registry's launch parameters (#360): epoch 14 days, minimum term 90 days, finality margin 1 day,
-challenger margin 10% of the incumbent's votes, eligibility 1% of total stake, quorum 25% of total
-stake, candidate cap 25, minimum self-bond 0.1% of MONKEY's maximum supply, liveness timeout 3 days.
-The deployed values are the ones that count: `cast call $REGISTRY
-'parameters()(uint64,uint64,uint64,uint16,uint16,uint16,uint16,uint256,uint64)' --rpc-url $RPC`
-prints, in order, the epoch length, minimum term, finality margin, margin, eligibility and quorum
-(basis points), candidate cap, minimum self-bond, and liveness timeout.
+The registry's launch parameters (#360): epoch 14 days, finality margin 1 day, eligibility 1% of
+total stake, quorum 25% of total stake, candidate cap 25, minimum self-bond 0.1% of MONKEY's maximum
+supply, liveness timeout 3 days. The deployed values are the ones that count: `cast call $REGISTRY
+'parameters()(uint64,uint64,uint16,uint16,uint16,uint256,uint64)' --rpc-url $RPC` prints, in order,
+the epoch length, finality margin, eligibility and quorum (basis points), candidate cap, minimum
+self-bond, and liveness timeout.
+
+The launch registry names a schedule (`OperatorSchedule`), so it rotates the operator daily instead
+of electing one: section 6 describes the turns. Sections 1 to 5 still describe registering, the
+handover and upgrading, which every turn uses.
 
 ## What a candidate needs
 
@@ -279,6 +282,36 @@ that release and the candidacy's. Releases the timelock approved for the candida
 installation stay approved, so withdraw any the operator should not move to. The installation
 changes no candidacy: the operator it replaced keeps its release, approvals and listing, and its
 moves no longer reach the vault.
+
+## 6. Daily turns
+
+With a schedule named, each election close while rotation is on adopts every eligible candidate as
+the rotation set, weighted by delegated stake, seven days plus the finality margin before the set
+takes effect; at most one set waits at a time. Without a quorum the set in effect stands, less the
+members no longer eligible. Anyone draws turn `n`, which starts at 22:30 UTC on day `n` of the Unix
+epoch, from a day before that boundary until it: `cast send $SCHEDULE 'draw(uint64)' $n`. Draw each
+turn as soon as its deadline passes, so the engine mirrors it well before its boundary; a turn not
+drawn by its boundary is not drawn at all, and the member before it stays named.
+
+- **Before your turn.** Run the node with `operator.rotation_enabled = true`, sealing and a handover
+  listener, and `custody.evm.staking.registry.schedule` naming the schedule. `cast call $SCHEDULE
+  'turnOf(uint64)' $n` shows the member, its generation and the turn before it, whose handover
+  endpoint you take the keys from.
+- **At the boundary.** Start the node with no sealed keys for the turn's generation. It takes a trusted
+  time sample, reads the turn from the finalised schedule, connects to the incumbent's handover
+  endpoint, and takes the keys and the log's tail; neither side waits for chain finality after the
+  boundary. Its first command is `TurnTaken`, which starts your time in office for the operator's
+  share. A turn you hold again the next day needs no handover: your node logs `TurnTaken` for it at
+  the boundary.
+- **After your turn.** Your key stops signing at the next boundary, and you earn nothing past it,
+  even if your node keeps sequencing because no successor came. Hand over as section 4 describes.
+- **A turn the engine refused.** `turn_refused` ([alerts.md](alerts.md)) means no set mirrored at
+  least seven days earlier names your candidate with your key: the key in effect stays for that turn.
+- **Rotation off.** Turning rotation off stops draws; the turns already drawn stand, and the last
+  member stays named until the timelock installs an operator once they end.
+- **Liveness.** `promote` reverts while a schedule is named: promotion over turns is not built yet. A
+  failed member holds its turn until the next boundary, and a member that cannot hand over at all
+  needs the governance fallback: rotation off, then `installOperator` once the drawn turns end.
 
 ## Open questions
 

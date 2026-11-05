@@ -22,8 +22,7 @@ use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::evidence::{self, Peer, Quoting};
 use crate::handover::{
     Challenge, Confirm, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, confirm_digest, confirmed_digest,
-    current_release, ensure_named, keys_report_data, receive, request_report_data, seal_keys, send, send_bytes,
-    vault_reader,
+    keys_report_data, receive, request_report_data, seal_keys, send, send_bytes, vault_reader,
 };
 use crate::log::{Checkpoint, CheckpointDomain, Manifest, SegmentInfo};
 use crate::sequencer::{StreamBody, StreamMsg};
@@ -328,7 +327,8 @@ impl<C: CheckpointChain> Predecessor<C> {
 
     /// The successor's release, the measurement its quote proves and the config hash it binds,
     /// once its quote binds `report_data`, its policy and TCB are no weaker than this release's, and
-    /// the vault names that release at finality.
+    /// the vault names that release at finality, or the finalised schedule names it for the turn
+    /// trusted time has reached (`turns`).
     /// Error cases:
     /// - any of those checks fails, or the vault cannot be read
     async fn admit(
@@ -342,7 +342,8 @@ impl<C: CheckpointChain> Predecessor<C> {
         let peer = evidence::verify(self.provider, &request.evidence, report_data, now, None)?;
         no_weaker(&self.store.platform(), &peer)?;
         let release = Release { launch_digest: peer.launch_digest, config_sha256 };
-        ensure_named(current_release(&self.vault).await?, &release)?;
+        let at = self.vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+        crate::handover::turns::named_generation(&self.vault, &at, &release, self.trusted.reached_ms()).await?;
         Ok(release)
     }
 

@@ -119,8 +119,33 @@ impl<V: VaultReader> DepositWatcher<V> {
                 }
             }
         }
+        // So must the schedule's registry: the schedule's events mirror only from the registry's own.
+        if let (Some((schedule, false)), Some((registry, _))) = (self.schedule, self.registry) {
+            let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
+            match self.vault.schedule_registry(BlockRef { number: to, hash }).await.map_err(PollError::rpc)? {
+                None => info!(to, "the schedule is not deployed at this window's end"),
+                Some(recorded) if recorded != registry => {
+                    return Err(PollError::inconsistent(anyhow!(
+                        "the schedule {schedule} records registry {recorded}, not the configured {registry}"
+                    )));
+                }
+                Some(_) => self.schedule = Some((schedule, true)),
+            }
+        }
         let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");
         let bound = self.registry.is_some_and(|(_, bound)| bound);
-        staking::mirror(&self.vault, tx, cursor, path, &mut self.staking_range, from..=to, &hashes, bound).await
+        let schedule_bound = self.schedule.is_none_or(|(_, bound)| bound);
+        let window = from..=to;
+        staking::mirror(
+            &self.vault,
+            tx,
+            cursor,
+            path,
+            &mut self.staking_range,
+            window,
+            &hashes,
+            (bound, schedule_bound),
+        )
+        .await
     }
 }

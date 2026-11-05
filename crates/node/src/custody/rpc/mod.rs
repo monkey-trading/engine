@@ -72,6 +72,8 @@ pub struct VaultRpc {
     staking: Option<Address>,
     /// The operator registry whose events mirror with the staking contract's; `None` without one.
     registry: Option<Address>,
+    /// The registry's schedule, whose rotation sets and turns mirror with them; `None` without one.
+    schedule: Option<Address>,
     finality_tag: BlockNumberOrTag,
     withdrawal_finality_tag: BlockNumberOrTag,
     rpc_timeout: Duration,
@@ -203,6 +205,24 @@ impl VaultReader for VaultRpc {
         Ok(Some(registryCall::abi_decode_returns(&out).context("decoding the staking contract's registry")?))
     }
 
+    /// The registry the configured schedule records, read in the canonical block `at`; `None`
+    /// where the schedule has no code yet.
+    /// Error cases:
+    /// - no schedule is configured, the call fails or times out, or a non-empty answer does not
+    ///   decode as an address
+    async fn schedule_registry(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
+        let schedule = self.schedule.context("no schedule is configured")?;
+        let request = TransactionRequest::default().to(schedule).input(registryCall {}.abi_encode().into());
+        let out: Bytes = self
+            .deadline("eth_call", self.client.request("eth_call", (request, BlockId::hash_canonical(at.hash))))
+            .await
+            .context("reading the schedule's registry")?;
+        if out.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(registryCall::abi_decode_returns(&out).context("decoding the schedule's registry")?))
+    }
+
     /// `account`'s native balance in the canonical block `at`.
     /// Error cases:
     /// - the request fails or times out, or the endpoint does not hold that block as canonical
@@ -254,8 +274,9 @@ impl VaultReader for VaultRpc {
         Ok((header.number, header.hash))
     }
 
-    /// Both mirrorable staking events from the configured contract, and the operator registry's
-    /// rotation switches and elections, sorted by block and log index.
+    /// Both mirrorable staking events from the configured contract, the operator registry's
+    /// rotation switches and elections, and its schedule's rotation sets and turns, sorted by block
+    /// and log index.
     /// Without a staking contract the answer is empty.
     /// Error cases:
     /// - the request fails or times out
@@ -270,10 +291,13 @@ impl VaultReader for VaultRpc {
         let mut events = Vec::new();
         if let Some(staking) = self.staking {
             let owned_blocks = blocks.to_vec();
-            let addresses: Vec<Address> = [Some(staking), self.registry].into_iter().flatten().collect();
+            let addresses: Vec<Address> = [Some(staking), self.registry, self.schedule].into_iter().flatten().collect();
             let mut signatures = vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH];
             if self.registry.is_some() {
                 signatures.extend(crate::custody::registry::SIGNATURES);
+            }
+            if self.schedule.is_some() {
+                signatures.extend(crate::custody::registry::SCHEDULE_SIGNATURES);
             }
             let batches = stream::iter(owned_blocks.into_iter().map(|block| {
                 let (addresses, signatures) = (addresses.clone(), signatures.clone());
@@ -372,6 +396,7 @@ impl VaultRpc {
             vault,
             staking: cfg.staking.as_ref().map(|staking| staking.contract),
             registry: cfg.staking.as_ref().map(|staking| staking.registry.contract),
+            schedule: cfg.staking.as_ref().and_then(|staking| staking.registry.schedule),
             withdrawal_finality_tag: match cfg.withdrawal_finality_tag {
                 FinalityTag::Latest => BlockNumberOrTag::Latest,
                 FinalityTag::Safe => BlockNumberOrTag::Safe,

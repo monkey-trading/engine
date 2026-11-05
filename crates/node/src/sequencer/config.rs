@@ -54,4 +54,7 @@ pub struct SequencerConfig<'a> {
     /// The on-chain head poster's publish end, when `[log_heads]` runs: the released-head watch
     /// and the rollback freeze latch the poster shares with the sequencer.
     pub(crate) log_heads: Option<crate::log_heads::Publisher>,
+    /// This enclave's release, which takes each daily turn the log assigns the config's operator key
+    /// with a `TurnTaken` before anything else in it; `None` where this node takes no turn.
+    pub(crate) turn_release: Option<engine_core::eip712::B256>,
 }

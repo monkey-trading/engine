@@ -332,7 +332,19 @@ follows the operator registry's elections, which the engine mirrors from finalis
 the incumbent's host can delay an elected key's takeover, bounded only by the custody watcher's
 stall alerts, and from V50, which splits the operator's share of each distribution among the
 operators by their sequenced time in office, the incumbent keeps earning the share through that
-delay; the enclave keys and the vault's current release do not yet follow an election (#44); the dev configurations explicitly
+delay; from V51 a registry that names a schedule rotates the operator daily instead: each election
+close adopts a rotation set seven days plus the finality margin before it takes effect, and anyone
+draws each 22:30 UTC turn from it a day ahead with a seed relayed from Ethereum, so whoever can
+withhold every relay until a turn's draw deadline chooses between that turn's seed and the fallback;
+a turn's key signs from its boundary only when a set mirrored at least seven days earlier names it;
+the vault names the turn's release, in the generation the schedule fixed, from the boundary without a
+transaction, and both enclaves of a handover accept the turn's member from the finalised schedule
+once their trusted time reaches the boundary, so a host that holds an enclave's Roughtime replies
+back can delay a handover but not bring it forward; the member earns the operator's share only from
+its enclave's `TurnTaken` to the end of its turn, and an incumbent past its turn earns nothing;
+promotion over turns, which is the liveness rule's, is not built yet, so a failed member holds its
+turn until the next boundary and the governance fallback (rotation off and `installOperator` once the
+drawn turns end) applies; the enclave keys and the vault's current release do not yet follow an election (#44); the dev configurations explicitly
 use a published mock-only signer, which real attestation refuses; the custody adapter requires a strict
 majority of at least three configured independent RPC providers to agree on deposits, block hashes
 and finality, with reads compared at the same block height and empty log responses requiring the

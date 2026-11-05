@@ -119,7 +119,7 @@ async fn a_running_node_alerts_once_the_vault_names_another_release_or_generatio
     let vault = Vault::naming(CurrentRelease { id: sealed.id(), generation: 2 });
     let current = vault.current.clone();
     let every = Duration::from_secs(60);
-    let watch = tokio::spawn(watch_release(vault, sealed, 2, every));
+    let watch = tokio::spawn(watch_release(vault, sealed, 2, every, untrusted()));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the release the vault names raised an alert");
 
@@ -142,7 +142,7 @@ async fn a_superseded_release_alerts_before_the_vault_folds_the_change() {
     *vault.synced.lock().unwrap() = Some(sealed.id());
     let current = vault.current.clone();
     let every = Duration::from_secs(60);
-    let watch = tokio::spawn(watch_release(vault, sealed, 2, every));
+    let watch = tokio::spawn(watch_release(vault, sealed, 2, every, untrusted()));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the release the vault names raised an alert");
 
@@ -318,4 +318,10 @@ fn the_handover_episode_escalates_past_the_registry_effective_time_and_resolves(
     assert_eq!(episode(Some(election(future, false)), operator, Some(future)), Episode::Overdue);
     assert_eq!(episode(Some(election(future, false)), operator, None), Episode::Elected);
     assert_eq!(episode(Some(election(future, true)), operator, Some(future + 1)), Episode::None);
+}
+
+/// A trusted clock with no sample: no turn's boundary has been reached.
+fn untrusted() -> crate::trusted_time::TrustedClock {
+    let clock = std::sync::Arc::new(crate::clock::SystemClock);
+    crate::trusted_time::TrustedClock::new(clock, tokio::sync::watch::channel(None).1, Duration::from_secs(1))
 }

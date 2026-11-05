@@ -73,6 +73,7 @@ pub(crate) mod secrets;
 pub(crate) use secrets::fetch_secrets;
 mod successor;
 pub(crate) use successor::take;
+pub(crate) mod turns;
 
 /// A read-only client for the vault `[checkpoints]` reads, or `None` without `[checkpoints]`.
 /// Error cases:

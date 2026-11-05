@@ -3,6 +3,9 @@
 use std::sync::atomic::AtomicBool;
 
 use anyhow::Context as _;
+use engine_core::types::Millis;
+
+use crate::checkpoints::ScheduledTurn;
 
 use super::*;
 
@@ -15,6 +18,8 @@ pub(super) struct Vault {
     pub(super) synced: Arc<Mutex<Option<[u8; 32]>>>,
     /// The registry's rotation switch.
     pub(super) rotation: Rotation,
+    /// The turn the finalised schedule names, at any time at or after its boundary.
+    pub(super) scheduled: Arc<Mutex<Option<ScheduledTurn>>>,
 }
 
 /// The registry's rotation switch as the vault reads it, at the latest block and at finality, and
@@ -58,6 +63,11 @@ impl CheckpointChain for Vault {
         ensure!(at.view == View::Finalized, "the rotation switch is read at finality");
         ensure!(!self.rotation.fails.load(Ordering::SeqCst), "the rotation switch cannot be read");
         Ok(self.rotation.finalized.load(Ordering::SeqCst))
+    }
+
+    async fn scheduled_turn(&self, at: &Observation, now_ms: Millis) -> anyhow::Result<Option<ScheduledTurn>> {
+        ensure!(at.view == View::Finalized, "the schedule is read at finality");
+        Ok(self.scheduled.lock().unwrap().clone().filter(|turn| turn.boundary <= now_ms))
     }
 
     fn reads_release_fold(&self) -> bool {

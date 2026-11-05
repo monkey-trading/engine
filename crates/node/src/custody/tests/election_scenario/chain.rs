@@ -22,9 +22,7 @@ sol! {
     struct InitialOperator { address adminKey; bytes launchDigest; bytes32 configHash; }
     struct Parameters {
         uint64 epochLength;
-        uint64 minTerm;
         uint64 finalityMargin;
-        uint16 marginBps;
         uint16 eligibilityBps;
         uint16 quorumBps;
         uint16 maxCandidates;

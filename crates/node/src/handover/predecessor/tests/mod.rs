@@ -5,6 +5,7 @@ mod fold;
 mod secrets;
 mod stop;
 mod successor;
+mod turns;
 mod vault;
 use vault::{Rotation, Vault};
 
@@ -64,6 +65,12 @@ struct Exchange {
     rotation: Rotation,
     /// The delivered secrets the predecessor holds.
     secrets: Arc<SecretStore>,
+    /// The turn the finalised schedule names, as both sides read it.
+    scheduled: Arc<Mutex<Option<crate::checkpoints::ScheduledTurn>>>,
+    /// The predecessor's trusted time samples.
+    samples: watch::Sender<Option<crate::trusted_time::Sample>>,
+    /// The time the successor's own sample has reached, for a turn's boundary.
+    reached: Option<engine_core::types::Millis>,
 }
 
 #[tokio::test]
@@ -156,6 +163,7 @@ async fn a_successor_the_vault_no_longer_names_once_the_keys_arrive_seals_nothin
         current: Arc::new(Mutex::new(named_another)),
         synced: Arc::default(),
         rotation: Default::default(),
+        scheduled: Default::default(),
     };
     let err = exchange.take_reading(vault).await.err().expect("keys sealed for a release the vault no longer names");
     assert!(format!("{err:#}").contains("the vault's current release is"), "{err:#}");
@@ -250,6 +258,8 @@ impl Exchange {
         let (signing, signing_rx) = watch::channel(true);
         let predecessor_log = scratch_dir(&format!("{name}-old-log"));
         let rotation = Rotation::default();
+        let scheduled = Arc::new(Mutex::new(None));
+        let (samples, samples_rx) = watch::channel(None);
         let stand_in = Box::new(MockSealer { launch_digest: RELEASE });
         let secrets = Arc::new(SecretStore::open(&dir, stand_in, PREDECESSOR_CONFIG).unwrap());
         let predecessor = Predecessor {
@@ -269,9 +279,10 @@ impl Exchange {
                 current: current.clone(),
                 synced: synced.clone(),
                 rotation: rotation.clone(),
+                scheduled: scheduled.clone(),
             },
             log_dir: predecessor_log.clone(),
-            trusted: TrustedClock::new(Arc::new(SystemClock), watch::channel(None).1, Duration::from_secs(1)),
+            trusted: TrustedClock::new(Arc::new(SystemClock), samples_rx, Duration::from_secs(1)),
             drain,
             signing: signing_rx,
             secrets: Some(secrets.clone()),
@@ -292,6 +303,9 @@ impl Exchange {
             signing,
             rotation,
             secrets,
+            scheduled,
+            samples,
+            reached: None,
         }
     }
 
@@ -378,13 +392,15 @@ impl Exchange {
             current: self.current.clone(),
             synced: self.synced.clone(),
             rotation: self.rotation.clone(),
+            scheduled: self.scheduled.clone(),
         })
         .await
     }
 
     /// The successor's side, reading `vault`.
     async fn take_reading(&self, vault: Vault) -> anyhow::Result<KeyStore> {
-        take(&self.successor, &self.address, &MockSealer { launch_digest: UPGRADE }, &MockAttestor, &vault).await
+        let sealer = MockSealer { launch_digest: UPGRADE };
+        take(&self.successor, &self.address, &sealer, &MockAttestor, &vault, self.reached).await
     }
 }
 

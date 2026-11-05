@@ -6,8 +6,10 @@ use super::*;
 use engine_core::benchmark::BenchmarkBatch;
 use engine_core::eip712::{self, B256};
 use engine_core::election::{RegistryElection, RegistryInstallation};
+use engine_core::emissions::TokenUnits;
 use engine_core::operator_bounds::NOTICE_MS;
 use engine_core::staking::StakingConfig;
+use engine_core::turns::{RegistryRotationSet, RegistryTurn, SetMember, TurnReason, boundary};
 use k256::ecdsa::SigningKey;
 
 use crate::admin::sign;
@@ -346,6 +348,76 @@ fn a_due_key_an_unscanned_installation_supersedes_ends_no_hold() {
 }
 
 /// The address of `seed`'s signing key.
+#[test]
+fn a_turns_member_takes_it_with_its_first_command_once() {
+    let (dir, clock, turn, member) = turn_log("turn-taken");
+    let release = B256::repeat_byte(0x51);
+    let recorded = dev_config().operator().unwrap();
+    let mut seq = recover_turns(&dir, clock.clone(), Operator { address: member, ..recorded }, release);
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(Command::Tick).unwrap().expect("admitted");
+    seq.sequence(Command::Tick).unwrap().expect("admitted");
+    seq.flush().unwrap();
+    let written = commands(&log_entries(&dir));
+    let taken: Vec<_> = written.iter().filter(|cmd| matches!(cmd, Command::TurnTaken { .. })).collect();
+    assert_eq!(taken, [&Command::TurnTaken { turn, release }], "one TurnTaken");
+    let at = written.iter().position(|cmd| matches!(cmd, Command::TurnTaken { .. })).unwrap();
+    assert!(matches!(written[at - 1], Command::AssignTurn(_)), "the turn's first command takes it");
+    assert_eq!(seq.engine.daily_turns().taken.map(|taken| (taken.turn, taken.release)), Some((turn, release)));
+}
+
+#[test]
+fn a_node_under_another_key_takes_no_turn() {
+    let (dir, clock, _, _) = turn_log("turn-not-taken");
+    let mut seq = recover_turns(&dir, clock.clone(), dev_config().operator().unwrap(), B256::repeat_byte(0x52));
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(Command::Tick).unwrap().expect("admitted");
+    assert_eq!(seq.engine.daily_turns().taken, None);
+    assert!(!commands(&log_entries(&dir)).iter().any(|cmd| matches!(cmd, Command::TurnTaken { .. })));
+}
+
+/// A staked log with rotation on, a set naming the member key mirrored, and a turn for it mirrored
+/// an hour before its boundary, which the returned clock is a second past: the log's directory, the
+/// clock, the turn and the member's key.
+fn turn_log(name: &str) -> (PathBuf, Arc<TestClock>, u64, AccountId) {
+    let (dir, clock) = staked_log(name, Some(FRONTIER));
+    let member = address(INSTALLED_SEED);
+    let candidate = AccountId([0xc1; 20]);
+    let mut seq = recover_installed(&dir, clock.clone(), dev_config().operator().unwrap(), None).unwrap();
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    let members = vec![SetMember { candidate, admin_key: member, weight: TokenUnits(1) }];
+    let effective_at = clock.now_ms() + NOTICE_MS;
+    let (block, chain_ref) = (12, "0x02:0".to_owned());
+    let adoption = RegistryRotationSet { set: 1, epoch: 1, effective_at, quorum: true, members, block, chain_ref };
+    let switch =
+        Command::SwitchRotation { enabled: true, election_cancelled: false, block: 11, chain_ref: "0x01:0".into() };
+    for cmd in [switch, Command::AdoptRotationSet(adoption)] {
+        let events = seq.sequence(cmd).unwrap().expect("admitted");
+        assert!(!events.iter().any(|event| matches!(event, Event::ElectionRejected { .. })), "{events:?}");
+    }
+    let turn = (0..).find(|turn| boundary(*turn).unwrap() > clock.now_ms() + NOTICE_MS + 86_400_000).unwrap();
+    let begins = boundary(turn).unwrap();
+    clock.advance(Duration::from_millis((begins - 3_600_000 - clock.now_ms()) as u64));
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    let (reason, block, chain_ref) = (TurnReason::Draw, 13, "0x03:0".to_owned());
+    let assignment = RegistryTurn { turn, set: 1, position: 0, reason, candidate, admin_key: member, block, chain_ref };
+    let events = seq.sequence(Command::AssignTurn(assignment)).unwrap().expect("admitted");
+    assert!(matches!(events.last(), Some(Event::TurnAssigned { .. })), "{events:?}");
+    seq.flush().unwrap();
+    clock.advance(Duration::from_millis((begins + 1_000 - clock.now_ms()) as u64));
+    (dir, clock, turn, member)
+}
+
+/// Recovers the log in `dir` under a config naming `operator`, whose enclave runs `release`.
+fn recover_turns(dir: &Path, clock: Arc<TestClock>, operator: Operator, release: B256) -> Sequencer {
+    let genesis = finished_genesis(&log_entries(dir));
+    let (manifest, _) = watch::channel(Manifest::default());
+    let base = sequencer_config(dir, manifest);
+    let cfg = SequencerConfig { clock, genesis, operator, turn_release: Some(release), ..base };
+    Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(16).0, mpsc::unbounded_channel().0)
+        .unwrap()
+}
+
 fn address(seed: u8) -> AccountId {
     eip712::address(SigningKey::from_slice(&[seed; 32]).unwrap().verifying_key())
 }

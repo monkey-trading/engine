@@ -52,6 +52,13 @@ pub trait VaultReader {
         async { anyhow::bail!("this reader does not read the staking contract's registry") }
     }
 
+    /// The registry the configured schedule records, in the canonical block `at`, or `None` where
+    /// the schedule has no code yet. A reader that cannot read it refuses.
+    fn schedule_registry(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<Option<Address>>> + Send {
+        let _ = at;
+        async { anyhow::bail!("this reader does not read the schedule's registry") }
+    }
+
     /// The native balance of `account` in the canonical block `at`. A reader that cannot read it
     /// refuses.
     fn account_balance(&self, at: BlockRef, account: Address) -> impl Future<Output = anyhow::Result<U256>> + Send {

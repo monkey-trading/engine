@@ -238,8 +238,8 @@ impl Engine {
         self.credit_registry_mirror(chain_ref, block);
         let start = boundary(turn).expect("checked above");
         let applies_at = start.max(self.now);
-        if let Some(reason) = self.turn_refusal(turn, set, candidate, admin_key, applies_at) {
-            events.push(Event::TurnRefused { turn, reason });
+        if let Some(refused) = self.turn_refusal(turn, set, candidate, admin_key, applies_at) {
+            events.push(Event::TurnRefused { turn, position, cause: reason, candidate, admin_key, reason: refused });
             return;
         }
         let accepted = TurnAssignment { turn, position, reason, set, candidate, admin_key, applies_at };

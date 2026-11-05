@@ -15,6 +15,7 @@ use engine_core::election::{RegistryElection, RegistryInstallation};
 use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
+use engine_core::turns::{RegistryRotationSet, RegistryTurn, SetMember, TurnReason};
 use engine_core::types::{AccountId, Millis};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -37,7 +38,7 @@ pub struct StakingEvent {
     pub kind: StakingEventKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StakingEventKind {
     /// `amount` MONKEY base units staked by `account`.
     Staked { account: AccountId, amount: u128 },
@@ -51,6 +52,11 @@ pub enum StakingEventKind {
     /// The timelock installed `candidate`, whose `admin_key` takes effect seven days after the
     /// mirror is logged.
     Installed { candidate: AccountId, admin_key: AccountId },
+    /// The schedule adopted rotation set `set` at `epoch`'s close, taking effect at `effective_at`
+    /// milliseconds.
+    RotationSetAdopted { set: u32, epoch: u64, effective_at: Millis, quorum: bool, members: Vec<SetMember> },
+    /// The schedule named `candidate`, under `admin_key`, for `turn`.
+    TurnAssigned { turn: u64, set: u32, position: u16, reason: TurnReason, candidate: AccountId, admin_key: AccountId },
 }
 
 impl StakingEvent {
@@ -63,7 +69,7 @@ impl StakingEvent {
     /// engine advances the authenticated mirrored-through frontier.
     fn command(&self) -> Command {
         let (block, chain_ref) = (self.block, self.chain_ref());
-        match self.kind {
+        match self.kind.clone() {
             StakingEventKind::Staked { account, amount } => {
                 Command::Stake { account, amount: TokenUnits(amount), block, chain_ref }
             }
@@ -78,6 +84,29 @@ impl StakingEvent {
             }
             StakingEventKind::Installed { candidate, admin_key } => {
                 Command::InstallOperator(RegistryInstallation { candidate, admin_key, block, chain_ref })
+            }
+            StakingEventKind::RotationSetAdopted { set, epoch, effective_at, quorum, members } => {
+                Command::AdoptRotationSet(RegistryRotationSet {
+                    set,
+                    epoch,
+                    effective_at,
+                    quorum,
+                    members,
+                    block,
+                    chain_ref,
+                })
+            }
+            StakingEventKind::TurnAssigned { turn, set, position, reason, candidate, admin_key } => {
+                Command::AssignTurn(RegistryTurn {
+                    turn,
+                    set,
+                    position,
+                    reason,
+                    candidate,
+                    admin_key,
+                    block,
+                    chain_ref,
+                })
             }
         }
     }
@@ -165,8 +194,9 @@ impl StakingCursor {
 /// `bound` is whether the poll has verified the configured registry as the staking contract's
 /// deployer: while it is false the poll read no staking code at `to`, and since the registry
 /// deploys the staking contract atomically no event can legitimately exist in the window, so any
-/// event is a contradiction that stalls rather than mirrors. A failed event read halves `range`;
-/// a completed chunk lets it grow back.
+/// event is a contradiction that stalls rather than mirrors. Its second half is whether a configured
+/// schedule has been read to name the registry: a schedule event before then stalls the same way. A
+/// failed event read halves `range`; a completed chunk lets it grow back.
 /// Error cases:
 /// - stalled: a read fails, an event is on an unproven block, an event arrives before the
 ///   registry binding is verified, or the engine refuses a mirror
@@ -180,7 +210,7 @@ pub(super) async fn mirror<V: VaultReader>(
     range: &mut AdaptiveSize,
     window: std::ops::RangeInclusive<u64>,
     hashes: &std::collections::BTreeMap<u64, B256>,
-    bound: bool,
+    (bound, schedule_bound): (bool, bool),
 ) -> Result<(), PollError> {
     let (from, to) = (*window.start(), *window.end());
     if from > to {
@@ -224,6 +254,14 @@ pub(super) async fn mirror<V: VaultReader>(
     if !bound && !events.is_empty() {
         return Err(PollError::inconsistent(anyhow!(
             "the window names staking events, but the staking contract has no code at its end: the configured contract cannot be the registry's"
+        )));
+    }
+    let from_schedule = |event: &StakingEvent| {
+        matches!(event.kind, StakingEventKind::RotationSetAdopted { .. } | StakingEventKind::TurnAssigned { .. })
+    };
+    if !schedule_bound && events.iter().any(from_schedule) {
+        return Err(PollError::inconsistent(anyhow!(
+            "the window names schedule events, but the schedule has not been read to name the registry"
         )));
     }
     for event in events {
@@ -273,7 +311,7 @@ async fn mirror_one(tx: &mpsc::Sender<Request>, event: StakingEvent) -> Result<(
                 event.chain_ref()
             ))));
         }
-        match event.kind {
+        match &event.kind {
             StakingEventKind::Staked { account, amount } | StakingEventKind::UnstakeCompleted { account, amount } => {
                 info!(%account, amount, "staking event mirrored");
             }
@@ -281,6 +319,13 @@ async fn mirror_one(tx: &mpsc::Sender<Request>, event: StakingEvent) -> Result<(
             | StakingEventKind::Elected { .. }
             | StakingEventKind::Installed { .. } => {
                 info!("operator registry event mirrored");
+            }
+            StakingEventKind::RotationSetAdopted { set, members, .. } => {
+                info!(set, members = members.len(), "rotation set mirrored");
+            }
+            StakingEventKind::TurnAssigned { turn, position, candidate, .. } => {
+                // A turn the engine credits but refuses (`turn_refused`) is not a disagreement.
+                info!(turn, position, %candidate, "turn assignment mirrored");
             }
         }
         Ok(())

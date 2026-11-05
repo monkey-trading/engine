@@ -216,7 +216,7 @@ pub struct CustodySection {
 }
 
 /// Trusted time: the Roughtime servers the host clock is checked against.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimeSection {
     /// The most a sequenced timestamp may differ from Roughtime-verified time. A reply slower than

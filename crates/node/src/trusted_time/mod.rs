@@ -271,6 +271,23 @@ pub async fn run(
     }
 }
 
+/// One sample from `cfg`'s servers, for a check before the sequencer's own sampling runs, as a
+/// successor's at its start: up to three rounds, `cfg.interval` apart.
+/// Error cases:
+/// - no round makes a sample, or a round fails
+pub(crate) async fn sample_once(cfg: &TimeSection, clock: &Arc<dyn Clock>) -> anyhow::Result<Sample> {
+    let mut sampler = Sampler::new(cfg.clone());
+    for round in 0..3 {
+        if round > 0 {
+            tokio::time::sleep(cfg.interval).await;
+        }
+        if let Some(sample) = sampler.round(clock).await? {
+            return Ok(sample);
+        }
+    }
+    bail!("the Roughtime servers gave no sample in three rounds")
+}
+
 /// Resolves `address` and asks its addresses for a reply verified under `key`, within `wait`.
 /// Error cases:
 /// - the address does not resolve

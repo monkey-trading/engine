@@ -7,7 +7,10 @@ own. The takeover is a chain of steps across the registry, the vault and the sta
 orders them. Read [reference.md](reference.md) and [operator-candidate.md](operator-candidate.md) first.
 
 Rotation must be on for any of this to apply. While it is off, a stalled operator is handled by the
-fallback at the end of this page.
+fallback at the end of this page. It applies to a registry that elects: one that names a schedule
+rotates daily turns, where `promote()` reverts `ScheduleNamesTurns` until promotion over turns is
+built, and a stalled member is handled by the same fallback once the drawn turns end
+([operator-candidate.md](operator-candidate.md), section 6).
 
 ## How a takeover goes
 

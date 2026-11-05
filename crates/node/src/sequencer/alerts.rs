@@ -222,6 +222,14 @@ pub(super) fn alert_on(event: &Event) {
         Event::ElectionRejected { chain_ref, reason } => {
             error!(alert = "election_rejected", chain_ref, "operator registry event not mirrored: {reason}");
         }
+        // A credited turn whose key cannot sign leaves the key in effect: the turn's member cannot
+        // operate it, and its incumbent earns nothing past its own turn.
+        Event::TurnRefused { turn, candidate, reason, .. } => {
+            warn!(alert = "turn_refused", turn, %candidate, "the schedule's turn keeps the key in effect: {reason}");
+        }
+        Event::TurnTakenRejected { reason } => {
+            warn!(alert = "turn_take_refused", "this node's TurnTaken was refused: {reason}");
+        }
         Event::PricesRejected { market, reason } => {
             // The reason can carry a per-quote value, so it goes in the message, not the episode key.
             warn!(alert = "prices_rejected", market, "price update refused: {reason}");

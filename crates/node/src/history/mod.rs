@@ -418,6 +418,11 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::OperatorElected { .. }
         | Event::OperatorInstalled { .. }
         | Event::ElectionRejected { .. }
+        | Event::RotationSetAdopted { .. }
+        | Event::TurnAssigned { .. }
+        | Event::TurnRefused { .. }
+        | Event::TurnTaken { .. }
+        | Event::TurnTakenRejected { .. }
         | Event::CatchUpDeferred { .. } => None,
     }
 }
