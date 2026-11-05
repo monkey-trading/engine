@@ -2,82 +2,169 @@
 
 ## Summary
 
-Two measures of insolvency set very different floors, and the owner's choice between them decides
-the launch floors. Over 90 days from a house with no capital, on 2,000 simulated paths, each cell
-giving the measured share of paths with the one-sided 95% upper bound beside it:
+The results below are at the launch margins, with BTC-USD and ETH-USD at 100:1 (1% to $2M of
+notional, 2% to $10M, 5% above, #500). Moving them from 10:1 (10% to $1M, then 20%) changes the
+answers more than any other input: the same margin buys several times the notional on the markets
+carrying most of the flow, so those markets fill their caps sooner and lose more when they gap. The
+section "BTC-USD and ETH-USD at 100:1" lists every value that moved. This study changes no genesis
+value.
+
+Two measures of insolvency set the floors, and at 100:1 they agree at the 1% target. Over 90 days
+from a house with no capital, on 2,000 simulated paths, each cell giving the measured share of
+paths with the one-sided 95% upper bound beside it:
 
 | Target | NAV never below zero | House cash never below zero (the vault covers client balances) |
 |---|---|---|
-| 1% | $37M in total: $1M on every market (1.00%; 20 paths, bound <1.45%). Refuses 47% of launch-week opening notional, 20% over 90 days. | $240M in total: $10M on most markets, $17.8M on US500 and US100, $5.62M on ETH-USD and SOL-USD, $3.16M on every share (0.80%; 16 paths, bound <1.21%). Refuses 0.3% in the launch week, 0.1% over 90 days. |
-| 0.1% | $0 in total: nothing opens. The best candidate with any floor, $100k on every market, already measures 0.20% (bound <0.46%). | $0 in total: nothing opens, at the same 0.20%. |
+| 1% | $37M in total: $1M on every market (0.85%; 17 paths, bound <1.27%). Refuses 64% of launch-week opening notional, 23% over 90 days. | $37M in total: the same $1M on every market (0.85%; 17 paths, bound <1.27%). The floors where each market's refusals end ($274M) measure 3.50% (70 paths). |
+| 0.1% | $0 in total: nothing opens. The best candidate with any floor, $100k on every market, measures 0.35% (bound <0.66%). | $0 in total: nothing opens, at the same 0.35%. |
 | 0.01% | $0 in total: nothing opens. | $0 in total: nothing opens. |
 
-The 1% row for NAV is the uniform family: $1M on every market. The risk-level method below sets
-each market's floor from the market run alone, where a small market's own fees cannot absorb its
-gap losses; alone, no market stays at or below 0.3% at any floor, so at those levels the family
-puts $0 on every market and nothing opens. Its 1% choice is $49.4k on two markets, refusing 97% of
-launch-week notional; with every market at $1M, pooled crypto fees carry the small markets, the
-same target measures 1.00%, and it refuses 47%. For 0.1% and 0.01%, every candidate with any floor
-measures above the target, so the recommendation is $0. The house-cash 1% row is the binding
-point: each market at the floor where its refusals end.
+The 1% choice for both measures is the uniform family: $1M on every market. The risk-level method
+below sets each market's floor from the market run alone, where a small market's own fees cannot
+absorb its gap losses; alone, no market stays at or below 1% at any floor, so at 1% and below that
+family puts $0 on every market and nothing opens. With every market at $1M, pooled crypto fees
+carry the small markets. For 0.1% and 0.01%, every candidate with any floor measures above the
+target, so the recommendation is $0. Against the 10:1 results, the house-cash 1% row falls from
+$240M (refusing 0.1% over 90 days) to $37M (refusing 23%): at 100:1 the floors where refusals end
+are no longer safe, because the caps there let BTC-USD and ETH-USD carry net exposures of $31.6M
+and $17.8M, three times the $10M and $5.62M at 10:1, on a 1% margin.
 
-- **Early dips are common, shallow, and short.** With $10M on every market, NAV
-  falls below zero at some hour in 18.75% of paths (375 of 2,000), at a median of 0.2 days after
-  launch, before fees have built any capital. It falls below -$100k in 3.4% of paths and never
-  below -$1M. House cash goes below zero in 0.85% (17 paths), no withdrawal ever waits in the #49
-  queue, and NAV ends the 90 days at a median of $26.2M.
+- **Early dips are rarer and shallower at small floors, larger at large ones.** With $10M on every
+  market, NAV falls below zero at some hour in 5.85% of paths (117 of 2,000), at a median of 0.1
+  days after launch, before fees have built any capital; it falls below -$100k in 1.30% and never
+  below -$1M. House cash goes below zero in 1.55% (31 paths), no withdrawal ever waits in the #49
+  queue, and NAV ends the 90 days at a median of $75.7M. At the floors where each market's refusals
+  end ($274M), NAV falls below zero in 24.6% of paths, below -$100k in 14.7% and below -$1M in
+  1.9%.
 - **Order size, not exposure, is what small floors refuse.** An order larger than the cap is
-  refused whatever flows around it. At 200:1, orders up to $1M carry only 45% of papertrade's
-  margin, so a floor under a few million refuses most launch flow — 82% of launch-week notional at
-  $100k a market, 47% at $1M — while $10M a market, papertrade's position cap, refuses 2%.
-- **Along the risk-level allocations, the dip rises quickly with the floors.** From 0.55% at $49.4k
-  in total (two markets with floors), it passes 1.80% at $7.78M and 7.35% at $98.1M, reaching
-  19.7% at $240M, where every market sits at its refusal-ending floor. At 0.3% and below the
-  family sets $0 on every market, since alone no market stays at or below the level.
+  refused whatever flows around it. $1M of margin buys $26.4M of BTC-USD or ETH-USD under the
+  bands, so a floor under a few million refuses most of the flow on the markets that carry most of
+  it: 91% of launch-week notional at $100k a market, 64% at $1M and 39% at $3M, against 13% at
+  $10M, papertrade's position cap.
+- **Along the risk-level allocations, the dip rises quickly with the floors.** From 1.45% at
+  $1.18M in total (the 3% level), it passes 3.85% at $15.2M, 13.45% at $38.5M and 24.75% at $143M,
+  reaching 24.6% at $274M, where every market sits at its refusal-ending floor. At 1% and below
+  the family sets $0 on every market, since alone no market stays at or below the level.
 - **Pooling carries the small markets.** Each market alone, at the floor where its refusals end,
   dips below zero in 39.5% (XAU-USD) to 73.0% (DE40) of paths, because its own fees are small next
-  to its gap losses. Together at $10M a market the house earns a mean of $25.3M of fees over the 90
+  to its gap losses. Together at $10M a market the house earns a mean of $70.7M of fees over the 90
   days, and the crypto markets fund the others' risk.
-- **The total floor does not bind.** At the chosen per-market floors, a total floor at 25% to 100%
-  of their sum leaves the measured risk unchanged and moves the refused share by less than a
-  hundredth of a point — at $1M a market ($37M sum) from $9.25M to $37M, and at the house-cash
-  choice ($240M sum) from $60M to $240M.
+- **The total floor does not bind.** At the chosen per-market floors ($1M on every market, $37M in
+  total), a total floor at 25% to 100% of their sum leaves the measured risk unchanged and moves
+  the refused share by 0.2 points in the first week and none over 90 days.
 
-The assumptions that move these numbers most, each at the house-cash 1% choice ($240M of floors),
-on 1,000 paths (the baseline gives NAV below zero 18.0% and house cash below zero 1.2%):
+The assumptions that move these numbers most, each at the floors both measures choose at 1% ($37M
+of floors), on 1,000 paths (the baseline gives NAV below zero 0.80% and house cash below zero
+0.80%):
 
 | Assumption | NAV<0 ever | Cash<0 | NAV<-$100k | Bad debt mean |
 |---|---|---|---|---|
-| Baseline | 18.0% | 1.2% | 3.3% | $633k |
-| No farming (no hedged flow) | 79.1% | 29.3% | 44.5% | $173k |
-| One client direction for all markets | 27.6% | 4.4% | 7.9% | $633k |
-| Farmers hold 10% of their pairs through every closure | 24.3% | 8.6% | 10.5% | $8M |
-| Volatility x2 | 21.3% | 1.2% | 9.4% | $2M |
-| Markets bootstrapped independently | 7.6% | 0.30% | 0.60% | $631k |
-| Farming share x2 | 2.4% | 0 | 0 | $1.09M |
-| Flow x0.25 / x4 | 18.5% / 4.7% | 1.2% / 0.60% | 0.20% / 1.20% | $158k / $2.52M |
+| Baseline | 0.80% | 0.80% | 0 | $557k |
+| No farming (no hedged flow) | 12.60% | 13.20% | 0 | $131k |
+| One client direction for all markets | 2.30% | 2.20% | 0 | $557k |
+| Farmers hold 10% of their pairs through every closure | 0.80% | 0.80% | 0 | $6.56M |
+| Volatility x2 | 0.90% | 0.80% | 0 | $1.89M |
+| Markets bootstrapped independently | 0.40% | 0.40% | 0 | $561k |
+| Farming share x2 | 0 | 0 | 0 | $1.01M |
+| Flow x0.25 / x4 | 2.00% / 0.30% | 1.80% / 0.30% | 0 / 0 | $101k / $2.42M |
+| Leverage mapped relative to each limit | 6.30% | 3.60% | 0 | $26.7k |
 
 - **Farming is what makes the house solvent early.** Hedged flow pays about two thirds of the fees.
-  Without it, NAV dips below zero in 79% of paths and house cash in 29%.
-- **Correlated client direction is among the largest market risks.** When clients lean the same way in
-  every market, the house's net exposure adds up across markets instead of netting.
+  Without it, NAV dips below zero in 12.6% of paths and house cash in 13.2%, at floors that
+  otherwise measure 0.8%. Every scaling of the floors (x0.1 to x1) leaves them above 1% (`results/sensitivity.csv`).
+- **Correlated client direction is among the largest market risks.** When clients lean the same way
+  in every market, the house's net exposure adds up across markets instead of netting: 2.3% and
+  2.2%.
 - **Pairs held through closures are a risk floors barely touch.** A pair adds no net exposure, so a
   cap limits it only through the size of its orders, while a gap past a leg's balance is bad debt:
-  $8M over 90 days in this stress. Margin over closures, not floors, controls it.
+  $6.56M over 90 days in this stress, all of it on markets that close (BTC-USD and ETH-USD never
+  do). Margin over closures, not floors, controls it.
+- **How much flow trades at the maximum leverage decides the fees.** The baseline caps each
+  position's leverage at the market's maximum, so most flow trades at it. Mapped instead to the
+  same fraction of each market's maximum as of papertrade's 1000:1, fees fall from $58.4M to
+  $3.17M over 90 days, with NAV below zero in 6.3% of paths and house cash in 3.6%.
 
 Decisions for the owner:
 
-1. **The measure and the target.** NAV below zero at any hour is strict: with no capital, every
-   floor that lets the house trade risks an early dip. House cash below zero is what clients feel:
-   the vault holding less than their balances. A depth tolerance, such as NAV never below -$100k,
-   sits between them: $10M on every market gives 3.4% on 2,000 paths, the NAV measure's 1%
-   recommendation keeps it at zero, and the house-cash measure's reaches it in 3.6%.
+1. **The measure and the target.** At 100:1 NAV below zero at any hour and house cash below zero
+   choose the same floors at 1%, $1M on every market. A depth tolerance, such as NAV never below
+   -$100k, admits more: $3M on every market measures 0.05% (1 path), refusing 39% of launch-week
+   notional and 16% over 90 days, and $10M measures 1.30%.
 2. **Whether to seed the house.** The early dip happens before fees accrue. Seed capital, not
    floors, removes it.
 3. **Leverage on gap-prone markets.** Bad debt from gaps past 100:1 and 200:1 margin (oil, silver,
-   indices) and 10:1 earnings gaps on shares is untouched by floors.
-4. **#111's last acceptance criterion.** It puts the chosen values into the production genesis.
+   indices), 10:1 earnings gaps on shares, and BTC-USD's and ETH-USD's 1% margin is untouched by
+   floors. The hourly model fills a crypto close-out at its trigger, so it shows no bad debt there;
+   the trade-level measure is in the 100:1 section.
+4. **The utilisation stress level.** No level below 9500 keeps the fire rate under the bounds at
+   100:1 on the launch-relevant floors; see "Stress triggers".
+5. **#111's last acceptance criterion.** It puts the chosen values into the production genesis.
    This study recommends values but changes no config.
+
+## BTC-USD and ETH-USD at 100:1
+
+#500 moves BTC-USD and ETH-USD from 10:1 (10% margin to $1M of notional, 20% above) to 100:1 (1% to
+$2M, 2% to $10M, 5% above, the genesis bands). The model caps each position's leverage at the
+market's maximum, so most of the flow on the two markets, 71% of the whole, moves with the margin:
+$1M of margin buys $26.4M of notional where it bought $5.5M. Every stage was re-run on the
+committed `data/derived/` with the genesis bands and nothing else changed. The values that moved
+against the committed (10:1) results, at the same seed and path counts:
+
+| Value | 10:1 (committed) | 100:1 |
+|---|---|---|
+| BTC-USD alone: floor where refusals end | $10M | $31.6M |
+| ETH-USD alone: floor where refusals end | $5.62M | $17.8M |
+| BTC-USD alone at that floor: NAV<0 / cash<0 | 63.00% / 21.90% | 40.35% / 12.85% |
+| ETH-USD alone at that floor: NAV<0 / cash<0 | 64.80% / 23.35% | 43.70% / 14.80% |
+| BTC-USD, ETH-USD alone: mean fees over 90 days | $6.33M, $4.28M | $36.2M, $23.2M |
+| Floors at 1%, NAV measure | $1M on every market ($37M; 1.00%) | $1M on every market ($37M; 0.85%) |
+| Refused at those floors, week 1 / 90 days | 47.0% / 20.1% | 64.1% / 22.9% |
+| Floors at 1%, house-cash measure | $240M (0.80%) | $37M (0.85%) |
+| Refused at those floors, week 1 / 90 days | 0.3% / 0.1% | 64.1% / 22.9% |
+| Refusal-ending floors, every market: total | $240M | $274M |
+| at them: NAV<0 / cash<0 / NAV<-$100k | 19.7% / 0.80% / 3.60% | 24.6% / 3.50% / 14.7% |
+| at them: NAV day 90 p50 / mean fees | $26.2M / $25.3M | $75.7M / $74.1M |
+| $10M on every market: NAV<0 / cash<0 / NAV<-$100k | 18.75% / 0.85% / 3.40% | 5.85% / 1.55% / 1.30% |
+| Bad debt, mean over 90 days, at the refusal-ending floors | $632k | $632k |
+| Utilisation level 1 (`utilisation_bps`) | 7000 | none below 9500 passes |
+
+**Floors.** The 1% choice for both measures is now $1M on every market. The floors where refusals
+end let BTC-USD and ETH-USD carry net exposures three times those at 10:1 on a margin a tenth the
+size, and the house-cash measure at them rises from 0.80% to 3.50% (70 paths). The floors the
+owner has yet to set therefore trade a larger refused share (64% of launch-week notional at $1M a
+market, 13% at $10M, against 1.9% at $10M at 10:1) for a smaller dip. NAV and fees are larger
+throughout because the flow carries more notional per margin; that rests on the approximated
+100:1 flow profile (Limits).
+
+**Bad debt.** The mean is unchanged because the hourly model fills a crypto close-out at its
+trigger, so BTC-USD and ETH-USD show $0 at either margin; the $632k comes from the markets that
+close. The 100:1 gap risk is therefore not in this study's results. Paired positions held in two
+accounts at maximum leverage are the case the net exposure caps cannot limit: a leg whose price
+jumps past its margin with no close-out in between is bad debt to the house, which takes a jump of
+about 1.1% at 1% margin against about 11% at 10:1. The spread study (#623) measures it on 50 ms
+trade grids of Coinbase and Kraken, at 1% margin:
+
+- the index passes the half of the margin left at the close-out trigger within the engine's next
+  price (up to 3 s) for about 3 seconds a day over the two markets, with a mean loss past the
+  balance of 0.5% of the position's notional, and for 25 minutes of 2025-10-10's four stress hours;
+  at 2% margin it is under a second a day, and at 5% none in the year sample and 3 seconds on the
+  stress hours;
+- paired positions across unpriced moves take about nothing a day, but $19.1M over those four
+  stress hours, and stop paying at 2% margin.
+
+**Utilisation levels.** The fire rates (table in "Stress triggers") rise at every level because
+BTC-USD fills its cap far more often: at 7000 it fires in 19.0% of open hours at the refusal-ending
+floors (2.9% at 10:1) and 51.7% at a uniform $10M. No candidate below 9500 keeps the flow-weighted
+rate under 2% on both launch-relevant floor families. The genesis values (7000 and 9500) are
+unchanged; whether to move them, or to give BTC-USD and ETH-USD their own, is the owner's.
+
+**Proposed to `config/production-genesis.toml`:** nothing. #500 changes no genesis value, and the
+move and divergence levels do not depend on margin: the stage reproduces the committed 75/200 bps
+and 6001/9500.
+
+Provenance: `run.py per-market`, `joint`, `sensitivity` and `stress` on the committed
+`data/derived/`, seed 1, 2,000 paths (1,000 for the sensitivities), three workers; 21, 44, 89 and
+16 minutes (`results/manifest_*.json`).
 
 ## The question
 
@@ -239,8 +326,8 @@ takes its asset class's smallest listed share. Each papertrade class keeps its s
 hold, and long share. Each position's leverage is capped at the market's maximum, the first margin
 tier, so most flow trades at the maximum, and its notional is no more than its margin buys under
 the market's margin bands, which charge each slice of notional at its band's rate: $1M of margin
-buys $10M of a 10:1 market in one tier, but $5.5M of BTC-USD (10% to $1M, then 20%) and $3.3M of a
-share (10% to $500k, 20% to $2M, then 50%).
+buys $10M of a 10:1 market in one tier, $3.3M of a share (10% to $500k, 20% to $2M, then 50%), and
+$26.4M of BTC-USD or ETH-USD (1% to $2M, 2% to $10M, then 5%).
 
 - *Directional* positions open at the hour's close and settle after their class's hold (1, 4, 16,
   or 48 hours); a planned exit inside a closure waits for the reopening. The long share follows an
@@ -333,35 +420,35 @@ floors that stays at or below the level when the market runs alone):
 | Level | Total floor | Markets with a floor | NAV<0 ever | Cash<0 | NAV<-$100k | Refused, week 1 | Refused, 90 days | NAV day 90 p50 | Fees mean | Bad debt mean |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 0 | $0 | 0 | 0 | 0 | 0 | 100% | 100% | $0 | $0 | $0 |
-| 0.01% to 0.3% | $0 | 0 | 0 | 0 | 0 | 100% | 100% | $0 | $0 | $0 |
-| 1% | $49.4k | 2 | 0.55% | 3.55% | 0 | 97.2% | 42.3% | $16.8M | $15.8M | $338k |
-| 3% | $740k | 2 | 0.80% | 0.95% | 0 | 82.3% | 31.3% | $19.8M | $18.7M | $409k |
-| 10% | $3.35M | 12 | 0.75% | 0.80% | 0 | 62.6% | 25.1% | $21.4M | $20.2M | $450k |
-| 20% | $7.78M | 15 | 1.80% | 0.55% | 0 | 47.6% | 20.8% | $22.4M | $21.2M | $477k |
-| 30% | $13.5M | 17 | 2.55% | 0.50% | 0 | 35.9% | 17.4% | $23.0M | $21.9M | $500k |
-| 50% | $98.1M | 29 | 7.35% | 0.55% | 0.05% | 7.6% | 3.8% | $25.7M | $24.8M | $626k |
-| binding | $240M | 37 | 19.7% | 0.80% | 3.60% | 0.3% | 0.1% | $26.2M | $25.3M | $632k |
+| 0.01% to 1% | $0 | 0 | 0 | 0 | 0 | 100% | 100% | $0 | $0 | $0 |
+| 3% | $1.18M | 2 | 1.45% | 1.55% | 0 | 81.6% | 28.3% | $61M | $54.1M | $509k |
+| 10% | $15.2M | 12 | 3.85% | 2.00% | 0.40% | 35.3% | 13.4% | $72.6M | $66.5M | $574k |
+| 20% | $21.1M | 15 | 4.30% | 1.75% | 0.55% | 28.6% | 11.6% | $74M | $68.3M | $586k |
+| 30% | $38.5M | 17 | 13.45% | 2.15% | 5.10% | 18.6% | 7.0% | $75.4M | $71.4M | $596k |
+| 50% | $143M | 29 | 24.75% | 3.50% | 14.60% | 3.6% | 1.0% | $75.7M | $74M | $630k |
+| binding | $274M | 37 | 24.60% | 3.50% | 14.70% | 2.4% | 0.7% | $75.7M | $74.1M | $632k |
 
 Floors set for house cash below zero at some hour:
 
 | Level | Total floor | Markets with a floor | NAV<0 ever | Cash<0 | NAV<-$100k | Refused, week 1 | Refused, 90 days | NAV day 90 p50 |
 |---|---|---|---|---|---|---|---|---|
 | 0 | $0 | 0 | 0 | 0 | 0 | 100% | 100% | $0 |
-| 0.01% to 3% | $0 | 0 | 0 | 0 | 0 | 100% | 100% | $0 |
-| 10% | $6.31M | 12 | 11.75% | 1.45% | 0 | 57.2% | 22.2% | $22.2M |
-| 20% | $63.2M | 20 | 14.1% | 0.65% | 0.95% | 6.5% | 2.9% | $25.9M |
-| 30% | $176M | 26 | 19.75% | 0.80% | 3.70% | 0.9% | 0.3% | $26.2M |
-| 50%, binding | $240M | 37 | 19.7% | 0.80% | 3.60% | 0.3% | 0.1% | $26.2M |
+| 0.01% to 1% | $0 | 0 | 0 | 0 | 0 | 100% | 100% | $0 |
+| 3% | $278k | 2 | 1.00% | 1.05% | 0 | 94.3% | 35.6% | $55.3M |
+| 10% | $29.9M | 12 | 16.35% | 2.60% | 6.20% | 23.5% | 7.7% | $75.2M |
+| 20% | $104M | 20 | 24.85% | 3.50% | 14.60% | 3.9% | 1.0% | $75.6M |
+| 30% | $210M | 26 | 24.65% | 3.50% | 14.70% | 2.5% | 0.7% | $75.7M |
+| 50%, binding | $274M | 37 | 24.60% | 3.50% | 14.70% | 2.4% | 0.7% | $75.7M |
 
 The same floor on every market:
 
 | Floor | Total floor | Markets with a floor | NAV<0 ever | Cash<0 | NAV<-$100k | Refused, week 1 | Refused, 90 days | NAV day 90 p50 | Fees mean | Bad debt mean |
 |---|---|---|---|---|---|---|---|---|---|---|
-| $100k | $3.7M | 37 | 0.20% | 0.20% | 0 | 82.0% | 31.5% | $19.7M | $18.6M | $416k |
-| $300k | $11.1M | 37 | 0.25% | 0.25% | 0 | 69.0% | 26.8% | $21M | $19.9M | $448k |
-| $1M | $37M | 37 | 1.00% | 0.40% | 0 | 47.0% | 20.1% | $22.8M | $21.7M | $495k |
-| $3M | $111M | 37 | 9.00% | 0.75% | 0.05% | 23.8% | 12.1% | $24.7M | $23.6M | $572k |
-| $10M | $370M | 37 | 18.75% | 0.85% | 3.40% | 1.9% | 1.0% | $26.2M | $25.3M | $631k |
+| $100k | $3.7M | 37 | 0.35% | 0.35% | 0 | 90.9% | 33.1% | $57.3M | $50.5M | $491k |
+| $300k | $11.1M | 37 | 0.75% | 0.75% | 0 | 82.6% | 28.8% | $60.7M | $53.9M | $522k |
+| $1M | $37M | 37 | 0.85% | 0.85% | 0 | 64.1% | 22.9% | $65.4M | $58.4M | $558k |
+| $3M | $111M | 37 | 1.30% | 1.25% | 0.05% | 38.8% | 16.4% | $70.5M | $63.7M | $605k |
+| $10M | $370M | 37 | 5.85% | 1.55% | 1.30% | 13.1% | 8.1% | $75.7M | $70.7M | $632k |
 
 Each probability is the share of the 2,000 paths. The recommendation for a target is the
 candidate whose measured share is at or below it that refuses the least; the one-sided 95% upper
@@ -372,6 +459,12 @@ opening notional, directional flow and churn.
 
 ## Limits
 
+- **The 100:1 flow is approximated.** BTC-USD's and ETH-USD's bands have no profile in the
+  derived papertrade data (their size and leverage profiles are scaled from the oil schedule with
+  the same first-tier rate, `flow.with_genesis_profiles`), so every stage's notional, fees and
+  exposure on the two markets, and the floors they set, rest on that scaling. Papertrade's traders
+  chose their leverage at 1000:1; the `leverage relative to max` row bounds how much of it
+  carries over.
 - **Ten days of behaviour.** The papertrade data covers 10.6 days of a new venue: two BTC/ETH
   markets at 1000:1, crypto-native users, and a launch spike. Holds, leverage, and long share on
   RWA markets, at lower leverage and with closures, are assumptions carried over from it.
@@ -473,42 +566,52 @@ house exposure in bps of the market's cap at house NAV.
   utilisation and exposure — the book the hour leaves behind, after its settlements and its opens,
   the positions outstanding until the next hour, the closest hourly analog of the engine's
   after-command re-evaluation — on the same 2,000 paths as the floor study, at three floor
-  families: the house-cash 1% choice ($240M of floors, the study's recommendation), a uniform
-  $10M, and a uniform $1M. Level 2 stays at 9500: it is the last widening before refusals start.
-  Level 1 is the lowest candidate whose flow-weighted fire rate stays under 2% on the
-  launch-relevant families and under 5% on any market with at least 1% of the flow — 7000, firing
-  1.4–1.5% flow-weighted (worst market 2.9%). The fire rates:
+  families: the floors where each market's refusals end (`house_cash_1pct` in the files: $274M,
+  the house-cash measure's binding row, which at 100:1 no longer meets 1%), a uniform $10M, and a
+  uniform $1M, the floors both measures now choose at 1%. Level 2 stays at 9500: it is the last
+  widening before refusals start. Level 1 is the lowest candidate whose flow-weighted fire rate
+  stays under 2% on the first two families and under 5% on any market with at least 1% of the
+  flow. At 10:1 that was 7000, firing 1.4–1.5% flow-weighted (worst market 2.9%). At 100:1 no
+  candidate passes, because BTC-USD and ETH-USD fill their caps far more often. The fire rates,
+  flow-weighted with BTC-USD's beside them (at 10:1 the three families fired 1.5%, 1.4% and 35.4%
+  at 7000, BTC-USD 2.9%, 2.9% and 55.9%):
 
-  | level bps | house-cash 1% | uniform $10M | uniform $1M |
+  | level bps | refusal-ending floors | uniform $10M | uniform $1M |
   |---|---|---|---|
-  | 5000 | 14.3% | 13.1% | 54.8% |
-  | 6000 | 5.2% | 4.9% | 45.2% |
-  | **7000 (L1)** | **1.5%** | **1.4%** | 35.4% |
-  | 8000, launch L1 | 0.45% | 0.43% | 25.7% |
-  | **9500 (L2)** | **0.02%** | **0.02%** | 10.3% |
+  | 5000 | 27.6% (46.6%) | 45.0% (71.6%) | 47.2% (68.7%) |
+  | 6000 | 17.8% (31.9%) | 37.4% (62.5%) | 39.7% (59.9%) |
+  | 7000, genesis | 10.1% (19.0%) | 29.4% (51.7%) | 32.1% (50.1%) |
+  | 7500 | 7.2% (13.8%) | 25.3% (45.7%) | 28.1% (44.8%) |
+  | 8000 | 4.8% (9.4%) | 21.2% (39.1%) | 24.2% (39.2%) |
+  | 8500 | 2.9% (5.8%) | 17.0% (32.1%) | 20.1% (33.3%) |
+  | 9000 | 1.3% (2.6%) | 12.7% (24.4%) | 16.0% (27.0%) |
+  | 9500, level 2 | 0.26% (0.5%) | 8.1% (16.0%) | 11.7% (20.2%) |
 
-  Under $1M floors a market's cap is so small that every level fires constantly — a property of
-  those floors, reported rather than calibrated to; at the recommended floors the utilisation
-  trigger is a rare event, as intended. The per-fire exposure at 7000 is the house near its cap
-  ($7.8M mean on BTC-USD at 70% of a cap near $11M), against a p99 next-mark gap of 180 bps on
-  BTC-USD (`gap_tables`). The
-  model nets each hour's orders against the net-exposure cap and fills offsetting flow in full
-  (its documented approximation, README above), so after one-sided settlement a book can briefly
-  exceed the cap — the engine, checking each order, refuses more. The exposure-at-fire rows of
-  `stress_utilisation.csv` inherit that; the level choice rests on the fire rates, which the
-  artifact touches only in a handful of hours per market.
+  On the refusal-ending floors alone 9000 would pass (1.3%, BTC-USD 2.6%), 500 bps under level 2,
+  but those floors fail the 1% target and a uniform $10M fires at 12.7% there. Under $1M floors a
+  market's cap is so small that every level fires constantly — a property of those floors,
+  reported rather than calibrated to — and those are now the recommended floors, so at them the
+  utilisation trigger is not a rare event. The per-fire exposure at 7000 on BTC-USD at the
+  refusal-ending floors is $25.6M, 81% of its $31.6M cap, against a p99 next-mark gap of 180 bps
+  (`gap_tables`), a $461k hole. The model nets each hour's orders against the net-exposure cap and
+  fills offsetting flow in full (its documented approximation, README above), so after one-sided
+  settlement a book can briefly exceed the cap — the engine, checking each order, refuses more.
+  The exposure-at-fire rows of `stress_utilisation.csv` inherit that; the level choice rests on
+  the fire rates, which the artifact touches only in a handful of hours per market.
 
-The values proposed to `config/production-genesis.toml` (`stress_choice.json`):
+`stress_choice.json` records level 1 as null when no candidate passes, with the fire rates at the
+highest candidate below level 2. The genesis values are the 10:1 calibration; the 100:1 stage
+leaves them in place and proposes none (#500: the owner decides first):
 
-| parameter | launch | calibrated |
+| parameter | genesis (10:1 calibration) | calibrated at 100:1 |
 |---|---|---|
 | `stress_move_window_ms` | 60000 | 60000 |
-| move bps, level 1 / 2 | 150 / 300 | 75 / 200 |
-| divergence share bps, level 1 / 2 | 6000 / 8000 | 6001 / 9500 |
-| utilisation bps, level 1 / 2 | 8000 / 9500 | 7000 / 9500 |
+| move bps, level 1 / 2 | 75 / 200 | 75 / 200 |
+| divergence share bps, level 1 / 2 | 6001 / 9500 | 6001 / 9500 |
+| utilisation bps, level 1 / 2 | 7000 / 9500 | none / 9500 |
 
 Provenance: `run.py stress` on the committed `data/derived/`, 2,000 paths in batches of 25, seed
-1, four workers, about 21 minutes (`results/manifest_stress.json`, which records the stage's own
+1, three workers, about 16 minutes (`results/manifest_stress.json`, which records the stage's own
 settings: the effective scenario, the move-table hours, and the floor families); the move tables
 sample 400 history hours per market at the same seed. The same seed and batch sizes reproduce the
 run exactly.
@@ -639,8 +742,8 @@ Limits:
   notional per margin); `derive/papertrade.py` lists the planned and previous bands among its
   schedules, so a rebuild with the papertrade positions replaces the approximation.
 - **Close-out gap bad debt is excluded.** The model fills crypto close-outs at the trigger in
-  continuous trading, so these results say nothing about 100x safety; that is #500 (crash windows,
-  priced-update gaps, 100x vs 50x), which builds on this study's results.
+  continuous trading, so these results say nothing about 100x safety; the trade-grid measure
+  (crash windows, priced-update gaps, 100x against 50x) is in the 100:1 section.
 - **The crypto series is a Binance spot stand-in**; Coinbase/Kraken-only pricing is not re-derived.
 - **Genesis starts at zero capital** (#436): a floor under opening NAV is swept by the first
   staker, so the retained floor must be at or above opening NAV. At zero capital nothing is swept

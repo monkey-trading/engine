@@ -256,10 +256,14 @@ def test_choose_utilisation_takes_the_lowest_level_within_the_bounds():
     assert choice["fire_rate_by_family"]["uniform_1M" if "uniform_1M" in choice["fire_rate_by_family"] else "house_cash_1pct"] <= 0.02
 
 
-def test_choose_utilisation_rejects_every_candidate_over_the_bounds():
-    rows = [utilisation_row("house_cash_1pct", "BTC-USD", level, 0.05) for level in (5000, 6000, 7000)]
-    with pytest.raises(ValueError):
-        stress.choose_utilisation(rows, {"BTC-USD": 1.0})
+def test_choose_utilisation_names_no_level_when_every_candidate_is_over_the_bounds():
+    rows = [utilisation_row("house_cash_1pct", "BTC-USD", level, 0.05 - level / 1e6) for level in (5000, 6000, 7000)]
+    choice = stress.choose_utilisation(rows, {"BTC-USD": 1.0})
+    assert choice["utilisation_bps_l1"] is None
+    assert choice["utilisation_bps_l2"] == 9500
+    assert choice["highest_level_checked_bps"] == 7000
+    assert choice["fire_rate_by_family"] == {"house_cash_1pct": 0.043}
+    assert choice["worst_market_fire_rate"] == 0.043
 
 
 def test_choose_move_flow_weighted_bound_decides_across_markets():

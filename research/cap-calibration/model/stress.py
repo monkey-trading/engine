@@ -382,7 +382,9 @@ def choose_utilisation(rows: list[dict], flow_by_symbol: dict[str, float]) -> di
     is the lowest candidate whose flow-weighted fire rate stays under UTIL_L1_TIME, and every
     market with at least 1% of flow under UTIL_L1_MAX_TIME, on the launch-relevant floor families
     (the house-cash 1% choice and the uniform $10M; the tiny $1M family's caps keep utilisation
-    high whatever the level, which the table reports rather than calibrates to)."""
+    high whatever the level, which the table reports rather than calibrates to). When no
+    candidate passes, level 1 is None and the fire rates reported are those of the highest
+    candidate below level 2."""
     flow = {s: w for s, w in flow_by_symbol.items() if w > 0}
     total = sum(flow.values())
     families = sorted({r["family"] for r in rows} - {EXCLUDED_FAMILY})
@@ -404,4 +406,12 @@ def choose_utilisation(rows: list[dict], flow_by_symbol: dict[str, float]) -> di
                 "fire_rate_by_family": {f: round(v, 5) for f, v in fire.items()},
                 "worst_market_fire_rate": round(worst, 5),
             }
-    raise ValueError("no utilisation candidate passes the bounds")
+    # A level is a share of a cap, so no candidate passes where a family's flow keeps a market near
+    # its cap (BTC-USD and ETH-USD at 100x): the choice is the owner's, with the table.
+    return {
+        "utilisation_bps_l1": None,
+        "utilisation_bps_l2": 9500,
+        "fire_rate_by_family": {f: round(v, 5) for f, v in fire.items()},
+        "worst_market_fire_rate": round(worst, 5),
+        "highest_level_checked_bps": level,
+    }

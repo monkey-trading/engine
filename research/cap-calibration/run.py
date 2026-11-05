@@ -32,12 +32,15 @@ def inputs():
 
     from catalogue import load_genesis
     from model import prices, simulate
-    from model.flow import load, load_mix
+    from model.expansion import require_profiles
+    from model.flow import load, load_mix, with_genesis_profiles
 
     bars, symbols = prices.load_bars(DERIVED / "hourly_bars.npz")
-    flow = load(DERIVED)
+    genesis = load_genesis()
+    flow = with_genesis_profiles(load(DERIVED), [m for m in genesis["markets"] if m["symbol"] in symbols])
     benchmarks = {r["benchmark"]: float(r["bps"]) for r in read_rows(DERIVED / "benchmarks.csv")}
-    markets = simulate.load_markets(load_genesis(), symbols, load_mix(DERIVED, symbols), bars, benchmarks)
+    markets = simulate.load_markets(genesis, symbols, load_mix(DERIVED, symbols), bars, benchmarks)
+    require_profiles(markets, flow)
     return np, simulate, bars, flow, markets
 
 
