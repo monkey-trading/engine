@@ -200,9 +200,11 @@ log. Posts go at most every
 `log_heads.interval` (an hour by default) and only when the head moved, so a cut must land within
 about the posting interval plus chain inclusion of the log's end to pass; a host that stalls or
 withholds the poster's submissions extends the window by however long the tail stays unposted,
-and `log_head_stalled` pages once the head has not advanced for three intervals: counted from the
-head startup checked, with the sequenced time the log had already run past it, so restarting the
-node does not keep the alarm quiet while it sequences commands.
+and `log_head_stalled` pages once the head has not advanced for three intervals: counted, until a
+read sees it advance, in trusted time since the command of the head startup checked was stamped,
+so neither restarting the node nor cutting its log back to that head keeps the alarm quiet. While
+no epoch this key signed holds a head, the alarm counts from the process's start, and the bound is
+the vault-finalized checkpoint's below.
 Without `[log_heads]`, the bound is the commands after the latest checkpoint the vault has
 finalized: a cut below a later accepted-but-unfinalized checkpoint shows when the node's checkpoint
 poster next compares a checkpoint with the vault (`checkpoint_conflict`), and a cut after the latest

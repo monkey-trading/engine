@@ -92,6 +92,7 @@ async fn a_head_signed_before_a_crash_is_adopted_after_restart() {
         freeze: crate::log_heads::FreezeLatch::default(),
         confirmed: None,
         anchored: None,
+        trusted: None,
         prefix_ring: Default::default(),
     };
     let task1 = tokio::spawn(poster.run(rx1, sequencer));
@@ -113,6 +114,7 @@ async fn a_head_signed_before_a_crash_is_adopted_after_restart() {
         freeze: crate::log_heads::FreezeLatch::default(),
         confirmed: None,
         anchored: None,
+        trusted: None,
         prefix_ring,
     };
     let (sequencer, _from_poster) = tokio::sync::mpsc::channel(8);
@@ -159,10 +161,11 @@ async fn a_restart_remembers_the_authenticated_startup_head() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_restart_carries_the_time_since_the_checked_head_into_the_stall_alarm() {
-    // Startup checked the posted head at seq 1, and the log had run four posting intervals past
-    // it in sequenced time. The first read after the restart sees the same head: no advance, and
-    // the stall fires at once though this process has only just started.
+async fn a_restart_counts_trusted_time_since_the_checked_head_in_the_stall_alarm() {
+    // Startup checked the posted head at seq 1, stamped four posting intervals ago in trusted
+    // time — a restart, or a log cut back to that head, cannot move either. The first read after
+    // the restart sees the same head: no advance, and the stall fires at once though this process
+    // has only just started.
     let held = Head { seq: 1, link: B256::from([1; 32]) };
     let chain = FakeChain::new(Some(held));
     chain.fail_next_posts(usize::MAX);
@@ -170,6 +173,9 @@ async fn a_restart_carries_the_time_since_the_checked_head_into_the_stall_alarm(
     let (sequencer, _from_poster) = tokio::sync::mpsc::channel(8);
     let (tx, rx) = watch::channel(Head { seq: 5, link: B256::from([5; 32]) });
     let interval = Duration::from_secs(60);
+    let clock: Arc<dyn crate::clock::Clock> = Arc::new(crate::clock::test_clock::TestClock::at(1_000_000_000));
+    let samples = watch::channel(Some(crate::test_support::sample_around(clock.as_ref()))).1;
+    let stamped = clock.now_ms() - i64::try_from((interval * 4).as_millis()).unwrap();
     let poster = Poster {
         chain: chain.clone(),
         key: Arc::new(crate::tee::EnclaveKey::test_key()),
@@ -178,7 +184,8 @@ async fn a_restart_carries_the_time_since_the_checked_head_into_the_stall_alarm(
         retry: Duration::from_secs(1),
         freeze: crate::log_heads::FreezeLatch::default(),
         confirmed: Some((1, held)),
-        anchored: Some((held.seq, interval * 4)),
+        anchored: Some((held.seq, Some(stamped))),
+        trusted: Some(crate::trusted_time::TrustedClock::new(clock, samples, Duration::from_secs(1))),
         prefix_ring: Default::default(),
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
@@ -328,6 +335,7 @@ async fn a_foreign_head_at_a_retained_seq_freezes() {
         freeze: freeze.clone(),
         confirmed: None,
         anchored: None,
+        trusted: None,
         prefix_ring,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
@@ -363,6 +371,7 @@ async fn a_divergent_history_head_freezes_at_the_ancestor() {
         freeze: freeze.clone(),
         confirmed: None,
         anchored: None,
+        trusted: None,
         prefix_ring,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
@@ -397,6 +406,7 @@ async fn a_head_beyond_the_retained_evidence_is_not_adopted() {
         freeze: freeze.clone(),
         confirmed: None,
         anchored: None,
+        trusted: None,
         prefix_ring,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));

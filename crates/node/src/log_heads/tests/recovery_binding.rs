@@ -183,18 +183,18 @@ fn startup_compares_a_posted_head_above_any_snapshot_with_the_replayed_link() {
 
 #[test]
 fn startup_starts_the_stall_alarm_from_the_checked_heads_sequenced_time() {
-    // The checked head is seq 0, stamped at 0 ms, and the log's last command is stamped at 1 ms:
-    // the poster starts with that head as its on-chain seq and the 1 ms the log ran past it.
-    let (dir, first_prefix, _, _) = log_with_shutdown_checkpoint("log-head-stall-seed");
+    // The checked head is seq 1, which the fixture stamps at 1 ms: the poster starts with that
+    // head as its on-chain seq and that stamp as the time the alarm counts from.
+    let (dir, _, last_prefix, _) = log_with_shutdown_checkpoint("log-head-stall-seed");
     let rpc_dir = crate::test_support::scratch_dir("log-head-stall-seed-rpc");
     std::fs::create_dir_all(&rpc_dir).unwrap();
-    let log = recover(&dir, 0);
-    let posted = Head { seq: 0, link: first_prefix };
+    let log = recover(&dir, 1);
+    let posted = Head { seq: 1, link: last_prefix };
     let setup = crate::log_heads::setup::startup(
         Some(crate::log_heads::setup::Pending::for_test(Some(posted), &rpc_dir)),
         &log,
     )
     .unwrap()
     .expect("[log_heads] is configured");
-    assert_eq!(setup.poster.anchored, Some((0, std::time::Duration::from_millis(1))));
+    assert_eq!(setup.poster.anchored, Some((1, Some(1))));
 }

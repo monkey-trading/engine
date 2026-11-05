@@ -203,10 +203,9 @@ async fn startup_reads_no_earlier_epoch_while_the_current_one_holds_a_head() {
     assert!(chains.iter().all(|chain| chain.0.lock().unwrap().epochs.reads.is_empty()));
 }
 
-/// The enclave key startup reads for, another key, and the LogHeads contract.
+/// The enclave key startup reads for, and another key.
 const KEY: Address = Address::repeat_byte(0x5e);
 const OTHER: Address = Address::repeat_byte(0x0f);
-const LOG_HEADS: Address = Address::repeat_byte(0x11);
 
 /// One epoch's number, its signer, and the head it holds.
 type Epoch = (u64, Address, Option<(u64, B256)>);

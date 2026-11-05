@@ -287,10 +287,10 @@ impl VaultReader for FakeChain {
     async fn contract_call(
         &self,
         at: BlockRef,
-        _to: Address,
+        to: Address,
         data: alloy::primitives::Bytes,
     ) -> anyhow::Result<alloy::primitives::Bytes> {
-        self.0.lock().unwrap().epochs.answer(at, &data)
+        self.0.lock().unwrap().epochs.answer(at, to, &data)
     }
 }
 
@@ -489,6 +489,7 @@ mod sequencer;
 pub(crate) use sequencer::{engine_sequencer, refusing_sequencer};
 
 mod epochs;
+pub(super) use epochs::LOG_HEADS;
 mod files;
 pub(super) use files::{evm_toml, scratch};
 mod logs;

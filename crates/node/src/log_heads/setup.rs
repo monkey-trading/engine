@@ -32,8 +32,14 @@ impl Setup {
         super::Publisher { tx: self.tx.clone(), freeze: self.freeze.clone() }
     }
 
-    /// Runs the poster as a supervised task until a rollback freezes it.
-    pub(crate) async fn spawn(self, sequencer: mpsc::Sender<Request>) -> (&'static str, anyhow::Result<()>) {
+    /// Runs the poster as a supervised task until a rollback freezes it, its stall alarm reading
+    /// `trusted` time.
+    pub(crate) async fn spawn(
+        mut self,
+        sequencer: mpsc::Sender<Request>,
+        trusted: crate::trusted_time::TrustedClock,
+    ) -> (&'static str, anyhow::Result<()>) {
+        self.poster.trusted = Some(trusted);
         ("log_heads", self.poster.run(self.rx, sequencer).await)
     }
 }
@@ -67,6 +73,7 @@ impl Pending {
             freeze: freeze.clone(),
             confirmed: None,
             anchored: None,
+            trusted: None,
             prefix_ring: Default::default(),
         };
         Self { poster, posted, freeze }
@@ -95,6 +102,7 @@ pub(crate) async fn read_posted(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyh
         freeze: freeze.clone(),
         confirmed: None,
         anchored: None,
+        trusted: None,
         prefix_ring: Default::default(),
     };
     let (retry, budget) = (
@@ -170,11 +178,9 @@ pub(crate) fn startup(pending: Option<Pending>, log: &crate::sequencer::Replayed
                 .with_context(|| format!("the replayed log holds no command at the posted head's seq {seq}"))
         })
         .inspect_err(|e| error!("refusing to serve: {e:#}"))?;
-        // The stall alarm starts from the checked head, not from this process: the sequenced time
-        // the log has run past it is carried, so a restart neither resets it nor counts the head as
-        // an advance.
-        let past = log.replayed.ts_at.map_or(0, |ts| log.replayed.engine.now().saturating_sub(ts));
-        poster.anchored = Some((posted.seq, Duration::from_millis(u64::try_from(past).unwrap_or(0))));
+        // The stall alarm starts from the checked head, not from this process: the head is no
+        // advance, and trusted time since its command was stamped counts.
+        poster.anchored = Some((posted.seq, log.replayed.ts_at));
     }
     // The evidence that this log holds an on-chain head: each command's cumulative prefix as the
     // replay authenticated it, seeded before the poster's first read.
