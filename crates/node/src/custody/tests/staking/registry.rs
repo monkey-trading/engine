@@ -1,7 +1,15 @@
 //! The operator registry's events mirror in chain order with the staking contract's, credited once,
-//! and one the engine refuses stalls the mirror with its cursor unmoved.
+//! and one the engine refuses stalls the mirror with its cursor unmoved. The schedule's events mirror
+//! only from the schedule both the registry and the config name, once it is read to record the
+//! registry.
+
+use alloy::primitives::Address;
+use engine_core::turns::SetMember;
 
 use super::*;
+
+/// The schedule the fake chain's registry names.
+const SCHEDULE: Address = Address::repeat_byte(0x5c);
 
 /// An election of `admin_key` at `epoch`, taking effect at `effective_at` milliseconds.
 fn elected(block: u64, tx: u8, epoch: u64, admin_key: AccountId, effective_at: i64) -> StakingEvent {
@@ -159,4 +167,107 @@ async fn events_stall_until_the_registry_binding_is_verified() {
     .unwrap();
     assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(500));
     node.stop().await;
+}
+
+#[tokio::test]
+async fn a_registry_naming_a_schedule_the_config_does_not_stalls_the_poll_before_any_mirror() {
+    let dir = scratch("schedule-named");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let account = AccountId([6; 20]);
+    let chains = schedule_chains(SCHEDULE, Some(REGISTRY), account);
+    for (what, configured) in [("another schedule", Some(Address::repeat_byte(0x5d))), ("no schedule", None)] {
+        let error = schedule_watcher(&chains, &dir, configured).poll(&node.tx).await.unwrap_err();
+        let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{what}: {error:?}") };
+        assert!(cause.to_string().contains(&format!("the registry names schedule {SCHEDULE}")), "{what}: {cause}");
+        assert_eq!(mirrored(&node, account).await, (TokenUnits(0), vec![]), "{what}: an event mirrored");
+    }
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_schedule_recording_another_registry_stalls_the_poll_before_any_mirror() {
+    let dir = scratch("schedule-records-registry");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let (account, other) = (AccountId([7; 20]), Address::repeat_byte(0x6c));
+    let chains = schedule_chains(SCHEDULE, Some(other), account);
+    let error = schedule_watcher(&chains, &dir, Some(SCHEDULE)).poll(&node.tx).await.unwrap_err();
+    let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
+    assert!(cause.to_string().contains(&format!("the schedule {SCHEDULE} records registry {other}")), "{cause}");
+    assert_eq!(mirrored(&node, account).await, (TokenUnits(0), vec![]), "an event mirrored");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_schedule_event_before_the_schedule_is_read_to_name_the_registry_stalls_the_poll() {
+    let dir = scratch("schedule-unbound-event");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let account = AccountId([8; 20]);
+    // The schedule has no code at the window's end, so no read has bound it, yet the window names
+    // its rotation set: a contradiction, not an event to mirror.
+    let chains = schedule_chains(SCHEDULE, None, account);
+    let error = schedule_watcher(&chains, &dir, Some(SCHEDULE)).poll(&node.tx).await.unwrap_err();
+    let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
+    assert!(cause.to_string().contains("the schedule has not been read to name the registry"), "{cause}");
+    assert_eq!(mirrored(&node, account).await, (TokenUnits(0), vec![]), "an event mirrored");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn the_schedule_both_name_that_records_the_registry_mirrors_its_events() {
+    let dir = scratch("schedule-bound");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let account = AccountId([9; 20]);
+    let chains = schedule_chains(SCHEDULE, Some(REGISTRY), account);
+    schedule_watcher(&chains, &dir, Some(SCHEDULE)).poll(&node.tx).await.unwrap();
+    assert_eq!(mirrored(&node, account).await, (TokenUnits(500), vec![1]));
+    node.stop().await;
+}
+
+/// The schedule's adoption of rotation set 1, of one member.
+fn adopted(block: u64, tx: u8) -> StakingEvent {
+    let members =
+        vec![SetMember { candidate: AccountId([0xc1; 20]), admin_key: AccountId([0xa1; 20]), weight: TokenUnits(1) }];
+    let effective_at = 1_793_000_000_000;
+    event(block, tx, StakingEventKind::RotationSetAdopted { set: 1, epoch: 1, effective_at, quorum: true, members })
+}
+
+/// Chains whose registry names `named`, whose schedule records `registry`, and whose window holds a
+/// stake by `account` and the schedule's adoption of a rotation set.
+fn schedule_chains(named: Address, registry: Option<Address>, account: AccountId) -> [FakeChain; 3] {
+    let chains = poll_chains(10);
+    for chain in &chains {
+        let mut state = chain.0.lock().unwrap();
+        (state.schedule.named, state.schedule.registry) = (named, registry);
+        state.staking.extend([staked(2, 1, account, 500), adopted(3, 2)]);
+    }
+    chains
+}
+
+/// The confirmed watcher over `chains`, configured with the fake chain's registry and `schedule`.
+fn schedule_watcher(
+    chains: &[FakeChain; 3],
+    dir: &Path,
+    schedule: Option<Address>,
+) -> DepositWatcher<Quorum<FakeChain>> {
+    let schedule = schedule.map_or_else(String::new, |schedule| format!(r#", schedule = "{schedule}""#));
+    let toml = format!(
+        r#"{}
+        staking = {{ contract = "0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a", cursor_path = "{}", registry = {{ contract = "{REGISTRY}"{schedule} }} }}
+        "#,
+        evm_toml(dir, 100),
+        dir.join("staking-cursor.json").display()
+    );
+    let cfg: EvmCustodySection = toml::from_str(&toml).unwrap();
+    let quorum =
+        Quorum::new(chains.iter().enumerate().map(|(i, chain)| (format!("p{i}"), chain.clone())).collect()).unwrap();
+    DepositWatcher::start(quorum, &cfg, CHAIN_ID, VAULT, None).unwrap()
+}
+
+/// What `account` has staked in the engine, and the rotation sets it has mirrored.
+async fn mirrored(node: &Node, account: AccountId) -> (TokenUnits, Vec<u32>) {
+    node.read(move |engine| (engine.staked(account), engine.daily_turns().sets.keys().copied().collect())).await
 }

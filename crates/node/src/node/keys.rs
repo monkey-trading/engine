@@ -98,10 +98,12 @@ async fn obtain(
     start: &KeyStart,
     attestor: &dyn Attestor,
 ) -> anyhow::Result<(EnclaveKey, TlsIdentity, Option<KeyStore>)> {
-    obtain_with(cfg, start, attestor, vault_reader(cfg)?.as_ref()).await
+    let sampled = crate::handover::turns::sampled_now(cfg);
+    obtain_with(cfg, start, attestor, vault_reader(cfg)?.as_ref(), sampled).await
 }
 
-/// `obtain`, reading the vault through `vault`, when the config names one.
+/// `obtain`, reading the vault through `vault`, when the config names one, and the time trusted time
+/// has reached through `reached`, which it awaits only while rotation is on and a daily turn is drawn.
 /// Error cases:
 /// - a flag is given without `[tee.sealing]`, or real attestation runs without it
 /// - the stand-in measurement is missing under the mock TEE, or given under real attestation
@@ -116,6 +118,7 @@ async fn obtain_with(
     start: &KeyStart,
     attestor: &dyn Attestor,
     vault: Option<&impl CheckpointChain>,
+    reached: impl Future<Output = anyhow::Result<Millis>>,
 ) -> anyhow::Result<(EnclaveKey, TlsIdentity, Option<KeyStore>)> {
     let Some(sealing) = &cfg.tee.sealing else {
         ensure!(
@@ -164,7 +167,7 @@ async fn obtain_with(
     // the turn the finalised schedule names at trusted time is the only holding named, and its
     // generation is this release's when it names this one (`handover::turns`).
     let turn = match vault {
-        Some(vault) if cfg.operator.rotation_enabled => crate::handover::turns::at_start(cfg, vault).await?,
+        Some(vault) if cfg.operator.rotation_enabled => crate::handover::turns::at_start(vault, reached).await?,
         _ => None,
     };
     if let Some(turn) = &turn {

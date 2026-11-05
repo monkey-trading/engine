@@ -75,19 +75,29 @@ pub(crate) fn ensure_turn_names(turn: &ScheduledTurn, release: &Release) -> anyh
     Ok(())
 }
 
-/// The turn the finalised schedule names now, by a one-off Roughtime sample, at a start; `None` when
-/// no turn is drawn (`drawn`), or none names anyone by then. A start needs no sample without one.
+/// The turn the finalised schedule names now, at a start, by `reached`, the time trusted time has
+/// reached, awaited only once a turn is drawn (`drawn`); `None` when none is, or none names anyone
+/// by then. A start needs no sample without one.
 /// Error cases:
-/// - the vault cannot be read, or, with a turn drawn, no trusted time sample can be taken
-pub(crate) async fn at_start(cfg: &NodeConfig, vault: &impl CheckpointChain) -> anyhow::Result<Option<ScheduledTurn>> {
+/// - the vault cannot be read, or, with a turn drawn, `reached` fails
+pub(crate) async fn at_start(
+    vault: &impl CheckpointChain,
+    reached: impl Future<Output = anyhow::Result<Millis>>,
+) -> anyhow::Result<Option<ScheduledTurn>> {
     let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
     if !drawn(vault, &at).await? {
         return Ok(None);
     }
+    turn_at(vault, &at, Some(reached.await?)).await
+}
+
+/// The time true time has certainly reached, by a one-off Roughtime sample of `cfg`'s servers.
+/// Error cases:
+/// - no trusted time sample can be taken
+pub(crate) async fn sampled_now(cfg: &NodeConfig) -> anyhow::Result<Millis> {
     let clock: Arc<dyn crate::clock::Clock> = Arc::new(crate::clock::SystemClock);
     let sample = crate::trusted_time::sample_once(&cfg.time, &clock).await.context("taking a trusted time sample")?;
-    let reached = sample.earliest_ms.saturating_add(sample.at.elapsed().as_millis() as Millis);
-    turn_at(vault, &at, Some(reached)).await
+    Ok(sample.earliest_ms.saturating_add(sample.at.elapsed().as_millis() as Millis))
 }
 
 /// Whether the finalised schedule at `at` has drawn a turn that names its member at some time, even

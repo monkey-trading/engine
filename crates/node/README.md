@@ -219,6 +219,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   reaches the final checkpoint of the release that handed the keys over
 - `src/node/keys/tests.rs` — sealed, new, refused, and unsealed keys, the vault's current release,
   the stand-in measurement, and the first start's head check
+- `src/node/keys/tests/turns.rs` — a start while rotation is on: a daily turn naming another release
+  refuses it, keys sealed in the turn's generation open, a member without them takes them from the
+  turn's source, and no turn drawn takes no trusted time sample
 - `src/node/recovery.rs` — reading the log and the history index it must match before anything is
   written
 - `src/node/secrets.rs` — this start's delivered secrets: opening the sealed bundle, asking a
@@ -889,7 +892,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   across polls while their endpoint stays canonical
 - `src/custody/evm/types.rs` — the canonical deposit, staking-event, finality and reader types
 - `src/custody/evm/staking.rs` — staking catch-up proofs anchored independently of deposit progress
-- `src/custody/tests/fakes/files.rs` — temporary directories and custody test configurations
+- `src/custody/tests/fakes/files.rs` — temporary directories, custody test configurations, and the
+  stored deposit cursor
+- `src/custody/tests/fakes/schedule.rs` — the schedule the fake chain's registry names, and the
+  registry that schedule records
 - `src/custody/tests/fakes/sequencer.rs` — in-memory sequencer stand-ins for the watcher tests, with no
   log and no trusted time
 - `src/custody/tests/fakes/logs.rs` — log lines captured from a test's tasks, for alert assertions
@@ -898,7 +904,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
 - `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, and its schedule's rotation set and turn events, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
-- `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, and the staking contract's deployer checked against the configured registry
+- `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, the staking contract's deployer checked against the configured registry, and the schedule checked against the one the registry and the config name and against the registry it records
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, and the latest checkpoint
 - `src/api/operator.rs` — `GET /v1/operator`: the key in effect, its pending rotation, whether rotation is on, the last election, and from `V51` the rotation set in effect and the next with its time, today's and tomorrow's turns, and the turn history (`?before=&limit=`)
 - `src/api/operator_list.rs` — `GET /v1/operators`: the list `custody/operators/` last read, 404 without a lens and 503 before the first read or once it is stale
