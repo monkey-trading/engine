@@ -2,8 +2,9 @@
 //!
 //! An operator registry that names a schedule (`contracts/src/OperatorSchedule.sol`) adopts a
 //! rotation set at each election close: every eligible candidate, weighted by its delegated stake,
-//! taking effect seven days plus the finality margin later. The schedule draws each turn from the
-//! set in effect for its boundary, 22:30 UTC on the turn's day of the Unix epoch, from a seed relayed
+//! taking effect seven days plus the finality margin later, each close's set after its own notice
+//! however many wait. The schedule draws each turn, whose boundary is 22:30 UTC on the turn's day of
+//! the Unix epoch, from the set in effect at its draw deadline a day earlier, with a seed relayed
 //! from Ethereum. The engine mirrors both from finalised events on the staking mirror, each credited
 //! once under its chain reference and advancing the mirror's frontier.
 //!
@@ -41,9 +42,9 @@ pub const BOUNDARY_OFFSET_MS: Millis = (22 * 60 + 30) * 60 * 1000;
 /// The most members a set may name: the registry's `CANDIDATE_LIMIT` and the one place beyond it the
 /// operator in effect may take.
 pub const MAX_SET_MEMBERS: usize = 101;
-/// The sets kept: the one turns draw from, the one waiting to take effect, and the one before,
-/// whose drawn turns may still be due.
-pub const KEPT_SETS: usize = 3;
+/// How long before its boundary a turn's draw deadline falls, the schedule's `DRAW_LEAD`: the turn
+/// is drawn from the set in effect then.
+pub const DRAW_LEAD_MS: Millis = DAY_MS;
 
 /// The mirrored schedule: the sets the engine keeps, the turns mirrored and not yet applied, the
 /// assignment whose key is in effect, and whether its member has taken it. Left out of the
@@ -181,8 +182,8 @@ impl Engine {
         &self.daily_turns
     }
 
-    /// Mirrors the schedule's `RotationSetAdopted` event: records the set, keeping the newest
-    /// `KEPT_SETS`.
+    /// Mirrors the schedule's `RotationSetAdopted` event: records the set, and forgets each set no
+    /// turn that has yet to end can draw from (`still_drawable`).
     pub(crate) fn adopt_rotation_set(&mut self, adoption: &RegistryRotationSet, events: &mut Vec<Event>) {
         let RegistryRotationSet { set, epoch, effective_at, ref members, block, ref chain_ref, .. } = *adoption;
         let reason = self.turns_mirror_refusal(chain_ref).or_else(|| {
@@ -211,10 +212,20 @@ impl Engine {
         self.credit_registry_mirror(chain_ref, block);
         let recorded = RotationSet { epoch, effective_at, logged_at: self.now, members: members.clone() };
         self.daily_turns.sets.insert(set, recorded);
-        while self.daily_turns.sets.len() > KEPT_SETS {
+        while !self.still_drawable() {
             self.daily_turns.sets.pop_first();
         }
         events.push(Event::RotationSetAdopted { set, epoch, effective_at });
+    }
+
+    /// Whether the oldest set kept may still be drawn from: a turn draws from the set in effect at its
+    /// deadline, `DRAW_LEAD_MS` before its boundary, and ends a day after its boundary, so a turn
+    /// that has yet to end has its deadline less than that long ago, and the oldest set is past
+    /// drawing once the set after it took effect earlier still. The newest set always is.
+    fn still_drawable(&self) -> bool {
+        let mut sets = self.daily_turns.sets.values();
+        let (Some(_), Some(next)) = (sets.next(), sets.next()) else { return true };
+        next.effective_at > self.now.saturating_sub(DRAW_LEAD_MS + DAY_MS)
     }
 
     /// Mirrors the schedule's `TurnAssigned` event: records the assignment, whose key applies from

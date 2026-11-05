@@ -146,12 +146,29 @@ fn a_set_out_of_order_or_malformed_is_refused() {
 }
 
 #[test]
-fn the_newest_three_sets_are_kept() {
+fn every_set_a_turn_yet_to_end_can_draw_from_is_kept() {
+    let kept = |h: &Harness| h.engine.daily_turns().sets.keys().copied().collect::<Vec<_>>();
     let mut h = rotating();
+    // Five closes a day apart, each set waiting out its own notice.
     for set in 1..=5 {
         assert!(matches!(adopt(&mut h, set, members()).last(), Some(Event::RotationSetAdopted { .. })));
+        h.advance_to(h.ts + DAY_MS);
     }
-    assert_eq!(h.engine.daily_turns().sets.keys().copied().collect::<Vec<_>>(), [3, 4, 5]);
+    assert_eq!(kept(&h), [1, 2, 3, 4, 5]);
+    // The last turn whose deadline finds set 1 in effect ends two days after set 2 takes effect, at
+    // the latest; a minute before it ends, set 1 is still kept, and the turn's draw from it applies.
+    let second = h.engine.daily_turns().sets[&2].effective_at;
+    let turn = next_turn(second);
+    assert!(boundary(turn).unwrap() - DAY_MS < second, "turn {turn} draws from set 1");
+    h.advance_to(boundary(turn).unwrap() + DAY_MS - 60_000);
+    assert!(matches!(adopt(&mut h, 6, members()).last(), Some(Event::RotationSetAdopted { .. })));
+    assert_eq!(kept(&h), [1, 2, 3, 4, 5, 6]);
+    let events = assign(&mut h, turn, 1, 0, TurnReason::Draw);
+    assert!(matches!(events.last(), Some(Event::TurnAssigned { .. })), "{events:?}");
+    // Two days after set 2 took effect no turn yet to end draws from set 1, and it is forgotten.
+    h.advance_to(second + 2 * DAY_MS);
+    assert!(matches!(adopt(&mut h, 7, members()).last(), Some(Event::RotationSetAdopted { .. })));
+    assert_eq!(kept(&h), [2, 3, 4, 5, 6, 7]);
 }
 
 #[test]

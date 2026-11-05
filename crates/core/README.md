@@ -624,9 +624,10 @@ office, and the staking state encodes as before, so earlier logs replay unchange
 
 Protocol V51 adds daily operator turns. A registry that names a schedule adopts a rotation set at
 each election close, every eligible candidate weighted by its delegated stake, taking effect seven
-days plus the finality margin later, and anyone draws each day's turn from the set in effect a day
-before its 22:30 UTC boundary. The engine mirrors the set and each turn assignment, with its position
-and its reason (the day's draw, a skip, or a promotion), and keeps the newest three sets. A turn's
+days plus the finality margin later, each close's set after its own notice however many wait, and
+anyone draws each day's turn from the set in effect a day before its 22:30 UTC boundary. The engine
+mirrors the set and each turn assignment, with its position and its reason (the day's draw, a skip,
+or a promotion), and keeps every set a turn yet to end can draw from. A turn's
 key signs from its boundary when it is mirrored before it, and otherwise from its mirror, so a
 reassignment after its boundary, and a promotion, which is mirrored only once finalised, apply from
 then; the key in effect moves before the command is authorised. A turn whose candidate and key no set

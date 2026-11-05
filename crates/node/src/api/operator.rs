@@ -109,7 +109,8 @@ pub(super) async fn operator(
     view.map(Json).map_err(ApiError::BadRequest)
 }
 
-/// The newest mirrored set in effect by `engine`'s sequenced time, and the newest one after it.
+/// The newest mirrored set in effect by `engine`'s sequenced time, and the first of those waiting
+/// to take effect after it.
 fn sets(engine: &Engine) -> (Option<SetView>, Option<SetView>) {
     let view = |(set, recorded): (&u32, &engine_core::turns::RotationSet)| SetView {
         set: *set,
@@ -121,6 +122,6 @@ fn sets(engine: &Engine) -> (Option<SetView>, Option<SetView>) {
     let sets = &engine.daily_turns().sets;
     let now = engine.now();
     let in_effect = sets.iter().rev().find(|(_, recorded)| recorded.effective_at <= now).map(view);
-    let next = sets.iter().rev().find(|(_, recorded)| recorded.effective_at > now).map(view);
+    let next = sets.iter().find(|(_, recorded)| recorded.effective_at > now).map(view);
     (in_effect, next)
 }
