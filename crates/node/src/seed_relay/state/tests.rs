@@ -56,7 +56,7 @@ fn a_cut_or_misordered_state_is_refused() {
 
 /// Fields of mainnet's state at slot 15583232, whose root matched its block's state root, each with
 /// the root that state gave it: every list and container type the state holds non-empty there, and
-/// the first validators and pending deposits as elements.
+/// validators and pending deposits whose every field is non-zero as elements.
 #[test]
 fn mainnet_fields_hash_to_the_roots_their_state_gave_them() {
     let fixture: serde_json::Value =
@@ -96,20 +96,28 @@ fn record_mainnet_fields() {
         .into_iter()
         .map(|index| serde_json::json!({"index": index, "bytes": hex(fields[index]), "root": hex(&roots[index])}))
         .collect();
-    let elements = |index: usize, sizes: &[usize]| -> Vec<serde_json::Value> {
-        let size: usize = sizes.iter().sum();
-        fields[index]
-            .chunks(size)
-            .take(2)
-            .map(|element| serde_json::json!({"bytes": hex(element), "root": hex(&container_root(element, sizes).unwrap())}))
-            .collect()
-    };
+    let element = |bytes: &[u8], sizes: &[usize]| serde_json::json!({"bytes": hex(bytes), "root": hex(&container_root(bytes, sizes).unwrap())});
+    // Elements whose every field is non-zero, so a layout that moves a boundary changes their root:
+    // a slashed validator, an activated and exited one, and deposits with a slot.
+    let word = |bytes: &[u8], at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap());
+    let validators: Vec<&[u8]> = fields[11].chunks(VALIDATOR.iter().sum()).collect();
+    let slashed = validators.iter().find(|v| v[88] == 1 && word(v, 89) != 0 && word(v, 97) != 0).unwrap();
+    let exited = validators
+        .iter()
+        .find(|v| v[88] == 0 && word(v, 89) != 0 && word(v, 97) != 0 && word(v, 105) != u64::MAX)
+        .unwrap();
+    let deposits: Vec<_> = fields[34]
+        .chunks(PENDING_DEPOSIT.iter().sum())
+        .filter(|d| word(d, 184) != 0)
+        .take(2)
+        .map(|d| element(d, &PENDING_DEPOSIT))
+        .collect();
     let fixture = serde_json::json!({
         "slot": u64::from_le_bytes(fields[SLOT_FIELD].try_into().unwrap()),
         "stateRoot": expected,
         "fields": recorded,
-        "validators": elements(11, &VALIDATOR),
-        "pendingDeposits": elements(34, &PENDING_DEPOSIT),
+        "validators": [element(slashed, &VALIDATOR), element(exited, &VALIDATOR)],
+        "pendingDeposits": deposits,
     });
     println!("{}", serde_json::to_string_pretty(&fixture).unwrap());
 }
