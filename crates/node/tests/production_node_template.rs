@@ -1,7 +1,7 @@
 //! The production node template. Assembled as the deploy runbook says, with the benchmark
 //! publishers and the production genesis, it loads and validates as a node config, and it holds what
 //! a production build requires of one but for the futures and share markets' second TLS source,
-//! open in #621. Every placeholder carries a marker, so none is mistaken for a value.
+//! open in #673. Every placeholder carries a marker, so none is mistaken for a value.
 
 use std::fs;
 use std::path::Path;
