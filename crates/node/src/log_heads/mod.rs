@@ -107,9 +107,9 @@ pub(crate) struct Poster<R> {
     /// The startup-quorum-authenticated posted head and the epoch it was read under: the seed for
     /// the poster's per-epoch confirmed head — the parent the first post after a restart names.
     pub confirmed: Option<(u64, Head)>,
-    /// The head startup checked the log against, and the sequenced time its command was stamped
-    /// at: the stall alarm's starting point, so a restart neither counts that head as an advance
-    /// nor resets the time since it.
+    /// The seq of the head startup checked the log against (0 with none posted), and the later of
+    /// its command's stamp and the vault-finalized checkpoint's: the stall alarm's starting point,
+    /// so a restart neither counts that head as an advance nor resets the time since the stamp.
     pub anchored: Option<(u64, Option<engine_core::types::Millis>)>,
     /// Trusted time, which the stall alarm measures the time since the anchored command against;
     /// `None` measures this process's time only.
@@ -138,12 +138,16 @@ impl<R: HeadsChain> Poster<R> {
         // passed. The gate advances on every send attempt, before the result: a lost response still paced the
         // relayer, and the read-back confirms inclusion on later ticks.
         let mut posted_at: Option<tokio::time::Instant> = None;
+        // When this process first sent a post: the carried stall time counts from one posting
+        // interval after it, the bound the post had to be included in.
+        let mut first_post: Option<tokio::time::Instant> = None;
         // Anchoring progress: the last time a quorum read observed the on-chain head advance, and,
-        // until one does, trusted time since startup's checked head was stamped — which neither a
-        // restart nor a log cut back to that head resets. That carried time counts once this
-        // process's first post has had a retry to land, so a restart after a long stop does not
-        // page before it posts. Past three intervals with a newer released head, the stall alert
-        // fires once per episode. Acceptance proves no inclusion, so it never moves this clock.
+        // until one does, trusted time since startup's anchor was stamped — which neither a
+        // restart nor a log cut back to it resets. That carried time counts once this process's
+        // first post has had a posting interval to be included, so a restart after a long stop
+        // does not page before its first post lands. Past three intervals with a newer released
+        // head, the stall alert fires once per episode. Acceptance proves no inclusion, so it
+        // never moves this clock.
         let mut progressed_at = tokio::time::Instant::now();
         let (mut on_chain_seq, mut anchor_ts) = self.anchored.unwrap_or_default();
         let mut stalled = false;
@@ -274,7 +278,7 @@ impl<R: HeadsChain> Poster<R> {
                 // goes parentless under the first-post rule.
                 confirmed = None;
             }
-            let carried = posted_at.is_some_and(|at| at.elapsed() >= self.retry);
+            let carried = first_post.is_some_and(|at| at.elapsed() >= self.interval);
             let since_anchor =
                 anchor_ts.filter(|_| carried).zip(self.trusted.as_ref().and_then(|clock| clock.now_ms()));
             let since_anchor = since_anchor.map_or(0, |(at, now)| u64::try_from(now.saturating_sub(at)).unwrap_or(0));
@@ -313,6 +317,7 @@ impl<R: HeadsChain> Poster<R> {
                 confirmed.map(|parent| (parent.seq, parent.link)),
             );
             posted_at = Some(tokio::time::Instant::now());
+            first_post = first_post.or(posted_at);
             match self.chain.post(epoch, head, confirmed, &signature).await {
                 // Acceptance proves no inclusion: only a quorum-observed advance is anchoring
                 // progress, so the stall timer stands.

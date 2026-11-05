@@ -124,12 +124,21 @@ fn candidate(
     // the on-disk prefix through it — no engine apply, so snapshot recovery keeps its savings. The
     // verified base prefix is the snapshot's own certified `command_prefix`, which
     // `from_snapshot` seeds; the posted command's sequenced time is carried to the stall alarm.
-    let mut posted_ts = None;
-    if let Some(posted) = capture.filter(|posted| posted.seq <= at.seq) {
+    // With `[log_heads]`, the same pass stamps a vault-finalized checkpoint under the base, the
+    // alarm's anchor where no later head is posted; the suffix replay stamps one past the base.
+    let posted = capture.filter(|posted| posted.seq <= at.seq);
+    let anchor = parent.filter(|parent| {
+        cfg.log_heads.is_some()
+            && parent.has_checkpoint
+            && parent.seq < at.seq
+            && capture.is_none_or(|posted| posted.seq < parent.seq)
+    });
+    let (mut posted_ts, mut anchor_ts) = (None, None);
+    if posted.is_some() || anchor.is_some() {
         let trusted = signer.context("snapshot recovery needs the trusted signer to verify the posted head")?;
-        let dir = &cfg.node.log_dir;
-        let certified = snapshot.context.command_prefix;
-        posted_ts = Some(crate::log_heads::prefix::verify(dir, domain, trusted, posted, at.seq, certified)?.1);
+        let (dir, certified, anchor) = (&cfg.node.log_dir, snapshot.context.command_prefix, anchor.map(|a| a.seq));
+        let verified = crate::log_heads::prefix::verify(dir, domain, trusted, posted, anchor, at.seq, certified)?;
+        (posted_ts, anchor_ts) = (verified.posted_ts, verified.anchor_ts);
     }
     let pair = snapshot.pair.as_ref().context("engine-only cache requires full history migration")?;
     let expected = PrefixId {
@@ -188,6 +197,7 @@ fn candidate(
         })?;
     let mut replayed = replay.finish();
     replayed.ts_at = replayed.ts_at.or(posted_ts);
+    replayed.anchor_ts = replayed.anchor_ts.or(anchor_ts);
     replayed.origin.require_staking_provenance()?;
     // A signed history head the replay never reached, or a catalog tip covering what the log no
     // longer holds, proves the node took commands the log lost. Both take only synced entries, so

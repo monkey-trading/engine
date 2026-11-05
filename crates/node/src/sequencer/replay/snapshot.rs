@@ -106,6 +106,10 @@ impl Replay {
             ..
         } = snapshot;
         let last_checkpoint_ts = Some(engine.now());
+        // The base's own command is the snapshot engine's last: its time is the anchor's when the
+        // vault finalized the base. An anchor under the base is the prefix pass's to stamp.
+        let recovery_anchor_ts =
+            recovery_anchor.as_ref().filter(|anchor| anchor.seq == checkpoint.seq).map(|_| engine.now());
         // The pinned snapshot envelope signs all engine bytes, including legacy staking references.
         // Commands after its checkpoint are checked independently from that checkpoint's link.
         let mut origin = crate::sequencer::origin::Origin::new(Some(domain), trusted_signer);
@@ -130,6 +134,7 @@ impl Replay {
             recovery_anchor_work,
             recovery_parent,
             recovery_origin: parent,
+            recovery_anchor_ts,
             recovery_anchor,
             last_signed_checkpoint: Some(checkpoint),
             last_checkpoint_offset: Some(offset),

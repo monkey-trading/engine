@@ -59,7 +59,10 @@ impl Pending {
     /// earlier epoch's head is no parent under its first-post rule.
     fn from_heads(mut poster: Poster<HeadsRpc>, heads: super::rpc::StartupHeads, freeze: super::FreezeLatch) -> Self {
         poster.confirmed = heads.current.map(|head| (heads.epoch, head));
-        Self { poster, posted: heads.newest, freeze }
+        if let Some((epoch, head)) = heads.newest {
+            info!(epoch, seq = head.seq, "startup checks the log against the head signer epoch {epoch} posted");
+        }
+        Self { poster, posted: heads.newest.map(|(_, head)| head), freeze }
     }
 
     /// The posted head the replay must bind to, if one is posted.
@@ -191,10 +194,12 @@ pub(crate) fn startup(pending: Option<Pending>, log: &crate::sequencer::Replayed
                 .with_context(|| format!("the replayed log holds no command at the posted head's seq {seq}"))
         })
         .inspect_err(|e| error!("refusing to serve: {e:#}"))?;
-        // The stall alarm starts from the checked head, not from this process: the head is no
-        // advance, and trusted time since its command was stamped counts.
-        poster.anchored = Some((posted.seq, log.replayed.ts_at));
     }
+    // The stall alarm starts from the later of the checked head's stamp and the vault-finalized
+    // checkpoint's, not from this process: the checked head is no advance, and trusted time since
+    // that stamp counts, a head of this key posted or not.
+    let stamp = posted.and(log.replayed.ts_at).max(log.replayed.anchor_ts);
+    poster.anchored = Some((posted.map_or(0, |head| head.seq), stamp));
     // The evidence that this log holds an on-chain head: each command's cumulative prefix as the
     // replay authenticated it, seeded before the poster's first read.
     poster.prefix_ring = log.prefix_ring();

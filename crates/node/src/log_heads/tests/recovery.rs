@@ -1,5 +1,6 @@
 //! Recovery behaviors of the poster's loop: heads that land despite a lost response or across
-//! a restart, the stall alarm carried across a restart, same-epoch reorg reparenting, an emptied epoch, the transport-failure alert
+//! a restart, the stall alarm carried across a restart from the checked head or the finalized
+//! checkpoint, same-epoch reorg reparenting, an emptied epoch, the transport-failure alert
 //! episodes' resolutions, and adoption bound to this log's prefixes — a foreign prefix freezes, a
 //! head with no retained evidence is not adopted.
 
@@ -164,14 +165,16 @@ async fn a_restart_remembers_the_authenticated_startup_head() {
 async fn a_restart_counts_trusted_time_since_the_checked_head_in_the_stall_alarm() {
     // Startup checked the posted head at seq 1, stamped four posting intervals ago in trusted
     // time — a restart, or a log cut back to that head, cannot move either. Every post is lost:
-    // once the first has had a retry to land, the stall fires, though this process has only just
-    // started and has seen no advance.
+    // once the first has had a posting interval to be included, the stall fires, though this
+    // process has seen no advance and its own clock has run for one interval only.
     let held = Head { seq: 1, link: B256::from([1; 32]) };
     let chain = FakeChain::new(Some(held));
     chain.fail_next_posts(usize::MAX);
     let (_guard, mut router) = crate::alerts::capture_until_dropped();
-    let (tx, task) = restarted(chain, held);
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    let (tx, task) = restarted(chain, Some(held));
+    tokio::time::sleep(Duration::from_secs(55)).await;
+    assert!(!router.take().iter().any(|line| line.name == "log_head_stalled"), "the first post's interval runs first");
+    tokio::time::sleep(Duration::from_secs(10)).await;
     let lines = router.take();
     assert_eq!(
         lines.iter().filter(|line| line.name == "log_head_stalled" && line.severity.is_some()).count(),
@@ -183,17 +186,41 @@ async fn a_restart_counts_trusted_time_since_the_checked_head_in_the_stall_alarm
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_restart_after_a_long_stop_posts_before_the_carried_time_can_page() {
-    // The same restart, with posts landing: the first post goes out before the carried time
-    // counts, the next read sees it, and nothing pages.
+async fn a_restart_after_a_long_stop_gives_its_first_post_an_interval_to_land() {
+    // The same restart, with the first post's inclusion slow: it lands ten retry ticks after the
+    // send, well inside the posting interval, and nothing pages meanwhile.
     let held = Head { seq: 1, link: B256::from([1; 32]) };
     let chain = FakeChain::new(Some(held));
+    chain.hold_posts();
     let (_guard, mut router) = crate::alerts::capture_until_dropped();
-    let (tx, task) = restarted(chain.clone(), held);
+    let (tx, task) = restarted(chain.clone(), Some(held));
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    let sent = Head { seq: 5, link: B256::from([5; 32]) };
+    assert_eq!(chain.posts_with_parents(), vec![(1, Some(held), sent)]);
+    chain.set_posted(sent);
     tokio::time::sleep(Duration::from_secs(5)).await;
-    assert_eq!(chain.posts_with_parents(), vec![(1, Some(held), Head { seq: 5, link: B256::from([5; 32]) })]);
     let lines = router.take();
     assert!(!lines.iter().any(|line| line.name == "log_head_stalled"), "{lines:?}");
+    drop(tx);
+    assert!(task.await.unwrap().is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_restart_with_no_head_posted_counts_from_the_finalized_checkpoint() {
+    // No head of this key is posted: startup anchored on the vault-finalized checkpoint, stamped
+    // four intervals ago. Every post is lost, and the stall fires once the first post has had its
+    // interval, though a restart reset this process's own clock.
+    let chain = FakeChain::new(None);
+    chain.fail_next_posts(usize::MAX);
+    let (_guard, mut router) = crate::alerts::capture_until_dropped();
+    let (tx, task) = restarted(chain, None);
+    tokio::time::sleep(Duration::from_secs(65)).await;
+    let lines = router.take();
+    assert_eq!(
+        lines.iter().filter(|line| line.name == "log_head_stalled" && line.severity.is_some()).count(),
+        1,
+        "the finalized checkpoint's stamp survives the restart: {lines:?}"
+    );
     drop(tx);
     assert!(task.await.unwrap().is_ok());
 }
@@ -425,9 +452,13 @@ async fn a_head_beyond_the_retained_evidence_is_not_adopted() {
 
 // ── Helpers ──
 
-/// A poster restarted on a log released to seq 5, whose startup checked `held` at seq 1, stamped
-/// four posting intervals before its trusted time.
-fn restarted(chain: FakeChain, held: Head) -> (watch::Sender<Head>, tokio::task::JoinHandle<anyhow::Result<()>>) {
+/// A poster restarted on a log released to seq 5, whose startup checked `held` at seq 1, or, with
+/// no head posted, anchored on the vault-finalized checkpoint, stamped four posting intervals before
+/// its trusted time.
+fn restarted(
+    chain: FakeChain,
+    held: Option<Head>,
+) -> (watch::Sender<Head>, tokio::task::JoinHandle<anyhow::Result<()>>) {
     let (sequencer, _from_poster) = tokio::sync::mpsc::channel(8);
     let (tx, rx) = watch::channel(Head { seq: 5, link: B256::from([5; 32]) });
     let interval = Duration::from_secs(60);
@@ -441,8 +472,8 @@ fn restarted(chain: FakeChain, held: Head) -> (watch::Sender<Head>, tokio::task:
         interval,
         retry: Duration::from_secs(1),
         freeze: crate::log_heads::FreezeLatch::default(),
-        confirmed: Some((1, held)),
-        anchored: Some((held.seq, Some(stamped))),
+        confirmed: held.map(|held| (1, held)),
+        anchored: Some((held.map_or(0, |held| held.seq), Some(stamped))),
         trusted: Some(crate::trusted_time::TrustedClock::new(clock, samples, Duration::from_secs(1))),
         prefix_ring: Default::default(),
     };

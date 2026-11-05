@@ -74,17 +74,26 @@ fn log_with_shutdown_checkpoint(label: &str) -> (std::path::PathBuf, B256, B256,
 
 /// Reads `dir` as recovery does, capturing the link at `target` from the replayed bytes.
 fn recover(dir: &std::path::Path, target: u64) -> crate::sequencer::ReplayedLog {
+    recover_from(dir, None, Some(target))
+}
+
+/// Reads `dir` as recovery does from the vault-finalized `parent`, capturing at `target`.
+fn recover_from(
+    dir: &std::path::Path,
+    parent: Option<crate::log::CheckpointParent>,
+    target: Option<u64>,
+) -> crate::sequencer::ReplayedLog {
     let key = EnclaveKey::test_key();
     Sequencer::read_log_with_authorities(
         dir,
         Some(DOMAIN),
         Some(AccountId(key.address())),
-        None,
+        parent,
         Default::default(),
         |_| {},
         None,
         None,
-        Some(target),
+        target,
     )
     .unwrap()
 }
@@ -208,8 +217,8 @@ fn startup_checks_the_newest_head_of_this_keys_epochs_and_parents_only_on_the_cu
     let rpc_dir = crate::test_support::scratch_dir("log-head-reinstalled-rpc");
     std::fs::create_dir_all(&rpc_dir).unwrap();
     let log = recover(&dir, 1);
-    let start = |current, newest| {
-        let heads = crate::log_heads::rpc::StartupHeads { epoch: 3, current, newest };
+    let start = |current, newest: Option<Head>| {
+        let heads = crate::log_heads::rpc::StartupHeads { epoch: 3, current, newest: newest.map(|head| (2, head)) };
         crate::log_heads::setup::startup(Some(crate::log_heads::setup::Pending::for_test_heads(heads, &rpc_dir)), &log)
     };
     let earlier = Head { seq: 1, link: last_prefix };
@@ -223,4 +232,29 @@ fn startup_checks_the_newest_head_of_this_keys_epochs_and_parents_only_on_the_cu
     // The current epoch's own head parents the first post.
     let setup = start(Some(earlier), Some(earlier)).unwrap().expect("[log_heads] is configured");
     assert_eq!(setup.poster.confirmed, Some((3, earlier)));
+}
+
+#[test]
+fn startup_anchors_the_stall_alarm_on_the_finalized_checkpoint_with_no_head_posted() {
+    // The vault finalized the checkpoint at seq 0, whose command is stamped at 0 ms. With no head
+    // of this key posted, the alarm counts from that stamp; with this log's head at seq 1, stamped
+    // at 1 ms, from the later of the two.
+    let (dir, _, last_prefix, checkpoint) = log_with_shutdown_checkpoint("log-head-finalized-anchor");
+    let rpc_dir = crate::test_support::scratch_dir("log-head-finalized-anchor-rpc");
+    std::fs::create_dir_all(&rpc_dir).unwrap();
+    let parent = crate::log::CheckpointParent { has_checkpoint: true, seq: 0, root: checkpoint.root.parse().unwrap() };
+    let start = |log: &crate::sequencer::ReplayedLog, posted| {
+        let pending = crate::log_heads::setup::Pending::for_test(posted, &rpc_dir);
+        crate::log_heads::setup::startup(Some(pending), log)
+            .unwrap()
+            .expect("[log_heads] is configured")
+            .poster
+            .anchored
+    };
+    let unanchored = recover_from(&dir, None, None);
+    assert_eq!(start(&unanchored, None), Some((0, None)), "nothing anchors a log the vault has not finalized");
+    let finalized = recover_from(&dir, Some(parent), None);
+    assert_eq!(start(&finalized, None), Some((0, Some(0))), "the finalized checkpoint anchors it");
+    let posted = recover_from(&dir, Some(parent), Some(1));
+    assert_eq!(start(&posted, Some(Head { seq: 1, link: last_prefix })), Some((1, Some(1))));
 }

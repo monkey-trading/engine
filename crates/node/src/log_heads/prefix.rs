@@ -14,7 +14,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::AccountId;
+use engine_core::types::{AccountId, Millis};
 use tracing::error;
 
 use super::Head;
@@ -34,30 +34,39 @@ impl std::fmt::Display for Rollback {
 
 impl std::error::Error for Rollback {}
 
+/// What the prefix pass binds to the snapshot: the running digest at the base, and the sequenced
+/// times of the commands at the posted seq and at the vault-finalized checkpoint, where the stall
+/// alarm starts.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Verified {
+    pub base_prefix: [u8; 32],
+    pub posted_ts: Option<Millis>,
+    pub anchor_ts: Option<Millis>,
+}
+
 /// Whether the on-disk log through the snapshot base `base` carries the posted head's cumulative
-/// command-prefix digest and the snapshot's certified command prefix, verified from the log's
-/// start along `signer`'s seal chain. Only the command-prefix hash and the seals are checked — the
-/// engine is not applied — and the pass stops at the base: the boundary is checked before an
-/// entry beyond it is processed, so a nonempty suffix never contaminates the comparison. Returns
-/// the running digest at the base and the sequenced time of the command at the posted seq, where
-/// the stall alarm starts.
+/// command-prefix digest, if a head is posted, and the snapshot's certified command prefix,
+/// verified from the log's start along `signer`'s seal chain; and the stamp of the command at
+/// `anchor`, the vault-finalized checkpoint's seq. Only the command-prefix hash and the seals are
+/// checked — the engine is not applied — and the pass stops at the base: the boundary is checked
+/// before an entry beyond it is processed, so a nonempty suffix never contaminates the comparison.
 /// Error cases:
 /// - the log cannot be opened or a seal is invalid, an unsealed span lacks the trusted authority,
-///   the log holds no command at the posted seq or the base, or the posted digest or the command
-///   prefix differs (the Critical names the cause)
+///   the log holds no command at the posted seq, the anchor, or the base, or the posted digest or
+///   the command prefix differs (the Critical names the cause)
 pub(crate) fn verify(
     dir: &Path,
     domain: CheckpointDomain,
     signer: AccountId,
-    posted: Head,
+    posted: Option<Head>,
+    anchor: Option<u64>,
     base: u64,
     certified_prefix: [u8; 32],
-) -> anyhow::Result<([u8; 32], engine_core::types::Millis)> {
+) -> anyhow::Result<Verified> {
     let mut origin = Origin::new(Some(domain), Some(signer));
     let mut command_prefix = [0u8; 32];
     let mut previous = None;
-    let mut posted_prefix = None;
-    let mut base_prefix = None;
+    let (mut posted_prefix, mut anchor_ts, mut base_prefix) = (None, None, None);
     let result = SegmentedLog::open(dir, |entry| {
         let offset = log::offset_of(previous, &entry)?;
         if offset.seq > base {
@@ -72,10 +81,14 @@ pub(crate) fn verify(
                 origin.command(command, ProtocolVersion::LATEST)?;
                 command_prefix =
                     crate::log::extend_command_prefix(command_prefix, crate::log::command_digest(command)?);
-                if command.sequenced.seq == posted.seq {
-                    posted_prefix = Some((command_prefix, command.sequenced.ts));
+                let (seq, ts) = (command.sequenced.seq, command.sequenced.ts);
+                if posted.is_some_and(|posted| posted.seq == seq) {
+                    posted_prefix = Some((command_prefix, ts));
                 }
-                if command.sequenced.seq == base {
+                if anchor == Some(seq) {
+                    anchor_ts = Some(ts);
+                }
+                if seq == base {
                     base_prefix = Some(command_prefix);
                 }
             }
@@ -96,19 +109,26 @@ pub(crate) fn verify(
     // Unsealed spans the trusted authority does not cover refuse the start, as writable
     // recovery's coverage check does.
     origin.require_audit(signer).context("verifying the on-chain log head against the log's prefix")?;
-    let (prefix, posted_ts) = posted_prefix
-        .with_context(|| format!("the log holds no command at the on-chain log head's seq {}", posted.seq))?;
-    if prefix != posted.link {
-        error!(
-            alert = "log_rollback",
-            seq = posted.seq,
-            posted_link = %posted.link,
-            log_prefix = %engine_core::eip712::B256::from(prefix),
-            "the on-chain log head's cumulative prefix differs at seq {} at or below the snapshot base: \
-             refusing to start",
-            posted.seq
-        );
-        return Err(anyhow::Error::new(Rollback));
+    let mut posted_ts = None;
+    if let Some(posted) = posted {
+        let (prefix, ts) = posted_prefix
+            .with_context(|| format!("the log holds no command at the on-chain log head's seq {}", posted.seq))?;
+        if prefix != posted.link {
+            error!(
+                alert = "log_rollback",
+                seq = posted.seq,
+                posted_link = %posted.link,
+                log_prefix = %engine_core::eip712::B256::from(prefix),
+                "the on-chain log head's cumulative prefix differs at seq {} at or below the snapshot base: \
+                 refusing to start",
+                posted.seq
+            );
+            return Err(anyhow::Error::new(Rollback));
+        }
+        posted_ts = Some(ts);
+    }
+    if let Some(seq) = anchor {
+        anchor_ts.with_context(|| format!("the log holds no command at the finalized checkpoint's seq {seq}"))?;
     }
     if command_prefix != certified_prefix {
         error!(
@@ -119,7 +139,8 @@ pub(crate) fn verify(
         );
         return Err(anyhow::Error::new(Rollback));
     }
-    Ok((base_prefix.context("the log holds no command at the snapshot base")?, posted_ts))
+    let base_prefix = base_prefix.context("the log holds no command at the snapshot base")?;
+    Ok(Verified { base_prefix, posted_ts, anchor_ts })
 }
 
 #[cfg(test)]
@@ -189,10 +210,26 @@ mod tests {
     fn the_prefix_pass_accepts_the_matching_head_and_returns_the_base_prefix() {
         // The fixture stamps each command at its seq: the pass returns the posted command's time.
         let (dir, signer, at_zero, at_one, prefix) = sealed_log("prefix-accept", false);
-        let (base, ts) = verify(&dir, DOMAIN, signer, Head { seq: 0, link: at_zero.into() }, 1, prefix).unwrap();
-        assert_eq!((base, ts), (at_one, 0), "the pass returns the cumulative prefix at the base");
-        let (base, ts) = verify(&dir, DOMAIN, signer, Head { seq: 1, link: at_one.into() }, 1, prefix).unwrap();
-        assert_eq!((base, ts), (at_one, 1));
+        let verified = verify(&dir, DOMAIN, signer, Some(Head { seq: 0, link: at_zero.into() }), None, 1, prefix);
+        let expected = Verified { base_prefix: at_one, posted_ts: Some(0), anchor_ts: None };
+        assert_eq!(verified.unwrap(), expected, "the pass returns the cumulative prefix at the base");
+        let verified = verify(&dir, DOMAIN, signer, Some(Head { seq: 1, link: at_one.into() }), None, 1, prefix);
+        assert_eq!(verified.unwrap(), Verified { base_prefix: at_one, posted_ts: Some(1), anchor_ts: None });
+    }
+
+    #[test]
+    fn the_prefix_pass_stamps_the_finalized_checkpoint_without_a_posted_head() {
+        // No head is posted: the pass still binds the on-disk prefix to the snapshot and returns
+        // the stamp of the command the vault-finalized checkpoint covers.
+        let (dir, signer, _, at_one, prefix) = sealed_log("prefix-anchor", false);
+        for anchor in [0, 1] {
+            let verified = verify(&dir, DOMAIN, signer, None, Some(anchor), 1, prefix).unwrap();
+            let stamp = i64::try_from(anchor).unwrap();
+            assert_eq!(verified, Verified { base_prefix: at_one, posted_ts: None, anchor_ts: Some(stamp) });
+        }
+        let foreign = [9; 32];
+        let error = verify(&dir, DOMAIN, signer, None, Some(0), 1, foreign).unwrap_err();
+        assert!(error.is::<Rollback>(), "a foreign prefix refuses the start: {error:#}");
     }
 
     #[test]
@@ -200,17 +237,18 @@ mod tests {
         // A nonempty suffix must not contaminate the certified-prefix comparison: the boundary is
         // checked before the first command beyond the base is processed.
         let (dir, signer, at_zero, at_one, prefix) = sealed_log("prefix-suffix", true);
-        let (base, _) = verify(&dir, DOMAIN, signer, Head { seq: 0, link: at_zero.into() }, 1, prefix).unwrap();
-        assert_eq!(base, at_one);
-        let (base, _) = verify(&dir, DOMAIN, signer, Head { seq: 1, link: at_one.into() }, 1, prefix).unwrap();
-        assert_eq!(base, at_one);
+        let verified = verify(&dir, DOMAIN, signer, Some(Head { seq: 0, link: at_zero.into() }), None, 1, prefix);
+        assert_eq!(verified.unwrap().base_prefix, at_one);
+        let verified = verify(&dir, DOMAIN, signer, Some(Head { seq: 1, link: at_one.into() }), None, 1, prefix);
+        assert_eq!(verified.unwrap().base_prefix, at_one);
     }
 
     #[test]
     fn the_prefix_pass_refuses_a_divergent_posted_head() {
         let (dir, signer, _, _, prefix) = sealed_log("prefix-divergent", false);
         for seq in [0, 1] {
-            let error = verify(&dir, DOMAIN, signer, Head { seq, link: B256::from([4; 32]) }, 1, prefix).unwrap_err();
+            let error = verify(&dir, DOMAIN, signer, Some(Head { seq, link: B256::from([4; 32]) }), None, 1, prefix)
+                .unwrap_err();
             assert!(error.is::<Rollback>(), "a divergent posted head refuses: {error:#}");
         }
     }
@@ -221,7 +259,8 @@ mod tests {
         // A certified prefix from another history (even one differing by a byte) refuses: the
         // scanned bytes are not bound to the selected snapshot.
         let foreign = crate::log::extend_command_prefix(prefix, [9; 32]);
-        let error = verify(&dir, DOMAIN, signer, Head { seq: 0, link: at_zero.into() }, 1, foreign).unwrap_err();
+        let error =
+            verify(&dir, DOMAIN, signer, Some(Head { seq: 0, link: at_zero.into() }), None, 1, foreign).unwrap_err();
         assert!(error.is::<Rollback>(), "an uncertified command prefix refuses: {error:#}");
     }
 
@@ -256,7 +295,7 @@ mod tests {
         }
         writer.flush().unwrap();
         let posted = Head { seq: 1, link: command_prefix.into() };
-        let error = verify(&dir, DOMAIN, signer, posted, 1, command_prefix).unwrap_err();
+        let error = verify(&dir, DOMAIN, signer, Some(posted), None, 1, command_prefix).unwrap_err();
         assert!(!error.is::<Rollback>(), "a seal failure is a plain refusal, not a digest mismatch: {error:#}");
         assert!(format!("{error:#}").contains("prefix"), "{error:#}");
     }

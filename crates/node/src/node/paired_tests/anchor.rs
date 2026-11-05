@@ -34,7 +34,7 @@ impl CheckpointChain for Finalized {
 
 #[tokio::test]
 async fn paired_recovery_hands_the_finalized_checkpoint_to_the_preflight_wherever_it_lies() {
-    let (cfg, checkpoints, base) = gated_log().await;
+    let (cfg, checkpoints, base) = gated_log("paired-anchor").await;
     let caches = snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap();
     let newest = seq_of(&caches[0]);
     let in_work = checkpoints
@@ -69,11 +69,12 @@ async fn paired_recovery_hands_the_finalized_checkpoint_to_the_preflight_whereve
     assert_eq!(files(&root), before, "the refusal changed no byte");
 }
 
-/// A gated paired node's log: the chain finalizes its first checkpoint, every later one stays
-/// outstanding work, and history catches up after each command so every checkpoint is captured.
-/// Returns the stopped node's config, every checkpoint in log order, and the finalized one.
-async fn gated_log() -> (NodeConfig, Vec<Checkpoint>, Checkpoint) {
-    let mut cfg = configuration("paired-anchor");
+/// A gated paired node's log in a directory named for `label`: the chain finalizes its first
+/// checkpoint, every later one stays outstanding work, and history catches up after each command so
+/// every checkpoint is captured. Returns the stopped node's config, every checkpoint in log order,
+/// and the finalized one.
+pub(super) async fn gated_log(label: &str) -> (NodeConfig, Vec<Checkpoint>, Checkpoint) {
+    let mut cfg = configuration(label);
     cfg.node.checkpoint_every = 2;
     let (work, mut sent) = mpsc::channel(1024);
     let node = Node::start_gated(cfg, CheckpointParent::default(), work).await.unwrap();
@@ -150,7 +151,7 @@ async fn recover(cfg: &NodeConfig, finalized: &Checkpoint) -> anyhow::Result<Opt
 }
 
 /// A fresh node config holding copies of `cfg`'s log and cache directories.
-fn copy_of(cfg: &NodeConfig, case: &str) -> NodeConfig {
+pub(super) fn copy_of(cfg: &NodeConfig, case: &str) -> NodeConfig {
     let mut copy = configuration(&format!("paired-anchor-{case}"));
     copy.node.checkpoint_every = cfg.node.checkpoint_every;
     let dirs = [
@@ -182,6 +183,6 @@ fn files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 /// The checkpoint seq a cache file is named for.
-fn seq_of(path: &Path) -> u64 {
+pub(super) fn seq_of(path: &Path) -> u64 {
     path.file_name().unwrap().to_str().unwrap()[..20].parse().unwrap()
 }
