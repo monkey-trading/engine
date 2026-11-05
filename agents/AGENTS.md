@@ -32,7 +32,11 @@ an index: load only the rule whose hint matches the current action.
   is logged and once the mirror's finalised block time reaches it, `RotateOperator` refused while rotation is on;
   from `V48`, the timelock-only `installOperator` fallback mirrored the same way while rotation is off, its key in
   effect seven days after it is logged with no finalised frontier, `tests/operator_election.rs` and
-  `tests/operator_install.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
+  `tests/operator_install.rs`; from `V51`, daily turns in `turns.rs`: the schedule's rotation sets and
+  turn assignments mirrored the same way, a turn's admin key from its boundary or, mirrored later, from
+  its mirror, refused (`turn_refused`) unless a set mirrored seven days earlier names it, and the
+  member's `TurnTaken`, from which the operator's share counts its time in office to its turn's end,
+  `tests/daily_turns.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
@@ -139,7 +143,11 @@ an index: load only the rule whose hint matches the current action.
   Roughtime servers with sequenced time held to monotonic time's pace (`clock.rs`), the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
   authenticated in engine state rather than trusted from the host cursor, and from V37 the operator
-  registry's rotation switches and elections in the same proven blocks, `custody/registry.rs`), the
+  registry's rotation switches and elections in the same proven blocks, and from V51 its schedule's
+  rotation sets and turns once the schedule is read to name the registry, `custody/registry.rs`; a
+  daily turn's member takes the keys from the finalised schedule once trusted time reaches the turn's
+  boundary, in the generation the schedule fixed, with no chain wait after it (`handover/turns.rs`),
+  and logs `TurnTaken` with its first command in each turn, `sequencer/turns.rs`), the
   standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
   segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up,
   taking only entries whose command seals continue the copy and raising `operator_log_rollback`, with
@@ -148,7 +156,8 @@ an index: load only the rule whose hint matches the current action.
   the latest checkpoint the vault accepted, drops the unsigned tail, and exits for a `--new-key`
   start, which serves only its attestation until the timelock installs the registered enclave;
   `engine replay --attestation` pairs one attestation with each signer), the
-  `/v1/operator` read of the key in effect, its pending rotation, and the last election, the
+  `/v1/operator` read of the key in effect, its pending rotation, the last election, and the rotation
+  sets, today's and tomorrow's turns and the turn history paged from the log (`stats/turns.rs`), the
   `/v1/operators` list of the registry's approved candidates with their stake and role (`custody/operators/`:
   `RegistryLens` read over its own custody quorum at one final block every `api.operators_interval`, the answer
   naming the block; 404 without `custody.evm.staking.registry.lens`), the seed relayer

@@ -4,11 +4,14 @@
 //! finalised schedule already names it: the incumbent admits, and the successor accepts, the turn's
 //! member from that once trusted time reaches the boundary, and neither waits on chain after it.
 
+use std::sync::Arc;
+
 use anyhow::Context;
 use engine_core::types::Millis;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::checkpoints::{CheckpointChain, Observation, ScheduledTurn};
+use crate::config::NodeConfig;
 use crate::handover::{ensure_named, folded_release};
 use crate::tee::sealing::Release;
 
@@ -58,4 +61,45 @@ pub(crate) async fn scheduled_for(
         );
     }
     Ok(turn)
+}
+
+/// The turn the finalised schedule names for `release` once trusted time, from a one-off Roughtime
+/// sample, has reached its boundary; `None` when it names none. A vault whose
+/// registry names no schedule, or a schedule that drew no turn, needs no sample.
+/// Error cases:
+/// - the vault cannot be read, or, with a turn drawn, no trusted time sample can be taken
+pub(crate) async fn at_start(
+    cfg: &NodeConfig,
+    vault: &impl CheckpointChain,
+    release: &Release,
+) -> anyhow::Result<Option<ScheduledTurn>> {
+    let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+    if vault.scheduled_turn(&at, engine_core::types::MAX_STAMP_MS).await?.is_none() {
+        return Ok(None);
+    }
+    let clock: Arc<dyn crate::clock::Clock> = Arc::new(crate::clock::SystemClock);
+    let sample = crate::trusted_time::sample_once(&cfg.time, &clock).await.context("taking a trusted time sample")?;
+    let reached = sample.earliest_ms.saturating_add(sample.at.elapsed().as_millis() as Millis);
+    scheduled_for(vault, &at, release, Some(reached)).await
+}
+
+/// Whether the finalised schedule names `sealed` in `generation` for the turn trusted time `reached_ms`
+/// has reached; `false` when it cannot be read.
+pub(crate) async fn names(
+    vault: &impl CheckpointChain,
+    sealed: &Release,
+    generation: u64,
+    reached_ms: Option<Millis>,
+) -> bool {
+    let turn = async {
+        let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+        scheduled_for(vault, &at, sealed, reached_ms).await
+    };
+    match turn.await {
+        Ok(turn) => turn.is_some_and(|turn| turn.generation == generation),
+        Err(e) => {
+            warn!("reading the operator schedule failed: {e:#}");
+            false
+        }
+    }
 }

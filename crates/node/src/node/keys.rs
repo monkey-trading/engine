@@ -163,7 +163,7 @@ async fn obtain_with(
     // From a daily turn's boundary the vault names its member's release before finality shows it:
     // the finalised schedule's turn at trusted time names this release's generation (`handover::turns`).
     let turn = match vault {
-        Some(vault) if cfg.operator.rotation_enabled => scheduled_turn(cfg, vault, &release).await?,
+        Some(vault) if cfg.operator.rotation_enabled => crate::handover::turns::at_start(cfg, vault, &release).await?,
         _ => None,
     };
     let generation = turn.as_ref().map(|turn| turn.generation).or(current.map(|current| current.generation));
@@ -245,22 +245,6 @@ async fn obtain_with(
     };
     let keys = store.keys();
     Ok((keys.enclave_key()?, TlsIdentity::new(keys.tls_key()?)?, Some(store)))
-}
-
-/// The turn the finalised schedule names for `release` once trusted time, from a one-off Roughtime
-/// sample, has reached its boundary; `None` when it names none (see `handover::turns`).
-/// Error cases:
-/// - no trusted time sample can be taken, or the vault cannot be read
-async fn scheduled_turn(
-    cfg: &NodeConfig,
-    vault: &impl CheckpointChain,
-    release: &Release,
-) -> anyhow::Result<Option<crate::checkpoints::ScheduledTurn>> {
-    let clock: Arc<dyn crate::clock::Clock> = Arc::new(crate::clock::SystemClock);
-    let sample = crate::trusted_time::sample_once(&cfg.time, &clock).await.context("taking a trusted time sample")?;
-    let reached = sample.earliest_ms.saturating_add(sample.at.elapsed().as_millis() as engine_core::types::Millis);
-    let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
-    crate::handover::turns::scheduled_for(vault, &at, release, Some(reached)).await
 }
 
 /// The source of `provider`'s quotes. With real attestation nothing is attested before the guest
@@ -420,7 +404,7 @@ pub(super) async fn watch_release(
             }
         };
         let named = (current.id == sealed.id() && current.generation == generation)
-            || scheduled_names(&vault, &sealed, generation, trusted.reached_ms()).await;
+            || crate::handover::turns::names(&vault, &sealed, generation, trusted.reached_ms()).await;
         if !named && !superseded {
             error!(
                 alert = "release_superseded",
@@ -435,27 +419,6 @@ pub(super) async fn watch_release(
             info!(alert_resolved = "release_superseded", "the vault names this release again");
         }
         superseded = !named;
-    }
-}
-
-/// Whether the finalised schedule names `sealed` in `generation` for the turn trusted time `reached_ms`
-/// has reached; `false` when it cannot be read.
-async fn scheduled_names(
-    vault: &impl CheckpointChain,
-    sealed: &Release,
-    generation: u64,
-    reached_ms: Option<engine_core::types::Millis>,
-) -> bool {
-    let turn = async {
-        let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
-        crate::handover::turns::scheduled_for(vault, &at, sealed, reached_ms).await
-    };
-    match turn.await {
-        Ok(turn) => turn.is_some_and(|turn| turn.generation == generation),
-        Err(e) => {
-            warn!("reading the operator schedule failed: {e:#}");
-            false
-        }
     }
 }
 

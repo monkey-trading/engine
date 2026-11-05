@@ -36,7 +36,6 @@ sol! {
         bytes32 release,
         uint64 generation
     );
-    function registry() external view returns (address);
 }
 
 /// The topics of the registry events the engine mirrors.
