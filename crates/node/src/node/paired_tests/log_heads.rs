@@ -1,6 +1,7 @@
 //! The posted-head check through paired recovery and the start: a posted head at or under the
 //! snapshot base is bound to the on-disk prefix before the snapshot is accepted, a conflict refuses
-//! recovery rather than falling back, and the start then accepts the head on its seq.
+//! recovery rather than falling back, and the start then accepts the head on its seq; with no head
+//! posted, recovery stamps the vault-finalized checkpoint for the stall alarm.
 
 use alloy::primitives::B256;
 use engine_core::types::AccountId;
@@ -60,5 +61,80 @@ async fn paired_recovery_binds_a_posted_head_under_the_base_to_the_on_disk_prefi
         let foreign = Head { seq, link: B256::from([0x5a; 32]) };
         let error = recover(Some(foreign)).err().expect("a foreign prefix under the base refuses recovery");
         assert!(error.is::<Rollback>(), "a refusal, not a rejected cache to fall back from: {error:#}");
+    }
+}
+
+#[tokio::test]
+async fn paired_recovery_stamps_the_finalized_checkpoint_for_the_stall_alarm() {
+    // With `[log_heads]` and no head of this key posted, the stall alarm's anchor is the
+    // vault-finalized checkpoint's stamp. Paired recovery takes it from the prefix pass for one under
+    // the cache's base, from the cache itself at its base, and from the suffix replay past it — the
+    // value the full replay gives each time. Without `[log_heads]`, or with a head posted, the pass
+    // never runs for it.
+    let (cfg, checkpoints, base) = super::anchor::gated_log("paired-log-head-anchor").await;
+    let caches = crate::snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap();
+    let newest = super::anchor::seq_of(&caches[0]);
+    let in_work = checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.seq > base.seq && checkpoint.seq < newest)
+        .expect("the newest cache carries outstanding work after its base");
+    let at_cache = checkpoints.iter().find(|checkpoint| checkpoint.seq == newest).expect("the cache's checkpoint");
+    let signer = Some(AccountId(EnclaveKey::test_key().address()));
+    let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().unwrap() };
+    let full = |dir: &std::path::Path, parent, capture| {
+        let replayed = Sequencer::read_log_with_authorities(
+            dir,
+            Some(domain),
+            signer,
+            parent,
+            Default::default(),
+            |_| {},
+            None,
+            None,
+            capture,
+        )
+        .unwrap()
+        .replayed;
+        (replayed.anchor_ts, replayed.link_at)
+    };
+    let cases = [("base", &base), ("work", in_work), ("cache", at_cache), ("suffix", checkpoints.last().unwrap())];
+    for (case, finalized) in cases {
+        let mut copy = super::anchor::copy_of(&cfg, &format!("heads-{case}"));
+        if case == "suffix" {
+            // Recovery then uses an earlier cache, so the finalized checkpoint lies in the suffix.
+            for path in crate::snapshot::candidates_readonly(copy.snapshots.as_ref().unwrap()).unwrap() {
+                if super::anchor::seq_of(&path) >= finalized.seq {
+                    std::fs::write(path, b"{").unwrap();
+                }
+            }
+        }
+        let parent = Some(crate::log::CheckpointParent {
+            has_checkpoint: true,
+            seq: finalized.seq,
+            root: finalized.root.parse().unwrap(),
+        });
+        let recover = |copy: &crate::config::NodeConfig, posted| {
+            let (log, _) = Sequencer::read_paired_log(copy, signer, parent, Default::default(), None, posted, |_| {})
+                .unwrap_or_else(|error| panic!("{case}: {error:#}"));
+            assert!(log.snapshot_seq.is_some(), "{case}: a paired cache serves recovery");
+            log.replayed.anchor_ts
+        };
+        let (stamp, _) = full(&copy.node.log_dir, parent, None);
+        assert!(stamp.is_some(), "{case}: the full replay stamps the finalized checkpoint");
+        if case == "work" {
+            assert_eq!(recover(&copy, None), None, "without [log_heads] no pass stamps it");
+        }
+        copy.log_heads = Some(crate::config::LogHeadsSection {
+            contract: alloy::primitives::Address::repeat_byte(0xaa),
+            relayer: alloy::primitives::Address::repeat_byte(0xbb),
+            interval: std::time::Duration::from_secs(3600),
+        });
+        assert_eq!(recover(&copy, None), stamp, "{case}: no head posted");
+        if case == "work" {
+            // This log's head, posted one seq before the checkpoint, anchors instead.
+            let older = finalized.seq - 1;
+            let link = full(&copy.node.log_dir, None, Some(older)).1.expect("the log holds the head's seq");
+            assert_eq!(recover(&copy, Some(Head { seq: older, link })), None, "a posted head needs no anchor pass");
+        }
     }
 }

@@ -11,7 +11,7 @@ use engine_core::types::{AccountId, MarketId, Millis};
 use engine_core::{Engine, Fixed};
 
 use crate::checkpoints::accounting::Accounting;
-use crate::log::{self, CheckpointDomain, LogEntry, SegmentedLog};
+use crate::log::{self, CheckpointDomain, LogEntry};
 use crate::sequencer::{GenesisProgress, SignedWithdrawal};
 use crate::snapshot::RecoveryBase;
 
@@ -71,6 +71,10 @@ pub struct Replayed {
     pub link_at: Option<engine_core::eip712::B256>,
     /// The sequenced time of the command at the posted head's seq: where the stall alarm starts.
     pub ts_at: Option<Millis>,
+    /// The sequenced time of the command the vault-finalized checkpoint covers, where the replay or
+    /// its snapshot reached it, or, with `[log_heads]`, the snapshot's prefix pass did for one under
+    /// its base with no head posted: the stall alarm's anchor while no head of this key is posted.
+    pub anchor_ts: Option<Millis>,
 }
 
 /// Re-applies a log entry by entry, as it is read, and checks every checkpoint root, logged event,
@@ -93,6 +97,8 @@ pub(super) struct Replay {
     recovery_parent: Option<crate::log::CheckpointParent>,
     recovery_origin: Option<crate::log::CheckpointParent>,
     recovery_anchor: Option<crate::log::Checkpoint>,
+    /// The sequenced time of the command the vault-finalized checkpoint covers.
+    recovery_anchor_ts: Option<Millis>,
     recovery_anchor_work: Option<crate::checkpoints::Work>,
     recovery_work: Vec<crate::checkpoints::Work>,
     activations: Vec<(ProtocolVersion, u64)>,
@@ -362,6 +368,7 @@ impl Replay {
                     parent.has_checkpoint && parent.seq == cp.seq && parent.root.to_string() == cp.root
                 }) {
                     self.recovery_anchor = Some(cp.clone());
+                    self.recovery_anchor_ts = Some(engine.now());
                     self.recovery_anchor_work =
                         Some(crate::checkpoints::Work::capture(cp.clone(), self.accounting, engine));
                 }
@@ -439,6 +446,7 @@ impl Replay {
             legacy_approvals: self.legacy_approvals,
             link_at: self.captured_link,
             ts_at: self.captured_ts,
+            anchor_ts: self.recovery_anchor_ts,
             prefix_ring: self.prefix_ring,
         }
     }
@@ -448,28 +456,6 @@ pub(crate) use paths::replay_path_with_authorities;
 pub use paths::{
     replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust, replay_with_signer,
 };
-
-/// A log read from disk and replayed, before anything is written to it.
-pub struct ReplayedLog {
-    pub(crate) log: SegmentedLog,
-    pub(crate) replayed: Replayed,
-    pub(crate) snapshot_seq: Option<u64>,
-    pub(crate) legacy_authorizations: crate::sequencer::legacy::Authorizations,
-}
-
-impl ReplayedLog {
-    /// The cumulative command-prefix digest after the log's last command: the head commitment this
-    /// node publishes on chain. A trailing checkpoint does not change it.
-    pub fn head_link(&self) -> engine_core::eip712::B256 {
-        engine_core::eip712::B256::from(self.replayed.command_prefix)
-    }
-
-    /// The replay-authenticated prefix ring: the last `crate::log::PrefixRing::CAPACITY`
-    /// (seq, cumulative-prefix) pairs, the poster's adoption evidence for on-chain heads.
-    pub(crate) fn prefix_ring(&self) -> crate::log::PrefixRing {
-        self.replayed.prefix_ring.clone()
-    }
-}
 
 /// Replays `entries`, a whole log held in memory (see `Replay`).
 /// Error cases:
@@ -487,6 +473,8 @@ mod auth_tests;
 mod authorities;
 mod marks;
 mod paths;
+mod replayed_log;
+pub use replayed_log::ReplayedLog;
 mod signed;
 mod snapshot;
 mod stats;

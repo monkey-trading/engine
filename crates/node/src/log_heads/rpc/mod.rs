@@ -57,10 +57,10 @@ pub(crate) struct StartupHeads {
     pub epoch: u64,
     /// The current epoch's posted head: the parent the poster's first post names.
     pub current: Option<Head>,
-    /// The newest head the chain holds over this log for the starting key: the current epoch's or,
-    /// while it holds none, the newest of the earlier epochs that key signed back to the first
-    /// epoch another key signed.
-    pub newest: Option<Head>,
+    /// The newest head the chain holds over this log for the starting key, with the epoch that
+    /// posted it: the current epoch's or, while it holds none, the newest of the earlier epochs
+    /// that key signed back to the first epoch another key signed.
+    pub newest: Option<(u64, Head)>,
 }
 
 /// `posted`, and, while the current epoch holds no head and `signer` is its signer, the walk back
@@ -86,7 +86,7 @@ pub(crate) async fn startup_heads<R: VaultReader + Sync>(
         signerAtEpochCall::abi_decode_returns(&out).context("decoding the vault's signer at an epoch")
     };
     let current = posted.head.map(|(seq, link)| Head { seq, link });
-    let (mut newest, mut epoch) = (current, posted.epoch);
+    let (mut newest, mut epoch) = (current.map(|head| (posted.epoch, head)), posted.epoch);
     if newest.is_none() && signer_at(epoch).await? == signer {
         while newest.is_none() && epoch > 1 {
             epoch -= 1;
@@ -96,7 +96,7 @@ pub(crate) async fn startup_heads<R: VaultReader + Sync>(
             let out = quorum.call_as("earlier_log_head", at, contract, headsCall { epoch }.abi_encode().into()).await?;
             let held = headsCall::abi_decode_returns(&out).context("decoding an earlier epoch's log head")?;
             // Seq 0 is the unattested empty log, as in the current epoch's read.
-            newest = (held.seq > 0).then_some(Head { seq: held.seq, link: held.link });
+            newest = (held.seq > 0).then_some((epoch, Head { seq: held.seq, link: held.link }));
         }
     }
     Ok(StartupHeads { epoch: posted.epoch, current, newest })

@@ -288,6 +288,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/origin.rs` — command-origin coverage shared by replay and writable recovery
 - `src/sequencer/replay.rs` — log replay, which recovery and `engine replay` share
 - `src/sequencer/replay/snapshot.rs` — replay restored from a verified state snapshot
+- `src/sequencer/replay/replayed_log.rs` — a log read and replayed before anything is written, and
+  the head link and prefix ring the log-head poster reads from it
 - `src/sequencer/house.rs` — the latest checkpoint and the seq of the latest `SetParams`, which `GET /v1/house/state` answers from
 - `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, and after a restart
 - `src/sequencer/replay/authorities.rs` — accepted historical signers for checkpoints a retired key signed
@@ -342,7 +344,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   publication tests
 - `src/node/paired_tests/` — paired recovery through node startup: restart and fallback, crash
   recovery, the restart dev scenario (`restart.rs`), the on-chain anchor preflight (`anchor.rs`), a
-  posted log head under the snapshot base bound to the on-disk prefix (`log_heads.rs`),
+  posted log head under the snapshot base bound to the on-disk prefix, and the finalized
+  checkpoint's stamp where none is posted (`log_heads.rs`),
   custody receipts and their history across a cache restart (`custody.rs`), publication faults,
   public history pages, and the harness
 - `src/sequencer/required.rs` — client auth, the operator, protocol activation, and genesis, which
@@ -794,7 +797,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   check that refuses a log the posted head does not hold
 - `src/log_heads/prefix.rs` — the snapshot-scan prefix pass: extends the running command-prefix
   digest over each sealed command entry up to the snapshot base, refuses a prefix the snapshot
-  does not certify, and returns the posted command's stamp
+  does not certify, and returns the stamps of the posted command and of the command a
+  vault-finalized checkpoint under the base covers
 - `src/log_heads/rpc/mod.rs` — the LogHeads chain access: strict-majority quorum reads of the signer
   epoch and posted head at one agreed latest block, the startup walk back through the epochs the
   starting key signed at that block, posts through the checkpoint endpoint on the dedicated relayer,
@@ -812,12 +816,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   snapshot base), refuses a log the posted head does not hold within the custody finality budget —
   the current epoch's head or, while it holds none, the newest head of the earlier epochs the
   starting key signed — and builds the poster with the watch at the recovered head and its stall
-  alarm counting from the checked head's stamp
+  alarm counting from the checked head's stamp, or the vault-finalized checkpoint's with no head
+  posted
 - `src/log_heads/tests/mod.rs` — the poster's loop tests: pacing, lost responses, rollback freezes
   at a higher or forked posted head, stall and transport-failure alert episodes, and the reorg
   reparenting
 - `src/log_heads/tests/recovery.rs` — recovery behaviors: heads that land despite a lost response
-  or across a restart, the stall alarm counting across a restart, same-epoch reorg reparenting, an emptied epoch, the transport episodes'
+  or across a restart, the stall alarm counting across a restart from the checked head or the
+  finalized checkpoint, same-epoch reorg reparenting, an emptied epoch, the transport episodes'
   resolutions, and adoption by this log's prefixes: a foreign prefix freezes, a head with no
   retained evidence is not adopted
 - `src/log_heads/tests/fake_chain.rs` — the tests' fake chain: the posted head, epoch, and failures

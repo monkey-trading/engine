@@ -161,7 +161,7 @@ async fn startup_walks_back_to_the_newest_head_an_unbroken_run_of_this_keys_epoc
     let quorum = quorum(&chains).await;
     let heads = crate::log_heads::startup_heads(&quorum, LOG_HEADS, VAULT, KEY, CHAIN_ID).await.unwrap();
     assert_eq!((heads.epoch, heads.current), (3, None));
-    assert_eq!(heads.newest, Some(crate::log_heads::Head { seq: 2, link: B256::from([2; 32]) }));
+    assert_eq!(heads.newest, Some((1, crate::log_heads::Head { seq: 2, link: B256::from([2; 32]) })));
     for chain in &chains {
         let reads = chain.0.lock().unwrap().epochs.reads.clone();
         assert!(!reads.is_empty() && reads.iter().all(|(block, _)| *block == 10), "{reads:?}");
@@ -199,7 +199,7 @@ async fn startup_reads_no_earlier_epoch_while_the_current_one_holds_a_head() {
     let quorum = quorum(&chains).await;
     let heads = crate::log_heads::startup_heads(&quorum, LOG_HEADS, VAULT, KEY, CHAIN_ID).await.unwrap();
     let current = Some(crate::log_heads::Head { seq: 7, link: B256::from([7; 32]) });
-    assert_eq!((heads.current, heads.newest), (current, current));
+    assert_eq!((heads.current, heads.newest), (current, current.map(|head| (3, head))));
     assert!(chains.iter().all(|chain| chain.0.lock().unwrap().epochs.reads.is_empty()));
 }
 

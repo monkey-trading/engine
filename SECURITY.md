@@ -227,11 +227,16 @@ log. Posts go at most every
 about the posting interval plus chain inclusion of the log's end to pass; a host that stalls or
 withholds the poster's submissions extends the window by however long the tail stays unposted,
 and `log_head_stalled` pages once the head has not advanced for three intervals: counted, until a
-read sees it advance, in trusted time since the command of the head startup checked was stamped,
-from once the restarted poster's first post has had a retry to land, so neither restarting the
-node nor cutting its log back to that head keeps the alarm quiet. While
-no epoch this key signed holds a head, the alarm counts from the process's start, and the bound is
-the vault-finalized checkpoint's below.
+read sees it advance, in trusted time since a stamp that recovery authenticates — the command of
+the head startup checked, or, while no epoch this key signed holds one, the command the
+vault-finalized checkpoint covers — from once the restarted poster's first post has had a posting
+interval to be included, so neither cutting its log back nor restarting it less often than once
+per posting interval keeps the alarm quiet. A host that restarts it more often, with each stop under
+the node-down alert's minute, keeps `log_head_stalled` quiet; blocked submissions still raise
+`log_head_post_failed`, and every start logs. While no epoch this key signed holds a head, the
+rollback bound is the vault-finalized checkpoint's, as without `[log_heads]`, and a restart counts
+from the newest such checkpoint, so restarts less than three intervals apart keep the alarm quiet
+while checkpoints finalize.
 Without `[log_heads]`, the bound is the commands after the latest checkpoint the vault has
 finalized: a cut below a later accepted-but-unfinalized checkpoint shows when the node's checkpoint
 poster next compares a checkpoint with the vault (`checkpoint_conflict`), and a cut after the latest
