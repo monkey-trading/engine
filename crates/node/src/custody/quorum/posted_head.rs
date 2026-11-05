@@ -16,10 +16,11 @@ impl<R: VaultReader + Sync> Quorum<R> {
     /// where a strict majority agrees on both wins. A faulty provider cannot deny the read while the
     /// honest ones agree at some height, and a lagging minority cannot vote. Candidates vote silently;
     /// only the deciding votes, or the last candidate's when none wins, raise or resolve the alerts.
+    /// Returns the agreed block with the head, so a caller reads more at the same block.
     /// Error cases:
     /// - fewer than a strict majority answer, or no strict majority agrees on the block and the head
     ///   at any candidate height
-    pub(crate) async fn posted_head(&self, contract: Address) -> anyhow::Result<PostedHead> {
+    pub(crate) async fn posted_head(&self, contract: Address) -> anyhow::Result<(PostedHead, BlockRef)> {
         let tips = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
             self.qualified(i)?;
             r.latest_block().await
@@ -53,12 +54,12 @@ impl<R: VaultReader + Sync> Quorum<R> {
             .await;
             if majority(&heads, self.required).is_some() {
                 self.vote("latest_block", blocks)?;
-                return self.vote("log_head", heads).map(|v| v.0);
+                return self.vote("log_head", heads).map(|v| (v.0, at));
             }
-            last_heads = Some(heads);
+            last_heads = Some((heads, at));
         }
-        if let Some(heads) = last_heads {
-            return self.vote("log_head", heads).map(|v| v.0);
+        if let Some((heads, at)) = last_heads {
+            return self.vote("log_head", heads).map(|v| (v.0, at));
         }
         // No height won a strict majority on the block: the vote over the last candidate's answers
         // (or the tips, with too few to pick a height) raises the alert.

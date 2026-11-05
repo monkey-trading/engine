@@ -78,7 +78,8 @@ pub(crate) async fn prove_legacy_withdrawals(
 
 /// The custody providers' agreed view of one account's native balance, for an account the vault
 /// does not hold, such as the checkpoint relayer. It has its own quorum state, apart from the
-/// deposit watcher's.
+/// deposit watcher's, and raises its quorum alerts as `quorum=relayer_balance` at Warning: a lost
+/// balance read pauses no crediting.
 pub(crate) struct BalanceQuorum(Quorum<VaultRpc>);
 
 impl BalanceQuorum {
@@ -87,7 +88,7 @@ impl BalanceQuorum {
     /// - fewer than three providers, or `custody.vault` or a client does not parse
     pub(crate) fn connect(cfg: &CustodySection) -> anyhow::Result<Self> {
         let evm = cfg.evm.as_ref().context("custody.provider = \"evm\" needs [custody.evm]")?;
-        Ok(Self(Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)?))
+        Ok(Self(Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)?.named("relayer_balance", false)))
     }
 
     /// `account`'s balance in the highest block a majority of providers declares final.
@@ -100,11 +101,14 @@ impl BalanceQuorum {
 
 /// Builds the strict-majority vault reader the log-head check polls independently of the custody
 /// deposit watcher; it runs its own identity admission and votes reads across the same providers.
+/// Its quorum alerts carry `quorum=log_heads` at Warning: a lost log-head read pauses no crediting,
+/// and the poster's own `log_head_read_failed` and startup's `log_heads_startup_failed` carry the
+/// impact.
 /// Error cases:
 /// - EVM custody without its `[custody.evm]` section, or `custody.vault` does not parse
 pub(crate) fn heads_reader(cfg: &CustodySection) -> anyhow::Result<Quorum<VaultRpc>> {
     let evm = cfg.evm.as_ref().context("log heads need [custody.evm]")?;
-    Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)
+    Ok(Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)?.named("log_heads", false))
 }
 
 /// A connected custody provider, ready to run.

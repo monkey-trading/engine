@@ -1,5 +1,5 @@
 //! Recovery behaviors of the poster's loop: heads that land despite a lost response or across
-//! a restart, same-epoch reorg reparenting, an emptied epoch, the transport-failure alert
+//! a restart, the stall alarm carried across a restart, same-epoch reorg reparenting, an emptied epoch, the transport-failure alert
 //! episodes' resolutions, and adoption bound to this log's prefixes — a foreign prefix freezes, a
 //! head with no retained evidence is not adopted.
 
@@ -91,6 +91,7 @@ async fn a_head_signed_before_a_crash_is_adopted_after_restart() {
         retry: Duration::from_secs(1),
         freeze: crate::log_heads::FreezeLatch::default(),
         confirmed: None,
+        anchored: None,
         prefix_ring: Default::default(),
     };
     let task1 = tokio::spawn(poster.run(rx1, sequencer));
@@ -111,6 +112,7 @@ async fn a_head_signed_before_a_crash_is_adopted_after_restart() {
         retry: Duration::from_secs(1),
         freeze: crate::log_heads::FreezeLatch::default(),
         confirmed: None,
+        anchored: None,
         prefix_ring,
     };
     let (sequencer, _from_poster) = tokio::sync::mpsc::channel(8);
@@ -151,6 +153,41 @@ async fn a_restart_remembers_the_authenticated_startup_head() {
         vec![(1, Some(held), removed), (1, Some(held), surviving)],
         "the startup-authenticated head is the surviving parent after a reorg: {:?}",
         chain.posts_with_parents()
+    );
+    drop(tx);
+    assert!(task.await.unwrap().is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_restart_carries_the_time_since_the_checked_head_into_the_stall_alarm() {
+    // Startup checked the posted head at seq 1, and the log had run four posting intervals past
+    // it in sequenced time. The first read after the restart sees the same head: no advance, and
+    // the stall fires at once though this process has only just started.
+    let held = Head { seq: 1, link: B256::from([1; 32]) };
+    let chain = FakeChain::new(Some(held));
+    chain.fail_next_posts(usize::MAX);
+    let (_guard, mut router) = crate::alerts::capture_until_dropped();
+    let (sequencer, _from_poster) = tokio::sync::mpsc::channel(8);
+    let (tx, rx) = watch::channel(Head { seq: 5, link: B256::from([5; 32]) });
+    let interval = Duration::from_secs(60);
+    let poster = Poster {
+        chain: chain.clone(),
+        key: Arc::new(crate::tee::EnclaveKey::test_key()),
+        domain: CheckpointDomain { chain_id: 1, vault: AccountId([2; 20]) },
+        interval,
+        retry: Duration::from_secs(1),
+        freeze: crate::log_heads::FreezeLatch::default(),
+        confirmed: Some((1, held)),
+        anchored: Some((held.seq, interval * 4)),
+        prefix_ring: Default::default(),
+    };
+    let task = tokio::spawn(poster.run(rx, sequencer));
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let lines = router.take();
+    assert_eq!(
+        lines.iter().filter(|line| line.name == "log_head_stalled" && line.severity.is_some()).count(),
+        1,
+        "the restart neither counts the checked head as an advance nor resets the time since it: {lines:?}"
     );
     drop(tx);
     assert!(task.await.unwrap().is_ok());
@@ -290,6 +327,7 @@ async fn a_foreign_head_at_a_retained_seq_freezes() {
         retry: Duration::from_secs(1),
         freeze: freeze.clone(),
         confirmed: None,
+        anchored: None,
         prefix_ring,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
@@ -324,6 +362,7 @@ async fn a_divergent_history_head_freezes_at_the_ancestor() {
         retry: Duration::from_secs(1),
         freeze: freeze.clone(),
         confirmed: None,
+        anchored: None,
         prefix_ring,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
@@ -357,6 +396,7 @@ async fn a_head_beyond_the_retained_evidence_is_not_adopted() {
         retry: Duration::from_secs(1),
         freeze: freeze.clone(),
         confirmed: None,
+        anchored: None,
         prefix_ring,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));

@@ -1,6 +1,6 @@
 //! The posted-head check's binding to the replayed bytes: the captured cumulative command-prefix
 //! digest, its continuity across a shutdown checkpoint (checkpoints do not reset it), the
-//! host-tamper proof, and the poster's evidence seeded from the replayed prefixes.
+//! host-tamper proof, and the poster's evidence and stall alarm seeded from the replay.
 use alloy::primitives::B256;
 use engine_core::Engine;
 use engine_core::command::{Command, Sequenced};
@@ -179,4 +179,22 @@ fn startup_compares_a_posted_head_above_any_snapshot_with_the_replayed_link() {
     assert!(start(Head { seq: 1, link: last_prefix }).is_ok(), "this log's own head is accepted");
     let error = start(Head { seq: 1, link: B256::from([4; 32]) }).err().expect("a foreign link refuses the start");
     assert!(format!("{error:#}").contains("differs"), "{error:#}");
+}
+
+#[test]
+fn startup_starts_the_stall_alarm_from_the_checked_heads_sequenced_time() {
+    // The checked head is seq 0, stamped at 0 ms, and the log's last command is stamped at 1 ms:
+    // the poster starts with that head as its on-chain seq and the 1 ms the log ran past it.
+    let (dir, first_prefix, _, _) = log_with_shutdown_checkpoint("log-head-stall-seed");
+    let rpc_dir = crate::test_support::scratch_dir("log-head-stall-seed-rpc");
+    std::fs::create_dir_all(&rpc_dir).unwrap();
+    let log = recover(&dir, 0);
+    let posted = Head { seq: 0, link: first_prefix };
+    let setup = crate::log_heads::setup::startup(
+        Some(crate::log_heads::setup::Pending::for_test(Some(posted), &rpc_dir)),
+        &log,
+    )
+    .unwrap()
+    .expect("[log_heads] is configured");
+    assert_eq!(setup.poster.anchored, Some((0, std::time::Duration::from_millis(1))));
 }

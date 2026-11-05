@@ -834,6 +834,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/fakes/sequencer.rs` — in-memory sequencer stand-ins for the watcher tests, with no
   log and no trusted time
 - `src/custody/tests/fakes/logs.rs` — log lines captured from a test's tasks, for alert assertions
+- `src/custody/tests/fakes/epochs.rs` — the fake chain's signer history and earlier epochs' log heads,
+  answered as contract calls
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
 - `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
@@ -865,6 +867,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/pending.rs` — bounded, backed-off log-derived retries of deposits left pending by source failures
 - `src/custody/quorum.rs` — strict-majority reads at common block heights, provider alerts, and
   a Critical alert while quorum is lost
+- `src/custody/quorum/posted_head.rs` — the LogHeads contract's posted head, read at the highest
+  block a strict majority has reached and agrees on, block and head both
 - `src/custody/rpc/mod.rs` — the vault over JSON-RPC, trusting only compiled-in TLS roots, with
   errors scrubbed of the endpoint URL
 - `src/custody/rpc/decode.rs` — decoding the vault's deposit logs, the staking and registry events,

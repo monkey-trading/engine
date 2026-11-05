@@ -29,9 +29,10 @@ async fn paired_recovery_binds_a_posted_head_under_the_base_to_the_on_disk_prefi
     let recover =
         |posted: Option<Head>| Sequencer::read_paired_log(&cfg, signer, None, Default::default(), None, posted, |_| {});
     let base = recover(None).unwrap().0.snapshot_seq.expect("recovery uses a paired cache");
-    // The prefix the log holds at each seq under the base, from a full replay of the same bytes.
-    let prefix_at = |seq| {
-        Sequencer::read_log_with_authorities(
+    // The prefix the log holds at each seq under the base, and that command's sequenced time,
+    // from a full replay of the same bytes.
+    let replayed_at = |seq| {
+        let replayed = Sequencer::read_log_with_authorities(
             &cfg.node.log_dir,
             Some(domain),
             signer,
@@ -43,14 +44,15 @@ async fn paired_recovery_binds_a_posted_head_under_the_base_to_the_on_disk_prefi
             Some(seq),
         )
         .unwrap()
-        .replayed
-        .link_at
-        .expect("the log holds a command at the seq")
+        .replayed;
+        (replayed.link_at.expect("the log holds a command at the seq"), replayed.ts_at)
     };
     for seq in [base, base - 1] {
-        let held = Head { seq, link: prefix_at(seq) };
+        let (link, ts) = replayed_at(seq);
+        let held = Head { seq, link };
         let (log, _) = recover(Some(held)).expect("the prefix this log holds is accepted");
         assert_eq!(log.snapshot_seq, Some(base), "the snapshot still serves recovery");
+        assert_eq!(log.replayed.ts_at, ts, "the prefix pass carries the posted command's time to the stall alarm");
         // The start then accepts the head on its seq: the suffix replay never reaches it, and
         // recovery bound it to the on-disk prefix.
         let pending = crate::log_heads::setup::Pending::for_test(Some(held), &rpc_dir);

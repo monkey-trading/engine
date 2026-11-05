@@ -1,6 +1,7 @@
 //! The LogHeads chain access's tests: the pending bound, the rebroadcast's exact bytes, the
 //! replacement record's consistency, the call durable before its broadcast, the post's send, wait,
-//! resend, and rebroadcast branches against a loopback endpoint, and the bounded store IO.
+//! resend, and rebroadcast branches against a loopback endpoint, and the bounded store IO, one
+//! operation outstanding at a time.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -117,15 +118,16 @@ fn a_replacement_reservation_records_the_call_being_sent() {
 }
 
 #[tokio::test]
-async fn a_held_store_outruns_its_bound_and_returns() {
+async fn a_held_store_outruns_its_bound_and_keeps_its_one_worker() {
     // The watchdog bound, not the operation's length, decides: a host-held filesystem
     // operation lets the poster loop — and the stall alarm running in it — move on with an
     // error the caller logs as log_head_post_failed and retries next tick. The abandoned
-    // operation still completes in the background; real time, not the paused test clock.
-    let bound = Duration::from_millis(50);
+    // operation keeps the one worker until it completes; real time, not the paused test clock.
+    let (bound, slot) = (Duration::from_millis(50), Arc::new(tokio::sync::Semaphore::new(1)));
+    let (release, held_until) = std::sync::mpsc::channel::<()>();
     let started = std::time::Instant::now();
-    let held = bounded_store(bound, || {
-        std::thread::sleep(Duration::from_secs(5));
+    let held = bounded_store(&slot, bound, move || {
+        let _ = held_until.recv();
         Ok(7)
     })
     .await;
@@ -136,9 +138,23 @@ async fn a_held_store_outruns_its_bound_and_returns() {
         "the bound, not the held operation, bounds the wait: {:?}",
         started.elapsed()
     );
-    // A store that answers inside the bound returns its value.
-    let done = bounded_store(bound, || Ok(7)).await.unwrap();
-    assert_eq!(done, 7);
+    // While it is outstanding, a later attempt reports it and starts no second worker.
+    let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let later = bounded_store(&slot, bound, {
+        let ran = ran.clone();
+        move || {
+            ran.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(8)
+        }
+    })
+    .await;
+    assert!(format!("{:#}", later.unwrap_err()).contains("still outstanding"));
+    assert!(!ran.load(std::sync::atomic::Ordering::SeqCst), "the later operation never ran");
+    // Once the held operation completes, its worker returns the slot and a store that answers
+    // inside the bound returns its value.
+    release.send(()).unwrap();
+    drop(slot.acquire().await.unwrap());
+    assert_eq!(bounded_store(&slot, bound, || Ok(7)).await.unwrap(), 7);
 }
 
 #[tokio::test]

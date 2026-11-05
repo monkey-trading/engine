@@ -69,6 +69,8 @@ pub struct Replayed {
     /// startup check. Checkpoints do not reset it, so a posted head binds every command's sealed
     /// bytes, not only the state since the last checkpoint.
     pub link_at: Option<engine_core::eip712::B256>,
+    /// The sequenced time of the command at the posted head's seq: where the stall alarm starts.
+    pub ts_at: Option<Millis>,
 }
 
 /// Re-applies a log entry by entry, as it is read, and checks every checkpoint root, logged event,
@@ -127,10 +129,11 @@ pub(super) struct Replay {
     last_marks: BTreeMap<engine_core::types::MarketId, Fixed>,
     /// The dashboard record recovery seeds: it takes every command this replay applies.
     stats: Option<crate::stats::Stats>,
-    /// When set, the command arm records the cumulative command-prefix digest at this seq for the
-    /// posted-head check.
+    /// When set, the command arm records the cumulative command-prefix digest and the command's
+    /// sequenced time at this seq for the posted-head check.
     capture_link_at: Option<u64>,
     captured_link: Option<engine_core::eip712::B256>,
+    captured_ts: Option<Millis>,
     /// The last `crate::log::PrefixRing::CAPACITY` (seq, cumulative-prefix) pairs: the poster's
     /// adoption evidence, seeded before its first tick.
     prefix_ring: crate::log::PrefixRing,
@@ -244,6 +247,7 @@ impl Replay {
                 self.prefix_ring.record(seq, engine_core::eip712::B256::from(self.command_prefix));
                 if self.capture_link_at == Some(seq) {
                     self.captured_link = Some(engine_core::eip712::B256::from(self.command_prefix));
+                    self.captured_ts = Some(c.sequenced.ts);
                 }
                 self.commands += 1;
             }
@@ -434,6 +438,7 @@ impl Replay {
             legacy_deposits: self.legacy_deposits,
             legacy_approvals: self.legacy_approvals,
             link_at: self.captured_link,
+            ts_at: self.captured_ts,
             prefix_ring: self.prefix_ring,
         }
     }

@@ -287,7 +287,7 @@ impl<R: VaultReader + Sync> Quorum<R> {
     /// of a caller has its own episode and one that succeeds cannot end another's.
     /// Error cases:
     /// - no quorum
-    pub(super) async fn call_as(
+    pub(crate) async fn call_as(
         &self,
         operation: &'static str,
         at: BlockRef,

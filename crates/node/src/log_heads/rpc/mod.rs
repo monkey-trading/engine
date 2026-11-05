@@ -25,9 +25,12 @@ use crate::custody::VaultReader;
 use crate::custody::{Quorum, VaultRpc};
 use crate::log::CheckpointDomain;
 
-// The LogHeads contract's ABI, as `contracts/src/LogHeads.sol` declares it.
+// The LogHeads contract's ABI, as `contracts/src/LogHeads.sol` declares it, and the vault's signer
+// history, as `contracts/src/Vault.sol` declares it.
 sol! {
     function post(uint64 seq, bytes32 link, uint64 parentSeq, bytes32 parentLink, bytes signature) external;
+    function heads(uint64 epoch) external view returns (uint64 seq, bytes32 link);
+    function signerAtEpoch(uint64 epoch) external view returns (address signer);
 }
 
 /// The vault's current signer epoch and its newest posted head, read through the custody RPC
@@ -43,8 +46,60 @@ pub(crate) async fn posted<R: VaultReader + Sync>(
     let identity = quorum.identity().await?;
     ensure!(identity.chain_id == chain_id, "the custody quorum serves another chain");
     ensure!(identity.token.is_some(), "no vault answers on the custody quorum's chain");
-    let posted = quorum.posted_head(contract).await?;
+    let (posted, _) = quorum.posted_head(contract).await?;
     Ok((posted.epoch, posted.head.map(|(seq, link)| Head { seq, link })))
+}
+
+/// What startup checks the log against, all read at one quorum-agreed block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StartupHeads {
+    /// The vault's current signer epoch.
+    pub epoch: u64,
+    /// The current epoch's posted head: the parent the poster's first post names.
+    pub current: Option<Head>,
+    /// The newest head the chain holds over this log for the starting key: the current epoch's or,
+    /// while it holds none, the newest of the earlier epochs that key signed back to the first
+    /// epoch another key signed.
+    pub newest: Option<Head>,
+}
+
+/// `posted`, and, while the current epoch holds no head and `signer` is its signer, the walk back
+/// through the epochs before it while `signer` signed them, to the newest head one holds, all at the
+/// agreed block: `setSigner` starts a new, empty epoch even when it reinstalls the same key, whose
+/// earlier heads still bind this log. Each step is a vault signer change, so the walk is as long as
+/// that key's unbroken run of epochs.
+/// Error cases:
+/// - identity admission or a quorum read fails, or an answer does not decode
+pub(crate) async fn startup_heads<R: VaultReader + Sync>(
+    quorum: &Quorum<R>,
+    contract: Address,
+    vault: Address,
+    signer: Address,
+    chain_id: u64,
+) -> anyhow::Result<StartupHeads> {
+    let identity = quorum.identity().await?;
+    ensure!(identity.chain_id == chain_id, "the custody quorum serves another chain");
+    ensure!(identity.token.is_some(), "no vault answers on the custody quorum's chain");
+    let (posted, at) = quorum.posted_head(contract).await?;
+    let signer_at = |epoch| async move {
+        let out = quorum.call_as("signer_at_epoch", at, vault, signerAtEpochCall { epoch }.abi_encode().into()).await?;
+        signerAtEpochCall::abi_decode_returns(&out).context("decoding the vault's signer at an epoch")
+    };
+    let current = posted.head.map(|(seq, link)| Head { seq, link });
+    let (mut newest, mut epoch) = (current, posted.epoch);
+    if newest.is_none() && signer_at(epoch).await? == signer {
+        while newest.is_none() && epoch > 1 {
+            epoch -= 1;
+            if signer_at(epoch).await? != signer {
+                break;
+            }
+            let out = quorum.call_as("earlier_log_head", at, contract, headsCall { epoch }.abi_encode().into()).await?;
+            let held = headsCall::abi_decode_returns(&out).context("decoding an earlier epoch's log head")?;
+            // Seq 0 is the unattested empty log, as in the current epoch's read.
+            newest = (held.seq > 0).then_some(Head { seq: held.seq, link: held.link });
+        }
+    }
+    Ok(StartupHeads { epoch: posted.epoch, current, newest })
 }
 
 /// What a post's gas limit adds to its estimate; an estimate is exact only for the state it ran on.
@@ -66,6 +121,9 @@ pub(crate) struct HeadsRpc {
     /// reconciles at once; the persisted `stored_at` is a hint, never the bound.
     pending_since: std::sync::Mutex<Option<std::time::Instant>>,
     submissions: SubmissionStore,
+    /// One permit: held by the reservation operation on the blocking pool, until it completes even
+    /// after its caller's bound elapses, so a stalled file holds one worker, never one per attempt.
+    store_slot: Arc<tokio::sync::Semaphore>,
     quorum: Arc<Quorum<VaultRpc>>,
 }
 
@@ -101,8 +159,17 @@ impl HeadsRpc {
             interval: cfg.interval,
             pending_since: std::sync::Mutex::new(None),
             submissions: SubmissionStore::pending(log_dir, cfg.relayer, cfg.contract, domain.chain_id)?,
+            store_slot: Arc::new(tokio::sync::Semaphore::new(1)),
             quorum,
         })
+    }
+
+    /// `startup_heads` for this deployment's contract, vault, and chain.
+    /// Error cases:
+    /// - as `startup_heads`
+    pub(crate) async fn startup_heads(&self, signer: Address) -> anyhow::Result<StartupHeads> {
+        let vault = Address::from(self.domain.vault.0);
+        startup_heads(&self.quorum, self.contract, vault, signer, self.domain.chain_id).await
     }
 
     /// Bounds requests and redacts transport credentials from their errors.
@@ -179,13 +246,13 @@ impl HeadsRpc {
 
     /// Persists the reservation on the blocking-pool worker, bounded by `timeout`. The store's
     /// lock is taken inside the worker and held until the write completes: a caller that times
-    /// out abandons the wait, never the lock, so a stalled writer keeps exclusive access and a
-    /// retry's write queues behind it.
+    /// out abandons the wait, never the lock, so a stalled writer keeps exclusive access, and a
+    /// retry while it is outstanding is refused rather than queued behind it.
     /// Error cases:
-    /// - the bound elapses, or the write fails
+    /// - an earlier operation is still outstanding, the bound elapses, or the write fails
     async fn persist_update(&self, reservation: super::submission::Reservation) -> anyhow::Result<()> {
         let store = self.submissions.clone();
-        bounded_store(self.timeout, move || store.update(&reservation)).await
+        bounded_store(&self.store_slot, self.timeout, move || store.update(&reservation)).await
     }
 }
 
@@ -199,16 +266,24 @@ fn pending_due(since: Option<std::time::Instant>, bound: Duration) -> bool {
 
 /// Runs one reservation-store operation on the blocking-pool worker, bounded by `timeout`: the
 /// poster loop — and the stall alarm running in it — never waits on a host-held filesystem
-/// operation beyond the bound. A timed-out operation still completes in the background; the
-/// store's validate-and-replace makes the late write idempotent, and the next attempt reconciles
-/// against what it re-reads.
+/// operation beyond the bound. A timed-out operation still completes in the background, holding
+/// `slot`'s one permit until it does; the store's validate-and-replace makes the late write
+/// idempotent, and the next attempt reconciles against what it re-reads.
 /// Error cases:
-/// - the bound elapses, or the operation fails
+/// - an earlier operation is still outstanding, the bound elapses, or the operation fails
 async fn bounded_store<T: Send + 'static>(
+    slot: &Arc<tokio::sync::Semaphore>,
     timeout: Duration,
     op: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
 ) -> anyhow::Result<T> {
-    let work = tokio::task::spawn_blocking(op);
+    let permit = slot
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| anyhow!("an earlier reservation IO operation is still outstanding"))?;
+    let work = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        op()
+    });
     match tokio::time::timeout(timeout, work).await {
         Ok(done) => done.context("the reservation IO worker panicked")?,
         Err(_) => Err(anyhow!("reservation IO did not complete within {timeout:?}")),
@@ -276,8 +351,8 @@ impl HeadsChain for HeadsRpc {
         let now =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
         let store = self.submissions.clone();
-        let mut reservation = match bounded_store(self.timeout, move || store.reserve(latest, epoch, head, now)).await?
-        {
+        let reserve = move || store.reserve(latest, epoch, head, now);
+        let mut reservation = match bounded_store(&self.store_slot, self.timeout, reserve).await? {
             Reserve::Pending(_) if !self.pending_action() => return Ok(PostOutcome::Waiting),
             Reserve::Pending(mut pending) => {
                 let hash = pending.tx_hash.context("a pending reservation carries its hash")?;

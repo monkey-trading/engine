@@ -199,7 +199,10 @@ so posting halts (`log_head_stalled`) until a restart checks the posted head aga
 log. Posts go at most every
 `log_heads.interval` (an hour by default) and only when the head moved, so a cut must land within
 about the posting interval plus chain inclusion of the log's end to pass; a host that stalls or
-withholds the poster's submissions extends the window by however long the tail stays unposted.
+withholds the poster's submissions extends the window by however long the tail stays unposted,
+and `log_head_stalled` pages once the head has not advanced for three intervals: counted from the
+head startup checked, with the sequenced time the log had already run past it, so restarting the
+node does not keep the alarm quiet while it sequences commands.
 Without `[log_heads]`, the bound is the commands after the latest checkpoint the vault has
 finalized: a cut below a later accepted-but-unfinalized checkpoint shows when the node's checkpoint
 poster next compares a checkpoint with the vault (`checkpoint_conflict`), and a cut after the latest
@@ -218,7 +221,11 @@ the range; it takes nothing more and keeps its copy unchanged to restore from. N
 and root, which the vault compares atomically to fence divergent same-key publishers. The standby's
 check reaches only as far as what it received: it detects a cut that goes back past that. Posted log
 heads are per signer epoch, so a standby's takeover — which drops the outgoing key's tail by design —
-is not refused: a new epoch starts with no posted head. The checkpoint RPC still supplies the canonical chain
+is not refused: a new epoch starts with no posted head, and its key signed no earlier one. A key
+`setSigner` reinstalls, as after the guardian retires it, starts a new empty epoch too, so while the
+current epoch holds no head and the starting key signs it, startup walks back through the epochs
+before it for as long as that key signed them and checks the newest head one holds, all at one
+quorum-agreed block: the reinstalled key's own earlier head still binds its log. The checkpoint RPC still supplies the canonical chain
 view, and a signature's named signer must be checked against a trusted attestation or the vault's
 authorized signer. A withdrawal signature never settles its approval: finalized custody nonce-use
 evidence does. Withdrawal completion evidence also requires that independently trusted signer
