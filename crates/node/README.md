@@ -114,7 +114,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - MONKEY staking from protocol `V25`: `engine admin init-staking` or a genesis `staking` entry
   records the liquidity floor, epoch length, start, and unstake cooldown once; each epoch the
   engine distributes house NAV above the floor to stakers pro-rata, from `V47` less a fifth to the
-  operator in effect while rotation is on, and
+  operator in effect while rotation is on, from `V50` split among the operators by their time in
+  office, and
   `GET /v1/accounts/{address}/distributions` serves an account's cumulative USDC distribution with
   its proof, for the vault's `claimDistribution`; checkpoint
   reconciliation counts the USDC the vault has paid in distributions against the ledger
@@ -750,6 +751,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/election_scenario/operator_share.rs` — the operator's share dev scenario on
   isolated Anvil: the election's candidate and a staker claim through the vault, an epoch below the
   floor pays neither, and the candidate's unclaimed leaf registers and pays through the exit
+- `src/custody/tests/election_scenario/time_in_office.rs` — the `V50` part of the operator's share
+  dev scenario: a second election takes effect halfway through an epoch, whose close credits the
+  outgoing and incoming candidates about half the share each, both in their histories and both
+  claimed through the vault
 - `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation
 - `src/history/preflight/tests.rs` — private WAL resume and malformed geometry byte-preservation regressions
 - `src/node/tests/custody_preflight.rs` — local custody refusal preserves log/history across image states
@@ -1072,7 +1077,8 @@ cargo build --release -p engine-node --features production
 
 # Run the operator's share scenario on isolated Anvil: an elected candidate and a staker each claim
 # their share of an epoch through the vault, an epoch below the floor pays neither, and the
-# candidate's unclaimed leaf registers and pays through the vault's exit
+# candidate's unclaimed leaf registers and pays through the vault's exit; then a second election
+# takes effect halfway through an epoch, and its close splits the share between the two candidates
 ./scripts/dev-operator-share.sh
 
 # Deliver secrets into a node's enclave, on its [tee.sealing.secrets] listener. The tool refuses unless
@@ -1809,7 +1815,8 @@ strings. `GET /v1/monkey/distributions?limit=&before=` pages the closed distribu
 (`limit` 1 to 200, 50 by default; `before` an epoch number, as a page's `next`): each has its `epoch`, the
 `close_seq` and `close_ms` of the command that closed it, `ended_ms`, `nav`, `floor`, `excess_usdc_units`,
 `allocated_usdc_units`, `stakers_usdc_units` with the number of `stakers` paid, `operator_shares` (every
-recipient with its `amount`, none while rotation is off) and `skipped` (the range of earlier epochs no command
+recipient with its `amount`: before `V50` none for a close with rotation off, and from `V50` each account
+whose time in office in the epoch earned a part) and `skipped` (the range of earlier epochs no command
 saw the end of, which that close distributed nothing for). It states where its data begins like the other
 answers, and `retained_from_epoch` names the oldest epoch held, with `truncated` true once `[stats] distribution_limit`
 (5000 by default) has dropped older epochs. `GET /v1/stats/series?metric=&market=&resolution=(1m|1h|1d)&from_ms=&to_ms=&limit=` pages a
@@ -2031,7 +2038,8 @@ distribution the same way (`entitled` in the 6-decimal token's base units, with 
 against the root of the proof's `seq`, under the same rule, and `claimable` does not read a withdrawal
 pause, under which the vault refuses the claim. An account has no distribution, and gets 404, until
 the first checkpoint after an epoch in which it was allocated a share. From `V47`, while rotation is on, the
-operator's fifth of each epoch's distribution is in this same leaf, under its candidate's address.
+operator's fifth of each epoch's distribution is in this same leaf, under its candidate's address,
+and from `V50` each operator's part of it by time in office is in its own.
 
 `/v1/accounts/{address}/exit` returns, from `V38`, every proof the account exits the vault with
 against the state root of the last checkpoint: `terms` (the vault deposit cursor and the pending and

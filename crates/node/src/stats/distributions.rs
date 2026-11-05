@@ -45,8 +45,9 @@ pub(crate) struct EpochClose {
     /// What went to stakers, and how many stakers it reached.
     pub stakers_usdc_units: UsdcUnits,
     pub stakers: u64,
-    /// The recipients of the operator's share, in the order the close allocated them: none while
-    /// rotation is off or before `V47`.
+    /// The recipients of the operator's share, in the order the close allocated them: none before
+    /// `V47` or, before `V50`, for a close with rotation off; from `V50`, each account whose time in
+    /// office in the epoch earned a part.
     pub operator_shares: Vec<OperatorShare>,
     /// The epochs before this one that no command witnessed the end of, when there are any.
     pub skipped: Option<Skipped>,

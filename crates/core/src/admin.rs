@@ -368,7 +368,14 @@ impl Engine {
                 if self.protocol_version < ProtocolVersion::V46 && *version >= ProtocolVersion::V46 {
                     self.bound_stress_floors(events);
                 }
+                let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
                 self.protocol_version = *version;
+                // Rules before `V47` record no candidate, so one an election already seated is seated before
+                // any time counts.
+                if counts_office {
+                    self.settle_operator_candidate();
+                    self.start_time_in_office();
+                }
                 if *version >= ProtocolVersion::V26 {
                     self.hot_indexes = None;
                     self.ensure_hot_indexes();

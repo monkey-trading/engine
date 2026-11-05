@@ -245,6 +245,9 @@ impl Engine {
         let last_now = self.now;
         self.now = sequenced.ts;
         self.command_ms = sequenced.ts;
+        // From `V50` the time since the last command was served under the office it left, before
+        // this command's handover moves it.
+        self.accrue_time_in_office(last_now);
         // From `V35` a rotation whose notice has run hands over before the command is authorised.
         self.apply_due_rotation(sequenced.ts);
         // From `V47` the candidate seated moves with the key, before any distribution closes.

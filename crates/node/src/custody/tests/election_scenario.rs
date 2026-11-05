@@ -9,6 +9,7 @@ mod chain;
 mod node;
 mod operator_share;
 mod staking_reads;
+mod time_in_office;
 
 use std::sync::Arc;
 

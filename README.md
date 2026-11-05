@@ -110,7 +110,8 @@ stays on its benchmark, and the operator's stress floor is at most level 1 and l
 From V49 a market's financing markup and the stress levels and triggers in the signed parameters
 change only seven days after a signed notice, as the profit fee and close-out level do.
 While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
-distribution, which it claims from the vault as a staker claims its own.
+distribution, which it claims from the vault as a staker claims its own; from V50 the fifth is split
+among the operators by their time in office during the epoch.
 
 The reasoning behind each of these choices is recorded in the decision issues
 [#1](https://github.com/0xjevons/monkeytrading/issues/1) to

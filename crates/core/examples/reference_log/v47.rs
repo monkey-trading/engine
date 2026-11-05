@@ -24,7 +24,7 @@ const HOUR_MS: Millis = 60 * 60 * 1000;
 /// The trader loses on a round trip, so the house earns above the floor, then a tick at the end of
 /// the open epoch closes it, returning what it credited the operator, its excess and its allocated
 /// total.
-fn close(h: &mut Harness) -> (Vec<(AccountId, UsdcUnits)>, UsdcUnits, UsdcUnits) {
+pub(crate) fn close(h: &mut Harness) -> (Vec<(AccountId, UsdcUnits)>, UsdcUnits, UsdcUnits) {
     let loser = Client { expires_at: h.ts + 60_000, ..Client::new(LOSER_SEED) };
     for (side, price) in [(Side::Buy, "100"), (Side::Sell, "99.7")] {
         h.price(ETH, price);

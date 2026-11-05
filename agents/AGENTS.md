@@ -35,7 +35,7 @@ an index: load only the rule whose hint matches the current action.
   `tests/operator_install.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
-  anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
+  anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks). It does no IO and uses no clocks,
@@ -342,7 +342,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
   `dev-operator-share.sh`, the operator's share of distributions on Anvil: an elected candidate and a
   staker each claim their share, an epoch below the floor pays neither, and the candidate's unclaimed
-  leaf registers and pays through the vault's exit;
+  leaf registers and pays through the vault's exit; then, from `V50`, an election taking effect halfway
+  through an epoch splits the share between the outgoing and incoming candidates, each claimed;
   `dev-staking-reads.sh`, the staking reads scenario on Anvil: forty candidates register and thirty-five are
   approved, `/v1/operators` lists them with the chain's votes and the final block it names, three
   distribution epochs close and `/v1/monkey/distributions` lists them, a later delegation shows in a later
@@ -626,7 +627,9 @@ Run from the repo root:
 - Operator's share dev scenario: `./scripts/dev-operator-share.sh` (the same requirements; a real
   election mirrored into the sequencer, a close above the floor crediting the candidate a fifth and
   stakers the rest, both claims through the vault, an epoch below the floor paying neither, and the
-  candidate's unclaimed leaf registering and paying through the exit from the stopped node's log)
+  candidate's unclaimed leaf registering and paying through the exit from the stopped node's log; then,
+  on a fresh Anvil, a second election taking effect halfway through an epoch, whose close credits the
+  outgoing and incoming candidates about half the share each, both in their histories and both claimed)
 - Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens
   read through the custody quorum into `/v1/operators`, the closed epochs in `/v1/monkey/distributions`
   across a delegation and a restart, and each saved answer verified with `engine verify-response`)

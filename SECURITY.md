@@ -262,8 +262,9 @@ vault's current release through the checkpoint RPC endpoint, which the node trus
 state, and a flaw in a release that has run still needs a signer rotation; from V37 the admin key
 follows the operator registry's elections, which the engine mirrors from finalised chain events, so
 the incumbent's host can delay an elected key's takeover, bounded only by the custody watcher's
-stall alerts, and the enclave keys and the vault's current release do not yet follow an election
-(#44); the dev configurations explicitly
+stall alerts, and from V50, which splits the operator's share of each distribution among the
+operators by their sequenced time in office, the incumbent keeps earning the share through that
+delay; the enclave keys and the vault's current release do not yet follow an election (#44); the dev configurations explicitly
 use a published mock-only signer, which real attestation refuses; the custody adapter requires a strict
 majority of at least three configured independent RPC providers to agree on deposits, block hashes
 and finality, with reads compared at the same block height and empty log responses requiring the
