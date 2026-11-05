@@ -39,7 +39,8 @@ impl std::error::Error for Rollback {}
 /// start along `signer`'s seal chain. Only the command-prefix hash and the seals are checked — the
 /// engine is not applied — and the pass stops at the base: the boundary is checked before an
 /// entry beyond it is processed, so a nonempty suffix never contaminates the comparison. Returns
-/// the running digest at the base.
+/// the running digest at the base and the sequenced time of the command at the posted seq, where
+/// the stall alarm starts.
 /// Error cases:
 /// - the log cannot be opened or a seal is invalid, an unsealed span lacks the trusted authority,
 ///   the log holds no command at the posted seq or the base, or the posted digest or the command
@@ -51,7 +52,7 @@ pub(crate) fn verify(
     posted: Head,
     base: u64,
     certified_prefix: [u8; 32],
-) -> anyhow::Result<[u8; 32]> {
+) -> anyhow::Result<([u8; 32], engine_core::types::Millis)> {
     let mut origin = Origin::new(Some(domain), Some(signer));
     let mut command_prefix = [0u8; 32];
     let mut previous = None;
@@ -72,7 +73,7 @@ pub(crate) fn verify(
                 command_prefix =
                     crate::log::extend_command_prefix(command_prefix, crate::log::command_digest(command)?);
                 if command.sequenced.seq == posted.seq {
-                    posted_prefix = Some(command_prefix);
+                    posted_prefix = Some((command_prefix, command.sequenced.ts));
                 }
                 if command.sequenced.seq == base {
                     base_prefix = Some(command_prefix);
@@ -95,7 +96,7 @@ pub(crate) fn verify(
     // Unsealed spans the trusted authority does not cover refuse the start, as writable
     // recovery's coverage check does.
     origin.require_audit(signer).context("verifying the on-chain log head against the log's prefix")?;
-    let prefix = posted_prefix
+    let (prefix, posted_ts) = posted_prefix
         .with_context(|| format!("the log holds no command at the on-chain log head's seq {}", posted.seq))?;
     if prefix != posted.link {
         error!(
@@ -118,7 +119,7 @@ pub(crate) fn verify(
         );
         return Err(anyhow::Error::new(Rollback));
     }
-    base_prefix.context("the log holds no command at the snapshot base")
+    Ok((base_prefix.context("the log holds no command at the snapshot base")?, posted_ts))
 }
 
 #[cfg(test)]
@@ -186,11 +187,12 @@ mod tests {
 
     #[test]
     fn the_prefix_pass_accepts_the_matching_head_and_returns_the_base_prefix() {
+        // The fixture stamps each command at its seq: the pass returns the posted command's time.
         let (dir, signer, at_zero, at_one, prefix) = sealed_log("prefix-accept", false);
-        let base = verify(&dir, DOMAIN, signer, Head { seq: 0, link: at_zero.into() }, 1, prefix).unwrap();
-        assert_eq!(base, at_one, "the pass returns the cumulative prefix at the base");
-        let base = verify(&dir, DOMAIN, signer, Head { seq: 1, link: at_one.into() }, 1, prefix).unwrap();
-        assert_eq!(base, at_one);
+        let (base, ts) = verify(&dir, DOMAIN, signer, Head { seq: 0, link: at_zero.into() }, 1, prefix).unwrap();
+        assert_eq!((base, ts), (at_one, 0), "the pass returns the cumulative prefix at the base");
+        let (base, ts) = verify(&dir, DOMAIN, signer, Head { seq: 1, link: at_one.into() }, 1, prefix).unwrap();
+        assert_eq!((base, ts), (at_one, 1));
     }
 
     #[test]
@@ -198,9 +200,9 @@ mod tests {
         // A nonempty suffix must not contaminate the certified-prefix comparison: the boundary is
         // checked before the first command beyond the base is processed.
         let (dir, signer, at_zero, at_one, prefix) = sealed_log("prefix-suffix", true);
-        let base = verify(&dir, DOMAIN, signer, Head { seq: 0, link: at_zero.into() }, 1, prefix).unwrap();
+        let (base, _) = verify(&dir, DOMAIN, signer, Head { seq: 0, link: at_zero.into() }, 1, prefix).unwrap();
         assert_eq!(base, at_one);
-        let base = verify(&dir, DOMAIN, signer, Head { seq: 1, link: at_one.into() }, 1, prefix).unwrap();
+        let (base, _) = verify(&dir, DOMAIN, signer, Head { seq: 1, link: at_one.into() }, 1, prefix).unwrap();
         assert_eq!(base, at_one);
     }
 

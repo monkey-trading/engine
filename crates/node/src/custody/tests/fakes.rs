@@ -114,6 +114,8 @@ pub(super) struct ChainState {
     /// Requests that start a poll: identity checks and final-block reads.
     pub(super) polls: u64,
     pub(super) reads: Vec<(u64, u64)>,
+    /// The vault's signer history and earlier epochs' log heads, answered as contract calls.
+    pub(super) epochs: epochs::Epochs,
 }
 
 /// The sequencer over a log in a test directory.
@@ -280,6 +282,15 @@ impl VaultReader for FakeChain {
         }
         let head = chain.posted.filter(|_| chain.posted_block.is_none_or(|block| at.number >= block));
         Ok(PostedHead { epoch: chain.epoch, head })
+    }
+
+    async fn contract_call(
+        &self,
+        at: BlockRef,
+        to: Address,
+        data: alloy::primitives::Bytes,
+    ) -> anyhow::Result<alloy::primitives::Bytes> {
+        self.0.lock().unwrap().epochs.answer(at, to, &data)
     }
 }
 
@@ -477,6 +488,8 @@ pub(super) async fn wait_for_polls(chain: &FakeChain, polls: u64) {
 mod sequencer;
 pub(crate) use sequencer::{engine_sequencer, refusing_sequencer};
 
+mod epochs;
+pub(super) use epochs::LOG_HEADS;
 mod files;
 pub(super) use files::{evm_toml, scratch};
 mod logs;

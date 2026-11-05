@@ -38,6 +38,8 @@ fn spawn_with(
         retry: Duration::from_secs(1),
         freeze: crate::log_heads::FreezeLatch::default(),
         confirmed,
+        anchored: None,
+        trusted: None,
         prefix_ring: Default::default(),
     };
     (tx, tokio::spawn(poster.run(rx, sequencer)))
@@ -201,6 +203,8 @@ async fn a_conflicting_post_at_the_verified_base_freezes() {
         retry: Duration::from_secs(1),
         freeze: crate::log_heads::FreezeLatch::default(),
         confirmed: None,
+        anchored: None,
+        trusted: None,
         prefix_ring: Default::default(),
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
@@ -223,6 +227,8 @@ async fn a_matching_post_at_the_verified_base_is_confirmed_not_reposted() {
         retry: Duration::from_secs(1),
         freeze: crate::log_heads::FreezeLatch::default(),
         confirmed: None,
+        anchored: None,
+        trusted: None,
         prefix_ring: Default::default(),
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
@@ -376,6 +382,8 @@ async fn a_restart_posts_past_the_authenticated_head_naming_it_as_parent() {
         retry: Duration::from_secs(1),
         freeze: crate::log_heads::FreezeLatch::default(),
         confirmed: Some((1, posted)),
+        anchored: None,
+        trusted: None,
         prefix_ring: Default::default(),
     };
     let task = tokio::spawn(poster.run(rx, sequencer));

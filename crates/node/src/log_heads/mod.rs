@@ -9,7 +9,7 @@
 pub(crate) mod prefix;
 mod rpc;
 #[cfg(test)]
-pub(crate) use rpc::posted;
+pub(crate) use rpc::{posted, startup_heads};
 pub(crate) mod setup;
 mod submission;
 #[cfg(test)]
@@ -107,6 +107,13 @@ pub(crate) struct Poster<R> {
     /// The startup-quorum-authenticated posted head and the epoch it was read under: the seed for
     /// the poster's per-epoch confirmed head — the parent the first post after a restart names.
     pub confirmed: Option<(u64, Head)>,
+    /// The head startup checked the log against, and the sequenced time its command was stamped
+    /// at: the stall alarm's starting point, so a restart neither counts that head as an advance
+    /// nor resets the time since it.
+    pub anchored: Option<(u64, Option<engine_core::types::Millis>)>,
+    /// Trusted time, which the stall alarm measures the time since the anchored command against;
+    /// `None` measures this process's time only.
+    pub trusted: Option<crate::trusted_time::TrustedClock>,
     /// Each command's cumulative prefix from the authenticated replay, the highest seqs kept:
     /// evidence that this log holds an on-chain head. `setup` seeds it from the replayed log; the
     /// poster records every released head into it.
@@ -131,11 +138,14 @@ impl<R: HeadsChain> Poster<R> {
         // passed. The gate advances on every send attempt, before the result: a lost response still paced the
         // relayer, and the read-back confirms inclusion on later ticks.
         let mut posted_at: Option<tokio::time::Instant> = None;
-        // Anchoring progress: the last time a quorum read observed the on-chain head advance.
-        // Past three intervals with a newer released head, the stall alert fires once per episode.
-        // Acceptance proves no inclusion, so it never moves this clock.
+        // Anchoring progress: the last time a quorum read observed the on-chain head advance, and,
+        // until one does, trusted time since startup's checked head was stamped — which neither a
+        // restart nor a log cut back to that head resets. That carried time counts once this
+        // process's first post has had a retry to land, so a restart after a long stop does not
+        // page before it posts. Past three intervals with a newer released head, the stall alert
+        // fires once per episode. Acceptance proves no inclusion, so it never moves this clock.
         let mut progressed_at = tokio::time::Instant::now();
-        let mut on_chain_seq = 0u64;
+        let (mut on_chain_seq, mut anchor_ts) = self.anchored.unwrap_or_default();
         let mut stalled = false;
         // The last quorum-confirmed head of the current epoch: what the next post extends. Seeded
         // from the startup-authenticated posted head; a read adopts a head only when its link is
@@ -201,7 +211,7 @@ impl<R: HeadsChain> Poster<R> {
             if let Some(posted) = on_chain {
                 if posted.seq > on_chain_seq {
                     on_chain_seq = posted.seq;
-                    progressed_at = tokio::time::Instant::now();
+                    (progressed_at, anchor_ts) = (tokio::time::Instant::now(), None);
                     if std::mem::take(&mut stalled) {
                         info!(alert_resolved = "log_head_stalled", "the on-chain log head advanced");
                     }
@@ -264,7 +274,12 @@ impl<R: HeadsChain> Poster<R> {
                 // goes parentless under the first-post rule.
                 confirmed = None;
             }
-            if !stalled && head.seq > on_chain_seq && progressed_at.elapsed() > self.interval.saturating_mul(3) {
+            let carried = posted_at.is_some_and(|at| at.elapsed() >= self.retry);
+            let since_anchor =
+                anchor_ts.filter(|_| carried).zip(self.trusted.as_ref().and_then(|clock| clock.now_ms()));
+            let since_anchor = since_anchor.map_or(0, |(at, now)| u64::try_from(now.saturating_sub(at)).unwrap_or(0));
+            let unanchored = progressed_at.elapsed().max(Duration::from_millis(since_anchor));
+            if !stalled && head.seq > on_chain_seq && unanchored > self.interval.saturating_mul(3) {
                 stalled = true;
                 warn!(
                     alert = "log_head_stalled",

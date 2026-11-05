@@ -2,6 +2,7 @@
 //! pages Critical `log_sync_held` once — from any wait on the sync, with nothing arriving — and the
 //! episode resolves once no batch in flight is past the bound, an earlier run's included.
 
+use std::future::Future;
 use std::sync::mpsc::{Receiver as StdReceiver, Sender as StdSender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -9,6 +10,7 @@ use std::time::Duration;
 use engine_core::command::Command;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::timeout;
+use tracing_subscriber::layer::SubscriberExt;
 
 use crate::log::Manifest;
 use crate::sequencer::pipeline::hold::MAX_SYNC_HOLD;
@@ -125,6 +127,35 @@ async fn a_request_received_past_the_deadline_waits_for_the_held_sync() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_kept_request_waits_when_a_younger_batch_crosses_the_bound_while_the_resolution_is_written() {
+    // Batch A's sync is held past the bound with a request kept, and a younger batch B is in
+    // flight. A's sync finishes, B is inside its bound, and the hold's resolution is logged — a
+    // write the host blocks until B is past its own bound. The kept request is judged again and
+    // waits behind B's held sync, which pages.
+    let (mut seq, permits, _entered) = held_sequencer("pipeline-kept-rejudged");
+    stage_ticks(&mut seq, 1);
+    let deadline = tokio::time::Instant::now() + MAX_SYNC_HOLD;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    stage_ticks(&mut seq, 1);
+    tokio::time::advance(MAX_SYNC_HOLD - Duration::from_secs(1)).await;
+    assert!(seq.admit(query(), deadline).is_none(), "past A's deadline the request is kept");
+    seq.pipeline.as_mut().unwrap().held = true;
+    permits.send(Verdict::Pass).unwrap();
+    while seq.pipeline.as_ref().unwrap().shared.done.lock().unwrap().is_empty() {
+        std::thread::yield_now();
+    }
+    crate::test_tracing::keep_callsites_interested();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let layer = BlockedResolution { by: Duration::from_secs(2), seen: seen.clone() };
+    let _guard = tracing::subscriber::set_default(tracing_subscriber::Registry::default().with(layer));
+    let (_tx, mut rx) = mpsc::channel(4);
+    let taken = timeout(Duration::from_secs(1), seq.next_request(&mut rx)).await;
+    assert!(taken.is_err(), "the kept request is not stamped behind B's held sync");
+    assert!(seq.pipeline.as_ref().unwrap().kept.is_some(), "the request stays kept");
+    assert_eq!(*seen.lock().unwrap(), ["resolved log_sync_held", "log_sync_held"], "B's hold pages");
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_sync_that_finished_inside_the_bound_is_no_hold() {
     // The sync finishes before the deadline, but the sequencer looks only after it: the finished
     // sync is released first, so nothing pages.
@@ -201,4 +232,41 @@ fn stage_ticks(seq: &mut Sequencer, batches: usize) {
 
 fn query() -> Request {
     Request::Query(Box::new(|_| {}))
+}
+
+/// A host that blocks the write of the `log_sync_held` resolution for `by`: the paused clock moves
+/// on while the line is written. Records every alert and resolution it sees, in order.
+struct BlockedResolution {
+    by: Duration,
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for BlockedResolution {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        let mut alert = AlertName::default();
+        event.record(&mut alert);
+        let Some(name) = alert.0 else { return };
+        if name == "resolved log_sync_held" {
+            // `advance` moves the clock on its first poll; the dropped future only yielded after.
+            let mut advance = std::pin::pin!(tokio::time::advance(self.by));
+            let _ = advance.as_mut().poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+        }
+        self.seen.lock().unwrap().push(name);
+    }
+}
+
+/// An event's `alert`, or its `alert_resolved` prefixed with `resolved`.
+#[derive(Default)]
+struct AlertName(Option<String>);
+
+impl tracing::field::Visit for AlertName {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        match field.name() {
+            "alert" => self.0 = Some(value.to_owned()),
+            "alert_resolved" => self.0 = Some(format!("resolved {value}")),
+            _ => {}
+        }
+    }
+
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
 }

@@ -243,7 +243,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/state/durable_tests.rs` — a proof, a dashboard view and a fallback view are answered only once the log holds the state they read
 - `src/sequencer/pipeline/tests.rs` — a batch leaves only after its sync and the next is sequenced meanwhile, a failed sync releases nothing and stops the sequencer, and a full pipeline takes no request
 - `src/sequencer/pipeline/hold.rs` — waiting on the log-sync thread: no request, new, drained, or received past the deadline, while the oldest batch's sync is held past 5 s, and every wait on a sync while the sequencer runs waking at that bound to raise Critical `log_sync_held` once and resolve it
-- `src/sequencer/pipeline/hold_tests.rs` — the held-sync bound: one page, nothing stamped, a quiet node and a settling one paged at the deadline, a request arriving past it kept, a finished sync never paged, and an earlier run's episode resolved
+- `src/sequencer/pipeline/hold_tests.rs` — the held-sync bound: one page, nothing stamped, a quiet node and a settling one paged at the deadline, a request arriving past it kept, and judged again when a younger batch crosses the bound while the resolution is written, a finished sync never paged, and an earlier run's episode resolved
 - `src/sequencer/wait_bench.rs` — what a price waits behind at 100k accounts, per occurrence, and the channel-to-stamp wait budget under reads and checkpoints
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
@@ -791,26 +791,31 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   this log holds at its seq, freezing sequencing on a rollback or a foreign prefix, and the startup
   check that refuses a log the posted head does not hold
 - `src/log_heads/prefix.rs` — the snapshot-scan prefix pass: extends the running command-prefix
-  digest over each sealed command entry up to the snapshot base and refuses a prefix the snapshot
-  does not certify
+  digest over each sealed command entry up to the snapshot base, refuses a prefix the snapshot
+  does not certify, and returns the posted command's stamp
 - `src/log_heads/rpc/mod.rs` — the LogHeads chain access: strict-majority quorum reads of the signer
-  epoch and posted head at one agreed latest block, posts through the checkpoint endpoint on the
-  dedicated relayer, and persists the complete signed call before each broadcast
+  epoch and posted head at one agreed latest block, the startup walk back through the epochs the
+  starting key signed at that block, posts through the checkpoint endpoint on the dedicated relayer,
+  persists the complete signed call before each broadcast, and holds one reservation operation at a
+  time
 - `src/log_heads/rpc/tests.rs` — the chain access's tests: the pending bound, the rebroadcast's exact
   bytes, the replacement record's consistency, and against a loopback endpoint the call durable
-  before its broadcast and the send, wait, resend, and rebroadcast branches; and the bounded store IO
+  before its broadcast and the send, wait, resend, and rebroadcast branches; and the bounded store IO,
+  one operation outstanding at a time
 - `src/log_heads/submission.rs` — crash-durable relayer nonce reservations for log-head posts:
   a nonce advances only on chain evidence, an unsent reservation is reused for the newer head, a
   pending one is awaited rather than replaced, and the lock is held inside each blocking write
 - `src/log_heads/setup.rs` — reading the posted head before the log replays, so the startup gate
   binds to the link the replay captures at the posted seq (seq-only at or under an attested
-  snapshot base), refuses a log the posted head does not hold within the custody finality budget,
-  and builds the poster with the watch at the recovered head
+  snapshot base), refuses a log the posted head does not hold within the custody finality budget —
+  the current epoch's head or, while it holds none, the newest head of the earlier epochs the
+  starting key signed — and builds the poster with the watch at the recovered head and its stall
+  alarm counting from the checked head's stamp
 - `src/log_heads/tests/mod.rs` — the poster's loop tests: pacing, lost responses, rollback freezes
   at a higher or forked posted head, stall and transport-failure alert episodes, and the reorg
   reparenting
 - `src/log_heads/tests/recovery.rs` — recovery behaviors: heads that land despite a lost response
-  or across a restart, same-epoch reorg reparenting, an emptied epoch, the transport episodes'
+  or across a restart, the stall alarm counting across a restart, same-epoch reorg reparenting, an emptied epoch, the transport episodes'
   resolutions, and adoption by this log's prefixes: a foreign prefix freezes, a head with no
   retained evidence is not adopted
 - `src/log_heads/tests/fake_chain.rs` — the tests' fake chain: the posted head, epoch, and failures
@@ -819,7 +824,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   and the timed-out write that keeps its lock until it completes
 - `src/log_heads/tests/recovery_binding.rs` — the posted-head check's binding to the replayed
   bytes: the captured cumulative command-prefix digest, its continuity across a shutdown
-  checkpoint, the host-tamper proof, and the poster's evidence seeded from the replayed prefixes
+  checkpoint, the host-tamper proof, and the poster's evidence and stall alarm seeded from the replay
 - `src/log_heads/tests/rollback.rs` — the rollback check's refusals: seqs the log lacks, a link
   mismatch at the posted seq, and a seq the replay did not capture
 - `src/custody/tests/election_scenario.rs` — the operator election dev scenario on isolated Anvil:
@@ -862,6 +867,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/fakes/sequencer.rs` — in-memory sequencer stand-ins for the watcher tests, with no
   log and no trusted time
 - `src/custody/tests/fakes/logs.rs` — log lines captured from a test's tasks, for alert assertions
+- `src/custody/tests/fakes/epochs.rs` — the fake chain's signer history and earlier epochs' log heads,
+  answered as contract calls
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
 - `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
@@ -893,6 +900,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/pending.rs` — bounded, backed-off log-derived retries of deposits left pending by source failures
 - `src/custody/quorum.rs` — strict-majority reads at common block heights, provider alerts, and
   a Critical alert while quorum is lost
+- `src/custody/quorum/posted_head.rs` — the LogHeads contract's posted head, read at the highest
+  block a strict majority has reached and agrees on, block and head both
 - `src/custody/rpc/mod.rs` — the vault over JSON-RPC, trusting only compiled-in TLS roots, with
   errors scrubbed of the endpoint URL
 - `src/custody/rpc/decode.rs` — decoding the vault's deposit logs, the staking and registry events,
@@ -910,7 +919,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/quorum.rs` — fabrication, disagreement, lag, outages, and quorum recovery
 - `src/custody/tests/log_heads.rs` — the log-head read through the quorum: block and head at the
   highest height a strict majority agrees on, never the finality tag, falling back past a faulty
-  provider, a lagging minority excluded, and one quorum loss when no height wins
+  provider, a lagging minority excluded, and one quorum loss when no height wins; startup's walk back
+  through the epochs the starting key signed; and the log-head and relayer-balance quorums' alerts
+  under their own names at Warning
 - `src/custody/tests/quorum_diagnostics.rs` — malformed header exclusion, transport independence, and retained watchdog progress
 - `src/custody/tests/rpc.rs` — the RPC adapter's log decoding, deadlines, and URL scrubbing
 - `src/custody/tests/rpc/redaction.rs` — a key a provider's refusal echoes stays out of the error

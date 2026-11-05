@@ -176,7 +176,8 @@ an index: load only the rule whose hint matches the current action.
   relayer, an hour by default, reading back through the custody RPC quorum — and refuses to start
   on a log the posted head does not hold, freezing sequencing when a posted head overtakes it or
   names another prefix at a seq it retains (`log_rollback`); the check is per signer epoch, so a standby takeover dropping the outgoing
-  key's tail is not refused.
+  key's tail is not refused, while a key `setSigner` reinstalls is checked against the newest head of
+  its earlier epochs.
   Withdrawal authorizations carry EIP-712 data and an approval inclusion proof; custody's used nonce
   determines payment, and unpaid approvals are reissued on signer rotation or on their account's
   signed request, never on a schedule. It also has price feeds: live crypto
@@ -456,12 +457,12 @@ an index: load only the rule whose hint matches the current action.
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
   dev scenario, the alert outbox kill/restart scenario (with the metrics and alert routing, browser-origin, proxy protocol,
-  batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets
-  and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
+  batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
+  on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
   signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
-  scenario, the production secrets dev scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
+  scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
   package; `wasm-verifier-compare` fails if the builds differ), and the enclave image (`image`

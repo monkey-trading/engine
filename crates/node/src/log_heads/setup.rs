@@ -9,7 +9,7 @@ use anyhow::Context;
 use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 
-use super::{Head, HeadsChain, Poster, rpc::HeadsRpc};
+use super::{Head, Poster, rpc::HeadsRpc};
 use crate::config::NodeConfig;
 use crate::custody::heads_reader;
 use crate::log::CheckpointDomain;
@@ -32,8 +32,14 @@ impl Setup {
         super::Publisher { tx: self.tx.clone(), freeze: self.freeze.clone() }
     }
 
-    /// Runs the poster as a supervised task until a rollback freezes it.
-    pub(crate) async fn spawn(self, sequencer: mpsc::Sender<Request>) -> (&'static str, anyhow::Result<()>) {
+    /// Runs the poster as a supervised task until a rollback freezes it, its stall alarm reading
+    /// `trusted` time.
+    pub(crate) async fn spawn(
+        mut self,
+        sequencer: mpsc::Sender<Request>,
+        trusted: crate::trusted_time::TrustedClock,
+    ) -> (&'static str, anyhow::Result<()>) {
+        self.poster.trusted = Some(trusted);
         ("log_heads", self.poster.run(self.rx, sequencer).await)
     }
 }
@@ -47,9 +53,26 @@ pub(crate) struct Pending {
 }
 
 impl Pending {
+    /// The newest head this key's epochs hold, which the log must contain, with the poster's
+    /// confirmed parent seeded from the current epoch's head only: the first post after a restart
+    /// names it, so a tail already past it does not fail the contract's chaining rule, and an
+    /// earlier epoch's head is no parent under its first-post rule.
+    fn from_heads(mut poster: Poster<HeadsRpc>, heads: super::rpc::StartupHeads, freeze: super::FreezeLatch) -> Self {
+        poster.confirmed = heads.current.map(|head| (heads.epoch, head));
+        Self { poster, posted: heads.newest, freeze }
+    }
+
     /// The posted head the replay must bind to, if one is posted.
     pub(crate) fn posted(&self) -> Option<Head> {
         self.posted
+    }
+
+    /// What `read_posted` returns when startup reads `heads`, over a chain access in `dir` that
+    /// touches no network.
+    #[cfg(test)]
+    pub(crate) fn for_test_heads(heads: super::rpc::StartupHeads, dir: &std::path::Path) -> Self {
+        let Self { poster, freeze, .. } = Self::for_test(None, dir);
+        Self::from_heads(poster, heads, freeze)
     }
 
     /// What `read_posted` returns when the contract holds `posted` for the current epoch, over a
@@ -66,6 +89,8 @@ impl Pending {
             retry: Duration::from_secs(1),
             freeze: freeze.clone(),
             confirmed: None,
+            anchored: None,
+            trusted: None,
             prefix_ring: Default::default(),
         };
         Self { poster, posted, freeze }
@@ -85,7 +110,7 @@ pub(crate) async fn read_posted(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyh
     let quorum = Arc::new(heads_reader(&cfg.custody)?);
     let chain = HeadsRpc::new(checkpoints, log_heads, domain, &cfg.node.log_dir, quorum)?;
     let freeze = super::FreezeLatch::default();
-    let mut poster = Poster {
+    let poster = Poster {
         chain,
         key: key.clone(),
         domain,
@@ -93,33 +118,34 @@ pub(crate) async fn read_posted(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyh
         retry: checkpoints.retry_interval,
         freeze: freeze.clone(),
         confirmed: None,
+        anchored: None,
+        trusted: None,
         prefix_ring: Default::default(),
     };
     let (retry, budget) = (
         checkpoints.retry_interval,
         cfg.custody.evm.as_ref().map_or(Duration::from_secs(30), |evm| evm.finality_stalled_after),
     );
-    let (epoch, posted) = read_posted_with_retry(&poster, retry, budget).await?;
-    // The authenticated posted head seeds the poster's confirmed parent: the first post after a
-    // restart names it, so a tail already past it does not fail the contract's chaining rule.
-    poster.confirmed = posted.map(|head| (epoch, head));
-    Ok(Some(Pending { poster, posted, freeze }))
+    let heads = read_posted_with_retry(&poster, alloy::primitives::Address::from(key.address()), retry, budget).await?;
+    Ok(Some(Pending::from_heads(poster, heads, freeze)))
 }
 
-/// Reads the current signer epoch and its posted head through the custody RPC quorum, retrying
-/// transport failures up to the custody finality budget: a node that cannot bound its log's
-/// rollback window must not open the log for writing.
+/// Reads, through the custody RPC quorum, the current signer epoch, its posted head, and the newest
+/// head this key's epochs hold (`rpc::startup_heads`), retrying transport failures up to the custody
+/// finality budget: a node that cannot bound its log's rollback window must not open the log for
+/// writing.
 /// Error cases:
 /// - the budget elapses with no quorum read
 async fn read_posted_with_retry(
     poster: &Poster<HeadsRpc>,
+    signer: alloy::primitives::Address,
     retry: Duration,
     budget: Duration,
-) -> anyhow::Result<(u64, Option<Head>)> {
+) -> anyhow::Result<super::rpc::StartupHeads> {
     tokio::time::timeout(budget, async {
         let mut failed = false;
         loop {
-            match poster.chain.posted().await {
+            match poster.chain.startup_heads(signer).await {
                 Ok(posted) => {
                     if std::mem::take(&mut failed) {
                         info!(alert_resolved = "log_head_read_failed", "reading the posted log head recovered");
@@ -140,8 +166,9 @@ async fn read_posted_with_retry(
 
 /// The startup gate and poster setup in one call: checks the posted head against the link the
 /// replay captured — accepting it seq-only at or under an attested snapshot base, which determines
-/// the content there — and builds the poster with the watch at the recovered head. A detected
-/// rollback logs Critical `log_rollback` naming the range.
+/// the content there — and builds the poster with the watch at the recovered head and its stall
+/// alarm started from the checked head. A detected rollback logs Critical `log_rollback` naming the
+/// range.
 /// Error cases:
 /// - the rollback check fails (its Critical names the range)
 pub(crate) fn startup(pending: Option<Pending>, log: &crate::sequencer::ReplayedLog) -> anyhow::Result<Option<Setup>> {
@@ -164,6 +191,9 @@ pub(crate) fn startup(pending: Option<Pending>, log: &crate::sequencer::Replayed
                 .with_context(|| format!("the replayed log holds no command at the posted head's seq {seq}"))
         })
         .inspect_err(|e| error!("refusing to serve: {e:#}"))?;
+        // The stall alarm starts from the checked head, not from this process: the head is no
+        // advance, and trusted time since its command was stamped counts.
+        poster.anchored = Some((posted.seq, log.replayed.ts_at));
     }
     // The evidence that this log holds an on-chain head: each command's cumulative prefix as the
     // replay authenticated it, seeded before the poster's first read.

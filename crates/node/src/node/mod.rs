@@ -280,6 +280,8 @@ async fn serve_node(
     let sequencer = crate::sequencer_thread::Worker::start(seq.run(rx), cpu)?;
     let mut tasks: JoinSet<TaskResult> = JoinSet::new();
     tasks.spawn(marks_task);
+    let (samples, samples_rx) = watch::channel(None);
+    let trusted = || trusted_time::TrustedClock::new(clock.clone(), samples_rx.clone(), cfg.time.max_drift);
     if let Some(setup) = checkpoint_setup {
         let checkpoint_tx = tx.clone();
         tasks.spawn(async move {
@@ -287,14 +289,12 @@ async fn serve_node(
         });
     }
     if let Some(setup) = log_heads_setup {
-        tasks.spawn(setup.spawn(tx.clone()));
+        tasks.spawn(setup.spawn(tx.clone(), trusted()));
     }
 
     // A successor's request stops sequencing through `drain_rx`, once the vault approves it; the
     // stop itself goes to the sequencer as a final-checkpoint request, which refuses while the
     // checkpoint gate would withhold the checkpoint.
-    let (samples, samples_rx) = watch::channel(None);
-    let trusted = || trusted_time::TrustedClock::new(clock.clone(), samples_rx.clone(), cfg.time.max_drift);
     let (drain_tx, mut drain_rx) = mpsc::channel(1);
     let handover_stop_tx = tx.clone();
     let mut handover = JoinSet::new();

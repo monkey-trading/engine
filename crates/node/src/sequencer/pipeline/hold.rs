@@ -79,7 +79,7 @@ impl Sequencer {
     /// batches pending, or the oldest one's sync held past `MAX_SYNC_HOLD`, it takes no request
     /// until a sync is done, and it wakes at the deadline with nothing arriving, so a hold pages on
     /// a quiet node too. A request received past the deadline, before the timer fired, is kept and
-    /// handed out once the hold clears.
+    /// handed out once it is admitted against the oldest batch's deadline at hand-out.
     /// Error cases:
     /// - a sync failed, or its thread ended
     pub(in crate::sequencer) async fn next_request(
@@ -100,7 +100,12 @@ impl Sequencer {
                 continue;
             }
             if let Some(request) = pipeline.kept.take() {
-                return Ok(Some(request));
+                // Judged against the deadline again: the verdict above was taken before the
+                // hold's resolution was logged, a write the host can block past the bound.
+                match self.admit(request, deadline) {
+                    Some(request) => return Ok(Some(request)),
+                    None => continue,
+                }
             }
             let shared = pipeline.shared.clone();
             tokio::select! {

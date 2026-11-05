@@ -1,6 +1,8 @@
 //! Log-head reads through the custody quorum: block and head at the highest height a strict
 //! majority agrees on, never the custody finality tag, falling back past a faulty provider, a
-//! lagging minority excluded, and one quorum loss when no height wins.
+//! lagging minority excluded, and one quorum loss when no height wins; startup's walk back through
+//! the epochs the starting key signed; the log-head and relayer balance quorums alert under their
+//! own names at Warning.
 
 use alloy::primitives::{Address, B256};
 
@@ -148,4 +150,106 @@ async fn no_candidate_height_with_a_majority_fails_the_read_with_one_quorum_loss
         .collect();
     assert_eq!(lost.len(), 1, "one quorum loss for the read: {lost:?}");
     assert_eq!(lost[0].get("operation").map(String::as_str), Some("latest_block"));
+}
+
+#[tokio::test]
+async fn startup_walks_back_to_the_newest_head_an_unbroken_run_of_this_keys_epochs_holds() {
+    // `setSigner` reinstalled this key twice: epoch three is empty, epoch two holds nothing, and
+    // epoch one holds the head this key signed over this log. The startup read reaches it, every
+    // call at the agreed block.
+    let chains = reinstalled([(1, KEY, Some((2, B256::from([2; 32])))), (2, KEY, None), (3, KEY, None)]);
+    let quorum = quorum(&chains).await;
+    let heads = crate::log_heads::startup_heads(&quorum, LOG_HEADS, VAULT, KEY, CHAIN_ID).await.unwrap();
+    assert_eq!((heads.epoch, heads.current), (3, None));
+    assert_eq!(heads.newest, Some(crate::log_heads::Head { seq: 2, link: B256::from([2; 32]) }));
+    for chain in &chains {
+        let reads = chain.0.lock().unwrap().epochs.reads.clone();
+        assert!(!reads.is_empty() && reads.iter().all(|(block, _)| *block == 10), "{reads:?}");
+    }
+}
+
+#[tokio::test]
+async fn startup_stops_the_walk_at_an_epoch_another_key_signed() {
+    // Epoch two's head is another key's: the run of this key's epochs ends there, so neither it
+    // nor epoch one's head is this log's to check.
+    let chains = reinstalled([
+        (1, KEY, Some((2, B256::from([2; 32])))),
+        (2, OTHER, Some((5, B256::from([5; 32])))),
+        (3, KEY, None),
+    ]);
+    let quorum = quorum(&chains).await;
+    let heads = crate::log_heads::startup_heads(&quorum, LOG_HEADS, VAULT, KEY, CHAIN_ID).await.unwrap();
+    assert_eq!(heads.newest, None);
+}
+
+#[tokio::test]
+async fn startup_walks_back_only_when_this_key_signs_the_current_epoch() {
+    let chains = reinstalled([(2, KEY, Some((5, B256::from([5; 32])))), (3, OTHER, None)]);
+    let quorum = quorum(&chains).await;
+    let heads = crate::log_heads::startup_heads(&quorum, LOG_HEADS, VAULT, KEY, CHAIN_ID).await.unwrap();
+    assert_eq!(heads.newest, None, "another key's epoch starts no walk");
+}
+
+#[tokio::test]
+async fn startup_reads_no_earlier_epoch_while_the_current_one_holds_a_head() {
+    let chains = reinstalled([(2, KEY, Some((5, B256::from([5; 32])))), (3, KEY, None)]);
+    for chain in &chains {
+        chain.0.lock().unwrap().posted = Some((7, B256::from([7; 32])));
+    }
+    let quorum = quorum(&chains).await;
+    let heads = crate::log_heads::startup_heads(&quorum, LOG_HEADS, VAULT, KEY, CHAIN_ID).await.unwrap();
+    let current = Some(crate::log_heads::Head { seq: 7, link: B256::from([7; 32]) });
+    assert_eq!((heads.current, heads.newest), (current, current));
+    assert!(chains.iter().all(|chain| chain.0.lock().unwrap().epochs.reads.is_empty()));
+}
+
+#[tokio::test]
+async fn the_log_head_and_relayer_balance_quorums_alert_under_their_own_names_at_warning() {
+    // Neither read feeds a credit: losing it pages Warning under its own quorum name, so neither
+    // shares an episode with the deposit watcher's Critical "crediting paused" quorum loss.
+    let cfg = refusing_custody();
+    let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
+    let heads = crate::custody::heads_reader(&cfg.custody).unwrap();
+    crate::log_heads::posted(&heads, Address::ZERO, cfg.custody.chain_id).await.unwrap_err();
+    crate::custody::BalanceQuorum::connect(&cfg.custody).unwrap().balance(Address::ZERO).await.unwrap_err();
+    assert_eq!((logs.warnings("custody_rpc_quorum_lost"), logs.critical("custody_rpc_quorum_lost")), (2, 0));
+    let (log_heads, relayer_balance) = (logs.count("quorum=\"log_heads\""), logs.count("quorum=\"relayer_balance\""));
+    assert!(log_heads > 0 && relayer_balance > 0, "each quorum raised its own alerts");
+    assert_eq!(log_heads + relayer_balance, logs.count("alert=\"custody_rpc_"), "every custody alert names its quorum");
+}
+
+// ── Helpers ──
+
+/// The enclave key startup reads for, and another key.
+const KEY: Address = Address::repeat_byte(0x5e);
+const OTHER: Address = Address::repeat_byte(0x0f);
+
+/// One epoch's number, its signer, and the head it holds.
+type Epoch = (u64, Address, Option<(u64, B256)>);
+
+/// Three providers at block ten in signer epoch three, its own head unposted, with each epoch's
+/// signer and head as `history` gives it.
+fn reinstalled<const N: usize>(history: [Epoch; N]) -> [FakeChain; 3] {
+    let chains = chains();
+    for chain in &chains {
+        let mut chain = chain.0.lock().unwrap();
+        (chain.head, chain.epoch) = (10, 3);
+        chain.epochs.by_epoch = history.iter().map(|&(epoch, signer, head)| (epoch, (signer, head))).collect();
+    }
+    chains
+}
+
+/// `config/anvil.toml` with its custody providers on loopback ports nothing listens on, so every
+/// read is refused at once.
+fn refusing_custody() -> crate::config::NodeConfig {
+    let mut anvil = std::fs::read_to_string(crate::test_support::ANVIL_CONFIG).unwrap();
+    for port in ["8545", "8546", "8547"] {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        anvil = anvil.replace(&format!("http://127.0.0.1:{port}\""), &format!("http://127.0.0.1:{closed}\""));
+    }
+    let cfg: crate::config::NodeConfig = toml::from_str(&anvil).unwrap();
+    let providers = &cfg.custody.evm.as_ref().unwrap().providers;
+    let ports: Vec<_> = providers.iter().map(|p| p.rpc_url.expose().unwrap().port()).collect();
+    assert!(ports.iter().all(|port| !matches!(port, Some(8545..=8547))), "no read reaches Anvil: {ports:?}");
+    cfg
 }
