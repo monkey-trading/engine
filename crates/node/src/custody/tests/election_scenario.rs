@@ -6,6 +6,7 @@
 //! by the vault, its only minter, impersonated in place of proven emission claims.
 
 mod chain;
+mod daily_turns;
 mod node;
 mod operator_share;
 mod staking_reads;

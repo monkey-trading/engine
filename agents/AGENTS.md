@@ -394,6 +394,12 @@ an index: load only the rule whose hint matches the current action.
   staker each claim their share, an epoch below the floor pays neither, and the candidate's unclaimed
   leaf registers and pays through the vault's exit; then, from `V50`, an election taking effect halfway
   through an epoch splits the share between the outgoing and incoming candidates, each claimed;
+  `dev-daily-rotation.sh`, the daily rotation scenario, from `V51`, on two Anvil chains with warped time:
+  A, B and C delegate 50:30:20 and a close adopts them as a rotation set; eight days on, five turns are
+  drawn from relayed seeds, and at each boundary the turn's key applies and the previous one's is
+  refused, the incumbent hands the keys and the log over while the vault's finalised view still names
+  its release, the member's first command is `TurnTaken` and its time in office starts there,
+  `/v1/operator` shows the sets and turns, and the last member's log replays;
   `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
   contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
   relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped
@@ -466,7 +472,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the enclave key
+  deposit finality scenarios, the MONKEY staking, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation dev scenario (`dev-daily-rotation`), the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
@@ -685,6 +691,11 @@ Run from the repo root:
   candidate's unclaimed leaf registering and paying through the exit from the stopped node's log; then,
   on a fresh Anvil, a second election taking effect halfway through an epoch, whose close credits the
   outgoing and incoming candidates about half the share each, both in their histories and both claimed)
+- Daily rotation dev scenario: `./scripts/dev-daily-rotation.sh` (the same requirements; the
+  operator-share harness's in-process nodes on a test clock, against a custody Anvil finalising two
+  blocks behind its head and the seed relay fixture's stand-in Ethereum; five daily turns, each
+  handover through the real listener and `handover::take`, the admin keys, `TurnTaken`, the time in
+  office and `/v1/operator` checked at each boundary, then the log replayed)
 - Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens
   read through the custody quorum into `/v1/operators`, the closed epochs in `/v1/monkey/distributions`
   across a delegation and a restart, and each saved answer verified with `engine verify-response`)

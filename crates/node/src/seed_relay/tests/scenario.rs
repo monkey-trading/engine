@@ -8,6 +8,8 @@
 //!   another epoch, reverts on Arbitrum.
 //! - With the beacon node stopped, relaying fails (`seed_relay_failed`); once the next turn's draw
 //!   deadline passes, `seed_missing` fires, and that turn draws from the fallback.
+//!
+//! The daily turns scenario relays its seeds through the same fixture to another chain's receiver.
 
 use std::process::{Command as Process, Stdio};
 use std::sync::{Arc, Mutex};
@@ -47,7 +49,7 @@ sol! {
 }
 
 /// The dev beacon chain's genesis time.
-const GENESIS: u64 = 1_700_000_000;
+pub(crate) const GENESIS: u64 = 1_700_000_000;
 /// The address the protocol writes each block's parent beacon root from.
 const SYSTEM: Address = alloy::primitives::address!("fffffffffffffffffffffffffffffffffffffffe");
 const FULU: [u8; 4] = [6, 0, 0, 0];
@@ -129,17 +131,18 @@ async fn dev_scenario_three_daily_seeds_reach_arbitrum_and_a_missing_one_alerts(
 // ── Helpers ──
 
 /// One Anvil chain, its three RPC proxies, and its unlocked accounts.
-struct Chain {
+pub(crate) struct Chain {
     _anvil: Anvil,
     _proxies: Vec<Anvil>,
-    client: RpcClient,
+    pub(crate) client: RpcClient,
     url: String,
     proxies: Vec<String>,
     accounts: Vec<Address>,
 }
 
 impl Chain {
-    async fn start(chain_id: u64, time: u64) -> Self {
+    /// Anvil as chain `chain_id` from `time`, with its three proxies.
+    pub(crate) async fn start(chain_id: u64, time: u64) -> Self {
         let port = free_port();
         let anvil = Anvil(
             Process::new("anvil")
@@ -210,7 +213,7 @@ type Finalized = (BeaconBlockHeader, Arc<Vec<u8>>);
 
 /// A beacon node that serves one synthetic finalized block and its state.
 #[derive(Clone, Default)]
-struct Beacon(Arc<Mutex<Option<Finalized>>>);
+pub(crate) struct Beacon(Arc<Mutex<Option<Finalized>>>);
 
 impl Beacon {
     /// Finalizes a block at `slot` and returns its root.
@@ -228,7 +231,7 @@ impl Beacon {
     }
 
     /// Serves the beacon API on a free port: its URL, and the task to abort to stop it.
-    async fn serve(&self) -> (String, JoinHandle<()>) {
+    pub(crate) async fn serve(&self) -> (String, JoinHandle<()>) {
         let app = Router::new()
             .route("/eth/v1/beacon/headers/finalized", get(header))
             .route("/eth/v2/debug/beacon/states/{slot}", get(state))
@@ -266,6 +269,12 @@ async fn state(State(beacon): State<Beacon>, Path(slot): Path<u64>) -> Response 
 /// Ethereum's EIP-4788 contract records its root in the next slot's block, as the protocol's system
 /// call does.
 async fn advance(ethereum: &Chain, arbitrum: &Chain, beacon: &Beacon, time: u64) {
+    finalize_beacon(ethereum, beacon, time).await;
+    arbitrum.warp(time).await;
+}
+
+/// `advance` on the beacon node and Ethereum alone.
+pub(crate) async fn finalize_beacon(ethereum: &Chain, beacon: &Beacon, time: u64) {
     let slot = (time - GENESIS) / 12 - 80;
     let root = beacon.finalize(slot);
     ethereum.impersonate(SYSTEM).await;
@@ -273,19 +282,29 @@ async fn advance(ethereum: &Chain, arbitrum: &Chain, beacon: &Beacon, time: u64)
     let record = TransactionRequest::default().from(SYSTEM).to(crate::seed_relay::ethereum::BEACON_ROOTS);
     let receipt = transact(&ethereum.client, record.input(root.to_vec().into())).await;
     assert!(receipt.status(), "the beacon root is recorded");
-    arbitrum.warp(time).await;
 }
 
 /// Deploys the Inbox stand-in and the relay on Ethereum and the receiver on Arbitrum, the receiver
 /// naming the relay's address before the relay exists.
 async fn deploy_pair(ethereum: &Chain, arbitrum: &Chain) -> (Address, Address, Address) {
+    deploy_relay(ethereum, &arbitrum.client, arbitrum.accounts[0]).await
+}
+
+/// `deploy_pair`, with the receiver deployed by `deployer` on the chain `arbitrum` serves: the relay,
+/// the receiver, and the Inbox.
+pub(crate) async fn deploy_relay(
+    ethereum: &Chain,
+    arbitrum: &RpcClient,
+    deployer: Address,
+) -> (Address, Address, Address) {
+    let receiver_deployer = deployer;
     let deployer = ethereum.accounts[0];
     let inbox = deploy(&ethereum.client, deployer, "MockInbox.sol/MockInbox.json", &[]).await;
     let nonce: U64 = ethereum.client.request("eth_getTransactionCount", (deployer, "latest")).await.unwrap();
     let relay = deployer.create(nonce.to());
     let receiver = deploy(
-        &arbitrum.client,
-        arbitrum.accounts[0],
+        arbitrum,
+        receiver_deployer,
         "SeedReceiver.sol/SeedReceiver.json",
         &(relay, GENESIS).abi_encode_params(),
     )
@@ -297,7 +316,7 @@ async fn deploy_pair(ethereum: &Chain, arbitrum: &Chain) -> (Address, Address, A
 }
 
 /// Delivers every ticket the Inbox records to its target on Arbitrum, from its sender's alias.
-async fn bridge(ethereum: RpcClient, arbitrum: RpcClient, inbox: Address, receiver: Address) {
+pub(crate) async fn bridge(ethereum: RpcClient, arbitrum: RpcClient, inbox: Address, receiver: Address) {
     let mut from = 0u64;
     loop {
         let head: U64 = ethereum.request("eth_blockNumber", ()).await.unwrap();
@@ -329,12 +348,25 @@ async fn bridge(ethereum: RpcClient, arbitrum: RpcClient, inbox: Address, receiv
 /// The node config the relayer runs from: the Anvil config with its custody providers on Arbitrum's
 /// proxies, and a `[seed_relay]` section on Ethereum's, signing as Ethereum's second account.
 fn node_config(ethereum: &Chain, arbitrum: &Chain, relay: Address, receiver: Address, beacon: &str) -> NodeConfig {
+    relayer_config(ethereum, 31337, &arbitrum.proxies, relay, receiver, beacon)
+}
+
+/// `node_config`, with Ethereum the chain `chain_id` and Arbitrum read through the proxy URLs `arbitrum`.
+pub(crate) fn relayer_config(
+    ethereum: &Chain,
+    chain_id: u64,
+    arbitrum: &[String],
+    relay: Address,
+    receiver: Address,
+    beacon: &str,
+) -> NodeConfig {
     let mut cfg = NodeConfig::load(std::path::Path::new(ANVIL_CONFIG)).unwrap();
-    // No vault is deployed: the custody quorum's identity read finds no token there, alike on every provider.
+    // The relayer reads no vault: at an address with no code, the custody quorum's identity read finds
+    // no token, alike on every provider.
     cfg.custody.vault = format!("{}", Address::repeat_byte(0x99));
     let evm = cfg.custody.evm.as_mut().unwrap();
     evm.finality_tag = FinalityTag::Latest;
-    evm.providers = providers(&arbitrum.proxies);
+    evm.providers = providers(arbitrum);
     let providers: String = ethereum
         .proxies
         .iter()
@@ -343,7 +375,7 @@ fn node_config(ethereum: &Chain, arbitrum: &Chain, relay: Address, receiver: Add
         .collect();
     cfg.seed_relay = Some(
         toml::from_str(&format!(
-            "chain_id = 31337\nrpc_url = '{}'\nrelayer = '{}'\nbeacon_api = '{beacon}'\nrelay = '{relay}'\n\
+            "chain_id = {chain_id}\nrpc_url = '{}'\nrelayer = '{}'\nbeacon_api = '{beacon}'\nrelay = '{relay}'\n\
              receiver = '{receiver}'\npoll_interval = '1s'\nrpc_timeout = '5s'\nstate_timeout = '30s'\n\
              resend_after = '1h'\nl2_max_fee_per_gas = '1'\nmin_balance = '0.1'\n{providers}",
             ethereum.url, ethereum.accounts[1],
@@ -398,7 +430,7 @@ fn alias(address: Address) -> Address {
 }
 
 /// The stand-in beacon chain's RANDAO mix for `epoch`.
-fn dev_mix(epoch: u64) -> [u8; 32] {
+pub(crate) fn dev_mix(epoch: u64) -> [u8; 32] {
     keccak256([b"dev randao".as_slice(), &epoch.to_le_bytes()].concat()).0
 }
 

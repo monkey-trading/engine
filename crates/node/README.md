@@ -575,7 +575,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   custody credit tag, raises `seed_missing` and `seed_relayer_unfunded`, and relays the upcoming turns'
   seeds the receiver lacks, one transaction in flight at a time, raising `seed_relay_failed` when it
   cannot; `src/seed_relay/tests.rs` and its `tests/` modules cover its decisions over fake chains, and
-  `src/seed_relay/tests/scenario.rs` is the two-Anvil dev scenario `scripts/dev-seed-relay.sh` runs
+  `src/seed_relay/tests/scenario.rs` is the two-Anvil dev scenario `scripts/dev-seed-relay.sh` runs,
+  whose stand-in Ethereum, beacon node, bridge and relayer config also seed the daily rotation scenario
 - `src/seed_relay/settle.rs` — which transaction the relayer's next send replaces, and at which nonce;
   `src/seed_relay/balance.rs` — the relayer's balance, its funding alert and its unreadable alert
 - `src/seed_relay/abi.rs` — the relay's, receiver's and Inbox's ABIs
@@ -845,9 +846,20 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   election by those tallies mirrored through the custody quorum, and the elected key signing from
   its effective time
 - `src/custody/tests/election_scenario/chain.rs` — the scenario's chain at a fixed genesis time, its
-  RPC proxies, deployments, and registry and timelock calls
+  RPC proxies, deployments, and registry and timelock calls, optionally finalising two blocks behind
+  its head
 - `src/custody/tests/election_scenario/node.rs` — the scenario's sequencer on a test clock, custody
-  watcher, and API
+  watcher, and API, and a daily turn member's seat: its own operator key and turn release
+- `src/custody/tests/election_scenario/daily_turns.rs` — the daily rotation dev scenario
+  `scripts/dev-daily-rotation.sh` runs: a rotation set of three, five turns drawn from relayed seeds,
+  and at each boundary the turn's key, the handover while finality trails, `TurnTaken`, the time in
+  office and `/v1/operator` checked, then the log replayed
+- `src/custody/tests/election_scenario/daily_turns/seat.rs` — a member and its node while it holds a
+  turn: sealed keys, the handover listener, and the stop a handover asks for
+- `src/custody/tests/election_scenario/daily_turns/seeds.rs` — the scenario's seed source over the
+  seed relay scenario's two-chain fixture
+- `src/custody/tests/election_scenario/daily_turns/checks.rs` — the time in office, the operator
+  view, and the stopped log's commands the scenario checks
 - `src/custody/tests/election_scenario/operator_share.rs` — the operator's share dev scenario on
   isolated Anvil: the election's candidate and a staker claim through the vault, an epoch below the
   floor pays neither, and the candidate's unclaimed leaf registers and pays through the exit

@@ -1,6 +1,8 @@
 //! The election scenarios' node: the real sequencer on a test clock, the custody watcher over the
 //! three-proxy quorum mirroring the staking contract and the registry, the API, and, for the
-//! operator's share, the checkpoint worker posting roots to the vault.
+//! operator's share, the checkpoint worker posting roots to the vault. A daily turn's member runs
+//! as a seat: its own operator key and the release its sealed keys run, with the sequencer's
+//! stream followed for the head a handover hands over.
 
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
@@ -15,6 +17,7 @@ use axum::{Extension, Router};
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{AdminCommand, Command};
+use engine_core::eip712::B256;
 use engine_core::event::Event;
 use engine_core::staking::StakingConfig;
 use engine_core::types::{AccountId, Millis};
@@ -38,6 +41,7 @@ use crate::config::{
     CheckpointSection, CustodyProvider, CustodySection, FinalityTag, Genesis, RateLimit, RpcProviderSection,
 };
 use crate::custody::{Custody, OperatorsReader};
+use crate::handover::Published;
 use crate::limits::ApiLimits;
 use crate::log::{CheckpointDomain, CheckpointParent, Manifest};
 use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
@@ -68,23 +72,45 @@ pub(super) struct Node {
     samples: watch::Sender<Option<Sample>>,
     key: Arc<EnclaveKey>,
     posting: bool,
+    /// A seat's stream since the start, whose drain gives a handover's final head, and whether the
+    /// sequencer signs its checkpoints.
+    pub(super) handover: Option<(Published, watch::Receiver<bool>)>,
 }
 
 /// What a restart keeps of the node it replaces: its log directory, clock and screening source.
 type Resume = (PathBuf, Arc<TestClock>, Option<Source>);
+
+/// A daily turn's member: the operator key its config names, and the release its sealed keys run,
+/// which takes each turn the log assigns that key.
+#[derive(Clone, Copy)]
+pub(super) struct Seat {
+    pub(super) operator: AccountId,
+    pub(super) release: B256,
+}
 
 impl Node {
     /// Starts the sequencer on a fresh log at `T0_SECS`, with the operator `deployer` signs as and
     /// the staking config the registry's staking contract was deployed with in its genesis, and the
     /// custody watcher reading the chain through its proxies.
     pub(super) async fn start(chain: &Chain, key: Arc<EnclaveKey>) -> Self {
-        Self::launch(chain, key, false, None).await
+        Self::launch(chain, key, false, None, None).await
+    }
+
+    /// Starts `seat`'s node over the log in `dir` (a fresh log when it holds none) on `clock`.
+    pub(super) async fn start_seated(
+        chain: &Chain,
+        key: Arc<EnclaveKey>,
+        seat: Seat,
+        dir: PathBuf,
+        clock: Arc<TestClock>,
+    ) -> Self {
+        Self::launch(chain, key, false, Some((dir, clock, None)), Some(seat)).await
     }
 
     /// `start`, with the checkpoint worker posting roots to the vault and a signed screening source,
     /// for a scenario that moves funds.
     pub(super) async fn start_posting_checkpoints(chain: &Chain, key: Arc<EnclaveKey>) -> Self {
-        Self::launch(chain, key, true, None).await
+        Self::launch(chain, key, true, None, None).await
     }
 
     /// Stops this node and starts another over the same log, clock and screening source, recovering
@@ -92,10 +118,16 @@ impl Node {
     pub(super) async fn restart(self, chain: &Chain) -> Self {
         let (key, posting, dir, clock) = (self.key.clone(), self.posting, self.dir.clone(), self.clock.clone());
         let access = self.stop().await;
-        Self::launch(chain, key, posting, Some((dir, clock, access))).await
+        Self::launch(chain, key, posting, Some((dir, clock, access)), None).await
     }
 
-    async fn launch(chain: &Chain, key: Arc<EnclaveKey>, post_checkpoints: bool, resume: Option<Resume>) -> Self {
+    async fn launch(
+        chain: &Chain,
+        key: Arc<EnclaveKey>,
+        post_checkpoints: bool,
+        resume: Option<Resume>,
+        seat: Option<Seat>,
+    ) -> Self {
         let (dir, clock, resumed_source) = match resume {
             Some((dir, clock, source)) => (dir, clock, Some(source)),
             None => (
@@ -107,7 +139,10 @@ impl Node {
         let mut cfg = dev_config();
         cfg.custody.provider = CustodyProvider::Evm;
         cfg.custody.vault = format!("{:#x}", chain.vault);
-        let operator = Operator { vault: AccountId(chain.vault.into()), ..cfg.operator().unwrap() };
+        let mut operator = Operator { vault: AccountId(chain.vault.into()), ..cfg.operator().unwrap() };
+        if let Some(seat) = seat {
+            operator.address = seat.operator;
+        }
         let custody_cfg = custody_section(chain, &dir, cfg.custody);
         let mut genesis: Genesis = cfg.genesis;
         genesis.house_capital = engine_core::Fixed::ZERO;
@@ -145,8 +180,14 @@ impl Node {
             checkpoint_parent,
             checkpoints: post_checkpoints.then_some(work_tx),
             access_policy: source.as_ref().map(|source| source.policy.clone()),
+            turn_release: seat.map(|seat| seat.release),
             ..sequencer_config(&dir, manifest_tx)
         };
+        let signing = seat.map(|_| {
+            let (signing_tx, signing) = watch::channel(true);
+            seq_cfg.checkpoint_signing = Some(signing_tx);
+            signing
+        });
         // As a boot does: the replay feeds the dashboard record and checks the history index.
         let stats = crate::test_support::stats();
         let mut history_cfg = dev_config();
@@ -164,6 +205,9 @@ impl Node {
         .unwrap();
         let (replayed, mut history) = plan.finish_with_log(replayed, key.clone()).unwrap();
         seq_cfg.history_sealing = history.sealing();
+        let handover = signing.map(|signing| {
+            (Published::new(stream.subscribe(), replayed.last_seq(), replayed.last_checkpoint()), signing)
+        });
         let mut seq = Sequencer::recover_from(replayed, seq_cfg, key.clone(), stream.clone(), withdrawals).unwrap();
         seq.track_stats(stats.clone());
         let access = source.as_ref().map(|source| source.client.clone());
@@ -259,7 +303,13 @@ impl Node {
             samples,
             key,
             posting: post_checkpoints,
+            handover,
         }
+    }
+
+    /// Trusted time as this node's samples bound it.
+    pub(super) fn trusted(&self) -> TrustedClock {
+        TrustedClock::new(self.clock.clone(), self.samples.subscribe(), dev_config().time.max_drift)
     }
 
     /// Moves the sequenced time to `ms`, and trusted time and the API's clock with it.
@@ -394,9 +444,9 @@ fn poster(chain: &Chain, dir: &std::path::Path, key: &EnclaveKey) -> Poster<Chec
     }
 }
 
-/// EVM custody over the chain's proxies at the latest block, with the staking contract and the
-/// registry mirrored.
-fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody: CustodySection) -> CustodySection {
+/// EVM custody over the chain's proxies, crediting at the latest block and releasing at the chain's
+/// release tag, with the staking contract, the registry, and any schedule mirrored.
+pub(super) fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody: CustodySection) -> CustodySection {
     let anvil: crate::config::NodeConfig =
         toml::from_str(&std::fs::read_to_string(crate::test_support::ANVIL_CONFIG).unwrap()).unwrap();
     let mut evm = anvil.custody.evm.unwrap();
@@ -410,18 +460,19 @@ fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody: CustodySec
         .collect();
     evm.usdc = chain.usdc;
     evm.finality_tag = FinalityTag::Latest;
-    evm.withdrawal_finality_tag = FinalityTag::Latest;
+    evm.withdrawal_finality_tag = chain.release_tag;
     evm.confirmations = 0;
     evm.start_block = 0;
     evm.poll_interval = Duration::from_millis(30);
     evm.cursor_path = dir.join("custody.json");
     evm.staking = Some(
         toml::from_str(&format!(
-            "contract = '{:#x}'\ncursor_path = '{}'\n[registry]\ncontract = '{:#x}'{}",
+            "contract = '{:#x}'\ncursor_path = '{}'\n[registry]\ncontract = '{:#x}'{}{}",
             chain.staking,
             dir.join("staking.json").display(),
             chain.registry,
-            chain.lens.map(|lens| format!("\nlens = '{lens:#x}'")).unwrap_or_default()
+            chain.lens.map(|lens| format!("\nlens = '{lens:#x}'")).unwrap_or_default(),
+            chain.schedule.map(|schedule| format!("\nschedule = '{schedule:#x}'")).unwrap_or_default()
         ))
         .unwrap(),
     );
