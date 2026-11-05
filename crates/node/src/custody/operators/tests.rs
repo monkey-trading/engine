@@ -349,6 +349,22 @@ async fn a_failed_read_leaves_the_last_list_up_and_a_later_one_replaces_it() {
     reader.refresh().await;
     assert_eq!(*feed.current().expect("the failed read leaves the list up"), *first);
     assert_eq!((logs.warnings("operators_read_failed"), logs.critical("operators_read_failed")), (1, 0));
+    // The providers answer again, with a different total staked: the next read replaces the list.
+    let changed: Vec<_> = providers
+        .into_iter()
+        .map(|mut provider| {
+            provider.model.overview.totalStaked = U256::from(7u64);
+            provider
+        })
+        .collect();
+    reader.quorum = Quorum::new(changed.into_iter().enumerate().map(|(i, p)| (format!("p{i}"), p)).collect())
+        .unwrap()
+        .named("operators", false);
+    reader.refresh().await;
+    let replaced = feed.current().expect("the later read serves");
+    assert_ne!(*replaced, *first);
+    assert_eq!(json_of(&replaced)["total_staked"], json!("7"));
+    assert_eq!(logs.count("alert_resolved=\"operators_read_failed\""), 2, "the first read and the recovery");
 }
 
 #[tokio::test]
