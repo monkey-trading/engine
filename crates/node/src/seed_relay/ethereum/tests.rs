@@ -47,7 +47,7 @@ async fn a_revert_reads_as_no_beacon_root_and_any_other_error_as_a_failure() {
 }
 
 #[tokio::test]
-async fn a_replacement_takes_the_pending_nonce_and_outbids_its_fees() {
+async fn every_send_names_its_nonce_and_a_replacement_outbids_the_fees_of_the_pending_one() {
     let pending = json!({
         "from": "0x2222222222222222222222222222222222222222",
         "to": "0x4444444444444444444444444444444444444444",
@@ -64,13 +64,13 @@ async fn a_replacement_takes_the_pending_nonce_and_outbids_its_fees() {
     .await;
     let providers = [Stub::answering([]).await, Stub::answering([]).await, Stub::answering([]).await];
     let ethereum = client(&providers, &signer);
-    // A fresh send leaves the nonce to the endpoint and offers twice the base fee plus the tip.
-    ethereum.send(vec![1], U256::from(5), None).await.unwrap();
+    // A fresh send names its nonce and offers twice the base fee plus the tip.
+    ethereum.send(vec![1], U256::from(5), 7, None).await.unwrap();
     let sent = signer.last("eth_sendTransaction");
-    assert_eq!(sent.get("nonce"), None);
+    assert_eq!(sent["nonce"].as_str(), Some("0x7"));
     assert_eq!((sent["maxFeePerGas"].as_str(), sent["maxPriorityFeePerGas"].as_str()), (Some("0x16"), Some("0x2")));
-    // A replacement takes the pending one's nonce and pays a quarter more than it does.
-    ethereum.send(vec![1], U256::from(5), Some(B256::repeat_byte(9))).await.unwrap();
+    // A replacement goes out at the nonce it is given and pays a quarter more than the pending one.
+    ethereum.send(vec![1], U256::from(5), 7, Some(B256::repeat_byte(9))).await.unwrap();
     let sent = signer.last("eth_sendTransaction");
     assert_eq!(sent["nonce"].as_str(), Some("0x7"));
     assert_eq!((sent["maxFeePerGas"].as_str(), sent["maxPriorityFeePerGas"].as_str()), (Some("0x7e"), Some("0x1a")));

@@ -84,8 +84,8 @@ impl SeedChains for Chains {
         self.ethereum.balance().await
     }
 
-    async fn send(&self, input: Vec<u8>, value: U256, replacing: Option<B256>) -> anyhow::Result<B256> {
-        self.ethereum.send(input, value, replacing).await
+    async fn send(&self, input: Vec<u8>, value: U256, nonce: u64, replacing: Option<B256>) -> anyhow::Result<B256> {
+        self.ethereum.send(input, value, nonce, replacing).await
     }
 
     async fn receipt(&self, hash: B256) -> anyhow::Result<Option<bool>> {

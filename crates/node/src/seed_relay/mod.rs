@@ -8,14 +8,16 @@
 //!   (`latest` in production): the turn whose draw deadline last passed, the two after it, and the
 //!   receiver's pairing with the relay;
 //! - raises `seed_missing` (Critical) while that turn has no seed, once an earlier turn has had one;
-//! - reads the relayer's balance and raises `seed_relayer_unfunded` (Warning) below `min_balance`;
+//! - reads the relayer's balance and raises `seed_relayer_unfunded` (Warning) below `min_balance`, and
+//!   `seed_relayer_balance_unreadable` (Warning) once it has stayed unreadable for ten minutes;
 //! - relays the earlier of the two later turns that has no seed: from the beacon node's finalized
 //!   header, the EIP-4788 entry that holds its root, found through the Ethereum quorum, and its state's
 //!   proof. A failure raises `seed_relay_failed` (Warning), which ends once both turns have seeds.
 //!
-//! One relay transaction is in flight at a time, so none queues behind another: one still waiting for a
-//! block after `resend_after` is replaced at its nonce, and a pending transaction the node does not
-//! track, as after a restart, holds new relays back. Nothing else needs to survive a restart.
+//! One relay transaction is in flight at a time, so none queues behind another, and every send names
+//! its nonce: one still waiting for a block after `resend_after` is replaced at its own nonce, and a
+//! pending transaction the node does not track, as after a restart, holds new relays back. Nothing
+//! else needs to survive a restart.
 //!
 //! What bounds each read from the host's network: the receiver's state is a custody quorum's; the
 //! EIP-4788 entry, the relay's pairing and the Inbox's fee are an Ethereum quorum's, and the base fee
@@ -24,11 +26,13 @@
 //! wrong answer costs a relay that reverts, never a wrong seed.
 
 mod abi;
+mod balance;
 mod beacon;
 mod chains;
 mod ethereum;
 mod header;
 mod schedule;
+mod settle;
 mod ssz;
 pub mod state;
 
@@ -37,7 +41,6 @@ use std::future::Future;
 use std::mem::take;
 use std::time::Duration;
 
-use alloy::primitives::utils::format_ether;
 use alloy::primitives::{Address, B256, U256};
 use alloy::sol_types::SolCall;
 use anyhow::{Context, bail, ensure};
@@ -86,12 +89,13 @@ pub(crate) trait SeedChains {
     fn submission_cost(&self, inbox: Address) -> impl Future<Output = anyhow::Result<U256>> + Send;
     /// The relayer's balance on Ethereum.
     fn balance(&self) -> impl Future<Output = anyhow::Result<U256>> + Send;
-    /// Sends `input` to the relay with `value` from the relayer, in place of the pending transaction
-    /// `replacing` when it is still waiting for a block.
+    /// Sends `input` to the relay with `value` from the relayer at `nonce`, outbidding the pending
+    /// transaction `replacing` when the endpoint still finds it.
     fn send(
         &self,
         input: Vec<u8>,
         value: U256,
+        nonce: u64,
         replacing: Option<B256>,
     ) -> impl Future<Output = anyhow::Result<B256>> + Send;
     /// Whether a sent transaction succeeded, once it is in a block.
@@ -124,12 +128,13 @@ pub(crate) struct RelayMetrics {
     pub latest_turn: Gauge,
 }
 
-/// The relay transaction this node has waiting for a block, and when it went out: at most one, so
-/// none queues behind another.
+/// The relay transaction this node has waiting for a block, its nonce, and when it went out: at most
+/// one, so none queues behind another.
 #[derive(Clone, Copy)]
 struct InFlight {
     hash: B256,
     turn: u64,
+    nonce: u64,
     at: Instant,
 }
 
@@ -161,6 +166,9 @@ pub(crate) struct SeedRelayer<C> {
     missing: bool,
     failing: bool,
     unfunded: bool,
+    /// Since when the relayer's balance has been unreadable, and whether that has been alerted.
+    unreadable_since: Option<Instant>,
+    unreadable: bool,
 }
 
 impl RelayMetrics {
@@ -194,6 +202,8 @@ impl<C: SeedChains> SeedRelayer<C> {
             missing: false,
             failing: false,
             unfunded: false,
+            unreadable_since: None,
+            unreadable: false,
         }
     }
 
@@ -245,28 +255,6 @@ impl<C: SeedChains> SeedRelayer<C> {
         }
     }
 
-    /// Exports the relayer's balance and warns while it is below `min_balance`. A read that fails
-    /// changes nothing: the relay that needs the same providers fails and alerts on its own.
-    async fn check_balance(&mut self) {
-        let balance = match self.chains.balance().await {
-            Ok(balance) => balance,
-            Err(error) => return debug!("the seed relayer's balance is unreadable: {error:#}"),
-        };
-        let ether = format_ether(balance);
-        self.metrics.balance_eth.set(ether.parse().unwrap_or(f64::NAN));
-        if balance < self.min_balance {
-            self.unfunded = true;
-            warn!(
-                alert = "seed_relayer_unfunded",
-                relayer = %self.relayer,
-                "the seed relayer holds {ether} ETH, below {}: relays stop when it cannot pay for one",
-                format_ether(self.min_balance)
-            );
-        } else if take(&mut self.unfunded) {
-            info!(alert_resolved = "seed_relayer_unfunded", relayer = %self.relayer, "the seed relayer holds {ether} ETH");
-        }
-    }
-
     /// Relays the seeds of `open` turns this node has not relayed within `resend_after`.
     /// Error cases:
     /// - the relay and receiver are not each other's, a relay this node sent reverted, or a read,
@@ -281,7 +269,7 @@ impl<C: SeedChains> SeedRelayer<C> {
             identity.genesis,
             view.genesis
         );
-        let Some(replacing) = self.settle().await? else { return Ok(()) };
+        let Some(slot) = self.settle().await? else { return Ok(()) };
         let mut due = Vec::new();
         for &turn in open {
             if let Some(at) = self.mined.get(&turn).copied() {
@@ -326,55 +314,11 @@ impl<C: SeedChains> SeedRelayer<C> {
         };
         let value = submission + U256::from(L2_GAS_LIMIT) * self.l2_max_fee_per_gas;
         let input = ISeedRelay::relayCall { turn, witness: witness(timestamp, &header, &proof), fees }.abi_encode();
-        let hash = self.chains.send(input, value, replacing).await?;
+        let hash = self.chains.send(input, value, slot.nonce, slot.replacing).await?;
         info!(relayed_turn = turn, epoch, seed = %proof.mix, tx = %hash, "relayed the turn's seed to Arbitrum");
         self.metrics.relays.inc();
-        self.in_flight = Some(InFlight { hash, turn, at: Instant::now() });
+        self.in_flight = Some(InFlight { hash, turn, nonce: slot.nonce, at: Instant::now() });
         Ok(())
-    }
-
-    /// Settles the relay in flight. `None` holds new relays back; `Some(replacing)` lets one go out, in
-    /// place of `replacing` when that one has waited `resend_after` for a block.
-    /// Error cases:
-    /// - the relay in flight reverted, or the receipt or the nonces cannot be read
-    async fn settle(&mut self) -> anyhow::Result<Option<Option<B256>>> {
-        if let Some(InFlight { hash, turn, at }) = self.in_flight {
-            match self.chains.receipt(hash).await? {
-                Some(true) => {
-                    self.mined.insert(turn, Instant::now());
-                    self.in_flight = None;
-                }
-                Some(false) => {
-                    self.in_flight = None;
-                    bail!("turn {turn}'s relay {hash} reverted");
-                }
-                None if at.elapsed() < self.resend_after => return Ok(None),
-                None => {
-                    self.fail(format!(
-                        "relay {hash} for turn {turn} has waited {:?} for a block: replacing it at its nonce",
-                        at.elapsed()
-                    ));
-                    return Ok(Some(Some(hash)));
-                }
-            }
-        }
-        // With nothing of this node's in flight, a pending transaction at the relayer's nonce is one it
-        // does not track, sent before a restart or by a send whose answer was lost; a relay sent now
-        // would queue behind it.
-        let (latest, pending) = self.chains.nonces().await?;
-        if pending > latest {
-            let since = *self.held_since.get_or_insert_with(Instant::now);
-            if since.elapsed() >= self.resend_after {
-                self.fail(format!(
-                    "a transaction this node is not tracking has waited {:?} at the relayer's nonce {latest}: relays \
-                     wait for it, and it can be replaced by hand",
-                    since.elapsed()
-                ));
-            }
-            return Ok(None);
-        }
-        self.held_since = None;
-        Ok(Some(None))
     }
 
     /// Keeps a proven block for `epochs`: the one already proven while it serves and holds them all,

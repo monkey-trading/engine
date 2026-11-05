@@ -136,17 +136,29 @@ impl ContractQuorum {
         to: Address,
         calls: impl FnOnce(u64) -> Vec<(&'static str, Bytes)>,
     ) -> anyhow::Result<(u64, Vec<Bytes>)> {
-        self.0.identity().await?;
-        let block = self.0.finality().await?.tagged.context("custody providers name no final block")?;
-        let header = self.0.headers(block.number, block.number).await?;
-        let time = header.first().filter(|link| link.hash == block.hash).context("the final block's header")?.timestamp;
-        let calls = calls(time);
-        let mut answers = Vec::with_capacity(calls.len());
-        for (operation, data) in calls {
-            answers.push(self.0.call_as(operation, block, to, data).await?);
-        }
-        Ok((time, answers))
+        read_final(&self.0, to, calls).await
     }
+}
+
+/// `ContractQuorum::read` over any quorum. The calls run at the block the finality tag names, and the
+/// time is read from the header of that same block: a header with another hash is refused.
+/// Error cases:
+/// - see `ContractQuorum::read`
+async fn read_final<R: crate::custody::evm::VaultReader + Sync>(
+    quorum: &Quorum<R>,
+    to: Address,
+    calls: impl FnOnce(u64) -> Vec<(&'static str, Bytes)>,
+) -> anyhow::Result<(u64, Vec<Bytes>)> {
+    quorum.identity().await?;
+    let block = quorum.finality().await?.tagged.context("custody providers name no final block")?;
+    let header = quorum.headers(block.number, block.number).await?;
+    let time = header.first().filter(|link| link.hash == block.hash).context("the final block's header")?.timestamp;
+    let calls = calls(time);
+    let mut answers = Vec::with_capacity(calls.len());
+    for (operation, data) in calls {
+        answers.push(quorum.call_as(operation, block, to, data).await?);
+    }
+    Ok((time, answers))
 }
 
 /// A connected custody provider, ready to run.

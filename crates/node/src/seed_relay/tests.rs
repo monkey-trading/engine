@@ -11,6 +11,9 @@ use crate::test_support::{Alert, capture_alerts_and_resolutions};
 
 use super::*;
 
+mod anchor;
+mod balance;
+mod nonce;
 mod scenario;
 
 const GENESIS: u64 = 1_606_824_023;
@@ -32,7 +35,7 @@ async fn open_turns_are_relayed_one_at_a_time_from_one_proven_state() {
     let sent = fake.sent.lock().unwrap().clone();
     assert_eq!(sent.len(), 2);
     let anchor = GENESIS + 12 * (fake.header.slot + 1);
-    for ((input, value, replacing), turn) in sent.iter().zip([FINAL + 1, FINAL + 2]) {
+    for ((input, value, replacing, nonce), turn) in sent.iter().zip([FINAL + 1, FINAL + 2]) {
         let call = ISeedRelay::relayCall::abi_decode(input).unwrap();
         let epoch = seed_epoch(turn, GENESIS).unwrap();
         assert_eq!(call.turn, turn);
@@ -42,7 +45,7 @@ async fn open_turns_are_relayed_one_at_a_time_from_one_proven_state() {
         assert_eq!((call.witness.forkProof.len(), call.witness.seedProof.len()), (8, 22));
         assert_eq!(call.fees.gasLimit, U256::from(L2_GAS_LIMIT));
         assert_eq!(*value, SUBMISSION + U256::from(L2_GAS_LIMIT) * fee());
-        assert_eq!(*replacing, None);
+        assert_eq!((*replacing, *nonce), (None, 0));
     }
     assert_eq!(*fake.states.lock().unwrap(), 1, "both turns are proven from one download");
 }
@@ -67,6 +70,8 @@ async fn a_relay_waiting_for_a_block_is_replaced_at_its_nonce_and_one_not_on_arb
     relayer.poll().await;
     let hashes = fake.hashes.lock().unwrap().clone();
     assert_eq!(fake.sent.lock().unwrap()[1].2, Some(hashes[0]), "the waiting relay is replaced at its nonce");
+    let nonces: Vec<u64> = fake.sent.lock().unwrap().iter().map(|relay| relay.3).collect();
+    assert_eq!(nonces[1], nonces[0]);
     assert!(named(&mut alerts, "seed_relay_failed").iter().any(|a| a["message"].contains("waited")));
     // Another member's relay of the first turn lands; the stuck one is replaced by the next turn's relay.
     fake.seeds(|seeds| seeds[1] = B256::repeat_byte(8));
@@ -273,8 +278,8 @@ async fn a_state_that_is_not_the_headers_or_a_fork_the_relay_refuses_is_not_sent
 /// What the fake Inbox asks for a ticket's submission.
 const SUBMISSION: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
-/// A relay the fake sent: its input, value, and the transaction it replaced.
-type SentRelay = (Vec<u8>, U256, Option<B256>);
+/// A relay the fake sent: its input, value, the transaction it replaced, and its nonce.
+type SentRelay = (Vec<u8>, U256, Option<B256>, u64);
 
 /// A finalized block, its state and its EIP-4788 entries.
 type Finalized = (BeaconBlockHeader, Vec<u8>, BTreeMap<u64, B256>);
@@ -296,6 +301,10 @@ struct Fake {
     later: Mutex<Option<Finalized>>,
     receiver_error: Mutex<Option<String>>,
     send_error: Mutex<Option<String>>,
+    /// Record each send, then fail it, as when the endpoint takes a transaction but its answer is lost.
+    lose_answer: Mutex<bool>,
+    /// Fails the balance read with this message.
+    balance_error: Mutex<Option<String>>,
     /// The relayer's nonce at the latest block, and counting its pending transactions.
     nonces: Mutex<(u64, u64)>,
 }
@@ -340,6 +349,8 @@ impl Fake {
             later: Mutex::new(None),
             receiver_error: Mutex::new(None),
             send_error: Mutex::new(None),
+            lose_answer: Mutex::new(false),
+            balance_error: Mutex::new(None),
             nonces: Mutex::new((0, 0)),
         }
     }
@@ -394,17 +405,23 @@ impl SeedChains for Arc<Fake> {
     }
 
     async fn balance(&self) -> anyhow::Result<U256> {
+        if let Some(error) = self.balance_error.lock().unwrap().clone() {
+            bail!("{error}");
+        }
         Ok(*self.balance.lock().unwrap())
     }
 
-    async fn send(&self, input: Vec<u8>, value: U256, replacing: Option<B256>) -> anyhow::Result<B256> {
+    async fn send(&self, input: Vec<u8>, value: U256, nonce: u64, replacing: Option<B256>) -> anyhow::Result<B256> {
         if let Some(error) = self.send_error.lock().unwrap().clone() {
             bail!("{error}");
         }
         let mut sent = self.sent.lock().unwrap();
-        sent.push((input, value, replacing));
+        sent.push((input, value, replacing, nonce));
         let hash = B256::from(U256::from(sent.len()));
         self.hashes.lock().unwrap().push(hash);
+        if *self.lose_answer.lock().unwrap() {
+            bail!("the answer to eth_sendTransaction timed out");
+        }
         Ok(hash)
     }
 

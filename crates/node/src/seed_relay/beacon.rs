@@ -163,21 +163,47 @@ impl BeaconApi {
 
 #[cfg(test)]
 mod tests {
+    use axum::Router;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use tokio::net::TcpListener;
+
     use super::*;
+
+    /// The section for a beacon node at `beacon_api`.
+    fn cfg(beacon_api: &str) -> SeedRelaySection {
+        toml::from_str(&format!(
+            "chain_id = 1\nrpc_url = 'http://127.0.0.1:4'\n\
+             relayer = '0x2222222222222222222222222222222222222222'\n\
+             beacon_api = '{beacon_api}'\n\
+             relay = '0x4444444444444444444444444444444444444444'\n\
+             receiver = '0x5555555555555555555555555555555555555555'\n\
+             poll_interval = '60s'\nrpc_timeout = '10s'\nstate_timeout = '300s'\nresend_after = '1h'\n\
+             l2_max_fee_per_gas = '0.1'\nmin_balance = '0.05'\nproviders = []"
+        ))
+        .unwrap()
+    }
+
+    /// A beacon node stand-in answering every route with `status`, `body` and, when given, the
+    /// consensus version header.
+    async fn serving(status: u16, version: Option<&'static str>, body: &'static [u8]) -> BeaconApi {
+        let app = Router::new().fallback(move || async move {
+            let mut response = (StatusCode::from_u16(status).unwrap(), body).into_response();
+            if let Some(version) = version {
+                response.headers_mut().insert("eth-consensus-version", version.parse().unwrap());
+            }
+            response
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        BeaconApi::new(&cfg(&url)).unwrap()
+    }
 
     /// A key may sit in the base URL's path or its query; every route keeps both.
     #[test]
     fn routes_keep_the_base_path_and_query() {
-        let mut cfg: SeedRelaySection = toml::from_str(
-            "chain_id = 1\nrpc_url = 'http://127.0.0.1:4'\n\
-             relayer = '0x2222222222222222222222222222222222222222'\n\
-             beacon_api = 'https://beacon.example/node/?api_key={beacon_key}'\n\
-             relay = '0x4444444444444444444444444444444444444444'\n\
-             receiver = '0x5555555555555555555555555555555555555555'\n\
-             poll_interval = '60s'\nrpc_timeout = '10s'\nstate_timeout = '300s'\nresend_after = '1h'\n\
-             l2_max_fee_per_gas = '0.1'\nmin_balance = '0.05'\nproviders = []",
-        )
-        .unwrap();
+        let mut cfg = cfg("https://beacon.example/node/?api_key={beacon_key}");
         cfg.beacon_api.deliver_test_key("K");
         let api = BeaconApi::new(&cfg).unwrap();
         assert_eq!(
@@ -188,5 +214,33 @@ mod tests {
             api.url("eth/v2/debug/beacon/states/7").as_str(),
             "https://beacon.example/node/eth/v2/debug/beacon/states/7?api_key=K"
         );
+    }
+
+    #[tokio::test]
+    async fn a_state_not_named_fulu_is_refused_with_the_message_the_runbook_routes_on() {
+        for version in [Some("deneb"), None] {
+            let error = serving(200, version, b"state").await.state(7).await.unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("this node reads Fulu states only"), "{version:?}: {message}");
+        }
+        assert_eq!(serving(200, Some("fulu"), b"state").await.state(7).await.unwrap(), b"state");
+    }
+
+    #[tokio::test]
+    async fn an_answer_other_than_200_is_refused() {
+        let api = serving(503, Some("fulu"), b"{}").await;
+        for error in [api.state(7).await.unwrap_err(), api.finalized_header().await.unwrap_err()] {
+            assert!(format!("{error:#}").contains("the beacon API answered 503"), "{error:#}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_body_one_byte_over_its_cap_is_refused_and_one_at_it_is_read() {
+        let api = serving(200, None, b"123456789").await;
+        let get = || api.http.get(api.url("body"));
+        let at = api.body(api.send(get()).await.unwrap(), 9).await.unwrap();
+        assert_eq!(at, b"123456789");
+        let error = api.body(api.send(get()).await.unwrap(), 8).await.unwrap_err();
+        assert!(format!("{error:#}").contains("the beacon API answered more than 8 bytes"), "{error:#}");
     }
 }

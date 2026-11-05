@@ -223,27 +223,31 @@ impl Ethereum {
         block.base_fee_per_gas.context("the latest block has no base fee")
     }
 
-    /// Sends `input` to the relay with `value`, from the relayer, through the signing endpoint, at twice
-    /// the latest base fee plus the endpoint's priority fee. In place of `replacing` while that one still
-    /// waits for a block, it takes that transaction's nonce and outbids its fees by a quarter.
+    /// Sends `input` to the relay with `value`, from the relayer, through the signing endpoint, at
+    /// `nonce`, at twice the latest base fee plus the endpoint's priority fee. In place of `replacing`
+    /// while the endpoint still finds that transaction, it outbids its fees by a quarter.
     /// Error cases:
     /// - a fee or the pending transaction cannot be read, the gas estimate reverts, naming the relay's
     ///   reason, or the send fails
-    pub(crate) async fn send(&self, input: Vec<u8>, value: U256, replacing: Option<B256>) -> anyhow::Result<B256> {
+    pub(crate) async fn send(
+        &self,
+        input: Vec<u8>,
+        value: U256,
+        nonce: u64,
+        replacing: Option<B256>,
+    ) -> anyhow::Result<B256> {
         let tip: U256 = self
             .signer
             .wait("eth_maxPriorityFeePerGas", self.signer.client.request("eth_maxPriorityFeePerGas", ()))
             .await?;
         let tip: u128 = tip.saturating_to();
         let mut fees = (self.base_fee().await?.saturating_to::<u128>().saturating_mul(2).saturating_add(tip), tip);
-        let mut nonce = None;
         if let Some(hash) = replacing {
             let pending: Option<TransactionRequest> = self
                 .signer
                 .wait("eth_getTransactionByHash", self.signer.client.request("eth_getTransactionByHash", (hash,)))
                 .await?;
             if let Some(pending) = pending {
-                nonce = pending.nonce;
                 fees.0 = fees.0.max(outbid(pending.max_fee_per_gas));
                 fees.1 = fees.1.max(outbid(pending.max_priority_fee_per_gas));
             }
@@ -255,7 +259,7 @@ impl Ethereum {
             .input(input.into())
             .max_fee_per_gas(fees.0)
             .max_priority_fee_per_gas(fees.1);
-        let tx = TransactionRequest { chain_id: Some(self.chain_id), nonce, ..tx };
+        let tx = TransactionRequest { chain_id: Some(self.chain_id), nonce: Some(nonce), ..tx };
         let estimate: U64 =
             self.signer.wait("eth_estimateGas", self.signer.client.request("eth_estimateGas", (tx.clone(),))).await?;
         let estimate: u64 = estimate.to();
