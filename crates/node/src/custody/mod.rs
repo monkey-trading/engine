@@ -33,7 +33,7 @@ mod credit;
 mod cursor;
 mod evm;
 pub(crate) mod pending;
-use crate::custody::evm::{DepositWatcher, VaultReader};
+use crate::custody::evm::DepositWatcher;
 mod quorum;
 pub(crate) use crate::custody::quorum::Quorum;
 mod operators;
