@@ -1,5 +1,7 @@
 //! A daily turn's `TurnTaken`: the first command this node sequences in each turn the log assigns its
-//! operator key, whether it took the keys at the boundary or holds the next turn too.
+//! operator key, whether it took the keys at the boundary or holds the next turn too. The engine runs
+//! no catch-up in it, so it is stamped alone, ahead of any catch-up `Tick`, and behind a benchmark
+//! hold too.
 
 use engine_core::command::Command;
 use engine_core::event::Event;
@@ -22,7 +24,10 @@ impl Sequencer {
         if turn.admin_key != self.operator.address || taken {
             return Ok(());
         }
-        let Some(events) = self.stamp(ts, Command::TurnTaken { turn: turn.turn, release })? else { return Ok(()) };
+        if self.frozen() {
+            return Ok(());
+        }
+        let events = self.stamp_once(ts, Command::TurnTaken { turn: turn.turn, release })?;
         match events.last() {
             Some(Event::TurnTaken { .. }) => info!(turn = turn.turn, position = turn.position, "took the turn"),
             other => warn!(turn = turn.turn, "the engine did not record this node's turn: {other:?}"),

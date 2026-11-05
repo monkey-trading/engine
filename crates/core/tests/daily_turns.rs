@@ -126,21 +126,23 @@ fn schedule_mirrors_need_v51_and_each_credits_once() {
 fn a_set_out_of_order_or_malformed_is_refused() {
     let (mut h, _) = with_set();
     refused(&adopt(&mut h, 1, members()), "set 1 is not after the last mirrored");
-    refused(&adopt(&mut h, 2, vec![]), "a set names 1 to 100 members, not 0");
     let mut zero = members();
     zero[1].weight = TokenUnits(0);
     refused(&adopt(&mut h, 2, zero), "positive weights");
     let mut twice = members();
     twice[2].candidate = twice[0].candidate;
     refused(&adopt(&mut h, 2, twice), "each candidate and key once");
-    let mut many = Vec::new();
-    for i in 0..101u8 {
-        let account = AccountId([i.wrapping_add(1); 20]);
-        let admin_key = AccountId([i.wrapping_add(1); 20]);
-        many.push(SetMember { candidate: account, admin_key, weight: TokenUnits(1) });
-    }
-    refused(&adopt(&mut h, 2, many), "not 101");
+    let many = |count: u8| {
+        (1..=count)
+            .map(|i| SetMember { candidate: AccountId([i; 20]), admin_key: AccountId([i; 20]), weight: TokenUnits(1) })
+            .collect::<Vec<_>>()
+    };
+    refused(&adopt(&mut h, 2, many(102)), "at most 101 members, not 102");
     assert_eq!(h.engine.daily_turns().sets.len(), 1, "no refused set is recorded");
+    // The registry's cap and the operator in effect's place beyond it, and a close that leaves no one.
+    assert!(matches!(adopt(&mut h, 2, many(101)).last(), Some(Event::RotationSetAdopted { set: 2, .. })));
+    assert!(matches!(adopt(&mut h, 3, vec![]).last(), Some(Event::RotationSetAdopted { set: 3, .. })));
+    assert!(h.engine.daily_turns().sets[&3].members.is_empty());
 }
 
 #[test]
@@ -245,14 +247,14 @@ fn a_key_no_set_named_seven_days_earlier_is_refused_and_the_key_in_effect_stays(
 }
 
 #[test]
-fn a_turn_already_over_or_before_the_one_in_effect_is_refused() {
+fn a_turn_already_over_is_credited_and_refused() {
     let (mut h, turn) = with_set();
     assign(&mut h, turn + 1, 0, 0, TurnReason::Draw);
     h.advance_to(boundary(turn + 1).unwrap());
     h.cmd(Command::Tick);
     turn_refused(&assign(&mut h, turn, 1, 0, TurnReason::Draw), "ended before its assignment was mirrored");
     h.advance(DAY_MS / 2);
-    // A reassignment of a turn before the one in effect cannot reach back.
+    // A reassignment of the turn in effect applies; once that turn is over, one is refused.
     h.engine.daily_turns().in_effect.expect("a turn in effect");
     let (block, chain_ref) = (h.log.len() as u64, "0xturn:late".to_owned());
     let late = RegistryTurn {
@@ -280,6 +282,55 @@ fn rotate_operator_stays_refused_while_turns_run() {
         events.last(),
         Some(&Event::AdminRejected { reason: "while rotation is on, only an election moves the operator key".into() })
     );
+}
+
+#[test]
+fn drawn_turns_stand_after_rotation_turns_off_until_an_installation_ends_them() {
+    let (mut h, turn) = with_set();
+    assign(&mut h, turn, 0, 0, TurnReason::Draw);
+    assign(&mut h, turn + 1, 1, 0, TurnReason::Draw);
+    h.advance_to(boundary(turn).unwrap());
+    let (block, chain_ref) = (h.log.len() as u64, "0xoff".to_owned());
+    h.cmd(Command::SwitchRotation { enabled: false, election_cancelled: false, block, chain_ref });
+    // The drawn turns still name the operator: no signed rotation, and the next turn's key applies.
+    let events = h.operate_as(SEEDS[0], AdminCommand::RotateOperator { address: key(2) });
+    assert!(matches!(events.last(), Some(Event::AdminRejected { .. })), "{events:?}");
+    h.advance_to(boundary(turn + 1).unwrap());
+    assert_eq!(signed_by(&mut h, SEEDS[1], true), Some(Event::AdminApplied));
+
+    // The timelock installs an operator once the drawn turns end: the turns end with it, and a signed
+    // rotation is no longer refused for them.
+    h.advance_to(boundary(turn + 2).unwrap());
+    let installed = Client::new(0x6a).account;
+    let (block, chain_ref) = (h.log.len() as u64, "0xinstall".to_owned());
+    let installation = engine_core::election::RegistryInstallation {
+        candidate: AccountId([0xb9; 20]),
+        admin_key: installed,
+        block,
+        chain_ref,
+    };
+    let events = h.cmd(Command::InstallOperator(installation));
+    assert!(matches!(events.last(), Some(Event::OperatorInstalled { .. })), "{events:?}");
+    let turns = h.engine.daily_turns();
+    assert!(turns.in_effect.is_none() && turns.assigned.is_empty() && turns.taken.is_none(), "{turns:?}");
+    h.advance(NOTICE_MS);
+    assert_eq!(signed_by(&mut h, 0x6a, false), Some(Event::AdminApplied));
+}
+
+#[test]
+fn a_turn_is_taken_before_any_catch_up_in_its_command() {
+    let (mut h, turn) = with_set();
+    assign(&mut h, turn, 0, 0, TurnReason::Draw);
+    h.advance_to(boundary(turn).unwrap());
+    h.cmd(Command::Tick);
+    // A day on, a rollover is due: the turn's `TurnTaken` charges nothing, and the next command does.
+    h.advance(DAY_MS - 1);
+    let catch_up = |event: &Event| matches!(event, Event::BenchmarkRateMissing { .. } | Event::Financing { .. });
+    let taken = h.cmd(Command::TurnTaken { turn, release: release(1) });
+    assert_eq!(taken.last(), Some(&Event::TurnTaken { turn, candidate: CANDIDATES[0], release: release(1) }));
+    assert!(!taken.iter().any(catch_up), "TurnTaken caught up: {taken:?}");
+    let tick = h.cmd(Command::Tick);
+    assert!(tick.iter().any(catch_up), "the next command catches up: {tick:?}");
 }
 
 #[test]

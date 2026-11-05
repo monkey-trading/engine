@@ -98,3 +98,22 @@ fn a_member_earns_from_its_turn_taken_to_the_end_of_its_turn() {
     assert_eq!(h.engine.operator().map(|operator| operator.address), Some(key()));
     assert_eq!(office(&h), TimeInOffice { since: close_at, served: [(MEMBER, ends - close_at)].into_iter().collect() });
 }
+
+#[test]
+fn a_drawn_turn_keeps_earning_after_rotation_turns_off() {
+    let mut h = with_set(1_000_000_000);
+    let (start, turn) = epoch_with_boundary(&h);
+    let begins = boundary(turn).unwrap();
+    assign(&mut h, turn);
+    h.advance_to(start);
+    h.cmd(Command::Tick);
+    h.advance_to(begins);
+    let release = alloy_primitives::B256::repeat_byte(7);
+    h.cmd(Command::TurnTaken { turn, release });
+    // The switch turns off, but the drawn turn still names its member, which earns to the turn's end.
+    h.advance(HOUR_MS);
+    switch(&mut h, false);
+    h.advance(HOUR_MS);
+    h.cmd(Command::Tick);
+    assert_eq!(office(&h).served.get(&MEMBER), Some(&(2 * HOUR_MS)));
+}

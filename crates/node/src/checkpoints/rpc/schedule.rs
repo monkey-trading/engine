@@ -8,7 +8,7 @@ use alloy::sol_types::SolCall;
 use anyhow::{Context, ensure};
 use engine_core::types::{AccountId, Millis};
 
-use crate::checkpoints::rpc::{candidateOfCall, operatorInEffectCall, registryCall};
+use crate::checkpoints::rpc::{candidateOfCall, namedOperatorCall, registryCall};
 use crate::checkpoints::{CheckpointRpc, HandoverSource, Observation, ScheduledTurn, View};
 
 sol! {
@@ -21,9 +21,9 @@ sol! {
         uint64 generation;
         uint64 prior;
         bytes32 seed;
+        address source;
     }
     function turnAt(uint64 timestamp) external view returns (uint64 turn, TurnReturn memory);
-    function sourceOf(uint64 turn) external view returns (address);
 }
 
 impl CheckpointRpc {
@@ -56,17 +56,18 @@ impl CheckpointRpc {
         if drawn.candidate.is_zero() {
             return Ok(None);
         }
-        let member = self.candidacy(registry, drawn.candidate, block).await?;
         let boundary = engine_core::turns::boundary(turn).context("the turn's boundary is out of range")?;
-        let source = match source_of(self, schedule, turn, block).await? {
-            Some(source) => Some(source),
-            // The first turn takes over from the operator the registry named before any turn.
-            None => {
-                let raw = self.call(registry, operatorInEffectCall {}.abi_encode(), block).await?;
-                Some(operatorInEffectCall::abi_decode_returns(&raw)?.candidate).filter(|named| !named.is_zero())
+        // Once the turn is over it still names its member, unless the registry has since installed
+        // an operator, which ends the turns: the registry then names that operator instead.
+        if now_ms >= boundary.saturating_add(engine_core::turns::DAY_MS) {
+            let raw = self.call(registry, namedOperatorCall {}.abi_encode(), block).await?;
+            if namedOperatorCall::abi_decode_returns(&raw)?.candidate != drawn.candidate {
+                return Ok(None);
             }
-        };
-        let source = match source.filter(|source| *source != drawn.candidate) {
+        }
+        let member = self.candidacy(registry, drawn.candidate, block).await?;
+        // The holder the registry named when the turn was drawn, which hands the member the keys.
+        let source = match Some(drawn.source).filter(|source| !source.is_zero() && *source != drawn.candidate) {
             Some(source) => Some(self.handover_source_of(registry, source, block).await?),
             None => None,
         };
@@ -111,17 +112,4 @@ impl CheckpointRpc {
             handover_endpoint: registered.handoverEndpoint,
         })
     }
-}
-
-/// The member of the drawn turn before `turn`, if any.
-/// Error cases:
-/// - the call or its decoding fails
-async fn source_of(
-    rpc: &CheckpointRpc,
-    schedule: Address,
-    turn: u64,
-    block: BlockId,
-) -> anyhow::Result<Option<Address>> {
-    let raw = rpc.call(schedule, sourceOfCall { turn }.abi_encode(), block).await?;
-    Ok(Some(sourceOfCall::abi_decode_returns(&raw)?).filter(|source| !source.is_zero()))
 }

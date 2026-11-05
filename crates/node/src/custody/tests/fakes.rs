@@ -254,6 +254,10 @@ impl VaultReader for FakeChain {
         Ok(chain.balance)
     }
 
+    async fn registry_schedule(&self, _at: BlockRef) -> anyhow::Result<Address> {
+        Ok(Address::ZERO)
+    }
+
     async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
         let chain = self.0.lock().unwrap();
         if chain.staking_deployed_at.is_some_and(|at_deploy| at.number < at_deploy) {

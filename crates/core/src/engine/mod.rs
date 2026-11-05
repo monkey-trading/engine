@@ -277,6 +277,14 @@ impl Engine {
         if !staking_activation {
             self.finalise_staking(&mut events);
         }
+        // From `V51` a turn is taken before anything else in it: no market, rollover or corporate
+        // catch-up runs in its command, so a benchmark hold can admit it ahead of the snapshot.
+        if let Command::TurnTaken { turn, release } = &sequenced.cmd
+            && self.protocol_version >= ProtocolVersion::V51
+        {
+            self.take_turn(*turn, *release, &mut events);
+            return Ok(events);
+        }
         let corporate = self.protocol_version >= ProtocolVersion::V23;
         let mut corporate_margin = false;
         let mut early_outcome = None;

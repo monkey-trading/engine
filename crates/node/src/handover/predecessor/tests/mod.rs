@@ -246,6 +246,11 @@ impl Exchange {
     /// A predecessor sealed for `RELEASE`, behind a vault that names no current release yet, serving
     /// on loopback. Neither side's log directory holds anything: tests write the tails they want.
     async fn start(name: &str) -> Self {
+        Self::start_logged(name, None).await
+    }
+
+    /// `start`, with the predecessor checking daily turns against the log `engine` answers for.
+    async fn start_logged(name: &str, engine: Option<mpsc::Sender<crate::sequencer::Request>>) -> Self {
         let (successor, successor_dir) = successor_config(name);
 
         let old = KeySet::generate().unwrap();
@@ -288,6 +293,7 @@ impl Exchange {
             drain,
             signing: signing_rx,
             secrets: Some(secrets.clone()),
+            engine,
         };
         let run = tokio::spawn(predecessor.run());
         let successor_log = successor.node.log_dir.clone();

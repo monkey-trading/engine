@@ -50,6 +50,7 @@ sol! {
     event Staked(address indexed account, uint256 amount);
     event UnstakeCompleted(address indexed account, uint256 amount);
     function registry() external view returns (address);
+    function schedule() external view returns (address);
 }
 
 mod decode;
@@ -203,6 +204,19 @@ impl VaultReader for VaultRpc {
             return Ok(None);
         }
         Ok(Some(registryCall::abi_decode_returns(&out).context("decoding the staking contract's registry")?))
+    }
+
+    /// The schedule the configured registry names, read in the canonical block `at`.
+    /// Error cases:
+    /// - no registry is configured, the call fails or times out, or the answer does not decode
+    async fn registry_schedule(&self, at: BlockRef) -> anyhow::Result<Address> {
+        let registry = self.registry.context("no registry is configured")?;
+        let request = TransactionRequest::default().to(registry).input(scheduleCall {}.abi_encode().into());
+        let out: Bytes = self
+            .deadline("eth_call", self.client.request("eth_call", (request, BlockId::hash_canonical(at.hash))))
+            .await
+            .context("reading the registry's schedule")?;
+        scheduleCall::abi_decode_returns(&out).context("decoding the registry's schedule")
     }
 
     /// The registry the configured schedule records, read in the canonical block `at`; `None`

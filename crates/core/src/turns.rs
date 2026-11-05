@@ -38,8 +38,9 @@ use crate::types::{AccountId, MAX_STAMP_MS, Millis};
 pub const DAY_MS: Millis = 24 * 60 * 60 * 1000;
 /// A turn's boundary within its day: 22:30 UTC.
 pub const BOUNDARY_OFFSET_MS: Millis = (22 * 60 + 30) * 60 * 1000;
-/// The most members a set may name: the registry's `CANDIDATE_LIMIT`.
-pub const MAX_SET_MEMBERS: usize = 100;
+/// The most members a set may name: the registry's `CANDIDATE_LIMIT` and the one place beyond it the
+/// operator in effect may take.
+pub const MAX_SET_MEMBERS: usize = 101;
 /// The sets kept: the one turns draw from, the one waiting to take effect, and the one before,
 /// whose drawn turns may still be due.
 pub const KEPT_SETS: usize = 3;
@@ -191,8 +192,8 @@ impl Engine {
             let distinct = members.iter().all(|m| candidates.insert(m.candidate) && keys.insert(m.admin_key));
             if self.daily_turns.sets.last_key_value().is_some_and(|(last, _)| set <= *last) {
                 Some(format!("set {set} is not after the last mirrored"))
-            } else if members.is_empty() || members.len() > MAX_SET_MEMBERS {
-                Some(format!("a set names 1 to {MAX_SET_MEMBERS} members, not {}", members.len()))
+            } else if members.len() > MAX_SET_MEMBERS {
+                Some(format!("a set names at most {MAX_SET_MEMBERS} members, not {}", members.len()))
             } else if members.iter().any(|m| m.candidate == zero || m.admin_key == zero || m.weight.0 == 0) {
                 Some("a set names nonzero candidates and keys with positive weights".into())
             } else if !distinct {
@@ -260,10 +261,9 @@ impl Engine {
         let member = |recorded: &RotationSet| {
             recorded.members.iter().any(|m| m.candidate == candidate && m.admin_key == admin_key)
         };
+        // A turn before the one in effect has ended too: the one in effect started at its end or later.
         if turn_end(turn) <= self.now {
             Some(format!("turn {turn} ended before its assignment was mirrored"))
-        } else if self.daily_turns.in_effect.is_some_and(|in_effect| in_effect.turn > turn) {
-            Some(format!("turn {turn} is before the turn in effect"))
         } else {
             match self.daily_turns.sets.get(&set) {
                 None => Some(format!("set {set} is not among the sets mirrored")),
@@ -326,9 +326,10 @@ impl Engine {
         events.push(Event::TurnTaken { turn, candidate: in_effect.candidate, release });
     }
 
-    /// From `V51`, while rotation is on and a turn is in effect, its member while it holds the
-    /// turn it took, with the end of that turn; `None` before its `TurnTaken` or past the turn's end.
-    /// The outer `None` means no turn has applied, so the earlier rule names the account in office.
+    /// From `V51`, while a turn is in effect, its member while it holds the turn it took, with the end
+    /// of that turn; `None` before its `TurnTaken` or past the turn's end. Turning rotation off leaves
+    /// drawn turns standing, and their members earning, as the registry still names them. The outer
+    /// `None` means no turn has applied, so the earlier rule names the account in office.
     pub(crate) fn turn_office(&self) -> Option<Option<(AccountId, Millis)>> {
         if self.protocol_version < ProtocolVersion::V51 {
             return None;
@@ -338,9 +339,14 @@ impl Engine {
             .daily_turns
             .taken
             .is_some_and(|taken| (taken.turn, taken.position) == (in_effect.turn, in_effect.position));
-        Some(
-            (taken && self.operator_election.rotation_enabled).then(|| (in_effect.candidate, turn_end(in_effect.turn))),
-        )
+        Some(taken.then(|| (in_effect.candidate, turn_end(in_effect.turn))))
+    }
+
+    /// From `V51`, whether a mirrored turn is in effect or waits to apply: until an installation ends
+    /// them, drawn turns name the operator.
+    pub(crate) fn turns_run(&self) -> bool {
+        self.protocol_version >= ProtocolVersion::V51
+            && (self.daily_turns.in_effect.is_some() || !self.daily_turns.assigned.is_empty())
     }
 
     /// Drops the turns an installation supersedes: the registry names the installed operator from

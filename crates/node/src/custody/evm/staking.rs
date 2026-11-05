@@ -119,6 +119,18 @@ impl<V: VaultReader> DepositWatcher<V> {
                 }
             }
         }
+        // The schedule mirrored must be the one the registry names, once it names one: a node that
+        // mirrors another, or none, would never apply the turns that name the operator.
+        if let Some((_, true)) = self.registry {
+            let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
+            let named = self.vault.registry_schedule(BlockRef { number: to, hash }).await.map_err(PollError::rpc)?;
+            let configured = self.schedule.map(|(schedule, _)| schedule);
+            if !named.is_zero() && configured != Some(named) {
+                return Err(PollError::inconsistent(anyhow!(
+                    "the registry names schedule {named}, but the config names {configured:?}"
+                )));
+            }
+        }
         // So must the schedule's registry: the schedule's events mirror only from the registry's own.
         if let (Some((schedule, false)), Some((registry, _))) = (self.schedule, self.registry) {
             let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;

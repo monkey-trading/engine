@@ -138,7 +138,8 @@ impl Holder {
             Predecessor::bind(&holding.config(chain), &store, attestor, &key, node.trusted(), drain, signing)
                 .await
                 .unwrap()
-                .expect("[tee.sealing.handover] binds the listener");
+                .expect("[tee.sealing.handover] binds the listener")
+                .with_engine(node.state.tx.clone());
         Self { member, node, listener: tokio::spawn(listener.run()), drains }
     }
 

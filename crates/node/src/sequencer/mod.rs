@@ -307,13 +307,12 @@ impl Sequencer {
         if !access::gate_withdrawal(&mut cmd, self.gate.as_ref().map(checkpoints::Gate::admits_withdrawals)) {
             return Ok(None);
         }
+        // A turn's first command is its `TurnTaken`, even behind a benchmark hold: it runs no catch-up.
+        self.take_turn(ts)?;
         if self.benchmark_sync && !matches!(&cmd, Command::SignedAdmin(req) if req.command.is_benchmark_snapshot()) {
             return Ok(None);
         }
         let snapshot = matches!(&cmd, Command::SignedAdmin(req) if req.command.is_benchmark_snapshot());
-        if !self.benchmark_sync {
-            self.take_turn(ts)?;
-        }
         let Some(events) = self.stamp(ts, cmd)? else {
             // Frozen mid-request: refuse like an unadmitted stamp, dropping the reply.
             return Ok(None);
@@ -487,7 +486,7 @@ mod metrics_tests;
 #[cfg(test)]
 mod pace_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 #[cfg(test)]
 mod wait_bench;
 

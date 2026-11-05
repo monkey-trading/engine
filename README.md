@@ -114,9 +114,9 @@ distribution, which it claims from the vault as a staker claims its own; from V5
 among the operators by their time in office during the epoch.
 From protocol V51 the operator rotates daily. At each election close a schedule contract adopts every
 eligible candidate as the rotation set, weighted by its delegated stake, seven days plus a finality
-margin before the set takes effect. Each day's turn is drawn from the set a day ahead of its 22:30 UTC
-boundary, seeded by an Ethereum RANDAO mix relayed to Arbitrum, and a candidate may hold consecutive
-turns. From the boundary the vault names the turn's release, the incumbent hands the member the keys
+margin before the set takes effect. Anyone draws each day's turn, from a day before its 22:30 UTC
+boundary until the boundary, from the set in effect at the start of that window, seeded by an Ethereum
+RANDAO mix relayed to Arbitrum, and a candidate may hold consecutive turns. From the boundary the vault names the turn's release, the incumbent hands the member the keys
 and the log, and the engine applies the member's admin key; the member earns the operator's share
 from the moment it takes its turn to the end of it.
 

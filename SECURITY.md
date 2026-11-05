@@ -334,13 +334,17 @@ stall alerts, and from V50, which splits the operator's share of each distributi
 operators by their sequenced time in office, the incumbent keeps earning the share through that
 delay; from V51 a registry that names a schedule rotates the operator daily instead: each election
 close adopts a rotation set seven days plus the finality margin before it takes effect, and anyone
-draws each 22:30 UTC turn from it a day ahead with a seed relayed from Ethereum, so whoever can
-withhold every relay until a turn's draw deadline chooses between that turn's seed and the fallback;
+draws each 22:30 UTC turn from the set in effect at its draw deadline, a day before the boundary, until
+the boundary, with a seed relayed from Ethereum, so whoever can withhold every relay until a turn's
+draw deadline chooses between that turn's seed and the fallback, and nothing in the node draws, so a
+turn nobody draws leaves the member before it named;
 a turn's key signs from its boundary only when a set mirrored at least seven days earlier names it;
 the vault names the turn's release, in the generation the schedule fixed, from the boundary without a
 transaction, and both enclaves of a handover accept the turn's member from the finalised schedule
-once their trusted time reaches the boundary, so a host that holds an enclave's Roughtime replies
-back can delay a handover but not bring it forward; the member earns the operator's share only from
+once their trusted time reaches the boundary, the turn the schedule names then being the only holding
+named, and the incumbent hands over only a turn its own log accepted, so a host that holds an
+enclave's Roughtime replies back can delay a handover but not bring it forward, and a turn drawn
+within a finality period of its boundary waits for finality; the member earns the operator's share only from
 its enclave's `TurnTaken` to the end of its turn, and an incumbent past its turn earns nothing;
 promotion over turns, which is the liveness rule's, is not built yet, so a failed member holds its
 turn until the next boundary and the governance fallback (rotation off and `installOperator` once the

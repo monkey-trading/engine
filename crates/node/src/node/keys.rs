@@ -161,11 +161,16 @@ async fn obtain_with(
         },
     };
     // From a daily turn's boundary the vault names its member's release before finality shows it:
-    // the finalised schedule's turn at trusted time names this release's generation (`handover::turns`).
+    // the turn the finalised schedule names at trusted time is the only holding named, and its
+    // generation is this release's when it names this one (`handover::turns`).
     let turn = match vault {
-        Some(vault) if cfg.operator.rotation_enabled => crate::handover::turns::at_start(cfg, vault, &release).await?,
+        Some(vault) if cfg.operator.rotation_enabled => crate::handover::turns::at_start(cfg, vault).await?,
         _ => None,
     };
+    if let Some(turn) = &turn {
+        crate::handover::turns::ensure_turn_names(turn, &release)
+            .context("refusing this release's keys: a daily turn names another release")?;
+    }
     let generation = turn.as_ref().map(|turn| turn.generation).or(current.map(|current| current.generation));
     let generation = generation.unwrap_or(0);
     let sealed = file_for(dir, &release, generation).exists();
@@ -403,8 +408,10 @@ pub(super) async fn watch_release(
                 continue;
             }
         };
-        let named = (current.id == sealed.id() && current.generation == generation)
-            || crate::handover::turns::names(&vault, &sealed, generation, trusted.reached_ms()).await;
+        let named = match crate::handover::turns::names(&vault, &sealed, generation, trusted.reached_ms()).await {
+            Some(named) => named,
+            None => current.id == sealed.id() && current.generation == generation,
+        };
         if !named && !superseded {
             error!(
                 alert = "release_superseded",

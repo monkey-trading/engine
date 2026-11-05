@@ -115,7 +115,7 @@ pub(crate) async fn take(
         enclave.address_hex()
     );
     let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
-    let generation = crate::handover::turns::named_generation(vault, &observation, &release, reached_ms).await?;
+    let (generation, _) = crate::handover::turns::named_generation(vault, &observation, &release, reached_ms).await?;
     let signers = crate::handover::vault_signers(vault, &observation).await?;
     let mut tip = log_tip;
     for listed in &tails {

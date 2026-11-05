@@ -367,6 +367,19 @@ fn a_turns_member_takes_it_with_its_first_command_once() {
 }
 
 #[test]
+fn a_turns_member_takes_it_behind_a_benchmark_hold() {
+    let (dir, clock, turn, member) = turn_log("turn-taken-held");
+    let (release, recorded) = (B256::repeat_byte(0x53), dev_config().operator().unwrap());
+    let mut seq = recover_turns(&dir, clock.clone(), Operator { address: member, ..recorded }, release);
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.wait_for_benchmarks().unwrap();
+    assert!(seq.sequence(Command::Tick).unwrap().is_none(), "the hold admits no tick");
+    seq.flush().unwrap();
+    let written = commands(&log_entries(&dir));
+    assert_eq!(written.last(), Some(&Command::TurnTaken { turn, release }), "the turn is taken behind the hold");
+}
+
+#[test]
 fn a_node_under_another_key_takes_no_turn() {
     let (dir, clock, _, _) = turn_log("turn-not-taken");
     let mut seq = recover_turns(&dir, clock.clone(), dev_config().operator().unwrap(), B256::repeat_byte(0x52));
@@ -379,7 +392,7 @@ fn a_node_under_another_key_takes_no_turn() {
 /// A staked log with rotation on, a set naming the member key mirrored, and a turn for it mirrored
 /// an hour before its boundary, which the returned clock is a second past: the log's directory, the
 /// clock, the turn and the member's key.
-fn turn_log(name: &str) -> (PathBuf, Arc<TestClock>, u64, AccountId) {
+pub(crate) fn turn_log(name: &str) -> (PathBuf, Arc<TestClock>, u64, AccountId) {
     let (dir, clock) = staked_log(name, Some(FRONTIER));
     let member = address(INSTALLED_SEED);
     let candidate = AccountId([0xc1; 20]);
@@ -409,7 +422,7 @@ fn turn_log(name: &str) -> (PathBuf, Arc<TestClock>, u64, AccountId) {
 }
 
 /// Recovers the log in `dir` under a config naming `operator`, whose enclave runs `release`.
-fn recover_turns(dir: &Path, clock: Arc<TestClock>, operator: Operator, release: B256) -> Sequencer {
+pub(crate) fn recover_turns(dir: &Path, clock: Arc<TestClock>, operator: Operator, release: B256) -> Sequencer {
     let genesis = finished_genesis(&log_entries(dir));
     let (manifest, _) = watch::channel(Manifest::default());
     let base = sequencer_config(dir, manifest);

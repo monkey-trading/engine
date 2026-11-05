@@ -52,6 +52,13 @@ pub trait VaultReader {
         async { anyhow::bail!("this reader does not read the staking contract's registry") }
     }
 
+    /// The schedule the configured registry names, in the canonical block `at`; the zero address
+    /// before the timelock names one. A reader that cannot read it refuses.
+    fn registry_schedule(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<Address>> + Send {
+        let _ = at;
+        async { anyhow::bail!("this reader does not read the registry's schedule") }
+    }
+
     /// The registry the configured schedule records, in the canonical block `at`, or `None` where
     /// the schedule has no code yet. A reader that cannot read it refuses.
     fn schedule_registry(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<Option<Address>>> + Send {
