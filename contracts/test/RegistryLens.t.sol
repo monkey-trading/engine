@@ -157,7 +157,7 @@ contract RegistryLensTest is RegistryTest {
         _delegate(alice, alice);
         _delegate(bob, bob);
         _setRotation(true);
-        vm.warp(block.timestamp + MIN_TERM);
+        vm.warp(block.timestamp + EPOCH);
         registry.closeEpoch();
         OperatorRegistry.Election memory pending = registry.pendingElection();
         assertEq(pending.candidate, bob);

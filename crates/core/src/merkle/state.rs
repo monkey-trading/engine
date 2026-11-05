@@ -34,6 +34,7 @@ use crate::operator_bounds::OperatorBounds;
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
 use crate::staking::{Staking, UsdcUnits};
+use crate::turns::DailyTurns;
 use crate::types::{AccountId, MarketId, Millis, OrderId};
 pub(crate) use touched::Changed;
 pub use touched::RootWork;
@@ -94,6 +95,9 @@ struct Globals<'a> {
     /// From `V37`; omitted until the registry's first mirrored event, so earlier roots stand.
     #[serde(skip_serializing_if = "OperatorElection::is_default")]
     operator_election: &'a OperatorElection,
+    /// From `V51`; omitted until the schedule's first mirrored event, so earlier roots stand.
+    #[serde(skip_serializing_if = "DailyTurns::is_default")]
+    daily_turns: &'a DailyTurns,
     /// From `V40`; omitted until the registry is installed, so earlier roots stand.
     #[serde(skip_serializing_if = "Option::is_none")]
     close_spread_ceilings: &'a Option<BTreeMap<MarketId, i64>>,
@@ -431,6 +435,7 @@ impl Engine {
             access_policy,
             operator_bounds,
             operator_election,
+            daily_turns,
             close_spread_ceilings,
             pending_ceiling,
             session_keys: _,
@@ -466,6 +471,7 @@ impl Engine {
             access_policy,
             operator_bounds,
             operator_election,
+            daily_turns,
             close_spread_ceilings,
             pending_ceiling,
         }

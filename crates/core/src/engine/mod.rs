@@ -41,6 +41,7 @@ use crate::session_keys::AccountSessionKeys;
 use crate::staking::{Staking, UsdcUnits};
 pub use crate::stress::{MoveBucket, StressState};
 use crate::tracked::{TrackedMap, TrackedSet};
+use crate::turns::DailyTurns;
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis, OrderId, Side};
 use crate::withdrawal::{QueuedWithdrawal, WithdrawalApproval};
 
@@ -160,6 +161,10 @@ pub struct Engine {
     /// from `V47`, the candidate seated; from `V48`, the last operator the timelock installed.
     #[serde(default, skip_serializing_if = "OperatorElection::is_default")]
     pub(crate) operator_election: OperatorElection,
+    /// From `V51`, the mirrored schedule: the rotation sets kept, the turns waiting to apply, the turn
+    /// in effect, and whether its member has taken it.
+    #[serde(default, skip_serializing_if = "DailyTurns::is_default")]
+    pub(crate) daily_turns: DailyTurns,
     /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once
     /// (genesis, or one signed install) and changed only by a signed adoption, so `UpsertMarket`
     /// can neither replace nor raise an entry. Absent until installed.
@@ -250,6 +255,8 @@ impl Engine {
         self.accrue_time_in_office(last_now);
         // From `V35` a rotation whose notice has run hands over before the command is authorised.
         self.apply_due_rotation(sequenced.ts);
+        // From `V51` a turn whose time has come hands over after any rotation, before authorisation.
+        self.apply_due_turn(sequenced.ts);
         // From `V47` the candidate seated moves with the key, before any distribution closes.
         self.settle_operator_candidate();
         // From `V40` a ceiling adoption whose notice has run applies before the command acts.
@@ -269,6 +276,14 @@ impl Engine {
         let staking_activation = sequenced.cmd.changes_staking_reserves(self.protocol_version);
         if !staking_activation {
             self.finalise_staking(&mut events);
+        }
+        // From `V51` a turn is taken before anything else in it: no market, rollover or corporate
+        // catch-up runs in its command, so a benchmark hold can admit it ahead of the snapshot.
+        if let Command::TurnTaken { turn, release } = &sequenced.cmd
+            && self.protocol_version >= ProtocolVersion::V51
+        {
+            self.take_turn(*turn, *release, &mut events);
+            return Ok(events);
         }
         let corporate = self.protocol_version >= ProtocolVersion::V23;
         let mut corporate_margin = false;
@@ -378,6 +393,9 @@ impl Engine {
                 }
                 Command::ElectOperator(election) => self.elect_operator(election, &mut events),
                 Command::InstallOperator(installation) => self.install_operator(installation, &mut events),
+                Command::AdoptRotationSet(adoption) => self.adopt_rotation_set(adoption, &mut events),
+                Command::AssignTurn(assignment) => self.assign_turn(assignment, &mut events),
+                Command::TurnTaken { turn, release } => self.take_turn(*turn, *release, &mut events),
                 Command::RegisterSessionKey { account, session_key, expires_at, auth } => {
                     self.register_session_key(*account, *session_key, *expires_at, auth.as_ref(), &mut events)
                 }

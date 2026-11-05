@@ -76,9 +76,7 @@ impl Chain {
         };
         let parameters = RegistryParameters {
             epochLength: 3_600,
-            minTerm: 0,
             finalityMargin: 60,
-            marginBps: 1_000,
             eligibilityBps: 100,
             quorumBps: 2_000,
             maxCandidates: 10,
@@ -88,9 +86,7 @@ impl Chain {
         let (lo, hi) = (
             RegistryParameters {
                 epochLength: 60,
-                minTerm: 0,
                 finalityMargin: 0,
-                marginBps: 0,
                 eligibilityBps: 0,
                 quorumBps: 0,
                 maxCandidates: 1,
@@ -99,9 +95,7 @@ impl Chain {
             },
             RegistryParameters {
                 epochLength: 86_400,
-                minTerm: 86_400,
                 finalityMargin: 3_600,
-                marginBps: 10_000,
                 eligibilityBps: 10_000,
                 quorumBps: 10_000,
                 maxCandidates: 100,

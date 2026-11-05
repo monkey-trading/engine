@@ -434,4 +434,4 @@ fn witness(timestamp: u64, header: &BeaconBlockHeader, proof: &MixProof) -> ISee
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

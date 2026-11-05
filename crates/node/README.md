@@ -219,6 +219,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   reaches the final checkpoint of the release that handed the keys over
 - `src/node/keys/tests.rs` — sealed, new, refused, and unsealed keys, the vault's current release,
   the stand-in measurement, and the first start's head check
+- `src/node/keys/tests/turns.rs` — a start while rotation is on: a daily turn naming another release
+  refuses it, keys sealed in the turn's generation open, a member without them takes them from the
+  turn's source, and no turn drawn takes no trusted time sample
 - `src/node/recovery.rs` — reading the log and the history index it must match before anything is
   written
 - `src/node/secrets.rs` — this start's delivered secrets: opening the sealed bundle, asking a
@@ -348,6 +351,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   checkpoint's stamp where none is posted (`log_heads.rs`),
   custody receipts and their history across a cache restart (`custody.rs`), publication faults,
   public history pages, and the harness
+- `src/sequencer/turns.rs` — the `TurnTaken` this node sequences first in each daily turn the log assigns its operator key
 - `src/sequencer/required.rs` — client auth, the operator, protocol activation, and genesis, which
   wait for trusted time
 - `src/sequencer/catch_up.rs` — the `Tick`s that finish a V33 catch-up before a command
@@ -574,7 +578,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   custody credit tag, raises `seed_missing` and `seed_relayer_unfunded`, and relays the upcoming turns'
   seeds the receiver lacks, one transaction in flight at a time, raising `seed_relay_failed` when it
   cannot; `src/seed_relay/tests.rs` and its `tests/` modules cover its decisions over fake chains, and
-  `src/seed_relay/tests/scenario.rs` is the two-Anvil dev scenario `scripts/dev-seed-relay.sh` runs
+  `src/seed_relay/tests/scenario.rs` is the two-Anvil dev scenario `scripts/dev-seed-relay.sh` runs,
+  whose stand-in Ethereum, beacon node, bridge and relayer config also seed the daily rotation scenario
 - `src/seed_relay/settle.rs` — which transaction the relayer's next send replaces, and at which nonce;
   `src/seed_relay/balance.rs` — the relayer's balance, its funding alert and its unreadable alert
 - `src/seed_relay/abi.rs` — the relay's, receiver's and Inbox's ABIs
@@ -611,11 +616,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/handover/predecessor.rs` — the running release's side: its listener, the current release, the
   stop, the final checkpoint, and the sealed tail segments it sends after the keys;
   `src/handover/predecessor/tests/` runs it over loopback, the stop and final-checkpoint tests in
-  `stop.rs`, the successor-side transfer tests in `successor.rs`
+  `stop.rs`, the successor-side transfer tests in `successor.rs`, a daily turn's handover from its
+  boundary in `turns.rs`
 - `src/handover/secrets.rs` — the new release's side of moving the delivered secrets with an
   approved upgrade, checked by the operator's signature; `src/handover/predecessor/secrets.rs` is
   the running release's, which refuses an election's successor; `src/handover/predecessor/tests/`'s
   `secrets.rs` covers both, against the switch in its `vault.rs`
+- `src/handover/turns.rs` — a daily turn's handover authorisation: the finalised schedule's member, once trusted time reaches the turn's boundary, in the generation the schedule fixed; and the operators the member takes the keys from, its turn's source and then each earlier turn's, a week back; `src/handover/turns/tests.rs` walks those sources
 - `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence
 - `src/verify/mod.rs` — attestation verification for the CLI and replay: loading or fetching the
   attestation, release manifest, and collateral, `engine-verify` on the system clock, and the
@@ -740,6 +747,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/history.rs` — accepted history from the finalized anchor, the signed-parent chain, and signer epochs
 - `src/checkpoints/lifecycle_tests/` — paid cash reconciliation, bounded claim polling, rotated authorities, and the vault's pause and retired signer observed, alerted and finalized
 - `src/checkpoints/reconciliation.rs` — finalized collateral health: shortfalls, deposit totals, payouts, surpluses, the credit deadline, and the vault's halt
+- `src/checkpoints/rpc/schedule.rs` — the daily turn the vault's registry's schedule names at a time, read at a finalized block
+- `src/checkpoints/rpc/takeover.rs` — the standby's takeover signal, read at one finalized block
 - `src/checkpoints/rpc/observation.rs` — same-block balance, epoch, paid total, and bounded claim reads, and whether a claim can prove against a checkpoint
 - `src/checkpoints/rpc/authority.rs` — accepted historical signer identities for rotated nonce journals
 - `src/checkpoints/rpc/submission/tests/lifecycle.rs` — canonical pinned history and retired journal recovery
@@ -840,9 +849,21 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   election by those tallies mirrored through the custody quorum, and the elected key signing from
   its effective time
 - `src/custody/tests/election_scenario/chain.rs` — the scenario's chain at a fixed genesis time, its
-  RPC proxies, deployments, and registry and timelock calls
+  RPC proxies, deployments, and registry and timelock calls, optionally finalising two blocks behind
+  its head
 - `src/custody/tests/election_scenario/node.rs` — the scenario's sequencer on a test clock, custody
-  watcher, and API
+  watcher, and API, and a daily turn member's seat: its own operator key and turn release
+- `src/custody/tests/election_scenario/daily_turns.rs` — the daily rotation dev scenario
+  `scripts/dev-daily-rotation.sh` runs: a rotation set of three, five turns drawn from relayed seeds,
+  and at each boundary the turn's key, the handover while finality trails, `TurnTaken`, the time in
+  office and `/v1/operator` checked, then the log replayed, and an installation of the last turn's
+  own candidate ending the turns
+- `src/custody/tests/election_scenario/daily_turns/seat.rs` — a member and its node while it holds a
+  turn: sealed keys, the handover listener, and the stop a handover asks for
+- `src/custody/tests/election_scenario/daily_turns/seeds.rs` — the scenario's seed source over the
+  seed relay scenario's two-chain fixture
+- `src/custody/tests/election_scenario/daily_turns/checks.rs` — the time in office, the operator
+  view, and the stopped log's commands the scenario checks
 - `src/custody/tests/election_scenario/operator_share.rs` — the operator's share dev scenario on
   isolated Anvil: the election's candidate and a staker claim through the vault, an epoch below the
   floor pays neither, and the candidate's unclaimed leaf registers and pays through the exit
@@ -871,21 +892,25 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   across polls while their endpoint stays canonical
 - `src/custody/evm/types.rs` — the canonical deposit, staking-event, finality and reader types
 - `src/custody/evm/staking.rs` — staking catch-up proofs anchored independently of deposit progress
-- `src/custody/tests/fakes/files.rs` — temporary directories and custody test configurations
+- `src/custody/tests/fakes/files.rs` — temporary directories, custody test configurations, and the
+  stored deposit cursor
+- `src/custody/tests/fakes/schedule.rs` — the schedule the fake chain's registry names, and the
+  registry that schedule records
 - `src/custody/tests/fakes/sequencer.rs` — in-memory sequencer stand-ins for the watcher tests, with no
   log and no trusted time
 - `src/custody/tests/fakes/logs.rs` — log lines captured from a test's tasks, for alert assertions
 - `src/custody/tests/fakes/epochs.rs` — the fake chain's signer history and earlier epochs' log heads,
   answered as contract calls
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
-- `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, decoded for the staking mirror
+- `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, and its schedule's rotation set and turn events, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
-- `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, and the staking contract's deployer checked against the configured registry
+- `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, the staking contract's deployer checked against the configured registry, and the schedule checked against the one the registry and the config name and against the registry it records
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, and the latest checkpoint
-- `src/api/operator.rs` — `GET /v1/operator`: the key in effect, its pending rotation, whether rotation is on, and the last election
+- `src/api/operator.rs` — `GET /v1/operator`: the key in effect, its pending rotation, whether rotation is on, the last election, and from `V51` the rotation set in effect and the next with its time, today's and tomorrow's turns, and the turn history (`?before=&limit=`)
 - `src/api/operator_list.rs` — `GET /v1/operators`: the list `custody/operators/` last read, 404 without a lens and 503 before the first read or once it is stale
 - `src/custody/operators/` — the operator list's reader over its own custody quorum: `lens.rs` is the `RegistryLens` ABI and the checks that make the list, `mod.rs` the reader, its loop and the feed the API serves from, `tests.rs` the stand-in providers
 - `src/stats/distributions.rs` — the bounded history of closed distribution epochs behind `GET /v1/monkey/distributions`
+- `src/stats/turns.rs` — the bounded history of turn assignments, with each member's `TurnTaken`, that `GET /v1/operator` pages
 - `src/custody/tests/election_scenario/staking_reads.rs` — the staking reads dev scenario
 - `src/api/admin_tests/delivery_authority.rs` — who a running node takes deliveries from: the key in
   effect by trusted time, and a named or installed successor's own
@@ -2111,7 +2136,10 @@ names that `block`'s number, hash and time. The lens's return data must be ident
 executed in the canonical block by hash, on the configured chain and token, and the lens must name the configured
 registry; an inconsistent answer is not served. A failed read raises the `operators_read_failed` Warning and leaves the last list
 up for `custody.evm.finality_stalled_after`, after which the route answers 503 until a read succeeds. Without
-`custody.evm.staking.registry.lens` the route answers 404 and the node runs as before. Building the answer from the lens's return data at 100 candidates takes about 80 µs for the quorum's votes, the decode and the checks and about 100 µs for its 46 KB of JSON (`operators::tests::build_cost_at_the_registry_limit`); a read makes six lens calls to each provider, none on the sequencer's thread. A 200-epoch page of `/v1/monkey/distributions` from a full history of 100,000 epochs takes about 4 µs under the record's lock and 130 µs with its 63 KB of JSON (`stats::tests::distributions::page_cost_from_a_full_history`). A refused registry mirror raises a Critical `election_rejected` alert and
+`custody.evm.staking.registry.lens` the route answers 404 and the node runs as before. With
+`custody.evm.staking.registry.schedule`, the registry's `OperatorSchedule`, the watcher mirrors its
+`RotationSetAdopted` and `TurnAssigned` events with the registry's from protocol `V51`, once a read at a
+window's end shows the schedule names the configured registry, and refuses a schedule event before then. Building the answer from the lens's return data at 100 candidates takes about 80 µs for the quorum's votes, the decode and the checks and about 100 µs for its 46 KB of JSON (`operators::tests::build_cost_at_the_registry_limit`); a read makes six lens calls to each provider, none on the sequencer's thread. A 200-epoch page of `/v1/monkey/distributions` from a full history of 100,000 epochs takes about 4 µs under the record's lock and 130 µs with its 63 KB of JSON (`stats::tests::distributions::page_cost_from_a_full_history`). A refused registry mirror raises a Critical `election_rejected` alert and
 holds the staking mirror behind it. With real attestation, `rotate-operator` and the admin route refuse an address that `config/test-keys.toml` lists, and the route refuses a request such a key signs unless it is the configured operator's, and the route admits a pending rotation's key only once its time has come by the node's clock. `engine replay` prints the operator a log records. A node
 whose `tee.provider` is not `mock` refuses to start with an operator key that
 `config/test-keys.toml` lists, in either SEC1 encoding: the repository publishes those keys' private

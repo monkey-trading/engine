@@ -159,7 +159,6 @@ contract ReleaseChangeTest is RegistryTest {
         assertEq(registry.candidateOf(alice).release, _release(5));
         assertEq(registry.operatorInEffect().release, _release(0), "a standby's move leaves the operator's");
         assertEq(vault.currentRelease(), _release(0));
-        vm.warp(block.timestamp + MIN_TERM);
         _closeNext();
         OperatorRegistry.Election memory pending = registry.pendingElection();
         assertEq(pending.candidate, alice);
@@ -326,7 +325,6 @@ contract ReleaseChangeTest is RegistryTest {
         registry.setRelease(_digest(3), CONFIG);
         _candidate(alice, 60_000e18, 1);
         _delegate(alice, alice);
-        vm.warp(uint256(effectiveAt) + MIN_TERM);
         _closeNext();
         assertEq(registry.pendingElection().candidate, alice);
         OperatorRegistry.HandoverSource memory source = registry.handoverSource();
@@ -527,12 +525,11 @@ contract ReleaseChangeTest is RegistryTest {
     }
 
     /// @dev Registers `candidate` with release `seed`, stakes and self-delegates 20k for it, turns
-    /// rotation on, and elects it past the deployer's term; returns the effective time.
+    /// rotation on, and elects it at the next close; returns the effective time.
     function _elect(address candidate, uint256 seed) internal returns (uint64) {
         _candidate(candidate, 20_000e18, seed);
         _delegate(candidate, candidate);
         if (!registry.rotationEnabled()) _setRotation(true);
-        vm.warp(block.timestamp + MIN_TERM);
         _closeNext();
         OperatorRegistry.Election memory pending = registry.pendingElection();
         assertEq(pending.candidate, candidate);

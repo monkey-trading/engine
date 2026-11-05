@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {TimelockController} from "@openzeppelin-contracts/governance/TimelockController.sol";
 import {ECDSA} from "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
 
+import {OperatorSchedule} from "./OperatorSchedule.sol";
 import {Staking} from "./Staking.sol";
 
 /// @dev The vault the liveness clock reads: the registry asks it when a checkpoint last posted.
@@ -13,45 +14,44 @@ interface IVault {
 }
 
 /// @title OperatorRegistry
-/// @notice Elects the operator, whose key signs the engine's admin commands, by delegated MONKEY
+/// @notice Names the operator, whose key signs the engine's admin commands, by delegated MONKEY
 /// stake. Anyone may register as a candidate with a self-bond of its own stake, which the staking
 /// contract this registry deploys locks while the candidate is registered and for one cooldown after
 /// it leaves. A candidate is eligible once the timelock has approved its release, and while its
 /// self-bond and its share of total stake meet the minimums.
-/// @notice Anyone may close an election epoch once it has ended. While rotation is on and no
-/// election is waiting to take effect, the close elects the eligible candidate with the most
-/// delegated stake, if that is not the operator in effect, a quorum of total stake is delegated to
-/// approved candidates, the operator in effect has served its minimum term, and the winner's votes exceed the
-/// incumbent's by the margin. The election takes effect seven days plus the finality margin after
-/// the close; the engine mirrors it and applies the winner's admin key from then.
-/// @notice Liveness: while rotation is on and no election waits, anyone may promote the top
-/// eligible standby once the vault has had no checkpoint for `parameters.livenessTimeout`. The
-/// promotion takes effect like an election, and moves the vault's current release to the standby
-/// at once; the standby's registered enclave address is the only one the vault's timelock-gated
-/// `setSigner` installs while rotation is on.
+/// @notice Anyone may close an election epoch once it has ended; while rotation is on, the close
+/// moves the role in one of two modes. A registry that names a schedule rotates daily turns: each
+/// close adopts a rotation set in the schedule, and the member of the turn the schedule drew names
+/// the operator from the turn's boundary. A registry without one elects: while no election is
+/// waiting to take effect, the close elects the eligible candidate with the most delegated stake, if
+/// that is not the operator in effect and a quorum of total stake is delegated to approved
+/// candidates, seven days plus the finality margin after the close; the engine mirrors it and
+/// applies the winner's admin key from then.
+/// @notice Liveness, without a schedule: while rotation is on and no election waits, anyone may
+/// promote the top eligible standby once the vault has had no checkpoint for
+/// `parameters.livenessTimeout`. The promotion takes effect like an election, and moves the vault's
+/// current release to the standby at once; the standby's registered enclave address is the only one
+/// the vault's timelock-gated `setSigner` installs while rotation is on.
 /// @notice Releases: a candidate moves its candidacy to a release the timelock approved for it.
-/// The operator in effect's move is how it upgrades while rotation is on: the vault names the new
+/// The named operator's move is how it upgrades while rotation is on: the vault names the new
 /// release at once, and the running release hands it the keys and the log.
 /// @dev Not upgradeable. Rotation starts off, with the deployment's initial operator in effect, and
-/// while it is off a close elects nothing. Only the timelock turns rotation on and off (turning it
-/// off cancels an election not yet in effect), approves candidates' releases, and changes the
-/// parameters within the bounds fixed at deployment. While rotation is off the timelock alone may
-/// also install a new operator in effect (#502), the fallback for a failed operator whose key is
-/// gone. The operator in effect, and a candidate elected and waiting to take effect, cannot leave:
-/// an operator leaves by losing a vote. A candidate registers an admin key only with that key's
-/// EIP-712 authorization, so no one can reserve a key the candidate advertised before it registers.
+/// while it is off a close elects and adopts nothing. Only the timelock turns rotation on and off
+/// (turning it off cancels an election not yet in effect; turns already drawn stand), names the
+/// schedule, approves candidates' releases, and changes the parameters within the bounds fixed at
+/// deployment. While rotation is off and no drawn turn runs, the timelock alone may also install a
+/// new operator in effect (#502), the fallback for a failed operator whose key is gone. The operator
+/// in effect, a candidate elected and waiting to take effect, and a member holding a turn cannot
+/// leave. A candidate registers an admin key only with that key's EIP-712 authorization, so no one
+/// can reserve a key the candidate advertised before it registers.
 contract OperatorRegistry {
     /// @notice The election's adjustable values; the timelock changes them within deployment bounds.
     struct Parameters {
         /// @notice Election epoch length, in seconds.
         uint64 epochLength;
-        /// @notice How long the operator in effect serves before the role can move, in seconds.
-        uint64 minTerm;
-        /// @notice Added to the seven-day notice before an election takes effect, in seconds.
+        /// @notice Added to the seven-day notice before an election or a rotation set takes effect,
+        /// in seconds.
         uint64 finalityMargin;
-        /// @notice How far a challenger's votes must exceed the incumbent's, in basis points of the
-        /// incumbent's.
-        uint16 marginBps;
         /// @notice A candidate's smallest share of total stake to be eligible, in basis points.
         uint16 eligibilityBps;
         /// @notice The smallest share of total stake delegated to approved candidates for the role to
@@ -148,6 +148,10 @@ contract OperatorRegistry {
     /// operator in effect may take, it bounds the gas of a close, which reads every candidate.
     uint256 public constant CANDIDATE_LIMIT = 100;
 
+    /// @notice The shortest epoch while a schedule is named: with the notice, it bounds how many
+    /// rotation sets wait at once, since every close adopts one.
+    uint64 public constant MIN_SCHEDULED_EPOCH = 1 days;
+
     uint256 private constant BPS = 10_000;
     uint256 private constant MAX_HOSTNAME_BYTES = 253;
     uint256 private constant MAX_ENDPOINT_BYTES = 512;
@@ -169,8 +173,12 @@ contract OperatorRegistry {
     Parameters public minimums;
     Parameters public maximums;
 
-    /// @notice Whether closes elect; off at deployment.
-    bool public rotationEnabled;
+    /// @notice Whether closes elect or adopt rotation sets, and draws run; off at deployment.
+    bool public rotationSwitch;
+
+    /// @notice The schedule whose turns name the operator; set once by governance, and while it is
+    /// unset the registry elects.
+    OperatorSchedule public schedule;
 
     /// @notice The election epoch now open, and when it started.
     uint64 public openEpoch;
@@ -235,6 +243,8 @@ contract OperatorRegistry {
 
     event ParametersChanged(Parameters parameters);
 
+    event ScheduleSet(address indexed schedule);
+
     error ZeroAddress();
     error InvalidGovernance();
     error UnauthorizedGovernance();
@@ -259,6 +269,11 @@ contract OperatorRegistry {
     error VaultAlreadySet(address vault);
     error LivenessNotDue(uint256 dueAt);
     error NoQualifiedStandby();
+    error InvalidSchedule();
+    error ScheduleAlreadySet(address schedule);
+    error ScheduleNamesTurns();
+    error TurnsPending(uint64 until);
+    error EpochTooShort(uint64 epochLength, uint64 minimum);
 
     /// @param monkey_ The MONKEY token the staking contract holds.
     /// @param cooldownSeconds_ The staking contract's unstake cooldown, in seconds, which also keeps
@@ -285,7 +300,7 @@ contract OperatorRegistry {
         if (initial.adminKey == address(0)) revert ZeroAddress();
         if (
             minimums_.epochLength == 0 || minimums_.livenessTimeout == 0 || minimums_.maxCandidates == 0
-                || maximums_.marginBps > BPS || maximums_.eligibilityBps > BPS || maximums_.quorumBps > BPS
+                || maximums_.eligibilityBps > BPS || maximums_.quorumBps > BPS
                 || maximums_.maxCandidates > CANDIDATE_LIMIT
         ) revert InvalidBounds();
         minimums = minimums_;
@@ -390,14 +405,20 @@ contract OperatorRegistry {
     }
 
     /// @notice Removes the caller's candidacy; its self-bond stays locked for one cooldown. The
-    /// operator in effect, and a candidate elected and waiting to take effect, cannot leave.
+    /// operator in effect while no turn names one, a candidate elected and waiting to take effect,
+    /// and, while a turn names the operator or drawn turns run, the member of the turn in effect, its
+    /// source, or the member of the last drawn turn cannot leave.
     function deregister() external {
         Candidate memory registered = candidates[msg.sender];
         if (registered.adminKey == address(0)) revert NotRegistered();
         _settle();
-        if (msg.sender == current.candidate || (pending.effectiveAt != 0 && msg.sender == pending.candidate)) {
-            revert OperatorCannotLeave();
-        }
+        (Operator memory turn,,) = _turn();
+        bool turnNamed = turn.candidate != address(0);
+        if (
+            (!turnNamed && msg.sender == current.candidate)
+                || (pending.effectiveAt != 0 && msg.sender == pending.candidate)
+                || _holdsRunningTurn(msg.sender, turnNamed)
+        ) revert OperatorCannotLeave();
         if (listed[msg.sender] != 0) _delist(msg.sender);
         delete keyHolder[registered.adminKey];
         delete candidates[msg.sender];
@@ -428,7 +449,8 @@ contract OperatorRegistry {
     /// release does while rotation is off. A candidate whose registered release was unapproved is
     /// listed again, under the candidate cap. While an election or promotion waits to take effect,
     /// neither the operator it replaces nor the candidate it names may move: the election keeps the
-    /// release and the handover source it was made with.
+    /// release and the handover source it was made with. A turn member's move names the new release
+    /// at once for its turn in effect and its last drawn turn, each in a new generation.
     function setRelease(bytes calldata launchDigest, bytes32 configHash) external {
         Candidate storage registered = candidates[msg.sender];
         if (registered.adminKey == address(0)) revert NotRegistered();
@@ -445,6 +467,7 @@ contract OperatorRegistry {
         }
         emit CandidateReleaseChanged(msg.sender, release, launchDigest, configHash);
         if (listed[msg.sender] == 0) _enlist(msg.sender);
+        if (address(schedule) != address(0)) schedule.releaseMoved(msg.sender);
     }
 
     /// @notice Names the deployment's vault, whose `lastCheckpointAt` the liveness clock reads.
@@ -453,6 +476,19 @@ contract OperatorRegistry {
         if (vault_.code.length == 0) revert ZeroAddress();
         if (address(vault) != address(0)) revert VaultAlreadySet(address(vault));
         vault = IVault(vault_);
+    }
+
+    /// @notice Names the schedule whose turns name the operator, from which on closes adopt rotation
+    /// sets instead of electing. Set once, while rotation is off and the epoch is at least
+    /// `MIN_SCHEDULED_EPOCH`, to a schedule built for this registry.
+    function setSchedule(OperatorSchedule schedule_) external onlyGovernance {
+        if (address(schedule) != address(0)) revert ScheduleAlreadySet(address(schedule));
+        if (rotationSwitch) revert RotationActive();
+        uint64 epochLength = parameters.epochLength;
+        if (epochLength < MIN_SCHEDULED_EPOCH) revert EpochTooShort(epochLength, MIN_SCHEDULED_EPOCH);
+        if (schedule_.registry() != this) revert InvalidSchedule();
+        schedule = schedule_;
+        emit ScheduleSet(address(schedule_));
     }
 
     /// @notice Approves, or withdraws approval of, `candidate` running the release with SEV-SNP launch
@@ -479,30 +515,34 @@ contract OperatorRegistry {
     }
 
     /// @notice Turns rotation on or off. Turning it off cancels an election not yet in effect, and
-    /// its handover source with it: no successor hands over while rotation is off.
+    /// its handover source with it: no successor hands over while rotation is off. Turns already
+    /// drawn stand.
     function setRotation(bool enabled) external onlyGovernance {
-        if (enabled == rotationEnabled) revert RotationUnchanged(enabled);
+        if (enabled == rotationSwitch) revert RotationUnchanged(enabled);
         _settle();
         bool cancelled = !enabled && pending.effectiveAt != 0;
         if (cancelled) {
             delete pending;
             delete source;
         }
-        rotationEnabled = enabled;
+        rotationSwitch = enabled;
         emit RotationChanged(enabled, cancelled);
     }
 
-    /// @notice Sets the parameters, each within the bounds fixed at deployment. A lower candidate cap
-    /// removes no listed candidate; it refuses new approvals, and approved re-registrations, until the
-    /// count is under it.
+    /// @notice Sets the parameters, each within the bounds fixed at deployment, and, with a schedule
+    /// named, an epoch of at least `MIN_SCHEDULED_EPOCH`. A lower candidate cap removes no listed
+    /// candidate; it refuses new approvals, and approved re-registrations, until the count is under it.
     function setParameters(Parameters calldata parameters_) external onlyGovernance {
         _checkBounds(parameters_);
+        if (address(schedule) != address(0) && parameters_.epochLength < MIN_SCHEDULED_EPOCH) {
+            revert EpochTooShort(parameters_.epochLength, MIN_SCHEDULED_EPOCH);
+        }
         parameters = parameters_;
         emit ParametersChanged(parameters_);
     }
 
     /// @notice Closes the latest election epoch that has ended, skipping any that ended unclosed, and
-    /// elects as the contract's rule says.
+    /// adopts a rotation set or elects as the contract's rule says.
     /// @return epoch The epoch closed.
     function closeEpoch() external returns (uint64 epoch) {
         Parameters memory p = parameters;
@@ -514,7 +554,12 @@ contract OperatorRegistry {
         openEpochStart += uint64(elapsed * p.epochLength);
         _settle();
         emit EpochClosed(epoch);
-        if (!rotationEnabled || pending.effectiveAt != 0) return epoch;
+        if (!rotationSwitch) return epoch;
+        if (address(schedule) != address(0)) {
+            _adopt(epoch, p);
+            return epoch;
+        }
+        if (pending.effectiveAt != 0) return epoch;
         address winner = _winner(p);
         if (winner == address(0)) return epoch;
         Candidate storage elected = candidates[winner];
@@ -529,10 +574,12 @@ contract OperatorRegistry {
     /// becomes the pending operator in effect: the vault's current release is its at once, and its
     /// admin key takes effect at `now + NOTICE + finalityMargin`, as an election's does. The vault
     /// installs the standby's registered enclave address through its limited `setSigner` in that
-    /// time. Reverts when no standby qualifies, leaving the operator in effect unchanged.
+    /// time. Reverts when no standby qualifies, leaving the operator in effect unchanged, and with a
+    /// schedule, whose turns name the operator.
     /// @return epoch The epoch number the promotion consumes, one more than any closed or consumed.
     function promote() external returns (uint64 epoch) {
-        if (!rotationEnabled) revert RotationDisabled();
+        if (address(schedule) != address(0)) revert ScheduleNamesTurns();
+        if (!rotationSwitch) revert RotationDisabled();
         _settle();
         if (pending.effectiveAt != 0) revert ElectionPending();
         IVault liveness = vault;
@@ -557,9 +604,10 @@ contract OperatorRegistry {
 
     /// @notice Installs `candidate` with `adminKey` as the operator in effect, running the release
     /// `launchDigest`/`configHash` names: the timelock-only fallback for a failed operator whose key
-    /// is gone and no election can move, since an election needs rotation on and the minimum term
-    /// (#502). Rotation must be off — while it is on, elections and promotions move the role — so a
-    /// pending election is already cancelled. The installed operator takes effect at once; the engine
+    /// is gone and no election can move, since an election needs rotation on (#502). Rotation must be
+    /// off — while it is on, elections, promotions and turns move the role — so a pending election is
+    /// already cancelled, and every drawn turn must have ended: the installation ends the last turn's
+    /// naming. The installed operator takes effect at once; the engine
     /// mirrors this with its seven-day log notice before its key signs. No candidacy changes: the
     /// replaced operator keeps its release, approvals and listing, and the installed candidate,
     /// when registered, keeps its own and moves with `setRelease` like any operator in effect.
@@ -567,26 +615,52 @@ contract OperatorRegistry {
         external
         onlyGovernance
     {
-        if (rotationEnabled) revert RotationActive();
+        if (rotationSwitch) revert RotationActive();
+        if (address(schedule) != address(0)) {
+            uint64 until = schedule.turnsRunUntil();
+            if (until > block.timestamp) revert TurnsPending(until);
+        }
         if (candidate == address(0) || adminKey == address(0)) revert ZeroAddress();
         bytes32 release = _release(launchDigest, configHash);
         current = Operator(candidate, adminKey, release, uint64(block.timestamp));
         emit OperatorInstalled(candidate, adminKey, release);
     }
 
-    /// @notice The operator in effect: the last election once its time has come, or before it the
-    /// operator it replaces.
+    /// @notice The operator in effect: the member of the schedule's turn while it names one, else
+    /// the last election once its time has come, or before it the operator it replaces.
     function operatorInEffect() external view returns (Operator memory) {
-        return _inEffect();
+        (Operator memory turn,,) = _turn();
+        return turn.candidate != address(0) ? turn : _inEffect();
     }
 
-    /// @notice The operator the vault names while rotation is on: a pending promotion from the
-    /// moment it is made, a pending election from its effective time, else the operator in effect.
-    /// A node's hostname and release checks read this, not `operatorInEffect`: the vault names a
-    /// promoted standby's release at once, while the promoted key takes effect only after its
-    /// notice.
+    /// @notice The operator the vault names while rotation is on: the member of the schedule's turn
+    /// from its boundary, while it names one; else a pending promotion from the moment it is made, a
+    /// pending election from its effective time, else the operator in effect. A node's hostname and
+    /// release checks read this, not `operatorInEffect`: the vault names a promoted standby's release
+    /// at once, while the promoted key takes effect only after its notice.
     function namedOperator() external view returns (Operator memory) {
         return _named();
+    }
+
+    /// @notice Whether the vault follows this registry's operator: while the switch is on, and while
+    /// a drawn turn names the operator after it turns off.
+    function rotationEnabled() external view returns (bool) {
+        (Operator memory turn,,) = _turn();
+        return rotationSwitch || turn.candidate != address(0);
+    }
+
+    /// @notice The generation of the turn that names the operator, zero when no turn does.
+    function operatorGeneration() external view returns (uint64 generation) {
+        (, generation,) = _turn();
+    }
+
+    /// @notice What the vault reads in one call: `rotationEnabled`, `operatorRelease`, the
+    /// `operatorGeneration`, and when the schedule's turn that started last ends, zero before any.
+    function rotationState() external view returns (bool enabled, bytes32 release, uint64 generation, uint64 until) {
+        Operator memory turn;
+        (turn, generation, until) = _turn();
+        enabled = rotationSwitch || turn.candidate != address(0);
+        release = turn.candidate != address(0) ? turn.release : _elected().release;
     }
 
     /// @notice The enclave address the named operator's candidate registered: the only address the
@@ -631,9 +705,38 @@ contract OperatorRegistry {
         return HandoverSource(current.candidate, current.release, leaving.apiHostname, leaving.handoverEndpoint);
     }
 
-    /// @dev The operator the vault names while rotation is on: a pending promotion from the moment
-    /// it is made, a pending election from its effective time, else the operator in effect.
+    /// @dev The operator the vault names while rotation is on: the turn's member while a turn names
+    /// one, else as `_elected`.
     function _named() private view returns (Operator memory) {
+        (Operator memory turn,,) = _turn();
+        return turn.candidate != address(0) ? turn : _elected();
+    }
+
+    /// @dev The schedule's turn that started last, and when it ends: its member and generation while
+    /// it names the operator, which it does until an installation after its end, zeros otherwise.
+    function _turn() private view returns (Operator memory named, uint64 generation, uint64 until) {
+        OperatorSchedule turns = schedule;
+        if (address(turns) == address(0)) return (named, 0, 0);
+        address candidate;
+        uint64 since;
+        (candidate, generation, since, until) = turns.namedAt(uint64(block.timestamp));
+        if (candidate == address(0) || current.since >= until) return (named, 0, until);
+        Candidate storage member = candidates[candidate];
+        named = Operator(candidate, member.adminKey, member.release, since);
+    }
+
+    /// @dev Whether `candidate` holds a turn while turns still matter: a turn names the operator
+    /// (`turnNamed`), or a drawn turn has not ended. After an installation past the last turn's end
+    /// neither holds.
+    function _holdsRunningTurn(address candidate, bool turnNamed) private view returns (bool) {
+        OperatorSchedule turns = schedule;
+        if (address(turns) == address(0)) return false;
+        return (turnNamed || turns.turnsRunUntil() > block.timestamp) && turns.holdsTurn(candidate);
+    }
+
+    /// @dev The operator elections name: a pending promotion from the moment it is made, a pending
+    /// election from its effective time, else the operator in effect.
+    function _elected() private view returns (Operator memory) {
         if (pending.effectiveAt != 0 && (pending.promoted || block.timestamp >= pending.effectiveAt)) {
             return Operator(pending.candidate, pending.adminKey, pending.release, pending.effectiveAt);
         }
@@ -662,6 +765,11 @@ contract OperatorRegistry {
         return candidateList.length;
     }
 
+    /// @notice Whether `candidate` is registered and its release approved, which a drawn member needs.
+    function isListed(address candidate) external view returns (bool) {
+        return listed[candidate] != 0;
+    }
+
     /// @notice Whether `candidate` would count in a close now: registered, its release approved, its
     /// self-bond at the minimum, and its votes at the eligibility share of total stake.
     function isEligible(address candidate) external view returns (bool) {
@@ -670,36 +778,63 @@ contract OperatorRegistry {
     }
 
     /// @dev The eligible candidate with the most votes, the earlier registration on a tie, when the
-    /// role moves to it: it is not the operator in effect, a quorum of total stake is delegated to
-    /// approved candidates, the operator in effect has served its minimum term, and the winner's votes exceed
-    /// the incumbent's by the margin. An incumbent that is not an eligible candidate has no votes.
-    /// The zero address otherwise.
+    /// role moves to it: it is not the operator in effect, and a quorum of total stake is delegated
+    /// to approved candidates. The zero address otherwise.
     function _winner(Parameters memory p) private view returns (address winner) {
         uint256 total = staking.totalStaked();
         uint256 delegated = 0;
         uint256 best = 0;
-        uint256 incumbent = 0;
         uint64 earliest = 0;
         for (uint256 i = 0; i < candidateList.length; ++i) {
             address candidate = candidateList[i];
             uint256 cast = staking.votes(candidate);
             delegated += cast;
             if (!_eligible(candidate, cast, total, p)) continue;
-            if (candidate == current.candidate) incumbent = cast;
             uint64 registration = candidates[candidate].registration;
             if (winner == address(0) || cast > best || (cast == best && registration < earliest)) {
                 (winner, best, earliest) = (candidate, cast, registration);
             }
         }
-        if (winner == address(0) || winner == current.candidate) return address(0);
-        if (delegated * BPS < uint256(p.quorumBps) * total) return address(0);
-        if (block.timestamp < uint256(current.since) + p.minTerm) return address(0);
-        if (best * BPS <= incumbent * (BPS + p.marginBps)) return address(0);
+        if (winner == current.candidate || delegated * BPS < uint256(p.quorumBps) * total) return address(0);
+    }
+
+    /// @dev Adopts the rotation set the close of `epoch` makes in the schedule, to take effect seven
+    /// days plus the finality margin from now: every eligible listed candidate with its admin key
+    /// and votes, and whether a quorum of total stake is delegated to listed candidates.
+    function _adopt(uint64 epoch, Parameters memory p) private {
+        uint256 total = staking.totalStaked();
+        uint256 delegated = 0;
+        uint256 count = 0;
+        uint256 listedCount = candidateList.length;
+        address[] memory eligible = new address[](listedCount);
+        address[] memory keys = new address[](listedCount);
+        uint256[] memory votes = new uint256[](listedCount);
+        for (uint256 i = 0; i < listedCount; ++i) {
+            address candidate = candidateList[i];
+            uint256 cast = staking.votes(candidate);
+            delegated += cast;
+            if (!_eligible(candidate, cast, total, p)) continue;
+            (eligible[count], keys[count], votes[count]) = (candidate, candidates[candidate].adminKey, cast);
+            ++count;
+        }
+        assembly ("memory-safe") {
+            mstore(eligible, count)
+            mstore(keys, count)
+            mstore(votes, count)
+        }
+        schedule.adopt(
+            epoch,
+            uint64(block.timestamp + NOTICE + p.finalityMargin),
+            eligible,
+            keys,
+            votes,
+            delegated * BPS >= uint256(p.quorumBps) * total
+        );
     }
 
     /// @dev The eligible candidate with the most votes, the earlier registration on a tie, other
     /// than the operator in effect: the standby the liveness rule promotes. Unlike `_winner`, no
-    /// quorum, margin, or minimum term: the incumbent has failed, so any eligible standby serves.
+    /// quorum: the incumbent has failed, so any eligible standby serves.
     function _standby(Parameters memory p) private view returns (address standby) {
         uint256 total = staking.totalStaked();
         uint256 best = 0;
@@ -739,14 +874,12 @@ contract OperatorRegistry {
         Parameters memory lo = minimums;
         Parameters memory hi = maximums;
         if (
-            p.epochLength < lo.epochLength || p.epochLength > hi.epochLength || p.minTerm < lo.minTerm
-                || p.minTerm > hi.minTerm || p.finalityMargin < lo.finalityMargin
-                || p.finalityMargin > hi.finalityMargin || p.marginBps < lo.marginBps || p.marginBps > hi.marginBps
-                || p.eligibilityBps < lo.eligibilityBps || p.eligibilityBps > hi.eligibilityBps
-                || p.quorumBps < lo.quorumBps || p.quorumBps > hi.quorumBps || p.maxCandidates < lo.maxCandidates
-                || p.maxCandidates > hi.maxCandidates || p.minSelfBond < lo.minSelfBond
-                || p.minSelfBond > hi.minSelfBond || p.livenessTimeout < lo.livenessTimeout
-                || p.livenessTimeout > hi.livenessTimeout
+            p.epochLength < lo.epochLength || p.epochLength > hi.epochLength || p.finalityMargin < lo.finalityMargin
+                || p.finalityMargin > hi.finalityMargin || p.eligibilityBps < lo.eligibilityBps
+                || p.eligibilityBps > hi.eligibilityBps || p.quorumBps < lo.quorumBps || p.quorumBps > hi.quorumBps
+                || p.maxCandidates < lo.maxCandidates || p.maxCandidates > hi.maxCandidates
+                || p.minSelfBond < lo.minSelfBond || p.minSelfBond > hi.minSelfBond
+                || p.livenessTimeout < lo.livenessTimeout || p.livenessTimeout > hi.livenessTimeout
         ) revert ParameterOutOfBounds();
     }
 

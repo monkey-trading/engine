@@ -85,9 +85,8 @@ contract RegistryLens {
         view_.pendingPromotion = view_.pending.effectiveAt != 0 && view_.pending.promoted;
     }
 
-    /// @dev The registry's parameters in force. Its getter returns the struct's nine static fields as
-    /// a tuple, which encodes as the struct does, so the return data decodes into one: a destructure
-    /// of nine values does not fit the stack.
+    /// @dev The registry's parameters in force. Its getter returns the struct's seven static fields
+    /// as a tuple, which encodes as the struct does, so the return data decodes into one.
     function _parameters() private view returns (OperatorRegistry.Parameters memory) {
         (bool ok, bytes memory out) = address(registry).staticcall(abi.encodeCall(registry.parameters, ()));
         if (!ok) revert ParametersUnreadable();

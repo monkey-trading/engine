@@ -71,9 +71,7 @@ fn overview(count: usize) -> Overview {
         rotationEnabled: true,
         parameters: Parameters {
             epochLength: 86_400,
-            minTerm: 604_800,
             finalityMargin: 600,
-            marginBps: 1_000,
             eligibilityBps: 500,
             quorumBps: 2_000,
             maxCandidates: 100,

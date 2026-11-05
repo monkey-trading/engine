@@ -71,10 +71,13 @@ async fn segment_bytes_that_differ_from_the_listing_inside_the_keys_are_refused_
         current: Arc::new(Mutex::new(named)),
         rotation: Default::default(),
         synced: Arc::default(),
+        scheduled: Default::default(),
     };
     let sealer = MockSealer { launch_digest: UPGRADE };
-    let err =
-        take(&successor, &address, &sealer, &MockAttestor, &vault).await.err().expect("started on a tampered log");
+    let err = take(&successor, &address, &sealer, &MockAttestor, &vault, None)
+        .await
+        .err()
+        .expect("started on a tampered log");
     assert!(format!("{err:#}").contains("differs from its listing"), "{err:#}");
     predecessor.await.unwrap();
 }
@@ -115,9 +118,11 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
         current: Arc::new(Mutex::new(named)),
         rotation: Default::default(),
         synced: Arc::default(),
+        scheduled: Default::default(),
     };
     let sealer = MockSealer { launch_digest: UPGRADE };
-    let err = take(&successor, &address, &sealer, &MockAttestor, &vault).await.err().expect("started unacknowledged");
+    let err =
+        take(&successor, &address, &sealer, &MockAttestor, &vault, None).await.err().expect("started unacknowledged");
     assert!(format!("{err:#}").contains("did not acknowledge"), "{err:#}");
     predecessor.await.unwrap();
 

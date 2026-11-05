@@ -1,6 +1,8 @@
-//! Temporary directories and configuration files for the custody fixtures.
+//! Temporary directories, configuration files, and the stored deposit cursor for the custody fixtures.
 
 use std::path::{Path, PathBuf};
+
+use crate::custody::cursor::Cursor;
 
 /// A `[custody.evm]` section with its cursor in `dir`.
 pub(in crate::custody::tests) fn evm_toml(dir: &Path, max_block_range: u64) -> String {
@@ -33,4 +35,9 @@ pub(in crate::custody::tests) fn scratch(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+/// The cursor stored in `dir`, read without the checks `Cursor::load` makes.
+pub(in crate::custody::tests) fn stored_cursor(dir: &Path) -> Cursor {
+    serde_json::from_str(&std::fs::read_to_string(dir.join("cursor.json")).unwrap()).unwrap()
 }

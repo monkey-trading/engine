@@ -18,11 +18,13 @@ const DIGEST: [u8; 48] = [0x11; 48];
 struct Vault {
     current: Arc<Mutex<CurrentRelease>>,
     synced: Arc<Mutex<Option<[u8; 32]>>>,
+    /// The turn the finalised schedule names, at any time at or after its boundary.
+    scheduled: Arc<Mutex<Option<crate::checkpoints::ScheduledTurn>>>,
 }
 
 impl Vault {
     fn naming(current: CurrentRelease) -> Self {
-        Self { current: Arc::new(Mutex::new(current)), synced: Arc::new(Mutex::new(None)) }
+        Self { current: Arc::new(Mutex::new(current)), synced: Arc::new(Mutex::new(None)), scheduled: Arc::default() }
     }
 }
 
@@ -47,6 +49,14 @@ impl CheckpointChain for Vault {
     async fn current_release(&self, at: &Observation) -> anyhow::Result<CurrentRelease> {
         ensure!(at.view == View::Finalized, "the current release is read at finality");
         Ok(*self.current.lock().unwrap())
+    }
+
+    async fn scheduled_turn(
+        &self,
+        _at: &Observation,
+        now_ms: engine_core::types::Millis,
+    ) -> anyhow::Result<Option<crate::checkpoints::ScheduledTurn>> {
+        Ok(self.scheduled.lock().unwrap().clone().filter(|turn| turn.boundary <= now_ms))
     }
 
     fn reads_release_fold(&self) -> bool {
@@ -87,26 +97,28 @@ async fn keys_are_opened_or_sealed_only_for_the_vaults_current_release() {
         ("a config change", named(Release { config_sha256: [0xc2; 32], ..this }, 2)),
     ];
     for (what, vault) in &superseded {
-        let err = obtain_with(&cfg, &start(true), &MockAttestor, Some(vault)).await.err();
+        let err = obtain_with(&cfg, &start(true), &MockAttestor, Some(vault), trusted_at(0)).await.err();
         let err = err.unwrap_or_else(|| panic!("new keys were sealed while the vault names {what}"));
         assert!(format!("{err:#}").contains("the vault's current release is"), "{what}: {err:#}");
         assert!(std::fs::read_dir(&dir).is_err(), "{what}: a refused start sealed keys");
     }
-    let (key, _, store) = obtain_with(&cfg, &start(true), &MockAttestor, Some(&named(this, 1))).await.unwrap();
+    let (key, _, store) =
+        obtain_with(&cfg, &start(true), &MockAttestor, Some(&named(this, 1)), trusted_at(0)).await.unwrap();
     assert!(file_for(&dir, &this, 1).exists() && store.unwrap().generation() == 1, "sealed outside generation 1");
-    let (again, _, _) = obtain_with(&cfg, &start(false), &MockAttestor, Some(&named(this, 1))).await.unwrap();
+    let (again, _, _) =
+        obtain_with(&cfg, &start(false), &MockAttestor, Some(&named(this, 1)), trusted_at(0)).await.unwrap();
     assert_eq!(again.address(), key.address());
 
     // Once governance names another release, this one's sealed keys stay sealed.
     for (what, vault) in &superseded {
-        let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(vault)).await.err();
+        let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(vault), trusted_at(0)).await.err();
         let err = err.unwrap_or_else(|| panic!("the keys opened while the vault names {what}"));
         assert!(format!("{err:#}").contains("refusing this release's keys"), "{what}: {err:#}");
     }
 
     // Named again, in a later generation, it finds no keys there: its copy from generation 1 stays
     // sealed, and it takes the keys afresh from the release running then.
-    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&named(this, 3))).await.err();
+    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&named(this, 3)), trusted_at(0)).await.err();
     let err = format!("{:#}", err.expect("a release named again reopened its older copy"));
     assert!(err.contains("no keys are sealed for this release") && err.contains("generation 3"), "{err}");
     assert!(file_for(&dir, &this, 1).exists() && !file_for(&dir, &this, 3).exists());
@@ -119,7 +131,7 @@ async fn a_running_node_alerts_once_the_vault_names_another_release_or_generatio
     let vault = Vault::naming(CurrentRelease { id: sealed.id(), generation: 2 });
     let current = vault.current.clone();
     let every = Duration::from_secs(60);
-    let watch = tokio::spawn(watch_release(vault, sealed, 2, every));
+    let watch = tokio::spawn(watch_release(vault, sealed, 2, every, untrusted()));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the release the vault names raised an alert");
 
@@ -135,6 +147,49 @@ async fn a_running_node_alerts_once_the_vault_names_another_release_or_generatio
 }
 
 #[tokio::test(start_paused = true)]
+async fn from_a_turns_boundary_the_turn_alone_names_a_release() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (sealed, incumbent) = (
+        Release { launch_digest: DIGEST, config_sha256: [0xc1; 32] },
+        Release { launch_digest: DIGEST, config_sha256: [0xc2; 32] },
+    );
+    // The finalised vault still names the incumbent; the turn trusted time has reached names this release.
+    let vault = Vault::naming(CurrentRelease { id: incumbent.id(), generation: 3 });
+    let boundary = 1_793_226_600_000;
+    *vault.scheduled.lock().unwrap() = Some(crate::checkpoints::ScheduledTurn {
+        turn: 20_754,
+        boundary,
+        candidate: AccountId([0xb0; 20]),
+        admin_key: AccountId([0xb1; 20]),
+        release: sealed.id(),
+        generation: 4,
+        source: None,
+    });
+    let scheduled = vault.scheduled.clone();
+    let every = Duration::from_secs(60);
+    let clock = Arc::new(crate::clock::SystemClock);
+    let sample =
+        crate::trusted_time::Sample { at: std::time::Instant::now(), earliest_ms: boundary, latest_ms: boundary + 1 };
+    let (samples, samples_rx) = tokio::sync::watch::channel(Some(sample));
+    let trusted = crate::trusted_time::TrustedClock::new(clock, samples_rx, Duration::from_secs(1));
+    let watch = tokio::spawn(watch_release(vault, sealed, 4, every, trusted));
+    tokio::time::sleep(every * 3).await;
+    assert!(alerts.try_recv().is_err(), "the turn's member was paged before finality named it");
+    // The turn names another release: the vault's finalised one no longer counts, though nothing
+    // pages while the turn's member takes the keys from this node.
+    scheduled.lock().unwrap().as_mut().unwrap().release = incumbent.id();
+    tokio::time::sleep(every * 3).await;
+    assert!(alerts.try_recv().is_err(), "paged within the turn's handover grace");
+    let past = boundary + TURN_HANDOVER_GRACE_MS;
+    let late = crate::trusted_time::Sample { at: std::time::Instant::now(), earliest_ms: past, latest_ms: past + 1 };
+    samples.send_replace(Some(late));
+    tokio::time::sleep(every).await;
+    let alert = alerts.try_recv().expect("a release the turn does not name raises Critical past the grace");
+    assert_eq!(alert["alert"].as_str(), "release_superseded");
+    watch.abort();
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_superseded_release_alerts_before_the_vault_folds_the_change() {
     let (_guard, mut alerts) = capture_alerts();
     let sealed = Release { launch_digest: DIGEST, config_sha256: [0xc1; 32] };
@@ -142,7 +197,7 @@ async fn a_superseded_release_alerts_before_the_vault_folds_the_change() {
     *vault.synced.lock().unwrap() = Some(sealed.id());
     let current = vault.current.clone();
     let every = Duration::from_secs(60);
-    let watch = tokio::spawn(watch_release(vault, sealed, 2, every));
+    let watch = tokio::spawn(watch_release(vault, sealed, 2, every, untrusted()));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the release the vault names raised an alert");
 
@@ -319,3 +374,16 @@ fn the_handover_episode_escalates_past_the_registry_effective_time_and_resolves(
     assert_eq!(episode(Some(election(future, false)), operator, None), Episode::Elected);
     assert_eq!(episode(Some(election(future, true)), operator, Some(future + 1)), Episode::None);
 }
+
+/// A trusted clock with no sample: no turn's boundary has been reached.
+fn untrusted() -> crate::trusted_time::TrustedClock {
+    let clock = std::sync::Arc::new(crate::clock::SystemClock);
+    crate::trusted_time::TrustedClock::new(clock, tokio::sync::watch::channel(None).1, Duration::from_secs(1))
+}
+
+/// Trusted time that has reached `ms`, as a start's sample reads it once a turn is drawn.
+fn trusted_at(ms: Millis) -> std::future::Ready<anyhow::Result<Millis>> {
+    std::future::ready(Ok(ms))
+}
+
+mod turns;

@@ -14,7 +14,7 @@ use super::*;
 mod anchor;
 mod balance;
 mod nonce;
-mod scenario;
+pub(crate) mod scenario;
 
 const GENESIS: u64 = 1_606_824_023;
 /// The turn whose draw deadline last passed; the two after it are open.

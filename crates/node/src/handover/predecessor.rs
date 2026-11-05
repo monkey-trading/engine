@@ -22,8 +22,7 @@ use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::evidence::{self, Peer, Quoting};
 use crate::handover::{
     Challenge, Confirm, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, confirm_digest, confirmed_digest,
-    current_release, ensure_named, keys_report_data, receive, request_report_data, seal_keys, send, send_bytes,
-    vault_reader,
+    keys_report_data, receive, request_report_data, seal_keys, send, send_bytes, vault_reader,
 };
 use crate::log::{Checkpoint, CheckpointDomain, Manifest, SegmentInfo};
 use crate::sequencer::{StreamBody, StreamMsg};
@@ -58,6 +57,12 @@ pub(crate) struct Predecessor<C = CheckpointRpc> {
     signing: watch::Receiver<bool>,
     /// The delivered secrets, which an approved upgrade takes first.
     secrets: Option<Arc<SecretStore>>,
+    /// The sequencer, whose log must have accepted a daily turn before its member gets the keys. Weak,
+    /// so the listener never holds the sequencer open past a shutdown's drain.
+    engine: Option<mpsc::WeakSender<crate::sequencer::Request>>,
+    /// The turn and key the log accepted when this release admitted that turn's member, which a
+    /// retry after the stop, when the sequencer is gone, is admitted under.
+    logged: std::sync::Mutex<Option<(u64, AccountId)>>,
 }
 
 /// How one connection ended.
@@ -106,6 +111,8 @@ impl Predecessor {
             drain,
             signing,
             secrets: None,
+            engine: None,
+            logged: std::sync::Mutex::new(None),
         }))
     }
 }
@@ -114,6 +121,12 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// Gives the listener the delivered secrets an approved upgrade takes.
     pub(crate) fn with_secrets(mut self, secrets: Option<Arc<SecretStore>>) -> Self {
         self.secrets = secrets;
+        self
+    }
+
+    /// Gives the listener the sequencer, whose log a daily turn's successor needs (`ensure_logged`).
+    pub(crate) fn with_engine(mut self, engine: &mpsc::Sender<crate::sequencer::Request>) -> Self {
+        self.engine = Some(engine.downgrade());
         self
     }
 
@@ -275,60 +288,10 @@ impl<C: CheckpointChain> Predecessor<C> {
         Ok(bytes)
     }
 
-    /// Whether the segments past `tip` can be handed over: each within the frame bound, and the
-    /// set within count and byte budgets the keys message and memory hold. The successor is
-    /// expected to hold the rest from the archive; a transfer past these bounds is refused before
-    /// the stop, with a message that says to sync the archive first.
-    /// Error cases:
-    /// - the manifest or the log directory cannot be read
-    fn transfer_bounds(&self, tip: Option<u64>) -> anyhow::Result<()> {
-        const MAX_TAILS: usize = 1024;
-        const MAX_TRANSFER_BYTES: u64 = 8 << 30;
-        let manifest = Manifest::load(&self.log_dir)?;
-        let mut count = 0_usize;
-        let mut bytes = 0_u64;
-        if let Some(first) = manifest.segments.iter().find(|listed| tip.is_none_or(|tip| listed.last_seq > tip)) {
-            ensure!(
-                tip.is_none_or(|tip| first.first_seq == tip + 1),
-                "the successor's log tip {:?} is not a segment boundary: its copy must be re-synced from the archive",
-                tip
-            );
-        }
-        for listed in manifest.segments.iter().filter(|listed| tip.is_none_or(|tip| listed.last_seq > tip)) {
-            ensure!(
-                listed.bytes <= crate::handover::MAX_SEGMENT_BYTES as u64,
-                "the log segment {} is over the handover's 64 MiB frame bound: the successor cannot take it",
-                listed.file
-            );
-            count += 1;
-            bytes += listed.bytes;
-        }
-        ensure!(
-            count <= MAX_TAILS && bytes <= MAX_TRANSFER_BYTES,
-            "the log past seq {tip:?} is {count} segments, {bytes} bytes: beyond the handover's bounds, so sync              the successor's archive copy first"
-        );
-        let entries = match std::fs::read_dir(&self.log_dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(e) => return Err(e).with_context(|| format!("reading {}", self.log_dir.display())),
-        };
-        for entry in entries {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if crate::log::segment_seq(&name).is_none() || manifest.segments.iter().any(|listed| listed.file == name) {
-                continue;
-            }
-            ensure!(
-                entry.metadata()?.len() <= crate::handover::MAX_SEGMENT_BYTES as u64,
-                "the open log segment {name} is over the handover's 64 MiB frame bound: rotate it before the handover"
-            );
-        }
-        Ok(())
-    }
-
     /// The successor's release, the measurement its quote proves and the config hash it binds,
     /// once its quote binds `report_data`, its policy and TCB are no weaker than this release's, and
-    /// the vault names that release at finality.
+    /// the vault names that release at finality, or the finalised schedule names it for the turn
+    /// trusted time has reached (`turns`) and this release's log accepted it.
     /// Error cases:
     /// - any of those checks fails, or the vault cannot be read
     async fn admit(
@@ -342,7 +305,12 @@ impl<C: CheckpointChain> Predecessor<C> {
         let peer = evidence::verify(self.provider, &request.evidence, report_data, now, None)?;
         no_weaker(&self.store.platform(), &peer)?;
         let release = Release { launch_digest: peer.launch_digest, config_sha256 };
-        ensure_named(current_release(&self.vault).await?, &release)?;
+        let at = self.vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+        let (_, turn) =
+            crate::handover::turns::named_generation(&self.vault, &at, &release, self.trusted.reached_ms()).await?;
+        if let Some(turn) = turn {
+            self.ensure_logged(&turn).await?;
+        }
         Ok(release)
     }
 
@@ -489,6 +457,7 @@ impl Published {
     }
 }
 
+mod checks;
 mod secrets;
 
 #[cfg(test)]

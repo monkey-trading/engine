@@ -83,12 +83,16 @@ impl ReplayedLog {
         // A promoted or elected standby's config names the key its pending rotation moves to, while
         // the log still records the incumbent: the pending rotation's key, on this deployment,
         // identifies this node as the successor.
-        let named_successor =
-            engine.operator_bounds().rotation.is_some_and(|rotation| rotation.address == cfg.operator.address)
-                && match engine.operator() {
-                    Some(recorded) => same_domain(recorded),
-                    None => false,
-                };
+        // So does a daily turn the log assigned to the config's key, before or after it applies.
+        let turns = engine.daily_turns();
+        let turn_member =
+            turns.assigned.values().chain(&turns.in_effect).any(|turn| turn.admin_key == cfg.operator.address);
+        let named_successor = (turn_member
+            || engine.operator_bounds().rotation.is_some_and(|rotation| rotation.address == cfg.operator.address))
+            && match engine.operator() {
+                Some(recorded) => same_domain(recorded),
+                None => false,
+            };
         // So does the key the finalised registry installed while rotation is off, before the log's
         // scan has passed the installation: the fallback for a failed operator boots under its config.
         let installed = cfg.registry_operator.and_then(|seated| seated.unscanned(engine)) == Some(cfg.operator.address);
@@ -355,6 +359,7 @@ impl Sequencer {
             access_alerts,
             operator: cfg.operator,
             registry_operator: cfg.registry_operator,
+            turn_release: cfg.turn_release,
             metrics: cfg.metrics,
             claims: Default::default(),
             gate: cfg.checkpoints.map(|sink| {

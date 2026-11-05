@@ -16,9 +16,7 @@ abstract contract RegistryTest is GovernanceTest {
     uint256 internal constant DISTRIBUTION_EPOCH = 30 minutes;
     /// @dev Test values only.
     uint64 internal constant EPOCH = 1 days;
-    uint64 internal constant MIN_TERM = 30 days;
     uint64 internal constant FINALITY_MARGIN = 1 hours;
-    uint16 internal constant MARGIN_BPS = 1_000;
     uint16 internal constant ELIGIBILITY_BPS = 500;
     uint16 internal constant QUORUM_BPS = 2_000;
     uint16 internal constant MAX_CANDIDATES = 10;
@@ -53,24 +51,16 @@ abstract contract RegistryTest is GovernanceTest {
 
     function _parameters() internal pure returns (OperatorRegistry.Parameters memory) {
         return OperatorRegistry.Parameters(
-            EPOCH,
-            MIN_TERM,
-            FINALITY_MARGIN,
-            MARGIN_BPS,
-            ELIGIBILITY_BPS,
-            QUORUM_BPS,
-            MAX_CANDIDATES,
-            MIN_BOND,
-            LIVENESS
+            EPOCH, FINALITY_MARGIN, ELIGIBILITY_BPS, QUORUM_BPS, MAX_CANDIDATES, MIN_BOND, LIVENESS
         );
     }
 
     function _minimums() internal pure returns (OperatorRegistry.Parameters memory) {
-        return OperatorRegistry.Parameters(1 hours, 0, 0, 0, 0, 0, 1, 0, 1 hours);
+        return OperatorRegistry.Parameters(1 hours, 0, 0, 0, 1, 0, 1 hours);
     }
 
     function _maximums() internal pure returns (OperatorRegistry.Parameters memory) {
-        return OperatorRegistry.Parameters(30 days, 365 days, 7 days, 10_000, 10_000, 10_000, 100, 1e27, 30 days);
+        return OperatorRegistry.Parameters(30 days, 7 days, 10_000, 10_000, 100, 1e27, 30 days);
     }
 
     /// @dev A 48-byte launch measurement distinct per `seed`.
@@ -174,7 +164,7 @@ abstract contract RegistryTest is GovernanceTest {
 
     /// @dev Warps to the end of the open epoch unless it has already ended, and closes it.
     function _closeNext() internal returns (uint64) {
-        (uint64 epochLength,,,,,,,,) = registry.parameters();
+        (uint64 epochLength,,,,,,) = registry.parameters();
         uint256 endsAt = uint256(registry.openEpochStart()) + epochLength;
         if (block.timestamp < endsAt) vm.warp(endsAt);
         return registry.closeEpoch();

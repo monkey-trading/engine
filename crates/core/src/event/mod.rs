@@ -6,10 +6,15 @@ use crate::Fixed;
 use crate::access::{AccessReject, EligibilityClass};
 use crate::corporate::CorporateAction;
 use crate::deposits::{DepositReceipt, DepositReject, DepositStatus};
+use crate::eip712::B256;
 use crate::emissions::TokenUnits;
 use crate::price::PriceError;
 use crate::staking::UsdcUnits;
-use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
+use crate::turns::TurnReason;
+use crate::types::{AccountId, MarketId, Millis, OrderId};
+
+mod fill;
+pub use fill::{CancelReason, Fill};
 
 /// Engine outputs. Clients and the custody layer act on events; they never
 /// read state directly.
@@ -316,6 +321,44 @@ pub enum Event {
         chain_ref: String,
         reason: String,
     },
+    /// From `V51`, a rotation set the operator schedule adopted, mirrored; it takes effect on chain at
+    /// `effective_at`.
+    RotationSetAdopted {
+        set: u32,
+        epoch: u64,
+        effective_at: Millis,
+    },
+    /// From `V51`, a turn the operator schedule assigned, mirrored: `admin_key` signs admin commands
+    /// from `applies_at`.
+    TurnAssigned {
+        turn: u64,
+        position: u16,
+        reason: TurnReason,
+        candidate: AccountId,
+        admin_key: AccountId,
+        applies_at: Millis,
+    },
+    /// From `V51`, a turn assignment credited but refused, so the key in effect stays: no set mirrored
+    /// seven days earlier names its key, or its turn is over.
+    TurnRefused {
+        turn: u64,
+        position: u16,
+        /// Why the schedule named it.
+        cause: TurnReason,
+        candidate: AccountId,
+        admin_key: AccountId,
+        reason: String,
+    },
+    /// From `V51`, the turn's member started sequencing it, in an enclave running `release`.
+    TurnTaken {
+        turn: u64,
+        candidate: AccountId,
+        release: B256,
+    },
+    /// From `V51`, a `TurnTaken` the engine refused.
+    TurnTakenRejected {
+        reason: String,
+    },
     /// From `V41`, a session key the account registered: the key may place and cancel orders for
     /// the account until `expires_at` or an account-signed revocation.
     SessionKeyRegistered {
@@ -447,39 +490,6 @@ pub enum Reject {
     },
     /// A batch request (cancel-all or close-all) sequenced before `V44` activated.
     BatchUnsupported,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CancelReason {
-    Client,
-    /// Triggered but couldn't fill (margin, house capacity, or reduce-only
-    /// with no position left).
-    Unfillable,
-    /// A split rounded its quantity or price to zero, or took its quantity past the input bound.
-    Split,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Fill {
-    pub account: AccountId,
-    pub order_id: OrderId,
-    pub market: MarketId,
-    pub side: Side,
-    pub qty: Fixed,
-    pub price: Fixed,
-    /// Reference mid at fill time. `price` minus `index` is the spread paid.
-    pub index: Fixed,
-    pub spread_bps: i64,
-    /// Price PnL realised by this fill, in USD, before the fee.
-    pub realised_pnl: Fixed,
-    /// The FX index `realised_pnl` converted to USD at; absent for a USD market.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fx_index: Option<Fixed>,
-    pub profit_fee: Fixed,
-    /// Signed position after the fill.
-    pub position: Fixed,
-    pub liquidation: bool,
 }
 
 #[cfg(test)]

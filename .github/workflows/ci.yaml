@@ -372,6 +372,31 @@ jobs:
       - name: Run the executable quotes dev scenario
         run: ./scripts/dev-quotes.sh
 
+  dev-daily-rotation:
+    needs: changes
+    if: needs.changes.outputs.scenarios == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: engine-lib
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: v1.8.3
+          cache: false
+      - name: Install contract dependencies
+        working-directory: contracts
+        run: forge soldeer install
+      - name: Run the daily rotation dev scenario
+        run: ./scripts/dev-daily-rotation.sh
+
   # Builds the node and the scenario tools once, for the scenarios that only run them. Each of those
   # used to compile the same binary, about seven minutes apiece. A push to main that only refreshes
   # caches (see `changes`) runs this job alone of them, since it saves the cache these builds use.
@@ -1041,6 +1066,23 @@ jobs:
           gh run cancel ${{ github.run_id }} \
             || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
 
+  cancel-dev-daily-rotation:
+    needs: dev-daily-rotation
+    if: failure() && needs.dev-daily-rotation.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
   cancel-engine-build:
     needs: engine-build
     if: failure() && needs.engine-build.result == 'failure'
@@ -1403,7 +1445,7 @@ jobs:
   # `changes` set its area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
+    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-daily-rotation, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1417,7 +1459,8 @@ jobs:
             .changes.outputs as $run
             | {fmt: "rust", "file-loc": "rust", clippy: "rust", test: "rust", "test-production": "rust", "reference-examples": "rust",
                "reference-logs": "rust", "reference-logs-frozen": "rust", "cargo-deny": "rust", contracts: "contracts",
-               "dev-vault-deposits": "scenarios", "engine-build": "scenarios", "dev-metrics-alerts": "scenarios",
+               "dev-vault-deposits": "scenarios", "dev-daily-rotation": "scenarios", "engine-build": "scenarios",
+               "dev-metrics-alerts": "scenarios",
                "dev-alert-outbox": "scenarios", "dev-ct-watch": "scenarios", "dev-browser-origin": "scenarios", "dev-dashboard-data": "scenarios", "dev-proxy-protocol": "scenarios", "dev-batch-orders": "scenarios",
                "dev-snapshot-restart": "scenarios",
                "dev-rwa-feeds": "scenarios", "dev-attestation-verifier": "scenarios", "dev-signed-api": "scenarios",

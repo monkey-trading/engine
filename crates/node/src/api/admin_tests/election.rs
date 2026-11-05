@@ -73,6 +73,7 @@ async fn the_operator_route_reports_the_key_its_pending_rotation_and_the_last_el
             StatusCode::OK,
             serde_json::json!({
                 "operator": operator, "pending_rotation": null, "rotation_enabled": false, "last_election": null,
+                "rotation_set": null, "next_rotation_set": null, "turn": null, "next_turn": null, "turns": no_turns(),
             })
         )
     );
@@ -93,9 +94,15 @@ async fn the_operator_route_reports_the_key_its_pending_rotation_and_the_last_el
                     "epoch": 1, "candidate": CANDIDATE, "admin_key": elected, "effective_at": effective_at,
                     "registry_effective_at": effective_at,
                 },
+                "rotation_set": null, "next_rotation_set": null, "turn": null, "next_turn": null, "turns": no_turns(),
             })
         )
     );
+}
+
+/// The turn history of a log no schedule has assigned a turn in.
+fn no_turns() -> serde_json::Value {
+    serde_json::json!({ "records": [], "next": null, "truncated": false, "retained_from_seq": null })
 }
 
 #[tokio::test]

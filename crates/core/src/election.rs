@@ -227,6 +227,8 @@ impl Engine {
                 Some("an election while rotation is off".into())
             } else if self.operator.is_none() {
                 Some("no operator is recorded".into())
+            } else if self.protocol_version >= ProtocolVersion::V51 && !self.daily_turns.sets.is_empty() {
+                Some("an election from a registry whose schedule adopts rotation sets".into())
             } else if candidate == zero || admin_key == zero {
                 Some("an election names a nonzero candidate and key".into())
             } else if self.operator_election.last.is_some_and(|last| epoch <= last.epoch) {
@@ -299,6 +301,10 @@ impl Engine {
         self.operator_election.prior = None;
         self.operator_election.seated = None;
         self.operator_election.installed = Some(InstalledOperator { candidate, admin_key, effective_at });
+        // From `V51` the registry names the installed operator over the last turn.
+        if self.protocol_version >= ProtocolVersion::V51 {
+            self.end_turns();
+        }
         self.operator_bounds.rotation =
             (admin_key != operator).then_some(PendingRotation { address: admin_key, effective_at });
         events.push(Event::OperatorInstalled { candidate, admin_key, effective_at });
@@ -314,6 +320,14 @@ impl Engine {
                 && (!self.is_elected(*rotation)
                     || self.operator_election.last.is_some_and(|last| reached >= Some(last.registry_effective_at)))
         })
+    }
+
+    /// The key that signs a command stamped `ts` when it is not the one recorded: from `V51` a due
+    /// turn's, which hands over after any rotation, else a due rotation's (see `due_rotation`).
+    pub fn due_key(&self, ts: Millis) -> Option<PendingRotation> {
+        let turn =
+            self.due_turn(ts).map(|turn| PendingRotation { address: turn.admin_key, effective_at: turn.applies_at });
+        turn.or_else(|| self.due_rotation(ts))
     }
 
     /// From `V47`, seats the last election's candidate, with its key, once that election's time has
@@ -374,13 +388,15 @@ impl Engine {
         })
     }
 
-    /// Whether elections move the operator key, which refuses `RotateOperator`.
+    /// Whether elections, or from `V51` daily turns, move the operator key, which refuses
+    /// `RotateOperator`: while rotation is on, and while drawn turns still name the operator after it
+    /// turns off, as the registry's `rotationEnabled()` says, until an installation ends them.
     pub(crate) fn rotation_by_election(&self) -> bool {
-        self.operator_election.rotation_enabled
+        self.operator_election.rotation_enabled || self.turns_run()
     }
 
     /// Why a registry mirror under `chain_ref` cannot apply, if it cannot.
-    fn registry_mirror_refusal(&self, chain_ref: &str) -> Option<String> {
+    pub(crate) fn registry_mirror_refusal(&self, chain_ref: &str) -> Option<String> {
         if self.protocol_version < ProtocolVersion::V37 {
             Some(format!("operator elections need protocol {:?}", ProtocolVersion::V37))
         } else if self.staking.is_none() {
@@ -394,7 +410,7 @@ impl Engine {
 
     /// Credits a registry mirror once under `chain_ref`, advancing the staking mirror's frontier to
     /// `block`.
-    fn credit_registry_mirror(&mut self, chain_ref: &str, block: u64) {
+    pub(crate) fn credit_registry_mirror(&mut self, chain_ref: &str, block: u64) {
         self.staking_refs.insert(chain_ref.to_owned());
         // Checked by `registry_mirror_refusal`.
         let staking = self.staking.as_mut().expect("staking is initialised");

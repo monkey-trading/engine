@@ -266,11 +266,18 @@ pub enum ProtocolVersion {
     /// account's part rounds down, and the time no one served with rotation off and the rounding go
     /// to stakers. A handover in the close's own command leaves that epoch to the outgoing operator.
     V50,
+    /// Daily operator turns (`turns`). The registry's rotation sets and turn assignments are mirrored
+    /// from finalised events, each credited once. A turn's admin key signs from its boundary, or from
+    /// its mirror when that is later, and only if a set mirrored at least seven days earlier names
+    /// it; otherwise the turn is refused and the key in effect stays. While turns run, the
+    /// operator's share counts time in office from the member's `TurnTaken` to the end of its turn,
+    /// and the time before a member takes its turn goes to stakers.
+    V51,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V50;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V51;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

@@ -115,6 +115,8 @@ pub struct Sequencer {
     operator: Operator,
     /// The registry's operator in effect at startup, while rotation is off (see `hold_has_signer`).
     registry_operator: Option<crate::checkpoints::RegistryOperator>,
+    /// This enclave's release, which takes the daily turns the log assigns `operator` (see `take_turn`).
+    turn_release: Option<engine_core::eip712::B256>,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
     claims: claims::Claims,
@@ -305,6 +307,8 @@ impl Sequencer {
         if !access::gate_withdrawal(&mut cmd, self.gate.as_ref().map(checkpoints::Gate::admits_withdrawals)) {
             return Ok(None);
         }
+        // A turn's first command is its `TurnTaken`, even behind a benchmark hold: it runs no catch-up.
+        self.take_turn(ts)?;
         if self.benchmark_sync && !matches!(&cmd, Command::SignedAdmin(req) if req.command.is_benchmark_snapshot()) {
             return Ok(None);
         }
@@ -471,6 +475,7 @@ mod snapshots;
 pub use genesis::{GenesisProgress, genesis_commands};
 mod quotes;
 mod required;
+mod turns;
 
 #[cfg(test)]
 mod batch_tests;
@@ -481,7 +486,7 @@ mod metrics_tests;
 #[cfg(test)]
 mod pace_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 #[cfg(test)]
 mod wait_bench;
 

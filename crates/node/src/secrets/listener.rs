@@ -114,10 +114,13 @@ impl Authority {
                             .is_some_and(|r| r.address == last.admin_key && r.effective_at == last.effective_at)
                             || last.admin_key == recorded
                     });
+                    // Under daily turns each member's node takes its own operator's delivery only.
+                    let turns = election.rotation_enabled && !engine.daily_turns().sets.is_empty();
                     let own_key_only = (election.rotation_enabled && governing)
+                        || turns
                         || engine.operator_bounds().rotation.is_some_and(|r| r.address == configured)
                         || installed.and_then(|seated| seated.unscanned(engine)) == Some(configured);
-                    let due = now.and_then(|now| engine.due_rotation(now)).is_some_and(|r| r.address == signer);
+                    let due = now.and_then(|now| engine.due_key(now)).is_some_and(|r| r.address == signer);
                     let _ = reply.send(if own_key_only { signer == configured } else { signer == recorded || due });
                 })))
                 .await

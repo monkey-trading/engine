@@ -494,7 +494,7 @@ mod benchmarks;
 mod catch_up;
 mod genesis;
 mod house_state;
-mod operator;
+pub(crate) mod operator;
 mod replay;
 mod rotation;
 mod toxicity;

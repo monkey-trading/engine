@@ -331,3 +331,6 @@ mod rounding;
 
 #[path = "operator_share/time_in_office.rs"]
 mod time_in_office;
+
+#[path = "operator_share/daily_turns.rs"]
+mod daily_turns;

@@ -200,6 +200,15 @@ impl TrustedClock {
         check_sample(&sample, self.max_drift_ms, host_ms, host_ms, self.clock.instant()).is_none().then_some(host_ms)
     }
 
+    /// The latest sample's lower bound moved on by the monotonic time since, however old the sample:
+    /// a time true time has certainly reached, for a check that must not pass early, as a turn's
+    /// boundary. `None` before the first sample.
+    pub fn reached_ms(&self) -> Option<Millis> {
+        let sample = (*self.samples.borrow())?;
+        let elapsed = self.clock.instant().saturating_duration_since(sample.at);
+        Some(sample.earliest_ms.saturating_add(floor_millis(elapsed)))
+    }
+
     /// The latest sample's upper bound moved on by the monotonic time since, however old the sample;
     /// `None` before the first. For date checks that tolerate the monotonic clock's drift while no
     /// fresh sample comes, as when a node has stopped sequencing to hand its keys over.

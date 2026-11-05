@@ -20,7 +20,6 @@ use tokio::time::sleep;
 use crate::clock::now_ms;
 use crate::config::EvmCustodySection;
 use crate::custody::chain::BlockLink;
-use crate::custody::cursor::Cursor;
 use crate::custody::evm::{
     Beneficiary, BlockRef, DepositWatcher, Finality, PostedHead, StakingEvent, VaultDeposit, VaultIdentity, VaultReader,
 };
@@ -108,6 +107,8 @@ pub(super) struct ChainState {
     /// The block the staking contract deploys at; before it the endpoint answers no code. `None`
     /// means it always exists, as in single-fixture tests.
     pub(super) staking_deployed_at: Option<u64>,
+    /// The schedule the registry names, and the registry that schedule records.
+    pub(super) schedule: schedule::Schedule,
     pub(super) failing: bool,
     /// The native balance `account_balance` reports for every account.
     pub(super) balance: U256,
@@ -252,6 +253,14 @@ impl VaultReader for FakeChain {
             bail!("block {} is not canonical", at.hash);
         }
         Ok(chain.balance)
+    }
+
+    async fn registry_schedule(&self, _at: BlockRef) -> anyhow::Result<Address> {
+        Ok(self.0.lock().unwrap().schedule.named)
+    }
+
+    async fn schedule_registry(&self, _at: BlockRef) -> anyhow::Result<Option<Address>> {
+        Ok(self.0.lock().unwrap().schedule.registry)
     }
 
     async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
@@ -450,11 +459,6 @@ pub(super) fn watcher_with_finality_budget(
     DepositWatcher::start_legacy(chain.clone(), &cfg, CHAIN_ID, VAULT, log_seq).unwrap()
 }
 
-/// The cursor stored in `dir`, read without the checks `Cursor::load` makes.
-pub(super) fn stored_cursor(dir: &Path) -> Cursor {
-    serde_json::from_str(&std::fs::read_to_string(dir.join("cursor.json")).unwrap()).unwrap()
-}
-
 /// Vault deposit `id` in canonical `block`, from a transaction named after the id.
 pub(super) fn deposit(id: u64, block: u64, beneficiary: Beneficiary, units: u64) -> VaultDeposit {
     let tx_hash = B256::left_padding_from(&id.to_be_bytes());
@@ -487,10 +491,10 @@ pub(super) async fn wait_for_polls(chain: &FakeChain, polls: u64) {
 
 mod sequencer;
 pub(crate) use sequencer::{engine_sequencer, refusing_sequencer};
-
 mod epochs;
 pub(super) use epochs::LOG_HEADS;
 mod files;
-pub(super) use files::{evm_toml, scratch};
+pub(super) use files::{evm_toml, scratch, stored_cursor};
 mod logs;
 pub(super) use logs::Logs;
+mod schedule;

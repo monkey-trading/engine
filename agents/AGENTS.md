@@ -32,7 +32,11 @@ an index: load only the rule whose hint matches the current action.
   is logged and once the mirror's finalised block time reaches it, `RotateOperator` refused while rotation is on;
   from `V48`, the timelock-only `installOperator` fallback mirrored the same way while rotation is off, its key in
   effect seven days after it is logged with no finalised frontier, `tests/operator_election.rs` and
-  `tests/operator_install.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
+  `tests/operator_install.rs`; from `V51`, daily turns in `turns.rs`: the schedule's rotation sets and
+  turn assignments mirrored the same way, a turn's admin key from its boundary or, mirrored later, from
+  its mirror, refused (`turn_refused`) unless a set mirrored seven days earlier names it, and the
+  member's `TurnTaken`, from which the operator's share counts its time in office to its turn's end,
+  `tests/daily_turns.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
@@ -139,7 +143,11 @@ an index: load only the rule whose hint matches the current action.
   Roughtime servers with sequenced time held to monotonic time's pace (`clock.rs`), the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
   authenticated in engine state rather than trusted from the host cursor, and from V37 the operator
-  registry's rotation switches and elections in the same proven blocks, `custody/registry.rs`), the
+  registry's rotation switches and elections in the same proven blocks, and from V51 its schedule's
+  rotation sets and turns once the schedule is read to name the registry, `custody/registry.rs`; a
+  daily turn's member takes the keys from the finalised schedule once trusted time reaches the turn's
+  boundary, in the generation the schedule fixed, with no chain wait after it (`handover/turns.rs`),
+  and logs `TurnTaken` with its first command in each turn, `sequencer/turns.rs`), the
   standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
   segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up,
   taking only entries whose command seals continue the copy and raising `operator_log_rollback`, with
@@ -148,7 +156,8 @@ an index: load only the rule whose hint matches the current action.
   the latest checkpoint the vault accepted, drops the unsigned tail, and exits for a `--new-key`
   start, which serves only its attestation until the timelock installs the registered enclave;
   `engine replay --attestation` pairs one attestation with each signer), the
-  `/v1/operator` read of the key in effect, its pending rotation, and the last election, the
+  `/v1/operator` read of the key in effect, its pending rotation, the last election, and the rotation
+  sets, today's and tomorrow's turns and the turn history paged from the log (`stats/turns.rs`), the
   `/v1/operators` list of the registry's approved candidates with their stake and role (`custody/operators/`:
   `RegistryLens` read over its own custody quorum at one final block every `api.operators_interval`, the answer
   naming the block; 404 without `custody.evm.staking.registry.lens`), the seed relayer
@@ -239,8 +248,12 @@ an index: load only the rule whose hint matches the current action.
   operator in effect upgrades while rotation is on), the timelock approves releases, switches rotation
   (off at deployment, the deployer in effect), installs a new operator in effect while rotation is
   off (`installOperator`, the timelock-only fallback for a failed operator whose key is gone) and moves parameters within deployment bounds, and
-  anyone closes an election epoch, electing the top eligible candidate past quorum, minimum term and
-  margin to take effect seven days plus a finality margin later. Deployment gives that
+  anyone closes an election epoch, electing the top eligible candidate past quorum to take effect
+  seven days plus a finality margin later, or, once the timelock names `src/OperatorSchedule.sol`
+  (`setSchedule`), adopting a rotation set in it instead: anyone then draws each daily turn from the
+  set in effect a day before its boundary, weighted by votes and seeded from `SeedReceiver`, the turn's
+  member names the operator from its boundary in a generation the vault's one counter hands out, and
+  drawn turns stand after rotation turns off until `installOperator`. Deployment gives that
   timelock its multisig proposer. The timelock manages signer rotation, the current release that
   alone holds the signer's key (`setCurrentRelease`: the keccak of a launch measurement and config
   hash, in a new `releaseGeneration` each time), and independent deposit/withdrawal pauses; the
@@ -266,7 +279,8 @@ an index: load only the rule whose hint matches the current action.
   with) and to `randao_mixes`, and sends it through Arbitrum's inbox as a retryable ticket;
   `src/SeedReceiver.sol` on Arbitrum records it only from the relay's aliased address, for that epoch and
   before the draw deadline, and answers each turn's final seed, the last earlier seed hashed with the
-  turn number when none arrived. `test/fixtures/seed-relay/mainnet.json` is recorded mainnet data, which
+  turn number when none arrived; the schedule falls back to its own last seed only on the receiver's
+  `NoRelayedSeed`, and the timelock replaces the receiver after an Ethereum fork. `test/fixtures/seed-relay/mainnet.json` is recorded mainnet data, which
   `scripts/seed-relay-fixtures.sh` regenerates. `foundry.toml` enables the
   optimizer, without which the vault exceeds EIP-170's size limit.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
@@ -380,6 +394,13 @@ an index: load only the rule whose hint matches the current action.
   staker each claim their share, an epoch below the floor pays neither, and the candidate's unclaimed
   leaf registers and pays through the vault's exit; then, from `V50`, an election taking effect halfway
   through an epoch splits the share between the outgoing and incoming candidates, each claimed;
+  `dev-daily-rotation.sh`, the daily rotation scenario, from `V51`, on two Anvil chains with warped time:
+  A, B and C delegate 50:30:20 and a close adopts them as a rotation set; eight days on, five turns are
+  drawn from relayed seeds, and at each boundary the turn's key applies and the previous one's is
+  refused, the incumbent hands the keys and the log over while the vault's finalised view still names
+  its release, the member's first command is `TurnTaken` and its time in office starts there,
+  `/v1/operator` shows the sets and turns, and the last member's log replays; then an installation of
+  the last turn's own candidate ends the turns;
   `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
   contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
   relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped
@@ -452,7 +473,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the enclave key
+  deposit finality scenarios, the MONKEY staking, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation dev scenario (`dev-daily-rotation`), the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
@@ -671,6 +692,12 @@ Run from the repo root:
   candidate's unclaimed leaf registering and paying through the exit from the stopped node's log; then,
   on a fresh Anvil, a second election taking effect halfway through an epoch, whose close credits the
   outgoing and incoming candidates about half the share each, both in their histories and both claimed)
+- Daily rotation dev scenario: `./scripts/dev-daily-rotation.sh` (the same requirements; the
+  operator-share harness's in-process nodes on a test clock, against a custody Anvil finalising two
+  blocks behind its head and the seed relay fixture's stand-in Ethereum; five daily turns, each
+  handover through the real listener and `handover::take`, the admin keys, `TurnTaken`, the time in
+  office and `/v1/operator` checked at each boundary, then the log replayed and the turns ended by an
+  installation)
 - Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens
   read through the custody quorum into `/v1/operators`, the closed epochs in `/v1/monkey/distributions`
   across a delegation and a restart, and each saved answer verified with `engine verify-response`)

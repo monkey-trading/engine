@@ -23,7 +23,7 @@ use crate::tee::keys::KeySet;
 use crate::tee::sealing::{KeyStore, MockSealer, Release, Sealer, file_for};
 use crate::tee::{Attestation, AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
 use crate::tls::TlsIdentity;
-use engine_core::types::AccountId;
+use engine_core::types::{AccountId, Millis};
 
 /// The operator's one-off choices for a start of a release that has no sealed keys.
 #[derive(Clone, Debug, Default)]
@@ -98,10 +98,12 @@ async fn obtain(
     start: &KeyStart,
     attestor: &dyn Attestor,
 ) -> anyhow::Result<(EnclaveKey, TlsIdentity, Option<KeyStore>)> {
-    obtain_with(cfg, start, attestor, vault_reader(cfg)?.as_ref()).await
+    let sampled = crate::handover::turns::sampled_now(cfg);
+    obtain_with(cfg, start, attestor, vault_reader(cfg)?.as_ref(), sampled).await
 }
 
-/// `obtain`, reading the vault through `vault`, when the config names one.
+/// `obtain`, reading the vault through `vault`, when the config names one, and the time trusted time
+/// has reached through `reached`, which it awaits only while rotation is on and a daily turn is drawn.
 /// Error cases:
 /// - a flag is given without `[tee.sealing]`, or real attestation runs without it
 /// - the stand-in measurement is missing under the mock TEE, or given under real attestation
@@ -116,6 +118,7 @@ async fn obtain_with(
     start: &KeyStart,
     attestor: &dyn Attestor,
     vault: Option<&impl CheckpointChain>,
+    reached: impl Future<Output = anyhow::Result<Millis>>,
 ) -> anyhow::Result<(EnclaveKey, TlsIdentity, Option<KeyStore>)> {
     let Some(sealing) = &cfg.tee.sealing else {
         ensure!(
@@ -160,7 +163,19 @@ async fn obtain_with(
             None => None,
         },
     };
-    let generation = current.map_or(0, |current| current.generation);
+    // From a daily turn's boundary the vault names its member's release before finality shows it:
+    // the turn the finalised schedule names at trusted time is the only holding named, and its
+    // generation is this release's when it names this one (`handover::turns`).
+    let turn = match vault {
+        Some(vault) if cfg.operator.rotation_enabled => crate::handover::turns::at_start(vault, reached).await?,
+        _ => None,
+    };
+    if let Some(turn) = &turn {
+        crate::handover::turns::ensure_turn_names(turn, &release)
+            .context("refusing this release's keys: a daily turn names another release")?;
+    }
+    let generation = turn.as_ref().map(|turn| turn.generation).or(current.map(|current| current.generation));
+    let generation = generation.unwrap_or(0);
     let sealed = file_for(dir, &release, generation).exists();
     ensure!(
         !sealed || (!start.new_key && start.predecessor.is_none()),
@@ -168,7 +183,7 @@ async fn obtain_with(
         dir.display()
     );
     // A predecessor checks this itself before it hands its keys over.
-    if let (Some(current), None) = (current, &start.predecessor) {
+    if let (Some(current), None, None) = (current, &start.predecessor, &turn) {
         ensure_named(current, &release).context(
             "refusing this release's keys: the vault names one release at a time, and governance has not \
              made this one current, or has since superseded it with an upgrade or config change",
@@ -184,7 +199,15 @@ async fn obtain_with(
         KeyStore::create(dir, sealer.as_ref(), cfg.file_sha256, generation, KeySet::generate()?)?
     } else if let Some(address) = &start.predecessor {
         let vault = vault.context("--predecessor needs [checkpoints]: the vault names the key")?;
-        crate::handover::take(cfg, address, sealer.as_ref(), attestor, vault).await?
+        // Trusted time has reached a turn's boundary when the schedule names this release for it.
+        let reached = turn.as_ref().map(|turn| turn.boundary);
+        crate::handover::take(cfg, address, sealer.as_ref(), attestor, vault, reached).await?
+    } else if let (Some(vault), Some(turn)) = (vault, &turn) {
+        // No sealed keys and no flag, and the schedule names this release for the turn trusted time
+        // has reached: take the keys from the operator the turn takes over from, or, when that one
+        // never took its own turn, from the one before it.
+        let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+        crate::handover::turns::take_keys(cfg, vault, &at, turn, sealer.as_ref(), attestor).await?
     } else if let Some(vault) = vault {
         // No sealed keys and no flag: while the registry has rotation on and the vault names this
         // release — so an election has taken effect naming this node the operator — take the keys
@@ -207,7 +230,7 @@ async fn obtain_with(
                     "the vault names this release through an election in effect: taking the keys from the \
                      operator it replaced"
                 );
-                crate::handover::take(cfg, &source.endpoint, sealer.as_ref(), attestor, vault).await?
+                crate::handover::take(cfg, &source.endpoint, sealer.as_ref(), attestor, vault, None).await?
             }
             None => bail!("{}", refusal(dir, generation)),
         }
@@ -336,6 +359,12 @@ pub(super) async fn cut_to_finalized_anchor(cfg: &NodeConfig, key: &Arc<EnclaveK
 /// How often a running node with sealed keys reads the vault's current release.
 pub(super) const RELEASE_CHECK_EVERY: Duration = Duration::from_secs(60);
 
+/// How long from a daily turn's boundary, by trusted time, a release the turn does not name waits for
+/// the turn's member to take its keys before `release_superseded` pages: the member starts at the
+/// boundary, fetches the published log and connects, which a routine daily handover finishes well
+/// within.
+pub(super) const TURN_HANDOVER_GRACE_MS: Millis = 15 * 60 * 1000;
+
 /// The release the vault names at custody finality, whether or not its generation has folded the
 /// change: unlike `handover::current_release`, this read must not wait for the fold, since the
 /// supersession watch alerts on the release move itself.
@@ -351,7 +380,11 @@ async fn named_release(vault: &impl CheckpointChain) -> anyhow::Result<CurrentRe
 /// `every`: a restart would then find no keys to open, so they must be handed to the release the
 /// vault names before this node stops. The read does not wait for the vault's generation to fold
 /// the change: the running release is superseded from the block the change reads at finality, and
-/// the fold can lag that by anyone's `syncRelease`. A failed read is retried.
+/// the fold can lag that by anyone's `syncRelease`. From a daily turn's boundary by `trusted` time,
+/// the finalised schedule naming this release in `generation` for that turn names it too, as the
+/// vault does from then (`handover::turns`); a turn naming another release pages only once
+/// `TURN_HANDOVER_GRACE_MS` has passed since its boundary, as the turn's member takes the keys from this
+/// node meanwhile. A failed read is retried.
 /// Error cases:
 /// - none; it runs until the node stops
 pub(super) async fn watch_release(
@@ -359,8 +392,9 @@ pub(super) async fn watch_release(
     sealed: Release,
     generation: u64,
     every: Duration,
+    trusted: crate::trusted_time::TrustedClock,
 ) -> anyhow::Result<()> {
-    let mut superseded = false;
+    let (mut superseded, mut waiting) = (false, false);
     let mut tick = tokio::time::interval(every);
     loop {
         tick.tick().await;
@@ -371,7 +405,21 @@ pub(super) async fn watch_release(
                 continue;
             }
         };
-        let named = current.id == sealed.id() && current.generation == generation;
+        let reached = trusted.reached_ms();
+        let (named, handing_over) = match crate::handover::turns::names(&vault, &sealed, generation, reached).await {
+            Some((named, boundary)) => {
+                (named, reached.is_some_and(|reached| reached < boundary.saturating_add(TURN_HANDOVER_GRACE_MS)))
+            }
+            None => (current.id == sealed.id() && current.generation == generation, false),
+        };
+        if !named && handing_over {
+            if !waiting {
+                info!("a daily turn names another release from its boundary: waiting for its member to take the keys");
+            }
+            waiting = true;
+            continue;
+        }
+        waiting = false;
         if !named && !superseded {
             error!(
                 alert = "release_superseded",

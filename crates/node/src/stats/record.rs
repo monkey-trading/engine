@@ -55,6 +55,7 @@ impl Inner {
             self.next_scan = Some(ts.saturating_add(settings.interval_ms));
             self.next_light = Some(ts.saturating_add(settings.light_interval_ms));
         }
+        self.turns.observe(seq, ts, events);
         let mut stake_moved = false;
         let queued = engine.withdrawal_cash().is_some();
         // Allocations of the period the command closes: MONKEY base units, and the weight they share.

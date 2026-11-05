@@ -1,5 +1,7 @@
 //! The election scenarios' chain: Anvil at a fixed genesis time, three local RPC proxies for the
 //! custody quorum, and the vault, MONKEY, operator registry, and the staking contract it deploys.
+//! A chain may finalise each block only two blocks after it, for a scenario whose readers wait on
+//! finality.
 
 use std::process::{Command as Process, Stdio};
 use std::time::Duration;
@@ -17,14 +19,16 @@ use super::{
     dev_parameters,
 };
 use crate::checkpoints::scenario::{Anvil, deploy, transact};
+use crate::config::FinalityTag;
+
+/// The handover endpoint a candidate registers when its scenario runs no listener.
+const UNSERVED_ENDPOINT: &str = "127.0.0.1:9443";
 
 sol! {
     struct InitialOperator { address adminKey; bytes launchDigest; bytes32 configHash; }
     struct Parameters {
         uint64 epochLength;
-        uint64 minTerm;
         uint64 finalityMargin;
-        uint16 marginBps;
         uint16 eligibilityBps;
         uint16 quorumBps;
         uint16 maxCandidates;
@@ -84,6 +88,11 @@ pub(super) struct Chain {
     pub(super) staking: Address,
     /// The `RegistryLens` beside the registry, once a scenario deploys one.
     pub(super) lens: Option<Address>,
+    /// The `OperatorSchedule` the registry names, once a scenario deploys one.
+    pub(super) schedule: Option<Address>,
+    /// The tag the custody watcher's staking mirror and the vault's readers take as final: the head,
+    /// or on a chain started with `start_with_trailing_finality`, Anvil's finalized block.
+    pub(super) release_tag: FinalityTag,
     salts: u64,
 }
 
@@ -92,10 +101,28 @@ impl Chain {
     /// the timelock, the vault with its MONKEY, and the registry, with `deployer_key` the operator
     /// in effect.
     pub(super) async fn start(enclave: Address, deployer_key: Address) -> Self {
+        Self::launch(enclave, deployer_key, DEPLOYER_DIGEST, FinalityTag::Latest).await
+    }
+
+    /// `start`, with `operator_key` the operator in effect running the release `digest`, and Anvil
+    /// finalising each block once two more follow it (`finalize`), which the staking mirror and the
+    /// vault's readers wait for.
+    pub(super) async fn start_with_trailing_finality(
+        enclave: Address,
+        operator_key: Address,
+        digest: [u8; 48],
+    ) -> Self {
+        Self::launch(enclave, operator_key, digest, FinalityTag::Finalized).await
+    }
+
+    async fn launch(enclave: Address, deployer_key: Address, digest: [u8; 48], release_tag: FinalityTag) -> Self {
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        // One slot per epoch: Anvil's finalized block is two below its head.
+        let trailing: &[&str] = if release_tag == FinalityTag::Finalized { &["--slots-in-an-epoch", "1"] } else { &[] };
         let anvil = Anvil(
             Process::new("anvil")
                 .args(["--port", &port.to_string(), "--silent", "--timestamp", &T0_SECS.to_string()])
+                .args(trailing)
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
@@ -141,12 +168,14 @@ impl Chain {
             registry: Address::ZERO,
             staking: Address::ZERO,
             lens: None,
+            schedule: None,
+            release_tag,
             salts: 0,
         };
         chain.monkey = chain.view(vault, monkeyCall {}).await;
         let initial = InitialOperator {
             adminKey: deployer_key,
-            launchDigest: Bytes::from(DEPLOYER_DIGEST.to_vec()),
+            launchDigest: Bytes::from(digest.to_vec()),
             configHash: CONFIG_HASH.into(),
         };
         let (parameters, minimums, maximums) = dev_parameters();
@@ -175,9 +204,14 @@ impl Chain {
     /// A fresh account no key is held for: Anvil signs for it, and it holds gas.
     pub(super) async fn impersonated(&self, seed: &str) -> Address {
         let account = Address::from_slice(&alloy::primitives::keccak256(seed.as_bytes())[12..]);
+        self.impersonate(account).await;
+        account
+    }
+
+    /// Has Anvil sign for `account`, which it funds with gas.
+    pub(super) async fn impersonate(&self, account: Address) {
         self.rpc("anvil_setBalance", json!([account, "0xde0b6b3a7640000"])).await;
         self.rpc("anvil_impersonateAccount", json!([account])).await;
-        account
     }
 
     /// Mints `amount` MONKEY to `account` as the vault, its only minter, in place of a proven
@@ -213,6 +247,18 @@ impl Chain {
         bond: U256,
         digest: [u8; 48],
     ) {
+        self.register_serving(candidate, admin_key, bond, digest, UNSERVED_ENDPOINT).await;
+    }
+
+    /// `register`, with the handover listener at `endpoint` that a successor takes the keys from.
+    pub(super) async fn register_serving(
+        &self,
+        candidate: Address,
+        admin_key: &k256::ecdsa::SigningKey,
+        bond: U256,
+        digest: [u8; 48],
+        endpoint: &str,
+    ) {
         let admin = Address::from(engine_core::eip712::address(admin_key.verifying_key()).0);
         let registration = Registration {
             adminKey: admin,
@@ -221,7 +267,7 @@ impl Chain {
             launchDigest: Bytes::from(digest.to_vec()),
             configHash: CONFIG_HASH.into(),
             apiHostname: "api.candidate.local".into(),
-            handoverEndpoint: "127.0.0.1:9443".into(),
+            handoverEndpoint: endpoint.into(),
         };
         let digest: B256 = self.view(self.registry, registrationDigestCall { candidate, adminKey: admin }).await;
         let signature = engine_core::eip712::sign(admin_key, &digest);
@@ -243,13 +289,19 @@ impl Chain {
     /// Has the timelock make each call to the registry: schedules them, moves the next block past the
     /// delay, and executes them.
     pub(super) async fn govern(&mut self, calls: Vec<Vec<u8>>) {
+        let registry = self.registry;
+        self.govern_each(calls.into_iter().map(|call| (registry, call)).collect()).await;
+    }
+
+    /// `govern`, each call to its own target.
+    pub(super) async fn govern_each(&mut self, calls: Vec<(Address, Vec<u8>)>) {
         let from = self.accounts[0];
         let mut salts = Vec::new();
-        for data in &calls {
+        for (target, data) in &calls {
             self.salts += 1;
             let salt = B256::from(U256::from(self.salts));
             let schedule = scheduleCall {
-                target: self.registry,
+                target: *target,
                 value: U256::ZERO,
                 data: data.clone().into(),
                 predecessor: B256::ZERO,
@@ -260,14 +312,9 @@ impl Chain {
             salts.push(salt);
         }
         self.next_block_at(self.latest_timestamp().await + GOVERNANCE_DELAY_SECS).await;
-        for (data, salt) in calls.into_iter().zip(salts) {
-            let execute = executeCall {
-                target: self.registry,
-                value: U256::ZERO,
-                payload: data.into(),
-                predecessor: B256::ZERO,
-                salt,
-            };
+        for ((target, data), salt) in calls.into_iter().zip(salts) {
+            let execute =
+                executeCall { target, value: U256::ZERO, payload: data.into(), predecessor: B256::ZERO, salt };
             self.send(from, self.governance, execute.abi_encode()).await;
         }
     }
@@ -285,6 +332,12 @@ impl Chain {
         self.provider.request::<_, U64>("eth_blockNumber", ()).await.unwrap().to()
     }
 
+    /// Mines the two blocks after the head, which Anvil's finalized block then reaches on a chain
+    /// started with `start_with_trailing_finality`.
+    pub(super) async fn finalize(&self) {
+        self.rpc("anvil_mine", json!(["0x2"])).await;
+    }
+
     /// The revert data of a call from `from` that must revert.
     pub(super) async fn reverted(&self, from: Address, to: Address, input: Vec<u8>) -> Bytes {
         let request = TransactionRequest::default().from(from).to(to).input(input.into());
@@ -294,9 +347,20 @@ impl Chain {
 
     /// A view call at the latest block.
     pub(super) async fn view<C: SolCall>(&self, to: Address, call: C) -> C::Return {
+        self.view_at(to, call, "latest").await
+    }
+
+    /// A view call at the block `tag` names.
+    pub(super) async fn view_at<C: SolCall>(&self, to: Address, call: C, tag: &str) -> C::Return {
         let request = TransactionRequest::default().to(to).input(call.abi_encode().into());
-        let out: Bytes = self.provider.request("eth_call", (request, "latest")).await.unwrap();
+        let out: Bytes = self.provider.request("eth_call", (request, tag)).await.unwrap();
         C::abi_decode_returns(&out).unwrap()
+    }
+
+    /// The timestamp of the block `tag` names.
+    pub(super) async fn timestamp_at(&self, tag: &str) -> u64 {
+        let block: Value = self.provider.request("eth_getBlockByNumber", (tag, false)).await.unwrap();
+        u64::from_str_radix(block["timestamp"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
     }
 
     /// Sends a transaction from an unlocked or impersonated account, asserting it succeeds.
@@ -312,8 +376,7 @@ impl Chain {
     }
 
     pub(super) async fn latest_timestamp(&self) -> u64 {
-        let block: Value = self.provider.request("eth_getBlockByNumber", ("latest", false)).await.unwrap();
-        u64::from_str_radix(block["timestamp"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
+        self.timestamp_at("latest").await
     }
 
     /// One Anvil control RPC, asserted to succeed.

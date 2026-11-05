@@ -151,6 +151,8 @@ Rebuilt from the log. None changes the books.
 | `deposit_unrepresentable` | Critical | A deposit is too large to credit. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Custody RPC providers". |
 | `staking_rejected` | Critical | A staking event was not mirrored; the engine's stake has diverged. A finalized event the engine will not mirror leaves its stake diverged from the chain. Do not restart to clear it. Call the owner with the reason in the message. |
 | `election_rejected` | Critical | A registry event was not mirrored; the operator key has diverged. A finalized registry event the engine will not mirror leaves its operator key diverged from the chain. Do not restart to clear it. Call the owner with the reason in the message. |
+| `turn_refused` | Warning | The engine credited a turn the operator schedule assigned but kept the key in effect: no rotation set mirrored at least seven days earlier names the turn's candidate and key, or the turn was over when it was mirrored. The incumbent keeps sequencing and earns nothing past its turn. Check the reason in the message: a late mirror after an outage clears with the next turn; a key the set does not name means the candidate re-registered, which the next adoption fixes. |
+| `turn_take_refused` | Warning | The engine refused this node's `TurnTaken`, so its time in office does not count. The node logs one only for the turn in effect under its own key; call the owner with the reason in the message. |
 | `access_source_failed` | Warning | The access source refused or failed; the request stays unexecuted. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "The access source". |
 | `access_deposit_retry_failed` | Warning | Pending deposits stay uncredited: screening retries fail. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "The access source". |
 | `access_deposit_held` | Critical | A deposit is held by a screening decision. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "The access source". |
@@ -192,7 +194,7 @@ Rebuilt from the log. None changes the books.
 
 | Alert | Level | Meaning and response |
 | --- | --- | --- |
-| `release_superseded` | Critical | The vault names another release or generation; a restart would find no keys. See [deploy-and-rollback.md](deploy-and-rollback.md), "Upgrade to a new release, step 2". |
+| `release_superseded` | Critical | The vault names another release or generation; a restart would find no keys. From a daily turn's boundary that names another member, it pages only once 15 minutes have passed without the member taking the keys. See [deploy-and-rollback.md](deploy-and-rollback.md), "Upgrade to a new release, step 2", or for a turn [operator-candidate.md](operator-candidate.md), "Daily turns". |
 | `handover_unconfirmed` | Critical | A handover has not been confirmed or acknowledged. See [deploy-and-rollback.md](deploy-and-rollback.md), "Upgrade to a new release, step 5". |
 | `handover_failed` | Critical | The node stopped before a successor confirmed; its keys no longer open. See [key-recovery.md](key-recovery.md), "The running release stopped". |
 | `operator_elected` | Warning | An election names another operator (incumbent). See [operator-candidate.md](operator-candidate.md), "Handing the node to the next operator". |

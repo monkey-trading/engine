@@ -6,6 +6,7 @@
 //! by the vault, its only minter, impersonated in place of proven emission claims.
 
 mod chain;
+mod daily_turns;
 mod node;
 mod operator_share;
 mod staking_reads;
@@ -168,9 +169,7 @@ async fn dev_scenario_stakers_elect_the_key_that_signs_from_the_effective_time()
 fn dev_parameters() -> (Parameters, Parameters, Parameters) {
     let parameters = Parameters {
         epochLength: 3_600,
-        minTerm: 3_600,
         finalityMargin: FINALITY_MARGIN_SECS,
-        marginBps: 1_000,
         eligibilityBps: 500,
         quorumBps: 2_000,
         maxCandidates: 10,
@@ -179,9 +178,7 @@ fn dev_parameters() -> (Parameters, Parameters, Parameters) {
     };
     let minimums = Parameters {
         epochLength: 60,
-        minTerm: 0,
         finalityMargin: 0,
-        marginBps: 0,
         eligibilityBps: 0,
         quorumBps: 0,
         maxCandidates: 1,
@@ -190,9 +187,7 @@ fn dev_parameters() -> (Parameters, Parameters, Parameters) {
     };
     let maximums = Parameters {
         epochLength: 30 * 86_400,
-        minTerm: 365 * 86_400,
         finalityMargin: 86_400,
-        marginBps: 10_000,
         eligibilityBps: 10_000,
         quorumBps: 10_000,
         maxCandidates: 100,
