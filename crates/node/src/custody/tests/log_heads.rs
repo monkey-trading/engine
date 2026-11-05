@@ -203,6 +203,23 @@ async fn startup_reads_no_earlier_epoch_while_the_current_one_holds_a_head() {
     assert!(chains.iter().all(|chain| chain.0.lock().unwrap().epochs.reads.is_empty()));
 }
 
+#[tokio::test]
+async fn the_log_head_and_relayer_balance_quorums_alert_under_their_own_names_at_warning() {
+    // Neither read feeds a credit: losing it pages Warning under its own quorum name, so neither
+    // shares an episode with the deposit watcher's Critical "crediting paused" quorum loss.
+    let cfg = refusing_custody();
+    let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
+    let heads = crate::custody::heads_reader(&cfg.custody).unwrap();
+    crate::log_heads::posted(&heads, Address::ZERO, cfg.custody.chain_id).await.unwrap_err();
+    crate::custody::BalanceQuorum::connect(&cfg.custody).unwrap().balance(Address::ZERO).await.unwrap_err();
+    assert_eq!((logs.warnings("custody_rpc_quorum_lost"), logs.critical("custody_rpc_quorum_lost")), (2, 0));
+    let (log_heads, relayer_balance) = (logs.count("quorum=\"log_heads\""), logs.count("quorum=\"relayer_balance\""));
+    assert!(log_heads > 0 && relayer_balance > 0, "each quorum raised its own alerts");
+    assert_eq!(log_heads + relayer_balance, logs.count("alert=\"custody_rpc_"), "every custody alert names its quorum");
+}
+
+// ── Helpers ──
+
 /// The enclave key startup reads for, and another key.
 const KEY: Address = Address::repeat_byte(0x5e);
 const OTHER: Address = Address::repeat_byte(0x0f);
@@ -220,21 +237,6 @@ fn reinstalled<const N: usize>(history: [Epoch; N]) -> [FakeChain; 3] {
         chain.epochs.by_epoch = history.iter().map(|&(epoch, signer, head)| (epoch, (signer, head))).collect();
     }
     chains
-}
-
-#[tokio::test]
-async fn the_log_head_and_relayer_balance_quorums_alert_under_their_own_names_at_warning() {
-    // Neither read feeds a credit: losing it pages Warning under its own quorum name, so neither
-    // shares an episode with the deposit watcher's Critical "crediting paused" quorum loss.
-    let cfg = refusing_custody();
-    let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
-    let heads = crate::custody::heads_reader(&cfg.custody).unwrap();
-    crate::log_heads::posted(&heads, Address::ZERO, cfg.custody.chain_id).await.unwrap_err();
-    crate::custody::BalanceQuorum::connect(&cfg.custody).unwrap().balance(Address::ZERO).await.unwrap_err();
-    assert_eq!((logs.warnings("custody_rpc_quorum_lost"), logs.critical("custody_rpc_quorum_lost")), (2, 0));
-    let (log_heads, relayer_balance) = (logs.count("quorum=\"log_heads\""), logs.count("quorum=\"relayer_balance\""));
-    assert!(log_heads > 0 && relayer_balance > 0, "each quorum raised its own alerts");
-    assert_eq!(log_heads + relayer_balance, logs.count("alert=\"custody_rpc_"), "every custody alert names its quorum");
 }
 
 /// `config/anvil.toml` with its custody providers on loopback ports nothing listens on, so every

@@ -1,6 +1,7 @@
 //! The posted-head check's binding to the replayed bytes: the captured cumulative command-prefix
 //! digest, its continuity across a shutdown checkpoint (checkpoints do not reset it), the
-//! host-tamper proof, and the poster's evidence and stall alarm seeded from the replay.
+//! host-tamper proof, the poster's evidence and stall alarm seeded from the replay, and startup's
+//! check of the newest head this key's epochs hold.
 use alloy::primitives::B256;
 use engine_core::Engine;
 use engine_core::command::{Command, Sequenced};
@@ -197,4 +198,29 @@ fn startup_starts_the_stall_alarm_from_the_checked_heads_sequenced_time() {
     .unwrap()
     .expect("[log_heads] is configured");
     assert_eq!(setup.poster.anchored, Some((1, Some(1))));
+}
+
+#[test]
+fn startup_checks_the_newest_head_of_this_keys_epochs_and_parents_only_on_the_current_ones() {
+    // `setSigner` reinstalled this key: the current epoch three is empty and an earlier epoch holds
+    // this log's head at seq 1. Startup checks that head, and the first post names no parent.
+    let (dir, _, last_prefix, _) = log_with_shutdown_checkpoint("log-head-reinstalled");
+    let rpc_dir = crate::test_support::scratch_dir("log-head-reinstalled-rpc");
+    std::fs::create_dir_all(&rpc_dir).unwrap();
+    let log = recover(&dir, 1);
+    let start = |current, newest| {
+        let heads = crate::log_heads::rpc::StartupHeads { epoch: 3, current, newest };
+        crate::log_heads::setup::startup(Some(crate::log_heads::setup::Pending::for_test_heads(heads, &rpc_dir)), &log)
+    };
+    let earlier = Head { seq: 1, link: last_prefix };
+    let setup = start(None, Some(earlier)).unwrap().expect("[log_heads] is configured");
+    assert_eq!(setup.poster.confirmed, None, "an earlier epoch's head is no parent");
+    assert_eq!(setup.poster.anchored, Some((1, Some(1))), "the stall alarm counts from the earlier head");
+    // A log cut below the earlier epoch's head is refused.
+    let error =
+        start(None, Some(Head { seq: 5, link: B256::from([5; 32]) })).err().expect("the cut log refuses the start");
+    assert!(format!("{error:#}").contains("lacks the posted head's seqs 2..=5"), "{error:#}");
+    // The current epoch's own head parents the first post.
+    let setup = start(Some(earlier), Some(earlier)).unwrap().expect("[log_heads] is configured");
+    assert_eq!(setup.poster.confirmed, Some((3, earlier)));
 }

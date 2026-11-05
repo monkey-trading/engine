@@ -140,9 +140,10 @@ impl<R: HeadsChain> Poster<R> {
         let mut posted_at: Option<tokio::time::Instant> = None;
         // Anchoring progress: the last time a quorum read observed the on-chain head advance, and,
         // until one does, trusted time since startup's checked head was stamped — which neither a
-        // restart nor a log cut back to that head resets. Past three intervals with a newer
-        // released head, the stall alert fires once per episode. Acceptance proves no inclusion,
-        // so it never moves this clock.
+        // restart nor a log cut back to that head resets. That carried time counts once this
+        // process's first post has had a retry to land, so a restart after a long stop does not
+        // page before it posts. Past three intervals with a newer released head, the stall alert
+        // fires once per episode. Acceptance proves no inclusion, so it never moves this clock.
         let mut progressed_at = tokio::time::Instant::now();
         let (mut on_chain_seq, mut anchor_ts) = self.anchored.unwrap_or_default();
         let mut stalled = false;
@@ -273,7 +274,9 @@ impl<R: HeadsChain> Poster<R> {
                 // goes parentless under the first-post rule.
                 confirmed = None;
             }
-            let since_anchor = anchor_ts.zip(self.trusted.as_ref().and_then(|clock| clock.now_ms()));
+            let carried = posted_at.is_some_and(|at| at.elapsed() >= self.retry);
+            let since_anchor =
+                anchor_ts.filter(|_| carried).zip(self.trusted.as_ref().and_then(|clock| clock.now_ms()));
             let since_anchor = since_anchor.map_or(0, |(at, now)| u64::try_from(now.saturating_sub(at)).unwrap_or(0));
             let unanchored = progressed_at.elapsed().max(Duration::from_millis(since_anchor));
             if !stalled && head.seq > on_chain_seq && unanchored > self.interval.saturating_mul(3) {

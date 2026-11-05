@@ -53,9 +53,26 @@ pub(crate) struct Pending {
 }
 
 impl Pending {
+    /// The newest head this key's epochs hold, which the log must contain, with the poster's
+    /// confirmed parent seeded from the current epoch's head only: the first post after a restart
+    /// names it, so a tail already past it does not fail the contract's chaining rule, and an
+    /// earlier epoch's head is no parent under its first-post rule.
+    fn from_heads(mut poster: Poster<HeadsRpc>, heads: super::rpc::StartupHeads, freeze: super::FreezeLatch) -> Self {
+        poster.confirmed = heads.current.map(|head| (heads.epoch, head));
+        Self { poster, posted: heads.newest, freeze }
+    }
+
     /// The posted head the replay must bind to, if one is posted.
     pub(crate) fn posted(&self) -> Option<Head> {
         self.posted
+    }
+
+    /// What `read_posted` returns when startup reads `heads`, over a chain access in `dir` that
+    /// touches no network.
+    #[cfg(test)]
+    pub(crate) fn for_test_heads(heads: super::rpc::StartupHeads, dir: &std::path::Path) -> Self {
+        let Self { poster, freeze, .. } = Self::for_test(None, dir);
+        Self::from_heads(poster, heads, freeze)
     }
 
     /// What `read_posted` returns when the contract holds `posted` for the current epoch, over a
@@ -93,7 +110,7 @@ pub(crate) async fn read_posted(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyh
     let quorum = Arc::new(heads_reader(&cfg.custody)?);
     let chain = HeadsRpc::new(checkpoints, log_heads, domain, &cfg.node.log_dir, quorum)?;
     let freeze = super::FreezeLatch::default();
-    let mut poster = Poster {
+    let poster = Poster {
         chain,
         key: key.clone(),
         domain,
@@ -110,11 +127,7 @@ pub(crate) async fn read_posted(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyh
         cfg.custody.evm.as_ref().map_or(Duration::from_secs(30), |evm| evm.finality_stalled_after),
     );
     let heads = read_posted_with_retry(&poster, alloy::primitives::Address::from(key.address()), retry, budget).await?;
-    // The current epoch's authenticated head seeds the poster's confirmed parent: the first post
-    // after a restart names it, so a tail already past it does not fail the contract's chaining
-    // rule. The newest head this key's epochs hold is what the log must contain.
-    poster.confirmed = heads.current.map(|head| (heads.epoch, head));
-    Ok(Some(Pending { poster, posted: heads.newest, freeze }))
+    Ok(Some(Pending::from_heads(poster, heads, freeze)))
 }
 
 /// Reads, through the custody RPC quorum, the current signer epoch, its posted head, and the newest
