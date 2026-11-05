@@ -37,7 +37,8 @@ live terms from `margin_tiers` in `curl -sf $API/v1/markets`.
 
 **See it.** `venue_feed_down` or `venue_symbol_silent` (Warning) names the venue; `market_no_price`
 (Critical) follows after `alerts.no_price_after`; `engine_market_priced{market="1"}` and
-`{market="2"}` read `0`; `/v1/markets` shows no `mark` for them; fills stop.
+`{market="2"}` read `0`; fills stop. `/v1/markets` may still show a `mark`: it is the last stored
+value and survives the loss of live pricing, so a missing `mark` shows only a market that never priced.
 
 **You can:**
 1. Make BTC-USD and ETH-USD reduce-only at once ([reduce-only.md](reduce-only.md)). It stops new
@@ -79,26 +80,31 @@ leaves quotes older than a tighter limit even though the venues are healthy.
    to quote again, which moves the mid or fires the repeat, and sign the same change once more.
 3. For a large cut, tighten in steps, each signed after the venues have quoted again, so each step
    still prices the market from quotes that have arrived since the last. **Changes the live system.**
-   Each step is its own `upsert-market`, so each needs the owner's approval of its exact spec, or
-   one approval naming the whole sequence of limits.
+   Each step is its own `upsert-market`, so each needs the owner's approval of its exact spec.
 4. Failing that, make every held market the refusal names reduce-only first, the edited market and
    any market that converts at it ([reduce-only.md](reduce-only.md)), then sign the change again: the
    check then does not apply. **Changes the live system.** Needs the owner's approval of the
-   reduce-only commands, the change, and the commands below. Then check, as in step 1, that
-   `engine_market_priced` reads 1 for the edited market and each market that converts at it. The
-   `mark` in `/v1/markets` is the last stored value and stays after pricing is lost, so it proves
-   nothing. If one reads 0, restore the previous limit, which is always accepted, and wait for the
-   venues to quote again: loosening discards quotes stale under the tighter limit. Either way, resume
-   normal trading as in [reduce-only.md](reduce-only.md#resume-normal-trading).
+   reduce-only commands, the change, and the commands below. Then wait for a monitor sample taken
+   after the change: the gauge samples once a second and keeps its last value when a sample times
+   out, so a 1 read at once can describe the previous limit. Check that `engine_market_priced` reads
+   1 for the edited market and for each market that converts at it **and is open**; a market closed
+   on its schedule reads 0 whatever the limit, so check it at its next session. The `mark` in
+   `/v1/markets` is the last stored value and stays after pricing is lost, so it proves nothing. If
+   one reads 0, restore the previous limit, which is always accepted, wait for a sample taken after
+   that and for the venues to quote again: loosening discards quotes stale under the tighter limit.
+   Resume normal trading as in [reduce-only.md](reduce-only.md#resume-normal-trading) only once
+   `engine_market_priced` reads 1 for the market.
 
 ### Find what is down
 
 ```sh
-curl -sf $API/v1/markets | jq -r '.[] | select(.open and (.mark == null)) | "\(.id) \(.symbol) no mark"'
 curl -s http://<metrics host>:9464/metrics | grep -E '^engine_market_priced'     # 0 = no usable index
+curl -sf $API/v1/markets | jq -r '.[] | select(.open) | "\(.id) \(.symbol)"'    # the open markets
 ```
 
-Open markets with no mark are the `market_no_price` case. Match the alerts to the cause:
+An open market whose `engine_market_priced` reads 0 is the `market_no_price` case. The `mark` in
+`/v1/markets` is the last stored value and survives the loss of live pricing, so a missing `mark`
+shows only a market that never priced. Match the alerts to the cause:
 
 | Alert | Level | Meaning | Do |
 | --- | --- | --- | --- |

@@ -47,6 +47,12 @@ impl Pending {
         self.quote.take()
     }
 
+    /// The highest host time a quote was read at: sequenced time, which does not step back with the
+    /// host clock, is at least this.
+    pub(super) fn high_water(&self) -> Millis {
+        self.read_hwm
+    }
+
     /// Whether a quote waits.
     pub(super) fn waiting(&self) -> bool {
         self.quote.is_some()

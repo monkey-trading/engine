@@ -316,3 +316,42 @@ async fn an_installed_successor_takes_deliveries_from_its_own_key_and_not_the_fa
     assert!(!successor.admits(failed).await.unwrap(), "the failed key during the notice");
     assert!(!successor.admits(AccountId([7; 20])).await.unwrap(), "a stranger");
 }
+
+// A signed rotation to another key whose notice has run out, and the registry seating the recorded
+// key again before the log's scan reaches it: the recorded key is the one the registry names, so the
+// other key reaches into this node's enclave no more.
+#[tokio::test]
+async fn re_seating_the_recorded_key_takes_deliveries_from_it_and_not_a_due_rotation_to_another() {
+    let mut node = Node::staking("delivery-reseated").await;
+    let old = node.state.operator.address;
+    let next = SigningKey::from_slice(&[0x55; 32]).unwrap();
+    let rotated = engine_core::eip712::address(next.verifying_key());
+    let progress = Command::StakingProgress {
+        block: 10,
+        block_hash: engine_core::eip712::B256::repeat_byte(1),
+        block_time: Some(NOW - 60_000),
+    };
+    assert!(
+        !node.state.submit(progress).await.unwrap().iter().any(|event| matches!(event, Event::AdminRejected { .. }))
+    );
+    let rotation = node.sign(0, AdminCommand::RotateOperator { address: rotated }, NOW + 60_000);
+    let (status, _) = node.post("/v1/admin", serde_json::to_value(&rotation).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    node.stamps.advance(Duration::from_millis(after_the_notice() as u64 - NOW as u64));
+    let sample = sample_around(node.stamps.as_ref());
+    node.state.tx.send(crate::sequencer::Request::TimeSample(sample)).await.unwrap();
+    let clock = std::sync::Arc::new(crate::clock::test_clock::TestClock::at(after_the_notice()));
+    node.state.clock = clock.clone();
+
+    let authority = |installed| Authority::Log {
+        tx: node.state.tx.downgrade(),
+        configured: old,
+        installed,
+        trusted: std::sync::Arc::new(crate::test_support::trusted(clock.clone())),
+    };
+    let unread = authority(None);
+    assert!(unread.admits(rotated).await.unwrap(), "the due rotation's key, with no registry read");
+    let reseated = authority(Some(RegistryOperator { admin_key: old, since: NOW - 30_000 }));
+    assert!(reseated.admits(old).await.unwrap(), "the key the registry seated again");
+    assert!(!reseated.admits(rotated).await.unwrap(), "the due rotation's key, which the seating supersedes");
+}

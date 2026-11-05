@@ -122,7 +122,7 @@ You are the standby of a promoted candidate. Move quickly: the clock in "How a t
    ```
 
    **Changes the live system.** Needs the owner's approval. Without this fold, your `new-key` start
-   waits a minute for it and refuses ("have the promoter call syncRelease").
+   waits a minute for it at finality and refuses ("call syncRelease and start again once its block is finalized").
 3. **Let the standby finalize its copy.** Within `poll_interval` of the promotion being visible, it
    refreshes completed segments from the mirrors, requires the checkpoint the vault accepted last,
    cuts the copy after it, logs `promoted: the copy ends at the latest published checkpoint …`, and
@@ -226,6 +226,16 @@ shortened:
    final stays held: restart it. Start the benchmark worker under the new key once the effective
    time of the pending rotation `curl -sf $API/v1/operator | jq .pending_rotation` shows has
    passed: from then a hold waits for that key's snapshot.
+7. **Before turning rotation back on**, the timelock withdraws every release approved for the failed
+   operator (`setReleaseApproval(<failed candidate>, <digest>, <config hash>, false)` for each,
+   pattern in reference.md), which delists it. The installation leaves its candidacy listed and
+   approved, and delegations stay with it: the first `closeEpoch` past the installed operator's
+   minimum term would elect the failed operator, whose lost key becomes the admin key seven days
+   later, and a liveness promotion would pick it as the top eligible standby. Check, for
+   each release the failed candidate held: `cast call $REGISTRY 'releaseApproved(bytes32)(bool)'
+   $(cast keccak $(cast abi-encode 'f(address,bytes32)' <failed candidate> <release id>))` prints
+   `false`, and `candidateList(i)` no longer names it. Then the release check in
+   [operator-candidate.md](operator-candidate.md), section 2, holds.
 
 The fallback must be decided before it is needed: a host, a built and approved release, an archive
 mirror it can read, the fallback operator's admin key, and the people who can sign the timelock

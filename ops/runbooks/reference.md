@@ -68,7 +68,7 @@ operator key and the chain and vault the command is signed for.
 curl -sf $API/v1/health                                   # prints ok
 curl -sf $API/v1/operator | jq .                          # operator in effect, pending rotation, last election
 curl -sf $API/v1/markets | jq -c '.[] | {id, symbol, open, reduce_only, mark, stress_level}'
-curl -s http://<metrics host>:9464/metrics | grep -E '^engine_(withdrawals_paused|last_checkpoint_timestamp_seconds|alert_pages_pending|sequencer_queue_depth|tls_certificate_pending) '
+curl -s http://<metrics host>:9464/metrics | grep -E '^engine_(withdrawals_paused|market_priced|last_checkpoint_timestamp_seconds|alert_pages_pending|sequencer_queue_depth|tls_certificate_pending) '
 ```
 
 - `engine_withdrawals_paused 0` means withdrawal authorizations are being signed. `1` is a pause;
@@ -77,8 +77,8 @@ curl -s http://<metrics host>:9464/metrics | grep -E '^engine_(withdrawals_pause
   checkpoint covers. It trails the clock while a checkpoint is held back for the previous one to
   become final.
 - `engine_alert_pages_pending` above 0 for long means pages are not being delivered.
-- Every market with an `open` session and a feed should show a `mark`. A market with no `mark`
-  and `open: true` is the `market_no_price` case ([feed-and-custody-failures.md](feed-and-custody-failures.md)).
+- Every market with an `open` session and a feed should read `engine_market_priced` 1. A market
+  that reads 0 while `open: true` is the `market_no_price` case ([feed-and-custody-failures.md](feed-and-custody-failures.md)).
 
 The metrics listener is plain HTTP and carries no per-account data. Reach it only from the
 monitoring network.
