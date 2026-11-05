@@ -84,6 +84,15 @@ The relayer's Ethereum balance, read at a block the providers agree is final, is
 `seed_relay.min_balance`. Send it ETH. **Changes the live system** (a transfer): get the owner's
 approval. The alert ends at the next read above the minimum.
 
+## When `seed_relayer_balance_unreadable` fires
+
+The relayer's balance, read through the Ethereum providers at a block they agree is final, has failed
+for ten minutes, so the funding alert cannot fire. The message names the cause: providers that fail
+`eth_getBalance` at their `finalized` block, or that disagree on that block. Check the providers'
+health and the `rpc_url` and `providers` in `[seed_relay]`. Read the balance yourself with
+`cast balance <relayer> --block finalized --rpc-url $RPC` and send ETH if it is below
+`seed_relay.min_balance`. The alert ends at the next successful read.
+
 ## When `seed_missing` fires
 
 The turn whose draw deadline last passed has no relayed seed, so it draws from the last relayed seed

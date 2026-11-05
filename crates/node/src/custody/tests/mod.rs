@@ -11,6 +11,7 @@ use crate::custody::stall::{PollError, Polled, Stall};
 mod alerts;
 mod anvil_finality;
 mod confirmed;
+mod contract_read;
 mod cursor;
 mod election_scenario;
 mod fakes;

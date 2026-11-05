@@ -31,6 +31,7 @@ contract SeedRelayTest is Test {
     MockInbox internal inbox;
     SeedRelay internal relay;
     SeedReceiver internal receiver;
+    HeaderRoot internal hasher;
 
     function setUp() public {
         json = vm.readFile("test/fixtures/seed-relay/mainnet.json");
@@ -42,6 +43,7 @@ contract SeedRelayTest is Test {
         inbox = new MockInbox();
         (relay, receiver) = deploy(genesis, forks(FULU, ELECTRA));
         recordBeaconRoot(timestamp, vm.parseJsonBytes32(json, ".proof.beaconRoot"));
+        hasher = new HeaderRoot(inbox, address(receiver), genesis, forks(FULU, ELECTRA));
     }
 
     function test_ProvesAMainnetEpochsMixAndSendsItToTheReceiver() public {
@@ -68,6 +70,29 @@ contract SeedRelayTest is Test {
         deliver(sent);
         vm.warp(relay.drawDeadline(turn));
         assertEq(receiver.seedOf(turn), witness.seed);
+    }
+
+    function test_ProvesAMixFromAHeaderAtExactlyTheFirstSlotAfterTheEpoch() public {
+        // The relayer anchors on a finalized checkpoint block, the first slot of an epoch, so a turn
+        // first becomes ready with a header at slot (epoch + 1) * 32: the first slot the relay takes.
+        // The header is synthetic, with the fixture's state and its root recorded in EIP-4788.
+        SeedRelay.Witness memory witness = witnessAt(".proof", timestamp);
+        uint256 first = (uint256(epoch) + 1) * 32;
+        witness.header.slot = uint64(first);
+        recordBeaconRoot(timestamp, hasher.rootOf(witness.header));
+        vm.warp(timestamp + 1 hours);
+        (SeedRelay.Fees memory fees, uint256 value) = feesFor(witness);
+        uint256 ticket = relay.relay{value: value}(turn, witness, fees);
+        assertEq(inbox.ticket(ticket).data, abi.encodeCall(SeedReceiver.receiveSeed, (turn, epoch, witness.seed)));
+
+        // One slot earlier is still inside the epoch.
+        witness.header.slot = uint64(first - 1);
+        uint64 earlier = timestamp + 12;
+        recordBeaconRoot(earlier, hasher.rootOf(witness.header));
+        witness.timestamp = earlier;
+        vm.warp(earlier + 1 hours);
+        vm.expectRevert(abi.encodeWithSelector(SeedRelay.EpochNotEnded.selector, epoch, first - 1));
+        relay.relay{value: value}(turn, witness, fees);
     }
 
     function test_RevertWhen_TheBlockIsTheLastBeforeAMissedSlot() public {
@@ -329,5 +354,16 @@ contract SeedRelayTest is Test {
     function forks(bytes4 a, bytes4 b) internal pure returns (bytes4[] memory list) {
         list = new bytes4[](2);
         (list[0], list[1]) = (a, b);
+    }
+}
+
+/// `SeedRelay`'s header hashing, for a test to record a synthetic header's root.
+contract HeaderRoot is SeedRelay {
+    constructor(IInbox inbox_, address receiver_, uint64 genesis_, bytes4[] memory forks_)
+        SeedRelay(inbox_, receiver_, genesis_, forks_)
+    {}
+
+    function rootOf(BeaconBlockHeader calldata header) external pure returns (bytes32) {
+        return hashTreeRoot(header);
     }
 }

@@ -570,8 +570,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/seed_relay/mod.rs` — the seed relayer: each poll reads the seed receiver at a block of the
   custody credit tag, raises `seed_missing` and `seed_relayer_unfunded`, and relays the upcoming turns'
   seeds the receiver lacks, one transaction in flight at a time, raising `seed_relay_failed` when it
-  cannot; `src/seed_relay/tests.rs` covers its decisions over fake chains, and
+  cannot; `src/seed_relay/tests.rs` and its `tests/` modules cover its decisions over fake chains, and
   `src/seed_relay/tests/scenario.rs` is the two-Anvil dev scenario `scripts/dev-seed-relay.sh` runs
+- `src/seed_relay/settle.rs` — which transaction the relayer's next send replaces, and at which nonce;
+  `src/seed_relay/balance.rs` — the relayer's balance, its funding alert and its unreadable alert
 - `src/seed_relay/abi.rs` — the relay's, receiver's and Inbox's ABIs
 - `src/seed_relay/chains.rs` — the node's chains behind the relayer: Ethereum and the beacon node
   through the relayer's endpoints, and Arbitrum through the custody providers

@@ -209,6 +209,7 @@ Rebuilt from the log. None changes the books.
 | `seed_missing` | Critical | The turn whose draw deadline last passed has no relayed seed, so it draws from the last relayed seed hashed with its number. Every member's relay failed or was withheld. Resolves once a turn reaches its draw deadline with its seed. See [seed-relay.md](seed-relay.md), "When `seed_missing` fires". |
 | `seed_relay_failed` | Warning | This node could not relay a turn's seed the receiver lacks, or a seed it relayed had not reached Arbitrum by `seed_relay.resend_after`. Resolves once both upcoming turns have their seeds. See [seed-relay.md](seed-relay.md), "When `seed_relay_failed` fires". |
 | `seed_relayer_unfunded` | Warning | The seed relayer's Ethereum balance is below `seed_relay.min_balance`; relays stop when it cannot pay for one. Resolves once refilled. See [seed-relay.md](seed-relay.md), "When `seed_relayer_unfunded` fires". |
+| `seed_relayer_balance_unreadable` | Warning | The seed relayer's Ethereum balance has been unreadable for ten minutes, so `engine_seed_relayer_balance_eth` stands still and `seed_relayer_unfunded` cannot fire while relays keep spending the key. The message names the cause. Resolves at the next read. See [seed-relay.md](seed-relay.md), "When `seed_relayer_balance_unreadable` fires". |
 
 ## API limits
 
