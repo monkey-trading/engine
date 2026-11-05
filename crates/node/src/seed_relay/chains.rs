@@ -91,4 +91,8 @@ impl SeedChains for Chains {
     async fn receipt(&self, hash: B256) -> anyhow::Result<Option<bool>> {
         self.ethereum.receipt(hash).await
     }
+
+    async fn nonces(&self) -> anyhow::Result<(u64, u64)> {
+        self.ethereum.nonces().await
+    }
 }

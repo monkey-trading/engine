@@ -54,6 +54,66 @@ fn a_cut_or_misordered_state_is_refused() {
     assert!(prove_mix(&padded, epoch).unwrap_err().to_string().contains("16-byte elements"));
 }
 
+/// Fields of mainnet's state at slot 15583232, whose root matched its block's state root, each with
+/// the root that state gave it: every list and container type the state holds non-empty there, and
+/// the first validators and pending deposits as elements.
+#[test]
+fn mainnet_fields_hash_to_the_roots_their_state_gave_them() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../../tests/fixtures/seed-relay-state-fields.json")).unwrap();
+    let decode = |value: &serde_json::Value| hex::decode(value.as_str().unwrap().trim_start_matches("0x")).unwrap();
+    let fields = fixture["fields"].as_array().unwrap();
+    assert!(fields.len() >= 12);
+    for field in fields {
+        let index = field["index"].as_u64().unwrap() as usize;
+        assert_eq!(
+            FULU[index].root(&decode(&field["bytes"])).unwrap().to_vec(),
+            decode(&field["root"]),
+            "field {index}"
+        );
+    }
+    for (name, sizes) in [("validators", &VALIDATOR[..]), ("pendingDeposits", &PENDING_DEPOSIT[..])] {
+        for element in fixture[name].as_array().unwrap() {
+            assert_eq!(container_root(&decode(&element["bytes"]), sizes).unwrap().to_vec(), decode(&element["root"]));
+        }
+    }
+}
+
+/// Records that fixture from a downloaded state, refusing one whose root is not the expected one:
+/// `SEED_RELAY_STATE=<state.ssz> SEED_RELAY_STATE_ROOT=<0x…> cargo test -p engine-node --lib
+/// seed_relay::state::tests::record_mainnet_fields -- --ignored --nocapture > fields.json`.
+#[test]
+#[ignore = "reads a downloaded mainnet state; records tests/fixtures/seed-relay-state-fields.json"]
+fn record_mainnet_fields() {
+    let state = std::fs::read(std::env::var("SEED_RELAY_STATE").unwrap()).unwrap();
+    let expected = std::env::var("SEED_RELAY_STATE_ROOT").unwrap();
+    let fields = split(&state).unwrap();
+    let roots: Vec<[u8; 32]> = FULU.iter().zip(&fields).map(|(field, bytes)| field.root(bytes).unwrap()).collect();
+    let (state_root, _) = crate::seed_relay::ssz::branch(roots.clone(), STATE_DEPTH, 0).unwrap();
+    assert_eq!(format!("0x{}", hex::encode(state_root)), expected, "the state's root is not the block's");
+    let hex = |bytes: &[u8]| format!("0x{}", hex::encode(bytes));
+    let recorded: Vec<_> = [3, 4, 8, 9, 17, 18, 19, 20, 22, 24, 35, 36, 37]
+        .into_iter()
+        .map(|index| serde_json::json!({"index": index, "bytes": hex(fields[index]), "root": hex(&roots[index])}))
+        .collect();
+    let elements = |index: usize, sizes: &[usize]| -> Vec<serde_json::Value> {
+        let size: usize = sizes.iter().sum();
+        fields[index]
+            .chunks(size)
+            .take(2)
+            .map(|element| serde_json::json!({"bytes": hex(element), "root": hex(&container_root(element, sizes).unwrap())}))
+            .collect()
+    };
+    let fixture = serde_json::json!({
+        "slot": u64::from_le_bytes(fields[SLOT_FIELD].try_into().unwrap()),
+        "stateRoot": expected,
+        "fields": recorded,
+        "validators": elements(11, &VALIDATOR),
+        "pendingDeposits": elements(34, &PENDING_DEPOSIT),
+    });
+    println!("{}", serde_json::to_string_pretty(&fixture).unwrap());
+}
+
 // ── Helpers ──
 
 /// The mix the dev scenario's stand-in gives epoch `epoch`.

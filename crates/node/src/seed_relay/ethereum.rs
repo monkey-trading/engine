@@ -12,13 +12,14 @@ use std::time::Duration;
 use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::{Address, B256, Bytes, U64, U256, address};
 use alloy::rpc::client::RpcClient;
-use alloy::rpc::types::{Block, TransactionReceipt, TransactionRequest};
+use alloy::rpc::types::{TransactionReceipt, TransactionRequest};
 use alloy::sol_types::{SolCall, SolInterface};
 use alloy::transports::http::reqwest::redirect::Policy;
 use alloy::transports::http::reqwest::{Certificate, Client};
 use alloy::transports::{RpcError, TransportErrorKind};
 use anyhow::{Context, anyhow, bail, ensure};
 use futures_util::future::join_all;
+use serde::Deserialize;
 use tokio::time::timeout;
 
 use crate::config::{SecretUrl, SeedRelaySection, redact};
@@ -34,6 +35,13 @@ pub(crate) struct Endpoint {
     client: RpcClient,
     redactions: Vec<String>,
     timeout: Duration,
+}
+
+/// The one field of a block the relayer reads.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FeeBlock {
+    base_fee_per_gas: Option<U256>,
 }
 
 /// The relay contract's deployment, as the quorum reads it.
@@ -204,15 +212,15 @@ impl Ethereum {
     /// Error cases:
     /// - the request fails, or the block has no base fee
     pub(crate) async fn base_fee(&self) -> anyhow::Result<U256> {
-        let block: Option<Block> = self
+        let block: Option<FeeBlock> = self
             .signer
             .wait(
                 "eth_getBlockByNumber",
                 self.signer.client.request("eth_getBlockByNumber", (BlockNumberOrTag::Latest, false)),
             )
             .await?;
-        let fee = block.context("the signing endpoint has no latest block")?.header.base_fee_per_gas;
-        Ok(U256::from(fee.context("the latest block has no base fee")?))
+        let block = block.context("the signing endpoint has no latest block")?;
+        block.base_fee_per_gas.context("the latest block has no base fee")
     }
 
     /// Sends `input` to the relay with `value`, from the relayer, through the signing endpoint, at twice
@@ -253,6 +261,20 @@ impl Ethereum {
         let estimate: u64 = estimate.to();
         let tx = TransactionRequest { gas: Some(estimate.saturating_add(estimate / GAS_MARGIN_DIVISOR)), ..tx };
         self.signer.wait("eth_sendTransaction", self.signer.client.request("eth_sendTransaction", (tx,))).await
+    }
+
+    /// The relayer's nonce at the latest block, and counting its pending transactions, at the signing
+    /// endpoint.
+    /// Error cases:
+    /// - a request fails
+    pub(crate) async fn nonces(&self) -> anyhow::Result<(u64, u64)> {
+        let count = |tag: BlockNumberOrTag| {
+            self.signer.wait(
+                "eth_getTransactionCount",
+                self.signer.client.request::<_, U64>("eth_getTransactionCount", (self.relayer, tag)),
+            )
+        };
+        Ok((count(BlockNumberOrTag::Latest).await?.to(), count(BlockNumberOrTag::Pending).await?.to()))
     }
 
     /// Whether the transaction succeeded, once it is in a block.
@@ -338,3 +360,6 @@ impl Ethereum {
 fn outbid(fee: Option<u128>) -> u128 {
     fee.map_or(0, |fee| fee.saturating_add(fee / 4).saturating_add(1))
 }
+
+#[cfg(test)]
+mod tests;

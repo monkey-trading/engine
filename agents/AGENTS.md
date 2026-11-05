@@ -153,8 +153,8 @@ an index: load only the rule whose hint matches the current action.
   `RegistryLens` read over its own custody quorum at one final block every `api.operators_interval`, the answer
   naming the block; 404 without `custody.evm.staking.registry.lens`), the seed relayer
   (`seed_relay/`, `[seed_relay]`, in either mode: each poll reads the seed receiver on Arbitrum through its own
-  custody quorum at one final block, raises `seed_missing` while the turn whose draw deadline passed has no seed and
-  `seed_relayer_unfunded`, and relays the two upcoming turns' seeds the receiver lacks, raising `seed_relay_failed`;
+  custody quorum at one block of the custody credit tag (`latest` in production), raises `seed_missing` while the turn whose draw deadline passed has no seed and
+  `seed_relayer_unfunded`, and relays the two upcoming turns' seeds the receiver lacks, one transaction in flight at a time, raising `seed_relay_failed`;
   it proves each from the beacon node's finalized Fulu state with its own SSZ code, `seed_relay/state.rs`, finds the
   EIP-4788 entry holding the block's root and reads the relay through a strict majority of its Ethereum providers,
   and sends through its signing endpoint with a relayer key apart from the checkpoint relayer's), the

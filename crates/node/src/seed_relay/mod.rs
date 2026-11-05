@@ -1,23 +1,27 @@
 //! The seed relayer: it proves on Ethereum the RANDAO mix that seeds each daily operator turn, relays
 //! it to the seed receiver on Arbitrum (`contracts/src/SeedRelay.sol`, `SeedReceiver.sol`), and
 //! watches that each turn's seed is there by its draw deadline. Any node may relay any turn, and every
-//! relay of a turn carries the same seed, so the relayer keeps nothing across a restart: it reads the
-//! receiver again and relays what it lacks, at the cost of at most one more relay.
+//! relay of a turn carries the same seed.
 //!
 //! Each poll:
-//! - reads the receiver through the custody providers at one final block: the turn whose draw
-//!   deadline last passed, the two after it, and the receiver's pairing with the relay;
+//! - reads the receiver through the custody providers, at one block of the custody credit tag
+//!   (`latest` in production): the turn whose draw deadline last passed, the two after it, and the
+//!   receiver's pairing with the relay;
 //! - raises `seed_missing` (Critical) while that turn has no seed, once an earlier turn has had one;
 //! - reads the relayer's balance and raises `seed_relayer_unfunded` (Warning) below `min_balance`;
-//! - for each of the two later turns without a seed, unless this node relayed it within
-//!   `resend_after`: reads the beacon node's finalized header, finds through the Ethereum providers
-//!   the EIP-4788 entry that holds its root, downloads its state, proves the turn's mix, and sends the
-//!   relay. A failure raises `seed_relay_failed` (Warning), which ends once both turns have seeds.
+//! - relays the earlier of the two later turns that has no seed: from the beacon node's finalized
+//!   header, the EIP-4788 entry that holds its root, found through the Ethereum quorum, and its state's
+//!   proof. A failure raises `seed_relay_failed` (Warning), which ends once both turns have seeds.
+//!
+//! One relay transaction is in flight at a time, so none queues behind another: one still waiting for a
+//! block after `resend_after` is replaced at its nonce, and a pending transaction the node does not
+//! track, as after a restart, holds new relays back. Nothing else needs to survive a restart.
 //!
 //! What bounds each read from the host's network: the receiver's state is a custody quorum's; the
-//! EIP-4788 entry, the relay's pairing and the fees are an Ethereum quorum's; the header counts only
-//! once that entry holds its root, and the state only once it hashes to the header's; and `SeedRelay`
-//! checks all of it again on chain, so a wrong answer costs a relay that reverts, never a wrong seed.
+//! EIP-4788 entry, the relay's pairing and the Inbox's fee are an Ethereum quorum's, and the base fee
+//! and nonces are the signing endpoint's; the header counts only once that entry holds its root, and the
+//! state only once it hashes to the header's; and `SeedRelay` checks all of it again on chain, so a
+//! wrong answer costs a relay that reverts, never a wrong seed.
 
 mod abi;
 mod beacon;
@@ -61,6 +65,8 @@ use crate::seed_relay::state::{MixProof, prove_mixes};
 const L2_GAS_LIMIT: u64 = 150_000;
 /// `receiveSeed(uint64,uint64,bytes32)`'s calldata.
 const MESSAGE_LENGTH: usize = 4 + 3 * 32;
+/// How many slots past it a proven block still anchors a relay: a day, well inside EIP-4788's 8191.
+const PROVEN_SLOTS: u64 = 7200;
 
 /// What the relayer reads and sends through: the node's own `Chains`, or a test's.
 pub(crate) trait SeedChains {
@@ -90,6 +96,8 @@ pub(crate) trait SeedChains {
     ) -> impl Future<Output = anyhow::Result<B256>> + Send;
     /// Whether a sent transaction succeeded, once it is in a block.
     fn receipt(&self, hash: B256) -> impl Future<Output = anyhow::Result<Option<bool>>> + Send;
+    /// The relayer's nonce at the latest block, and counting the transactions it has pending.
+    fn nonces(&self) -> impl Future<Output = anyhow::Result<(u64, u64)>> + Send;
 }
 
 /// The receiver at one final Arbitrum block.
@@ -116,17 +124,21 @@ pub(crate) struct RelayMetrics {
     pub latest_turn: Gauge,
 }
 
-/// A relay this node sent, and when.
+/// The relay transaction this node has waiting for a block, and when it went out: at most one, so
+/// none queues behind another.
 #[derive(Clone, Copy)]
-struct Sent {
+struct InFlight {
     hash: B256,
+    turn: u64,
     at: Instant,
 }
 
-/// The proofs from the last finalized state downloaded, by epoch, kept until the beacon node finalizes
-/// another block so a relay that fails after them does not download the state again.
+/// The last finalized block proven, the time of the execution block whose EIP-4788 entry holds its
+/// root, and its state's proofs by epoch. It serves for `PROVEN_SLOTS`, so a relay that keeps failing
+/// does not download a state each epoch.
 struct Proven {
-    root: B256,
+    header: BeaconBlockHeader,
+    timestamp: u64,
     proofs: BTreeMap<u64, MixProof>,
 }
 
@@ -140,7 +152,11 @@ pub(crate) struct SeedRelayer<C> {
     l2_max_fee_per_gas: U256,
     min_balance: U256,
     metrics: RelayMetrics,
-    sent: BTreeMap<u64, Sent>,
+    in_flight: Option<InFlight>,
+    /// Turns whose relay from this node is in a block, and since when, until their seed is on Arbitrum.
+    mined: BTreeMap<u64, Instant>,
+    /// Since when a pending transaction this node is not tracking has held its relays back.
+    held_since: Option<Instant>,
     proven: Option<Proven>,
     missing: bool,
     failing: bool,
@@ -171,7 +187,9 @@ impl<C: SeedChains> SeedRelayer<C> {
             l2_max_fee_per_gas: cfg.l2_max_fee_per_gas,
             min_balance: cfg.min_balance,
             metrics,
-            sent: BTreeMap::new(),
+            in_flight: None,
+            mined: BTreeMap::new(),
+            held_since: None,
             proven: None,
             missing: false,
             failing: false,
@@ -186,14 +204,14 @@ impl<C: SeedChains> SeedRelayer<C> {
             // Nothing can be watched or relayed without it, whether the quorum failed or its answer did.
             Err(error) => return self.fail(format!("reading the seed receiver failed: {error:#}")),
         };
-        Span::current().record("turn", view.final_turn);
+        Span::current().record("final_turn", view.final_turn);
         if let Some(latest) = (0..3).rev().find(|&i| !view.seeds[i].is_zero()) {
             self.metrics.latest_turn.set(i64::try_from(view.final_turn + latest as u64).unwrap_or(i64::MAX));
         }
         self.watch(&view);
         self.check_balance().await;
         let open: Vec<u64> = (1..3).filter(|&i| view.seeds[i].is_zero()).map(|i| view.final_turn + i as u64).collect();
-        self.sent.retain(|turn, _| open.contains(turn));
+        self.mined.retain(|turn, _| open.contains(turn));
         if open.is_empty() {
             if take(&mut self.failing) {
                 info!(
@@ -263,53 +281,43 @@ impl<C: SeedChains> SeedRelayer<C> {
             identity.genesis,
             view.genesis
         );
+        let Some(replacing) = self.settle().await? else { return Ok(()) };
         let mut due = Vec::new();
         for &turn in open {
-            let mut replacing = None;
-            if let Some(Sent { hash, at }) = self.sent.get(&turn).copied() {
-                let receipt = self.chains.receipt(hash).await?;
-                if receipt == Some(false) {
-                    self.sent.remove(&turn);
-                    bail!("turn {turn}'s relay {hash} reverted");
-                }
+            if let Some(at) = self.mined.get(&turn).copied() {
                 if at.elapsed() < self.resend_after {
                     continue;
                 }
+                self.mined.remove(&turn);
                 self.fail(format!(
-                    "turn {turn}'s relay {hash} has not reached Arbitrum in {:?}: relaying it again; a sequencer that \
-                     withholds it can be overridden by force inclusion",
+                    "turn {turn}'s relay was in a block {:?} ago and has not reached Arbitrum: relaying it again; a \
+                     sequencer that withholds it can be overridden by force inclusion",
                     at.elapsed()
                 ));
-                // One still waiting for a block is replaced at its nonce, so the new one never queues behind it.
-                if receipt.is_none() {
-                    replacing = Some(hash);
-                }
             }
-            due.push((turn, replacing));
+            due.push(turn);
         }
         if due.is_empty() {
             return Ok(());
         }
         let header = self.chains.finalized_header().await?;
         let mut ready = Vec::new();
-        for (turn, replacing) in due {
+        for turn in due {
             let epoch = seed_epoch(turn, view.genesis)
                 .with_context(|| format!("turn {turn} has no seed epoch from genesis {}", view.genesis))?;
             let end = epoch.checked_add(1).and_then(|next| next.checked_mul(SLOTS_PER_EPOCH));
             if header.slot >= end.with_context(|| format!("epoch {epoch} is past the clock"))? {
-                ready.push((turn, epoch, replacing));
+                ready.push((turn, epoch));
             } else {
                 debug!(turn, epoch, slot = header.slot, "waiting for a finalized block past the seed's epoch");
             }
         }
-        if ready.is_empty() {
-            return Ok(());
-        }
-        let root = header.root();
-        let timestamp = self.anchor(&header, root, view.genesis).await?;
-        self.prove(&header, root, ready.iter().map(|&(_, epoch, _)| epoch).collect()).await?;
-        let proofs = &self.proven.as_ref().expect("prove keeps every ready epoch's proof").proofs;
-        let proofs: Vec<MixProof> = ready.iter().map(|(_, epoch, _)| proofs[epoch].clone()).collect();
+        // One relay at a time: the next goes out once this one is in a block.
+        let Some(&(turn, epoch)) = ready.first() else { return Ok(()) };
+        self.prove(header, view.genesis, ready.iter().map(|&(_, epoch)| epoch).collect()).await?;
+        let proven = self.proven.as_ref().expect("prove keeps every ready epoch's proof");
+        let (header, timestamp, proof) = (proven.header, proven.timestamp, proven.proofs[&epoch].clone());
+        ensure!(self.chains.accepts_fork(proof.fork_version).await?, "the relay refuses fork {:?}", proof.fork_version);
         let submission = self.chains.submission_cost(identity.inbox).await?;
         let fees = ISeedRelay::Fees {
             maxSubmissionCost: submission,
@@ -317,41 +325,76 @@ impl<C: SeedChains> SeedRelayer<C> {
             maxFeePerGas: self.l2_max_fee_per_gas,
         };
         let value = submission + U256::from(L2_GAS_LIMIT) * self.l2_max_fee_per_gas;
-        for ((turn, epoch, replacing), proof) in ready.into_iter().zip(proofs) {
-            ensure!(
-                self.chains.accepts_fork(proof.fork_version).await?,
-                "the relay refuses fork {:?}",
-                proof.fork_version
-            );
-            let witness = witness(timestamp, &header, &proof);
-            let input = ISeedRelay::relayCall { turn, witness, fees: fees.clone() }.abi_encode();
-            let hash = self.chains.send(input, value, replacing).await?;
-            info!(turn, epoch, seed = %proof.mix, tx = %hash, "relayed the turn's seed to Arbitrum");
-            self.metrics.relays.inc();
-            self.sent.insert(turn, Sent { hash, at: Instant::now() });
-        }
+        let input = ISeedRelay::relayCall { turn, witness: witness(timestamp, &header, &proof), fees }.abi_encode();
+        let hash = self.chains.send(input, value, replacing).await?;
+        info!(relayed_turn = turn, epoch, seed = %proof.mix, tx = %hash, "relayed the turn's seed to Arbitrum");
+        self.metrics.relays.inc();
+        self.in_flight = Some(InFlight { hash, turn, at: Instant::now() });
         Ok(())
     }
 
-    /// Proves each of `epochs` the cache lacks for the finalized block `root`, from its state, which
-    /// must hash to the header's state root.
+    /// Settles the relay in flight. `None` holds new relays back; `Some(replacing)` lets one go out, in
+    /// place of `replacing` when that one has waited `resend_after` for a block.
     /// Error cases:
-    /// - the state does not download, prove, or hash to the header's state root
-    async fn prove(&mut self, header: &BeaconBlockHeader, root: B256, epochs: Vec<u64>) -> anyhow::Result<()> {
-        if self.proven.as_ref().is_none_or(|proven| proven.root != root) {
-            self.proven = Some(Proven { root, proofs: BTreeMap::new() });
+    /// - the relay in flight reverted, or the receipt or the nonces cannot be read
+    async fn settle(&mut self) -> anyhow::Result<Option<Option<B256>>> {
+        if let Some(InFlight { hash, turn, at }) = self.in_flight {
+            match self.chains.receipt(hash).await? {
+                Some(true) => {
+                    self.mined.insert(turn, Instant::now());
+                    self.in_flight = None;
+                }
+                Some(false) => {
+                    self.in_flight = None;
+                    bail!("turn {turn}'s relay {hash} reverted");
+                }
+                None if at.elapsed() < self.resend_after => return Ok(None),
+                None => {
+                    self.fail(format!(
+                        "relay {hash} for turn {turn} has waited {:?} for a block: replacing it at its nonce",
+                        at.elapsed()
+                    ));
+                    return Ok(Some(Some(hash)));
+                }
+            }
         }
-        let missing: Vec<u64> = epochs
-            .into_iter()
-            .filter(|epoch| !self.proven.as_ref().is_some_and(|p| p.proofs.contains_key(epoch)))
-            .collect();
-        if missing.is_empty() {
+        // With nothing of this node's in flight, a pending transaction at the relayer's nonce is one it
+        // does not track, sent before a restart or by a send whose answer was lost; a relay sent now
+        // would queue behind it.
+        let (latest, pending) = self.chains.nonces().await?;
+        if pending > latest {
+            let since = *self.held_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= self.resend_after {
+                self.fail(format!(
+                    "a transaction this node is not tracking has waited {:?} at the relayer's nonce {latest}: relays \
+                     wait for it, and it can be replaced by hand",
+                    since.elapsed()
+                ));
+            }
+            return Ok(None);
+        }
+        self.held_since = None;
+        Ok(Some(None))
+    }
+
+    /// Keeps a proven block for `epochs`: the one already proven while it serves and holds them all,
+    /// else `header`'s, anchored and proven from its state, which must hash to the header's state root.
+    /// Error cases:
+    /// - no execution block anchors `header`, or its state does not download, prove, or hash to its
+    ///   state root
+    async fn prove(&mut self, header: BeaconBlockHeader, genesis: u64, epochs: Vec<u64>) -> anyhow::Result<()> {
+        let serves = self.proven.as_ref().is_some_and(|proven| {
+            header.slot.saturating_sub(proven.header.slot) < PROVEN_SLOTS
+                && epochs.iter().all(|epoch| proven.proofs.contains_key(epoch))
+        });
+        if serves {
             return Ok(());
         }
+        let timestamp = self.anchor(&header, header.root(), genesis).await?;
         let state = self.chains.state(header.slot).await?;
         // Hashing a mainnet state takes seconds of CPU, kept off the runtime's workers.
-        let epochs = missing.clone();
-        let proofs = spawn_blocking(move || prove_mixes(&state, &epochs)).await.context("the proof task")??;
+        let wanted = epochs.clone();
+        let proofs = spawn_blocking(move || prove_mixes(&state, &wanted)).await.context("the proof task")??;
         for proof in &proofs {
             ensure!(
                 proof.state_root == header.state_root,
@@ -361,8 +404,7 @@ impl<C: SeedChains> SeedRelayer<C> {
                 header.state_root
             );
         }
-        let cache = &mut self.proven.as_mut().expect("set above").proofs;
-        cache.extend(missing.into_iter().zip(proofs));
+        self.proven = Some(Proven { header, timestamp, proofs: epochs.into_iter().zip(proofs).collect() });
         Ok(())
     }
 
@@ -425,7 +467,7 @@ async fn run<C: SeedChains>(mut relayer: SeedRelayer<C>, every: Duration) -> any
     ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         ticks.tick().await;
-        relayer.poll().instrument(info_span!("seed_relay", turn = Empty)).await;
+        relayer.poll().instrument(info_span!("seed_relay", final_turn = Empty)).await;
     }
 }
 

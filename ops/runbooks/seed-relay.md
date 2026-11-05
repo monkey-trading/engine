@@ -61,6 +61,14 @@ the alert ends once both upcoming turns have their seeds. The message names the 
   has forked. Relaying resumes only with a node release that reads the new fork's state and, unless
   the relay was deployed with the new fork's version, a new relay and a receiver that names it. Both
   are the owner's to schedule; until then every turn draws from the fallback.
+- **"waited … for a block: replacing it at its nonce"**: the relayer's transaction stayed pending,
+  usually because the base fee rose past its fee cap, and the relayer replaced it at the same nonce
+  with fees a quarter higher. It keeps one relay in flight at a time, so nothing queues behind it.
+- **"a transaction this node is not tracking"**: a pending transaction holds the relayer's next nonce,
+  one sent before a restart or by a send whose answer was lost, and the relayer sends nothing until it
+  settles. Compare `cast nonce $RELAYER --block pending --rpc-url $L1_RPC` with `--block latest`. If it
+  does not mine, replace it with a zero-value transfer from the relayer to itself at the latest nonce
+  and higher fees. **Changes the live system** (a transaction on Ethereum): get the owner's approval.
 - **"has not reached Arbitrum"**: the relay was sent to Ethereum but no seed arrived within
   `resend_after`, and the relayer relays it again. Look up the relay transaction's retryable ticket on
   Arbitrum. If the ticket exists but its automatic redemption failed, anyone may redeem it with

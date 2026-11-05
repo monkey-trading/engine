@@ -19,9 +19,15 @@ const FINAL: u64 = 20_763;
 const FULU: [u8; 4] = [6, 0, 0, 0];
 
 #[tokio::test]
-async fn each_open_turn_without_a_seed_is_relayed_once_from_one_proven_state() {
+async fn open_turns_are_relayed_one_at_a_time_from_one_proven_state() {
     let fake = Fake::new(slot_past(FINAL + 2));
     let mut relayer = relayer(&fake);
+    relayer.poll().await;
+    // While the first relay waits for a block, nothing else goes out.
+    relayer.poll().await;
+    assert_eq!(fake.sent.lock().unwrap().len(), 1);
+    let first = fake.hashes.lock().unwrap()[0];
+    fake.receipts.lock().unwrap().insert(first, Some(true));
     relayer.poll().await;
     let sent = fake.sent.lock().unwrap().clone();
     assert_eq!(sent.len(), 2);
@@ -39,9 +45,6 @@ async fn each_open_turn_without_a_seed_is_relayed_once_from_one_proven_state() {
         assert_eq!(*replacing, None);
     }
     assert_eq!(*fake.states.lock().unwrap(), 1, "both turns are proven from one download");
-    // Within `resend_after`, a turn this node relayed waits for Arbitrum.
-    relayer.poll().await;
-    assert_eq!(fake.sent.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -54,25 +57,54 @@ async fn a_turn_whose_epoch_is_not_yet_final_waits_for_a_later_block() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_relay_not_on_arbitrum_by_resend_after_alerts_and_goes_out_again() {
+async fn a_relay_waiting_for_a_block_is_replaced_at_its_nonce_and_one_not_on_arbitrum_goes_out_again() {
     let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
     let fake = Fake::new(slot_past(FINAL + 2));
     let mut relayer = relayer(&fake);
+    let hour = Duration::from_secs(3601);
     relayer.poll().await;
-    let first = fake.hashes.lock().unwrap().clone();
-    // The first turn's relay is in a block; the second's still waits for one.
-    fake.receipts.lock().unwrap().insert(first[0], Some(true));
-    tokio::time::advance(Duration::from_secs(3601)).await;
+    tokio::time::advance(hour).await;
+    relayer.poll().await;
+    let hashes = fake.hashes.lock().unwrap().clone();
+    assert_eq!(fake.sent.lock().unwrap()[1].2, Some(hashes[0]), "the waiting relay is replaced at its nonce");
+    assert!(named(&mut alerts, "seed_relay_failed").iter().any(|a| a["message"].contains("waited")));
+    // Another member's relay of the first turn lands; the stuck one is replaced by the next turn's relay.
+    fake.seeds(|seeds| seeds[1] = B256::repeat_byte(8));
+    tokio::time::advance(hour).await;
     relayer.poll().await;
     let sent = fake.sent.lock().unwrap().clone();
-    assert_eq!(sent.len(), 4);
-    assert_eq!(sent[2].2, None, "a relay in a block is sent again at a new nonce");
-    assert_eq!(sent[3].2, Some(first[1]), "a pending relay is replaced at its nonce");
+    assert_eq!(sent[2].2, Some(hashes[1]));
+    assert_eq!(ISeedRelay::relayCall::abi_decode(&sent[2].0).unwrap().turn, FINAL + 2);
+    // In a block but not on Arbitrum after `resend_after`, the turn goes out again at a new nonce.
+    let mined = *fake.hashes.lock().unwrap().last().unwrap();
+    fake.receipts.lock().unwrap().insert(mined, Some(true));
+    relayer.poll().await;
+    assert_eq!(fake.sent.lock().unwrap().len(), 3);
+    tokio::time::advance(hour).await;
+    relayer.poll().await;
+    assert_eq!(fake.sent.lock().unwrap()[3].2, None);
     assert!(named(&mut alerts, "seed_relay_failed").iter().any(|a| a["message"].contains("has not reached Arbitrum")));
     // Once both turns have their seeds the episode ends.
-    fake.seeds(|seeds| seeds[1..].fill(B256::repeat_byte(9)));
+    fake.seeds(|seeds| seeds[2] = B256::repeat_byte(9));
     relayer.poll().await;
     assert_eq!(named(&mut resolved, "seed_relay_failed").len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pending_transaction_the_node_does_not_track_holds_relays_back() {
+    let (_guard, mut alerts, _) = capture_alerts_and_resolutions();
+    let fake = Fake::new(slot_past(FINAL + 2));
+    *fake.nonces.lock().unwrap() = (4, 5);
+    let mut relayer = relayer(&fake);
+    relayer.poll().await;
+    assert!(fake.sent.lock().unwrap().is_empty());
+    assert!(named(&mut alerts, "seed_relay_failed").is_empty(), "a pending transaction may just be slow");
+    tokio::time::advance(Duration::from_secs(3601)).await;
+    relayer.poll().await;
+    assert!(named(&mut alerts, "seed_relay_failed")[0]["message"].contains("not tracking"));
+    *fake.nonces.lock().unwrap() = (5, 5);
+    relayer.poll().await;
+    assert_eq!(fake.sent.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -159,20 +191,24 @@ async fn a_receiver_read_that_fails_alerts_and_relays_nothing() {
 }
 
 #[tokio::test]
-async fn a_failed_send_proves_from_the_same_state_until_another_block_is_final() {
+async fn a_failed_send_reuses_its_proven_state_while_the_block_anchors_a_relay() {
     let fake = Fake::new(slot_past(FINAL + 2));
     let mut relayer = relayer(&fake);
     *fake.send_error.lock().unwrap() = Some("insufficient funds".to_owned());
     relayer.poll().await;
     relayer.poll().await;
-    assert_eq!(*fake.states.lock().unwrap(), 1, "the state is downloaded once while its block is the final one");
-    // A later finalized block brings a new state.
-    let later = Fake::at(slot_past(FINAL + 2) + 32);
+    // A block finalized since, within a day of slots, does not bring a new download.
+    let later = Fake::at(slot_past(FINAL + 2) + PROVEN_SLOTS - 1);
     *fake.later.lock().unwrap() = Some((later.header, later.state, later.roots));
+    relayer.poll().await;
+    assert_eq!(*fake.states.lock().unwrap(), 1, "one download while the proven block anchors a relay");
+    let past = Fake::at(slot_past(FINAL + 2) + PROVEN_SLOTS);
+    *fake.later.lock().unwrap() = Some((past.header, past.state, past.roots));
     *fake.send_error.lock().unwrap() = None;
     relayer.poll().await;
     assert_eq!(*fake.states.lock().unwrap(), 2);
-    assert_eq!(fake.sent.lock().unwrap().len(), 2);
+    let sent = fake.sent.lock().unwrap().clone();
+    assert_eq!(ISeedRelay::relayCall::abi_decode(&sent[0].0).unwrap().witness.header.slot, past.header.slot);
 }
 
 /// Numbers the host's network supplies past what the clock holds fail the relay, never panic.
@@ -260,6 +296,8 @@ struct Fake {
     later: Mutex<Option<Finalized>>,
     receiver_error: Mutex<Option<String>>,
     send_error: Mutex<Option<String>>,
+    /// The relayer's nonce at the latest block, and counting its pending transactions.
+    nonces: Mutex<(u64, u64)>,
 }
 
 impl Fake {
@@ -302,6 +340,7 @@ impl Fake {
             later: Mutex::new(None),
             receiver_error: Mutex::new(None),
             send_error: Mutex::new(None),
+            nonces: Mutex::new((0, 0)),
         }
     }
 
@@ -371,6 +410,10 @@ impl SeedChains for Arc<Fake> {
 
     async fn receipt(&self, hash: B256) -> anyhow::Result<Option<bool>> {
         Ok(self.receipts.lock().unwrap().get(&hash).copied().flatten())
+    }
+
+    async fn nonces(&self) -> anyhow::Result<(u64, u64)> {
+        Ok(*self.nonces.lock().unwrap())
     }
 }
 

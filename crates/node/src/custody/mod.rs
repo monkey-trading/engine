@@ -108,7 +108,8 @@ pub(crate) fn heads_reader(cfg: &CustodySection) -> anyhow::Result<Quorum<VaultR
 }
 
 /// The custody providers' agreed reads of one contract the vault does not hold, such as the seed
-/// receiver: every call at one block a majority declares final, with that block's time. It has its
+/// receiver: every call at one block of the credit tag (`latest` in production), with that block's
+/// time. It has its
 /// own quorum state, and its alerts are Warnings under its own name, since nothing it reads credits
 /// or pays.
 pub(crate) struct ContractQuorum(Quorum<VaultRpc>);
@@ -122,8 +123,8 @@ impl ContractQuorum {
         Ok(Self(Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)?.named(name, false)))
     }
 
-    /// The final block's time, in seconds, and each of the calls to `to` that `calls` names for that
-    /// time, made there under its operation name.
+    /// The credit tag's block's time, in seconds, and each of the calls to `to` that `calls` names for
+    /// that time, made there under its operation name.
     /// Error cases:
     /// - the providers lack an identity, finality, header or call quorum, or name no final block
     pub(crate) async fn read(

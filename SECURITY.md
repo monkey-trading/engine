@@ -93,8 +93,8 @@ turn's draw deadline, from which its answer for the turn is final. What it still
   that fallback. No turn draws before the first seed arrives.
 - Its relayers, for liveness: nothing relays by itself, and a turn that reaches its deadline without a
   seed raises `seed_missing`.
-- The beacon state's layout. The relay's indices are those of the 64-field `BeaconState` from
-  Electra on, and it accepts only the fork versions it was deployed with; the relayer hashes only
+- The beacon state's layout. The relay's indices are those of the `BeaconState` from Electra on, whose
+  fields fill a 64-leaf tree, and it accepts only the fork versions it was deployed with; the relayer hashes only
   Fulu states. Any later fork stops relays until a node release reads its state and, unless its
   version was listed at deployment, a new relay and receiver are deployed; turns draw from the
   fallback meanwhile. Epochs are counted from 12-second slots.
