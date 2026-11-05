@@ -43,7 +43,7 @@ const PINGING: Timing = Timing {
     ping_interval: Duration::from_millis(50),
     max_delay: Duration::from_secs(1),
 };
-/// The commands after the roll that must quote June and never December.
+/// The commands after both venues quote June that must not quote December.
 const RUN: usize = 200;
 /// Far enough ahead that setup ends well before it, however long setup takes.
 const LATER_MS: Millis = 600_000;
@@ -177,24 +177,43 @@ async fn contracts_the_market_does_not_take_are_held_back_without_an_alert() {
     assert_no_feed_alert(&mut alerts);
 
     // March rolls in half a second from here. December, rolled off, is held back once the feeds
-    // learn of the roll, and June, now next, is sequenced. The feeds learn of it when their next
-    // confirmation is answered, so the check waits for a run of commands after the roll that
-    // quotes June and never December, however many commands the confirmation takes to arrive.
+    // learn of the roll, and June, now next, is sequenced. Each feed learns of it when its next
+    // confirmation is answered, and from then sends December no more, so once both venues have
+    // quoted June, which nothing sequenced before the roll, no later command quotes December. The
+    // waits are for those events, not for a time: they end when they happen, and the ceiling only
+    // bounds a hang.
     node.relist(futures(now_ms() + 500)).await;
     let rolled = || {
         commands(&applied)
             .iter()
             .position(|(_, _, events)| events.iter().any(|e| matches!(e, Event::MarketRolled { .. })))
     };
-    let at = wait_for(WAIT, rolled).await;
-    wait_for(WAIT, || {
-        let applied = commands(&applied);
-        let run = contracts(&applied[applied.len().checked_sub(RUN).filter(|from| *from > at)?..]);
-        (!run.contains(&"ESZ6".into()) && run.contains(&"ESM7".into())).then_some(())
-    })
-    .await;
+    wait_for(WAIT, rolled).await;
+    let quoted_june = |source: &str| {
+        commands(&applied).iter().position(|(_, cmd, _)| {
+            matches!(cmd, Command::Prices { quotes, .. }
+                if quotes.iter().any(|q| q.source == source && q.contract.as_deref() == Some("ESM7")))
+        })
+    };
+    let learned = wait_for(WAIT, || Some(quoted_june("kraken")?.max(quoted_june("bitstamp")?))).await;
+    wait_for(WAIT, || (commands(&applied).len() >= learned + RUN).then_some(())).await;
+    let after = commands(&applied);
+    assert!(!contracts(&after[learned..]).contains(&"ESZ6".into()), "December quoted after both feeds learned");
     assert!(events_of(&applied).iter().all(|e| !matches!(e, Event::PricesRejected { .. })));
     assert_no_feed_alert(&mut alerts);
+}
+
+#[tokio::test]
+async fn a_loopback_venue_serves_the_feed_again_after_it_drops() {
+    let url = listen_and_serve(Venue::Kraken, &["ESZ6"]).await;
+    for connection in 0..2 {
+        let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("connected");
+        futures_util::SinkExt::send(&mut ws, tokio_tungstenite::tungstenite::Message::text("subscribe"))
+            .await
+            .expect("subscribed");
+        let book = timeout(Duration::from_secs(10), ws.next()).await;
+        assert!(book.is_ok(), "connection {connection} was not served");
+    }
 }
 
 #[tokio::test]
@@ -247,22 +266,27 @@ async fn start_venue(node: &Node, venue: Venue, symbols: &[(MarketId, &str, Opti
     start_feed(node, venue, symbols, &url);
 }
 
-/// A loopback `venue` quoting `names` every 20ms, stamped now, and the URL that reaches it.
+/// A loopback `venue` quoting `names` every 20ms, stamped now, and the URL that reaches it. It
+/// serves every connection the feed makes: a feed starved on a loaded runner past its read timeout
+/// reconnects, and a venue that served only the first would leave it with no quotes for good.
 async fn listen_and_serve(venue: Venue, names: &[&str]) -> String {
     let (listener, url) = listen().await;
     let names: Vec<String> = names.iter().map(|name| (*name).to_owned()).collect();
     tokio::spawn(async move {
-        let (ws, _) = accept(&listener).await;
-        let books = move || {
-            names
-                .iter()
-                .map(|symbol| match venue {
-                    Venue::Bitstamp => bitstamp_book(symbol, "100", "101", now_ms()),
-                    _ => kraken_book(symbol, "100", "101", now_ms()),
-                })
-                .collect()
-        };
-        let _ = stream(ws, books).await;
+        loop {
+            let (ws, _) = accept(&listener).await;
+            let names = names.clone();
+            let books = move || {
+                names
+                    .iter()
+                    .map(|symbol| match venue {
+                        Venue::Bitstamp => bitstamp_book(symbol, "100", "101", now_ms()),
+                        _ => kraken_book(symbol, "100", "101", now_ms()),
+                    })
+                    .collect()
+            };
+            let _ = stream(ws, books).await;
+        }
     });
     url
 }
