@@ -73,7 +73,7 @@ pub struct Replayed {
     pub ts_at: Option<Millis>,
     /// The sequenced time of the command the vault-finalized checkpoint covers, where the replay or
     /// its snapshot reached it, or, with `[log_heads]`, the snapshot's prefix pass did for one under
-    /// its base with no later head posted: the stall alarm's other anchor.
+    /// its base with no head posted: the stall alarm's anchor while no head of this key is posted.
     pub anchor_ts: Option<Millis>,
 }
 

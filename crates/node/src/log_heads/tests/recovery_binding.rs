@@ -237,10 +237,10 @@ fn startup_checks_the_newest_head_of_this_keys_epochs_and_parents_only_on_the_cu
 }
 
 #[test]
-fn startup_anchors_the_stall_alarm_on_the_later_of_the_head_and_the_finalized_checkpoint() {
+fn startup_anchors_the_stall_alarm_on_the_head_or_with_none_posted_the_finalized_checkpoint() {
     // The checkpoint at seq 0 covers a command stamped at 0 ms. With no head of this key posted the
     // alarm counts from that stamp, with nothing finalized from nothing, and with this log's head at
-    // seq 1, stamped at 1 ms, from the later of the two.
+    // seq 1, stamped at 1 ms, from the head.
     let (dir, _, last_prefix, checkpoint) = log_with_shutdown_checkpoint("log-head-finalized-anchor");
     let rpc_dir = crate::test_support::scratch_dir("log-head-finalized-anchor-rpc");
     std::fs::create_dir_all(&rpc_dir).unwrap();
@@ -252,12 +252,12 @@ fn startup_anchors_the_stall_alarm_on_the_later_of_the_head_and_the_finalized_ch
     let posted = recover_from(&dir, Some(parent), Some(1));
     assert_eq!(anchored(&posted, Some(Head { seq: 1, link: last_prefix }), &rpc_dir), Some((1, Some(1))));
     // A head older than the finalized checkpoint — the common case, posted hourly while checkpoints
-    // finalize every few minutes: the checkpoint at seq 1, stamped at 1 ms, wins over the head at
-    // seq 0, stamped at 0 ms.
+    // finalize every few minutes: the head at seq 0, stamped at 0 ms, still anchors, so a newer
+    // checkpoint at seq 1, stamped at 1 ms, does not restart the count.
     let (dir, first_prefix, _, checkpoint) = log_with_checkpoint("log-head-finalized-later", 1);
     let parent = crate::log::CheckpointParent { has_checkpoint: true, seq: 1, root: checkpoint.root.parse().unwrap() };
     let older = recover_from(&dir, Some(parent), Some(0));
-    assert_eq!(anchored(&older, Some(Head { seq: 0, link: first_prefix }), &rpc_dir), Some((0, Some(1))));
+    assert_eq!(anchored(&older, Some(Head { seq: 0, link: first_prefix }), &rpc_dir), Some((0, Some(0))));
 }
 
 /// The poster's stall anchor after `startup` checks `log` against `posted`.

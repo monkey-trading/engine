@@ -107,9 +107,9 @@ pub(crate) struct Poster<R> {
     /// The startup-quorum-authenticated posted head and the epoch it was read under: the seed for
     /// the poster's per-epoch confirmed head — the parent the first post after a restart names.
     pub confirmed: Option<(u64, Head)>,
-    /// The seq of the head startup checked the log against (0 with none posted), and the later of
-    /// its command's stamp and the vault-finalized checkpoint's: the stall alarm's starting point,
-    /// so a restart neither counts that head as an advance nor resets the time since the stamp.
+    /// The seq of the head startup checked the log against (0 with none posted), and its command's
+    /// stamp, or, with none posted, the vault-finalized checkpoint's: the stall alarm's starting
+    /// point, so a restart neither counts that head as an advance nor resets the time since it.
     pub anchored: Option<(u64, Option<engine_core::types::Millis>)>,
     /// Trusted time, which the stall alarm measures the time since the anchored command against;
     /// `None` measures this process's time only.
@@ -142,8 +142,9 @@ impl<R: HeadsChain> Poster<R> {
         // interval after it, the bound the post had to be included in.
         let mut first_post: Option<tokio::time::Instant> = None;
         // Anchoring progress: the last time a quorum read observed the on-chain head advance, and,
-        // until one does, trusted time since startup's anchor was stamped — which neither a
-        // restart nor a log cut back to it resets. That carried time counts once this process's
+        // until one does, trusted time since startup's anchor was stamped — the checked head's,
+        // which neither a restart nor a log cut back to it resets, or, with no head posted, the
+        // newest finalized checkpoint's. That carried time counts once this process's
         // first post has had a posting interval to be included, so a restart after a long stop
         // does not page before its first post lands. Past three intervals with a newer released
         // head, the stall alert fires once per episode. Acceptance proves no inclusion, so it

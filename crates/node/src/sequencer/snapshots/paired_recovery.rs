@@ -101,10 +101,11 @@ impl Sequencer {
 /// Accepts no later head as checkpoint C; every suffix entry still passes current strict Replay.
 /// A posted head at or under C is verified against the on-disk prefix before the snapshot is
 /// accepted; that refusal (see `log_heads::prefix::Rollback`) aborts recovery rather than falling
-/// back, so a forked prefix cannot be served from the snapshot.
+/// back, so a forked prefix cannot be served from the snapshot. With `[log_heads]` and no head
+/// posted, the same pass stamps a vault-finalized checkpoint under C.
 /// Error cases:
 /// - certificate, fixed metadata, prefix extension, boundary bytes, replay, the posted-head prefix
-///   check, or availability fails
+///   check or the anchor-stamping pass, or availability fails
 #[allow(clippy::too_many_arguments)]
 fn candidate(
     cfg: &NodeConfig,
@@ -124,15 +125,11 @@ fn candidate(
     // the on-disk prefix through it — no engine apply, so snapshot recovery keeps its savings. The
     // verified base prefix is the snapshot's own certified `command_prefix`, which
     // `from_snapshot` seeds; the posted command's sequenced time is carried to the stall alarm.
-    // With `[log_heads]`, the same pass stamps a vault-finalized checkpoint under the base, the
-    // alarm's anchor where no later head is posted; the suffix replay stamps one past the base.
+    // With `[log_heads]` and no head posted, the same pass stamps a vault-finalized checkpoint under
+    // the base, the alarm's anchor then; the suffix replay stamps one past the base.
     let posted = capture.filter(|posted| posted.seq <= at.seq);
-    let anchor = parent.filter(|parent| {
-        cfg.log_heads.is_some()
-            && parent.has_checkpoint
-            && parent.seq < at.seq
-            && capture.is_none_or(|posted| posted.seq < parent.seq)
-    });
+    let anchor = parent
+        .filter(|parent| cfg.log_heads.is_some() && parent.has_checkpoint && parent.seq < at.seq && capture.is_none());
     let (mut posted_ts, mut anchor_ts) = (None, None);
     if posted.is_some() || anchor.is_some() {
         let trusted = signer.context("snapshot recovery needs the trusted signer to verify the log's prefix")?;

@@ -8,7 +8,8 @@
 //! so snapshot recovery keeps its savings, and one pass binds the scanned bytes
 //! to the snapshot the node is about to resume. A host that serves one fork to this pass and
 //! another to suffix recovery fails the prefix comparison; a seal failure or a posted-digest
-//! mismatch refuses startup.
+//! mismatch refuses startup. With no head posted, the same pass stamps the command a
+//! vault-finalized checkpoint under the base covers, for the stall alarm.
 
 use std::path::Path;
 
@@ -129,9 +130,6 @@ pub(crate) fn verify(
         }
         posted_ts = Some(ts);
     }
-    if let Some(seq) = anchor {
-        anchor_ts.with_context(|| format!("the log holds no command at the finalized checkpoint's seq {seq}"))?;
-    }
     // Without a posted head, a mismatch is a cache that is not this log's history, which recovery
     // rejects and replays past; only a head on chain makes it a rollback.
     ensure!(
@@ -146,6 +144,10 @@ pub(crate) fn verify(
              prefix: the on-disk prefix is not the snapshot's history; refusing to start"
         );
         return Err(anyhow::Error::new(Rollback));
+    }
+    // Checked after the prefix comparisons, so a log cut under the anchor is the rollback it is.
+    if let Some(seq) = anchor {
+        anchor_ts.with_context(|| format!("the log holds no command at the finalized checkpoint's seq {seq}"))?;
     }
     let base_prefix = base_prefix.context("the log holds no command at the snapshot base")?;
     Ok(Verified { base_prefix, posted_ts, anchor_ts })
@@ -239,6 +241,18 @@ mod tests {
         let foreign = [9; 32];
         let error = verify(&dir, DOMAIN, signer, None, Some(0), 1, foreign).unwrap_err();
         assert!(!error.is::<Rollback>() && format!("{error:#}").contains("certified prefix"), "{error:#}");
+    }
+
+    #[test]
+    fn the_prefix_pass_judges_the_prefix_before_a_missing_anchor() {
+        // A head is posted and the anchor's command is missing: a prefix that is not the snapshot's
+        // is the rollback, judged first; with the snapshot's prefix, the missing anchor is an error.
+        let (dir, signer, at_zero, _, prefix) = sealed_log("prefix-anchor-order", false);
+        let posted = Some(Head { seq: 0, link: at_zero.into() });
+        let error = verify(&dir, DOMAIN, signer, posted, Some(5), 1, [9; 32]).unwrap_err();
+        assert!(error.is::<Rollback>(), "{error:#}");
+        let error = verify(&dir, DOMAIN, signer, posted, Some(5), 1, prefix).unwrap_err();
+        assert!(!error.is::<Rollback>() && format!("{error:#}").contains("finalized checkpoint's seq 5"), "{error:#}");
     }
 
     #[test]

@@ -66,11 +66,11 @@ async fn paired_recovery_binds_a_posted_head_under_the_base_to_the_on_disk_prefi
 
 #[tokio::test]
 async fn paired_recovery_stamps_the_finalized_checkpoint_for_the_stall_alarm() {
-    // With `[log_heads]`, the stall alarm's anchor is the later of the checked head's stamp and the
-    // vault-finalized checkpoint's. Paired recovery takes the checkpoint's from the prefix pass for
-    // one under the cache's base, from the cache itself at its base, and from the suffix replay past
-    // it — the value the full replay gives each time — with no head posted, or a head posted before
-    // the checkpoint. Without `[log_heads]` the pass never runs for it.
+    // With `[log_heads]` and no head of this key posted, the stall alarm's anchor is the
+    // vault-finalized checkpoint's stamp. Paired recovery takes it from the prefix pass for one under
+    // the cache's base, from the cache itself at its base, and from the suffix replay past it — the
+    // value the full replay gives each time. Without `[log_heads]`, or with a head posted, the pass
+    // never runs for it.
     let (cfg, checkpoints, base) = super::anchor::gated_log("paired-log-head-anchor").await;
     let caches = crate::snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap();
     let newest = super::anchor::seq_of(&caches[0]);
@@ -130,9 +130,11 @@ async fn paired_recovery_stamps_the_finalized_checkpoint_for_the_stall_alarm() {
             interval: std::time::Duration::from_secs(3600),
         });
         assert_eq!(recover(&copy, None), stamp, "{case}: no head posted");
-        // This log's head posted one seq before the finalized checkpoint.
-        let older = finalized.seq - 1;
-        let link = full(&copy.node.log_dir, None, Some(older)).1.expect("the log holds the head's seq");
-        assert_eq!(recover(&copy, Some(Head { seq: older, link })), stamp, "{case}: a head before the checkpoint");
+        if case == "work" {
+            // This log's head, posted one seq before the checkpoint, anchors instead.
+            let older = finalized.seq - 1;
+            let link = full(&copy.node.log_dir, None, Some(older)).1.expect("the log holds the head's seq");
+            assert_eq!(recover(&copy, Some(Head { seq: older, link })), None, "a posted head needs no anchor pass");
+        }
     }
 }

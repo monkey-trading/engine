@@ -170,8 +170,8 @@ async fn read_posted_with_retry(
 /// The startup gate and poster setup in one call: checks the posted head against the link the
 /// replay captured — accepting it seq-only at or under an attested snapshot base, which determines
 /// the content there — and builds the poster with the watch at the recovered head and its stall
-/// alarm started from the later of the checked head's stamp and the vault-finalized checkpoint's. A
-/// detected rollback logs Critical `log_rollback` naming the range.
+/// alarm started from the checked head's stamp, or the vault-finalized checkpoint's with no head
+/// posted. A detected rollback logs Critical `log_rollback` naming the range.
 /// Error cases:
 /// - the rollback check fails (its Critical names the range)
 pub(crate) fn startup(pending: Option<Pending>, log: &crate::sequencer::ReplayedLog) -> anyhow::Result<Option<Setup>> {
@@ -195,10 +195,10 @@ pub(crate) fn startup(pending: Option<Pending>, log: &crate::sequencer::Replayed
         })
         .inspect_err(|e| error!("refusing to serve: {e:#}"))?;
     }
-    // The stall alarm starts from the later of the checked head's stamp and the vault-finalized
-    // checkpoint's, not from this process: the checked head is no advance, and trusted time since
-    // that stamp counts, a head of this key posted or not.
-    let stamp = posted.and(log.replayed.ts_at).max(log.replayed.anchor_ts);
+    // The stall alarm starts from the checked head's stamp, or, with no head of this key posted,
+    // the vault-finalized checkpoint's, not from this process: the checked head is no advance, and
+    // trusted time since that stamp counts. A newer checkpoint does not move a head's anchor.
+    let stamp = posted.map_or(log.replayed.anchor_ts, |_| log.replayed.ts_at);
     poster.anchored = Some((posted.map_or(0, |head| head.seq), stamp));
     // The evidence that this log holds an on-chain head: each command's cumulative prefix as the
     // replay authenticated it, seeded before the poster's first read.

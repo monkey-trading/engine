@@ -814,7 +814,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   snapshot base), refuses a log the posted head does not hold within the custody finality budget —
   the current epoch's head or, while it holds none, the newest head of the earlier epochs the
   starting key signed — and builds the poster with the watch at the recovered head and its stall
-  alarm counting from the later of the checked head's stamp and the vault-finalized checkpoint's
+  alarm counting from the checked head's stamp, or the vault-finalized checkpoint's with no head
+  posted
 - `src/log_heads/tests/mod.rs` — the poster's loop tests: pacing, lost responses, rollback freezes
   at a higher or forked posted head, stall and transport-failure alert episodes, and the reorg
   reparenting
