@@ -56,3 +56,13 @@ def test_a_lane_reports_what_its_paths_count():
     stats = experiments.lane_stats(out, 0)
     assert (stats["ever_paths"], stats["p_ever"], stats["short_paths"], stats["p_short"]) == (7, 7 / n, 3, 3 / n)
     assert stats["p_ever_upper"] == pytest.approx(experiments.upper_bound(7, n))
+
+
+def test_the_study_inputs_give_btc_and_eth_the_genesis_100x_bands_and_a_flow_profile():
+    from run import inputs
+
+    _, _, _, flow, markets = inputs()
+    for symbol in ("BTC-USD", "ETH-USD"):
+        i = markets.symbols.index(symbol)
+        assert markets.margin_rate[i] == pytest.approx(0.01)
+        assert all((kind, "capped", markets.schedule[i]) in flow.sizes for kind in ("directional", "hedged"))

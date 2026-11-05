@@ -4,7 +4,7 @@
  "move_bps_l2": 200,
  "divergence_share_bps_l1": 6001,
  "divergence_share_bps_l2": 9500,
- "utilisation_bps_l1": 7000,
+ "utilisation_bps_l1": null,
  "utilisation_bps_l2": 9500,
  "method": {
   "move": {
@@ -17,16 +17,18 @@
    "divergence_share_l1": 6001,
    "divergence_share_l2": 9500,
    "tightest_bound_bps": 5,
-   "level2_cost_feasible": false
+   "level1": "share",
+   "level2": "fallback"
   },
   "utilisation": {
-   "utilisation_bps_l1": 7000,
+   "utilisation_bps_l1": null,
    "utilisation_bps_l2": 9500,
    "fire_rate_by_family": {
-    "house_cash_1pct": 0.01497,
-    "uniform_10M": 0.01419
+    "house_cash_1pct": 0.01331,
+    "uniform_10M": 0.12651
    },
-   "worst_market_fire_rate": 0.02853
+   "worst_market_fire_rate": 0.24425,
+   "highest_level_checked_bps": 9000
   }
  }
 }

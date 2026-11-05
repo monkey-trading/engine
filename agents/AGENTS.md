@@ -314,7 +314,9 @@ an index: load only the rule whose hint matches the current action.
   production stress triggers (#133): fast-move thresholds and window from minute-scale
   simulations of the markets' own hours, divergence-trigger shares from a stale-fill cost model,
   and utilisation levels from the Monte Carlo's hourly books, proposed into
-  `config/production-genesis.toml`. Its `toxicity` stage calibrates the production toxicity
+  `config/production-genesis.toml`. Its results are at BTC-USD's and ETH-USD's 100x margins
+  (#500): $1M on every market is the 1% floor for both measures, and no utilisation level below
+  9500 meets the fire-rate bounds. Its `toxicity` stage calibrates the production toxicity
   parameters (#130): `prior`, `memory`, tier thresholds and spreads from the observed fill sizes
   and the markets' markout volatility, proposed into
   `config/production-genesis.toml`. Its `retained` stage sizes the staking liquidity floor
