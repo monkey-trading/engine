@@ -5,15 +5,16 @@ mod anvil;
 pub(crate) use anvil::Anvil;
 mod source;
 mod tasks;
+mod transact;
 
 use std::path::Path;
 use std::process::{Command as Process, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy::primitives::{Address, B256, U64, U256};
+use alloy::primitives::{Address, U64, U256};
 use alloy::rpc::client::RpcClient;
-use alloy::rpc::types::{TransactionReceipt, TransactionRequest};
+use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
 use alloy::sol_types::{SolCall, SolValue};
 use engine_core::Fixed;
@@ -24,6 +25,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::time::sleep;
 
 use crate::checkpoints::scenario::tasks::local_rpc;
+pub(crate) use crate::checkpoints::scenario::transact::transact;
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
 use crate::config::{CheckpointSection, CustodyProvider, FinalityTag, RpcProviderSection};
 use crate::custody::Custody;
@@ -465,22 +467,6 @@ pub(crate) async fn deploy(provider: &RpcClient, from: Address, artifact: &str, 
 pub(super) async fn send(provider: &RpcClient, from: Address, to: Address, input: Vec<u8>) {
     let receipt = transact(provider, TransactionRequest::default().from(from).to(to).input(input.into())).await;
     assert!(receipt.status());
-}
-
-/// Sends through Anvil's unlocked account and polls its receipt under the scenario deadline.
-pub(crate) async fn transact(provider: &RpcClient, transaction: TransactionRequest) -> TransactionReceipt {
-    let hash: B256 = provider.request("eth_sendTransaction", (transaction,)).await.unwrap();
-    crate::test_support::wait_for("the transaction receipt", async {
-        loop {
-            if let Some(receipt) =
-                provider.request::<_, Option<TransactionReceipt>>("eth_getTransactionReceipt", (hash,)).await.unwrap()
-            {
-                return receipt;
-            }
-            sleep(Duration::from_millis(30)).await;
-        }
-    })
-    .await
 }
 
 async fn submit(tx: &mpsc::Sender<Request>, cmd: Command) -> Option<Vec<engine_core::event::Event>> {
