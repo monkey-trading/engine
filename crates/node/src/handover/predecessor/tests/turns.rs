@@ -135,3 +135,24 @@ async fn a_successor_whose_own_time_has_not_reached_the_boundary_seals_nothing()
     assert!(std::fs::read_dir(&exchange.successor_dir).is_err(), "the successor sealed keys");
     assert!(!exchange.run.is_finished(), "the predecessor ended without a confirmation");
 }
+
+#[tokio::test]
+async fn a_turns_member_retrying_after_the_stop_is_admitted_once_the_sequencer_is_gone() {
+    let Logged { engine, _run: run, turn, key, boundary } = Logged::start("handover-turn-retry-log");
+    let mut exchange = Exchange::start_logged("handover-turn-retry", Some(engine.clone())).await;
+    exchange.schedule_successor(turn, key, boundary);
+    exchange.reach(boundary);
+    let head = write_log_tail(&exchange.successor_log, 9, &exchange.old.enclave_key().unwrap());
+    let answer = exchange.answer_drain(Ok(head));
+    // The first attempt stops sequencing, then fails on the successor's side.
+    exchange.reached = Some(boundary - 1);
+    assert!(exchange.take().await.is_err(), "keys sealed before the successor's time reached the boundary");
+    // The stopped node's sequencer ends; the listener holds no sender of its own to keep it.
+    drop(engine);
+    timeout(Duration::from_secs(5), run).await.expect("the sequencer ended").unwrap().unwrap();
+    exchange.reached = Some(boundary);
+    let store = exchange.take().await.expect("the retry is admitted under the turn the log accepted");
+    assert_eq!((store.release(), store.generation()), (exchange.upgrade(), TURN_GENERATION));
+    timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
+    assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
+}

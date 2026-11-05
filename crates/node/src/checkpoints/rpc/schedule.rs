@@ -8,7 +8,7 @@ use alloy::sol_types::SolCall;
 use anyhow::{Context, ensure};
 use engine_core::types::{AccountId, Millis};
 
-use crate::checkpoints::rpc::{candidateOfCall, namedOperatorCall, registryCall};
+use crate::checkpoints::rpc::{candidateOfCall, registryCall};
 use crate::checkpoints::{CheckpointRpc, HandoverSource, Observation, ScheduledTurn, View};
 
 sol! {
@@ -24,6 +24,7 @@ sol! {
         address source;
     }
     function turnAt(uint64 timestamp) external view returns (uint64 turn, TurnReturn memory);
+    function rotationState() external view returns (bool enabled, bytes32 release, uint64 generation, uint64 until);
 }
 
 impl CheckpointRpc {
@@ -58,12 +59,14 @@ impl CheckpointRpc {
         }
         let boundary = engine_core::turns::boundary(turn).context("the turn's boundary is out of range")?;
         // Once the turn is over it still names its member, unless the registry has since installed
-        // an operator, which ends the turns: the registry then names that operator instead.
-        if now_ms >= boundary.saturating_add(engine_core::turns::DAY_MS) {
-            let raw = self.call(registry, namedOperatorCall {}.abi_encode(), block).await?;
-            if namedOperatorCall::abi_decode_returns(&raw)?.candidate != drawn.candidate {
-                return Ok(None);
-            }
+        // an operator, which ends the turns: at the block, the turn that started last is this one,
+        // and the registry names no turn and no generation within it. A turn the block has yet to
+        // reach, as at a boundary finality trails, is not ended by anything the block shows.
+        let raw = self.call(registry, rotationStateCall {}.abi_encode(), block).await?;
+        let state = rotationStateCall::abi_decode_returns(&raw).context("decoding the registry's rotation state")?;
+        let ends = u64::try_from(boundary + engine_core::turns::DAY_MS).ok().map(|ms| ms / 1000);
+        if Some(state.until) == ends && state.generation == 0 {
+            return Ok(None);
         }
         let member = self.candidacy(registry, drawn.candidate, block).await?;
         // The holder the registry named when the turn was drawn, which hands the member the keys.

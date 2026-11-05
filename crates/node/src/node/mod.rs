@@ -307,7 +307,7 @@ async fn serve_node(
         && let Some(predecessor) =
             crate::handover::Predecessor::bind(&cfg, store, attestor, &key, trusted(), drain_tx, signing_rx).await?
     {
-        handover.spawn(predecessor.with_secrets(delivered.store.clone()).with_engine(tx.clone()).run());
+        handover.spawn(predecessor.with_secrets(delivered.store.clone()).with_engine(&tx).run());
     }
     if let Some(store) = &store
         && let Some(vault) = crate::handover::vault_reader(&cfg)?

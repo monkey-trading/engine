@@ -70,7 +70,7 @@ impl Member {
 
     /// The config its node runs: sealing with a handover listener at its endpoint, its log, the
     /// chain's custody and vault, and the config hash its release names.
-    fn config(&self, chain: &Chain) -> NodeConfig {
+    pub(super) fn config(&self, chain: &Chain) -> NodeConfig {
         let mut cfg = dev_config();
         cfg.tee.use_published_mock_key = false;
         cfg.tee.sealing = Some(
@@ -139,7 +139,7 @@ impl Holder {
                 .await
                 .unwrap()
                 .expect("[tee.sealing.handover] binds the listener")
-                .with_engine(node.state.tx.clone());
+                .with_engine(&node.state.tx);
         Self { member, node, listener: tokio::spawn(listener.run()), drains }
     }
 
@@ -153,6 +153,8 @@ impl Holder {
         let vault = crate::handover::vault_reader(&cfg).unwrap().expect("[checkpoints] reads the vault");
         let reached = self.node.trusted().reached_ms().expect("the node holds a trusted time sample");
         let at = vault.observe(View::Finalized, &[]).await.unwrap();
+        // A start at the boundary, as finality trails it, finds the turn drawn.
+        assert!(crate::handover::turns::drawn(&vault, &at).await.unwrap(), "a start finds no turn drawn");
         let scheduled = vault.scheduled_turn(&at, reached).await.unwrap().expect("the finalised schedule names a turn");
         let source = scheduled.source.clone().expect("the turn takes over from another member");
         let sealer = MockSealer { launch_digest: to.digest };

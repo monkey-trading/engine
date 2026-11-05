@@ -13,10 +13,15 @@ use anyhow::{Context, ensure};
 use engine_core::types::Millis;
 use tracing::{info, warn};
 
-use crate::checkpoints::{CheckpointChain, Observation, ScheduledTurn};
+use crate::checkpoints::{CheckpointChain, HandoverSource, Observation, ScheduledTurn};
 use crate::config::NodeConfig;
 use crate::handover::{ensure_named, folded_release};
-use crate::tee::sealing::Release;
+use crate::tee::Attestor;
+use crate::tee::sealing::{KeyStore, Release, Sealer};
+
+/// How many drawn turns back from its own a member that finds no source holding the keys looks: a
+/// week of members that never took their turns, past which the governance fallback applies.
+const SOURCE_LOOKBACK: usize = 7;
 
 /// The generation in which the vault names `release` at `at` and trusted time `reached_ms`, a time
 /// true time has certainly reached, and the turn that names it when one does: the turn the finalised
@@ -71,12 +76,12 @@ pub(crate) fn ensure_turn_names(turn: &ScheduledTurn, release: &Release) -> anyh
 }
 
 /// The turn the finalised schedule names now, by a one-off Roughtime sample, at a start; `None` when
-/// the vault's registry names no schedule or no turn names anyone. A start needs no sample then.
+/// no turn is drawn (`drawn`), or none names anyone by then. A start needs no sample without one.
 /// Error cases:
 /// - the vault cannot be read, or, with a turn drawn, no trusted time sample can be taken
 pub(crate) async fn at_start(cfg: &NodeConfig, vault: &impl CheckpointChain) -> anyhow::Result<Option<ScheduledTurn>> {
     let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
-    if vault.scheduled_turn(&at, engine_core::types::MAX_STAMP_MS).await?.is_none() {
+    if !drawn(vault, &at).await? {
         return Ok(None);
     }
     let clock: Arc<dyn crate::clock::Clock> = Arc::new(crate::clock::SystemClock);
@@ -85,24 +90,107 @@ pub(crate) async fn at_start(cfg: &NodeConfig, vault: &impl CheckpointChain) -> 
     turn_at(vault, &at, Some(reached)).await
 }
 
+/// Whether the finalised schedule at `at` has drawn a turn that names its member at some time, even
+/// one the finalised block has yet to reach: false when the vault's registry names no schedule, no
+/// turn is drawn, or an installation ended the turns.
+/// Error cases:
+/// - the schedule cannot be read
+pub(crate) async fn drawn(vault: &impl CheckpointChain, at: &Observation) -> anyhow::Result<bool> {
+    Ok(vault.scheduled_turn(at, engine_core::types::MAX_STAMP_MS).await?.is_some())
+}
+
 /// Whether the turn the finalised schedule names at trusted time `reached_ms` holds `sealed` in
-/// `generation`; `None` when no turn names anyone, or the schedule cannot be read, so the vault's own
-/// release decides.
+/// `generation`, and that turn's boundary; `None` when no turn names anyone, or the schedule cannot
+/// be read, so the vault's own release decides.
 pub(crate) async fn names(
     vault: &impl CheckpointChain,
     sealed: &Release,
     generation: u64,
     reached_ms: Option<Millis>,
-) -> Option<bool> {
+) -> Option<(bool, Millis)> {
     let turn = async {
         let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
         turn_at(vault, &at, reached_ms).await
     };
     match turn.await {
-        Ok(turn) => turn.map(|turn| turn.release == sealed.id() && turn.generation == generation),
+        Ok(turn) => turn.map(|turn| (turn.release == sealed.id() && turn.generation == generation, turn.boundary)),
         Err(e) => {
             warn!("reading the operator schedule failed: {e:#}");
             None
         }
     }
 }
+
+/// The operators a member of `turn` may take the keys from, in the order it tries them: the turn's
+/// source, the operator the registry named when the turn was drawn, then each earlier drawn turn's
+/// source, up to `SOURCE_LOOKBACK` turns back, since a member that never took its turn leaves the
+/// keys with the one before it. Each distinct operator with a handover endpoint, never the member.
+/// Error cases:
+/// - the schedule cannot be read
+pub(crate) async fn sources(
+    vault: &impl CheckpointChain,
+    at: &Observation,
+    turn: &ScheduledTurn,
+) -> anyhow::Result<Vec<HandoverSource>> {
+    let mut sources: Vec<HandoverSource> = Vec::new();
+    let mut drawn = Some(turn.clone());
+    for _ in 0..=SOURCE_LOOKBACK {
+        let Some(this) = drawn.take() else { break };
+        if let Some(source) = this.source.as_ref().filter(|source| {
+            source.candidate != turn.candidate
+                && !source.handover_endpoint.is_empty()
+                && sources.iter().all(|listed| listed.candidate != source.candidate)
+        }) {
+            sources.push(source.clone());
+        }
+        drawn = vault.scheduled_turn(at, this.boundary - 1).await.context("reading the operator schedule")?;
+    }
+    Ok(sources)
+}
+
+/// Takes `turn`'s keys, which the finalised schedule at `at` names this release for, from the first
+/// of its `sources` that hands them over: each one's published log first, then the keys and the log's
+/// tail by the handover, with trusted time at the turn's boundary.
+/// Error cases:
+/// - no source has a handover endpoint, the vault's signers cannot be read, or every source fails
+pub(crate) async fn take_keys(
+    cfg: &NodeConfig,
+    vault: &impl CheckpointChain,
+    at: &Observation,
+    turn: &ScheduledTurn,
+    sealer: &dyn Sealer,
+    attestor: &dyn Attestor,
+) -> anyhow::Result<KeyStore> {
+    let sources = sources(vault, at, turn).await?;
+    ensure!(
+        !sources.is_empty(),
+        "turn {} names this release but no operator with a handover endpoint to take its keys from",
+        turn.turn
+    );
+    let signers = crate::handover::vault_signers(vault, at).await?;
+    let mut failures = Vec::new();
+    for source in sources {
+        info!(turn = turn.turn, predecessor = %source.handover_endpoint, "daily turn: taking the keys");
+        let source = crate::handover::Source {
+            endpoint: source.handover_endpoint,
+            api_hostname: source.api_hostname,
+            release: source.release,
+            candidate: source.candidate,
+        };
+        let taken = async {
+            crate::handover::sync_predecessor_log(cfg, &source, signers.clone()).await?;
+            crate::handover::take(cfg, &source.endpoint, sealer, attestor, vault, Some(turn.boundary)).await
+        };
+        match taken.await {
+            Ok(store) => return Ok(store),
+            Err(e) => {
+                warn!(predecessor = %source.endpoint, "daily turn: this operator handed no keys over: {e:#}");
+                failures.push(format!("{}: {e:#}", source.endpoint));
+            }
+        }
+    }
+    anyhow::bail!("no operator handed turn {}'s keys over: {}", turn.turn, failures.join("; "))
+}
+
+#[cfg(test)]
+mod tests;

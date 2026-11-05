@@ -399,7 +399,8 @@ an index: load only the rule whose hint matches the current action.
   drawn from relayed seeds, and at each boundary the turn's key applies and the previous one's is
   refused, the incumbent hands the keys and the log over while the vault's finalised view still names
   its release, the member's first command is `TurnTaken` and its time in office starts there,
-  `/v1/operator` shows the sets and turns, and the last member's log replays;
+  `/v1/operator` shows the sets and turns, and the last member's log replays; then an installation of
+  the last turn's own candidate ends the turns;
   `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
   contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
   relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped
@@ -695,7 +696,8 @@ Run from the repo root:
   operator-share harness's in-process nodes on a test clock, against a custody Anvil finalising two
   blocks behind its head and the seed relay fixture's stand-in Ethereum; five daily turns, each
   handover through the real listener and `handover::take`, the admin keys, `TurnTaken`, the time in
-  office and `/v1/operator` checked at each boundary, then the log replayed)
+  office and `/v1/operator` checked at each boundary, then the log replayed and the turns ended by an
+  installation)
 - Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens
   read through the custody quorum into `/v1/operators`, the closed epochs in `/v1/monkey/distributions`
   across a delegation and a restart, and each saved answer verified with `engine verify-response`)

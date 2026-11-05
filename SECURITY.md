@@ -336,8 +336,10 @@ delay; from V51 a registry that names a schedule rotates the operator daily inst
 close adopts a rotation set seven days plus the finality margin before it takes effect, and anyone
 draws each 22:30 UTC turn from the set in effect at its draw deadline, a day before the boundary, until
 the boundary, with a seed relayed from Ethereum, so whoever can withhold every relay until a turn's
-draw deadline chooses between that turn's seed and the fallback, and nothing in the node draws, so a
-turn nobody draws leaves the member before it named;
+draw deadline chooses between that turn's seed and the fallback, a member's listing and admin key are
+read when the draw lands, so a deregistration or approval withdrawal that lands inside the window lets
+the drawer choose by ordering its draw around it, and nothing in the node draws, so a turn nobody
+draws leaves the member before it named;
 a turn's key signs from its boundary only when a set mirrored at least seven days earlier names it;
 the vault names the turn's release, in the generation the schedule fixed, from the boundary without a
 transaction, and both enclaves of a handover accept the turn's member from the finalised schedule

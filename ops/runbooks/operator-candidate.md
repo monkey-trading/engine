@@ -287,8 +287,8 @@ moves no longer reach the vault.
 
 With a schedule named, each election close while rotation is on adopts every eligible candidate as
 the rotation set, weighted by delegated stake, seven days plus the finality margin before the set
-takes effect; at most one set waits at a time. Without a quorum the set in effect stands, less the
-members no longer eligible. Anyone draws turn `n`, which starts at 22:30 UTC on day `n` of the Unix
+takes effect; each close's set waits out its own notice, however many wait. Without a quorum the
+latest set stands, less the members no longer eligible. Anyone draws turn `n`, which starts at 22:30 UTC on day `n` of the Unix
 epoch, from a day before that boundary until it: `cast send $SCHEDULE 'draw(uint64)' $n`. Draw each
 turn as soon as its deadline passes, so the engine mirrors it well before its boundary; a turn not
 drawn by its boundary is not drawn at all, and the member before it stays named.
@@ -300,11 +300,16 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
 - **At the boundary.** Start the node with no sealed keys for the turn's generation. It takes a trusted
   time sample, reads the turn from the finalised schedule, connects to the incumbent's handover
   endpoint, and takes the keys and the log's tail; neither side waits for chain finality after the
-  boundary. Its first command is `TurnTaken`, which starts your time in office for the operator's
-  share. A turn you hold again the next day needs no handover: your node logs `TurnTaken` for it at
-  the boundary.
+  boundary. When the turn before never changed hands, because its member never took it, the node
+  tries each earlier turn's source in turn, a week back at most, and the operator still holding the
+  keys hands them over. Failing that, start it with `--predecessor <host:port>` naming the holder's
+  handover endpoint. Its first command is `TurnTaken`, which starts your time in office for the
+  operator's share. A turn you hold again the next day needs no handover: your node logs `TurnTaken`
+  for it at the boundary.
 - **After your turn.** Your key stops signing at the next boundary, and you earn nothing past it,
-  even if your node keeps sequencing because no successor came. Hand over as section 4 describes.
+  even if your node keeps sequencing because no successor came. The next member's node takes the keys
+  from yours at the boundary; `release_superseded` pages only if it has not 15 minutes on. Hand over
+  as section 4 describes.
 - **A turn the engine refused.** `turn_refused` ([alerts.md](alerts.md)) means no set mirrored at
   least seven days earlier names your candidate with your key: the key in effect stays for that turn.
 - **Rotation off.** Turning rotation off stops draws; the turns already drawn stand, and the last

@@ -63,12 +63,18 @@ impl<C: CheckpointChain> Predecessor<C> {
 
     /// Refuses `turn` unless this release's log accepted its assignment: the engine refuses a turn
     /// whose key no set gave seven days' notice, and a successor whose key the log never applies must
-    /// not take the keys, since this release cannot sequence again once it stops.
+    /// not take the keys, since this release cannot sequence again once it stops. The answer for the
+    /// turn admitted is kept, so a successor retrying after the stop, when the log is final and the
+    /// sequencer gone, is admitted under it.
     /// Error cases:
     /// - the listener reads no log, the node is stopping, or the log has not accepted the turn
     pub(super) async fn ensure_logged(&self, turn: &ScheduledTurn) -> anyhow::Result<()> {
-        let engine = self.engine.as_ref().context("this listener reads no log to check the turn against")?;
         let (number, key) = (turn.turn, turn.admin_key);
+        if *self.logged.lock().expect("the logged turn lock") == Some((number, key)) {
+            return Ok(());
+        }
+        let engine = self.engine.as_ref().context("this listener reads no log to check the turn against")?;
+        let engine = engine.upgrade().ok_or_else(|| anyhow!("the node is stopping"))?;
         let (reply, answered) = oneshot::channel();
         let query = Box::new(move |engine: &engine_core::Engine| {
             let turns = engine.daily_turns();
@@ -83,6 +89,7 @@ impl<C: CheckpointChain> Predecessor<C> {
             "this release's log has not accepted turn {number} for key {key}: the engine refused its assignment \
              or has yet to mirror it, so the keys stay here"
         );
+        *self.logged.lock().expect("the logged turn lock") = Some((number, key));
         Ok(())
     }
 }

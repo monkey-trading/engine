@@ -57,8 +57,12 @@ pub(crate) struct Predecessor<C = CheckpointRpc> {
     signing: watch::Receiver<bool>,
     /// The delivered secrets, which an approved upgrade takes first.
     secrets: Option<Arc<SecretStore>>,
-    /// The sequencer, whose log must have accepted a daily turn before its member gets the keys.
-    engine: Option<mpsc::Sender<crate::sequencer::Request>>,
+    /// The sequencer, whose log must have accepted a daily turn before its member gets the keys. Weak,
+    /// so the listener never holds the sequencer open past a shutdown's drain.
+    engine: Option<mpsc::WeakSender<crate::sequencer::Request>>,
+    /// The turn and key the log accepted when this release admitted that turn's member, which a
+    /// retry after the stop, when the sequencer is gone, is admitted under.
+    logged: std::sync::Mutex<Option<(u64, AccountId)>>,
 }
 
 /// How one connection ended.
@@ -108,6 +112,7 @@ impl Predecessor {
             signing,
             secrets: None,
             engine: None,
+            logged: std::sync::Mutex::new(None),
         }))
     }
 }
@@ -120,8 +125,8 @@ impl<C: CheckpointChain> Predecessor<C> {
     }
 
     /// Gives the listener the sequencer, whose log a daily turn's successor needs (`ensure_logged`).
-    pub(crate) fn with_engine(mut self, engine: mpsc::Sender<crate::sequencer::Request>) -> Self {
-        self.engine = Some(engine);
+    pub(crate) fn with_engine(mut self, engine: &mpsc::Sender<crate::sequencer::Request>) -> Self {
+        self.engine = Some(engine.downgrade());
         self
     }
 

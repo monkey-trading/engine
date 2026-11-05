@@ -11,7 +11,9 @@
 # previous turn's key is refused; that the handover completes while the vault's finalized view
 # still names the incumbent's release; that the member's first command is TurnTaken and the time in
 # office follows it; that /v1/operator shows the rotation sets, today's and tomorrow's turns, and
-# every assignment with its TurnTaken; and that the last member's log replays to its roots.
+# every assignment with its TurnTaken; and that the last member's log replays to its roots. Last,
+# governance turns rotation off and, once the last turn ends, installs that turn's own candidate under
+# another release, after which the finalized schedule names no turn.
 # Needs Anvil, Forge, Python 3, Cargo, and installed Soldeer dependencies. No external RPC or keys are used.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

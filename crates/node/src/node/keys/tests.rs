@@ -168,15 +168,21 @@ async fn from_a_turns_boundary_the_turn_alone_names_a_release() {
     let clock = Arc::new(crate::clock::SystemClock);
     let sample =
         crate::trusted_time::Sample { at: std::time::Instant::now(), earliest_ms: boundary, latest_ms: boundary + 1 };
-    let (_samples, samples_rx) = tokio::sync::watch::channel(Some(sample));
+    let (samples, samples_rx) = tokio::sync::watch::channel(Some(sample));
     let trusted = crate::trusted_time::TrustedClock::new(clock, samples_rx, Duration::from_secs(1));
     let watch = tokio::spawn(watch_release(vault, sealed, 4, every, trusted));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the turn's member was paged before finality named it");
-    // The turn names another release: the vault's finalised one no longer counts.
+    // The turn names another release: the vault's finalised one no longer counts, though nothing
+    // pages while the turn's member takes the keys from this node.
     scheduled.lock().unwrap().as_mut().unwrap().release = incumbent.id();
+    tokio::time::sleep(every * 3).await;
+    assert!(alerts.try_recv().is_err(), "paged within the turn's handover grace");
+    let past = boundary + TURN_HANDOVER_GRACE_MS;
+    let late = crate::trusted_time::Sample { at: std::time::Instant::now(), earliest_ms: past, latest_ms: past + 1 };
+    samples.send_replace(Some(late));
     tokio::time::sleep(every).await;
-    let alert = alerts.try_recv().expect("a release the turn does not name raises Critical");
+    let alert = alerts.try_recv().expect("a release the turn does not name raises Critical past the grace");
     assert_eq!(alert["alert"].as_str(), "release_superseded");
     watch.abort();
 }

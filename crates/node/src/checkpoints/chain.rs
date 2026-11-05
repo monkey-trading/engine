@@ -249,7 +249,9 @@ pub(crate) trait CheckpointChain: Send + Sync {
 
     /// The drawn turn whose boundary is the latest at or before `now_ms`, in the schedule the vault's
     /// registry names, at the already pinned finalized observation; `None` when the registry names no
-    /// schedule or no such turn is drawn. A chain with no schedule reads `None`.
+    /// schedule, no such turn is drawn, or the registry installed an operator after that turn ended,
+    /// which ends the turns (`rotationState`, whatever candidate it installed). A chain with no
+    /// schedule reads `None`.
     /// Error cases: the observation is not finalized and pinned, or the chain cannot be read
     async fn scheduled_turn(&self, at: &Observation, now_ms: Millis) -> anyhow::Result<Option<ScheduledTurn>> {
         let _ = (at, now_ms);

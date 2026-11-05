@@ -32,6 +32,7 @@ use super::chain::{Chain, delegateCall, setRotationCall};
 use super::node::Node;
 use super::{DIGEST_A, DIGEST_B, FINALITY_MARGIN_SECS, T0_SECS, address, monkey};
 use crate::checkpoints::scenario::deploy;
+use crate::checkpoints::{CheckpointChain, View};
 use crate::clock::test_clock::TestClock;
 use crate::sequencer::replay_path;
 use crate::tee::keys::KeySet;
@@ -40,8 +41,9 @@ use seat::{Holder, Member};
 use seeds::Seeds;
 
 sol! {
-    struct Turn { address candidate; uint16 position; uint8 reason; uint32 setId; uint64 generation; uint64 prior; bytes32 seed; }
+    struct Turn { address candidate; uint16 position; uint8 reason; uint32 setId; uint64 generation; uint64 prior; bytes32 seed; address source; }
     function setVault(address vault_) external;
+    function installOperator(address candidate, address adminKey, bytes calldata launchDigest, bytes32 configHash) external;
     function setRegistry(address registry_) external;
     function setSchedule(address schedule_) external;
     function draw(uint64 turn) external returns (address);
@@ -328,6 +330,7 @@ async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
     // 6. The last member's log replays to its roots across every handover, to the same turns,
     //    operator and time in office; each TurnTaken is its member's first command in its turn.
     let live = holder.node.query(|e| (e.daily_turns().clone(), e.operator().copied(), office_of(e))).await;
+    let last = holder.member;
     let dir = holder.stop().await;
     let replayed = replay_path(&dir).expect("the log replays to its roots");
     let engine = &replayed.engine;
@@ -345,6 +348,39 @@ async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
         }
     }
     println!("PASS: the log replays to its roots across {handovers} handovers, and each TurnTaken opens its turn");
+
+    // 7. The governance fallback ends the turns, even when it installs the last turn's own candidate.
+    installation_ends_the_turns(&mut chain, &members[last]).await;
+}
+
+/// Turns rotation off, waits out the last drawn turn, and has the timelock install `member`, the last
+/// turn's candidate, under another release: once finalised the schedule names no turn at any time,
+/// so neither side of a handover, nor a start, takes the old turn's release and generation.
+async fn installation_ends_the_turns(chain: &mut Chain, member: &Member) {
+    let vault = crate::handover::vault_reader(&member.config(chain)).unwrap().expect("[checkpoints] reads the vault");
+    chain.govern_each(vec![(chain.registry, setRotationCall { enabled: false }.abi_encode())]).await;
+    let ended = boundary_secs(FIRST_TURN + TURNS);
+    chain.mine_at((ended + 60).max(chain.latest_timestamp().await + 1)).await;
+    chain.finalize().await;
+    let reached = (chain.timestamp_at("finalized").await as Millis) * 1000;
+    let at = vault.observe(View::Finalized, &[]).await.unwrap();
+    let over = vault.scheduled_turn(&at, reached).await.unwrap().expect("a turn over still names its member");
+    assert_eq!((over.turn, over.candidate), (FIRST_TURN + TURNS - 1, AccountId(member.candidate.into())));
+    let install = installOperatorCall {
+        candidate: member.candidate,
+        adminKey: Address::from(member.operator().0),
+        launchDigest: [0xd1u8; 48].to_vec().into(),
+        configHash: super::CONFIG_HASH.into(),
+    };
+    chain.govern_each(vec![(chain.registry, install.abi_encode())]).await;
+    chain.finalize().await;
+    let at = vault.observe(View::Finalized, &[]).await.unwrap();
+    assert_eq!(vault.scheduled_turn(&at, reached).await.unwrap(), None, "the installation ended the last turn");
+    assert!(!crate::handover::turns::drawn(&vault, &at).await.unwrap(), "a start finds a turn drawn");
+    println!(
+        "PASS: installing {}, the last turn's own candidate, under another release ends the turns: the schedule names no one",
+        member.name
+    );
 }
 
 /// Draws `turn` in a block stamped `at`, finalises it, and waits for `node` to mirror its key from

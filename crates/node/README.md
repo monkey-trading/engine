@@ -619,7 +619,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   approved upgrade, checked by the operator's signature; `src/handover/predecessor/secrets.rs` is
   the running release's, which refuses an election's successor; `src/handover/predecessor/tests/`'s
   `secrets.rs` covers both, against the switch in its `vault.rs`
-- `src/handover/turns.rs` — a daily turn's handover authorisation: the finalised schedule's member, once trusted time reaches the turn's boundary, in the generation the schedule fixed
+- `src/handover/turns.rs` — a daily turn's handover authorisation: the finalised schedule's member, once trusted time reaches the turn's boundary, in the generation the schedule fixed; and the operators the member takes the keys from, its turn's source and then each earlier turn's, a week back; `src/handover/turns/tests.rs` walks those sources
 - `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence
 - `src/verify/mod.rs` — attestation verification for the CLI and replay: loading or fetching the
   attestation, release manifest, and collateral, `engine-verify` on the system clock, and the
@@ -853,7 +853,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/election_scenario/daily_turns.rs` — the daily rotation dev scenario
   `scripts/dev-daily-rotation.sh` runs: a rotation set of three, five turns drawn from relayed seeds,
   and at each boundary the turn's key, the handover while finality trails, `TurnTaken`, the time in
-  office and `/v1/operator` checked, then the log replayed
+  office and `/v1/operator` checked, then the log replayed, and an installation of the last turn's
+  own candidate ending the turns
 - `src/custody/tests/election_scenario/daily_turns/seat.rs` — a member and its node while it holds a
   turn: sealed keys, the handover listener, and the stop a handover asks for
 - `src/custody/tests/election_scenario/daily_turns/seeds.rs` — the scenario's seed source over the

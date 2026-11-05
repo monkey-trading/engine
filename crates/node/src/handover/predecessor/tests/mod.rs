@@ -293,7 +293,8 @@ impl Exchange {
             drain,
             signing: signing_rx,
             secrets: Some(secrets.clone()),
-            engine,
+            engine: engine.as_ref().map(mpsc::Sender::downgrade),
+            logged: std::sync::Mutex::new(None),
         };
         let run = tokio::spawn(predecessor.run());
         let successor_log = successor.node.log_dir.clone();

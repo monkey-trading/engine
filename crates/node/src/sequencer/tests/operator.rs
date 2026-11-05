@@ -347,7 +347,6 @@ fn a_due_key_an_unscanned_installation_supersedes_ends_no_hold() {
     assert!(seq.sequence(Command::Tick).unwrap().is_some(), "the due key is superseded");
 }
 
-/// The address of `seed`'s signing key.
 #[test]
 fn a_turns_member_takes_it_with_its_first_command_once() {
     let (dir, clock, turn, member) = turn_log("turn-taken");
@@ -431,6 +430,7 @@ pub(crate) fn recover_turns(dir: &Path, clock: Arc<TestClock>, operator: Operato
         .unwrap()
 }
 
+/// The address of `seed`'s signing key.
 fn address(seed: u8) -> AccountId {
     eip712::address(SigningKey::from_slice(&[seed; 32]).unwrap().verifying_key())
 }
