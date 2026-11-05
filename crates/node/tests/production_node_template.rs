@@ -75,7 +75,7 @@ fn a_production_build_refuses_the_template_until_its_futures_and_shares_have_a_s
 
 #[test]
 fn every_placeholder_is_marked_and_no_marker_is_a_standalone_comment() {
-    const PLACEHOLDERS: [&str; 9] = [
+    const PLACEHOLDERS: [&str; 14] = [
         "example.com",
         "0x1111111111111111",
         "0x2222222222222222",
@@ -83,6 +83,11 @@ fn every_placeholder_is_marked_and_no_marker_is_a_standalone_comment() {
         "0x4444444444444444",
         "0x5555555555555555",
         "0x6666666666666666",
+        "0x7777777777777777",
+        "0x8888888888888888",
+        "0x9999999999999999",
+        "0xaaaaaaaaaaaaaaaa",
+        "0xbbbbbbbbbbbbbbbb",
         "start_block = 1 ",
         "processor = ",
     ];

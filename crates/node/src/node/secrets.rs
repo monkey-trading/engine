@@ -237,6 +237,7 @@ fn report_missing(held: Option<&SignedBundle>, named: &[NamedSecret]) {
             SecretUse::Required => "the node holds, serving only its delivery listener, until it is delivered",
             SecretUse::VendorKey => "this vendor connection stays off, and the markets it alone prices go unpriced",
             SecretUse::WebhookUrl => "this alert route stays off, so its alerts are only logged",
+            SecretUse::SeedRelay => "the seed relayer stays off",
         };
         error!(alert = "secret_missing", %secret, field = %field_name, "no delivered bundle holds this secret: {effect}");
     }

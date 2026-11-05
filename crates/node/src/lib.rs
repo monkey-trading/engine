@@ -31,6 +31,7 @@ mod replay_audit;
 mod roughtime;
 pub use replay_audit::replay_path_with_custody;
 mod secrets;
+pub mod seed_relay;
 pub mod sequencer;
 mod sequencer_thread;
 mod snapshot;

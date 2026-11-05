@@ -20,6 +20,7 @@ other runbooks call.
 | `unattested_certificate` fires | [unattested-certificate.md](unattested-certificate.md) |
 | Stand for election as the operator, or hand the node to or from the operator in effect | [operator-candidate.md](operator-candidate.md) |
 | Run a standby, take over after a promotion, or recover when none qualifies | [standby.md](standby.md) |
+| Run the seed relayer, or `seed_missing`, `seed_relay_failed` or `seed_relayer_unfunded` fires | [seed-relay.md](seed-relay.md) |
 | Find what an alert means and which runbook answers it | [alerts.md](alerts.md) |
 | Write the node's config | [production-node.toml](production-node.toml) |
 

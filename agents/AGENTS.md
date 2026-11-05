@@ -151,7 +151,13 @@ an index: load only the rule whose hint matches the current action.
   `/v1/operator` read of the key in effect, its pending rotation, and the last election, the
   `/v1/operators` list of the registry's approved candidates with their stake and role (`custody/operators/`:
   `RegistryLens` read over its own custody quorum at one final block every `api.operators_interval`, the answer
-  naming the block; 404 without `custody.evm.staking.registry.lens`), the
+  naming the block; 404 without `custody.evm.staking.registry.lens`), the seed relayer
+  (`seed_relay/`, `[seed_relay]`, in either mode: each poll reads the seed receiver on Arbitrum through its own
+  custody quorum at one block of the custody credit tag (`latest` in production), raises `seed_missing` while the turn whose draw deadline passed has no seed and
+  `seed_relayer_unfunded`, and relays the two upcoming turns' seeds the receiver lacks, one transaction in flight at a time, raising `seed_relay_failed`;
+  it proves each from the beacon node's finalized Fulu state with its own SSZ code, `seed_relay/state.rs`, finds the
+  EIP-4788 entry holding the block's root and reads the relay through a strict majority of its Ethereum providers,
+  and sends through its signing endpoint with a relayer key apart from the checkpoint relayer's), the
   `/v1/house/state` read of the protocol parameters (with the seq that set them) and the latest checkpoint
   (`api/house_state.rs`, `sequencer/house.rs`), checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), at most one signed checkpoint on its way to
@@ -252,7 +258,15 @@ an index: load only the rule whose hint matches the current action.
   newest released `(seq, link)` under an `engine.log-head.v1` signature checked against the vault's current
   `checkpointSigner` and `signerEpoch`, keeping the highest seq per epoch so a restarted node refuses a truncated
   log before writing anything; the posting interval is config, an hour by default, on its own relayer sender.
-  `foundry.toml` enables the
+  `src/SeedSchedule.sol` fixes each daily operator turn's seed epoch
+  (the beacon epoch holding the time two days before its draw deadline, which is a day before its 22:30 UTC boundary);
+  `src/SeedRelay.sol` on Ethereum proves that epoch's RANDAO mix from an EIP-4788 beacon block root, its
+  header, and SSZ branches to the state's `fork.current_version` (one of the versions it was deployed
+  with) and to `randao_mixes`, and sends it through Arbitrum's inbox as a retryable ticket;
+  `src/SeedReceiver.sol` on Arbitrum records it only from the relay's aliased address, for that epoch and
+  before the draw deadline, and answers each turn's final seed, the last earlier seed hashed with the
+  turn number when none arrived. `test/fixtures/seed-relay/mainnet.json` is recorded mainnet data, which
+  `scripts/seed-relay-fixtures.sh` regenerates. `foundry.toml` enables the
   optimizer, without which the vault exceeds EIP-170's size limit.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
   and checks the clock against public Roughtime servers, citing each server's key source;
@@ -365,6 +379,11 @@ an index: load only the rule whose hint matches the current action.
   staker each claim their share, an epoch below the floor pays neither, and the candidate's unclaimed
   leaf registers and pays through the vault's exit; then, from `V50`, an election taking effect halfway
   through an epoch splits the share between the outgoing and incoming candidates, each claimed;
+  `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
+  contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
+  relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped
+  `seed_relay_failed` and then `seed_missing` fire; `seed-relay-fixtures.sh`, which regenerates the
+  relay's recorded mainnet fixture from a named epoch (run by hand; it downloads a mainnet state);
   `dev-staking-reads.sh`, the staking reads scenario on Anvil: forty candidates register and thirty-five are
   approved, `/v1/operators` lists them with the chain's votes and the final block it names, three
   distribution epochs close and `/v1/monkey/distributions` lists them, a later delegation shows in a later
@@ -421,7 +440,7 @@ an index: load only the rule whose hint matches the current action.
   indexes them): deploy and rollback, reduce-only, restart and recovery, key recovery, corporate
   actions, incident response, withdrawal stalls and `checkpoint_backlog`, feed, custody and
   checkpoint-endpoint failures including a crypto venue outage, certificate renewal failure, the
-  `unattested_certificate` alert, operator candidates and standbys. `alerts.md` lists every alert
+  `unattested_certificate` alert, operator candidates and standbys, and the seed relay. `alerts.md` lists every alert
   the code raises with its level and where to go (a new alert gets a row there in the same change),
   `reference.md` holds the shared variables and checks, and `production-node.toml` is the production
   node config without `[genesis]`, assembled with `config/benchmark-publishers.toml` and
@@ -432,7 +451,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking, operator election, operator's share, staking reads, standby and handover dev scenarios, the enclave key
+  deposit finality scenarios, the MONKEY staking, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
@@ -654,6 +673,10 @@ Run from the repo root:
 - Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens
   read through the custody quorum into `/v1/operators`, the closed epochs in `/v1/monkey/distributions`
   across a delegation and a restart, and each saved answer verified with `engine verify-response`)
+- Seed relay dev scenario: `./scripts/dev-seed-relay.sh` (the same requirements; two Anvil chains, the
+  relayer built from a node config, three seeds relayed, refused relays, and the alerts with the beacon node
+  stopped); the relay's mainnet fixture: `scripts/seed-relay-fixtures.sh <epoch>` (needs `curl`, `jq`,
+  `python3` and Cargo, reads public mainnet endpoints, and downloads a 340 MB state)
 - Operator handover dev scenario: `./scripts/dev-operator-handover.sh` (the same requirements; A runs
   as the operator in effect with rotation on, an election names B and, past its effective time, B
   takes the keys and the log from A through the handover listener, A exits, a withdrawal A

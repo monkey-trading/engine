@@ -25,6 +25,7 @@ prints, in order, the epoch length, minimum term, finality margin, margin, eligi
 | Its own custody providers | At least three, run by different operators, serving archive state back to the vault's deployment block. The quorum that credits deposits is the candidate's own choice, which is why the timelock approves each release. |
 | Its own market-data accounts and secrets | The venues and vendors in its config, with their API keys. No secret moves from the incumbent: the candidate delivers its own to its own enclave ([key-recovery.md](key-recovery.md), "Secrets"). |
 | A checkpoint endpoint and a funded relayer | Its own, per [feed-and-custody-failures.md](feed-and-custody-failures.md), "Checkpoint endpoint". |
+| A seed relayer | Ethereum providers, a beacon node, and a funded relayer key apart from the checkpoint relayer's, per [seed-relay.md](seed-relay.md). |
 | An alert receiver | `[alerts.critical]` is required with real attestation. |
 | An admin key | Made and kept offline, ideally on a hardware wallet. It signs `engine admin` commands and its registration. |
 | A candidate account | An Arbitrum account holding the self-bond in staked MONKEY and ETH for gas. It may differ from the admin key. While its candidate is the operator in effect, it also moves the vault's release to any release the timelock approved for it (section 5), and the operator in effect cannot deregister to revoke it: keep it like the admin key, offline, on a hardware wallet or a multisig. |

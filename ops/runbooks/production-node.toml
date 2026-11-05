@@ -154,6 +154,30 @@ contract = "0x7777777777777777777777777777777777777777" # REPLACE: the LogHeads 
 relayer = "0x8888888888888888888888888888888888888888" # REPLACE: funded by the checkpoint endpoint
 interval = "1h" # OWNER: the truncation window is the interval plus chain inclusion
 
+[seed_relay]
+# Proves each daily operator turn's RANDAO seed on Ethereum and relays it to the receiver on
+# Arbitrum, which it reads through the custody providers (ops/runbooks/seed-relay.md). Every
+# rotation-set member runs one, from launch, so seeds are on chain before rotation turns on.
+providers = [
+  { name = "ethereum-a", rpc_url = "https://eth-a.example.com/v2/{ethereum_a_key}" }, # REPLACE
+  { name = "ethereum-b", rpc_url = "https://eth-b.example.com/v2/{ethereum_b_key}" }, # REPLACE
+  { name = "ethereum-c", rpc_url = "https://eth-c.example.com/v2/{ethereum_c_key}" }, # REPLACE
+]
+chain_id = 1
+# Signs and funds the relays as relayer, a key apart from the checkpoint relayer's.
+rpc_url = "https://seed-relay-rpc.example.com/v2/{seed_relay_rpc_key}" # REPLACE
+relayer = "0x9999999999999999999999999999999999999999" # REPLACE
+# A beacon node that serves /eth/v2/debug/beacon/states, run by the operator.
+beacon_api = "https://beacon.example.com" # REPLACE
+relay = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" # REPLACE: SeedRelay on Ethereum
+receiver = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" # REPLACE: SeedReceiver on Arbitrum
+poll_interval = "60s"
+rpc_timeout = "10s"
+state_timeout = "300s" # OWNER: measure a state download from the beacon node
+resend_after = "1h" # OWNER: above Arbitrum's usual delay for an Ethereum message
+l2_max_fee_per_gas = "0.1" # OWNER: gwei; the unspent part is refunded on Arbitrum
+min_balance = "0.05" # REPLACE: a week of relays at the current gas price
+
 [feeds]
 provider = "venues"
 interval = "200ms"

@@ -53,6 +53,8 @@ use api_defaults::MIN_OPERATORS_INTERVAL;
 mod checkpoints;
 pub use checkpoints::CheckpointSection;
 pub use checkpoints::LogHeadsSection;
+mod seed_relay;
+pub use seed_relay::SeedRelaySection;
 mod telemetry;
 pub use crate::config::telemetry::*;
 mod proxy;
@@ -132,6 +134,8 @@ pub struct NodeConfig {
     /// Standby mode (`--standby`): follow the operator in effect's stream into a local copy of the
     /// published log, ready to take over from its last vault-accepted checkpoint.
     pub standby: Option<StandbySection>,
+    /// The seed relayer, which runs beside the node in either mode.
+    pub seed_relay: Option<SeedRelaySection>,
     /// Sequenced as admin commands after protocol activation on a log's first boot, all or nothing,
     /// so the rules every fill ran under are part of the public record.
     pub genesis: Genesis,

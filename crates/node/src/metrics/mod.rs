@@ -122,6 +122,10 @@ pub struct Metrics {
     pub rejections: Family<RejectionLabels, Counter>,
     pub last_checkpoint_seconds: FloatGauge,
     pub checkpoint_relayer_balance_eth: FloatGauge,
+    pub seed_relays: Counter,
+    pub seed_relay_failures: Counter,
+    pub seed_relayer_balance_eth: FloatGauge,
+    pub seed_latest_turn: Gauge,
     pub house_nav: FloatGauge,
     pub house_gross_exposure: FloatGauge,
     pub house_net_exposure: Family<MarketLabel, FloatGauge>,
@@ -157,6 +161,10 @@ impl Metrics {
             rejections: Family::default(),
             last_checkpoint_seconds: FloatGauge::default(),
             checkpoint_relayer_balance_eth: FloatGauge::default(),
+            seed_relays: Counter::default(),
+            seed_relay_failures: Counter::default(),
+            seed_relayer_balance_eth: FloatGauge::default(),
+            seed_latest_turn: Gauge::default(),
             house_nav: FloatGauge::default(),
             house_gross_exposure: FloatGauge::default(),
             house_net_exposure: Family::default(),
@@ -221,6 +229,26 @@ impl Metrics {
             "The checkpoint relayer's balance in ether at a block the custody providers agree is final; set only \
              with [checkpoints.relayer_gas], after the first read",
             metrics.checkpoint_relayer_balance_eth.clone(),
+        );
+        r.register(
+            "seed_relays",
+            "Seed relays this node sent to Ethereum that the relay accepted",
+            metrics.seed_relays.clone(),
+        );
+        r.register(
+            "seed_relay_failures",
+            "Seed relay attempts that failed, or whose seed had not reached Arbitrum by seed_relay.resend_after",
+            metrics.seed_relay_failures.clone(),
+        );
+        r.register(
+            "seed_relayer_balance_eth",
+            "The seed relayer's balance in ether at a block the seed relay's providers agree is final",
+            metrics.seed_relayer_balance_eth.clone(),
+        );
+        r.register(
+            "seed_latest_turn",
+            "The latest operator turn whose seed the seed receiver holds, of the final turn and the two after it",
+            metrics.seed_latest_turn.clone(),
         );
         r.register("house_nav", "House cash minus clients' unrealised PnL", metrics.house_nav.clone());
         r.register(
