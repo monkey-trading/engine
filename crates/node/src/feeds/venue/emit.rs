@@ -58,6 +58,9 @@ impl VenueFeed {
         for (symbol, quotes) in buffered.iter_mut() {
             // The budget is spent up to this instant; one more quote may go while it is within
             // `BURST` intervals of now.
+            // The time the engine judges a quote by is no earlier than the highest host time read, as
+            // `Pending` clamps stamps by it, so the record of what the engine holds uses the same.
+            let engine_now = now.max(quotes.high_water());
             let free_at = spent
                 .get(symbol)
                 .and_then(|spent_to| spent_to.checked_sub(interval * (BURST - 1)))
@@ -92,14 +95,14 @@ impl VenueFeed {
                     // runs out, past which the sequencer drops the quote: it then waits only until
                     // the bound less `SEND_MARGIN`, or goes at once when the bound is already that
                     // close. The deadline is read, not taken, so the quote still carries it.
-                    let (send, wake) = match verdict(sent, &quote, refresh_ms, now) {
+                    let (send, wake) = match verdict(sent, &quote, refresh_ms, engine_now) {
                         Verdict::Send => (true, None),
                         Verdict::Redundant => {
                             self.take_not_after(symbol, quote.ts);
                             (false, None)
                         }
                         Verdict::Wait(at) => {
-                            let due = Instant::now() + Duration::from_millis((at - now) as u64);
+                            let due = Instant::now() + Duration::from_millis((at - engine_now) as u64);
                             let bound = self
                                 .peek_not_after(symbol, quote.ts)
                                 .map(|not_after| {
@@ -114,7 +117,7 @@ impl VenueFeed {
                     };
                     if send {
                         self.unconfirmed.insert(symbol.clone());
-                        self.sent.insert(symbol.clone(), record(sent, &quote, now));
+                        self.sent.insert(symbol.clone(), record(sent, &quote, engine_now));
                         let not_after = self.take_not_after(symbol, quote.ts);
                         let cmd = Command::Prices { market, quotes: vec![quote] };
                         self.tx.send(Request::Quote { cmd, not_after }).await.map_err(|_| anyhow!("sequencer gone"))?;

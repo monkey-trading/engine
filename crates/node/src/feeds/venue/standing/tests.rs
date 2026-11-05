@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use engine_core::Fixed;
 use engine_core::command::Command;
 use tokio::sync::mpsc;
 
@@ -233,6 +234,26 @@ fn a_book_raised_past_the_lead_the_engine_allows_goes_at_its_own_stamp_in_place_
     assert!(feed.standing.books.is_empty(), "the standing book is forgotten");
 }
 
+#[tokio::test]
+async fn the_record_of_a_sequenced_quote_is_stamped_as_the_engine_stores_it_after_a_host_clock_step_back() {
+    // A quote read at a host time 500 ms ahead of the clock now, as after a step back, is sequenced
+    // at a time no earlier than that. The engine holds a changed mid at the stamp `Pending` gives
+    // it, so the record names it, not the mid it replaced.
+    let (tx, mut sequenced) = mpsc::channel(4);
+    let mut feed = feed_into(Venue::Kraken, &[(1, "BTC")], tx);
+    let hwm = now_ms() + 500;
+    feed.sent.insert("BTC".into(), (Fixed::from_int(100), hwm));
+    let mut buffered = BTreeMap::from([("BTC".to_owned(), Pending::default())]);
+    let pending = buffered.get_mut("BTC").expect("pending");
+    pending.add(quote("100", hwm), hwm).expect("in range");
+    pending.take();
+    // Read after the step back, stamped 20 ms past the high-water mark.
+    pending.add(quote("101", hwm + 20), hwm - 500).expect("in range");
+    feed.emit(&mut buffered, &mut BTreeMap::new()).await.expect("sequencer up");
+    assert!(sequenced.try_recv().is_ok(), "the moved mid is sequenced");
+    assert_eq!(feed.sent["BTC"], (Fixed::from_int(101), hwm), "the record names the mid the engine holds");
+}
+
 #[test]
 fn an_answer_older_than_the_delay_bound_redates_nothing() {
     let (mut feed, adapter) = bitstamp();
@@ -336,8 +357,13 @@ fn ping(number: u64, sent: Instant, sent_ms: Millis) -> Ping {
     Ping { ping: number, sent, sent_ms }
 }
 
-/// A feed on `venue` for `symbols`, connected to nothing.
+/// A feed on `venue` for `symbols`, connected to nothing, sequencing into no one.
 fn feed(venue: Venue, symbols: &[(MarketId, &str)]) -> VenueFeed {
+    feed_into(venue, symbols, mpsc::channel(1).0)
+}
+
+/// `feed`, sequencing into `tx`.
+fn feed_into(venue: Venue, symbols: &[(MarketId, &str)], tx: mpsc::Sender<crate::sequencer::Request>) -> VenueFeed {
     let symbols = symbols.iter().map(|(market, symbol)| VenueSymbol {
         market: *market,
         symbol: (*symbol).into(),
@@ -350,7 +376,7 @@ fn feed(venue: Venue, symbols: &[(MarketId, &str)]) -> VenueFeed {
         api_key_secret: None,
         symbols: symbols.collect(),
     };
-    VenueFeed::new(conn, None, fast(WAIT), tls_config().expect("tls config"), mpsc::channel(1).0)
+    VenueFeed::new(conn, None, fast(WAIT), tls_config().expect("tls config"), tx)
 }
 
 /// A Bitstamp feed for `btcusd` (market 1) with a 2 s delay bound, and the adapter it reads with:

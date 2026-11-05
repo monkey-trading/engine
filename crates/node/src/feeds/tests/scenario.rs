@@ -323,15 +323,20 @@ impl Node {
 
 /// Starts a Kraken feed into `node` for `symbols` with a wide freshness bound, so only the
 /// engine's rules can keep a quote from counting: its BTC quotes are stamped by `btc_at`, its ETH
-/// quotes normally.
-async fn start_kraken(node: &Node, symbols: &[(MarketId, &str)], btc_at: impl Fn() -> Millis + Send + 'static) {
+/// quotes normally. The loopback venue serves every connection the feed makes: a feed starved past
+/// its read timeout on a loaded runner reconnects, and a venue that served only the first would leave
+/// it silent for good.
+async fn start_kraken(node: &Node, symbols: &[(MarketId, &str)], btc_at: impl Fn() -> Millis + Clone + Send + 'static) {
     let (listener, url) = listen().await;
     tokio::spawn(async move {
-        let (ws, _) = accept(&listener).await;
-        let books = move || {
-            vec![kraken_book("BTC/USD", BTC.0, BTC.1, btc_at()), kraken_book("ETH/USD", ETH.0, ETH.1, now_ms())]
-        };
-        let _ = stream(ws, books).await;
+        loop {
+            let (ws, _) = accept(&listener).await;
+            let btc_at = btc_at.clone();
+            let books = move || {
+                vec![kraken_book("BTC/USD", BTC.0, BTC.1, btc_at()), kraken_book("ETH/USD", ETH.0, ETH.1, now_ms())]
+            };
+            let _ = stream(ws, books).await;
+        }
     });
     let timing = Timing { stale_after: Duration::from_secs(60), ..fast(Duration::from_millis(300)) };
     spawn_feed_into(node.tx.clone(), Venue::Kraken, &url, symbols, timing);
