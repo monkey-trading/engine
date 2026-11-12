@@ -473,5 +473,4 @@ fn refusal(dir: &Path, generation: u64) -> String {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests;
