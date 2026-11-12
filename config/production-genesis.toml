@@ -8,7 +8,8 @@
 #
 # Launch values:
 # - Markets: the majors of each asset class (#7, launch markets) and 20 US
-#   large-cap shares.
+#   large-cap shares, without the Eurex and ICE markets (Germany 40, UK 100
+#   and Brent), which wait for a TLS real-time source (#673).
 # - Margin (#8, launch margin tables): professional-client levels, up to 200:1
 #   (50 bps) on FX majors and major indices and lower on commodities, shares
 #   and crypto, with bands that rise with position notional. BTC-USD and
@@ -24,19 +25,18 @@
 #   and ETH's 20%) and its margin (10:1 where BTC-USD and ETH-USD are 100:1).
 #   Each market's financing benchmark is the rate of its base or index
 #   currency, as dev.toml's EUR-USD uses ESTR, with that rate's day basis.
-# - Margin and spread bands and house caps are in USD notional. USD-JPY,
-#   Germany 40, UK 100 and Japan 225 are quoted in JPY, EUR, GBP and JPY at
-#   their venues (quote_currency). Their profit and loss accrues in that
-#   currency and converts to USD at the engine's own USD-JPY, EUR-USD and
-#   GBP-USD prices, which are listed before them.
+# - Margin and spread bands and house caps are in USD notional. Japan 225
+#   is quoted in JPY at its venue (quote_currency). Its profit and loss
+#   accrues in that currency and converts to USD at the engine's own USD-JPY
+#   price, which is listed before it.
 # - Futures (#32): from protocol V21 the index and commodity markets (ids
-#   20-25 and 30-33) price from their front futures contract. The index is
+#   20-22, 25 and 30-32) price from their front futures contract. The index is
 #   the front contract's median plus the sum of every roll's gap (additive
 #   adjustment). Each listing's `contracts` names its contracts in roll order,
 #   with the time the index rolls onto each, through early 2028; a relisting
 #   adds the next before the last becomes the front. A contract's name is its
-#   exchange root and month code: CME ES, NQ, YM, NIY, GC, SI and CL, Eurex
-#   FDAX, and ICE Z (FTSE 100) and BRN (Brent). The roll rules, decided by
+#   exchange root and month code: CME ES, NQ, YM, NIY, GC, SI and CL. The roll
+#   rules, decided by
 #   the owner on 2026-10-25, follow exchange conventions:
 #   - Index futures roll 8 calendar days before quarterly expiry, at 14:30
 #     UTC on the Thursday before the third Friday of March, June, September
@@ -48,13 +48,10 @@
 #     business day of the month before delivery, at 14:30 UTC, between active
 #     months only: gold's Feb, Apr, Jun, Aug, Oct and Dec, silver's Mar, May,
 #     Jul, Sep and Dec.
-#   - WTI and Brent roll 2 business days before last trade, every month, at
-#     14:30 UTC. WTI's last trade is 3 business days before the 25th of the
-#     month before delivery, or 4 when the 25th is not a business day. Brent's
-#     is ICE's published one:
-#     https://www.ice.com/products/219/Brent-Crude-Futures/expiry
-#   Business days are the exchange's: CME's exclude US holidays, and ICE
-#   Futures Europe's exclude UK bank holidays and 24 and 31 December.
+#   - WTI rolls 2 business days before last trade, every month, at 14:30 UTC.
+#     Its last trade is 3 business days before the 25th of the month before
+#     delivery, or 4 when the 25th is not a business day.
+#   Business days are the exchange's: CME's exclude US holidays.
 # - Benchmark rates are supplied by the separate signed publisher worker (#33).
 #   Complete the node config with config/benchmark-publishers.toml and run the worker
 #   before serving. With no rate, a market accrues no financing and raises a Critical alert.
@@ -135,70 +132,6 @@
 #   Juneteenth 2027 (12:00 CT or no halt) and Good Friday 2027 (shut, or open
 #   until 08:15 CT); metals and energy halts on every other holiday (12:00 CT,
 #   or 12:45-13:45 CT) and on Juneteenth 2027 (13:30 CT, one library only).
-# - Brent (id 33): ICE Futures Europe, 01:00-23:00 London Monday to Friday
-#   with a 23:00 Sunday open, and its 2026 and 2027 holiday hours:
-#   https://www.ice.com/products/219/brent-crude-futures and
-#   https://www.ice.com/publicdocs/Trading_Schedule.pdf
-#   ICE keeps these hours fixed to New York time: in the week UK and US clocks
-#   differ it trades 00:00-22:00 GMT, 20:00-18:00 EDT,
-#   https://www.ice.com/publicdocs/futures/Trading_Schedule_Temporary_Trading_Hours_for_DST.pdf
-#   so the schedule is written in New York time. The early closes are the ET
-#   times ICE prints beside the UK ones. On MLK Day and Presidents' Day 2027
-#   ICE trades Brent at regular hours (status A), and on Thanksgiving 2027 it
-#   closes at 14:30 ET (status C*), an hour later than in 2026. Both
-#   libraries' ICE calendars (pandas_market_calendars ICE, exchange_calendars
-#   IEPA) give the same 20:00-18:00 ET week and the same closures on
-#   25 Dec 2026, 1 Jan 2027 and Good Friday 2027.
-#   Read on 2026-10-29 (Trading_Schedule.pdf, July 2026 edition, and the
-#   temporary-hours file, October 2026 edition): Brent and Options cease
-#   at 19:00 GMT (14:00 ET) on 24 Dec 2026, 20:00 GMT (15:00 ET) on 31 Dec 2026
-#   and 2027, and 13:00 GMT (08:00 ET) on 24 Dec 2027 (Appendices 1 and 2);
-#   27 and 28 Dec 2026 and 2027 are regular hours; the statuses above are the
-#   file's. The Sunday open is 18:00 ET: the product page gives "Sunday open
-#   11:00 PM (London Local Time)", and the temporary-hours file, for 25-30 Oct
-#   2026, "these markets open at 22:00 hours Sunday (18:00 EDT)" with trading
-#   00:00-22:00 GMT, 20:00-18:00 EDT. ICE's schedule is used where the
-#   libraries differ: their 20:00 ET Sunday open, and their 13:00 ET closes on
-#   US holidays.
-#   NOT VERIFIED: the hours for the weeks of 2027 when US and UK clocks differ
-#   (14-27 March and 31 October-6 November). ICE publishes a temporary-hours
-#   file per occasion, and the one out covers 25-30 Oct 2026 only.
-# - UK 100 (id 24): ICE Futures Europe FTSE 100 Index Future, 01:00-21:00
-#   London, closed 25 and 28 Dec 2026:
-#   https://www.ice.com/products/38716764/FTSE-100-Index-Future and
-#   https://www.ice.com/publicdocs/futures/Trading_Schedule_Migrated_Liffe_Contracts.pdf
-#   That schedule closes the future on every England and Wales bank holiday
-#   of 2026 and covers 2026 only. The 2027 closures are the 2027 bank holidays,
-#   https://www.gov.uk/bank-holidays.json , which both libraries' London
-#   calendars (LSE, XLON) also close.
-#   The schedule's October 2026 edition lists the 2026 closures (Good Friday,
-#   Christmas Day, 6 Apr, 4 and 25 May, 31 Aug, 28 Dec) and says the
-#   Christmas and New Year hours "will be confirmed via an Exchange circular";
-#   none is out on 2026-10-29. The product page gives 01:00-21:00 London.
-#   NOT VERIFIED: ICE's on-screen hours on 24 and 31 Dec 2026 and 2027. The
-#   schedule closes at 12:30 with the London Stock Exchange, as both libraries
-#   give; ICE's 2026 schedule names 13:00 for block trades only.
-# - Germany 40 (id 23): Eurex DAX Futures, continuous trading to 22:00 Berlin,
-#   from 01:10 CET in winter and 02:10 CEST in summer, and the 2026 closures:
-#   https://www.eurex.com/ex-en/markets/idx/dax/DAX-Futures-139902 and
-#   https://www.eurex.com/ex-en/trade/trading-calendar (2026 PDF)
-#   Eurex fixes the open to UTC and the close to Berlin time, which one weekly
-#   window cannot follow: the windows open at 02:10, and each CET weekday
-#   Eurex trades has a 01:10-02:10 special session. 2027 closures are from the
-#   indicative calendar, confirmed by the end of 2026:
-#   https://www.eurex.com/ex-en/trade/trading-calendar/indicative-trading-calendars
-#   and https://www.eurex.com/ex-en/trade/trading-calendar/holiday-regulations
-#   exchange_calendars' XEUR closes the same days in both years.
-#   Read on 2026-10-29: Eurex's 2026 trading hours (tradingcalendar_2026_en.pdf,
-#   page 1) give FDAX 01:10-22:00 CET, with the note "02:10-22:00 CEST"; its
-#   2026 calendar closes all derivatives on 24 and 31 Dec 2026 as well as
-#   1 Jan, 3 and 6 Apr, 1 May and 25 Dec, and its holiday regulations list
-#   26 Mar, 29 Mar, 24 Dec and 31 Dec 2027 as non-trading days with 1 Jan 2027
-#   (the indicative file's EXCH and Deutschland calendars give the same).
-#   NOT VERIFIED: the final 2027 calendar, which Eurex confirms by the end of
-#   2026; and FDAX hours on 30 Dec 2026, on which the 2026 calendar names no
-#   closure, though its line for closures in German equity index derivatives
-#   reads "to be announced".
 # - Japan 225 (id 25): Osaka Exchange Nikkei 225 Futures, day session
 #   08:45-15:45 and night session 17:00-06:00 Tokyo, as JPX's trading hours
 #   page (updated 13 Apr 2026) gives them (opening auctions 08:45 and 17:00,
@@ -271,7 +204,8 @@ tiers = [
 # every market's p99 fill size (Brent binds, at its 1.06 bps markout scale);
 # prior is half of memory, enough neutral history that a new account's first
 # fills move its score only modestly while the toxic climb still lands well
-# inside the candidate fill counts.
+# inside the candidate fill counts. The study's market set includes Brent, which
+# launch defers (#673), so the values hold with margin on the launch set.
 [genesis.params.toxicity.notional]
 prior = "5629518"
 memory = "11259036"
@@ -585,248 +519,6 @@ closures = [
 ]
 
 [[genesis.markets]]
-id = 23
-symbol = "DE40"
-asset_class = "index"
-quote_currency = { currency = "eur", fx_market = 10 }
-max_slippage_bps = 10
-house_cap_bps = 5000
-margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100 }, { bps = 500 }]
-spread_tiers = [{ up_to = "5000000", bps = 0 }, { up_to = "25000000", bps = 1 }, { bps = 4 }]
-price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
-financing = { benchmark = "ESTR", markup_bps = 250, day_basis = 360 }
-contracts = [
-  { contract = "FDAXZ6", from = "2026-09-10T14:30:00Z" },
-  { contract = "FDAXH7", from = "2026-12-10T14:30:00Z" },
-  { contract = "FDAXM7", from = "2027-03-11T14:30:00Z" },
-  { contract = "FDAXU7", from = "2027-06-10T14:30:00Z" },
-  { contract = "FDAXZ7", from = "2027-09-09T14:30:00Z" },
-  { contract = "FDAXH8", from = "2027-12-09T14:30:00Z" },
-]
-
-# Eurex DAX Futures, Berlin time, with the winter 01:10 open as special sessions: see the header.
-[genesis.markets.schedule]
-kind = "weekly"
-tz = "Europe/Berlin"
-windows = [
-  { open = "Mon 02:10", close = "Mon 22:00" },
-  { open = "Tue 02:10", close = "Tue 22:00" },
-  { open = "Wed 02:10", close = "Wed 22:00" },
-  { open = "Thu 02:10", close = "Thu 22:00" },
-  { open = "Fri 02:10", close = "Fri 22:00" },
-]
-closed_dates = [
-  "2026-12-24",
-  "2026-12-25",
-  "2026-12-31",
-  "2027-01-01",
-  "2027-03-26",
-  "2027-03-29",
-  "2027-12-24",
-  "2027-12-31",
-]
-special_sessions = [
-  { from = "2026-10-26T01:10:00", to = "2026-10-26T02:10:00" },
-  { from = "2026-10-27T01:10:00", to = "2026-10-27T02:10:00" },
-  { from = "2026-10-28T01:10:00", to = "2026-10-28T02:10:00" },
-  { from = "2026-10-29T01:10:00", to = "2026-10-29T02:10:00" },
-  { from = "2026-10-30T01:10:00", to = "2026-10-30T02:10:00" },
-  { from = "2026-11-02T01:10:00", to = "2026-11-02T02:10:00" },
-  { from = "2026-11-03T01:10:00", to = "2026-11-03T02:10:00" },
-  { from = "2026-11-04T01:10:00", to = "2026-11-04T02:10:00" },
-  { from = "2026-11-05T01:10:00", to = "2026-11-05T02:10:00" },
-  { from = "2026-11-06T01:10:00", to = "2026-11-06T02:10:00" },
-  { from = "2026-11-09T01:10:00", to = "2026-11-09T02:10:00" },
-  { from = "2026-11-10T01:10:00", to = "2026-11-10T02:10:00" },
-  { from = "2026-11-11T01:10:00", to = "2026-11-11T02:10:00" },
-  { from = "2026-11-12T01:10:00", to = "2026-11-12T02:10:00" },
-  { from = "2026-11-13T01:10:00", to = "2026-11-13T02:10:00" },
-  { from = "2026-11-16T01:10:00", to = "2026-11-16T02:10:00" },
-  { from = "2026-11-17T01:10:00", to = "2026-11-17T02:10:00" },
-  { from = "2026-11-18T01:10:00", to = "2026-11-18T02:10:00" },
-  { from = "2026-11-19T01:10:00", to = "2026-11-19T02:10:00" },
-  { from = "2026-11-20T01:10:00", to = "2026-11-20T02:10:00" },
-  { from = "2026-11-23T01:10:00", to = "2026-11-23T02:10:00" },
-  { from = "2026-11-24T01:10:00", to = "2026-11-24T02:10:00" },
-  { from = "2026-11-25T01:10:00", to = "2026-11-25T02:10:00" },
-  { from = "2026-11-26T01:10:00", to = "2026-11-26T02:10:00" },
-  { from = "2026-11-27T01:10:00", to = "2026-11-27T02:10:00" },
-  { from = "2026-11-30T01:10:00", to = "2026-11-30T02:10:00" },
-  { from = "2026-12-01T01:10:00", to = "2026-12-01T02:10:00" },
-  { from = "2026-12-02T01:10:00", to = "2026-12-02T02:10:00" },
-  { from = "2026-12-03T01:10:00", to = "2026-12-03T02:10:00" },
-  { from = "2026-12-04T01:10:00", to = "2026-12-04T02:10:00" },
-  { from = "2026-12-07T01:10:00", to = "2026-12-07T02:10:00" },
-  { from = "2026-12-08T01:10:00", to = "2026-12-08T02:10:00" },
-  { from = "2026-12-09T01:10:00", to = "2026-12-09T02:10:00" },
-  { from = "2026-12-10T01:10:00", to = "2026-12-10T02:10:00" },
-  { from = "2026-12-11T01:10:00", to = "2026-12-11T02:10:00" },
-  { from = "2026-12-14T01:10:00", to = "2026-12-14T02:10:00" },
-  { from = "2026-12-15T01:10:00", to = "2026-12-15T02:10:00" },
-  { from = "2026-12-16T01:10:00", to = "2026-12-16T02:10:00" },
-  { from = "2026-12-17T01:10:00", to = "2026-12-17T02:10:00" },
-  { from = "2026-12-18T01:10:00", to = "2026-12-18T02:10:00" },
-  { from = "2026-12-21T01:10:00", to = "2026-12-21T02:10:00" },
-  { from = "2026-12-22T01:10:00", to = "2026-12-22T02:10:00" },
-  { from = "2026-12-23T01:10:00", to = "2026-12-23T02:10:00" },
-  { from = "2026-12-28T01:10:00", to = "2026-12-28T02:10:00" },
-  { from = "2026-12-29T01:10:00", to = "2026-12-29T02:10:00" },
-  { from = "2026-12-30T01:10:00", to = "2026-12-30T02:10:00" },
-  { from = "2027-01-04T01:10:00", to = "2027-01-04T02:10:00" },
-  { from = "2027-01-05T01:10:00", to = "2027-01-05T02:10:00" },
-  { from = "2027-01-06T01:10:00", to = "2027-01-06T02:10:00" },
-  { from = "2027-01-07T01:10:00", to = "2027-01-07T02:10:00" },
-  { from = "2027-01-08T01:10:00", to = "2027-01-08T02:10:00" },
-  { from = "2027-01-11T01:10:00", to = "2027-01-11T02:10:00" },
-  { from = "2027-01-12T01:10:00", to = "2027-01-12T02:10:00" },
-  { from = "2027-01-13T01:10:00", to = "2027-01-13T02:10:00" },
-  { from = "2027-01-14T01:10:00", to = "2027-01-14T02:10:00" },
-  { from = "2027-01-15T01:10:00", to = "2027-01-15T02:10:00" },
-  { from = "2027-01-18T01:10:00", to = "2027-01-18T02:10:00" },
-  { from = "2027-01-19T01:10:00", to = "2027-01-19T02:10:00" },
-  { from = "2027-01-20T01:10:00", to = "2027-01-20T02:10:00" },
-  { from = "2027-01-21T01:10:00", to = "2027-01-21T02:10:00" },
-  { from = "2027-01-22T01:10:00", to = "2027-01-22T02:10:00" },
-  { from = "2027-01-25T01:10:00", to = "2027-01-25T02:10:00" },
-  { from = "2027-01-26T01:10:00", to = "2027-01-26T02:10:00" },
-  { from = "2027-01-27T01:10:00", to = "2027-01-27T02:10:00" },
-  { from = "2027-01-28T01:10:00", to = "2027-01-28T02:10:00" },
-  { from = "2027-01-29T01:10:00", to = "2027-01-29T02:10:00" },
-  { from = "2027-02-01T01:10:00", to = "2027-02-01T02:10:00" },
-  { from = "2027-02-02T01:10:00", to = "2027-02-02T02:10:00" },
-  { from = "2027-02-03T01:10:00", to = "2027-02-03T02:10:00" },
-  { from = "2027-02-04T01:10:00", to = "2027-02-04T02:10:00" },
-  { from = "2027-02-05T01:10:00", to = "2027-02-05T02:10:00" },
-  { from = "2027-02-08T01:10:00", to = "2027-02-08T02:10:00" },
-  { from = "2027-02-09T01:10:00", to = "2027-02-09T02:10:00" },
-  { from = "2027-02-10T01:10:00", to = "2027-02-10T02:10:00" },
-  { from = "2027-02-11T01:10:00", to = "2027-02-11T02:10:00" },
-  { from = "2027-02-12T01:10:00", to = "2027-02-12T02:10:00" },
-  { from = "2027-02-15T01:10:00", to = "2027-02-15T02:10:00" },
-  { from = "2027-02-16T01:10:00", to = "2027-02-16T02:10:00" },
-  { from = "2027-02-17T01:10:00", to = "2027-02-17T02:10:00" },
-  { from = "2027-02-18T01:10:00", to = "2027-02-18T02:10:00" },
-  { from = "2027-02-19T01:10:00", to = "2027-02-19T02:10:00" },
-  { from = "2027-02-22T01:10:00", to = "2027-02-22T02:10:00" },
-  { from = "2027-02-23T01:10:00", to = "2027-02-23T02:10:00" },
-  { from = "2027-02-24T01:10:00", to = "2027-02-24T02:10:00" },
-  { from = "2027-02-25T01:10:00", to = "2027-02-25T02:10:00" },
-  { from = "2027-02-26T01:10:00", to = "2027-02-26T02:10:00" },
-  { from = "2027-03-01T01:10:00", to = "2027-03-01T02:10:00" },
-  { from = "2027-03-02T01:10:00", to = "2027-03-02T02:10:00" },
-  { from = "2027-03-03T01:10:00", to = "2027-03-03T02:10:00" },
-  { from = "2027-03-04T01:10:00", to = "2027-03-04T02:10:00" },
-  { from = "2027-03-05T01:10:00", to = "2027-03-05T02:10:00" },
-  { from = "2027-03-08T01:10:00", to = "2027-03-08T02:10:00" },
-  { from = "2027-03-09T01:10:00", to = "2027-03-09T02:10:00" },
-  { from = "2027-03-10T01:10:00", to = "2027-03-10T02:10:00" },
-  { from = "2027-03-11T01:10:00", to = "2027-03-11T02:10:00" },
-  { from = "2027-03-12T01:10:00", to = "2027-03-12T02:10:00" },
-  { from = "2027-03-15T01:10:00", to = "2027-03-15T02:10:00" },
-  { from = "2027-03-16T01:10:00", to = "2027-03-16T02:10:00" },
-  { from = "2027-03-17T01:10:00", to = "2027-03-17T02:10:00" },
-  { from = "2027-03-18T01:10:00", to = "2027-03-18T02:10:00" },
-  { from = "2027-03-19T01:10:00", to = "2027-03-19T02:10:00" },
-  { from = "2027-03-22T01:10:00", to = "2027-03-22T02:10:00" },
-  { from = "2027-03-23T01:10:00", to = "2027-03-23T02:10:00" },
-  { from = "2027-03-24T01:10:00", to = "2027-03-24T02:10:00" },
-  { from = "2027-03-25T01:10:00", to = "2027-03-25T02:10:00" },
-  { from = "2027-11-01T01:10:00", to = "2027-11-01T02:10:00" },
-  { from = "2027-11-02T01:10:00", to = "2027-11-02T02:10:00" },
-  { from = "2027-11-03T01:10:00", to = "2027-11-03T02:10:00" },
-  { from = "2027-11-04T01:10:00", to = "2027-11-04T02:10:00" },
-  { from = "2027-11-05T01:10:00", to = "2027-11-05T02:10:00" },
-  { from = "2027-11-08T01:10:00", to = "2027-11-08T02:10:00" },
-  { from = "2027-11-09T01:10:00", to = "2027-11-09T02:10:00" },
-  { from = "2027-11-10T01:10:00", to = "2027-11-10T02:10:00" },
-  { from = "2027-11-11T01:10:00", to = "2027-11-11T02:10:00" },
-  { from = "2027-11-12T01:10:00", to = "2027-11-12T02:10:00" },
-  { from = "2027-11-15T01:10:00", to = "2027-11-15T02:10:00" },
-  { from = "2027-11-16T01:10:00", to = "2027-11-16T02:10:00" },
-  { from = "2027-11-17T01:10:00", to = "2027-11-17T02:10:00" },
-  { from = "2027-11-18T01:10:00", to = "2027-11-18T02:10:00" },
-  { from = "2027-11-19T01:10:00", to = "2027-11-19T02:10:00" },
-  { from = "2027-11-22T01:10:00", to = "2027-11-22T02:10:00" },
-  { from = "2027-11-23T01:10:00", to = "2027-11-23T02:10:00" },
-  { from = "2027-11-24T01:10:00", to = "2027-11-24T02:10:00" },
-  { from = "2027-11-25T01:10:00", to = "2027-11-25T02:10:00" },
-  { from = "2027-11-26T01:10:00", to = "2027-11-26T02:10:00" },
-  { from = "2027-11-29T01:10:00", to = "2027-11-29T02:10:00" },
-  { from = "2027-11-30T01:10:00", to = "2027-11-30T02:10:00" },
-  { from = "2027-12-01T01:10:00", to = "2027-12-01T02:10:00" },
-  { from = "2027-12-02T01:10:00", to = "2027-12-02T02:10:00" },
-  { from = "2027-12-03T01:10:00", to = "2027-12-03T02:10:00" },
-  { from = "2027-12-06T01:10:00", to = "2027-12-06T02:10:00" },
-  { from = "2027-12-07T01:10:00", to = "2027-12-07T02:10:00" },
-  { from = "2027-12-08T01:10:00", to = "2027-12-08T02:10:00" },
-  { from = "2027-12-09T01:10:00", to = "2027-12-09T02:10:00" },
-  { from = "2027-12-10T01:10:00", to = "2027-12-10T02:10:00" },
-  { from = "2027-12-13T01:10:00", to = "2027-12-13T02:10:00" },
-  { from = "2027-12-14T01:10:00", to = "2027-12-14T02:10:00" },
-  { from = "2027-12-15T01:10:00", to = "2027-12-15T02:10:00" },
-  { from = "2027-12-16T01:10:00", to = "2027-12-16T02:10:00" },
-  { from = "2027-12-17T01:10:00", to = "2027-12-17T02:10:00" },
-  { from = "2027-12-20T01:10:00", to = "2027-12-20T02:10:00" },
-  { from = "2027-12-21T01:10:00", to = "2027-12-21T02:10:00" },
-  { from = "2027-12-22T01:10:00", to = "2027-12-22T02:10:00" },
-  { from = "2027-12-23T01:10:00", to = "2027-12-23T02:10:00" },
-  { from = "2027-12-27T01:10:00", to = "2027-12-27T02:10:00" },
-  { from = "2027-12-28T01:10:00", to = "2027-12-28T02:10:00" },
-  { from = "2027-12-29T01:10:00", to = "2027-12-29T02:10:00" },
-  { from = "2027-12-30T01:10:00", to = "2027-12-30T02:10:00" },
-]
-
-[[genesis.markets]]
-id = 24
-symbol = "UK100"
-asset_class = "index"
-quote_currency = { currency = "gbp", fx_market = 11 }
-max_slippage_bps = 10
-house_cap_bps = 5000
-margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100 }, { bps = 500 }]
-spread_tiers = [{ up_to = "5000000", bps = 0 }, { up_to = "25000000", bps = 1 }, { bps = 4 }]
-price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
-financing = { benchmark = "SONIA", markup_bps = 250, day_basis = 365 }
-contracts = [
-  { contract = "ZZ6", from = "2026-09-10T14:30:00Z" },
-  { contract = "ZH7", from = "2026-12-10T14:30:00Z" },
-  { contract = "ZM7", from = "2027-03-11T14:30:00Z" },
-  { contract = "ZU7", from = "2027-06-10T14:30:00Z" },
-  { contract = "ZZ7", from = "2027-09-09T14:30:00Z" },
-  { contract = "ZH8", from = "2027-12-09T14:30:00Z" },
-]
-
-# ICE Futures Europe FTSE 100 Index Future, London time.
-[genesis.markets.schedule]
-kind = "weekly"
-tz = "Europe/London"
-windows = [
-  { open = "Mon 01:00", close = "Mon 21:00" },
-  { open = "Tue 01:00", close = "Tue 21:00" },
-  { open = "Wed 01:00", close = "Wed 21:00" },
-  { open = "Thu 01:00", close = "Thu 21:00" },
-  { open = "Fri 01:00", close = "Fri 21:00" },
-]
-closed_dates = [
-  "2026-12-25",
-  "2026-12-28",
-  "2027-01-01",
-  "2027-03-26",
-  "2027-03-29",
-  "2027-05-03",
-  "2027-05-31",
-  "2027-08-30",
-  "2027-12-27",
-  "2027-12-28",
-]
-closures = [
-  { from = "2026-12-24T12:30:00", to = "2026-12-24T21:00:00" },
-  { from = "2026-12-31T12:30:00", to = "2026-12-31T21:00:00" },
-  { from = "2027-12-24T12:30:00", to = "2027-12-24T21:00:00" },
-  { from = "2027-12-31T12:30:00", to = "2027-12-31T21:00:00" },
-]
-
-[[genesis.markets]]
 id = 25
 symbol = "JP225"
 asset_class = "index"
@@ -1025,63 +717,6 @@ closures = [
   { from = "2027-11-25T12:00:00", to = "2027-11-25T16:00:00" },
   { from = "2027-11-26T12:00:00", to = "2027-11-26T16:00:00" },
   { from = "2027-12-23T17:00:00", to = "2027-12-24T16:00:00" },
-]
-
-[[genesis.markets]]
-id = 33
-symbol = "BRENT"
-asset_class = "commodity"
-max_slippage_bps = 10
-house_cap_bps = 3000
-margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
-spread_tiers = [{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 2 }, { bps = 6 }]
-price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
-financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
-contracts = [
-  { contract = "BRNZ6", from = "2026-09-28T14:30:00Z" },
-  { contract = "BRNF7", from = "2026-10-28T14:30:00Z" },
-  { contract = "BRNG7", from = "2026-11-26T14:30:00Z" },
-  { contract = "BRNH7", from = "2026-12-23T14:30:00Z" },
-  { contract = "BRNJ7", from = "2027-01-27T14:30:00Z" },
-  { contract = "BRNK7", from = "2027-02-24T14:30:00Z" },
-  { contract = "BRNM7", from = "2027-03-25T14:30:00Z" },
-  { contract = "BRNN7", from = "2027-04-28T14:30:00Z" },
-  { contract = "BRNQ7", from = "2027-05-26T14:30:00Z" },
-  { contract = "BRNU7", from = "2027-06-28T14:30:00Z" },
-  { contract = "BRNV7", from = "2027-07-28T14:30:00Z" },
-  { contract = "BRNX7", from = "2027-08-26T14:30:00Z" },
-  { contract = "BRNZ7", from = "2027-09-28T14:30:00Z" },
-  { contract = "BRNF8", from = "2027-10-27T14:30:00Z" },
-  { contract = "BRNG8", from = "2027-11-26T14:30:00Z" },
-  { contract = "BRNH8", from = "2027-12-23T14:30:00Z" },
-  { contract = "BRNJ8", from = "2028-01-27T14:30:00Z" },
-]
-
-# ICE Futures Europe Brent, fixed in New York time: see the header.
-[genesis.markets.schedule]
-kind = "weekly"
-tz = "America/New_York"
-windows = [
-  { open = "Sun 18:00", close = "Mon 18:00" },
-  { open = "Mon 20:00", close = "Tue 18:00" },
-  { open = "Tue 20:00", close = "Wed 18:00" },
-  { open = "Wed 20:00", close = "Thu 18:00" },
-  { open = "Thu 20:00", close = "Fri 18:00" },
-]
-closures = [
-  { from = "2026-11-26T13:30:00", to = "2026-11-26T18:00:00" },
-  { from = "2026-11-27T15:00:00", to = "2026-11-27T18:00:00" },
-  { from = "2026-12-24T14:00:00", to = "2026-12-25T18:00:00" },
-  { from = "2026-12-31T15:00:00", to = "2027-01-01T18:00:00" },
-  { from = "2027-03-25T20:00:00", to = "2027-03-26T18:00:00" },
-  { from = "2027-05-31T13:30:00", to = "2027-05-31T18:00:00" },
-  { from = "2027-06-18T13:30:00", to = "2027-06-18T18:00:00" },
-  { from = "2027-07-05T13:30:00", to = "2027-07-05T18:00:00" },
-  { from = "2027-09-06T13:30:00", to = "2027-09-06T18:00:00" },
-  { from = "2027-11-25T14:30:00", to = "2027-11-25T18:00:00" },
-  { from = "2027-11-26T15:00:00", to = "2027-11-26T18:00:00" },
-  { from = "2027-12-24T08:00:00", to = "2027-12-24T18:00:00" },
-  { from = "2027-12-31T15:00:00", to = "2027-12-31T18:00:00" },
 ]
 
 # --- US shares: core session of the listing exchange ----------------------
@@ -1996,14 +1631,6 @@ market = 22
 max_close_spread_bps = 13
 
 [[genesis.close_spread_ceilings]]
-market = 23
-max_close_spread_bps = 15
-
-[[genesis.close_spread_ceilings]]
-market = 24
-max_close_spread_bps = 13
-
-[[genesis.close_spread_ceilings]]
 market = 25
 max_close_spread_bps = 15
 
@@ -2017,10 +1644,6 @@ max_close_spread_bps = 20
 
 [[genesis.close_spread_ceilings]]
 market = 32
-max_close_spread_bps = 20
-
-[[genesis.close_spread_ceilings]]
-market = 33
 max_close_spread_bps = 20
 
 [[genesis.close_spread_ceilings]]

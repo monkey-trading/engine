@@ -49,8 +49,8 @@ together, rounding each price once and settling any rounded-off fraction of a po
 The [operator runbook](crates/node/README.md#corporate-actions-operator-runbook) describes required
 inputs, recorded FX valuation and failure handling.
 
-Accounts are kept in US dollars. A market quoted in another currency, such as Germany 40 in euros
-or Japan 225 in yen, accrues profit and loss in that currency and converts it to dollars at the
+Accounts are kept in US dollars. A market quoted in another currency, such as Japan 225
+in yen, accrues profit and loss in that currency and converts it to dollars at the
 engine's own price for the currency pair, the same way for margin, exposure, and financing. While
 that currency pair has no price, neither does the market, and nothing trades in it.
 

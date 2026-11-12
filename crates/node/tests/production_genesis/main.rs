@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc, Weekday};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Command, Sequenced};
@@ -23,7 +23,6 @@ use engine_core::params::{
     NotionalWeighting, ProtocolParams, StressLevel, StressTrigger, ToxicityParams, ToxicityTier,
 };
 use engine_core::protocol::ProtocolVersion;
-use engine_core::session::{Period, Schedule};
 use engine_core::types::{AssetClass, MarketId, Millis};
 use engine_core::{Engine, Fixed};
 use engine_node::NodeConfig;
@@ -37,17 +36,15 @@ const CRYPTO: [MarketId; 3] = [1, 2, 3];
 const CBOE_FX: [MarketId; 4] = [10, 11, 12, 13];
 const CME_EQUITY: [MarketId; 3] = [20, 21, 22];
 const CME_METALS_ENERGY: [MarketId; 3] = [30, 31, 32];
-const EUREX: [MarketId; 1] = [23];
-const ICE_FTSE: [MarketId; 1] = [24];
 const JPX: [MarketId; 1] = [25];
-const ICE_BRENT: [MarketId; 1] = [33];
 const US_SHARES: [MarketId; 20] = [40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59];
 
-/// The launch catalogue: #7's majors and 20 US large-cap shares, in listing order.
-const SYMBOLS: [&str; 37] = [
-    "BTC-USD", "ETH-USD", "SOL-USD", "EUR-USD", "GBP-USD", "USD-JPY", "AUD-USD", "US500", "US100", "US30", "DE40",
-    "UK100", "JP225", "XAU-USD", "XAG-USD", "WTI", "BRENT", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
-    "AVGO", "BRK.B", "JPM", "V", "MA", "LLY", "JNJ", "XOM", "WMT", "COST", "NFLX", "AMD", "ORCL",
+/// The launch catalogue: #7's majors without the Eurex and ICE markets (#673), and 20 US
+/// large-cap shares, in listing order.
+const SYMBOLS: [&str; 34] = [
+    "BTC-USD", "ETH-USD", "SOL-USD", "EUR-USD", "GBP-USD", "USD-JPY", "AUD-USD", "US500", "US100", "US30", "JP225",
+    "XAU-USD", "XAG-USD", "WTI", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "BRK.B", "JPM", "V",
+    "MA", "LLY", "JNJ", "XOM", "WMT", "COST", "NFLX", "AMD", "ORCL",
 ];
 
 const MINUTE: Millis = 60_000;
@@ -67,9 +64,7 @@ fn a_dev_node_loads_the_production_genesis_and_every_market_validates() {
     let symbols: Vec<&str> = genesis.markets.iter().map(|m| m.symbol.as_str()).collect();
     assert_eq!(symbols, SYMBOLS);
     let ids: Vec<MarketId> = genesis.markets.iter().map(|m| m.id).collect();
-    let venues =
-        [&CRYPTO[..], &CBOE_FX, &CME_EQUITY, &CME_METALS_ENERGY, &EUREX, &ICE_FTSE, &JPX, &ICE_BRENT, &US_SHARES]
-            .concat();
+    let venues = [&CRYPTO[..], &CBOE_FX, &CME_EQUITY, &CME_METALS_ENERGY, &JPX, &US_SHARES].concat();
     assert_eq!(ids.len(), venues.len());
     assert!(venues.iter().all(|id| ids.contains(id)), "{ids:?}");
 }
@@ -186,12 +181,8 @@ fn the_launch_markets_quoted_outside_usd_convert_at_their_pairs() {
     let production = production_genesis("quote-currencies");
     let quoted: BTreeMap<&str, QuoteCurrency> =
         production.markets.iter().map(|m| (m.symbol.as_str(), m.quote_currency)).collect();
-    let (eur, gbp, jpy) = (
-        QuoteCurrency::Eur { fx_market: 10 },
-        QuoteCurrency::Gbp { fx_market: 11 },
-        QuoteCurrency::Jpy { fx_market: 12 },
-    );
-    let expected = [("USD-JPY", jpy), ("DE40", eur), ("UK100", gbp), ("JP225", jpy)];
+    let jpy = QuoteCurrency::Jpy { fx_market: 12 };
+    let expected = [("USD-JPY", jpy), ("JP225", jpy)];
     for (symbol, currency) in quoted {
         let want = expected.iter().find(|(s, _)| *s == symbol).map_or(QuoteCurrency::Usd, |(_, c)| *c);
         assert_eq!(currency, want, "{symbol}");
@@ -205,46 +196,6 @@ fn markets_on_one_venue_share_one_calendar() {
     for venue in [&CBOE_FX[..], &CME_EQUITY, &CME_METALS_ENERGY, &US_SHARES] {
         assert!(venue.iter().all(|id| schedule(*id) == schedule(venue[0])), "{venue:?}");
     }
-}
-
-#[test]
-fn germany_40_opens_at_01_10_in_winter_and_02_10_in_summer() {
-    let genesis = production_genesis("germany-40");
-    let schedule = &genesis.markets.iter().find(|m| m.id == EUREX[0]).expect("listed").schedule;
-    let berlin = chrono_tz::Europe::Berlin;
-    // Eurex's open is fixed to UTC: 01:10 CET in winter, 02:10 CEST in summer.
-    for (day, opens_at_01_10) in
-        [("2026-11-02", true), ("2027-02-15", true), ("2027-11-02", true), ("2027-06-15", false)]
-    {
-        assert!(!schedule.is_open(at(berlin, &format!("{day} 01:09"))), "{day}");
-        assert_eq!(schedule.is_open(at(berlin, &format!("{day} 01:10"))), opens_at_01_10, "{day}");
-        assert!(schedule.is_open(at(berlin, &format!("{day} 02:10"))), "{day}");
-        assert!(!schedule.is_open(at(berlin, &format!("{day} 22:00"))), "{day}");
-    }
-    // A closed date stays shut through the winter first hour.
-    assert!(!schedule.is_open(at(berlin, "2027-03-26 01:30")));
-}
-
-#[test]
-fn germany_40_has_a_winter_first_hour_on_every_cet_weekday_eurex_trades() {
-    let genesis = production_genesis("germany-40-winter");
-    let schedule = &genesis.markets.iter().find(|m| m.id == EUREX[0]).expect("listed").schedule;
-    let Schedule::Weekly { closed_dates, special_sessions, .. } = schedule else { panic!("DE40 keeps weekly hours") };
-    let berlin = chrono_tz::Europe::Berlin;
-    let first = NaiveDate::from_ymd_opt(2026, 10, 20).expect("a date");
-    let last = NaiveDate::from_ymd_opt(2027, 12, 31).expect("a date");
-    let expected: Vec<Period> = first
-        .iter_days()
-        .take_while(|day| *day <= last)
-        .filter(|day| !matches!(day.weekday(), Weekday::Sat | Weekday::Sun) && !closed_dates.contains(day))
-        // CET is UTC+1; CEST days take Eurex's 02:10 open from the weekly windows.
-        .filter(|day| {
-            let noon = berlin.from_local_datetime(&day.and_hms_opt(12, 0, 0).expect("a time")).unwrap();
-            noon.offset().fix().local_minus_utc() == 3_600
-        })
-        .map(|day| Period { from: day.and_hms_opt(1, 10, 0).unwrap(), to: day.and_hms_opt(2, 10, 0).unwrap() })
-        .collect();
-    assert_eq!(special_sessions, &expected);
 }
 
 #[test]
@@ -335,21 +286,6 @@ fn thanksgiving_week() -> Week {
         // CME halts at 12:00 CT on Thanksgiving, reopens at 17:00, and closes at 12:00 CT the day after.
         (&CME_EQUITY, chicago, cme_thanksgiving.clone()),
         (&CME_METALS_ENERGY, chicago, cme_thanksgiving),
-        // Early closes at 13:30 ET on Thanksgiving and 15:00 ET the day after.
-        (
-            &ICE_BRENT,
-            new_york,
-            [
-                overnight(&["2026-11-22", mon], "18:00", "18:00"),
-                overnight(&[mon, tue, wed], "20:00", "18:00"),
-                listed(&[("2026-11-25 20:00", true), ("2026-11-26 13:30", false)]),
-                listed(&[("2026-11-26 20:00", true), ("2026-11-27 15:00", false)]),
-            ]
-            .concat(),
-        ),
-        (&ICE_FTSE, chrono_tz::Europe::London, sessions(&[mon, tue, wed, thu, fri], "01:00", "21:00")),
-        // Winter: Eurex opens at 01:10 CET.
-        (&EUREX, chrono_tz::Europe::Berlin, sessions(&[mon, tue, wed, thu, fri], "01:10", "22:00")),
         // Monday is shut for JPX's BCP test, day and night session.
         (
             &JPX,
@@ -385,25 +321,6 @@ fn christmas_week() -> Week {
         // CME closes at 12:00 CT on Christmas Eve and stays shut through Christmas Day.
         (&CME_EQUITY, chicago, cme_christmas.clone()),
         (&CME_METALS_ENERGY, chicago, cme_christmas),
-        // Trading ceases at 14:00 ET on Christmas Eve and stays shut through Christmas Day.
-        (
-            &ICE_BRENT,
-            new_york,
-            [
-                overnight(&["2026-12-20", mon], "18:00", "18:00"),
-                overnight(&[mon, tue, wed], "20:00", "18:00"),
-                listed(&[("2026-12-23 20:00", true), ("2026-12-24 14:00", false)]),
-            ]
-            .concat(),
-        ),
-        // Closes at 12:30 on Christmas Eve with the London market, and shut on Christmas Day.
-        (
-            &ICE_FTSE,
-            chrono_tz::Europe::London,
-            [sessions(&[mon, tue, wed], "01:00", "21:00"), sessions(&[thu], "01:00", "12:30")].concat(),
-        ),
-        // Closed on Christmas Eve and Christmas Day; the winter open is 01:10 CET.
-        (&EUREX, chrono_tz::Europe::Berlin, sessions(&[mon, tue, wed], "01:10", "22:00")),
         // No Japanese holiday this week.
         (
             &JPX,
@@ -431,17 +348,6 @@ fn easter_week_2027() -> Week {
         // CME is shut on Good Friday, so Thursday evening's session does not open.
         (&CME_EQUITY, chicago, cme_easter.clone()),
         (&CME_METALS_ENERGY, chicago, cme_easter),
-        // Closed on Good Friday, so Thursday evening's session does not open.
-        (
-            &ICE_BRENT,
-            new_york,
-            [overnight(&["2027-03-21", mon], "18:00", "18:00"), overnight(&[mon, tue, wed, thu], "20:00", "18:00")]
-                .concat(),
-        ),
-        // Shut on Good Friday, an England and Wales bank holiday.
-        (&ICE_FTSE, chrono_tz::Europe::London, sessions(&[mon, tue, wed, thu], "01:00", "21:00")),
-        // The winter 01:10 CET open, and closed on Good Friday.
-        (&EUREX, chrono_tz::Europe::Berlin, sessions(&[mon, tue, wed, thu], "01:10", "22:00")),
         // Monday's holiday is a JPX holiday-trading day.
         (
             &JPX,

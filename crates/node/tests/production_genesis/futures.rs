@@ -31,9 +31,6 @@ enum Rule {
     /// 2 CME business days before WTI's last trade: 3 business days before the 25th of the month
     /// before delivery, or 4 when the 25th is not a business day.
     WtiLastTrade,
-    /// 2 ICE business days before Brent's last trade, the last business day of the second month
-    /// before delivery.
-    BrentLastTrade,
 }
 
 const QUARTERLY: &[u32] = &[3, 6, 9, 12];
@@ -45,17 +42,14 @@ const SECOND_FRIDAY: Rule = Rule::Index { friday: 2, at: (1, 0) };
 
 /// Each futures market: its contracts' exchange root, the delivery months it rolls between, and
 /// its rule.
-const FUTURES: [(MarketId, &str, &[u32], Rule); 10] = [
+const FUTURES: [(MarketId, &str, &[u32], Rule); 7] = [
     (20, "ES", QUARTERLY, THIRD_FRIDAY),
     (21, "NQ", QUARTERLY, THIRD_FRIDAY),
     (22, "YM", QUARTERLY, THIRD_FRIDAY),
-    (23, "FDAX", QUARTERLY, THIRD_FRIDAY),
-    (24, "Z", QUARTERLY, THIRD_FRIDAY),
     (25, "NIY", QUARTERLY, SECOND_FRIDAY),
     (30, "GC", &[2, 4, 6, 8, 10, 12], Rule::FirstNotice),
     (31, "SI", &[3, 5, 7, 9, 12], Rule::FirstNotice),
     (32, "CL", MONTHLY, Rule::WtiLastTrade),
-    (33, "BRN", MONTHLY, Rule::BrentLastTrade),
 ];
 
 const MONTH_CODES: &[u8; 12] = b"FGHJKMNQUVXZ";
@@ -78,28 +72,6 @@ const CME_HOLIDAYS: &[&str] = &[
     "2027-12-24",
     "2028-01-17",
     "2028-02-21",
-];
-
-/// The weekdays ICE's Brent expiry calendar does not count as business days: England's bank
-/// holidays (https://www.gov.uk/bank-holidays.json), and 24 and 31 December, as February 2027 and
-/// 2028 Brent expire on 30 December: https://www.ice.com/products/219/Brent-Crude-Futures/expiry
-const ICE_NON_BUSINESS_DAYS: &[&str] = &[
-    "2026-08-31",
-    "2026-12-24",
-    "2026-12-25",
-    "2026-12-28",
-    "2026-12-31",
-    "2027-01-01",
-    "2027-03-26",
-    "2027-03-29",
-    "2027-05-03",
-    "2027-05-31",
-    "2027-08-30",
-    "2027-12-24",
-    "2027-12-27",
-    "2027-12-28",
-    "2027-12-31",
-    "2028-01-03",
 ];
 
 #[test]
@@ -137,8 +109,6 @@ fn each_futures_market_rolls_through_its_active_months_by_the_owners_rules() {
         (30, "GCG7", "2026-11-25T14:30:00Z"),
         // CL December's last trade is Fri 20 Nov 2026.
         (32, "CLF7", "2026-11-18T14:30:00Z"),
-        // BRN February's last trade is Wed 30 Dec 2026; 24, 25 and 28 Dec are skipped.
-        (33, "BRNH7", "2026-12-23T14:30:00Z"),
     ] {
         let listed = listing(&genesis, id).contracts.iter().find(|c| c.contract == contract).expect("listed");
         assert_eq!(listed.from, from.parse::<DateTime<Utc>>().unwrap(), "{contract}");
@@ -213,10 +183,6 @@ fn roll_off(rule: Rule, month: (i32, u32)) -> DateTime<Utc> {
             let back = if business_day(the_25th, CME_HOLIDAYS) { 3 } else { 4 };
             let last_trade = business_days_before(the_25th, back, CME_HOLIDAYS);
             (business_days_before(last_trade, 2, CME_HOLIDAYS), (14, 30))
-        }
-        Rule::BrentLastTrade => {
-            let last_trade = last_business_day(months_before(month, 2), ICE_NON_BUSINESS_DAYS);
-            (business_days_before(last_trade, 2, ICE_NON_BUSINESS_DAYS), (14, 30))
         }
     };
     day.and_hms_opt(hour, minute, 0).unwrap().and_utc()
