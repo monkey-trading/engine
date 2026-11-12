@@ -160,7 +160,7 @@ fn vacuum(conn: &Connection, pages: usize) -> Result<u64> {
     }
     let before: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
     {
-        // rusqlite 0.40 execute_batch stops after the first result row; this pragma yields per page.
+        // rusqlite 0.41 execute_batch stops after the first result row; this pragma yields per page.
         let mut statement = conn.prepare(&format!("PRAGMA incremental_vacuum({pages})"))?;
         let mut rows = statement.query([])?;
         let mut steps = 0usize;
