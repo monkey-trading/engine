@@ -1,14 +1,15 @@
 //! A daily turn's handover: from the turn's boundary, by both sides' trusted time, the finalised
 //! schedule's member takes the keys, sealed under the generation the schedule fixed, while the
-//! finalised vault still names the incumbent's release; and only for a turn the incumbent's log
-//! accepted.
+//! finalised vault still names the incumbent's release, from its turn's source even with that
+//! source's archive unreachable; and only for a turn the incumbent's log accepted, or, once it has
+//! stopped, would accept.
 
 use super::*;
 
 use engine_core::auth::Operator;
 use engine_core::eip712::B256;
 
-use crate::checkpoints::ScheduledTurn;
+use crate::checkpoints::{HandoverSource, ScheduledTurn};
 use crate::sequencer::Request;
 use crate::sequencer::tests::operator::{recover_turns, turn_log};
 use crate::trusted_time::Sample;
@@ -51,8 +52,18 @@ impl Exchange {
             admin_key: key,
             release: self.upgrade().id(),
             generation: TURN_GENERATION,
+            set: 1,
             source: None,
         });
+    }
+
+    /// The finalised schedule names the successor's release for `turn` under the candidate the log's
+    /// set names, with `key`, drawn from `set`.
+    fn schedule_set_member(&self, turn: u64, key: AccountId, set: u32) {
+        self.schedule_successor(turn, key, engine_core::turns::boundary(turn).unwrap());
+        let mut scheduled = self.scheduled.lock().unwrap();
+        let scheduled = scheduled.as_mut().expect("the turn is drawn");
+        (scheduled.candidate, scheduled.set) = (AccountId([0xc1; 20]), set);
     }
 
     /// Trusted time on both sides: the predecessor's sample and the successor's have reached `ms`.
@@ -152,6 +163,78 @@ async fn a_turns_member_retrying_after_the_stop_is_admitted_once_the_sequencer_i
     timeout(Duration::from_secs(5), run).await.expect("the sequencer ended").unwrap().unwrap();
     exchange.reached = Some(boundary);
     let store = exchange.take().await.expect("the retry is admitted under the turn the log accepted");
+    assert_eq!((store.release(), store.generation()), (exchange.upgrade(), TURN_GENERATION));
+    timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
+    assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
+}
+
+#[tokio::test]
+async fn a_turns_member_takes_the_keys_from_its_source_while_the_sources_archive_is_unreachable() {
+    let logged = Logged::start("handover-turn-source-log");
+    let mut exchange = Exchange::start_logged("handover-turn-source", Some(logged.engine.clone())).await;
+    exchange.schedule_successor(logged.turn, logged.key, logged.boundary);
+    // The turn's source answers on its handover listener, while nothing answers on its API hostname.
+    let unreachable = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string();
+    let source = HandoverSource {
+        candidate: AccountId([0xa0; 20]),
+        release: [0xa1; 32],
+        api_hostname: unreachable,
+        handover_endpoint: exchange.address.clone(),
+    };
+    let turn = {
+        let mut scheduled = exchange.scheduled.lock().unwrap();
+        scheduled.as_mut().expect("the turn is drawn").source = Some(source);
+        scheduled.clone().unwrap()
+    };
+    exchange.reach(logged.boundary);
+    // The member's copy from an earlier start, which the archive's refresh cannot extend.
+    let head = write_log_tail(&exchange.successor_log, 9, &exchange.old.enclave_key().unwrap());
+    let answer = exchange.answer_drain(Ok(head));
+    let vault = Vault {
+        signer: AccountId(exchange.old.enclave_key().unwrap().address()),
+        current: exchange.current.clone(),
+        synced: exchange.synced.clone(),
+        rotation: exchange.rotation.clone(),
+        scheduled: exchange.scheduled.clone(),
+    };
+    let at = vault.observe(View::Finalized, &[]).await.unwrap();
+    let sealer = MockSealer { launch_digest: UPGRADE };
+    let store = crate::handover::turns::take_keys(&exchange.successor, &vault, &at, &turn, &sealer, &MockAttestor)
+        .await
+        .expect("the keys came over the source's listener");
+    assert_eq!((store.release(), store.generation()), (exchange.upgrade(), TURN_GENERATION));
+    assert!(file_for(&exchange.successor_dir, &exchange.upgrade(), TURN_GENERATION).exists());
+    timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
+    assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
+}
+
+#[tokio::test]
+async fn after_an_unconfirmed_handover_the_next_turns_member_is_admitted_under_the_turns_the_stop_retained() {
+    let Logged { engine, _run: run, turn, key, boundary } = Logged::start("handover-turn-next-log");
+    let mut exchange = Exchange::start_logged("handover-turn-next", Some(engine.clone())).await;
+    exchange.schedule_successor(turn, key, boundary);
+    exchange.reach(boundary);
+    let head = write_log_tail(&exchange.successor_log, 9, &exchange.old.enclave_key().unwrap());
+    let answer = exchange.answer_drain(Ok(head));
+    // The turn's member is admitted and sequencing stops, but the transfer ends unconfirmed, and the
+    // stopped node's sequencer ends.
+    exchange.reached = Some(boundary - 1);
+    assert!(exchange.take().await.is_err(), "keys sealed before the successor's time reached the boundary");
+    drop(engine);
+    timeout(Duration::from_secs(5), run).await.expect("the sequencer ended").unwrap().unwrap();
+
+    // At the next boundary the turn the log never mirrored names the set's member: a key the set does
+    // not name, or a set the log never mirrored, gets nothing.
+    let next = turn + 1;
+    let next_boundary = engine_core::turns::boundary(next).unwrap();
+    exchange.reach(next_boundary);
+    for (what, admin_key, set) in [("a key the set does not name", AccountId([0xee; 20]), 1), ("another set", key, 2)] {
+        exchange.schedule_set_member(next, admin_key, set);
+        let err = exchange.take().await.err().unwrap_or_else(|| panic!("{what}: keys left for a turn the log refuses"));
+        assert!(format!("{err:#}").contains(&format!("has not accepted turn {next}")), "{what}: {err:#}");
+    }
+    exchange.schedule_set_member(next, key, 1);
+    let store = exchange.take().await.expect("the next turn's member is admitted under the retained turns");
     assert_eq!((store.release(), store.generation()), (exchange.upgrade(), TURN_GENERATION));
     timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
     assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");

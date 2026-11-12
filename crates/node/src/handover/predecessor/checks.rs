@@ -1,7 +1,9 @@
 //! The predecessor's checks before it stops: whether the tail fits the handover, and whether its
-//! own log accepted the daily turn a successor takes.
+//! own log accepted the daily turn a successor takes, or, once it has stopped, will accept it.
 
 use anyhow::{Context, anyhow, ensure};
+use engine_core::turns::DailyTurns;
+use engine_core::types::AccountId;
 use tokio::sync::oneshot;
 
 use crate::checkpoints::{CheckpointChain, ScheduledTurn};
@@ -65,25 +67,28 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// whose key no set gave seven days' notice, and a successor whose key the log never applies must
     /// not take the keys, since this release cannot sequence again once it stops. The answer for the
     /// turn admitted is kept, so a successor retrying after the stop, when the log is final and the
-    /// sequencer gone, is admitted under it.
+    /// sequencer gone, is admitted under it. Once the sequencer is gone, the turns retained at the stop
+    /// answer for any other turn: the log accepted it, or will when the successor continuing it mirrors
+    /// the assignment, as the set it was drawn from names its member with seven days' notice by its
+    /// boundary.
     /// Error cases:
-    /// - the listener reads no log, the node is stopping, or the log has not accepted the turn
+    /// - the listener reads no log, the node is stopping with no turns retained, or the log has not
+    ///   accepted the turn and, once stopped, would not
     pub(super) async fn ensure_logged(&self, turn: &ScheduledTurn) -> anyhow::Result<()> {
         let (number, key) = (turn.turn, turn.admin_key);
         if *self.logged.lock().expect("the logged turn lock") == Some((number, key)) {
             return Ok(());
         }
-        let engine = self.engine.as_ref().context("this listener reads no log to check the turn against")?;
-        let engine = engine.upgrade().ok_or_else(|| anyhow!("the node is stopping"))?;
-        let (reply, answered) = oneshot::channel();
-        let query = Box::new(move |engine: &engine_core::Engine| {
-            let turns = engine.daily_turns();
-            let assigned =
-                turns.assigned.get(&number).or(turns.in_effect.as_ref().filter(|in_effect| in_effect.turn == number));
-            let _ = reply.send(assigned.is_some_and(|assigned| assigned.admin_key == key));
-        });
-        engine.send(Request::Query(query)).await.map_err(|_| anyhow!("the node is stopping"))?;
-        let accepted = answered.await.map_err(|_| anyhow!("the node is stopping"))?;
+        let accepted = match self.query(move |engine| logged(engine.daily_turns(), number, key)).await {
+            Ok(accepted) => accepted,
+            Err(e) => match self.retained.lock().expect("the retained turns lock").as_ref() {
+                Some(retained) => {
+                    logged(retained, number, key)
+                        || retained.set_refusal(turn.set, turn.candidate, key, turn.boundary).is_none()
+                }
+                None => return Err(e),
+            },
+        };
         ensure!(
             accepted,
             "this release's log has not accepted turn {number} for key {key}: the engine refused its assignment \
@@ -92,4 +97,35 @@ impl<C: CheckpointChain> Predecessor<C> {
         *self.logged.lock().expect("the logged turn lock") = Some((number, key));
         Ok(())
     }
+
+    /// Retains the log's daily turns as sequencing stops, which answer for a later turn's member once
+    /// the sequencer is gone (`ensure_logged`). Read just before the stop: a set mirrored in between is
+    /// missing, which only refuses, and a read that fails retains none, which refuses such a member.
+    pub(super) async fn retain_turns(&self) {
+        let retained = self.query(|engine| engine.daily_turns().clone()).await;
+        *self.retained.lock().expect("the retained turns lock") = retained.ok();
+    }
+
+    /// Runs `read` on the sequencer's engine.
+    /// Error cases:
+    /// - the listener reads no log, or the node is stopping
+    async fn query<T: Send + 'static>(
+        &self,
+        read: impl FnOnce(&engine_core::Engine) -> T + Send + 'static,
+    ) -> anyhow::Result<T> {
+        let engine = self.engine.as_ref().context("this listener reads no log to check the turn against")?;
+        let engine = engine.upgrade().ok_or_else(|| anyhow!("the node is stopping"))?;
+        let (reply, answered) = oneshot::channel();
+        let query = Box::new(move |engine: &engine_core::Engine| {
+            let _ = reply.send(read(engine));
+        });
+        engine.send(Request::Query(query)).await.map_err(|_| anyhow!("the node is stopping"))?;
+        answered.await.map_err(|_| anyhow!("the node is stopping"))
+    }
+}
+
+/// Whether `turns` hold turn `number`'s accepted assignment for `key`, waiting or in effect.
+fn logged(turns: &DailyTurns, number: u64, key: AccountId) -> bool {
+    let in_effect = turns.in_effect.as_ref().filter(|in_effect| in_effect.turn == number);
+    turns.assigned.get(&number).or(in_effect).is_some_and(|assigned| assigned.admin_key == key)
 }

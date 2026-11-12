@@ -360,6 +360,7 @@ impl Sequencer {
             operator: cfg.operator,
             registry_operator: cfg.registry_operator,
             turn_release: cfg.turn_release,
+            turn_sealing: cfg.turn_sealing,
             metrics: cfg.metrics,
             claims: Default::default(),
             gate: cfg.checkpoints.map(|sink| {

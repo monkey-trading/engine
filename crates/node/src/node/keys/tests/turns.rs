@@ -1,6 +1,7 @@
 //! A start while rotation is on: from a daily turn's boundary by trusted time, the turn the finalised
 //! schedule names decides whether this release opens or takes the keys, and in which generation,
-//! whatever release the finalised vault still names; a start with no turn drawn takes no sample.
+//! whatever release the finalised vault still names; a start with no turn drawn takes no sample, and
+//! one with a turn drawn and no sample refuses.
 
 use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,7 +52,33 @@ async fn keys_sealed_in_the_turns_generation_open_while_the_vault_still_names_th
 }
 
 #[tokio::test]
-async fn without_sealed_keys_or_a_flag_a_turns_member_takes_the_keys_from_the_turns_source() {
+async fn a_returning_holders_restart_opens_the_keys_it_sealed_in_its_turns_generation() {
+    let (cfg, dir) = rotating_config("keys-turn-returning");
+    let this = release(&cfg);
+    // This release held the turn before last, whose member it was named in afresh after a turn its
+    // member never took; the finalised vault still names that member's release.
+    let skipped = Release { config_sha256: [0xc2; 32], ..this };
+    let vault = Vault::naming(CurrentRelease { id: skipped.id(), generation: TURN_GENERATION - 1 });
+    *vault.scheduled.lock().unwrap() = Some(turn(&this, TURN_GENERATION, None));
+    let sealer = MockSealer { launch_digest: DIGEST };
+    let store = KeyStore::create(&dir, &sealer, cfg.file_sha256, TURN_GENERATION - 2, KeySet::generate().unwrap());
+    let store = store.unwrap();
+
+    // Keys left in the earlier generation do not open, and no other operator holds them.
+    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), trusted_at(boundary())).await.err();
+    let err = format!("{:#}", err.expect("keys opened in a generation the turn does not hold"));
+    assert!(err.contains("no operator with a handover endpoint"), "{err}");
+
+    // Sealed in the turn's generation as the running holder took the turn, they open.
+    store.reseal(TURN_GENERATION).unwrap();
+    let (key, _, opened) =
+        obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), trusted_at(boundary())).await.unwrap();
+    assert_eq!(key.address(), store.keys().enclave_key().unwrap().address(), "other keys opened");
+    assert_eq!(opened.map(|opened| opened.generation()), Some(TURN_GENERATION));
+}
+
+#[tokio::test]
+async fn without_sealed_keys_or_a_flag_a_turns_member_asks_the_turns_source_for_the_keys() {
     let (mut cfg, dir) = rotating_config("keys-turn-take");
     cfg.node.log_dir = scratch_dir("keys-turn-take-log");
     let this = release(&cfg);
@@ -70,9 +97,30 @@ async fn without_sealed_keys_or_a_flag_a_turns_member_takes_the_keys_from_the_tu
 
     let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), trusted_at(boundary())).await.err();
     let err = format!("{:#}", err.expect("keys taken from a source that serves nothing"));
-    // The start asked the turn's source, rather than refusing or resolving an election's incumbent.
+    // The start asked the turn's source, rather than refusing or resolving an election's incumbent;
+    // `handover::predecessor`'s tests take the keys from a source that answers.
     assert!(err.contains(&format!("no operator handed turn {TURN}'s keys over: {endpoint}: ")), "{err}");
     assert!(std::fs::read_dir(&dir).is_err(), "a failed handover sealed keys");
+}
+
+#[tokio::test]
+async fn a_failed_trusted_time_sample_with_a_turn_drawn_refuses_the_start() {
+    let (cfg, dir) = rotating_config("keys-turn-no-sample");
+    let this = release(&cfg);
+    // The incumbent's start: the finalised vault still names this release, whose keys are sealed in
+    // its generation, while a turn past its boundary names another release.
+    let vault = Vault::naming(CurrentRelease { id: this.id(), generation: 1 });
+    let sealer = MockSealer { launch_digest: DIGEST };
+    KeyStore::create(&dir, &sealer, cfg.file_sha256, 1, KeySet::generate().unwrap()).unwrap();
+    let other = Release { config_sha256: [0xc2; 32], ..this };
+    *vault.scheduled.lock().unwrap() = Some(turn(&other, TURN_GENERATION, None));
+
+    let unsampled = std::future::ready(Err(anyhow::anyhow!("no Roughtime server answered")));
+    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), unsampled).await.err();
+    let err = format!("{:#}", err.expect("the incumbent's keys opened with no trusted time sample"));
+    assert!(err.contains("no Roughtime server answered"), "{err}");
+    let files: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|entry| entry.unwrap().path()).collect();
+    assert_eq!(files, [file_for(&dir, &this, 1)], "a start with no sample sealed keys");
 }
 
 #[tokio::test]
@@ -117,6 +165,7 @@ fn turn(release: &Release, generation: u64, source: Option<HandoverSource>) -> S
         admin_key: AccountId([0xb1; 20]),
         release: release.id(),
         generation,
+        set: 1,
         source,
     }
 }

@@ -213,15 +213,19 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/node/mod.rs` — startup, task supervision, and shutdown
 - `src/node/price_feeds.rs` — the price feed tasks: the mock feed, or one task per venue connection
 - `src/node/ticker.rs` — the `Tick` command at `node.tick`, so sessions and rollovers fire without traffic
+- `src/node/turn_keys.rs` — the generation the finalised schedule holds for each untaken turn the
+  log assigns this node's key, which its `TurnTaken` waits on; `src/node/turn_keys/tests.rs` covers it
 - `src/node/handover.rs` — the registry's rotation switch checked against the config at start, and the
   incumbent's election watcher
 - `src/node/keys.rs` — this start's enclave keys and their attestation, and the check that the log
   reaches the final checkpoint of the release that handed the keys over
 - `src/node/keys/tests.rs` — sealed, new, refused, and unsealed keys, the vault's current release,
-  the stand-in measurement, and the first start's head check
+  the stand-in measurement, the first start's head check, and the release watch, which reads the
+  keys' current generation
 - `src/node/keys/tests/turns.rs` — a start while rotation is on: a daily turn naming another release
-  refuses it, keys sealed in the turn's generation open, a member without them takes them from the
-  turn's source, and no turn drawn takes no trusted time sample
+  refuses it, keys sealed in the turn's generation open, a returning holder's restart opens the keys
+  it sealed there, a member without them asks the turn's source for them, no turn drawn takes no
+  trusted time sample, and a turn drawn with no sample refuses it
 - `src/node/recovery.rs` — reading the log and the history index it must match before anything is
   written
 - `src/node/secrets.rs` — this start's delivered secrets: opening the sealed bundle, asking a
@@ -351,7 +355,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   checkpoint's stamp where none is posted (`log_heads.rs`),
   custody receipts and their history across a cache restart (`custody.rs`), publication faults,
   public history pages, and the harness
-- `src/sequencer/turns.rs` — the `TurnTaken` this node sequences first in each daily turn the log assigns its operator key
+- `src/sequencer/turns.rs` — the `TurnTaken` this node sequences first in each daily turn the log
+  assigns its operator key, once its sealed keys are in the generation the finalised schedule holds
+  for the turn, sealed there first when the schedule names this release afresh;
+  `src/sequencer/turns/tests.rs` covers a returning and a continuing holder, and a failed seal
 - `src/sequencer/required.rs` — client auth, the operator, protocol activation, and genesis, which
   wait for trusted time
 - `src/sequencer/catch_up.rs` — the `Tick`s that finish a V33 catch-up before a command
@@ -569,8 +576,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   heads with the parent head they extend, each mirroring its contract's packed encoding
 - `src/tee/keys.rs` — the key set a restart keeps and an upgrade hands over: the signing key, the
   TLS key, the ACME account, the certificate, and the predecessor's final checkpoint
-- `src/tee/sealing.rs` — the sealed key file, AES-256-GCM under the platform's derived key, and the
-  mock TEE's public stand-in for sealing; `src/tee/sealing/tests.rs` covers it
+- `src/tee/sealing.rs` — the sealed key file, AES-256-GCM under the platform's derived key, the
+  reseal into a daily turn's new generation, and the mock TEE's public stand-in for sealing;
+  `src/tee/sealing/tests.rs` covers it
 - `src/tee/secrets.rs` — the sealed secrets file, per release and apart from the keys, and what the
   host can do with it; `src/tee/secrets/tests.rs` covers it
 - `src/tee/snp.rs` — the SEV-SNP sealing key and report through `/dev/sev-guest` (Linux)
@@ -617,13 +625,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   stop, the final checkpoint, and the sealed tail segments it sends after the keys;
   `src/handover/predecessor/tests/` runs it over loopback, the stop and final-checkpoint tests in
   `stop.rs`, the successor-side transfer tests in `successor.rs`, a daily turn's handover from its
-  boundary in `turns.rs`
+  boundary in `turns.rs`, with a member taking the keys from its source while that source's archive
+  is unreachable, and a later turn's member admitted after an unconfirmed handover
 - `src/handover/secrets.rs` — the new release's side of moving the delivered secrets with an
   approved upgrade, checked by the operator's signature; `src/handover/predecessor/secrets.rs` is
   the running release's, which refuses an election's successor; `src/handover/predecessor/tests/`'s
   `secrets.rs` covers both, against the switch in its `vault.rs`
 - `src/handover/turns.rs` — a daily turn's handover authorisation: the finalised schedule's member, once trusted time reaches the turn's boundary, in the generation the schedule fixed; and the operators the member takes the keys from, its turn's source and then each earlier turn's, a week back; `src/handover/turns/tests.rs` walks those sources
-- `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence
+- `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence;
+  `src/handover/tests/archive.rs` covers the published-log fetch ahead of a handover, which only an
+  archive failing its integrity checks refuses
 - `src/verify/mod.rs` — attestation verification for the CLI and replay: loading or fetching the
   attestation, release manifest, and collateral, `engine-verify` on the system clock, and the
   checkpoint-signer check, one attestation per signer, that lets `engine replay --attestation` span

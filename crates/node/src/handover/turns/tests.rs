@@ -49,6 +49,7 @@ fn drawn(turn: u64, member: u8, source: Option<HandoverSource>) -> ScheduledTurn
         admin_key: AccountId([member + 0x10; 20]),
         release: [member; 32],
         generation: turn,
+        set: 1,
         source,
     }
 }

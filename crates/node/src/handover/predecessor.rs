@@ -63,6 +63,9 @@ pub(crate) struct Predecessor<C = CheckpointRpc> {
     /// The turn and key the log accepted when this release admitted that turn's member, which a
     /// retry after the stop, when the sequencer is gone, is admitted under.
     logged: std::sync::Mutex<Option<(u64, AccountId)>>,
+    /// The log's daily turns as sequencing stopped, which admit a later turn's member once the
+    /// sequencer is gone (`ensure_logged`).
+    retained: std::sync::Mutex<Option<engine_core::turns::DailyTurns>>,
 }
 
 /// How one connection ended.
@@ -113,6 +116,7 @@ impl Predecessor {
             secrets: None,
             engine: None,
             logged: std::sync::Mutex::new(None),
+            retained: std::sync::Mutex::new(None),
         }))
     }
 }
@@ -215,6 +219,7 @@ impl<C: CheckpointChain> Predecessor<C> {
                     );
                     return Ok(refuse(&mut stream, withheld).await);
                 }
+                self.retain_turns().await;
                 let stopped = self.stop().await;
                 match &stopped {
                     // The checkpoint gate refused the final checkpoint: the node goes on sequencing,

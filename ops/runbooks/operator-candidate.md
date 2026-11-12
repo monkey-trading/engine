@@ -302,10 +302,15 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
   endpoint, and takes the keys and the log's tail; neither side waits for chain finality after the
   boundary. When the turn before never changed hands, because its member never took it, the node
   tries each earlier turn's source in turn, a week back at most, and the operator still holding the
-  keys hands them over. Failing that, start it with `--predecessor <host:port>` naming the holder's
-  handover endpoint. Its first command is `TurnTaken`, which starts your time in office for the
-  operator's share. A turn you hold again the next day needs no handover: your node logs `TurnTaken`
-  for it at the boundary.
+  keys hands them over. That includes an incumbent that stopped for an earlier member whose transfer
+  never confirmed (`handover_unconfirmed`): it admits you when the set your turn was drawn from names
+  your candidate and key, logged at least seven days before your boundary. Failing that, start it
+  with `--predecessor <host:port>` naming the holder's handover endpoint. Its first command is
+  `TurnTaken`, which starts your time in office for the operator's share. A turn you hold again the
+  next day needs no handover: your node logs `TurnTaken` for it at the boundary. Neither does a turn
+  you are named for after one whose member never took it, while your node still holds the keys: the
+  schedule gives that turn a new generation, and your node seals the keys in it before it logs
+  `TurnTaken`, so a restart opens them.
 - **After your turn.** Your key stops signing at the next boundary, and you earn nothing past it,
   even if your node keeps sequencing because no successor came. The next member's node takes the keys
   from yours at the boundary; `release_superseded` pages only if it has not 15 minutes on. Hand over

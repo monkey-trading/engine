@@ -131,7 +131,8 @@ async fn a_running_node_alerts_once_the_vault_names_another_release_or_generatio
     let vault = Vault::naming(CurrentRelease { id: sealed.id(), generation: 2 });
     let current = vault.current.clone();
     let every = Duration::from_secs(60);
-    let watch = tokio::spawn(watch_release(vault, sealed, 2, every, untrusted()));
+    let watch =
+        tokio::spawn(watch_release(vault, sealed_store("keys-watch-generation", sealed, 2), every, untrusted()));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the release the vault names raised an alert");
 
@@ -163,6 +164,7 @@ async fn from_a_turns_boundary_the_turn_alone_names_a_release() {
         admin_key: AccountId([0xb1; 20]),
         release: sealed.id(),
         generation: 4,
+        set: 1,
         source: None,
     });
     let scheduled = vault.scheduled.clone();
@@ -172,7 +174,7 @@ async fn from_a_turns_boundary_the_turn_alone_names_a_release() {
         crate::trusted_time::Sample { at: std::time::Instant::now(), earliest_ms: boundary, latest_ms: boundary + 1 };
     let (samples, samples_rx) = tokio::sync::watch::channel(Some(sample));
     let trusted = crate::trusted_time::TrustedClock::new(clock, samples_rx, Duration::from_secs(1));
-    let watch = tokio::spawn(watch_release(vault, sealed, 4, every, trusted));
+    let watch = tokio::spawn(watch_release(vault, sealed_store("keys-watch-turn", sealed, 4), every, trusted));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the turn's member was paged before finality named it");
     // The turn names another release: the vault's finalised one no longer counts, though nothing
@@ -190,6 +192,51 @@ async fn from_a_turns_boundary_the_turn_alone_names_a_release() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_turn_naming_this_release_in_another_generation_pages_only_while_the_keys_are_not_sealed_there() {
+    let (_guard, mut alerts) = capture_alerts();
+    let sealed = Release { launch_digest: DIGEST, config_sha256: [0xc1; 32] };
+    let boundary = 1_793_226_600_000;
+    // The finalised vault still names the turn's source; the turn names this release in a new generation.
+    let vault = || {
+        let vault = Vault::naming(CurrentRelease { id: [0x77; 32], generation: 9 });
+        *vault.scheduled.lock().unwrap() = Some(crate::checkpoints::ScheduledTurn {
+            turn: 20_754,
+            boundary,
+            candidate: AccountId([0xb0; 20]),
+            admin_key: AccountId([0xb1; 20]),
+            release: sealed.id(),
+            generation: 6,
+            set: 1,
+            source: None,
+        });
+        vault
+    };
+    let (returning, stale) =
+        (sealed_store("keys-watch-returning", sealed, 3), sealed_store("keys-watch-stale", sealed, 3));
+    let every = Duration::from_secs(60);
+    let clock: Arc<dyn crate::clock::Clock> = Arc::new(crate::clock::SystemClock);
+    let at = |ms| crate::trusted_time::Sample { at: std::time::Instant::now(), earliest_ms: ms, latest_ms: ms + 1 };
+    let (samples, samples_rx) = tokio::sync::watch::channel(Some(at(boundary)));
+    let trusted = || crate::trusted_time::TrustedClock::new(clock.clone(), samples_rx.clone(), Duration::from_secs(1));
+    let watch = tokio::spawn(watch_release(vault(), returning.clone(), every, trusted()));
+    tokio::time::sleep(every * 3).await;
+    assert!(alerts.try_recv().is_err(), "paged within the turn's handover grace");
+    // The holder seals its keys in the turn's generation as it takes the turn: past the grace, nothing pages.
+    returning.reseal(6).unwrap();
+    samples.send_replace(Some(at(boundary + TURN_HANDOVER_GRACE_MS)));
+    tokio::time::sleep(every * 3).await;
+    assert!(alerts.try_recv().is_err(), "paged for keys sealed in the turn's generation");
+    watch.abort();
+
+    // Keys left in the earlier generation page past the grace.
+    let watch = tokio::spawn(watch_release(vault(), stale, every, trusted()));
+    tokio::time::sleep(every).await;
+    let alert = alerts.try_recv().expect("keys left in the earlier generation raise Critical past the grace");
+    assert_eq!(alert["alert"].as_str(), "release_superseded");
+    watch.abort();
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_superseded_release_alerts_before_the_vault_folds_the_change() {
     let (_guard, mut alerts) = capture_alerts();
     let sealed = Release { launch_digest: DIGEST, config_sha256: [0xc1; 32] };
@@ -197,7 +244,7 @@ async fn a_superseded_release_alerts_before_the_vault_folds_the_change() {
     *vault.synced.lock().unwrap() = Some(sealed.id());
     let current = vault.current.clone();
     let every = Duration::from_secs(60);
-    let watch = tokio::spawn(watch_release(vault, sealed, 2, every, untrusted()));
+    let watch = tokio::spawn(watch_release(vault, sealed_store("keys-watch-fold", sealed, 2), every, untrusted()));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the release the vault names raised an alert");
 
@@ -318,6 +365,13 @@ fn the_first_start_after_a_handover_needs_the_log_to_end_at_the_predecessors_che
 }
 
 // ── Helpers ──
+
+/// Keys sealed for `release` in `generation`, in a fresh directory for `name`.
+fn sealed_store(name: &str, release: Release, generation: u64) -> Arc<KeyStore> {
+    let dir = scratch_dir(name);
+    let sealer = MockSealer { launch_digest: release.launch_digest };
+    Arc::new(KeyStore::create(&dir, &sealer, release.config_sha256, generation, KeySet::generate().unwrap()).unwrap())
+}
 
 /// A start with the stand-in measurement, asking for new keys when `new_key`.
 fn start(new_key: bool) -> KeyStart {
