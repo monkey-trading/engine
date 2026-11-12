@@ -401,7 +401,9 @@ spread per market, which the house keeps as `spread_income`, and `Scenario.fee_s
 the 10% with a fee that falls with each class's mean hold (`accounting.fee_bps_at`).
 `research/spread-calibration` (#615) uses both, and `flow.with_genesis_profiles`, which gives the
 genesis's 100x bands on BTC-USD and ETH-USD a size and leverage profile approximated from a profiled
-schedule with the same first rate; no stage here uses them, so the committed results are unchanged.
+schedule with the same first rate. No stage here uses them, so the committed results keep their
+values; a re-run adds a `spread_income_mean` column, zero without spreads, and the two fields to the
+manifests.
 
 **Calibration.** Each market alone, at its share of the flow, gives each measure as a function of
 its floor, over 18 floors from $0 to $100M. A *risk level* `q` sets every market's floor to the

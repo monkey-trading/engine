@@ -37,6 +37,35 @@ cash. At 100x, BTC-USD and ETH-USD alone go from a 40% chance of NAV below zero 
 to none with the spreads and fee. The tables are in `results/report.md`. The changes are
 proposals: this study changes no genesis value.
 
+## Owner decisions
+
+The owner answered this study's proposals on #614 on 2026-11-12. Where an answer differs from a
+proposal in this README, the answer stands:
+
+- **Spreads, the score and the volume tiers** (proposals 1, 3 and 4): adopted, with the hold
+  measured as below. Closing fills pay the size spread through the same bands as opening fills, and
+  close-outs pay it too, without the toxicity add-on.
+- **The holding-time fee** (proposal 2): 100% of gains on holds up to 1 s, falling to 10% at 15
+  minutes, in place of the 5-minute proposal. In the frontier it costs target flow nothing extra,
+  takes 33% of the gross profit on holds under 15 minutes, and leaves the operator's latency take at
+  $276k a day and the fastest honest client's at $79k. A cap on how fast the house can lose bounds
+  both.
+- **BTC-USD and ETH-USD** (proposal 5): a 1% minimum margin, so tiers 2 and 3 reach 100x. Unpriced
+  pairs, about $3k a day and $19.1M over 2025-10-10's four stress hours, are bounded by that cap and
+  re-run at 1%.
+- **Leverage by tier:** a margin floor of 5% at tier 0 and 2% at tier 1, none above, on the initial
+  requirement only, in place of the table's shares of the maximum.
+- **FX and index first tiers** (proposal 7): spread rates in tenths of a basis point.
+- **Resting-order limits:** 25, 50, 100 and 250 at tiers 0 to 3, subject to their calibration.
+- **Databento** (proposal 6): the engine now prices only from sources over TLS (#622), and #673
+  settles second sources.
+
+The figures in this study are before a correction to the house income model, which charges the
+churn profit fee on the price gain at each cohort's mean hold and adds both fills' spread income
+beside it. The engine charges the fee on realised PnL after the spread, so the model overstates
+house income and the operator's honest share. #697 makes the correction and re-states the headline
+at the owner's values.
+
 ## The question
 
 #615 asks, for the owner:
@@ -135,6 +164,11 @@ add 2 and 5 bps to the account's spread. On the sampled hours:
 - Holding such an account's score under a tier with edgeless fills costs 8 to 11 times the edge it
   hides, at the calibrated spreads and the weight cap.
 
+The sample holds separate hours, so each hour's own markout spread stands in for its trailing hour.
+Against the year's single spread instead, edgeless accounts reach the first tier at 0.40% to 0.55% in
+1,000 fills, and a latency fill carries 2.1 to 3.2 standard errors (`results/toxicity.json`,
+`fixed`).
+
 ## Volume tiers
 
 | Counted volume, 30 days | Requests a second | Best-price size | Leverage | Fee floor | Financing discount | Emissions |
@@ -156,7 +190,9 @@ tier's best-price benefit.
 recycling wallets avoids the score's add-on and forfeits the kept tier's best-price size, leverage
 and wallets. The benefits forfeited are 35% to 70% of the add-on avoided, so recycling still pays
 the strategy by $1k to $31k a day per market; what it pays is the take the spreads and fee leave
-(next section), not a gain over the defences.
+(next section), not a gain over the defences. The benefits forfeited leave out tiers 2 and 3's fee
+and financing discounts, which a kept wallet's holds of 15 to 30 minutes would earn, so the figure
+leans towards recycling.
 
 ## The attack classes against the launch criterion
 

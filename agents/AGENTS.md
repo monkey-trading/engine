@@ -763,7 +763,8 @@ Run from the repo root:
 - Spread calibration research, from a virtualenv outside the repo with
   `research/spread-calibration/requirements.txt`, in `research/spread-calibration/`: `python -I run.py
   <stage>` (`spreads`, `latency`, `scaled`, `fee`, `frontier`, `fx_tiers`, `toxicity`, `carrot`,
-  `attacks`, `per_market`, `gaps`, `retained`, then `report`), and its tests with `python -I -m pytest tests`
+  `attacks`, `per_market`, `gaps`, `retained`, then `report`, with the worker and path counts its README
+  gives), and its tests with `python -I -m pytest tests`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
   `python -I research/close-spread-calibration/run.py`, then
   `python -I research/close-spread-calibration/calibrate.py`, then

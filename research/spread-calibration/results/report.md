@@ -132,7 +132,7 @@ Markouts at 5 s in units of the trailing hour's markout spread (floored at half 
 
 ## Volume tiers
 
-Counted volume over 30 days, but for same-index round trips within the score's horizon and any part closed within 60 s; a day counts at most a 2th, 5th and 10th of tiers 1, 2 and 3's thresholds.
+Counted volume over 30 days, but for same-index round trips within the score's horizon and any part closed within 60 s; a day counts at most a half, a fifth and a tenth of tiers 1, 2 and 3's thresholds.
 
 | Threshold | Requests a second | Best price, share of first bound | Leverage, share of maximum | Fee floor | Financing discount | Emissions boost |
 |---|---|---|---|---|---|---|

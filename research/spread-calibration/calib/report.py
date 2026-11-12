@@ -183,14 +183,19 @@ def toxicity_section(results: Path) -> list[str]:
     return out
 
 
+def part(n: int) -> str:
+    """One `n`th in words: a day's share of a tier's threshold."""
+    return {2: "half", 3: "third", 4: "quarter", 5: "fifth", 10: "tenth"}.get(n, f"1/{n}")
+
+
 def carrot_section(results: Path) -> list[str]:
     c = load(results, "carrot.json")
     if not c:
         return []
     out = ["## Volume tiers", "",
            "Counted volume over 30 days, but for same-index round trips within the score's horizon and any part closed within "
-           f"{c['min_hold_s']:g} s; a day counts at most a {c['days'][1]}th, {c['days'][2]}th and {c['days'][3]}th of tiers 1, 2 "
-           "and 3's thresholds.", ""]
+           f"{c['min_hold_s']:g} s; a day counts at most a {part(c['days'][1])}, a {part(c['days'][2])} and a {part(c['days'][3])} of "
+           "tiers 1, 2 and 3's thresholds.", ""]
     names = ["Threshold", "Requests a second", "Best price, share of first bound", "Leverage, share of maximum", "Fee floor",
              "Financing discount", "Emissions boost"]
     body = [[usd(t["volume"]), f"{t['requests_per_s']:g}", f"{t['best_price_share']:g}", f"{t['leverage_share']:g}",

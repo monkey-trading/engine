@@ -6,9 +6,9 @@ lowest fee at which no threshold `theta` takes more than a budget a day,
 
     fee >= 1 - (negative + budget * 365 / size) / positive,
 
-for an honest node's lead (0.25 s) with a budget of zero, so a fast trader at the best price loses
-money, and for #510's 3 s bound with the launch criterion's budget, the operator's honest share
-a day. The schedule is the larger of the two at each hold, made to fall with the hold, rounded up
+for an honest node's lead (0.25 s) with a budget near zero (`FAST_BUDGET` in `run.py`, $10,000 a
+day), so a fast trader at the best price makes almost nothing, and for #510's 3 s bound with the
+launch criterion's budget, the operator's honest share a day. The schedule is the larger of the two at each hold, made to fall with the hold, rounded up
 to whole 5%, and interpolated linearly in the logarithm of the hold between the measured lengths.
 
 **A hold** is measured as #614 proposes, on the position, not on lots:
