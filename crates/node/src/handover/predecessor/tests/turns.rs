@@ -223,11 +223,14 @@ async fn after_an_unconfirmed_handover_the_next_turns_member_is_admitted_under_t
     drop(engine);
     timeout(Duration::from_secs(5), run).await.expect("the sequencer ended").unwrap().unwrap();
 
-    // At the next boundary the turn the log never mirrored names the set's member: a key the set does
-    // not name, or a set the log never mirrored, gets nothing.
-    let next = turn + 1;
+    // At a later boundary a turn the log never mirrored names the set's member: a key the set does
+    // not name, a set the log never mirrored, or a turn that has ended gets nothing.
+    let (ended, next) = (turn + 1, turn + 2);
     let next_boundary = engine_core::turns::boundary(next).unwrap();
     exchange.reach(next_boundary);
+    exchange.schedule_set_member(ended, key, 1);
+    let err = exchange.take().await.err().expect("keys left for a turn that has ended");
+    assert!(format!("{err:#}").contains(&format!("has not accepted turn {ended}")), "{err:#}");
     for (what, admin_key, set) in [("a key the set does not name", AccountId([0xee; 20]), 1), ("another set", key, 2)] {
         exchange.schedule_set_member(next, admin_key, set);
         let err = exchange.take().await.err().unwrap_or_else(|| panic!("{what}: keys left for a turn the log refuses"));

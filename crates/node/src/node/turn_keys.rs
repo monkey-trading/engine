@@ -46,16 +46,7 @@ pub(super) async fn watch_turn_generations(
 async fn untaken_turns(sequencer: &mpsc::Sender<Request>, operator: AccountId) -> anyhow::Result<Vec<u64>> {
     let (reply, answered) = oneshot::channel();
     let query = Box::new(move |engine: &engine_core::Engine| {
-        let turns = engine.daily_turns();
-        let taken = turns.taken.map(|taken| (taken.turn, taken.position));
-        let untaken = turns
-            .assigned
-            .values()
-            .chain(turns.in_effect.as_ref())
-            .filter(|assigned| assigned.admin_key == operator && taken != Some((assigned.turn, assigned.position)))
-            .map(|assigned| assigned.turn)
-            .collect();
-        let _ = reply.send(untaken);
+        let _ = reply.send(crate::sequencer::turns::untaken(engine.daily_turns(), operator));
     });
     sequencer.send(Request::Query(query)).await.map_err(|_| anyhow!("sequencer gone"))?;
     answered.await.map_err(|_| anyhow!("sequencer gone"))
@@ -64,7 +55,7 @@ async fn untaken_turns(sequencer: &mpsc::Sender<Request>, operator: AccountId) -
 /// The generation the finalised schedule holds for each of `turns` it names `release` for.
 /// Error cases:
 /// - the vault or the schedule cannot be read
-async fn read_generations(
+pub(super) async fn read_generations(
     vault: &impl CheckpointChain,
     release: &Release,
     turns: &[u64],

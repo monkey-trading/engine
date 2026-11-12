@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use engine_core::command::Command;
 use engine_core::event::Event;
-use engine_core::types::Millis;
+use engine_core::turns::DailyTurns;
+use engine_core::types::{AccountId, Millis};
 use tokio::sync::watch;
 use tracing::{info, warn};
 
@@ -81,6 +82,11 @@ impl TurnSealing {
 }
 
 impl Sequencer {
+    /// The turns the log assigns this node's operator key that it has yet to see taken (`untaken`).
+    pub(crate) fn untaken_turns(&self) -> Vec<u64> {
+        untaken(self.engine.daily_turns(), self.operator.address)
+    }
+
     /// Sequences `TurnTaken` at `ts` when the turn due by `ts`, or the one in effect, names this
     /// node's operator key and has not been taken under that assignment, and, with sealed keys, they
     /// are sealed in the turn's generation (`TurnSealing::sealed_for`): the engine hands the turn's key
@@ -108,6 +114,18 @@ impl Sequencer {
         }
         Ok(())
     }
+}
+
+/// The turns `turns` assigns `operator`, waiting to apply or in effect, that are not taken.
+pub(crate) fn untaken(turns: &DailyTurns, operator: AccountId) -> Vec<u64> {
+    let taken = turns.taken.map(|taken| (taken.turn, taken.position));
+    turns
+        .assigned
+        .values()
+        .chain(turns.in_effect.as_ref())
+        .filter(|assigned| assigned.admin_key == operator && taken != Some((assigned.turn, assigned.position)))
+        .map(|assigned| assigned.turn)
+        .collect()
 }
 
 #[cfg(test)]

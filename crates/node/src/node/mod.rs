@@ -286,6 +286,13 @@ async fn serve_node(
         marks.activate().inspect_err(|e| error!(alert = "marks_cache_failed", "refusing to serve: {e:#}"))?;
     let marks_rx = marks::track(&mut seq);
 
+    // Before anything is sequenced, so a turn whose keys are sealed in its generation is taken first.
+    if let (Some(store), Some(vault)) = (&turn_store, &turn_vault) {
+        match turn_keys::read_generations(vault, &store.release(), &seq.untaken_turns()).await {
+            Ok(read) => drop(turn_generations.send_replace(read)),
+            Err(e) => warn!("reading the schedule's generations of this node's turns failed at start: {e:#}"),
+        }
+    }
     let (tx, rx) = mpsc::channel::<Request>(CHANNEL_CAPACITY);
     let marks_task = marks::task(marks_store, tx.downgrade(), marks_backfill, marks_sources, marks::live(marks_rx));
     let recovery = seq.take_recovery_checkpoints();

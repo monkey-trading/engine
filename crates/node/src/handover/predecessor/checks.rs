@@ -2,7 +2,7 @@
 //! own log accepted the daily turn a successor takes, or, once it has stopped, will accept it.
 
 use anyhow::{Context, anyhow, ensure};
-use engine_core::turns::DailyTurns;
+use engine_core::turns::{DAY_MS, DailyTurns};
 use engine_core::types::AccountId;
 use tokio::sync::oneshot;
 
@@ -69,8 +69,8 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// turn admitted is kept, so a successor retrying after the stop, when the log is final and the
     /// sequencer gone, is admitted under it. Once the sequencer is gone, the turns retained at the stop
     /// answer for any other turn: the log accepted it, or will when the successor continuing it mirrors
-    /// the assignment, as the set it was drawn from names its member with seven days' notice by its
-    /// boundary.
+    /// the assignment, as the turn has not ended by trusted time and the set it was drawn from names
+    /// its member with seven days' notice by its boundary.
     /// Error cases:
     /// - the listener reads no log, the node is stopping with no turns retained, or the log has not
     ///   accepted the turn and, once stopped, would not
@@ -83,8 +83,9 @@ impl<C: CheckpointChain> Predecessor<C> {
             Ok(accepted) => accepted,
             Err(e) => match self.retained.lock().expect("the retained turns lock").as_ref() {
                 Some(retained) => {
+                    let ended = self.trusted.reached_ms().is_some_and(|reached| reached >= turn.boundary + DAY_MS);
                     logged(retained, number, key)
-                        || retained.set_refusal(turn.set, turn.candidate, key, turn.boundary).is_none()
+                        || (!ended && retained.set_refusal(turn.set, turn.candidate, key, turn.boundary).is_none())
                 }
                 None => return Err(e),
             },
