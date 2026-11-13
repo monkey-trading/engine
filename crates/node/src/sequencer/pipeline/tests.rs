@@ -108,7 +108,7 @@ impl Gated {
             let _ = reply.send(engine.last_seq());
         });
         self.tx.send(Request::Query(query)).await.unwrap();
-        rx.await.unwrap()
+        timeout(Duration::from_secs(10), rx).await.expect("the sequencer answers").unwrap()
     }
 
     /// The last seq the stats worker's copy has applied, as a view reads it.
@@ -123,6 +123,11 @@ impl Gated {
 /// Whether `rx` has nothing yet, after the sequencer has had every chance to answer.
 async fn silent<T>(rx: &mut oneshot::Receiver<T>) -> bool {
     timeout(Duration::from_millis(150), rx).await.is_err()
+}
+
+/// The reply of a released batch, failing with `what` unless it arrives within ten seconds.
+async fn released<T>(reply: oneshot::Receiver<T>, what: &str) -> T {
+    timeout(Duration::from_secs(10), reply).await.unwrap_or_else(|_| panic!("{what}")).expect(what)
 }
 
 /// The node's API client surface over `node`: the same request channel and log manifest, with
@@ -152,7 +157,9 @@ async fn the_released_head_announced_is_the_batchs_own_not_a_later_one() {
     let counted = syncs.clone();
     let (permits, verdicts): (StdSender<()>, StdReceiver<()>) = channel();
     let verdicts = Mutex::new(verdicts);
+    let (entering, entered) = channel();
     seq.pipeline_with_syncs(move |job| {
+        _ = entering.send(());
         verdicts.lock().unwrap().recv().unwrap();
         counted.fetch_add(1, Ordering::SeqCst);
         job.sync()
@@ -166,11 +173,13 @@ async fn the_released_head_announced_is_the_batchs_own_not_a_later_one() {
     // Two batches staged while both syncs are held; the second's head must not leak into the first's
     // release, though the first batch finishes after the second is staged. The expected heads are
     // read off the sequencer's own link state before each stage, not off the release under test.
+    // The second is staged once the thread is inside the first's sync, so each takes a sync of its own.
     seq.sequence(Command::Tick).unwrap().unwrap();
     let first_head = crate::log_heads::Head { seq: seq.engine.last_seq().unwrap(), link: seq.command_prefix.into() };
     let first = seq.stage(Batch::default()).unwrap();
     assert_eq!(first.head, first_head, "a release carries the head its batch made durable");
     seq.submit(first).unwrap();
+    entered.recv_timeout(Duration::from_secs(10)).expect("the thread starts the first batch's sync");
     seq.sequence(Command::Tick).unwrap().unwrap();
     let second_head = crate::log_heads::Head { seq: seq.engine.last_seq().unwrap(), link: seq.command_prefix.into() };
     let second = seq.stage(Batch::default()).unwrap();
@@ -204,6 +213,8 @@ async fn a_batch_is_released_only_after_its_sync_and_the_next_is_sequenced_meanw
     let mut first = node.tick().await;
     let applied = node.applied().await;
     assert!(applied > before, "the first tick is sequenced");
+    // The thread is inside the first batch's sync before the second is sequenced, so each has its own.
+    node.sync_started();
     assert!(silent(&mut first).await, "its reply waits for the sync");
     assert_eq!(node.viewed().await, before, "a view does not show it either");
     let mut stream = node.stream.resubscribe();
@@ -215,11 +226,11 @@ async fn a_batch_is_released_only_after_its_sync_and_the_next_is_sequenced_meanw
     assert!(stream.try_recv().is_err(), "nothing of either batch is on the stream");
 
     node.permits.send(Verdict::Pass).unwrap();
-    first.await.expect("the first batch is released by its own sync");
+    released(first, "the first batch is released by its own sync").await;
     assert_eq!(node.viewed().await, applied, "a view sees the durable batch and not the next");
     assert!(silent(&mut second).await, "the second batch still waits for its own sync");
     node.permits.send(Verdict::Pass).unwrap();
-    second.await.expect("the second batch is released in turn");
+    released(second, "the second batch is released in turn").await;
     let seqs: Vec<u64> = std::iter::from_fn(|| stream.try_recv().ok()).map(|msg| msg.offset.seq).collect();
     assert!(seqs.windows(2).all(|pair| pair[0] <= pair[1]), "the stream keeps log order: {seqs:?}");
 }
@@ -237,12 +248,16 @@ async fn a_failed_sync_releases_nothing_and_stops_the_sequencer() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_full_pipeline_takes_no_request_until_a_sync_is_done() {
-    let (mut seq, permits, _entered) = crate::sequencer::pipeline::hold_tests::held_sequencer("pipeline-bounded");
-    // One batch per tick, each waiting on the held sync, as `run` would stage them.
-    for _ in 0..MAX_IN_FLIGHT {
+    let (mut seq, permits, entered) = crate::sequencer::pipeline::hold_tests::held_sequencer("pipeline-bounded");
+    // One batch per tick, each waiting on the held sync, as `run` would stage them. The rest are staged
+    // once the thread is inside the first's sync, so one verdict finishes that sync on its own.
+    for staged in 0..MAX_IN_FLIGHT {
         seq.sequence(Command::Tick).unwrap().unwrap();
         let release = seq.stage(Batch::default()).unwrap();
         seq.submit(release).unwrap();
+        if staged == 0 {
+            entered.recv_timeout(Duration::from_secs(10)).expect("the thread starts the first batch's sync");
+        }
     }
     let (tx, mut rx) = mpsc::channel(4);
     tx.send(Request::Query(Box::new(|_| {}))).await.unwrap();
@@ -266,7 +281,7 @@ async fn batches_queued_behind_a_sync_share_the_next_one() {
         node.applied().await;
     }
     node.permits.send(Verdict::Pass).unwrap();
-    first.await.expect("the first batch is released by its own sync");
+    released(first, "the first batch is released by its own sync").await;
     // One more permit is all the three need: the thread syncs the last of them, which covers the rest.
     node.permits.send(Verdict::Pass).unwrap();
     for reply in queued {
@@ -291,8 +306,8 @@ async fn a_batch_that_wrote_nothing_does_not_stand_in_for_the_sync_of_the_one_be
     for _ in 0..3 {
         node.permits.send(Verdict::Pass).unwrap();
     }
-    first.await.unwrap();
-    written.await.unwrap();
+    released(first, "the first batch is released").await;
+    released(written, "the batch that wrote is released").await;
     timeout(Duration::from_secs(10), house).await.expect("the sync request is answered").unwrap();
     assert_eq!(node.syncs.load(Ordering::SeqCst), 3, "the batch that wrote has its own sync");
 }
@@ -316,11 +331,11 @@ async fn batches_that_only_answer_reads_take_no_pipeline_slot() {
     timeout(Duration::from_secs(10), node.applied()).await.expect("a price is not held behind reads");
     node.permits.send(Verdict::Pass).unwrap();
     node.permits.send(Verdict::Pass).unwrap();
-    first.await.unwrap();
+    released(first, "the first batch is released").await;
     for answer in answers {
         timeout(Duration::from_secs(10), answer).await.expect("answered").unwrap();
     }
-    price.await.unwrap();
+    released(price, "the price is released").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -349,7 +364,7 @@ async fn a_batchs_later_answers_go_out_with_its_release() {
     assert!(silent(&mut reissue_rx).await, "the reissue waits");
 
     node.permits.send(Verdict::Pass).unwrap();
-    first.await.unwrap();
+    released(first, "the first batch is released").await;
     let payouts = timeout(Duration::from_secs(10), payouts_rx).await.expect("payouts answered").unwrap();
     assert!(!payouts.loaded, "mock custody holds no payout gate");
     let _ = timeout(Duration::from_secs(10), entitlement_rx).await.expect("the entitlement claim is answered");
@@ -420,7 +435,7 @@ async fn refused_signed_and_admin_requests_wait_for_their_batchs_sync() {
     assert!(silent(&mut admin_rx).await, "the admin refusal waits for it too");
 
     node.permits.send(Verdict::Pass).unwrap();
-    first.await.unwrap();
+    released(first, "the first batch is released").await;
     let signed = timeout(Duration::from_secs(10), signed_rx).await.expect("the signed refusal is answered").unwrap();
     assert_eq!(signed, StatusCode::FORBIDDEN);
     let admin = timeout(Duration::from_secs(10), admin_rx).await.expect("the admin refusal is answered").unwrap();
