@@ -11,6 +11,7 @@ pub mod close_spread;
 pub mod emissions;
 pub mod reference;
 pub mod session_keys;
+pub mod spreads;
 pub mod stress;
 mod versions;
 
@@ -29,6 +30,7 @@ use engine_core::params::{
 use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session::Schedule;
+use engine_core::spread_tier::SpreadTier;
 use engine_core::types::{AccountId, AssetClass, MarketId, Millis, Side};
 use engine_core::{Engine, Fixed};
 use k256::ecdsa::SigningKey;
@@ -367,9 +369,9 @@ pub fn market(id: MarketId, symbol: &str, class: AssetClass, schedule: Schedule,
         schedule,
         margin_tiers: vec![Tier { up_to: None, bps: margin_bps }],
         spread_tiers: vec![
-            Tier { up_to: Some(Fixed::from_int(1_000_000)), bps: 0 },
-            Tier { up_to: Some(Fixed::from_int(5_000_000)), bps: 2 },
-            Tier { up_to: None, bps: 5 },
+            SpreadTier::bps(Some(Fixed::from_int(1_000_000)), 0),
+            SpreadTier::bps(Some(Fixed::from_int(5_000_000)), 2),
+            SpreadTier::bps(None, 5),
         ],
         price_rules: PriceRules { max_age_ms: 1_000, max_divergence_bps: stress::MAX_DIVERGENCE_BPS, min_sources: 2 },
         max_slippage_bps: 20,

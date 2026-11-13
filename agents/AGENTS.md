@@ -24,10 +24,12 @@ an index: load only the rule whose hint matches the current action.
   by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
   seven-day key rotation, and from `V46` signed benchmark rates capped at 300 bps per day from the applied rates next to their
-  date in `benchmark.rs`, a market holding positions kept on its benchmark, and a stress floor of at most level 1 lapsing after 72 hours in `stress.rs`, and from `V49` stress parameters and a listed market's markup moved only after a seven-day notice); the spread a close can pay, from `V40`, capped per market
+  date in `benchmark.rs`, a market holding positions kept on its benchmark, and a stress floor of at most level 1 lapsing after 72 hours in `stress.rs`, and from `V49` stress parameters and a listed market's markup moved only after a seven-day notice, and from `V52` a listed market's spread and margin bands moved only by a seven-day listing notice and within its launch bands, in `listing_bounds.rs`); from `V52`, every fill's size spread, in tenths of a bp, on the slice that closes a position as on the slice that grows it, with each class's floor and no stress multiplier below 1x (`spread_tier.rs`, `execution/`); the spread a close can pay, from `V40`, capped per market
   (`close_spread.rs`: a ceiling registry adopted at genesis, kept apart from `MarketSpec`, clamps every close at
   the pricing site, refuses a reversal over its ceiling while the pure close stays open, and admits a post-genesis
-  entry only by a signed seven-day adoption that can only lower it); and, from `V37`, elected (`election.rs`: the operator registry's rotation switch and
+  entry only by a signed seven-day adoption that can only lower it, and from `V52` at least the market's launch close
+  charge, with a pure close clamped before the price check and an adoption for a market not yet listed binding its
+  first listing); and, from `V37`, elected (`election.rs`: the operator registry's rotation switch and
   elections mirrored on the staking mirror, the elected key in effect at the election's time or seven days after it
   is logged and once the mirror's finalised block time reaches it, `RotateOperator` refused while rotation is on;
   from `V48`, the timelock-only `installOperator` fallback mirrored the same way while rotation is off, its key in
@@ -327,8 +329,10 @@ an index: load only the rule whose hint matches the current action.
   `production-genesis.toml` is the production `[genesis]` section alone: the launch markets with
   their venue calendars, each calendar's sources and unpublished gaps, their quote currencies, the
   futures contracts the index and commodity markets roll through with the roll rules, the
-  launch margins and fees, and, from `V40`, each market's close-spread ceiling (#147's calibrated
-  values); a deployment's node sections complete it into a config. Every section
+  launch margins and fees, from `V52` each market's spread bands in tenths of a bp (#623's tiers,
+  with FX and index first bands pending the owner's confirmation), and, from `V40`, each market's
+  close-spread ceiling (#147's calibrated values, recomputed for `V52`'s floor); a deployment's node
+  sections complete it into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP, launched with Secure TSC:
@@ -388,6 +392,10 @@ an index: load only the rule whose hint matches the current action.
   cap, the worker signing around a refusal, the stress floor's limit and 72-hour lapse, restart and replay;
   `dev-params-notice.sh`, the V49 notice on a dev node: stress parameters and a market's markup refused
   with no notice and before its time, applied at it through `engine admin` and TLS, and replayed;
+  `dev-spreads.sh`, the V52 spreads on a dev node: opposite BTC positions to $12m opened and closed in legs
+  through every band and a EUR-USD round trip at 0.4bp, each fill at its band's charge, the signed quote
+  stream's steps through the bands a close crosses, refused floors, notices and ceilings, a noticed band and
+  margin change from its time, a bound first listing, restart and replay;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
@@ -495,7 +503,7 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
+  the browser-origin scenario, the proxy protocol scenario, the spreads scenario (its own job, compiling the node's tests), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
   signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
@@ -672,6 +680,8 @@ Run from the repo root:
   operator/worker/TLS/API scenario with deterministic time, restart and public replay)
 - Parameter notice dev scenario: `./scripts/dev-params-notice.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic time and public replay)
+- Spreads dev scenario: `./scripts/dev-spreads.sh` (runs the isolated access-screened trading, signed
+  admin over TLS and signed quote stream scenario with deterministic time, restart and public replay)
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault

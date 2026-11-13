@@ -26,6 +26,8 @@ pub struct Fill {
     pub price: Fixed,
     /// Reference mid at fill time. `price` minus `index` is the spread paid.
     pub index: Fixed,
+    /// The spread paid in whole basis points of `index`, truncated: a spread under a bp, as an FX or
+    /// index market's first band charges from `V52`, reads 0, and `price` minus `index` is exact.
     pub spread_bps: i64,
     /// Price PnL realised by this fill, in USD, before the fee.
     pub realised_pnl: Fixed,

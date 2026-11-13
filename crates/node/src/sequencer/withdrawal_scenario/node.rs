@@ -355,7 +355,10 @@ pub(super) fn write_config(
     cfg["genesis"]["markets"][0]["price_rules"]["min_sources"] = 1_i64.into();
     cfg["genesis"]["markets"][0]["price_rules"]["max_age_ms"] = 3000_i64.into();
     cfg["genesis"]["markets"][0]["house_cap_floor"] = "1000000".into();
-    cfg["genesis"]["markets"][0]["spread_tiers"] = serde_json::Value::Array(vec![serde_json::json!({"bps":0})]);
+    // One band at BTC's floor, a basis point, which every fill pays from protocol V52, and a 9.9% first
+    // margin band, so a trader's 10 USDC covers one unit at 100 and the basis point its open pays.
+    cfg["genesis"]["markets"][0]["spread_tiers"] = serde_json::Value::Array(vec![serde_json::json!({"tenth_bps":10})]);
+    cfg["genesis"]["markets"][0]["margin_tiers"][0]["bps"] = 990_i64.into();
     cfg["genesis"]["markets"][0]["financing"]["markup_bps"] = 0_i64.into();
     cfg["genesis"]["benchmarks"][0]["annual_bps"] = 0_i64.into();
     cfg["genesis"]["params"]["profit_fee_bps"] = 0_i64.into();

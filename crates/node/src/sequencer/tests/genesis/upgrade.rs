@@ -153,10 +153,19 @@ fn a_signed_adoption_after_the_carry_survives_restart_under_the_unchanged_config
     let key = k256::ecdsa::SigningKey::from_slice(&[0x42; 32]).unwrap();
     let notice_ms: Millis = 7 * 24 * 60 * 60 * 1000;
     let ts = trusted_now().latest_ms;
+    // Market 77 is not listed, so the adoption names the listing it binds.
+    let mut spec77 = genesis.markets[0].clone();
+    spec77.id = 77;
+    spec77.symbol = "TEST77".into();
     let adopt = Command::SignedAdmin(Box::new(crate::admin::sign(
         &key,
         &operator,
-        AdminCommand::AdoptCloseSpreadCeiling { market: 77, max_close_spread_bps: 25, effective_at: ts + notice_ms },
+        AdminCommand::AdoptCloseSpreadCeiling {
+            market: 77,
+            max_close_spread_bps: 25,
+            effective_at: ts + notice_ms,
+            listing: Some(spec77),
+        },
         0,
         ts + 60_000,
     )));

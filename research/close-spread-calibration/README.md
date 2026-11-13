@@ -28,7 +28,7 @@ pinned digest, so a change to a rule this study reads is a visible change here. 
 |---|---|
 | `results/ceilings.csv`, `ceilings.json` | one row per launch market: inputs, need, proposed ceiling, validation, flags, status; the registry-against-global comparison, reversal and rounding summaries |
 | `results/market_statistics.json` | per-market hourly tails with weekly block-bootstrap intervals, input hashes, split |
-| `results/reversal_blended_spread.csv` | blended spread of 2,664 reversal cells against each ceiling |
+| `results/reversal_blended_spread.csv` | blended spread of 2,664 reversal cells, priced at V52, against each ceiling, beside the same position's pure close |
 | `results/ceiling_effects.csv` | trader exit cost in bps, money and share of margin at the ceiling and under an uncapped operator change, with the house outcome in a 5% gap |
 | `results/conditional_gap_sweep.csv.gz` | the wider candidate sweep (0 to 100 bps) |
 | `results/report.md`, `*.png` | the report and figures |
@@ -36,15 +36,16 @@ pinned digest, so a change to a rule this study reads is a visible change here. 
 ## What a ceiling is
 
 A ceiling is a fixed limit on operator power, set in genesis. It is not a forecast of price moves and not
-the charged spread. The engine charges a close a stress minimum plus the account's toxicity add-on; a pure
-close pays no size spread, and a liquidation waives toxicity. Those charges exist to cover one risk, the
-index being stale or off the true price at the moment a client closes, and the genesis price rules bound
-it per market: a quote may be `max_age_ms` old and the sources it medians may differ by
+the charged spread. The engine charges a close a stress minimum plus the account's toxicity add-on, which a
+liquidation waives, and from V52 the size spread on the slice it closes. The minimum and add-on exist to cover
+one risk, the index being stale or off the true price at the moment a client closes, and the genesis price
+rules bound it per market: a quote may be `max_age_ms` old and the sources it medians may differ by
 `max_divergence_bps`. So
 
 ```
 need    = (max_divergence_bps + 1) + hourly tail move * sqrt(max_age_ms / 1 hour)
-ceiling = need rounded up to a multiple of 5 bps, never below the launch close charge (13 bps)
+floor   = the market's launch close charge in tenths of a bp, rounded up to a whole bp
+ceiling = need rounded up to a multiple of 5 bps, never below the floor
 ```
 
 The divergence limit counts whole bps: `compute_index` truncates the sources' spread before
@@ -56,16 +57,21 @@ p99 of the in-bar move (close against the bar's own open); the open against the 
 session gaps, is left out and reported separately. DE40 and UK100 fold their overnight move into the bar, which
 overstates their tail. Different asset classes differ because their divergence limits differ (FX 5, indices and commodities
 10, shares 10, crypto 25 bps), and a tail move over one second is small: one second is 1/60 of an hour's
-scale. The 13-bps floor is the stress-minimum 10 plus the top toxicity tier 3 in `production-genesis.toml`;
-a ceiling below it would clamp a launch close at the top stress level, and a ceiling equal to it still trims
-the rounding unit: the engine rounds the charge up, so the floored exact bound pays one raw unit less than
-today's launch close.
+scale. The floor is the launch close charge the engine refuses a ceiling below from V52: the widest stress
+minimum (10 bps) and the top toxicity add-on (3 bps) in `production-genesis.toml`, plus the market's first
+spread band at the widest size multiplier (4x), in tenths of a bp. EUR-USD's 0.4-bp first band adds 1.6 bps,
+a 14.6-bp charge and a 15-bp floor; a 2-bp first band adds 8 bps, a 21-bp floor. The engine compares
+`ceiling_bps * 10` with the charge in tenths, so the floor is the charge rounded up to a whole bp. A ceiling at
+its floor is at least the exact charge of a first-band close at the launch parameters, so on such a close the
+clamp removes at most what the engine's upward rounding adds. A close beyond the first band pays a higher
+band's rate and can exceed the ceiling, which clamps it; `reversal_summary` in `ceilings.json` counts how often
+in the grid.
 
-Volatility enters only through that one-second tail, and a doubled volatility input raises 31 of 37 ceilings,
-by at most 10 bps (the floor absorbs the four calm FX markets). A price jump over a gap, a closure or a contract roll is not a spread: it moves margin and
+Volatility enters only through that one-second tail, and a doubled volatility input raises 7 of 37 ceilings,
+by at most 5 bps (the floor absorbs the other 30). A price jump over a gap, a closure or a contract roll is not a spread: it moves margin and
 close-out risk. `results/ceiling_effects.csv` shows a close spread cannot repair it: in a 5% gap on EUR-USD
 with no house capital, an uncapped 103-bp close charge cuts the house shortfall by a fifth to a third and
-costs the trader eight times as much. A volatility-responsive charged spread is a different mechanism (the
+costs the trader seven times as much. A volatility-responsive charged spread is a different mechanism (the
 existing stress levels already respond to moves); a ceiling that adjusted itself with volatility would be
 operator-adjustable by construction and needs its own decision.
 
@@ -78,24 +84,42 @@ a decision). Its parameters are the floor, the step, the burden limit and the ta
 The chronological split is the first 78 weeks (calibration) and the last 24 (validation), fixed before any
 selection. The method is fixed on the calibration sample and tested on the validation sample: the
 calibration-only ceiling covers the validation need for every market, and over validation hours the need
-exceeds it in at most 0.9% of hours (MSFT; 0.9% or less for the proposed values). The proposed
+exceeds it in at most 0.2% of hours (BTC-USD; 0.2% or less for the proposed values). The proposed
 value then refits on the larger of the two tails, which is in-sample on the validation tail. The weekly bootstrap (200 resamples) describes sampling
 sensitivity under weekly stationarity; it does not cover proxy error, missing feeds or unseen tails.
 
 ## Engine model boundary
 
-At engine revision `41a9ef4a52cb26ac592c5a0e372f610d8d1ba067`, a pure reduction has no size spread. It pays the
-stress minimum plus the account's toxicity add-on; a liquidation waives the add-on. A reversal also pays
-size spread on its opening slice, divided over the whole fill quantity, with the stress multiplier on that
-slice only. `Engine::price` has no version gate other than the V10 upward rounding.
+`execution.adjustment` models the engine at revision `41a9ef4a52cb26ac592c5a0e372f610d8d1ba067`, whose pricing
+holds through V51: a pure reduction has no size spread. It pays the stress minimum plus the account's toxicity
+add-on; a liquidation waives the add-on. A reversal also pays size spread on its opening slice, divided over
+the whole fill quantity, with the stress multiplier on that slice only. Bands are in whole bps, and
+`Engine::price` has no version gate other than the V10 upward rounding until V40's ceilings, which this model
+leaves out.
 
-Thirteen vectors compare `execution.py` with actual `Engine::apply` fills at V17 and at V21 (the latest standalone harness without access screening; later versions
-need access evidence on every order, which does not touch pricing), including reversals across bounded size-spread bands (USD and EUR), a reduce-only
-clamp, EUR and JPY quotes, a one-raw-unit index and a liquidation gap that creates bad debt. They are research
-fixtures, separate from the protocol reference logs, and the fixture file is read by both the Python tests and
-`crates/core/tests/close_spread_calibration.rs`. Charges round upward at nine decimal places; a sell's adjustment
-stops one raw unit below its index. The integer `Fill.spread_bps` truncates, so checking it alone can miss a
-fractional-basis-point excess: a ceiling must bound the raw adjustment.
+`execution.adjustment_v52` models V52. Bands are in tenths of a bp, and the slice that closes a position pays
+through the same bands as the slice that grows it, over the notional it closes, from |position| down to what
+is left. Each band's charge rounds on its own; the closing and growing slices' costs are summed, multiplied by
+the stress level's size multiplier once and divided over the fill quantity. A pure close's charge clamps to
+its ceiling, floored to the exact bound `charge_raw * 10_000 <= index_raw * ceiling_bps`, before the check that
+the spread stays under the price, so a pure close always prices. A reversal whose blended charge exceeds the
+ceiling is refused, even when that charge reaches the price. The reversal grid prices with this model; the
+rounding evidence uses the V17 one.
+
+Thirteen vectors in `fixtures/engine-v17.json` compare `adjustment` with actual `Engine::apply` fills at V17 and
+at V21 (the latest standalone harness without access screening), including reversals across bounded
+size-spread bands (USD and EUR), a reduce-only clamp, EUR and JPY quotes, a one-raw-unit index and a
+liquidation gap that creates bad debt. Twenty-six vectors in `fixtures/engine-v52.json` compare
+`adjustment_v52` with fills at V52 through the access-screened order path. From V52 a listed market's bands and
+stress parameters move only after notice, so each vector sets its parameters, listing and ceiling before V52
+activates. They cover partial closes in every band at the calm, elevated and top levels, reversals within and
+over the ceiling (one whose blended charge reaches the price), a reduce-only clamp, pure closes whose unclamped
+charge reaches the price, close-outs with and without bad debt, EUR and JPY quotes with sub-bp bands, bands
+listed in whole bps before V52, an add no ceiling bounds, and a raw-unit index whose clamp floors the charge to
+zero. They are research fixtures, separate from the protocol reference logs, and each fixture file is read by
+both the Python tests and `crates/core/tests/close_spread_calibration.rs`. Charges round upward at nine decimal
+places; a sell's adjustment stops one raw unit below its index. The integer `Fill.spread_bps` truncates, so
+checking it alone can miss a fractional-basis-point excess: a ceiling must bound the raw adjustment.
 
 ## Evidence and limitations
 

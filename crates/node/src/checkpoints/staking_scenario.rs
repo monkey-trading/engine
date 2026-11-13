@@ -80,8 +80,10 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
         s.onboard(staker).await;
     }
 
-    // 1. Losses of $100 and $300 share the emission period's budget 25% and 75%, and put house NAV
-    //    400 above the 10m floor for the staking epoch that ends half an hour in.
+    // 1. Losses of $100 and $300 share the emission period's budget 25% and 75%. With the spreads the
+    //    trades pay, 39.98 a BTC (BTC's 2bp first band on the $100,000 open and the $99,900 close),
+    //    the stakers lose 139.98 and 419.94, which put house NAV 559.92 above the 10m floor for the
+    //    staking epoch that ends half an hour in.
     s.losses(&[(s.stakers[0], "1"), (s.stakers[1], "3")], "100000", "99900").await;
     s.advance_to(NOW + 600_000).await;
     s.submit(Command::Tick).await;
@@ -102,16 +104,16 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
     assert_eq!(s.staked(s.stakers[0]).await, TokenUnits(quarter));
     assert_eq!(s.staked(s.stakers[1]).await, TokenUnits(3 * quarter));
 
-    // 3. A restart across the epoch boundary, and the first tick closes epoch 0: the 400 USDC
+    // 3. A restart across the epoch boundary, and the first tick closes epoch 0: the 559.92 USDC
     //    above the floor pays the stakers 25/75, and house cash falls by the allocated total.
     s.stop().await;
     s.advance_to(NOW + EPOCH_MS).await;
     s.start_node().await;
     let events = s.submit(Command::Tick).await;
-    assert_eq!(s.distribution(s.stakers[0]).await, UsdcUnits(100_000_000), "{events:?}");
-    assert_eq!(s.distribution(s.stakers[1]).await, UsdcUnits(300_000_000), "{events:?}");
+    assert_eq!(s.distribution(s.stakers[0]).await, UsdcUnits(139_980_000), "{events:?}");
+    assert_eq!(s.distribution(s.stakers[1]).await, UsdcUnits(419_940_000), "{events:?}");
     assert!(events.iter().any(|e| matches!(e, Event::DistributionEpochClosed { epoch: 0, allocated, excess, .. }
-        if *allocated == UsdcUnits(400_000_000) && *excess == UsdcUnits(400_000_000))));
+        if *allocated == UsdcUnits(559_920_000) && *excess == UsdcUnits(559_920_000))));
     let replayed = replay_path(&s.dir).expect("the log replays with every checkpoint signature");
     assert_eq!(replayed.engine.staking(), s.staking_state().await.as_ref());
     assert_eq!(replayed.engine.staked_balances(), &s.staked_balances().await);
@@ -119,12 +121,12 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
     // 4. Each staker reads a proof, two later checkpoints post, and the proof still pays its USDC,
     //    relayed by another account; the same proof, and the newest one, then pay nothing, and the
     //    vault's balance plus what it paid still equals the ledger.
-    for (staker, usdc) in [(s.stakers[0], 100u64), (s.stakers[1], 300)] {
+    for (staker, units) in [(s.stakers[0], 139_980_000u64), (s.stakers[1], 419_940_000)] {
         let proof = s.posted_distribution_proof(staker).await;
         s.later_checkpoint().await;
         s.later_checkpoint().await;
         assert!(s.view(s.vault, latestSeqCall {}).await > proof.seq);
-        assert_eq!(s.claim_distribution_proof(&proof).await, U256::from(usdc) * U256::from(1_000_000));
+        assert_eq!(s.claim_distribution_proof(&proof).await, U256::from(units));
         assert_eq!(s.refused_distribution_proof(&proof).await, NothingToClaim::SELECTOR);
         assert_eq!(s.refused_distribution_claim(staker).await, NothingToClaim::SELECTOR);
     }
@@ -150,14 +152,15 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
     // 6. Epoch 1: the house loses more than it earns, so NAV ends below the floor and nothing is
     //    distributed.
     s.losses(&[(s.stakers[0], "1")], "100000", "99600").await;
-    // A winning short sells high and buys back low; the house pays the 900 win.
+    // A winning short sells high and buys back low; the house pays the 900 win, less the 40.18 its
+    // spreads pay and the 10% profit fee on the 859.82 it realises.
     s.wins(&[(s.stakers[1], "1")], "100900", "100000").await;
     assert!(s.house_nav().await < FLOOR);
     let events = s.next_epoch().await;
     assert!(events.iter().any(|e| matches!(e, Event::DistributionEpochClosed { epoch: 1, allocated, .. }
         if *allocated == UsdcUnits(0))));
-    assert_eq!(s.distribution(s.stakers[0]).await, UsdcUnits(100_000_000));
-    assert_eq!(s.distribution(s.stakers[1]).await, UsdcUnits(300_000_000));
+    assert_eq!(s.distribution(s.stakers[0]).await, UsdcUnits(139_980_000));
+    assert_eq!(s.distribution(s.stakers[1]).await, UsdcUnits(419_940_000));
     s.stop().await;
 }
 

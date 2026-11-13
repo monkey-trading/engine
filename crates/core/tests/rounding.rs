@@ -11,10 +11,11 @@ use engine_core::Fixed;
 use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Command};
 use engine_core::event::{Event, Fill, Reject};
-use engine_core::market::{MarketSpec, Tier};
+use engine_core::market::MarketSpec;
 use engine_core::params::{ProtocolParams, StressLevel};
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session::Schedule;
+use engine_core::spread_tier::SpreadTier;
 use engine_core::types::{AccountId, AssetClass, MarketId, Side};
 
 /// An FX market with 1% margin and no size spread, so every fill is at the mid.
@@ -279,7 +280,7 @@ fn rounding_a_spread_up_refuses_no_fill_the_truncated_spread_allows() {
             let level = StressLevel { size_spread_multiplier_bps: 10_000, min_spread_bps: spread_bps, trigger: None };
             h.operator_admin(AdminCommand::SetParams(ProtocolParams { stress_levels: vec![level], ..params() }));
             let spec = MarketSpec {
-                spread_tiers: vec![Tier { up_to: None, bps: band_bps }],
+                spread_tiers: vec![SpreadTier::bps(None, band_bps)],
                 max_slippage_bps: 10_000,
                 ..market(WIDE, "WIDE", AssetClass::Index, Schedule::AlwaysOpen, 1_000)
             };
@@ -385,7 +386,7 @@ fn a_dust_priced_short_whose_raw_product_with_the_mark_exceeds_i128_closes_out_a
 /// `h` with `EURUSD` listed and priced at `mid`, and account 1 funded with 1m.
 fn eurusd(mut h: Harness, mid: &str) -> (Harness, AccountId) {
     let spec = MarketSpec {
-        spread_tiers: vec![Tier { up_to: None, bps: 0 }],
+        spread_tiers: vec![SpreadTier::bps(None, 0)],
         ..market(EURUSD, "EUR-USD", AssetClass::Fx, Schedule::AlwaysOpen, 100)
     };
     h.admin(AdminCommand::UpsertMarket(spec));

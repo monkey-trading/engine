@@ -195,3 +195,21 @@ fn toxicity_spread_takes_the_highest_tier_reached() {
     assert_eq!(p.toxicity_spread_bps(5), 1);
     assert_eq!(p.toxicity_spread_bps(20), 3);
 }
+
+#[test]
+fn from_v52_no_stress_level_multiplies_size_spreads_below_one() {
+    let mut p = params();
+    p.stress_levels.push(StressLevel {
+        size_spread_multiplier_bps: 9_999,
+        min_spread_bps: 1,
+        trigger: Some(StressTrigger { move_bps: Some(100), ..StressTrigger::default() }),
+    });
+    // Earlier versions admit any multiplier from zero.
+    assert!(p.validate_for(ProtocolVersion::V51).is_ok());
+    let err = p.validate_for(ProtocolVersion::V52).unwrap_err();
+    assert_eq!(err, "from protocol V52 every stress level's size multiplier is at least 10000 bps");
+    p.stress_levels[1].size_spread_multiplier_bps = 10_000;
+    assert!(p.validate_for(ProtocolVersion::V52).is_ok());
+    p.stress_levels[0].size_spread_multiplier_bps = 0;
+    assert!(p.validate_for(ProtocolVersion::V52).is_err());
+}

@@ -9,13 +9,16 @@
 //!
 //! From `V49` the stress parameters and a listed market's financing markup take the same seven-day
 //! notice, with no range: an `AnnounceParams` may name new stress parameters, and an
-//! `AnnounceMarkup` one market's new markup, each applying once from its time on.
+//! `AnnounceMarkup` one market's new markup, each applying once from its time on. From `V52` that
+//! markup notice is a listing notice, which may also name the market's spread and margin bands
+//! (`listing_bounds`).
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::engine::Engine;
+use crate::listing_bounds::{LaunchBands, ListingNotice};
 use crate::market::MarketSpec;
 use crate::params::{MAX_RATE_BPS, ProtocolParams, StressLevel};
 use crate::protocol::ProtocolVersion;
@@ -70,15 +73,6 @@ impl StressSettings {
     }
 }
 
-/// From `V49`, the operator's notice of one listed market's new financing markup, which a relisting
-/// may apply from `effective_at` on, once.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MarkupNotice {
-    pub markup_bps: i64,
-    pub effective_at: Millis,
-}
-
 /// A rotation waiting out its notice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -88,7 +82,7 @@ pub struct PendingRotation {
 }
 
 /// What the bounds keep in state, left out of the encoding while empty.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorBounds {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -103,9 +97,17 @@ pub struct OperatorBounds {
     /// From `V46`, when a global stress floor above level 0 was set, which starts its time to lapse.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global_floor_set_at: Option<Millis>,
-    /// From `V49`, each listed market's pending markup notice.
+    /// From `V49`, each listed market's pending listing notice: a markup, and from `V52` its spread
+    /// and margin bands.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub markups: BTreeMap<MarketId, MarkupNotice>,
+    pub markups: BTreeMap<MarketId, ListingNotice>,
+    /// From `V52`, each listed market's launch bands, which bound what a listing notice may name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub launch_bands: BTreeMap<MarketId, LaunchBands>,
+    /// From `V52`, the listing a ceiling adoption for a market not yet listed bound, which that
+    /// market's first listing must be.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub proposed_listings: BTreeMap<MarketId, MarketSpec>,
 }
 
 impl OperatorBounds {
@@ -212,7 +214,7 @@ impl Engine {
             return Err("financing.markup_bps must be within ±10000".into());
         }
         self.check_notice_time("a markup notice", at)?;
-        self.operator_bounds.markups.insert(market, MarkupNotice { markup_bps, effective_at: at });
+        self.operator_bounds.markups.insert(market, ListingNotice::markup(markup_bps, at));
         Ok(())
     }
 
@@ -226,7 +228,7 @@ impl Engine {
         if self.protocol_version < ProtocolVersion::V49 || market.spec.financing.markup_bps == new {
             return Ok(false);
         }
-        match self.operator_bounds.markups.get(&id).filter(|notice| notice.markup_bps == new) {
+        match self.operator_bounds.markups.get(&id).filter(|notice| notice.markup_bps == Some(new)) {
             None => Err(format!("market {id}'s markup change to {new} needs a notice of at least seven days")),
             Some(notice) if notice.effective_at > self.now => {
                 Err(format!("market {id}'s markup change to {new} takes effect from {}", notice.effective_at))
@@ -237,7 +239,7 @@ impl Engine {
 
     /// Checks a notice's time: at least seven days after the sequenced time, and no later than the
     /// latest stamp.
-    fn check_notice_time(&self, what: &str, effective_at: Millis) -> Result<(), String> {
+    pub(crate) fn check_notice_time(&self, what: &str, effective_at: Millis) -> Result<(), String> {
         if effective_at < self.now + NOTICE_MS {
             return Err(format!("{what} takes effect no sooner than {}", self.now + NOTICE_MS));
         }

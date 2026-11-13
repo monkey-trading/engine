@@ -1,17 +1,21 @@
-//! Engine::apply agreement vectors for the research-only closing-price model, at `V17` and at `V21`,
-//! the latest standalone harness without access screening. `Engine::price` has no version gate other
-//! than the `V10` rounding. This checks the engine half; `tests/test_execution.py` checks the model.
+//! Engine::apply agreement vectors for the research-only closing-price model: at `V17` and at `V21`,
+//! the latest standalone harness without access screening, whose pricing has no version gate other
+//! than the `V10` rounding until `V40`'s ceilings; and at `V52`, which charges the closing slice too
+//! (`v52`). This checks the engine half; `tests/test_execution.py` checks the model.
 
 mod common;
+#[path = "close_spread_calibration/v52.rs"]
+mod v52;
 
 use common::events::only_fill;
 use common::{EURUSD, Harness, USDJPY, acct, f, market, params};
 use engine_core::Fixed;
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
 use engine_core::event::Event;
-use engine_core::market::{QuoteCurrency, Tier};
+use engine_core::market::QuoteCurrency;
 use engine_core::params::{ProtocolParams, StressLevel, ToxicityTier};
 use engine_core::session::Schedule;
+use engine_core::spread_tier::SpreadTier;
 use engine_core::types::{AssetClass, Side};
 use serde::Deserialize;
 
@@ -69,7 +73,7 @@ fn check(version: &str, mut h: Harness, vector: Vector) {
         "JPY" => QuoteCurrency::Jpy { fx_market: USDJPY },
         _ => panic!("unsupported vector currency"),
     };
-    spec.spread_tiers = vec![Tier { up_to: None, bps: 0 }];
+    spec.spread_tiers = vec![SpreadTier::bps(None, 0)];
     h.operator_admin(AdminCommand::UpsertMarket(spec.clone()));
     if let Some(fx) = vector.fx {
         let fx_market = if vector.currency == "JPY" { USDJPY } else { EURUSD };
@@ -83,7 +87,7 @@ fn check(version: &str, mut h: Harness, vector: Vector) {
         let events = h.market_order(a, WIDE, side, &vector.current.abs().to_string(), &vector.opening_mid.to_string());
         assert_eq!(only_fill(&events).position, vector.current, "{version} {} opening", vector.name);
     }
-    spec.spread_tiers = vector.tiers.iter().map(|&(up_to, bps)| Tier { up_to, bps }).collect();
+    spec.spread_tiers = vector.tiers.iter().map(|&(up_to, bps)| SpreadTier::bps(up_to, bps)).collect();
     h.operator_admin(AdminCommand::UpsertMarket(spec));
     p.stress_levels[0].min_spread_bps = vector.minimum_bps;
     p.stress_levels[0].size_spread_multiplier_bps = vector.multiplier_bps;

@@ -180,6 +180,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `verify-frames`, `admin`, and `ct-watch`
 - `src/lib.rs` — module index
 - `src/admin/mod.rs` — `engine admin`: the operator key, the commands it signs, and submission
+- `src/admin/command.rs` — the admin command each action sends, built from its arguments and TOML
+  files and checked before signing
 - `src/admin/benchmark_feed.rs` — the separate signed publisher worker and rollover scheduling
 - `src/admin/benchmark_watch.rs` — bounded schedule notifications and reconnection for the worker
 - `src/benchmarks/` — official CSV fetching (`mod.rs`), exact decimal parsing (`parse.rs`), compact
@@ -297,8 +299,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/replay/snapshot.rs` — replay restored from a verified state snapshot
 - `src/sequencer/replay/replayed_log.rs` — a log read and replayed before anything is written, and
   the head link and prefix ring the log-head poster reads from it
-- `src/sequencer/house.rs` — the latest checkpoint and the seq of the latest `SetParams`, which `GET /v1/house/state` answers from
-- `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, and after a restart
+- `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, and the pending listing notices, which `GET /v1/house/state` answers from
+- `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, with a pending listing notice, and after a restart
 - `src/sequencer/replay/authorities.rs` — accepted historical signers for checkpoints a retired key signed
 - `src/sequencer/legacy.rs` — verified legacy activation inputs and pre-writer signature eligibility
 - `src/sequencer/legacy/approvals.rs` — authenticated approval prefixes, bounded receipt proofs and per-obligation release authorization
@@ -425,6 +427,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/access_tests/reissue.rs` — a reissue request screened like a withdrawal, by account and peer, refused with 403 before the log, and a request for an approval that does not exist refused with 404 before any screening call
 - `src/api/access_tests/session_keys.rs` — a registered session key trades for its account without the wallet until revoked, a withdrawal it signs refuses as out of scope in the log, an expired, mis-scoped, or rate-flooding key is refused before sequencing, and a never-credited account registers one only after declaring, with its cancels, stale nonces, and missing signatures
 - `src/api/access_tests/source.rs` — the mock screening source the access tests answer with
+- `src/api/access_tests/spreads.rs` — the `V52` dev scenario: fills paying their bands on the open
+  and the close, the signed quote stream's closing steps, refused and noticed band changes, ceiling
+  floors and a bound first listing, through the signed admin route over TLS, and replay
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
 - `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof, at the
@@ -451,7 +456,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/stream/quotes/mod.rs` — a connection's quote subscription: the `quotes` op, one bounded
   sequencer read per interval while the log head moves, and only the quotes that changed
 - `src/api/stream/quotes/ladder.rs` — one account's quotes in one market from `Engine::quote`: a
-  price per spread tier up to the largest order the account can open, and the closing price
+  price at each spread tier a close crosses, then per spread tier up to the largest order the
+  account can open, and the closing price
 - `src/api/stream/quotes/tests.rs` — the subscription against a stand-in sequencer under paused
   time: pacing, spreading, replacement, refusals, a full queue, a stopped log, and the ladder search
 - `src/api/stream/quotes/api_tests.rs` — signed quotes through the API against a real sequencer
@@ -916,7 +922,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, and its schedule's rotation set and turn events, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, the staking contract's deployer checked against the configured registry, and the schedule checked against the one the registry and the config name and against the registry it records
-- `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, and the latest checkpoint
+- `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, the pending listing notices, and the latest checkpoint
 - `src/api/operator.rs` — `GET /v1/operator`: the key in effect, its pending rotation, whether rotation is on, the last election, and from `V51` the rotation set in effect and the next with its time, today's and tomorrow's turns, and the turn history (`?before=&limit=`)
 - `src/api/operator_list.rs` — `GET /v1/operators`: the list `custody/operators/` last read, 404 without a lens and 503 before the first read or once it is stale
 - `src/custody/operators/` — the operator list's reader over its own custody quorum: `lens.rs` is the `RegistryLens` ABI and the checks that make the list, `mod.rs` the reader, its loop and the feed the API serves from, `tests.rs` the stand-in providers
@@ -1092,7 +1098,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `tests/production_genesis/` — loads `config/production-genesis.toml` as a dev node's genesis,
   checks the launch values and quote currencies, and steps it through weeks with holidays and early
   closes (`main.rs`); checks each market reaches every divergence stress level with screened house
-  funding (`divergence.rs`);
+  funding (`divergence.rs`); checks each market's spread bands are the calibrated tiers in tenths of
+  a bp (`spreads.rs`);
   and recomputes each futures market's roll times from its exchange's calendar and rolls the engine
   through them (`futures.rs`)
 
@@ -1178,6 +1185,9 @@ cargo run -p engine-node -- admin --pin $PIN set-params params.toml           # 
 # a notice, by a set-params carrying that file or an upsert-market carrying that markup.
 cargo run -p engine-node -- admin --pin $PIN announce-params --stress-from params.toml --effective-at 2027-01-08T00:00:00Z
 cargo run -p engine-node -- admin --pin $PIN announce-markup 1 300 --effective-at 2027-01-08T00:00:00Z
+# From protocol V52, a listed market's spread and margin bands, and its markup, apply only seven days
+# after a listing notice, by an upsert-market carrying them, within the market's launch bands.
+cargo run -p engine-node -- admin --pin $PIN announce-listing 1 --spreads-from market.toml --margins-from market.toml --effective-at 2027-01-08T00:00:00Z
 # Once per log, from protocol V19: when emission period 0 starts (not before the command is
 # sequenced) and its budget in MONKEY base units. Production values need the owner's approval.
 cargo run -p engine-node -- admin --pin $PIN init-emissions --start 2027-01-01T00:00:00Z --period-budget <units>
@@ -2117,19 +2127,25 @@ long as the chain and vault match. `announce-params` gives the notice a profit f
 change needs, and from `V49` with `--stress-from <params.toml>` the notice for the stress levels, move
 window and cooldown that a `set-params` carrying that file applies; `announce-markup <market> <bps>
 --effective-at <time>` gives the notice a listed market's markup change needs before an
-`upsert-market` carries it. From `V37`, while the operator registry has rotation on, the engine refuses
+`upsert-market` carries it. From `V52`, `announce-listing <market>` with `--spreads-from` and
+`--margins-from` (TOML market specs whose bands it names) and `--markup-bps` gives the notice a listed
+market's spread band, margin band or markup change needs, and `adopt-close-spread-ceiling --listing
+<spec.toml>` names the listing an adoption for a market not yet listed binds. From `V37`, while the operator registry has rotation on, the engine refuses
 `rotate-operator`, and an election's key takes over the same way: from the election's effective
 time, or seven days after the election is logged when that is later, and once the staking mirror
 has completed a finalised block stamped at or after the registry's effective time, signing with
 `--rotated`.
-`GET /v1/house/state` returns `{"seq", "params", "checkpoint"}` from memory, signed like the other
-reads, with no log scan, so a client learns the protocol parameters and the latest checkpoint
-without replaying the log. `seq` is the log head the read was taken at (`null` on an empty log).
+`GET /v1/house/state` returns `{"seq", "params", "listing_notices", "checkpoint"}` from memory, signed
+like the other reads, with no log scan, so a client learns the protocol parameters, the pending
+listing notices and the latest checkpoint without replaying the log. `listing_notices` maps each
+market with a pending notice to it (`spread_tiers` in tenths of a bp, `margin_tiers`, `markup_bps`,
+each left out when not named, and `effective_at`); the bands in force are `GET /v1/markets`'s. `seq` is the log head the read was taken at (`null` on an empty log).
 `params` is `null` until the first `SetParams` applies, then the parameters in force, as the
 `set_params` command encodes them (`profit_fee_bps`, `closeout_level_bps`, `house_total_cap_bps`,
 `house_total_cap_floor` left out when zero, `stress_levels`, and the rest), plus `seq`, the seq of the
 `SetParams` that set them (`null` only when a snapshot written before it carried the seq restored the
-node and no `SetParams` has applied since). `checkpoint` is `null` until the log holds one, then the
+node and no `SetParams` has applied since; an activation that converts the parameters in place, as
+`V13`'s divergence shares and `V52`'s 1x multipliers do, leaves it at that `SetParams`). `checkpoint` is `null` until the log holds one, then the
 latest checkpoint as the stream carries it (`offset`, `type: "checkpoint"`, `seq`, `root`,
 `signature`, `signer`, and the rest). The sequencer keeps the checkpoint as it logs it and the seq as
 it applies the command; recovery restores both from the replay it already runs, or from the snapshot

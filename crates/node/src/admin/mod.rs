@@ -6,6 +6,7 @@
 
 mod benchmark_feed;
 mod benchmark_watch;
+mod command;
 mod input;
 mod secrets;
 mod tls;
@@ -20,14 +21,9 @@ use chrono::{DateTime, Utc};
 use clap::{ArgAction, Args, Subcommand};
 use engine_core::auth::{MAX_EXPIRY_AHEAD_MS, Operator, RequestAuth};
 use engine_core::command::{AdminCommand, AdminRequest};
-use engine_core::corporate::CorporateAction;
 use engine_core::eip712;
-use engine_core::emissions::{EmissionSchedule, TokenUnits};
+use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
-use engine_core::market::MarketSpec;
-use engine_core::operator_bounds::{ParamsNotice, StressSettings};
-use engine_core::params::ProtocolParams;
-use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, MarketId, Millis};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -143,6 +139,26 @@ pub enum AdminAction {
         #[arg(long)]
         effective_at: DateTime<Utc>,
     },
+    /// Give notice of a listed market's new spread bands, margin bands and/or financing markup, in
+    /// bps a year (from V52): an `upsert-market` carrying them applies only from `--effective-at`, at
+    /// least seven days after the notice is logged, with each spread rate from its launch rate to
+    /// twice it and the margin requirement at or above launch's. It replaces that market's pending
+    /// notice.
+    AnnounceListing {
+        market: MarketId,
+        /// A TOML market spec whose spread bands a later `upsert-market` applies, such as the file it
+        /// will carry.
+        #[arg(long)]
+        spreads_from: Option<PathBuf>,
+        /// A TOML market spec whose margin bands a later `upsert-market` applies.
+        #[arg(long)]
+        margins_from: Option<PathBuf>,
+        #[arg(long, allow_negative_numbers = true)]
+        markup_bps: Option<i64>,
+        /// When the new values may apply from, in RFC 3339 (`2027-01-01T00:00:00Z`).
+        #[arg(long)]
+        effective_at: DateTime<Utc>,
+    },
     /// Rotate the operator key to the key at `address` (from V35). The old key signs nothing from
     /// seven days after the rotation is logged; sign later commands with `--rotated` and the new key.
     RotateOperator { address: AccountId },
@@ -175,7 +191,9 @@ pub enum AdminAction {
     },
     /// Adopt a close-spread ceiling for a market (from V40): the most its closes may pay, whatever
     /// the parameters do. A new market's ceiling applies from `--effective-at`, at least seven days
-    /// after the command is logged; an adopted ceiling can only be lowered, never raised.
+    /// after the command is logged; an adopted ceiling can only be lowered, never raised. From V52 a
+    /// ceiling covers the market's launch close charge, and one for a market not yet listed names
+    /// the listing it binds with `--listing`.
     AdoptCloseSpreadCeiling {
         /// The market the ceiling applies to.
         #[arg(short, long)]
@@ -187,6 +205,10 @@ pub enum AdminAction {
         /// days after the command is logged.
         #[arg(long)]
         effective_at: DateTime<Utc>,
+        /// A TOML market spec: the listing the market's first listing must be, for a market not yet
+        /// listed (from V52).
+        #[arg(long)]
+        listing: Option<PathBuf>,
     },
     /// Encrypt a secrets bundle to a node's attested one-time key, after checking its quote against
     /// the release manifest, sign it, and deliver it to `[tee.sealing.secrets]`'s listener. Secrets
@@ -201,65 +223,6 @@ pub enum AdminAction {
 pub(crate) struct NodeApi {
     pub url: Uri,
     pub pin: [u8; 32],
-}
-
-impl AdminAction {
-    /// The admin command this action sends.
-    /// Error cases:
-    /// - a spec or parameters file cannot be read, does not parse, or fails validation
-    fn command(self) -> anyhow::Result<AdminCommand> {
-        Ok(match self {
-            AdminAction::ScheduleCorporateAction { file } => {
-                let action: CorporateAction = input::read_toml(&file)?;
-                action.validate().map_err(anyhow::Error::msg)?;
-                AdminCommand::ScheduleCorporateAction(action)
-            }
-            AdminAction::UpsertMarket { file } => {
-                let spec: MarketSpec = input::read_toml(&file)?;
-                spec.validate().map_err(anyhow::Error::msg).with_context(|| file.display().to_string())?;
-                AdminCommand::UpsertMarket(spec)
-            }
-            AdminAction::SetParams { file } => AdminCommand::SetParams(read_params(&file)?),
-            AdminAction::SetBenchmarkRate { benchmark, annual_bps } => {
-                AdminCommand::SetBenchmarkRate { benchmark, annual_bps }
-            }
-            AdminAction::SyncBenchmarks { .. } => bail!("publisher sync is asynchronous"),
-            AdminAction::DeliverSecrets(_) | AdminAction::SecretsStatus(_) => bail!("secrets take no admin command"),
-            AdminAction::SetStressFloor { level, market } => AdminCommand::SetStressFloor { market, level },
-            AdminAction::SetReduceOnly { reduce_only, market } => AdminCommand::SetReduceOnly { market, reduce_only },
-            AdminAction::AnnounceParams { profit_fee_bps, closeout_level_bps, stress_from, effective_at } => {
-                let stress = stress_from.map(|file| read_params(&file).map(|params| StressSettings::of(&params)));
-                AdminCommand::AnnounceParams(ParamsNotice {
-                    profit_fee_bps,
-                    closeout_level_bps,
-                    stress: stress.transpose()?,
-                    effective_at: effective_at.timestamp_millis(),
-                })
-            }
-            AdminAction::AnnounceMarkup { market, markup_bps, effective_at } => {
-                AdminCommand::AnnounceMarkup { market, markup_bps, effective_at: effective_at.timestamp_millis() }
-            }
-            AdminAction::RotateOperator { address } => AdminCommand::RotateOperator { address },
-            AdminAction::InitEmissions { start, period_budget } => {
-                AdminCommand::InitEmissions(EmissionSchedule { start_ms: start.timestamp_millis(), period_budget })
-            }
-            AdminAction::InitStaking { start, liquidity_floor, epoch_ms, cooldown_ms } => {
-                AdminCommand::InitStaking(engine_core::staking::StakingConfig {
-                    liquidity_floor,
-                    epoch_ms,
-                    start_ms: start.timestamp_millis(),
-                    cooldown_ms,
-                })
-            }
-            AdminAction::AdoptCloseSpreadCeiling { market, max_close_spread_bps, effective_at } => {
-                AdminCommand::AdoptCloseSpreadCeiling {
-                    market,
-                    max_close_spread_bps,
-                    effective_at: effective_at.timestamp_millis(),
-                }
-            }
-        })
-    }
 }
 
 /// Runs what the command line asks for: a secrets delivery or status read, or an admin command.
@@ -408,21 +371,6 @@ pub(crate) fn sign(
 /// - see `call`
 pub(crate) async fn submit(node: &NodeApi, req: &AdminRequest) -> anyhow::Result<Vec<Event>> {
     call(node, Method::POST, "/v1/admin", Some(serde_json::to_string(req)?)).await
-}
-
-/// The parameters in `file`, checked as the node, which runs the latest version, would apply them.
-/// Error cases:
-/// - a file that cannot be read or parsed
-/// - parameters that fail `validate_for`, `check_closing_spread` or `check_notional_weighting`
-fn read_params(file: &Path) -> anyhow::Result<ProtocolParams> {
-    let params: ProtocolParams = input::read_toml(file)?;
-    params
-        .validate_for(ProtocolVersion::LATEST)
-        .and_then(|()| params.check_closing_spread())
-        .and_then(|()| params.check_notional_weighting())
-        .map_err(anyhow::Error::msg)
-        .with_context(|| file.display().to_string())?;
-    Ok(params)
 }
 
 /// Makes one HTTP/1.1 call to the node over TLS pinned to its key, and parses its JSON reply.

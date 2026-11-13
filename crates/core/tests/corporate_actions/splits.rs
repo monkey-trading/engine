@@ -2,6 +2,7 @@ use engine_core::Fixed;
 use engine_core::command::{Command, OrderKind};
 use engine_core::event::{CancelReason, Event, Reject};
 use engine_core::protocol::ProtocolVersion;
+use engine_core::spread_tier::SpreadTier;
 use engine_core::types::Side;
 
 use crate::common::*;
@@ -292,7 +293,7 @@ fn split_quantities_beyond_the_input_bound_fail_a_position_and_cancel_a_resting_
         let mut spec = h.engine.markets()[&AAPL].spec.clone();
         spec.house_cap_floor = Fixed::MAX_INPUT;
         for tier in &mut spec.spread_tiers {
-            tier.bps = 0;
+            *tier = SpreadTier::bps(tier.up_to, 0);
         }
         h.operator_admin(engine_core::command::AdminCommand::UpsertMarket(spec));
         h.deposit(acct(1), "100000000");
@@ -401,7 +402,7 @@ fn reverse_split_preserves_internal_prices_above_the_external_input_bound() {
     let mut spec = h.engine.markets()[&AAPL].spec.clone();
     spec.house_cap_floor = Fixed::MAX_INPUT;
     for tier in &mut spec.spread_tiers {
-        tier.bps = 0;
+        *tier = SpreadTier::bps(tier.up_to, 0);
     }
     h.operator_admin(engine_core::command::AdminCommand::UpsertMarket(spec));
     h.deposit(acct(1), "1000000000");

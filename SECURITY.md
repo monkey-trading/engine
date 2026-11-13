@@ -181,7 +181,12 @@ detection (cutting the log back is bounded by what an on-chain anchor covers, as
 sign a state its rules do not produce, act for an account without its owner's signature, credit an
 account with funds that no deposit brought in, or pay out funds the engine did not approve. A
 finding that breaks one of these guarantees, or gets past one of those checks, is in scope even when
-it starts from an operator's key. With `[checkpoints]` configured, startup verifies the replayed log
+it starts from an operator's key. The engine also bounds what the operator's key moves on prices:
+from protocol V52 no spread band is below its class's floor, a listed market's spread and margin bands
+change only after a seven-day notice and within its launch bands, a close pays no more than its
+market's ceiling, and a ceiling is installed or adopted only at or above what a close in the first
+band pays at the widest admitted stress, under the parameters in force then and those the market
+launched with, so a change past those bounds is in scope. With `[checkpoints]` configured, startup verifies the replayed log
 against the latest posted vault commitment at custody finality and refuses a shorter or conflicting log before serving or opening
 history for writes; checkpoint signatures verify
 against their chain, vault, and named signer. Those checks reach only as far as the vault's

@@ -99,8 +99,10 @@ jobs:
                   areas+=" rust" ;;
                 # The deposit and checkpoint scenarios deploy the vault.
                 contracts/*) areas+=" contracts scenarios" ;;
-                # The test job runs the corporate-action, operator bounds and parameter notice scenarios.
-                scripts/dev-corporate-actions.sh | scripts/dev-operator-bounds.sh | scripts/dev-params-notice.sh) areas+=" rust" ;;
+                # The test job runs the corporate-action, operator bounds and parameter notice scenarios,
+                # and the spreads job its node test.
+                scripts/dev-corporate-actions.sh | scripts/dev-operator-bounds.sh | scripts/dev-params-notice.sh \
+                  | scripts/dev-spreads.sh) areas+=" rust" ;;
                 # The browser verifier's jobs build its package and run its scenario.
                 scripts/dev-* | scripts/build-wasm-verifier.sh) areas+=" scenarios" ;;
                 # The ACME scenario downloads its test CA under image/retry.
@@ -535,6 +537,28 @@ jobs:
         env:
           ENGINE_PREBUILT: "1"
         run: ./scripts/dev-proxy-protocol.sh
+
+  # The V52 spreads dev scenario: a node test on deterministic time, so it compiles the node's tests.
+  dev-spreads:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cache == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - name: Build the node's tests
+        if: needs.changes.outputs.cache == 'true'
+        run: cargo test -p engine-node --lib --locked --no-run
+      - name: Run the spreads dev scenario
+        if: needs.changes.outputs.cache != 'true'
+        run: ./scripts/dev-spreads.sh
 
   dev-batch-orders:
     needs: [changes, engine-build]
@@ -1202,6 +1226,23 @@ jobs:
           gh run cancel ${{ github.run_id }} \
             || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
 
+  cancel-dev-spreads:
+    needs: dev-spreads
+    if: failure() && needs.dev-spreads.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
   cancel-dev-batch-orders:
     needs: dev-batch-orders
     if: failure() && needs.dev-batch-orders.result == 'failure'
@@ -1445,7 +1486,7 @@ jobs:
   # `changes` set its area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-daily-rotation, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
+    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-daily-rotation, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-spreads, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1461,7 +1502,7 @@ jobs:
                "reference-logs": "rust", "reference-logs-frozen": "rust", "cargo-deny": "rust", contracts: "contracts",
                "dev-vault-deposits": "scenarios", "dev-daily-rotation": "scenarios", "engine-build": "scenarios",
                "dev-metrics-alerts": "scenarios",
-               "dev-alert-outbox": "scenarios", "dev-ct-watch": "scenarios", "dev-browser-origin": "scenarios", "dev-dashboard-data": "scenarios", "dev-proxy-protocol": "scenarios", "dev-batch-orders": "scenarios",
+               "dev-alert-outbox": "scenarios", "dev-ct-watch": "scenarios", "dev-browser-origin": "scenarios", "dev-dashboard-data": "scenarios", "dev-proxy-protocol": "scenarios", "dev-spreads": "rust", "dev-batch-orders": "scenarios",
                "dev-snapshot-restart": "scenarios",
                "dev-rwa-feeds": "scenarios", "dev-attestation-verifier": "scenarios", "dev-signed-api": "scenarios",
                "dev-production-secrets": "scenarios", "dev-log-heads": "scenarios", "dev-acme": "scenarios",

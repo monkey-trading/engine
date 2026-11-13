@@ -7,6 +7,7 @@ use engine_core::params::{NotionalWeighting, ProtocolParams, ToxicityParams};
 use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session::Schedule;
+use engine_core::spread_tier::SpreadTier;
 use engine_core::types::{AccountId, AssetClass, MarketId, Millis, Side};
 use engine_core::{Engine, Fixed};
 use proptest::arbitrary::any;
@@ -352,7 +353,7 @@ fn listing() -> impl Strategy<Value = MarketSpec> {
             ..listed(id)
         }),
         (id(), amount(), bps()).prop_map(move |(id, band, bps)| MarketSpec {
-            spread_tiers: vec![Tier { up_to: Some(band), bps: 0 }, Tier { up_to: None, bps }],
+            spread_tiers: vec![SpreadTier::bps(Some(band), 0), SpreadTier::bps(None, bps)],
             ..listed(id)
         }),
         (id(), bps()).prop_map(move |(id, house_cap_bps)| MarketSpec { house_cap_bps, ..listed(id) }),

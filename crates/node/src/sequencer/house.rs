@@ -1,12 +1,16 @@
 //! What `GET /v1/house/state` answers from memory: the protocol parameters with the seq that set
-//! them, and the latest checkpoint the log holds. The sequencer keeps the seq and the checkpoint
+//! them, the pending listing notices, and the latest checkpoint the log holds. The sequencer keeps the seq and the checkpoint
 //! as it logs them, recovery restores both from the replay it already runs, and the parameters
 //! themselves are the engine's.
+
+use std::collections::BTreeMap;
 
 use engine_core::Engine;
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
+use engine_core::listing_bounds::ListingNotice;
 use engine_core::params::ProtocolParams;
+use engine_core::types::MarketId;
 use serde::Serialize;
 use tokio::sync::oneshot;
 
@@ -48,12 +52,15 @@ pub struct ParamsAt {
     pub params: ProtocolParams,
 }
 
-/// The answer: the seq it was read at, the parameters (`None` before the first `SetParams`), and the
-/// latest checkpoint in the stream's form (`None` before the first).
+/// The answer: the seq it was read at, the parameters (`None` before the first `SetParams`), each
+/// listed market's pending listing notice (a markup, and from `V52` its spread and margin bands, in
+/// the market read's units), and the latest checkpoint in the stream's form (`None` before the
+/// first). The bands in force are the market read's.
 #[derive(Clone, Debug, Serialize)]
 pub struct HouseState {
     pub seq: Option<u64>,
     pub params: Option<ParamsAt>,
+    pub listing_notices: BTreeMap<MarketId, ListingNotice>,
     pub checkpoint: Option<StreamMsg>,
 }
 
@@ -94,7 +101,8 @@ impl Latest {
             return None;
         }
         let params = engine.params().map(|params| ParamsAt { seq: params_seq, params: params.clone() });
-        let state = HouseState { seq: engine.last_seq(), params, checkpoint: self.checkpoint.clone() };
+        let listing_notices = engine.operator_bounds().markups.clone();
+        let state = HouseState { seq: engine.last_seq(), params, listing_notices, checkpoint: self.checkpoint.clone() };
         Some((std::mem::take(&mut self.waiting), state))
     }
 }

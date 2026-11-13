@@ -20,6 +20,7 @@ def load(name):
 
 CEILINGS, PATHS, SWEEP = load("ceilings"), load("closing_paths"), load("sweep")
 RUN = load("run")
+OPEN_FRACTIONS = PATHS.OPEN_FRACTIONS
 GAP_SHOCK = D("0.05")
 ATTACK_BPS = 100
 
@@ -124,9 +125,14 @@ def reversal_summary(rows):
     out = {}
     for level in ("calm", "elevated", "top"):
         subset = [row for row in rows if row["stress_level"] == level]
+        # Each position's pure close repeats across its opening fractions; count it once.
+        closes = [row for row in subset if row["opening_over_closing"] == OPEN_FRACTIONS[0]]
         out[level] = {"cells": len(subset), "exceeding": sum(row["exceeds_ceiling"] for row in subset),
                       "share": sum(row["exceeds_ceiling"] for row in subset) / len(subset),
-                      "max_blended_bps": max(row["blended_reversal_bps"] for row in subset)}
+                      "max_blended_bps": max(row["blended_reversal_bps"] for row in subset),
+                      "pure_closes": len(closes),
+                      "pure_closes_clamped": sum(row["pure_close_clamped"] for row in closes),
+                      "pure_close_clamped_share": sum(row["pure_close_clamped"] for row in closes) / len(closes)}
         for name in sorted({row["asset_class"] for row in subset}):
             group = [row for row in subset if row["asset_class"] == name]
             out[level][name] = {"share": sum(row["exceeds_ceiling"] for row in group) / len(group),
@@ -151,8 +157,8 @@ def build():
     live = [item for item in statistics["markets"] if item["market"]["symbol"] in ceilings]
     levels, toxicity = PATHS.levels_from(params)
     reversals = PATHS.reversal_rows(live, ceilings, levels, toxicity)
-    floor = CEILINGS.launch_close_charge_bps(params)
-    at_floor = PATHS.reversal_rows(live, {symbol: floor for symbol in ceilings}, levels, toxicity)
+    floors = {row["symbol"]: row["floor_bps"] for row in rows if row["proposed_ceiling_bps"]}
+    at_floor = PATHS.reversal_rows(live, floors, levels, toxicity)
     effects_rows = effects(live, rows, params)
     return {
         "inputs": statistics["input_sha256"], "engine_revision": statistics["engine_revision"],
@@ -160,14 +166,18 @@ def build():
             "need": "(max_divergence_bps + 1) + hourly tail move * sqrt(max_age_ms / 1h)",
             "selection_statistic": CEILINGS.SELECTION_STATISTIC,
             "markets_set_by_method": sum(
-                row["calibration_only_ceiling_bps"] > floor for row in rows if row["proposed_ceiling_bps"]),
-            "floor_bps": CEILINGS.launch_close_charge_bps(params), "step_bps": CEILINGS.LAUNCH_STEP_BPS,
+                row["calibration_only_ceiling_bps"] > row["floor_bps"] for row in rows if row["proposed_ceiling_bps"]),
+            "floor": ("the market's launch close charge in tenths of a bp, rounded up to a whole bp: the widest "
+                      "stress minimum and the top toxicity add-on, plus the first spread band at the widest size "
+                      "multiplier"),
+            "stress_and_toxicity_bps": CEILINGS.launch_close_charge_bps(params),
+            "floor_range_bps": [min(floors.values()), max(floors.values())], "step_bps": CEILINGS.LAUNCH_STEP_BPS,
             "burden_limit_percent_of_min_initial_margin": CEILINGS.BURDEN_LIMIT_PERCENT,
             "owner_decisions": "the burden limit, the floor, and whether to adopt the tail statistic",
         },
         "markets": rows, "registry_vs_global": comparisons(rows),
         "reversal_summary": reversal_summary(reversals), "reversals": reversals,
-        "reversal_summary_if_every_ceiling_were_the_floor": reversal_summary(at_floor),
+        "reversal_summary_if_every_ceiling_were_its_floor": reversal_summary(at_floor),
         "gap_comparison": gap_comparison(effects_rows),
         "rounding": PATHS.rounding_rows(), "pure_close_excess_atoms_seeded": PATHS.pure_close_excess_atoms(),
         "effects": effects_rows,

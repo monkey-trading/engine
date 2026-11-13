@@ -4,8 +4,9 @@
 use engine_core::Fixed;
 use engine_core::command::AdminCommand;
 use engine_core::event::Event;
-use engine_core::market::{MarketSpec, Tier};
+use engine_core::market::MarketSpec;
 use engine_core::session::Schedule;
+use engine_core::spread_tier::SpreadTier;
 use engine_core::types::{AssetClass, MarketId, Side};
 use proptest::arbitrary::any;
 use proptest::collection::vec;
@@ -31,7 +32,7 @@ fn fills_at_one_price_never_realise_a_profit() {
     let result = TestRunner::new(config).run(&(price, orders), |(price, orders)| {
         let mut h = Harness::v5();
         let spec = MarketSpec {
-            spread_tiers: vec![Tier { up_to: None, bps: 0 }],
+            spread_tiers: vec![SpreadTier::bps(None, 0)],
             ..market(FLAT, "FLAT", AssetClass::Index, Schedule::AlwaysOpen, 1_000)
         };
         h.admin(AdminCommand::UpsertMarket(spec));

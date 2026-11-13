@@ -9,6 +9,7 @@ use crate::Fixed;
 use crate::fixed::Rounding;
 use crate::futures::{FuturesContract, validate_contracts};
 use crate::session::Schedule;
+use crate::spread_tier::{SpreadTier, spread_floor_tenth_bps, validate_spread_tiers};
 use crate::types::{AssetClass, MarketId};
 
 /// The most any per-trade rate may be: 100%.
@@ -41,10 +42,11 @@ pub struct MarketSpec {
     /// Margin bands by position notional (USD): each band's rate applies to the slice of notional
     /// inside it.
     pub margin_tiers: Vec<Tier>,
-    /// Size spread bands by position notional (USD). Spread is charged only on the slice of a trade
-    /// that grows the account's absolute position notional through each band, so normal size pays
-    /// zero and splitting a large order doesn't avoid it.
-    pub spread_tiers: Vec<Tier>,
+    /// Size spread bands by position notional (USD). Before `V52` the spread is charged only on the
+    /// slice of a trade that grows the account's absolute position notional through each band; from
+    /// `V52` on the slice it closes too, through the same bands, so splitting a large order doesn't
+    /// avoid it and a round trip pays it twice.
+    pub spread_tiers: Vec<SpreadTier>,
     pub price_rules: PriceRules,
     /// Largest adverse move from the price the client saw that a market order will still fill at.
     /// Beyond this the order is declined.
@@ -117,7 +119,8 @@ impl MarketSpec {
     /// Error cases:
     /// - an empty symbol, or a schedule that can never open
     /// - a tier table that is empty, out of order, or not unbounded at the end
-    /// - a margin rate outside 1..=10000 bps, or a spread rate outside 0..=10000 bps
+    /// - a margin rate outside 1..=10000 bps, or a spread rate outside 0..=10000 bps, or outside
+    ///   0..=100000 tenths of a bp for a band written in tenths
     /// - `min_sources` of zero, a non-positive `max_age_ms`, or a divergence outside 0..=10000 bps
     /// - a slippage bound outside 0..=10000 bps, or a house cap outside 1..=100000 bps
     /// - a financing markup outside ±10000 bps, or a day basis other than 360 or 365
@@ -129,7 +132,7 @@ impl MarketSpec {
         }
         self.schedule.validate()?;
         validate_tiers("margin_tiers", &self.margin_tiers, 1)?;
-        validate_tiers("spread_tiers", &self.spread_tiers, 0)?;
+        validate_spread_tiers("spread_tiers", &self.spread_tiers)?;
         let rules = &self.price_rules;
         if rules.min_sources == 0 || rules.max_age_ms <= 0 {
             return Err("price_rules needs min_sources >= 1 and max_age_ms > 0".into());
@@ -155,6 +158,13 @@ impl MarketSpec {
             return Err("house_cap_floor out of range".into());
         }
         validate_contracts(&self.contracts)
+    }
+
+    /// Writes every spread band in tenths of a bp, each raised to its class's floor: how `V52`'s
+    /// activation converts a listing, and the form a config under `V52` gives an earlier one.
+    pub fn convert_spread_tiers(&mut self) {
+        let floor = spread_floor_tenth_bps(self.asset_class);
+        self.spread_tiers = self.spread_tiers.iter().map(|tier| tier.converted(floor)).collect();
     }
 
     /// Margin required for a position of `notional` (either sign), each band's charge rounded as
@@ -263,22 +273,33 @@ impl QuoteCurrency {
 /// - a bounded last band, or an unbounded band before the last
 /// - a bound that does not exceed the previous one
 /// - a rate outside `min_bps..=10000`
-fn validate_tiers(name: &str, tiers: &[Tier], min_bps: i64) -> Result<(), String> {
-    let Some((last, bounded)) = tiers.split_last() else {
+pub(crate) fn validate_tiers(name: &str, tiers: &[Tier], min_bps: i64) -> Result<(), String> {
+    validate_bounds(name, &tiers.iter().map(|t| t.up_to).collect::<Vec<_>>())?;
+    if tiers.iter().any(|t| !(min_bps..=MAX_RATE_BPS).contains(&t.bps)) {
+        return Err(format!("{name}: rates must be in {min_bps}..=10000 bps"));
+    }
+    Ok(())
+}
+
+/// Checks a band table's upper bounds: at least one band, positive and strictly increasing bounds,
+/// and only the last band unbounded.
+/// Error cases:
+/// - an empty table
+/// - a bounded last band, or an unbounded band before the last
+/// - a bound that does not exceed the previous one
+pub(crate) fn validate_bounds(name: &str, up_tos: &[Option<Fixed>]) -> Result<(), String> {
+    let Some((last, bounded)) = up_tos.split_last() else {
         return Err(format!("{name} is empty"));
     };
-    if last.up_to.is_some() {
+    if last.is_some() {
         return Err(format!("{name}: last tier must be unbounded"));
     }
     let bounds: Vec<Fixed> = bounded
         .iter()
-        .map(|t| t.up_to.ok_or_else(|| format!("{name}: only the last tier may be unbounded")))
+        .map(|up_to| up_to.ok_or_else(|| format!("{name}: only the last tier may be unbounded")))
         .collect::<Result<_, _>>()?;
     if bounds.first().is_some_and(|b| !b.is_positive()) || bounds.windows(2).any(|w| w[1] <= w[0]) {
         return Err(format!("{name}: bands must be positive and strictly increasing"));
-    }
-    if tiers.iter().any(|t| !(min_bps..=MAX_RATE_BPS).contains(&t.bps)) {
-        return Err(format!("{name}: rates must be in {min_bps}..=10000 bps"));
     }
     Ok(())
 }
@@ -286,17 +307,27 @@ fn validate_tiers(name: &str, tiers: &[Tier], min_bps: i64) -> Result<(), String
 /// Cost of moving from notional `from` to `to` (`from <= to`) through banded rates: each band's bps
 /// applies to the slice of `[from, to]` inside it, and each band's charge rounds as `rounding` says.
 pub fn staircase(tiers: &[Tier], from: Fixed, to: Fixed, rounding: Rounding) -> Fixed {
+    banded(tiers.iter().map(|t| (t.up_to, t.bps)), from, to, |slice, bps| slice.mul_bps_rounded(bps, rounding))
+}
+
+/// Cost of moving from notional `from` to `to` through `bands`, each an upper bound and a rate:
+/// `charge` prices the slice of `[from, to]` inside each band at its rate.
+pub(crate) fn banded(
+    bands: impl Iterator<Item = (Option<Fixed>, i64)> + Clone,
+    from: Fixed,
+    to: Fixed,
+    charge: impl Fn(Fixed, i64) -> Fixed,
+) -> Fixed {
     if to <= from {
         return Fixed::ZERO;
     }
-    let lows = once(Fixed::ZERO).chain(tiers.iter().filter_map(|t| t.up_to));
-    tiers
-        .iter()
+    let lows = once(Fixed::ZERO).chain(bands.clone().filter_map(|(up_to, _)| up_to));
+    bands
         .zip(lows)
-        .map(|(t, lo)| {
+        .map(|((up_to, rate), lo)| {
             let start = from.max(lo);
-            let end = t.up_to.map_or(to, |hi| to.min(hi));
-            if end > start { (end - start).mul_bps_rounded(t.bps, rounding) } else { Fixed::ZERO }
+            let end = up_to.map_or(to, |hi| to.min(hi));
+            if end > start { charge(end - start, rate) } else { Fixed::ZERO }
         })
         .sum()
 }

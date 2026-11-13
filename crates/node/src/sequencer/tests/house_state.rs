@@ -1,9 +1,12 @@
-//! The parameters and latest checkpoint `GET /v1/house/state` answers from memory: before either
-//! exists, as the log sets and replaces them, and across a restart.
+//! The parameters, pending listing notices and latest checkpoint `GET /v1/house/state` answers from
+//! memory: before any exists, as the log sets and replaces them, and across a restart.
 
 use super::*;
 
 use engine_core::eip712;
+use engine_core::listing_bounds::ListingNotice;
+use engine_core::operator_bounds::NOTICE_MS;
+use engine_core::spread_tier::SpreadTier;
 use k256::ecdsa::SigningKey;
 
 use crate::admin::sign;
@@ -45,9 +48,14 @@ fn start(dir: &Path, clock: &Arc<TestClock>, genesis: bool) -> Sequencer {
 
 /// The operator signs `params` as the next admin command, returning the engine's events.
 fn set_params(seq: &mut Sequencer, clock: &TestClock, params: ProtocolParams) -> Vec<Event> {
+    operate(seq, clock, AdminCommand::SetParams(params))
+}
+
+/// The operator signs `command` as the next admin command, returning the engine's events.
+fn operate(seq: &mut Sequencer, clock: &TestClock, command: AdminCommand) -> Vec<Event> {
     let key = SigningKey::from_slice(&[0x42; 32]).unwrap();
     let nonce = seq.engine.next_request_nonce(eip712::address(key.verifying_key()));
-    let signed = sign(&key, &seq.operator, AdminCommand::SetParams(params), nonce, clock.now_ms() + 150_000);
+    let signed = sign(&key, &seq.operator, command, nonce, clock.now_ms() + 150_000);
     seq.sequence(Command::SignedAdmin(Box::new(signed))).unwrap().expect("admitted")
 }
 
@@ -76,7 +84,7 @@ fn a_log_with_no_command_has_neither_parameters_nor_a_checkpoint() {
     let dir = scratch_dir("house-state-empty");
     let (mut seq, _) = try_recover(&dir, &ClientAuth::Unsigned);
     let state = read(seq.as_mut().unwrap());
-    let expected = serde_json::json!({ "seq": null, "params": null, "checkpoint": null });
+    let expected = serde_json::json!({ "seq": null, "params": null, "listing_notices": {}, "checkpoint": null });
     assert_eq!(serde_json::to_value(state).unwrap(), expected);
 }
 
@@ -156,4 +164,30 @@ fn a_restart_restores_the_parameters_seq_and_the_checkpoint_from_the_replay_it_r
     let mut recovered = start(&dir, &clock, false);
     let after = read(&mut recovered);
     assert_eq!(serde_json::to_value(after).unwrap(), serde_json::to_value(before).unwrap());
+}
+
+#[test]
+fn a_pending_listing_notice_is_listed_in_the_market_reads_units_and_across_a_restart() {
+    let dir = scratch_dir("house-state-listing-notice");
+    let clock = Arc::new(TestClock::at(START));
+    let mut seq = start(&dir, &clock, true);
+    assert!(read(&mut seq).listing_notices.is_empty());
+    let doubled = seq.engine.markets()[&1]
+        .spec
+        .spread_tiers
+        .iter()
+        .map(|tier| SpreadTier::tenths(tier.up_to, tier.tenth_bps() * 2))
+        .collect();
+    let effective_at = clock.now_ms() + NOTICE_MS + 60_000;
+    let notice = ListingNotice { spread_tiers: Some(doubled), margin_tiers: None, markup_bps: None, effective_at };
+    let events = operate(&mut seq, &clock, AdminCommand::AnnounceListing { market: 1, notice: notice.clone() });
+    assert_eq!(events, [Event::AdminApplied]);
+    let state = read(&mut seq);
+    assert_eq!(state.listing_notices.into_iter().collect::<Vec<_>>(), [(1, notice.clone())]);
+    let listed = serde_json::to_value(read(&mut seq)).unwrap();
+    assert_eq!(listed["listing_notices"]["1"]["spread_tiers"][0]["tenth_bps"], 40, "{listed}");
+    drop(seq);
+
+    let mut recovered = start(&dir, &clock, false);
+    assert_eq!(read(&mut recovered).listing_notices.get(&1), Some(&notice));
 }

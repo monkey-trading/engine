@@ -48,7 +48,12 @@ fn adoption_adds_a_not_yet_listed_market_and_lowering_only_ever_moves_entries() 
     let mut h = harness();
     into_v40(&mut h);
     let due = h.ts + NOTICE_MS;
-    h.operator_admin(AdminCommand::AdoptCloseSpreadCeiling { market: 7, max_close_spread_bps: 25, effective_at: due });
+    h.operator_admin(AdminCommand::AdoptCloseSpreadCeiling {
+        market: 7,
+        max_close_spread_bps: 25,
+        effective_at: due,
+        listing: None,
+    });
     // Listing waits for the adoption: no fallback ceiling exists.
     let gold = market(7, "XAU-USD", AssetClass::Commodity, Schedule::AlwaysOpen, 500);
     let events = h.operate(AdminCommand::UpsertMarket(gold.clone()));
@@ -65,6 +70,7 @@ fn adoption_adds_a_not_yet_listed_market_and_lowering_only_ever_moves_entries() 
             market: 7,
             max_close_spread_bps: bps,
             effective_at: later,
+            listing: None,
         });
         assert!(rejected(&events).contains("can only be lowered"), "{events:?}");
     }
@@ -72,6 +78,7 @@ fn adoption_adds_a_not_yet_listed_market_and_lowering_only_ever_moves_entries() 
         market: 7,
         max_close_spread_bps: 18,
         effective_at: later,
+        listing: None,
     });
     assert_eq!(h.engine.close_spread_ceilings().unwrap()[&7], 25);
     h.advance_to(later);
@@ -82,6 +89,7 @@ fn adoption_adds_a_not_yet_listed_market_and_lowering_only_ever_moves_entries() 
         market: 7,
         max_close_spread_bps: 10,
         effective_at: h.ts + 1,
+        listing: None,
     });
     assert!(rejected(&events).contains("no sooner"), "{events:?}");
 }
@@ -148,6 +156,7 @@ fn the_registry_and_pending_adoption_round_trip_through_serialization() {
         market: ETH,
         max_close_spread_bps: 10,
         effective_at: due,
+        listing: None,
     });
     let encoded = serde_json::to_vec(&h.engine).expect("engine serialises");
     let mut decoded: engine_core::Engine = serde_json::from_slice(&encoded).expect("engine deserialises");

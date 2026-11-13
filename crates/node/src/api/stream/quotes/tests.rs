@@ -330,12 +330,13 @@ async fn a_small_accounts_ladder_ends_at_the_largest_size_it_can_open() {
     let mut rig = Rig::new();
     rig.subscribe_as(SMALL, "[1]");
     let quote = rig.within(INTERVAL).await.expect("quotes").remove(0);
-    // 150 USD of equity at 1% margin opens 0.15 BTC of 100,000, though the first tier ends at 20.
+    // 150 USD of equity covers 1% margin and BTC's 2bp first band on 150 / 1,020 = 0.1470588 BTC of
+    // 100,000, though the first tier ends at 20.
     for side in ["ask", "bid"] {
         let steps = quote[side].as_array().unwrap();
         let fitting: Vec<_> = steps.iter().filter(|step| step.get("declined").is_none()).collect();
         let largest: Fixed = fitting.last().expect("a size it can open")["qty"].as_str().unwrap().parse().unwrap();
-        assert!(largest > Fixed::from_raw(149_900_000) && largest <= Fixed::from_raw(150_000_000), "{side}: {quote}");
+        assert!(largest > Fixed::from_raw(146_900_000) && largest <= Fixed::from_raw(147_058_823), "{side}: {quote}");
         // The tier tops past it are priced and declined for margin.
         assert!(steps[fitting.len()..].iter().all(|step| step["declined"]["kind"] == "insufficient_margin"), "{quote}");
     }

@@ -165,11 +165,19 @@ impl GenesisProgress {
     }
 
     /// The genesis the log ran, in the form a config gives it under the latest protocol: parameters
-    /// set before `V11` without a toxicity notional weighting take `weighting`, and absolute
+    /// set before `V11` without a toxicity notional weighting take `weighting`, absolute
     /// divergence triggers set before `V13`, which a config can no longer give, become shares of the
-    /// widest divergence bound among the genesis markets.
+    /// widest divergence bound among the genesis markets, and spread bands and size multipliers set
+    /// before `V52` take the tenths of a bp, class floors and 1x floor `V52` converts them to.
     fn restated(&self, weighting: Option<NotionalWeighting>) -> Vec<Command> {
         let mut genesis = self.commands.clone();
+        for cmd in &mut genesis {
+            match cmd {
+                Command::Admin(AdminCommand::UpsertMarket(spec)) => spec.convert_spread_tiers(),
+                Command::Admin(AdminCommand::SetParams(params)) => params.raise_size_multipliers(),
+                _ => {}
+            }
+        }
         let widest = genesis
             .iter()
             .filter_map(|cmd| match cmd {

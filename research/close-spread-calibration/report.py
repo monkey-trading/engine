@@ -43,17 +43,21 @@ def write_report(data):
     live = [row for row in rows if row["proposed_ceiling_bps"] is not None]
     uncovered = [row["symbol"] for row in live if not row["validation_covered_by_calibration_ceiling"]]
     registry, reversals = data["registry_vs_global"], data["reversal_summary"]
-    at_floor, gap = data["reversal_summary_if_every_ceiling_were_the_floor"], data["gap_comparison"]
-    floor = data["objective"]["floor_bps"]
-    fx = next((row for row in live if row["asset_class"] == "fx"), None)
-    floor_rows = [row for row in live if row["proposed_ceiling_bps"] == floor]
+    at_floor, gap = data["reversal_summary_if_every_ceiling_were_its_floor"], data["gap_comparison"]
+    objective = data["objective"]
+    low, high = objective["floor_range_bps"]
+    floor_rows = [row for row in live if row["ceiling_binding_constraint"] == "launch charge"]
     floor_bound = ", ".join(row["symbol"] for row in floor_rows)
-    margin_row = fx if fx is not None else (floor_rows[0] if floor_rows else None)
-    floor_note = (f" Floor-bound ceilings ({floor_bound}) sit at the {floor}-bp floor, "
-                  f"{floor / margin_row['min_initial_margin_bps'] * 100:.0f}% of their "
-                  f"{margin_row['min_initial_margin_bps']}-bp margin, so the launch parameters themselves already cost "
-                  "them that share of margin to close at the top stress level: an owner decision for the launch "
-                  "stress minimum, not for the ceiling.") if margin_row is not None else ""
+
+    def burden(row):
+        return row["proposed_ceiling_bps"] / row["min_initial_margin_bps"]
+
+    widest = max(floor_rows, key=burden, default=None)
+    floor_note = (f" Floor-bound ceilings ({floor_bound}) sit at their markets' launch close charges, at most "
+                  f"{burden(widest) * 100:.0f}% of the smallest "
+                  "initial margin, so the launch parameters themselves already cost them that share of margin to "
+                  "close a first-band position at the top stress level: an owner decision for the launch stress "
+                  "minimum and spread bands, not for the ceiling.") if widest is not None else ""
     gap_note = (f"in a 5% gap on {gap['market']}, an uncapped 103-bp close charge cuts the zero-capital house "
                 f"shortfall by {gap['shortfall_reduction_min'] * 100:.0f}% to {gap['shortfall_reduction_max'] * 100:.0f}% "
                 f"while costing the trader {gap['trader_cost_ratio']:.0f} times as much."
@@ -67,15 +71,17 @@ def write_report(data):
         f"{len(live)} of {len(rows)} launch markets have a proposed ceiling "
         f"({len(rows) - len(live)} blocked). By class, in basis points: {classes}.",
         "Nothing here is adopted: the burden limit, the floor and the tail statistic are the owner's to approve.", "",
-        "A ceiling is the most an operator may ever charge to close, not a forecast of price moves. A close is",
-        "charged a stress minimum plus a toxicity add-on only (no size spread on a pure close; liquidation waives",
-        "toxicity), which cover one risk: the index being stale or off the true price when a client closes. The",
-        "engine bounds that risk per market in its price rules, so the need is", "",
+        "A ceiling is the most an operator may ever charge to close, not a forecast of price moves. From V52 a",
+        "close is charged a stress minimum, a toxicity add-on (waived on a liquidation) and the size spread on the",
+        "slice it closes. The minimum and add-on cover one risk: the index being stale or off the true price when a",
+        "client closes. The engine bounds that risk per market in its price rules, so the need is", "",
         "`need = (max_divergence_bps + 1) + hourly tail move * sqrt(max_age_ms / 1 hour)`", "",
-        f"The ceiling is the smallest multiple of {data['objective']['step_bps']} bps at or above the need, never "
-        f"below {data['objective']['floor_bps']} bps (the largest close charge the launch parameters allow, so no "
-        "launch close is clamped by more than the rounding unit: at a ceiling equal to the launch charge the "
-        "floored exact bound trims the engine's upward rounding, paying one raw unit less than today). The tail "
+        f"The ceiling is the smallest multiple of {objective['step_bps']} bps at or above the need, never below "
+        f"the market's launch close charge: the {objective['stress_and_toxicity_bps']}-bp widest stress minimum "
+        "and top toxicity add-on, plus the market's first spread band at the widest size multiplier, in tenths "
+        f"of a bp rounded up to a whole bp ({low} to {high} bps). From V52 the engine refuses a ceiling below it, "
+        "and on a first-band close at the launch parameters the clamp removes at most what the engine's upward "
+        "rounding adds. The tail "
         "move is the upper end of the "
         "weekly block-bootstrap interval of the calibration sample's hourly p99 of the in-bar move (the open against the previous close is left out). Hourly bars are scaled to the "
         "one-second quote age by square-root-of-time, an assumption no hourly data can test.", "",
@@ -92,13 +98,13 @@ def write_report(data):
            f"{len(live)} markets; {', '.join(uncovered)} did not" if uncovered else "It covers every market")
         + ", so the proposed value refits on the larger of the two tails (in-sample on the validation tail). Over the "
         "validation hours, the share whose need would exceed the calibration-only ceiling is at most "
-        f"{max(row['validation_hours_over_calibration_ceiling'] for row in live) * 100:.2f}%. A market at the floor "
-        "fails the test whenever its validation need exceeds the launch charge, so the count of markets whose "
-        f"calibration-only ceiling is above the floor ({data['objective']['markets_set_by_method']}) is not the "
+        f"{max(row['validation_hours_over_calibration_ceiling'] for row in live) * 100:.2f}%. A market at its floor "
+        "fails the test whenever its validation need exceeds its launch charge, so the count of markets whose "
+        f"calibration-only ceiling is above its floor ({objective['markets_set_by_method']}) is not the "
         "population that can fail it.", "",
         "Burden: every proposed ceiling is at most "
         f"{max(row['ceiling_percent_of_min_margin'] for row in live):.0f}% of the market's smallest initial margin "
-        f"(limit {data['objective']['burden_limit_percent_of_min_initial_margin']}%)." + floor_note,
+        f"(limit {objective['burden_limit_percent_of_min_initial_margin']}%)." + floor_note,
         "",
         "Sensitivity: doubling the volatility input raises "
         f"{sum(row['ceiling_if_volatility_doubled_bps'] > row['proposed_ceiling_bps'] for row in live)} ceilings, by at "
@@ -111,17 +117,24 @@ def write_report(data):
         f"{registry['global_burden_percent_of_min_margin_worst']:.0f}% of margin. At the strictest value "
         f"({registry['strictest_ceiling_bps']} bps) {registry['markets_above_strictest']} markets would need more "
         "than they may charge.", "",
-        "Reversal blending (grid of 6 position sizes and 4 opening fractions per market and stress level, against "
-        "each market's proposed ceiling): the share of reversals whose blended spread exceeds the ceiling is "
+        "Reversal blending (grid of 6 position sizes and 4 opening fractions per market and stress level, priced "
+        "as V52 prices them, closing slice included, against each market's proposed ceiling): the share of "
+        "reversals whose blended spread exceeds the ceiling, which the engine refuses, is "
         f"{reversals['calm']['share'] * 100:.1f}% at calm, {reversals['elevated']['share'] * 100:.1f}% at the "
         f"elevated level and {reversals['top']['share'] * 100:.1f}% at the top level (by class: {top_classes}). "
-        "This is a grid, not a flow distribution. Under one global value at the floor instead, the shares are "
-        f"{at_floor['calm']['share'] * 100:.1f}%, {at_floor['elevated']['share'] * 100:.1f}% and "
+        "A pure close of the same positions pays more than its ceiling, which clamps it, in "
+        f"{reversals['calm']['pure_close_clamped_share'] * 100:.1f}%, "
+        f"{reversals['elevated']['pure_close_clamped_share'] * 100:.1f}% and "
+        f"{reversals['top']['pure_close_clamped_share'] * 100:.1f}% of positions: the floor covers a first-band "
+        "close, and a larger one reaches higher bands. "
+        "This is a grid, not a flow distribution. With every ceiling at its market's floor instead, the reversal "
+        f"shares are {at_floor['calm']['share'] * 100:.1f}%, {at_floor['elevated']['share'] * 100:.1f}% and "
         f"{at_floor['top']['share'] * 100:.1f}%.",
         "", f"Rounding: see `rounding` in `ceilings.json`. At an index of 0.65 units one raw unit is "
         f"{10_000 / 650_000_000:.6f} bp; a seeded search of 20,000 pure closes found at most "
         f"{data['pure_close_excess_atoms_seeded']} raw unit above the exact bound. A floor to the exact bound makes "
-        f"a close free only below {10_000 // floor + 1} raw units.", "",
+        f"a close free only below {10_000 // registry['strictest_ceiling_bps'] + 1} raw units at the strictest "
+        f"ceiling ({registry['strictest_ceiling_bps']} bps).", "",
         "## Evidence and limits", "",
         "- Data: the 102-week hourly grid inherited from the exposure-cap study, a transformed proxy with selected "
         "gaps removed. See [the source audit](../source-audit.md) for providers, dates, time zones, checksums, "
@@ -132,8 +145,8 @@ def write_report(data):
         "covered, and no historical calibration guarantees future outcomes.",
         "- The sweep conditions on two existing isolated positions and one price jump; it is not a "
         "cross-margin or admission simulation, and scenario counts are not probabilities.",
-        "- Engine agreement: 13 vectors compare the pricing model with `Engine::apply` fills at V17 and V21 "
-        "(`cargo test -p engine-core --test close_spread_calibration`).", ""]
+        "- Engine agreement: 13 vectors compare the V17 pricing model with `Engine::apply` fills at V17 and V21, "
+        "and 26 compare the V52 model at V52 (`cargo test -p engine-core --test close_spread_calibration`).", ""]
     (RESULTS / "report.md").write_text("\n".join(lines))
 
 
@@ -148,7 +161,8 @@ def plots(data, statistics):
     ax.scatter([row["need_bps"] for row in rows], y, color=ORANGE, marker="D", s=22, label="Reference-risk need")
     ax.scatter([row["calibration_only_ceiling_bps"] for row in rows], y, color="white", edgecolor=GREY, s=14,
                label="Calibration-only ceiling", zorder=3)
-    ax.axvline(data["objective"]["floor_bps"], color=GREY, ls="--", lw=1, label="Launch close charge (floor)")
+    ax.scatter([row["floor_bps"] for row in rows], y, color=GREY, marker="|", s=120,
+               label="Launch close charge (floor)", zorder=3)
     ax.set(yticks=y, yticklabels=ceiling_labels, xlabel="basis points of the index price",
            title="Proposed close-spread ceilings")
     ax.invert_yaxis()

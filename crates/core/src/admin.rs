@@ -65,13 +65,13 @@ impl Engine {
     ///   `Engine::rotate_operator`
     /// - from `V49`, `SetParams` that changes the stress parameters without a notice whose time has
     ///   come (see `Engine::check_rate_changes`); `UpsertMarket` that changes a listed market's
-    ///   markup without one (see `Engine::check_markup_change`); `AnnounceMarkup` with any error case
-    ///   of `Engine::announce_markup`
+    ///   markup, or from `V52` its bands, without one (`Engine::check_listing_change`); a markup or
+    ///   listing notice with any error case of `Engine::announce_markup` or `Engine::announce_listing`
     /// - from `V40`, `SetCloseSpreadCeilings` and `AdoptCloseSpreadCeiling` with any error case of
     ///   `Engine::install_close_spread_ceilings` and `Engine::adopt_close_spread_ceiling`;
     ///   `UpsertMarket` of a market the ceiling registry has no entry for, or changing the
     ///   `asset_class` or `quote_currency` of a market with one; `ActivateProtocol` carrying a
-    ///   version past `V40` while a listed market has no adopted ceiling (see
+    ///   version past `V40` while a listed market has no adopted ceiling, or to `V52` over a low one (see
     ///   `Engine::check_close_spread_activation`)
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {
@@ -135,7 +135,7 @@ impl Engine {
                     self.check_priceable(spec)?;
                 }
                 self.check_held_benchmark(spec)?;
-                let spends_markup_notice = self.check_markup_change(spec)?;
+                let change = self.check_listing_change(spec)?;
                 if let Some(params) = self.params.as_ref().filter(|_| self.protocol_version >= ProtocolVersion::V13) {
                     params.check_divergence_reachable(spec)?;
                 }
@@ -180,9 +180,7 @@ impl Engine {
                         self.markets.insert(spec.id, MarketState { futures, ..MarketState::new(spec.clone()) });
                     }
                 }
-                if spends_markup_notice {
-                    self.operator_bounds.markups.remove(&spec.id);
-                }
+                self.settle_listing_change(spec, change);
                 self.refresh_session(spec.id, events);
                 // A new listing for a market others convert at can change what its index converts
                 // at, so it is their price update too, before any close-out runs.
@@ -368,6 +366,7 @@ impl Engine {
                 if self.protocol_version < ProtocolVersion::V46 && *version >= ProtocolVersion::V46 {
                     self.bound_stress_floors(events);
                 }
+                self.start_listing_bounds(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
                 self.protocol_version = *version;
                 // Rules before `V47` record no candidate, so one an election already seated is seated before
@@ -387,10 +386,11 @@ impl Engine {
             AdminCommand::AnnounceMarkup { market, markup_bps, effective_at } => {
                 self.announce_markup(*market, *markup_bps, *effective_at)?
             }
+            AdminCommand::AnnounceListing { market, notice } => self.announce_listing(*market, notice)?,
             AdminCommand::RotateOperator { address } => self.rotate_operator(*address)?,
             AdminCommand::SetCloseSpreadCeilings { ceilings } => self.install_close_spread_ceilings(ceilings)?,
-            AdminCommand::AdoptCloseSpreadCeiling { market, max_close_spread_bps, effective_at } => {
-                self.adopt_close_spread_ceiling(*market, *max_close_spread_bps, *effective_at)?
+            AdminCommand::AdoptCloseSpreadCeiling { market, max_close_spread_bps, effective_at, listing } => {
+                self.adopt_close_spread_ceiling(*market, *max_close_spread_bps, *effective_at, listing.as_ref())?
             }
         }
         Ok(())
@@ -403,7 +403,7 @@ impl Engine {
     /// - a corporate instruction, which only the signed operator channel accepts
     /// - from `V8`, an operator command once any deposit or house capital is credited
     /// - the emission schedule, which only the operator's signature initialises
-    /// - a parameter or markup notice or an operator rotation, which only the operator's signature
+    /// - a parameter, markup or listing notice or an operator rotation, which only the operator's signature
     ///   records
     /// - any error case of `admin`
     pub(crate) fn unsigned_admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
@@ -421,7 +421,10 @@ impl Engine {
         }
         if matches!(
             cmd,
-            AdminCommand::AnnounceParams(_) | AdminCommand::AnnounceMarkup { .. } | AdminCommand::RotateOperator { .. }
+            AdminCommand::AnnounceParams(_)
+                | AdminCommand::AnnounceMarkup { .. }
+                | AdminCommand::AnnounceListing { .. }
+                | AdminCommand::RotateOperator { .. }
         ) {
             return Err("the operator signs a parameter notice or a rotation".into());
         }

@@ -15,6 +15,7 @@ use crate::corporate::CorporateAction;
 use crate::deposits::{CustodyCheckpoint, DepositReceipt, DepositUpdate, LegacyDeposit};
 use crate::election::{RegistryElection, RegistryInstallation};
 use crate::emissions::{EmissionSchedule, TokenUnits};
+use crate::listing_bounds::ListingNotice;
 use crate::market::MarketSpec;
 use crate::operator_bounds::ParamsNotice;
 use crate::params::{NotionalWeighting, ProtocolParams};
@@ -282,11 +283,19 @@ pub enum AdminCommand {
     AnnounceParams(ParamsNotice),
     /// From `V49`, signed notice of a listed market's new financing markup, which an `UpsertMarket`
     /// may apply from `effective_at` on, at least seven days after the sequenced time. Replaces that
-    /// market's pending markup notice.
+    /// market's pending markup notice, from `V52` its pending listing notice.
     AnnounceMarkup {
         market: MarketId,
         markup_bps: i64,
         effective_at: Millis,
+    },
+    /// From `V52`, signed notice of a listed market's new spread bands, margin bands or financing
+    /// markup, which an `UpsertMarket` may apply from the notice's time on, at least seven days after
+    /// the sequenced time, each within the market's launch bounds (`listing_bounds`). Replaces that
+    /// market's pending listing notice.
+    AnnounceListing {
+        market: MarketId,
+        notice: ListingNotice,
     },
     /// From `V35`, signed rotation of the operator key to `address`, in effect seven days after it
     /// is logged. Replaces a pending rotation. From `V37`, refused while the operator registry has
@@ -304,11 +313,15 @@ pub enum AdminCommand {
     },
     /// From `V40`, signed adoption of one close-spread ceiling — an entry for a market not yet
     /// listed, or a strictly lower value for an adopted one — in effect from `effective_at`, at
-    /// least seven days after it is logged. Replaces a pending adoption.
+    /// least seven days after it is logged. Replaces a pending adoption. From `V52` an adoption for a
+    /// market not yet listed names the `listing` its first listing must be, and none other does;
+    /// left out of the encoding when none is named.
     AdoptCloseSpreadCeiling {
         market: MarketId,
         max_close_spread_bps: i64,
         effective_at: Millis,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        listing: Option<MarketSpec>,
     },
 }
 
@@ -413,7 +426,8 @@ impl AdminCommand {
 
     /// Whether the operator may sign this command: listings, parameters, benchmark rates, stress
     /// floors, reduce-only, the emission schedule, corporate actions, the staking config, and from `V35`
-    /// parameter notices and operator rotations, and from `V49` markup notices. The
+    /// parameter notices and operator rotations, from `V49` markup notices, and from `V52` listing
+    /// notices. The
     /// node alone sequences the others, from its config and build.
     pub fn is_operator_command(&self) -> bool {
         match self {
@@ -428,6 +442,7 @@ impl AdminCommand {
             | AdminCommand::InitStaking(_)
             | AdminCommand::AnnounceParams(_)
             | AdminCommand::AnnounceMarkup { .. }
+            | AdminCommand::AnnounceListing { .. }
             | AdminCommand::RotateOperator { .. }
             | AdminCommand::AdoptCloseSpreadCeiling { .. } => true,
             AdminCommand::SetClientAuth(_)

@@ -1,14 +1,15 @@
 //! The ladder against the engine it is read from: every step is checked with `Engine::quote` and,
 //! where it matters, by placing the order.
 
-use engine_core::command::{Command, OrderKind, OrderRequest, Sequenced};
+use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest, Sequenced};
 use engine_core::event::{Event, Reject};
 use engine_core::price::SourceQuote;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, MarketId, Millis, Side};
 use engine_core::{Engine, Fixed};
 
 use super::ladder::{MarketQuote, Step, largest, market_quote};
-use super::tests::{T0, TRADER, engine};
+use super::tests::{INTERVAL, Rig, T0, TRADER, engine};
 
 const BTC: MarketId = 1;
 const ETH: MarketId = 2;
@@ -190,11 +191,12 @@ fn an_account_that_can_open_under_a_dollar_gets_a_step_for_it() {
     let mut engine = engine();
     deposit(&mut engine, TINY, fixed("0.005"));
     let quote = read(&engine, TINY, BTC);
-    // Half a cent at 1% margin opens half a dollar: 0.000005 BTC at 100,000.
+    // Half a cent covers 1% margin and BTC's 2bp first band on just under half a dollar: 0.005 / 1,020,
+    // or 0.0000049019 BTC at 100,000.
     for (side, steps) in sides(&quote) {
         let fitting_steps: Vec<_> = steps.iter().filter(|step| step.declined.is_none()).collect();
         let step = fitting_steps.last().unwrap_or_else(|| panic!("{side:?}: {quote:?}"));
-        assert!(step.qty > fixed("0.0000049") && step.qty <= fixed("0.000005"), "{side:?}: {step:?}");
+        assert!(step.qty > fixed("0.0000048") && step.qty <= fixed("0.000004902"), "{side:?}: {step:?}");
         assert_eq!(fitting(&engine, TINY, BTC, side, step.qty), step.price);
         let beyond = engine.quote(TINY, BTC, side, step.qty + step.qty.div_int(100)).unwrap();
         assert_eq!(kind(&beyond.declined), "insufficient_margin", "{side:?}");
@@ -260,4 +262,88 @@ fn a_position_past_the_input_bound_is_quoted_to_close_at_the_bound() {
     // The closing side is quoted up to the bound too, not left empty: an order of that size fills.
     let quote = read(&engine, MARGIN, BTC);
     assert_eq!(quote.bid.last().map(|step| step.qty), Some(Fixed::MAX_INPUT), "{quote:?}");
+}
+
+/// `TRADER` long 120 BTC at 100,000 ($12m, through all three of BTC's tiers), with house capacity
+/// for it, then `V52`, under which a close pays the tiers it closes through.
+fn holding_through_every_tier() -> [Command; 3] {
+    let capital = Command::HouseCapital { amount: Fixed::from_int(90_000_000), chain_ref: "0xh".into() };
+    let (qty, mid) = (Fixed::from_int(120), Fixed::from_int(100_000));
+    let v52 = Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V52 });
+    [capital, order(TRADER, BTC, Side::Buy, qty, mid, 10_000), v52]
+}
+
+#[test]
+fn a_close_steps_at_each_tier_it_closes_through_and_each_step_covers_every_smaller_order() {
+    let mut engine = engine();
+    for cmd in holding_through_every_tier() {
+        let events = apply(&mut engine, T0, cmd);
+        assert!(!events.iter().any(|event| matches!(event, Event::AdminRejected { .. })), "{events:?}");
+    }
+    let quote = read(&engine, TRADER, BTC);
+    // Selling closes the long to 10m (20 BTC) in the top tier and to 2m (100 BTC) through the middle,
+    // then reverses through 2m (140) and 10m (220) of short.
+    let qtys: Vec<Fixed> = quote.bid.iter().map(|step| step.qty).collect();
+    assert_eq!(qtys[..4], [20, 100, 140, 220].map(Fixed::from_int), "{quote:?}");
+    assert_eq!(quote.bid[0].price, fitting(&engine, TRADER, BTC, Side::Sell, Fixed::from_int(20)));
+    // An order takes the first step at least its size, whose price is no better than its own.
+    for units in (1..=260).step_by(7) {
+        let qty = Fixed::from_int(units);
+        let Some(step) = quote.bid.iter().find(|step| step.qty >= qty) else { continue };
+        let own = engine.quote(TRADER, BTC, Side::Sell, qty).unwrap();
+        if own.declined.is_none() {
+            assert!(step.price <= own.price, "{qty}: {step:?} against {own:?}");
+        }
+    }
+    // The whole close is the close quote's, exactly.
+    let close = quote.close.expect("a position is held");
+    let whole = fitting(&engine, TRADER, BTC, Side::Sell, Fixed::from_int(120));
+    assert_eq!((close.qty, close.price), (Fixed::from_int(120), whole));
+}
+
+#[test]
+fn a_side_whose_smallest_reversal_the_ceiling_refuses_ends_at_the_whole_close() {
+    let mut engine = engine();
+    for cmd in holding_through_every_tier() {
+        apply(&mut engine, T0, cmd);
+    }
+    // At level 2, 10bps and 4x, closing the 120 BTC through every tier costs 27.3bps a unit, over a
+    // 26bps ceiling, so a sell just past the position is refused, while 40 BTC more at the first
+    // tier's 18bps brings the average to 25bps, under it.
+    let mut state = serde_json::to_value(&engine).unwrap();
+    state["markets"]["1"]["stress"]["level"] = serde_json::json!(2);
+    state["markets"]["1"]["stress"]["auto"] = serde_json::json!(2);
+    state["close_spread_ceilings"]["1"] = serde_json::json!(26);
+    let engine: Engine = serde_json::from_value(state).unwrap();
+    let held = Fixed::from_int(120);
+    assert!(engine.quote(TRADER, BTC, Side::Sell, held + fixed("0.01")).is_err());
+    assert_eq!(engine.quote(TRADER, BTC, Side::Sell, Fixed::from_int(160)).unwrap().declined, None);
+    let quote = read(&engine, TRADER, BTC);
+    let qtys: Vec<Fixed> = quote.bid.iter().map(|step| step.qty).collect();
+    assert_eq!(qtys, [20, 100, 120].map(Fixed::from_int), "{quote:?}");
+    // Each step's size fills, and so does every smaller order, at no better than its step.
+    for units in 1..=120 {
+        let qty = Fixed::from_int(units);
+        let step = quote.bid.iter().find(|step| step.qty >= qty).expect("a step");
+        assert!(step.price <= fitting(&engine, TRADER, BTC, Side::Sell, qty), "{qty}: {step:?}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_stream_quotes_partial_closes_and_a_reversal_through_the_tiers() {
+    let mut rig = Rig::new();
+    for cmd in holding_through_every_tier() {
+        rig.sequence(cmd);
+    }
+    rig.subscribe("[1]");
+    let quotes = rig.within(INTERVAL).await.expect("the first quotes");
+    let step = |step: &serde_json::Value, key: &str| -> Fixed { step[key].as_str().unwrap().parse().unwrap() };
+    let bid = quotes[0]["bid"].as_array().unwrap();
+    let qtys: Vec<Fixed> = bid.iter().map(|s| step(s, "qty")).collect();
+    assert_eq!(qtys[..4], [20, 100, 140, 220].map(Fixed::from_int), "{bid:?}");
+    // A sell's steps never improve as they grow, and the close is quoted below the mid.
+    let prices: Vec<Fixed> = bid.iter().map(|s| step(s, "price")).collect();
+    assert!(prices.windows(2).all(|pair| pair[1] <= pair[0]), "{prices:?}");
+    assert_eq!(quotes[0]["close"]["qty"], "120");
+    assert!(step(&quotes[0]["close"], "price") < Fixed::from_int(100_000));
 }

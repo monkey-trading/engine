@@ -4,7 +4,10 @@ use std::fs;
 use std::sync::Arc;
 
 use clap::{CommandFactory, Parser};
+use engine_core::emissions::EmissionSchedule;
+use engine_core::listing_bounds::ListingNotice;
 use engine_core::market::QuoteCurrency;
+use engine_core::operator_bounds::{ParamsNotice, StressSettings};
 
 use crate::metrics::Metrics;
 use crate::test_support::{DEV_CONFIG, dev_config, scratch_dir};
@@ -23,7 +26,7 @@ asset_class = "crypto"
 max_slippage_bps = 25
 house_cap_bps = 1000
 margin_tiers = [{ up_to = "1000000", bps = 1000 }, { bps = 2000 }]
-spread_tiers = [{ up_to = "1000000", bps = 0 }, { up_to = "5000000", bps = 3 }, { bps = 8 }]
+spread_tiers = [{ up_to = "1000000", tenth_bps = 20 }, { up_to = "5000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
@@ -152,6 +155,10 @@ fn each_action_builds_its_admin_command() {
             AdminCommand::AnnounceMarkup { market: 2, markup_bps: -150, effective_at: 1_798_761_600_000 },
         ),
         (
+            vec!["announce-listing", "2", "--markup-bps", "-150", "--effective-at", "2027-01-01T00:00:00Z"],
+            AdminCommand::AnnounceListing { market: 2, notice: ListingNotice::markup(-150, 1_798_761_600_000) },
+        ),
+        (
             vec!["rotate-operator", "0x5555555555555555555555555555555555555555"],
             AdminCommand::RotateOperator { address: AccountId([0x55; 20]) },
         ),
@@ -176,6 +183,7 @@ fn each_action_builds_its_admin_command() {
                 market: 1,
                 max_close_spread_bps: 25,
                 effective_at: 1_798_761_600_000,
+                listing: None,
             },
         ),
     ];
@@ -245,6 +253,40 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
     let mistyped = write("mistyped.toml", &SOL.replace("house_cap_bps", "house_capp_bps"));
     for file in [invalid, mistyped, dir.join("missing.toml").to_string_lossy().into_owned()] {
         assert!(action(&["upsert-market", &file]).command().is_err(), "{file}");
+    }
+
+    // A listing notice names the bands of the spec files a later `upsert-market` carries, and an
+    // adoption for a market not yet listed the listing it binds; each file is checked first.
+    let args = ["announce-listing", "3", "--spreads-from", &sol, "--margins-from", &sol, "--effective-at", at];
+    let AdminCommand::AnnounceListing { market: 3, notice } = action(&args).command().unwrap() else {
+        panic!("announce-listing gives notice")
+    };
+    assert_eq!(notice.spread_tiers.as_ref(), Some(&spec.spread_tiers));
+    assert_eq!((notice.margin_tiers, notice.markup_bps), (Some(spec.margin_tiers.clone()), None));
+    let adopt = ["adopt-close-spread-ceiling", "-m", "3", "--max-close-spread-bps", "30", "--effective-at", at];
+    let AdminCommand::AdoptCloseSpreadCeiling { listing, .. } =
+        action(&[&adopt[..], &["--listing", &sol]].concat()).command().unwrap()
+    else {
+        panic!("adopt-close-spread-ceiling adopts")
+    };
+    assert_eq!(listing, Some(spec));
+    let invalid = write("invalid-bands.toml", &SOL.replace("tenth_bps = 20", "tenth_bps = 9"));
+    // A crypto band below its 1bp floor, and one in whole bps, which the latest version refuses.
+    let whole = write(
+        "whole-bands.toml",
+        &SOL.replace("tenth_bps = 20", "bps = 2")
+            .replace("tenth_bps = 40", "bps = 4")
+            .replace("tenth_bps = 80", "bps = 8"),
+    );
+    for file in [&invalid, &whole] {
+        for args in [
+            vec!["upsert-market", file],
+            vec!["announce-listing", "3", "--spreads-from", file, "--effective-at", at],
+            [&adopt[..], &["--listing", file]].concat(),
+        ] {
+            let err = format!("{:#}", action(&args).command().unwrap_err());
+            assert!(err.contains("floor") || err.contains("tenth_bps"), "{args:?}: {err}");
+        }
     }
 }
 

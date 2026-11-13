@@ -277,14 +277,15 @@ fn an_account_below_the_level_at_the_marks_is_due_and_closed_out_by_the_next_pri
     assert!(!events.iter().any(|event| matches!(event, Event::CloseOut { .. })), "{events:?}");
 }
 
-/// A long loses at most its notional, so one the equity covers has no price above zero, and a short
-/// has none from ten times its mark when the equity covers the loss there.
+/// A long loses at most its notional and the spread its open paid, so one the equity covers has no
+/// price above zero, and a short has none from ten times its mark when the equity covers the loss
+/// there.
 #[test]
 fn a_position_the_range_cannot_close_out_has_no_price() {
-    let long = btc(Side::Buy, 1, 0);
+    let long = btc(Side::Buy, 1, 1_000);
     let found = closeout_of(&long, TRADER, 1);
     assert_eq!((found.reach, found.price), (ReachKind::Beyond, None));
-    assert!(!closes_out(btc(Side::Buy, 1, 0), 1, Fixed::from_int(1_000), &[], T0 + 10_000));
+    assert!(!closes_out(btc(Side::Buy, 1, 1_000), 1, Fixed::from_int(1_000), &[], T0 + 10_000));
     let short = btc(Side::Sell, 1, 10_000_000);
     let found = closeout_of(&short, TRADER, 1);
     assert_eq!((found.reach, found.price), (ReachKind::Beyond, None));

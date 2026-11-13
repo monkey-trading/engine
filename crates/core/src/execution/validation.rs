@@ -112,6 +112,17 @@ pub(super) fn growth(current: Fixed, delta: Fixed) -> (Fixed, Fixed) {
     }
 }
 
+/// The slice of a trade that closes |position|, as `(from, to)` absolute quantities: from what the
+/// position falls to, up to what it held, for a trade on the other side; nothing for one on the
+/// same side or with no position.
+pub(super) fn closing(current: Fixed, delta: Fixed) -> (Fixed, Fixed) {
+    if current.is_zero() || current.signum() == delta.signum() {
+        return (Fixed::ZERO, Fixed::ZERO);
+    }
+    let held = current.abs();
+    (held - delta.abs().min(held), held)
+}
+
 /// Losers pay nothing; winners pay `fee_bps` of realised profit, rounded up from `V5` and truncated
 /// before it.
 pub(super) fn profit_fee(realised: Fixed, fee_bps: i64, version: ProtocolVersion) -> Fixed {

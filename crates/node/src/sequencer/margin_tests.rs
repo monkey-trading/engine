@@ -43,51 +43,53 @@ fn dev_scenario_financing_closes_out_and_a_stale_market_counts_at_its_last_mark(
     seq.genesis(&genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
 
-    // 0.1 BTC bought at 100,000 and marked at 94,740: equity 48 against a close-out level of 47.37.
+    // 0.1 BTC bought at 100,000 pays BTC's 2bp first band, filling at 100,020; marked at 94,760, it
+    // leaves equity 48 against a close-out level of 47.38.
     fund(&mut seq, 1, 574, "dep-1");
     sequenced(&mut seq, prices(BTC, "100000", now()));
     market_order(&mut seq, 1, BTC, Side::Buy, "0.1", "100000");
-    sequenced(&mut seq, prices(BTC, "94740", now()));
-    // Across the 22:00 London rollover, a day's financing at 900bps a year on 9,474 is 2.336054795,
+    sequenced(&mut seq, prices(BTC, "94760", now()));
+    // Across the 22:00 London rollover, a day's financing at 900bps a year on 9,476 is 2.336547946,
     // rounded up.
     move_to(&mut seq, rollover - 500);
-    sequenced(&mut seq, prices(BTC, "94740", now()));
+    sequenced(&mut seq, prices(BTC, "94760", now()));
     move_to(&mut seq, rollover + 100);
     let events = sequenced(&mut seq, Command::Tick);
-    let financing = Fixed::from_raw(2_336_054_795);
+    let financing = Fixed::from_raw(2_336_547_946);
     assert!(
         events.contains(&Event::Financing { account: access::account(1), market: BTC, amount: financing }),
         "{events:?}"
     );
     let equity = fixed("48") - financing;
     assert!(
-        events.contains(&Event::CloseOut { account: access::account(1), equity, margin: fixed("94.74") }),
+        events.contains(&Event::CloseOut { account: access::account(1), equity, margin: fixed("94.76") }),
         "{events:?}"
     );
     assert!(events.iter().any(|e| matches!(e, Event::Fill(fill) if fill.liquidation && fill.qty == fixed("0.1"))));
 
-    // ETH bought at 4,000 and marked at 3,800, then left without quotes past its 1s age limit.
+    // ETH bought at 4,000 pays ETH's 3bp first band, filling at 4,001.2; marked at 3,780, it is then
+    // left without quotes past its 1s age limit.
     fund(&mut seq, 8, 1000, "dep-2");
     sequenced(&mut seq, prices(ETH, "4000", now()));
     market_order(&mut seq, 8, ETH, Side::Buy, "1", "4000");
-    sequenced(&mut seq, prices(ETH, "3800", now()));
+    sequenced(&mut seq, prices(ETH, "3780", now()));
     move_to(&mut seq, rollover + 1_200);
-    sequenced(&mut seq, prices(BTC, "94740", now()));
-    // Equity 800 against 38 of margin at the last mark leaves 762 free; past whole-USDC dust, a
+    sequenced(&mut seq, prices(BTC, "94760", now()));
+    // Equity 778.8 against 37.8 of margin at the last mark leaves 741 free; past whole-USDC dust, a
     // request above it is refused.
-    let events = withdrawal(&mut seq, 8, "762.000001");
-    let refused = Reject::InsufficientFunds { available: fixed("762") };
+    let events = withdrawal(&mut seq, 8, "741.000001");
+    let refused = Reject::InsufficientFunds { available: fixed("741") };
     assert!(matches!(&events[..], [Event::WithdrawalRejected { reason, .. }] if *reason == refused), "{events:?}");
-    let events = withdrawal(&mut seq, 8, "762");
+    let events = withdrawal(&mut seq, 8, "741");
     assert!(
         events.contains(&Event::WithdrawalApproved {
             account: crate::test_support::access::account(8),
-            amount: fixed("762"),
+            amount: fixed("741"),
             nonce: 1
         }),
         "{events:?}"
     );
-    let events = market_order(&mut seq, 8, ETH, Side::Sell, "1", "3800");
+    let events = market_order(&mut seq, 8, ETH, Side::Sell, "1", "3780");
     let stale = Reject::NoPrice { error: PriceError::Stale { fresh: 0, needed: 2 } };
     assert!(matches!(&events[..], [Event::OrderRejected { reason, .. }] if *reason == stale), "{events:?}");
 

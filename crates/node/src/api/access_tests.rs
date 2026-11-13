@@ -9,6 +9,7 @@ mod pre_deposit_budgets;
 mod reissue;
 mod session_keys;
 mod source;
+mod spreads;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -249,6 +250,7 @@ impl Node {
             forged: false,
             requests: Vec::new(),
             hold: None,
+            observed_at: NOW,
         }));
         let config: AccessSection = toml::from_str(&format!(
             "source='{}'\nendpoint='http://{}'\ntimeout='2s'\nmax_age='1s'\nmax_response_bytes=4096\nmax_in_flight=2",

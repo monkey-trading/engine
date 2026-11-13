@@ -10,7 +10,8 @@ use common::{BTC, ETH, Harness};
 use engine_core::Engine;
 use engine_core::command::{AdminCommand, Command};
 use engine_core::event::Event;
-use engine_core::operator_bounds::{MarkupNotice, NOTICE_MS, ParamsNotice, StressSettings};
+use engine_core::listing_bounds::ListingNotice;
+use engine_core::operator_bounds::{NOTICE_MS, ParamsNotice, StressSettings};
 use engine_core::params::{ProtocolParams, StressTrigger};
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{MarketId, Millis};
@@ -213,7 +214,7 @@ fn a_markup_change_needs_a_notice_and_applies_once_from_its_time() {
 
     let due = h.ts + NOTICE_MS;
     h.operator_admin(AdminCommand::AnnounceMarkup { market: BTC, markup_bps: markup, effective_at: due });
-    assert_eq!(h.engine.operator_bounds().markups[&BTC], MarkupNotice { markup_bps: markup, effective_at: due });
+    assert_eq!(h.engine.operator_bounds().markups[&BTC], ListingNotice::markup(markup, due));
     h.advance_to(due - 1);
     let command = relisted(&h, BTC, markup);
     assert_eq!(
@@ -245,8 +246,8 @@ fn each_market_keeps_its_own_markup_notice() {
     // A second notice for BTC replaces BTC's alone.
     h.operator_admin(AdminCommand::AnnounceMarkup { market: BTC, markup_bps: btc + 1, effective_at: due + 2_000 });
     let markups = &h.engine.operator_bounds().markups;
-    assert_eq!(markups[&BTC], MarkupNotice { markup_bps: btc + 1, effective_at: due + 2_000 });
-    assert_eq!(markups[&ETH], MarkupNotice { markup_bps: eth, effective_at: due + 1_000 });
+    assert_eq!(markups[&BTC], ListingNotice::markup(btc + 1, due + 2_000));
+    assert_eq!(markups[&ETH], ListingNotice::markup(eth, due + 1_000));
     // A parameter notice leaves them alone.
     h.operator_admin(stress_notice(&wider(&h), due));
     assert_eq!(h.engine.operator_bounds().markups.len(), 2);
@@ -274,6 +275,7 @@ fn a_relisting_that_keeps_the_markup_and_a_new_listing_need_no_notice() {
         market: NEW,
         max_close_spread_bps: 25,
         effective_at: due,
+        listing: None,
     });
     h.advance_to(due);
     h.cmd(Command::Tick);
@@ -334,7 +336,7 @@ fn a_refused_relisting_keeps_its_markup_notice() {
     spec.price_rules.max_divergence_bps = 0;
     let events = h.operate(AdminCommand::UpsertMarket(spec));
     assert!(rejected(&events).starts_with("a divergence share above zero can never fire in"), "{events:?}");
-    assert_eq!(h.engine.operator_bounds().markups[&BTC], MarkupNotice { markup_bps: markup, effective_at: due });
+    assert_eq!(h.engine.operator_bounds().markups[&BTC], ListingNotice::markup(markup, due));
     let command = relisted(&h, BTC, markup);
     assert!(applied(&h.operate(command)));
 }

@@ -1,4 +1,4 @@
-"""Hand calculations distinguish close charges from market moves and opening impact."""
+"""Hand calculations distinguish close charges from market moves and opening impact, at V17 and V52."""
 
 import importlib.util
 import json
@@ -78,6 +78,95 @@ class ExecutionTests(unittest.TestCase):
                 arguments["tiers"] = [(None if high is None else raw(high), bps)
                                       for high, bps in arguments["tiers"]]
                 result = EXEC.adjustment(**arguments)
+                self.assertEqual(result["price_raw"], vector["expected_price_raw"])
+                self.assertEqual(result["quantity_raw"], vector["expected_quantity_raw"])
+                self.assertEqual(result["reported_spread_bps"], vector["expected_spread_bps"])
+
+
+class V52Tests(unittest.TestCase):
+    """From V52 the closing slice pays the bands too, in tenths of a bp, and a pure close clamps first."""
+
+    BANDS = [(raw("1000"), 15), (raw("3000"), 37), (None, 120)]
+
+    def price(self, **changes):
+        arguments = dict(mid=raw("100"), current=raw("50"), quantity=raw("10"), buy=False, tiers=self.BANDS,
+                         minimum_bps=0, toxicity_bps=0, ceiling_bps=9_999)
+        return EXEC.adjustment_v52(**(arguments | changes))
+
+    def test_closing_slice_pays_each_band_it_closes_through(self):
+        # Sell 25 of 50 at $100: $2,000 at 12 bps and $500 at 3.7 bps, $2.585 over 25 units.
+        self.assertEqual(self.price(quantity=raw("25"))["adjustment_raw"], raw("0.1034"))
+        # Close $800 to $300 inside the first band: $500 at 1.5 bps over 5 units.
+        self.assertEqual(self.price(current=raw("8"), quantity=raw("5"))["adjustment_raw"], raw("0.015"))
+
+    def test_tenths_round_each_band_upwards(self):
+        self.assertEqual(EXEC.staircase_tenths([(1, 1), (None, 1)], 0, 2, True), 2)
+        self.assertEqual(EXEC.staircase_tenths([(None, 15)], 0, raw("1"), True), 150_000)
+        self.assertEqual(EXEC.staircase_tenths([(None, 15)], 0, raw("1"), False), 150_000)
+        self.assertEqual(EXEC.staircase_tenths([(None, 1)], 0, 99_999, True), 1)
+        self.assertEqual(EXEC.staircase_tenths([(None, 1)], 0, 99_999, False), 0)
+
+    def test_multiplier_applies_once_to_the_summed_slices(self):
+        # A reversal from long 10 selling 25 at 4x: closing $1,000 costs $0.15 and opening $1,500 costs
+        # $0.335; 4 x $0.485 over 25 units is $0.0776, on top of the 13-bp minimum and add-on.
+        result = self.price(current=raw("10"), quantity=raw("25"), minimum_bps=10, toxicity_bps=3,
+                            multiplier_bps=40_000, ceiling_bps=30)
+        self.assertEqual(result["adjustment_raw"], raw("0.2076"))
+        self.assertEqual(EXEC.closing(raw("10"), -raw("25")), (0, raw("10")))
+        self.assertEqual(EXEC.closing(raw("10"), raw("5")), (0, 0))
+        self.assertEqual(EXEC.closing(-raw("10"), raw("4")), (raw("6"), raw("10")))
+
+    def test_liquidation_waives_toxicity_but_pays_the_size_spread(self):
+        result = self.price(current=raw("10"), quantity=raw("10"), minimum_bps=10, toxicity_bps=3,
+                            multiplier_bps=40_000, liquidation=True)
+        self.assertEqual(result["adjustment_raw"], raw("0.16"))
+
+    def test_pure_close_clamps_to_its_ceiling_before_the_price_check(self):
+        # The unclamped close costs three times the price; the ceiling floors it to the exact bound.
+        steep = [(raw("1000"), 10), (None, 100_000)]
+        arguments = dict(mid=raw("400"), current=raw("10"), quantity=raw("10"), tiers=steep, minimum_bps=10,
+                         toxicity_bps=3, multiplier_bps=40_000)
+        with self.assertRaisesRegex(ValueError, "reaches the price"):
+            self.price(**arguments, ceiling_bps=None)
+        self.assertEqual(self.price(**arguments, ceiling_bps=30)["price_raw"], raw("398.8"))
+        self.assertEqual(self.price(mid=raw("99.987654321"), current=-raw("50"), quantity=raw("50"), buy=True,
+                                    minimum_bps=10, toxicity_bps=3, multiplier_bps=40_000,
+                                    ceiling_bps=25)["adjustment_raw"], 99_987_654_321 * 25 // 10_000)
+
+    def test_reversal_over_its_ceiling_is_refused_even_when_it_reaches_the_price(self):
+        arguments = dict(current=raw("10"), quantity=raw("40"), minimum_bps=10, toxicity_bps=3,
+                         multiplier_bps=40_000)
+        self.assertEqual(self.price(**arguments, ceiling_bps=None)["reported_spread_bps"], 23)
+        with self.assertRaises(EXEC.CeilingRefusal):
+            self.price(**arguments, ceiling_bps=20)
+        with self.assertRaises(EXEC.CeilingRefusal):
+            self.price(current=raw("10"), quantity=raw("30"), tiers=[(raw("1000"), 10), (None, 100_000)],
+                       multiplier_bps=40_000, ceiling_bps=30)
+
+    def test_an_add_pays_only_its_growing_slice_and_no_ceiling_bounds_it(self):
+        result = self.price(current=raw("10"), quantity=raw("25"), buy=True, minimum_bps=10, toxicity_bps=3,
+                            multiplier_bps=40_000, ceiling_bps=20)
+        self.assertEqual(result["adjustment_raw"], raw("0.3444"))
+
+    def test_model_matches_shared_engine_apply_vectors(self):
+        path = Path(__file__).resolve().parents[1] / "fixtures/engine-v52.json"
+        vectors = json.loads(path.read_text())
+        self.assertEqual(len(vectors), 26)
+        for vector in vectors:
+            with self.subTest(name=vector["name"]):
+                arguments = {key: vector[key] for key in (
+                    "buy", "minimum_bps", "toxicity_bps", "multiplier_bps", "ceiling_bps", "reduce_only",
+                    "liquidation", "currency")}
+                arguments |= {key: raw(vector[key]) for key in ("mid", "current", "quantity")}
+                arguments["fx"] = None if vector["fx"] is None else raw(vector["fx"])
+                arguments["tiers"] = [(None if high is None else raw(high), rate)
+                                      for high, rate in vector["tiers_tenth_bps"]]
+                if vector.get("expected_refusal"):
+                    self.assertEqual(vector["expected_refusal"], "close_spread_ceiling")
+                    with self.assertRaises(EXEC.CeilingRefusal):
+                        EXEC.adjustment_v52(**arguments)
+                    continue
+                result = EXEC.adjustment_v52(**arguments)
                 self.assertEqual(result["price_raw"], vector["expected_price_raw"])
                 self.assertEqual(result["quantity_raw"], vector["expected_quantity_raw"])
                 self.assertEqual(result["reported_spread_bps"], vector["expected_spread_bps"])

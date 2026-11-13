@@ -9,6 +9,7 @@ use engine_core::command::AdminCommand;
 use engine_core::event::Event;
 use engine_core::market::{MarketSpec, Tier};
 use engine_core::session::Schedule;
+use engine_core::spread_tier::SpreadTier;
 use engine_core::types::{AssetClass, MarketId, Side};
 use proptest::arbitrary::any;
 use proptest::collection::vec;
@@ -42,7 +43,7 @@ fn every_fill_pays_at_least_the_exact_spread_and_posts_at_least_the_exact_margin
         let margin = bands(bounds, [margin_bps.0, margin_bps.1, margin_bps.2]);
         let mut h = Harness::v10();
         let spec = MarketSpec {
-            spread_tiers: spread.clone(),
+            spread_tiers: spread.iter().map(|tier| SpreadTier::bps(tier.up_to, tier.bps)).collect(),
             margin_tiers: margin.clone(),
             max_slippage_bps: 10_000,
             ..market(BANDED, "BANDED", AssetClass::Index, Schedule::AlwaysOpen, 1_000)
