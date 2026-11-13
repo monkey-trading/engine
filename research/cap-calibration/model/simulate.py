@@ -20,7 +20,9 @@ Per hour and market:
    returning leg lands the exposure back within the caps. A pair ends when either leg is closed
    out (the other leg closes with it) or at its hold.
 6. Flow held under an hour (churn) pays the profit fee on its expected gain over its hold, and its
-   mean open net notional takes the hour's move from its open.
+   mean open net notional takes the hour's move from its open. With spreads or a fee that falls
+   with holding time, the fee is on the gain after both fills' spreads, at the fee each hold pays,
+   over the class's holds (`holdfee.py`).
 7. Cash moves through the vault: exits return proceeds to idle balances, new margin and churn's
    dues are drawn from them first and the rest deposited, and a share of the proceeds left is
    withdrawn; idle balances leave at a daily rate, faster while NAV is below zero; a withdrawal
@@ -31,7 +33,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from model import accounting
+from model import accounting, holdfee
 from model import prices as pricing
 from model.flow import Flow, daily_margin_path, fit_share, schedule_key
 
@@ -64,7 +66,8 @@ class Scenario:
     sweep_epoch_h: int = 0  # distributions every this many hours sweep the NAV above each lane's capital; 0 = none
     utilisation_stats: bool = False  # record per-hour utilisation buckets and absolute exposure (stress calibration)
     spread_bps: tuple | None = None  # per market in `symbols` order: each fill pays this on its notional (open and close); None = none
-    fee_schedule: tuple | None = None  # ((hold_s, profit fee share), ...): a fee that falls with holding time; None = the standard 10%
+    fee_schedule: accounting.HoldFee | None = None  # the fee as a function of the hold (#614, D7); None = the standard 10%
+    churn_holds: str = "bound"  # churn's holds with spreads or `fee_schedule`: "bound" (the least fee its hold moments allow) or "central" (`holdfee.py`)
 
 
 @dataclass
@@ -295,19 +298,64 @@ def rollover_units(prep: Prepared, exit_hour, t0: int, t1: int, hours: int):
     return marks / (paths.close[:, t0:t1] * paths.fx[:, t0:t1])
 
 
-def account_exit(pnl, balance, financing, fee_bps: float = accounting.PROFIT_FEE_BPS):
+def account_exit(pnl, balance, financing, fee_bps: float = accounting.PROFIT_FEE_BPS, spread_cost=0.0):
     """One account's exit, per unit of notional: house cash, client proceeds, fee, bad debt, and
-    the loss the account itself pays (the mint basis)."""
-    fee, bad, proceeds = accounting.settle(pnl, balance, financing, fee_bps)
+    the loss the account itself pays (the mint basis). The fee is on the PnL after both fills'
+    `spread_cost`, which the house books at the open."""
+    fee, bad, proceeds = accounting.settle(pnl, balance, financing, fee_bps, spread_cost)
     return -pnl + fee - bad, proceeds, fee, bad, np.maximum(np.maximum(-pnl, 0.0) - bad, 0.0)
 
 
-def pair_exit(markets: Markets, x, g, balance, units, fee_bps: float = accounting.PROFIT_FEE_BPS):
+def pair_exit(markets: Markets, x, g, balance, units, fee_bps: float = accounting.PROFIT_FEE_BPS, spread_cost=0.0):
     """A pair's two accounts, a long and a short at the same notional and balance, closed at the
     same relative price `x`; each pays its own financing and loses at most its own balance."""
-    long_leg = account_exit(accounting.realised_pnl(1, x, g), balance, markets.fin_long[None, None, :] * units, fee_bps)
-    short_leg = account_exit(accounting.realised_pnl(-1, x, g), balance, markets.fin_short[None, None, :] * units, fee_bps)
+    long_leg = account_exit(accounting.realised_pnl(1, x, g), balance, markets.fin_long[None, None, :] * units, fee_bps, spread_cost)
+    short_leg = account_exit(accounting.realised_pnl(-1, x, g), balance, markets.fin_short[None, None, :] * units, fee_bps, spread_cost)
     return tuple(a + b for a, b in zip(long_leg, short_leg))
+
+
+def round_trip_spread(scenario: Scenario, markets: Markets):
+    """Both fills' spread per unit of notional, (1, 1, markets): what a position's realised PnL
+    loses to the spread."""
+    if scenario.spread_bps is None:
+        return 0.0
+    return 2 * np.asarray(scenario.spread_bps, dtype=float)[None, None, :] / 1e4
+
+
+def churn_tables(scenario: Scenario, flow: Flow, churn: list) -> list[dict] | None:
+    """Per churn class, its fee tables (`holdfee.py`): `fee` the one charged (`scenario.churn_holds`),
+    `central` the estimate, and the fee rate at the class's mean hold, as the model charged it on the
+    gain before spreads (`gross_rate`). None with neither spreads nor a fee schedule: the standard
+    fee on the gain, as before either existed."""
+    if scenario.spread_bps is None and scenario.fee_schedule is None:
+        return None
+    if scenario.churn_holds not in ("bound", "central"):
+        raise ValueError(f"unknown churn holds {scenario.churn_holds}")
+    fee = scenario.fee_schedule or accounting.HoldFee(points=((1.0, accounting.PROFIT_FEE_BPS / 1e4),))
+    out = []
+    for cls in churn:
+        bound = _bound_table(fee, cls.mean_hold_h, cls.mean_sqrt_hold_h, cls.min_hold_s)
+        central = _central_table(fee, flow.holding, cls.mean_hold_h, cls.mean_sqrt_hold_h, cls.min_hold_s) if flow.holding else bound
+        out.append({"fee": bound if scenario.churn_holds == "bound" else central, "bound": bound, "central": central,
+                    "gross_rate": float(accounting.fee_bps_at(fee, cls.mean_hold_h * 3600)) / 1e4})
+    return out
+
+
+_TABLES: dict = {}
+
+
+def _bound_table(fee, m1, m2, min_hold_s):
+    key = ("bound", fee, m1, m2, min_hold_s)
+    if key not in _TABLES:
+        _TABLES[key] = holdfee.bound_table(fee, m1, m2, min_hold_s)
+    return _TABLES[key]
+
+
+def _central_table(fee, holding, m1, m2, min_hold_s):
+    key = ("central", fee, holding, m1, m2, min_hold_s)
+    if key not in _TABLES:
+        _TABLES[key] = holdfee.central_table(fee, holding, m1, m2, min_hold_s)
+    return _TABLES[key]
 
 
 def cohort_units(prep: Prepared, scenario: Scenario, markets: Markets, cls, side: int, t0: int, t1: int, hours: int):
@@ -326,7 +374,8 @@ def cohort_units(prep: Prepared, scenario: Scenario, markets: Markets, cls, side
     x, g = settle_at(prep, markets, side, closed_out, exit_hour, balance, t0, t1, hours)
     rate = (markets.fin_long if side > 0 else markets.fin_short)[None, None, :]
     fee_bps = accounting.fee_bps_at(scenario.fee_schedule, cls.mean_hold_h * 3600)
-    house, proceeds, fee, bad, mint = account_exit(accounting.realised_pnl(side, x, g), balance, rate * rollover_units(prep, exit_hour, t0, t1, hours), fee_bps)
+    house, proceeds, fee, bad, mint = account_exit(accounting.realised_pnl(side, x, g), balance, rate * rollover_units(prep, exit_hour, t0, t1, hours), fee_bps,
+                                                   round_trip_spread(scenario, markets))
     valid = exit_hour < hours
     entry_usd = prep.paths.close[:, t0:t1] * prep.paths.fx[:, t0:t1]
     quantity = -1.0 / entry_usd
@@ -350,7 +399,8 @@ def pair_units(prep: Prepared, scenario: Scenario, markets: Markets, cls, t0: in
     loser = np.where(cross_hour[0] <= cross_hour[1], 1.0, -1.0)
     x, g = settle_at(prep, markets, loser, closed_out, exit_hour, balance, t0, t1, hours)
     fee_bps = accounting.fee_bps_at(scenario.fee_schedule, cls.mean_hold_h * 3600)
-    house, proceeds, fee, bad, mint = pair_exit(markets, x, g, balance, rollover_units(prep, exit_hour, t0, t1, hours), fee_bps)
+    house, proceeds, fee, bad, mint = pair_exit(markets, x, g, balance, rollover_units(prep, exit_hour, t0, t1, hours), fee_bps,
+                                                round_trip_spread(scenario, markets))
     valid = exit_hour < hours
     quantity = -1.0 / (prep.paths.close[:, t0:t1] * prep.paths.fx[:, t0:t1])
     ring = np.stack([quantity, quantity, np.zeros_like(quantity), house, proceeds], axis=-1)
@@ -441,7 +491,7 @@ def run_batch(
 
     # `desired` and `refused_hedged` cover hedged flow too; `refused` and the week-one figures are
     # directional (churn included), as `desired_directional` is.
-    out = {k: np.zeros(lanes_shape) for k in ("desired", "refused", "refused_hedged", "desired_directional", "desired_week1", "refused_week1", "deposits", "withdrawn", "max_queue", "max_gross_exposure", "spread_income")}
+    out = {k: np.zeros(lanes_shape) for k in ("desired", "refused", "refused_hedged", "desired_directional", "desired_week1", "refused_week1", "deposits", "withdrawn", "max_queue", "max_gross_exposure", "spread_income", "filled")}
     # Each fill's spread on its notional, per market; a position's two fills are charged when it opens.
     spread = np.zeros(n_markets) if scenario.spread_bps is None else np.asarray(scenario.spread_bps, dtype=float) / 1e4
     out["min_nav"] = np.full(lanes_shape, np.inf)
@@ -470,6 +520,11 @@ def run_batch(
     hedged = [c for c in flow.classes if c.kind == "hedged" and c.hold_h > 0]
     cohorts = [(cls, side) for cls in directional for side in (1, -1)]
     churn = [c for c in flow.classes if c.hold_h == 0]
+    tables = churn_tables(scenario, flow, churn)
+    if tables is not None:
+        two_spread = 2 * spread[None, :]
+        for k in ("churn_fee", "churn_fee_central", "churn_fee_gross"):
+            out[k] = np.zeros(lanes_shape)
     deviation = np.zeros((n_paths, 1 if scenario.common_direction else n_markets))
     log_close = np.log(paths.close)
     usd_mark = paths.close * paths.fx
@@ -544,16 +599,22 @@ def run_batch(
             churn_long, churn_short, churn_hedged, hedged_full = zero.copy(), zero.copy(), zero.copy(), zero.copy()
             open_long, open_short = zero.copy(), zero.copy()  # churn's mean open notional over the hour
             gain_long, gain_short, gain_hedged = zero.copy(), zero.copy(), zero.copy()
-            churn_fee_long, churn_fee_short, churn_fee_hedged = zero.copy(), zero.copy(), zero.copy()
-            for cls in churn:
+            # Each churn fee estimate, (long, short, hedged): the one charged, the central estimate,
+            # and the fee at the mean hold on the gain before spreads.
+            churn_fees = {k: [zero.copy(), zero.copy(), zero.copy()] for k in ("fee", "central", "gross")}
+            for c, cls in enumerate(churn):
                 gain = (GAIN_PER_SD * paths.parkinson[:, t] * cls.mean_sqrt_hold_h)[..., None]
-                rate = accounting.fee_bps_at(scenario.fee_schedule, cls.mean_hold_h * 3600) / 1e4
+                unit = {} if tables is None else {
+                    "fee": holdfee.unit_fee(tables[c]["fee"], paths.parkinson[:, t], two_spread)[..., None],
+                    "central": holdfee.unit_fee(tables[c]["central"], paths.parkinson[:, t], two_spread)[..., None],
+                    "gross": tables[c]["gross_rate"] * gain}
                 if cls.kind == "hedged":
                     full = margin_hour * cls.margin_share * hedged_leverage[cls.bucket] * h_scale * decay[t]
                     hedged_full += full
                     churn_hedged += full * fits["pair"]
                     gain_hedged += full * fits["pair"] * gain
-                    churn_fee_hedged += rate * full * fits["pair"] * gain
+                    for est, u in unit.items():
+                        churn_fees[est][2] += u * full * fits["pair"]
                 else:
                     full = margin_hour * cls.margin_share * directional_leverage[cls.bucket]
                     share = np.clip(cls.long_share + deviation, 0.0, 1.0)[..., None]
@@ -565,8 +626,9 @@ def run_batch(
                     open_short += shorts_in * min(cls.mean_hold_h, 1.0)
                     gain_long += longs_in * gain
                     gain_short += shorts_in * gain
-                    churn_fee_long += rate * full * share * fits["long"] * gain
-                    churn_fee_short += rate * full * (1 - share) * fits["short"] * gain
+                    for est, u in unit.items():
+                        churn_fees[est][0] += u * longs_in
+                        churn_fees[est][1] += u * shorts_in
 
             # The crowded side fills up to the cap, the side that reduces exposure in full; churn
             # competes for room with its mean open notional over the hour.
@@ -639,7 +701,11 @@ def run_batch(
             # gains — 0.2 * N * gain for leg N, symmetric R — the same identity `pair_exit`
             # charges ex post (`execution.rs`, `profit_fee`).
             churn_gain = gain_long * long_ok + gain_short * short_ok + gain_hedged
-            churn_fee = churn_fee_long * long_ok + churn_fee_short * short_ok + churn_fee_hedged if scenario.fee_schedule else accounting.profit_fee(churn_gain)
+            accepted = {est: v[0] * long_ok + v[1] * short_ok + v[2] for est, v in churn_fees.items()}
+            churn_fee = accounting.profit_fee(churn_gain) if tables is None else accepted["fee"]
+            if tables is not None:
+                for est, name in (("fee", "churn_fee"), ("central", "churn_fee_central"), ("gross", "churn_fee_gross")):
+                    out[name] += accepted[est].sum(axis=1)
             fx_ratio = paths.fx[:, t] / paths.fx[:, t - 1] if t >= 1 else 1.0
             hour_ret = accounting.realised_pnl(1, paths.close[:, t] / paths.open[:, t], fx_ratio)
             churn_pnl = (open_long * long_ok - open_short * short_ok) * hour_ret[..., None]
@@ -649,6 +715,7 @@ def run_batch(
             churn_cash = churn_fee - churn_pnl + spread_cash  # to the house
             house += churn_cash
             out["spread_income"] += spread_cash.sum(axis=1)
+            out["filled"] += filled.sum(axis=1)
             totals[:, :, FEE] += churn_fee
             totals[:, :, MINT] += churn_gain
 

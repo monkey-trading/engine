@@ -14,6 +14,12 @@ Usage (from a virtualenv with requirements.txt, in this directory):
     python -I run.py gaps                       close-out gaps at the first band's margins
     python -I run.py retained --paths 1000      #134's retained NAV on current and target flow
     python -I run.py report                     results/report.md
+    python -I run.py owner_fee                  #697: D7's fee across the admitted bases and discounts
+    python -I run.py owner_latency              #697: crypto latency takes at the owner's fee
+    python -I run.py owner_fx [--workers 3]     #697: FX and index latency takes at D6's candidates
+    python -I run.py owner_unprice [--workers 3]  #697: unpriced pairs at each tier's fee
+    python -I run.py owner_income --paths 1000  #697: the honest share on the corrected income model
+    python -I run.py owner_report               #697: results/owner_values.md and owner_criterion.json
 
 Each stage reads only committed data and earlier stages' results, and is deterministic.
 """
@@ -233,30 +239,18 @@ def stage_fee(args):
 
 
 def stage_retained(args):
-    """#134's retained NAV at launch (37 markets, 1,000 paths) with every fill paying its market's
+    """#134's retained NAV at launch (the genesis's markets, 1,000 paths) with every fill paying its market's
     best-tier spread and the profit fee falling with holding time, on the cap study's own model."""
-    from calib.common import use
+    derived, bars, flow, markets = cap_inputs()
+    from model import expansion, retained, simulate
 
-    use("cap")
-    import catalogue
-    from model import expansion, prices, retained, simulate
-    from model.expansion import require_profiles
-    from model.flow import load, load_mix, with_genesis_profiles
-
-    derived = HERE.parent / "cap-calibration" / "data" / "derived"
-    bars, symbols = prices.load_bars(derived / "hourly_bars.npz")
-    genesis = catalogue.load_genesis()
-    flow = with_genesis_profiles(load(derived), [m for m in genesis["markets"] if m["symbol"] in symbols])
-    with (derived / "benchmarks.csv").open() as fh:
-        benchmarks = {r["benchmark"]: float(r["bps"]) for r in csv.DictReader(fh)}
-    markets = simulate.load_markets(genesis, symbols, load_mix(derived, symbols), bars, benchmarks)
-    require_profiles(markets, flow)
+    n = len(markets.symbols)
     classes = expansion.asset_classes(derived)
     with (derived / "market_mix.csv").open() as fh:
         listed = {r["symbol"] for r in csv.DictReader(fh) if r["listed"] == "True"}
     tiers = {r["symbol"]: r["tiers"][0]["bps"] for r in json.loads((RESULTS / "spreads.json").read_text())}
     schedule = json.loads((RESULTS / "fee.json").read_text())["proposal"]
-    fee_schedule = tuple(sorted((float(h), float(f)) for h, f in schedule.items()))
+    fee_schedule = simulate.accounting.HoldFee(points=tuple(sorted((float(h), float(f)) for h, f in schedule.items())), interp="log")
     pricing = {"spread_bps": tuple(tiers[s] for s in markets.symbols), "fee_schedule": fee_schedule}
     from calib import target
 
@@ -270,9 +264,9 @@ def stage_retained(args):
                                        ("target flow, spreads and fee", ("target", pricing)),
                                        ("current flow, genesis pricing", ("current", {})),
                                        ("target flow, genesis pricing", ("target", {}))):
-        scenario = simulate.Scenario(seed=1, paths=args.paths, batch_paths=retained.batch_paths(37), **changes)
-        rows = retained.run_variant(scenario, markets, bars, flows[flow_name], classes, listed, 37, "baseline", args.paths, grid,
-                                    retained.workers_for(37, args.workers))
+        scenario = simulate.Scenario(seed=1, paths=args.paths, batch_paths=retained.batch_paths(n), **changes)
+        rows = retained.run_variant(scenario, markets, bars, flows[flow_name], classes, listed, n, "baseline", args.paths, grid,
+                                    retained.workers_for(n, args.workers))
         answer = retained.retained_nav(rows)
         row = answer["row"]
         out["variants"][name] = {"retained_nav": answer["retained_nav"], "row": row, "rows": rows,
@@ -560,7 +554,9 @@ PER_MARKET = ("BTC-USD", "ETH-USD")
 
 
 def cap_inputs():
-    """The cap study's markets, bars and flow at the genesis margins (100x on BTC-USD and ETH-USD)."""
+    """The cap study's markets, bars and flow at the genesis margins (100x on BTC-USD and ETH-USD).
+    The bars cover every market #623 calibrated; the model prices the genesis's, which #685 cut
+    from 37 to 34, and the flow the dropped markets carried is not moved to the others."""
     from calib.common import use
 
     use("cap")
@@ -572,6 +568,9 @@ def cap_inputs():
     derived = HERE.parent / "cap-calibration" / "data" / "derived"
     bars, symbols = prices.load_bars(derived / "hourly_bars.npz")
     genesis = catalogue.load_genesis()
+    listed = {m["symbol"] for m in genesis["markets"]}
+    keep = [i for i, sym in enumerate(symbols) if sym in listed]
+    bars, symbols = bars[:, keep], [symbols[i] for i in keep]
     flow = with_genesis_profiles(load(derived), [m for m in genesis["markets"] if m["symbol"] in symbols])
     with (derived / "benchmarks.csv").open() as fh:
         benchmarks = {r["benchmark"]: float(r["bps"]) for r in csv.DictReader(fh)}
@@ -592,7 +591,7 @@ def stage_per_market(args):
 
     tiers = {r["symbol"]: r["tiers"][0]["bps"] for r in json.loads((RESULTS / "spreads.json").read_text())}
     schedule = proposal_schedule()
-    fee_schedule = tuple(sorted(schedule.items()))
+    fee_schedule = simulate.accounting.HoldFee(points=tuple(sorted(schedule.items())), interp="log")
     floors = experiments.MARKET_FLOORS[:, None]
     total = np.full(len(experiments.MARKET_FLOORS), experiments.NO_TOTAL_LIMIT)
     out = {"committed_10x": {}, "variants": {}}
@@ -681,6 +680,384 @@ def stage_gaps(args):
     print(stress)
 
 
+# #697: the corrected income model and the headline at the owner's values (#614, 2026-11-12), with
+# #549's attacks across the profit-fee bases and tier discounts the operator's bounds admit (D7).
+
+# From launch's 10% to V35's +50%; the owner refuses any cut below launch (#614, 2026-11-12).
+OWNER_BASES = (0.10, 0.1125, 0.125, 0.1375, 0.15)
+OWNER_CUT_BASE = 0.05  # V35's downward half, which the owner ruled out: what a long-hold cut would have cost
+DISCOUNT_STEP = 0.05
+# Tier 3's discount, the largest, for every account: the least fee any account can pay past the
+# curve, so the honest share below is a lower bound over how the flow spreads across tiers.
+HONEST_TIER = 3
+
+
+def owner_discounts() -> list[tuple]:
+    """Every tier-discount table on a 5-point grid that the bounds admit (#614, decision D7): none
+    above launch's and ordered by tier, so tiers 0 and 1 keep none, tier 2 takes 0 to 10% and tier 3
+    from tier 2's to 20%."""
+    from calib.fee import LAUNCH_DISCOUNTS
+
+    out = []
+    for i in range(int(round(LAUNCH_DISCOUNTS[2] / DISCOUNT_STEP)) + 1):
+        for j in range(i, int(round(LAUNCH_DISCOUNTS[3] / DISCOUNT_STEP)) + 1):
+            out.append((0.0, 0.0, round(i * DISCOUNT_STEP, 4), round(j * DISCOUNT_STEP, 4)))
+    return out
+
+
+def owner_first_tiers() -> dict[str, float]:
+    """Each launch market's first spread tier, bps, at the owner's values: D6's tenths on FX and
+    indices, #623's whole bps elsewhere (#614, decisions D1 and D6)."""
+    from calib import spreads
+
+    out = {}
+    for r in json.loads((RESULTS / "spreads.json").read_text()):
+        if r["asset_class"] in OPEN_HOURS:
+            out[r["symbol"]] = spreads.best_tier_tenths(r["move_3s_p90_bps"], r["adverse_bps"])
+        else:
+            out[r["symbol"]] = float(r["tiers"][0]["bps"])
+    return out
+
+
+def stage_owner_fee(args):
+    """D7's function on the engine's table, at every base from launch to +50% and every admitted
+    tier-discount table: whether each tier's fee falls with the hold, whether a higher tier never
+    pays more than a lower one, and how far any tier falls below its launch fee at any hold (the
+    calibrated fee held from below); and the same at the cut the owner ruled out."""
+    import numpy as np
+
+    from calib import fee
+
+    holds = np.unique(np.concatenate([np.arange(0.0, 3600.0 + 1e-9, 0.01), [h for h, _ in fee.D3_POINTS]]))
+    launch = [fee.d7(holds, fee.BASE, d) for d in fee.LAUNCH_DISCOUNTS]
+    rows = []
+    for base in (OWNER_CUT_BASE,) + OWNER_BASES:
+        for ds in owner_discounts():
+            tiers = [fee.d7(holds, base, d) for d in ds]
+            below = [float((launch[i] - tiers[i]).max()) for i in range(4)]
+            rows.append({"base": base, "discounts": ds,
+                         "falls_with_hold": all(bool((np.diff(t) <= 1e-12).all()) for t in tiers),
+                         "higher_tier_never_pays_more": all(bool((tiers[i + 1] <= tiers[i] + 1e-12).all()) for i in range(3)),
+                         "most_below_launch": max(below), "held_from_below": max(below) <= 1e-12,
+                         "first_hold_below_launch_s": next((float(holds[np.argmax(launch[i] - tiers[i] > 1e-12)])
+                                                            for i in range(4) if below[i] > 1e-12), None)})
+    points = {str(h): float(fee.d7(h, fee.BASE, 0.0)) for h in (0.5, 1.0, 1.5, 29.999, 30.0, 300.0, 899.999, 900.0)}
+    out = {"points": fee.D3_POINTS, "launch_discounts": fee.LAUNCH_DISCOUNTS, "at_holds_tier_0": points, "rows": rows}
+    (RESULTS / "owner_fee.json").write_text(json.dumps(out, indent=1))
+    admitted = [r for r in rows if r["base"] >= fee.BASE]
+    print(len(admitted), "admitted tables; all fall with the hold:", all(r["falls_with_hold"] for r in admitted),
+          "ordered:", all(r["higher_tier_never_pays_more"] for r in admitted), "held from below:", all(r["held_from_below"] for r in admitted))
+
+
+# Steeper short ends for the hold curve, each still reaching 10% at 15 minutes, so target flow pays
+# nothing more (#623's frontier): what the curve, not the base, does to the latency takes.
+OWNER_CURVES = {"100% to 1 s (D3)": None, "100% to 10 s": (10.0, 900.0), "100% to 60 s": (60.0, 900.0)}
+
+
+def owner_curve(name: str) -> tuple:
+    from calib import fee
+
+    return fee.D3_POINTS if OWNER_CURVES[name] is None else fee.curve_points(*OWNER_CURVES[name])
+
+
+def owner_latency_takes(tier_fee, years: dict, markets: dict) -> dict:
+    """`latency_takes` under a fee that depends on the tier: per crypto market, the better of keeping
+    a wallet (its tier from its counted volume) and recycling wallets at tier 0, for an honest node's
+    fastest client (0.25 s) and the operator's accounts (3 s)."""
+    from calib import carrot, toxicity
+
+    out = {}
+    for lag in (0.25, 3.0):
+        per = {}
+        for m in CRYPTO:
+            r = carrot.best_responses(years[(lag, m)], {}, markets[m], toxicity.Z_TIERS[0][1], toxicity.MIN_FILLS, SIZE, tier_fee)
+            who = "keeper" if r["keeper"]["per_day"] >= r["recycler"]["per_day"] else "recycler"
+            per[m] = {"who": who, **r[who]}
+        out[f"{lag}s"] = {"total": sum(v["per_day"] for v in per.values()), "markets": per}
+    return out
+
+
+def stage_owner_latency(args):
+    """Latency arbitrage on the crypto markets at the owner's fee: D7's function on the engine's
+    table at every admitted base and tier-discount table, the cut the owner ruled out, and #623's
+    log-linear form of the same schedule for comparison."""
+    from calib import fee
+
+    markets = crypto_markets()
+    years = {(lag, m): latency_market_year(lag, m) for lag in (0.25, 3.0) for m in CRYPTO}
+
+    def row(base, ds):
+        takes = owner_latency_takes(lambda hold, tier: fee.d7(hold, base, ds[tier]), years, markets)
+        return {"base": base, "discounts": ds, "operator_per_day": takes["3.0s"]["total"] * OPERATOR_KEEPS,
+                "fast_per_day": takes["0.25s"]["total"], "takes": takes}
+
+    grid = [row(base, ds) for base in OWNER_BASES for ds in owner_discounts()]
+    curves = {}
+    for name in OWNER_CURVES:
+        points = owner_curve(name)
+        takes = owner_latency_takes(lambda hold, tier, points=points: fee.d7(hold, fee.BASE, fee.LAUNCH_DISCOUNTS[tier], points), years, markets)
+        curves[name] = {"points": points, "operator_per_day": takes["3.0s"]["total"] * OPERATOR_KEEPS, "fast_per_day": takes["0.25s"]["total"],
+                        "short_fee_share": short_fee_share(points)}
+    log = latency_takes(fee.family(1.0, 900.0, 1.0), years, markets)
+    out = {"launch": next(r for r in grid if r["base"] == fee.BASE and tuple(r["discounts"]) == fee.LAUNCH_DISCOUNTS),
+           "grid": grid, "cut": row(OWNER_CUT_BASE, fee.LAUNCH_DISCOUNTS), "curves": curves,
+           "log_linear_d3": {"operator_per_day": log["3.0s"] * OPERATOR_KEEPS, "fast_per_day": log["0.25s"]}}
+    (RESULTS / "owner_latency.json").write_text(json.dumps(out, indent=1, default=float))
+    for r in grid:
+        if r["discounts"] == fee.LAUNCH_DISCOUNTS:
+            print(f"base {r['base']:.4f} operator ${r['operator_per_day']:,.0f} fastest ${r['fast_per_day']:,.0f}")
+    print("cut", round(out["cut"]["operator_per_day"]), "log-linear", {k: round(v) for k, v in out["log_linear_d3"].items()})
+    for name, c in curves.items():
+        print(name, round(c["operator_per_day"]), round(c["fast_per_day"]), round(c["short_fee_share"], 3))
+
+
+def short_fee_share(points: tuple) -> float:
+    """The fee on gross profit of holds under 15 minutes on the #111 profile (`fee.honest_cost`), at
+    tier 0 and launch's base, under the curve `points`."""
+    from calib import fee
+
+    with (HERE.parent / "cap-calibration" / "data" / "derived" / "papertrade_holding.csv").open() as fh:
+        holding = list(csv.DictReader(fh))
+    return fee.honest_cost(holding, None, to_s=900.0, fee_fn=lambda h: fee.d7(h, fee.BASE, 0.0, points))["extra_fee_share_of_profit"] + fee.BASE
+
+
+OWNER_FX_SIZES = (2e6, SIZE, 10e6)
+
+
+def owner_fx_candidates() -> dict:
+    """Per FX and index market, each first-tier candidate as the (position size, average spread bps)
+    pairs it is measured at (#614, decision D6): D6's tenths and 1 bp on the operator-sized position,
+    and the owner's reference tiers at each of `OWNER_FX_SIZES`, a fill paying each slice's tier."""
+    tenths = owner_first_tiers()
+    listed = {m["symbol"] for m in genesis_markets_cached()}
+    out = {}
+    for r in json.loads((RESULTS / "spreads.json").read_text()):
+        if r["asset_class"] not in OPEN_HOURS or r["symbol"] not in listed:
+            continue
+        ref = []
+        for size in OWNER_FX_SIZES:
+            lo, paid = 0.0, 0.0
+            for up_to, bps in REFERENCE_TIERS:
+                part = max(0.0, min(size, up_to) - lo)
+                paid += part * bps
+                lo = up_to
+            ref.append((size, paid / size))
+        out[r["symbol"]] = {"tenths": [(SIZE, tenths[r["symbol"]])], "1 bp": [(SIZE, 1.0)], "reference": ref}
+    return out
+
+
+def owner_fx_btc_year(btc_spreads: list[float], workers: int) -> dict:
+    """BTC-USD's latency strategy on its sampled hours at each of `btc_spreads` (bps), as `scaled`
+    runs it: (spread, lag, hold, theta) -> year sums (positive, negative, trades) per unit of size."""
+    from calib.common import use
+
+    use("rogue")
+    from model.paths import load_hours, population
+
+    hours = [h for h in load_hours() if h.market == "BTC-USD" and h.stratum != "stress"]
+    jobs = [(h, s) for h in hours for s in btc_spreads]
+    rows = []
+    if workers <= 1:
+        for job in jobs:
+            rows += _scaled_job(job)
+    else:
+        with Pool(workers) as pool:
+            for out in pool.imap_unordered(_scaled_job, jobs, chunksize=4):
+                rows += out
+    rows.sort(key=lambda r: (r["spread_bps"], r["hour"], r["lag_s"], r["hold_s"], r["theta_bps"]))  # a fixed summation order
+    strata, year_hours = population()["BTC-USD"]
+    counts = {}
+    for h in hours:
+        counts[h.stratum] = counts.get(h.stratum, 0) + 1
+    year = {}
+    for r in rows:
+        w = strata[int(r["stratum"])] / counts[r["stratum"]] * 8760 / year_hours / max(float(r["covered"]), 1e-9)
+        key = (round(float(r["spread_bps"]), 9), float(r["lag_s"]), float(r["hold_s"]), float(r["theta_bps"]))
+        pos, neg, n = year.get(key, (0.0, 0.0, 0.0))
+        year[key] = (pos + w * float(r["positive"]), neg + w * float(r["negative"]), n + w * float(r["trades"]))
+    return year
+
+
+def owner_fx_market_year(year: dict, btc_spread: float, lag: float, ratio: float, open_share: float) -> dict:
+    """A market's (hold, theta) -> year sums (positive, negative, trades) per unit of size at the
+    spread BTC-USD's `btc_spread` stands for: its results `ratio` times BTC-USD's, over its share of
+    the year's hours open."""
+    return {(hold, theta): (ratio * pos * open_share, ratio * neg * open_share, n * open_share)
+            for (sp, lg, hold, theta), (pos, neg, n) in year.items() if sp == btc_spread and lg == lag}
+
+
+def stage_owner_fx(args):
+    """Latency arbitrage on the FX and index markets at each D6 candidate under D7's fee, at each
+    market's exact spread: a market's take at spread `s` is its ratio `r` to BTC-USD's 3 s move
+    times BTC-USD's take at `s / r`, measured on BTC-USD's sampled hours at that spread rather than
+    interpolated. Two measures: `upper`, as `fx_tiers` takes it, the whole operator-sized position
+    at the candidate's average spread with no stick and tier 3's fee past the curve; and `best`, as
+    the crypto markets' takes are measured (`carrot.best_responses`), the better of keeping a wallet
+    under the stick and recycling wallets at tier 0, with each tier's best-price size and fee."""
+    from calib import carrot, fee, toxicity
+
+    spreads = {r["symbol"]: r for r in json.loads((RESULTS / "spreads.json").read_text())}
+    margins = {m["symbol"]: float(m["margin_tiers"][0]["bps"]) / 1e4 for m in genesis_markets_cached()}
+    btc_move = spreads["BTC-USD"]["move_3s_p90_bps"]
+    candidates = owner_fx_candidates()
+    ratio = {m: spreads[m]["move_3s_p90_bps"] / btc_move for m in candidates}
+    btc_spreads = sorted({round(s / ratio[m], 9) for m, c in candidates.items() for pts in c.values() for _, s in pts})
+    year = owner_fx_btc_year(btc_spreads, args.workers)
+    fees = [(base, d3) for base in OWNER_BASES for d3 in sorted({ds[3] for ds in owner_discounts()})]
+    out = {"btc_move_bps": btc_move, "sizes": OWNER_FX_SIZES, "fees": fees, "markets": {}}
+    for m, cands in candidates.items():
+        open_share = OPEN_HOURS[spreads[m]["asset_class"]] / 8760
+        first = spreads[m]["genesis_tiers"][0]
+        res = {"ratio": ratio[m], "tenths_bps": cands["tenths"][0][1], "candidates": {}}
+        for name, pts in cands.items():
+            # The candidate's first two tiers and first bound: D6's tenths and 1 bp double at the
+            # genesis bound; the reference steps from 0.1 bp to 1 bp at $2M.
+            s1 = pts[0][1] if name != "reference" else REFERENCE_TIERS[0][1]
+            market = {"bound": REFERENCE_TIERS[0][0] if name == "reference" else float(first["up_to"]), "s1_bps": s1,
+                      "s2_bps": REFERENCE_TIERS[1][1] if name == "reference" else 2 * s1, "margin": margins[m]}
+            cand = {"points": pts, "market": market, "upper": {}, "best": {}}
+            for base, d3 in fees:
+                key = f"{base}/{d3}"
+                cand["upper"][key], cand["best"][key] = {}, {}
+                for lag in (0.25, 3.0):
+                    takes = []
+                    for size, s in pts:
+                        y = owner_fx_market_year(year, round(s / ratio[m], 9), lag, ratio[m], open_share)
+                        takes.append(max(max((((1 - float(fee.d7(h, base, d3))) * pos - neg) * size / 365 for (h, _), (pos, neg, _n) in y.items()), default=0.0), 0.0))
+                    cand["upper"][key][f"{lag}s"] = max(takes)
+                    discounts = (0.0, 0.0, min(fee.LAUNCH_DISCOUNTS[2], d3), d3)
+                    y = owner_fx_market_year(year, round(s1 / ratio[m], 9), lag, ratio[m], open_share)
+                    r = carrot.best_responses(y, {}, market, toxicity.Z_TIERS[0][1], toxicity.MIN_FILLS, SIZE,
+                                              lambda hold, tier, base=base, discounts=discounts: fee.d7(hold, base, discounts[tier]))
+                    who = "keeper" if r["keeper"]["per_day"] >= r["recycler"]["per_day"] else "recycler"
+                    cand["best"][key][f"{lag}s"] = {"who": who, **r[who]}
+            res["candidates"][name] = cand
+        # The tenths under each curve in `OWNER_CURVES`, at launch's base and discounts.
+        tenths = res["tenths_bps"]
+        market = res["candidates"]["tenths"]["market"]
+        res["curves"] = {}
+        for curve in OWNER_CURVES:
+            points = owner_curve(curve)
+            res["curves"][curve] = {}
+            for lag in (0.25, 3.0):
+                y = owner_fx_market_year(year, round(tenths / ratio[m], 9), lag, ratio[m], open_share)
+                r = carrot.best_responses(y, {}, market, toxicity.Z_TIERS[0][1], toxicity.MIN_FILLS, SIZE,
+                                          lambda hold, tier, points=points: fee.d7(hold, fee.BASE, fee.LAUNCH_DISCOUNTS[tier], points))
+                res["curves"][curve][f"{lag}s"] = max(r["keeper"]["per_day"], r["recycler"]["per_day"])
+        out["markets"][m] = res
+    (RESULTS / "owner_fx.json").write_text(json.dumps(out, indent=1, default=float))
+    key = f"{fee.BASE}/{fee.LAUNCH_DISCOUNTS[3]}"
+    for m, r in out["markets"].items():
+        print(m, r["tenths_bps"], {n: {lag: (round(c["upper"][key][lag]), round(c["best"][key][lag]["per_day"])) for lag in ("0.25s", "3.0s")}
+                                   for n, c in r["candidates"].items()})
+
+
+# The profit fee a pair's winning leg pays: it stands longer than the curve before its spell, so it
+# pays the base less its tier's discount. A pair at 1% margin needs tier 2 (#614, decision D5), whose
+# best is tier 3's 20%; at 2% margin tier 1, with none. Launch's 10% and the +50% base.
+OWNER_PAIR_FEES = (0.08, 0.10, 0.12, 0.15)
+
+
+def _owner_unprice_job(args):
+    from model import unprice as rogue_unprice
+
+    from calib import unprice
+
+    h, s1, fee_share = args
+    saved = rogue_unprice.PROFIT_FEE
+    rogue_unprice.PROFIT_FEE = fee_share
+    try:
+        return [dict(r, fee=fee_share) for r in unprice.hour_rows(h, s1)]
+    finally:
+        rogue_unprice.PROFIT_FEE = saved
+
+
+def stage_owner_unprice(args):
+    """#549's unpriced-spell measure as `attacks` runs it, at each fee in `OWNER_PAIR_FEES`."""
+    from calib.common import use
+
+    use("rogue")
+    from model.paths import load_hours
+    from model.report import PAIR_NOTIONAL, Year, unprice_tables
+
+    tiers = {r["symbol"]: r["tiers"][0]["bps"] / 1e4 for r in json.loads((RESULTS / "spreads.json").read_text())}
+    hours = load_hours()
+    rows = []
+    with Pool(args.workers) as pool:
+        for out in pool.imap_unordered(_owner_unprice_job, [(h, tiers[h.market], f) for h in hours for f in OWNER_PAIR_FEES], chunksize=2):
+            rows += out
+    rows.sort(key=lambda r: tuple(str(r[k]) for k in ("fee", "market", "hour", "kind", "margin", "spell_s", "trigger")))  # a fixed summation order
+    out = {"pair_notional": PAIR_NOTIONAL, "fees": {}}
+    for f in OWNER_PAIR_FEES:
+        mine = [r for r in rows if r["fee"] == f]
+        table = [t for t in unprice_tables([r for r in mine if r["stratum"] != "stress"], Year())
+                 if t["kind"] == "causal" and t["spell_s"] == 300 and t["trigger_bps_5s"] == 40]
+        stress = {}
+        for r in mine:
+            if r["stratum"] == "stress" and r["kind"] == "causal" and r["spell_s"] == 300 and r["trigger"] == 0.004:
+                stress[str(r["margin"])] = stress.get(str(r["margin"]), 0.0) + r["payoff"] * PAIR_NOTIONAL
+        out["fees"][str(f)] = {"unprice": table, "stress_hours": stress}
+        for t in table:
+            print(f, t["markets"], t["margin"], round(t["usd_year"] / 365), round(t["usd_year_lo"] / 365), round(t["usd_year_hi"] / 365))
+        print(f, "stress", {k: round(v) for k, v in stress.items()})
+    (RESULTS / "owner_unprice.json").write_text(json.dumps(out, indent=1, default=float))
+
+
+# The income runs: (name, flow, fee base, tier, churn holds). The headline is tier 3's fee at launch
+# with the bound on churn's holds; the rest are the central estimate, the bases the bounds admit, and
+# no discount.
+OWNER_INCOME = [(f"{flow}, {name}", flow, base, tier, holds) for flow in ("current", "target") for name, base, tier, holds in (
+    ("launch, bound", 0.10, HONEST_TIER, "bound"),
+    ("launch, central", 0.10, HONEST_TIER, "central"),
+    ("base 12.5%, bound", 0.125, HONEST_TIER, "bound"),
+    ("base 15%, bound", 0.15, HONEST_TIER, "bound"),
+    ("no discount, bound", 0.10, 0, "bound"))]
+OWNER_INCOME_FLOORS = slice(6, 9)  # the retained grid's floors either side of #623's $107M
+
+
+def stage_owner_income(args):
+    """#134's retained NAV and the operator's honest share on the corrected income model at the
+    owner's values: D6's tenths and #623's tiers as each fill's first-tier spread, D7's fee on the
+    engine's table, the fee on realised PnL after both fills' spreads, and churn's fee over its holds
+    (`model/holdfee.py`). Runs resume: a variant already in `owner_income.json` is kept."""
+    derived, bars, flow, markets = cap_inputs()
+    from calib import fee, target
+    from model import accounting, expansion, retained, simulate
+
+    n = len(markets.symbols)
+    classes = expansion.asset_classes(derived)
+    with (derived / "market_mix.csv").open() as fh:
+        listed = {r["symbol"] for r in csv.DictReader(fh) if r["listed"] == "True"}
+    with (derived / "papertrade_holding.csv").open() as fh:
+        holding = list(csv.DictReader(fh))
+    tiers = owner_first_tiers()
+    flows = {"current": flow, "target": target.target_flow(flow, holding)}
+    grid = retained.floor_grid(retained.GRID_LOW, retained.GRID_HIGH)[OWNER_INCOME_FLOORS]
+    path = RESULTS / "owner_income.json"
+    out = json.loads(path.read_text()) if path.exists() else {"spread_bps": tiers, "variants": {}}
+    for name, flow_name, base, tier, holds in OWNER_INCOME:
+        if name in out["variants"] or (args.only and args.only not in name):
+            continue
+        hold_fee = accounting.HoldFee(points=fee.D3_POINTS, base_bps=base * 1e4, discount=fee.LAUNCH_DISCOUNTS[tier])
+        scenario = simulate.Scenario(seed=1, paths=args.paths, batch_paths=retained.batch_paths(n), churn_holds=holds,
+                                     spread_bps=tuple(tiers[s] for s in markets.symbols), fee_schedule=hold_fee)
+        rows = retained.run_variant(scenario, markets, bars, flows[flow_name], classes, listed, n, "baseline", args.paths, grid,
+                                    retained.workers_for(n, args.workers))
+        out["markets"] = n
+        answer = retained.retained_nav(rows)
+        row = answer["row"]
+        out["variants"][name] = {"flow": flow_name, "paths": args.paths, "base": base, "tier": tier, "churn_holds": holds, "retained_nav": answer["retained_nav"],
+                                 "row": row, "rows": rows, "operator_share_per_day": row["distributed_mean"] / 90 * 0.20 if row else None}
+        path.write_text(json.dumps(out, indent=1, default=float))
+        print(name, answer["retained_nav"], row and {k: round(row[k]) for k in row if k.endswith("_mean")}, flush=True)
+
+
+def stage_owner_report(args):
+    from calib import owner_report
+
+    print(owner_report.write(RESULTS)[:2000])
+
+
 def genesis_markets_cached():
     from calib.common import genesis_markets
 
@@ -689,9 +1066,11 @@ def genesis_markets_cached():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("stage", choices=["spreads", "latency", "scaled", "fee", "frontier", "fx_tiers", "per_market", "gaps", "attacks", "toxicity", "carrot", "retained", "report"])
+    parser.add_argument("stage", choices=["spreads", "latency", "scaled", "fee", "frontier", "fx_tiers", "per_market", "gaps", "attacks", "toxicity", "carrot", "retained", "report",
+                                          "owner_fee", "owner_latency", "owner_fx", "owner_unprice", "owner_income", "owner_report"])
     parser.add_argument("--workers", type=int, default=3)
     parser.add_argument("--paths", type=int, default=1000)
+    parser.add_argument("--only", default=None, help="owner_income: run only the variants whose name contains this")
     args = parser.parse_args()
     RESULTS.mkdir(exist_ok=True)
     globals()[f"stage_{args.stage}"](args)

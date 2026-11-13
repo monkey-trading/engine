@@ -376,7 +376,12 @@ an index: load only the rule whose hint matches the current action.
   score that round trips and size cannot dilute, volume tiers and how volume counts, the retained
   NAV with spread income on current and target flow, #549's attack classes against the operator's
   honest share, and #500's 100x question for BTC-USD and ETH-USD; it adds spread and fee-schedule
-  fields to the cap study's `Scenario`. Its `README.md` gives the method, results and proposals.
+  fields to the cap study's `Scenario`. Its `owner_*` stages (#697) correct the cap study's income
+  model (the fee on realised PnL after both fills' spreads, over each churn class's holds, in
+  `cap-calibration/model/holdfee.py`) and restate the headline at the owner's values on #614, with
+  #549's attacks across the profit-fee bases the operator's bounds admit and the house-loss budget
+  the loss-rate trigger (#695) must hold them to (`results/owner_values.md`,
+  `results/owner_criterion.json`). Its `README.md` gives the method, results and proposals.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
   `dev-operator-bounds.sh`, the operator's bounds on a dev node: benchmark rates inside and outside the
@@ -766,8 +771,9 @@ Run from the repo root:
 - Spread calibration research, from a virtualenv outside the repo with
   `research/spread-calibration/requirements.txt`, in `research/spread-calibration/`: `python -I run.py
   <stage>` (`spreads`, `latency`, `scaled`, `fee`, `frontier`, `fx_tiers`, `toxicity`, `carrot`,
-  `attacks`, `per_market`, `gaps`, `retained`, then `report`, with the worker and path counts its README
-  gives), and its tests with `python -I -m pytest tests`
+  `attacks`, `per_market`, `gaps`, `retained`, then `report`; #697's `owner_fee`, `owner_latency`,
+  `owner_fx`, `owner_unprice`, `owner_income`, then `owner_report`; with the worker and path counts its
+  README gives), and its tests with `python -I -m pytest tests`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
   `python -I research/close-spread-calibration/run.py`, then
   `python -I research/close-spread-calibration/calibrate.py`, then

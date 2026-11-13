@@ -1,0 +1,5309 @@
+{
+ "launch": {
+  "base": 0.1,
+  "discounts": [
+   0.0,
+   0.0,
+   0.1,
+   0.2
+  ],
+  "operator_per_day": 265060.29980326537,
+  "fast_per_day": 78584.99708830813,
+  "takes": {
+   "0.25s": {
+    "total": 78584.99708830813,
+    "markets": {
+     "BTC-USD": {
+      "who": "recycler",
+      "per_day": 6652.812185566575,
+      "hold_s": 900.0,
+      "theta_bps": 12.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 1.3237517771000156,
+      "counted_per_month": 548033235.7194065
+     },
+     "ETH-USD": {
+      "who": "recycler",
+      "per_day": 22430.852491922367,
+      "hold_s": 900.0,
+      "theta_bps": 12.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 9.044392869727934,
+      "counted_per_month": 3744378648.0673647
+     },
+     "SOL-USD": {
+      "who": "recycler",
+      "per_day": 49501.33241081919,
+      "hold_s": 1800.0,
+      "theta_bps": 12.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 11.46887492861222,
+      "counted_per_month": 4748114220.445459
+     }
+    }
+   },
+   "3.0s": {
+    "total": 331325.3747540817,
+    "markets": {
+     "BTC-USD": {
+      "who": "recycler",
+      "per_day": 62540.45917276223,
+      "hold_s": 3.0,
+      "theta_bps": 8.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 143.82099371787547,
+      "counted_per_month": 0.0
+     },
+     "ETH-USD": {
+      "who": "recycler",
+      "per_day": 83626.07112994386,
+      "hold_s": 5.0,
+      "theta_bps": 12.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 147.1377727013135,
+      "counted_per_month": 0.0
+     },
+     "SOL-USD": {
+      "who": "recycler",
+      "per_day": 185158.8444513756,
+      "hold_s": 5.0,
+      "theta_bps": 8.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 426.09169617361493,
+      "counted_per_month": 0.0
+     }
+    }
+   }
+  }
+ },
+ "grid": [
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.05
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "takes": {
+    "0.25s": {
+     "total": 78584.99708830813,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6652.812185566575,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 22430.852491922367,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 49501.33241081919,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.05
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 73917.18835138388,
+   "takes": {
+    "0.25s": {
+     "total": 73917.18835138388,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 6313.4109637786405,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 20929.01749083226,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.044392869727934,
+       "counted_per_month": 3744378648.0673647
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 46674.75989677299,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.05
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 69523.97374123667,
+   "takes": {
+    "0.25s": {
+     "total": 69523.97374123667,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5974.009741990709,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19701.77661651918,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 43848.18738272678,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.05
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 65742.37686195606,
+   "takes": {
+    "0.25s": {
+     "total": 65742.37686195606,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5634.608520202774,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 19086.153473072703,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 41021.614868680575,
+       "hold_s": 1800.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 11.46887492861222,
+       "counted_per_month": 4748114220.445459
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.05
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.1
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.15
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.2
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 62159.12867334767,
+   "takes": {
+    "0.25s": {
+     "total": 62159.12867334767,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 5295.20729841484,
+       "hold_s": 900.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 1.3237517771000156,
+       "counted_per_month": 548033235.7194065
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 18470.53032962621,
+       "hold_s": 900.0,
+       "theta_bps": 20.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 2.590344727025286,
+       "counted_per_month": 1072402716.9884683
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 38393.39104530663,
+       "hold_s": 600.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 9.630048763344025,
+       "counted_per_month": 3986840188.024427
+      }
+     }
+    },
+    "3.0s": {
+     "total": 331325.3747540817,
+     "markets": {
+      "BTC-USD": {
+       "who": "recycler",
+       "per_day": 62540.45917276223,
+       "hold_s": 3.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 143.82099371787547,
+       "counted_per_month": 0.0
+      },
+      "ETH-USD": {
+       "who": "recycler",
+       "per_day": 83626.07112994386,
+       "hold_s": 5.0,
+       "theta_bps": 12.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 147.1377727013135,
+       "counted_per_month": 0.0
+      },
+      "SOL-USD": {
+       "who": "recycler",
+       "per_day": 185158.8444513756,
+       "hold_s": 5.0,
+       "theta_bps": 8.0,
+       "size": 6900000.0,
+       "tier": 0,
+       "trades_per_day": 426.09169617361493,
+       "counted_per_month": 0.0
+      }
+     }
+    }
+   }
+  }
+ ],
+ "cut": {
+  "base": 0.05,
+  "discounts": [
+   0.0,
+   0.0,
+   0.1,
+   0.2
+  ],
+  "operator_per_day": 268228.5565997056,
+  "fast_per_day": 100434.98817471195,
+  "takes": {
+   "0.25s": {
+    "total": 100434.98817471195,
+    "markets": {
+     "BTC-USD": {
+      "who": "recycler",
+      "per_day": 8831.855742779944,
+      "hold_s": 900.0,
+      "theta_bps": 8.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 5.9248040633315915,
+      "counted_per_month": 2452868882.2192783
+     },
+     "ETH-USD": {
+      "who": "recycler",
+      "per_day": 28438.19249628279,
+      "hold_s": 900.0,
+      "theta_bps": 12.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 9.044392869727934,
+      "counted_per_month": 3744378648.0673647
+     },
+     "SOL-USD": {
+      "who": "recycler",
+      "per_day": 63164.939935649214,
+      "hold_s": 1800.0,
+      "theta_bps": 8.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 28.605025699600233,
+      "counted_per_month": 11842480639.634499
+     }
+    }
+   },
+   "3.0s": {
+    "total": 335285.69574963197,
+    "markets": {
+     "BTC-USD": {
+      "who": "recycler",
+      "per_day": 62540.45917276223,
+      "hold_s": 3.0,
+      "theta_bps": 8.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 143.82099371787547,
+      "counted_per_month": 0.0
+     },
+     "ETH-USD": {
+      "who": "recycler",
+      "per_day": 87586.39212549415,
+      "hold_s": 900.0,
+      "theta_bps": 20.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 11.546083089298516,
+      "counted_per_month": 4780078398.969586
+     },
+     "SOL-USD": {
+      "who": "recycler",
+      "per_day": 185158.8444513756,
+      "hold_s": 5.0,
+      "theta_bps": 8.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 426.09169617361493,
+      "counted_per_month": 0.0
+     }
+    }
+   }
+  }
+ },
+ "curves": {
+  "100% to 1 s (D3)": {
+   "points": [
+    [
+     1.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.9083
+    ],
+    [
+     4.0,
+     0.8166
+    ],
+    [
+     7.5,
+     0.7335
+    ],
+    [
+     15.0,
+     0.6418
+    ],
+    [
+     30.0,
+     0.55
+    ],
+    [
+     60.0,
+     0.4583
+    ],
+    [
+     120.0,
+     0.3666
+    ],
+    [
+     240.0,
+     0.2749
+    ],
+    [
+     450.0,
+     0.1918
+    ],
+    [
+     900.0,
+     0.1
+    ]
+   ],
+   "operator_per_day": 265060.29980326537,
+   "fast_per_day": 78584.99708830813,
+   "short_fee_share": 0.3326073077758295
+  },
+  "100% to 10 s": {
+   "points": [
+    [
+     10.0,
+     1.0
+    ],
+    [
+     15.682823361402004,
+     0.91
+    ],
+    [
+     24.595094858493642,
+     0.82
+    ],
+    [
+     38.57205282226822,
+     0.73
+    ],
+    [
+     60.49186910982997,
+     0.64
+    ],
+    [
+     94.8683298050514,
+     0.55
+    ],
+    [
+     148.78032589238492,
+     0.46
+    ],
+    [
+     233.32955706220983,
+     0.37
+    ],
+    [
+     365.92662284008037,
+     0.28
+    ],
+    [
+     573.8762589235349,
+     0.19
+    ],
+    [
+     900.0,
+     0.1
+    ]
+   ],
+   "operator_per_day": 159822.78946774258,
+   "fast_per_day": 78584.99708830813,
+   "short_fee_share": 0.44448608866624917
+  },
+  "100% to 60 s": {
+   "points": [
+    [
+     60.0,
+     1.0
+    ],
+    [
+     78.661165382385,
+     0.91
+    ],
+    [
+     103.12631565524875,
+     0.82
+    ],
+    [
+     135.20060285055936,
+     0.73
+    ],
+    [
+     177.2506163437666,
+     0.64
+    ],
+    [
+     232.379000772445,
+     0.55
+    ],
+    [
+     304.6533835192445,
+     0.46
+    ],
+    [
+     399.4065030885077,
+     0.37
+    ],
+    [
+     523.6296832374196,
+     0.28
+    ],
+    [
+     686.4886852044084,
+     0.19
+    ],
+    [
+     900.0,
+     0.1
+    ]
+   ],
+   "operator_per_day": 159822.78946774258,
+   "fast_per_day": 78584.99708830813,
+   "short_fee_share": 0.6087847748205965
+  }
+ },
+ "log_linear_d3": {
+  "operator_per_day": 276336.5359468614,
+  "fast_per_day": 78584.99708830813
+ }
+}

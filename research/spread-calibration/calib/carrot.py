@@ -140,7 +140,7 @@ def recycling(trader: Trader, add_on_bps: float, market: dict, min_fills: int, e
             "forfeited": forfeited, "benefits": benefits, "wallets": wallets, "recycling_pays": gain > forfeited}
 
 
-def best_responses(year: dict, schedule: dict, market: dict, add_on_bps: float, min_fills: int, cap: float) -> dict:
+def best_responses(year: dict, schedule: dict, market: dict, add_on_bps: float, min_fills: int, cap: float, tier_fee=None) -> dict:
     """The latency strategy's best day for a trader that keeps its wallet against one that recycles,
     over holds, thresholds and fill sizes up to `cap`. `year` maps (hold, theta) to year sums
     (positive, negative, trades) per unit of size at the first tier's spread. A fill above the
@@ -148,8 +148,13 @@ def best_responses(year: dict, schedule: dict, market: dict, add_on_bps: float, 
     add-on; both widen each trade's result by a cost `c`, which lowers the fee-adjusted result by at
     least `(1 - fee) * c` (its slope is `1 - fee` on gains and one on losses), so the takes here
     are upper bounds. The keeper's tier is the one its counted volume earns (holds of `MIN_HOLD_S`
-    or more, every day); the recycler's is tier 0, and it pays for a wallet every `min_fills` fills."""
+    or more, every day); the recycler's is tier 0, and it pays for a wallet every `min_fills` fills.
+    `tier_fee(hold, tier)`, when given, is the fee a tier pays at a hold (#614, decision D7), in place
+    of `schedule`'s, which every tier pays alike."""
     from calib import fee
+
+    def fee_for(hold, tier):
+        return float(tier_fee(hold, tier)) if tier_fee else float(fee.fee_at(schedule, hold))
 
     bound, step = market["bound"], (market["s2_bps"] - market["s1_bps"]) / 1e4
 
@@ -161,7 +166,6 @@ def best_responses(year: dict, schedule: dict, market: dict, add_on_bps: float, 
     for who in ("keeper", "recycler"):
         best = {"per_day": 0.0}
         for (hold, theta), (pos, neg, n) in year.items():
-            f = float(fee.fee_at(schedule, hold))
             for size in sorted({TIERS[0].best_price_share * bound, bound, TIERS[-1].best_price_share * bound, cap}):
                 if size > cap:
                     continue
@@ -171,6 +175,7 @@ def best_responses(year: dict, schedule: dict, market: dict, add_on_bps: float, 
                 caught = 2 * n / 365 / HALF_LIFE_RATE >= min_fills
                 extra = add_on_bps / 1e4 if who == "keeper" and caught else 0.0
                 wallets = 2 * n / 365 / min_fills if who == "recycler" else 0.0
+                f = fee_for(hold, tier)
                 value = take(pos, neg, n, f, size, TIERS[tier].best_price_share * bound, extra) - wallets * WALLET_COST_USD
                 if value > best["per_day"]:
                     best = {"per_day": value, "hold_s": hold, "theta_bps": theta, "size": size, "tier": tier,
@@ -180,7 +185,7 @@ def best_responses(year: dict, schedule: dict, market: dict, add_on_bps: float, 
     # the keeper's tier's best price, leverage and fee floor, and the wallets.
     r = out["recycler"]
     if r["per_day"] > 0:
-        f = float(fee.fee_at(schedule, r["hold_s"]))
+        f = fee_for(r["hold_s"], 0)
         n = r["trades_per_day"]
         counted = 2 * r["size"] * n * 30 if r["hold_s"] >= MIN_HOLD_S else 0.0
         kept = TIERS[tier_for(counted)]

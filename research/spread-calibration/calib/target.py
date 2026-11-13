@@ -47,5 +47,6 @@ def target_flow(flow, holding_rows: list[dict], keep_short: float = KEEP_SHORT):
             classes.append(c)
             continue
         classes.append(replace(c, margin_share=c.margin_share * (1 - held) * keep_short))
-        classes.append(FlowClass(c.kind, 0, c.bucket, c.margin_share * held, float(mean_h), float(mean_sqrt_h), c.long_share))
+        classes.append(FlowClass(c.kind, 0, c.bucket, c.margin_share * held, float(mean_h), float(mean_sqrt_h), c.long_share,
+                                 min_hold_s=TARGET_FROM_S))
     return replace(flow, classes=classes)

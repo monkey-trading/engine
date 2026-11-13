@@ -1,0 +1,220 @@
+{
+ "flows": {
+  "current": {
+   "classes": {
+    "latency arbitrage, crypto (3 s)": {
+     "operator_per_day": 265060.29980326537,
+     "trigger_sees": true
+    },
+    "latency arbitrage, FX and indices at D6's tenths (3 s)": {
+     "operator_per_day": 196818.5709546014,
+     "trigger_sees": true
+    },
+    "unpriced pairs at 1% margin, tier 3's fee": {
+     "operator_per_day": 17396.568787353997,
+     "trigger_sees": true
+    },
+    "held sync's kill option": {
+     "operator_per_day": 1749.1551283316467,
+     "trigger_sees": true
+    },
+    "skimming client fills": {
+     "operator_per_day": 159248.35120847393,
+     "trigger_sees": false
+    },
+    "censoring closes": {
+     "operator_per_day": 0.0,
+     "trigger_sees": false
+    }
+   },
+   "together": 640272.9458820263,
+   "seen": 481024.59467355243,
+   "unseen": 159248.35120847393,
+   "share_bound": 1139058.7252045136,
+   "share_central": 1170438.5885275921,
+   "at_bound": {
+    "holds": true,
+    "operator_budget_per_day": 979810.3739960397,
+    "house_loss_budget_per_day": 1224762.9674950496,
+    "cut_needed_share": 0.0,
+    "alone": {
+     "latency arbitrage, crypto (3 s)": {
+      "holds": true,
+      "house_loss_budget_per_day": 1423823.406505642
+     },
+     "latency arbitrage, FX and indices at D6's tenths (3 s)": {
+      "holds": true,
+      "house_loss_budget_per_day": 1423823.406505642
+     },
+     "unpriced pairs at 1% margin, tier 3's fee": {
+      "holds": true,
+      "house_loss_budget_per_day": 1423823.406505642
+     },
+     "held sync's kill option": {
+      "holds": true,
+      "house_loss_budget_per_day": 1423823.406505642
+     },
+     "skimming client fills": {
+      "holds": true,
+      "house_loss_budget_per_day": 1423823.406505642
+     },
+     "censoring closes": {
+      "holds": true,
+      "house_loss_budget_per_day": 1423823.406505642
+     }
+    },
+    "stress_day_pairs_house_loss": 30558329.411673564,
+    "stress_day_holds": false
+   },
+   "at_central": {
+    "holds": true,
+    "operator_budget_per_day": 1011190.2373191182,
+    "house_loss_budget_per_day": 1263987.7966488977,
+    "cut_needed_share": 0.0,
+    "alone": {
+     "latency arbitrage, crypto (3 s)": {
+      "holds": true,
+      "house_loss_budget_per_day": 1463048.23565949
+     },
+     "latency arbitrage, FX and indices at D6's tenths (3 s)": {
+      "holds": true,
+      "house_loss_budget_per_day": 1463048.23565949
+     },
+     "unpriced pairs at 1% margin, tier 3's fee": {
+      "holds": true,
+      "house_loss_budget_per_day": 1463048.23565949
+     },
+     "held sync's kill option": {
+      "holds": true,
+      "house_loss_budget_per_day": 1463048.23565949
+     },
+     "skimming client fills": {
+      "holds": true,
+      "house_loss_budget_per_day": 1463048.23565949
+     },
+     "censoring closes": {
+      "holds": true,
+      "house_loss_budget_per_day": 1463048.23565949
+     }
+    },
+    "stress_day_pairs_house_loss": 30558329.411673564,
+    "stress_day_holds": false
+   }
+  },
+  "target": {
+   "classes": {
+    "latency arbitrage, crypto (3 s)": {
+     "operator_per_day": 265060.29980326537,
+     "trigger_sees": true
+    },
+    "latency arbitrage, FX and indices at D6's tenths (3 s)": {
+     "operator_per_day": 196818.5709546014,
+     "trigger_sees": true
+    },
+    "unpriced pairs at 1% margin, tier 3's fee": {
+     "operator_per_day": 17396.568787353997,
+     "trigger_sees": true
+    },
+    "held sync's kill option": {
+     "operator_per_day": 1749.1551283316467,
+     "trigger_sees": true
+    },
+    "skimming client fills": {
+     "operator_per_day": 46994.5843720141,
+     "trigger_sees": false
+    },
+    "censoring closes": {
+     "operator_per_day": 0.0,
+     "trigger_sees": false
+    }
+   },
+   "together": 528019.1790455666,
+   "seen": 481024.59467355243,
+   "unseen": 46994.5843720141,
+   "share_bound": 385067.8510347685,
+   "share_central": 388546.820496117,
+   "at_bound": {
+    "holds": false,
+    "operator_budget_per_day": 338073.2666627544,
+    "house_loss_budget_per_day": 422591.583328443,
+    "cut_needed_share": 0.2971809125639657,
+    "alone": {
+     "latency arbitrage, crypto (3 s)": {
+      "holds": true,
+      "house_loss_budget_per_day": 481334.8137934606
+     },
+     "latency arbitrage, FX and indices at D6's tenths (3 s)": {
+      "holds": true,
+      "house_loss_budget_per_day": 481334.8137934606
+     },
+     "unpriced pairs at 1% margin, tier 3's fee": {
+      "holds": true,
+      "house_loss_budget_per_day": 481334.8137934606
+     },
+     "held sync's kill option": {
+      "holds": true,
+      "house_loss_budget_per_day": 481334.8137934606
+     },
+     "skimming client fills": {
+      "holds": true,
+      "house_loss_budget_per_day": 481334.8137934606
+     },
+     "censoring closes": {
+      "holds": true,
+      "house_loss_budget_per_day": 481334.8137934606
+     }
+    },
+    "stress_day_pairs_house_loss": 30558329.411673564,
+    "stress_day_holds": false
+   },
+   "at_central": {
+    "holds": false,
+    "operator_budget_per_day": 341552.2361241029,
+    "house_loss_budget_per_day": 426940.2951551286,
+    "cut_needed_share": 0.28994849763160757,
+    "alone": {
+     "latency arbitrage, crypto (3 s)": {
+      "holds": true,
+      "house_loss_budget_per_day": 485683.52562014625
+     },
+     "latency arbitrage, FX and indices at D6's tenths (3 s)": {
+      "holds": true,
+      "house_loss_budget_per_day": 485683.52562014625
+     },
+     "unpriced pairs at 1% margin, tier 3's fee": {
+      "holds": true,
+      "house_loss_budget_per_day": 485683.52562014625
+     },
+     "held sync's kill option": {
+      "holds": true,
+      "house_loss_budget_per_day": 485683.52562014625
+     },
+     "skimming client fills": {
+      "holds": true,
+      "house_loss_budget_per_day": 485683.52562014625
+     },
+     "censoring closes": {
+      "holds": true,
+      "house_loss_budget_per_day": 485683.52562014625
+     }
+    },
+    "stress_day_pairs_house_loss": 30558329.411673564,
+    "stress_day_holds": false
+   }
+  }
+ },
+ "fill_ratio_target": 0.29510248624485236,
+ "fx_upper_less_best": 343756.3140428021,
+ "fastest_client": {
+  "crypto": 78584.99708830813,
+  "fx_and_indices": 22979.910069475045,
+  "total": 101564.90715778316,
+  "budget_per_day": 0.0
+ },
+ "pairs": {
+  "day": 21745.710984192498,
+  "lo": -150018.99651123074,
+  "hi": 280158.62764156895,
+  "stress": 30558329.411673564
+ }
+}
