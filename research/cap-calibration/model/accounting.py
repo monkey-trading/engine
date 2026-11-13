@@ -46,12 +46,13 @@ def realised_pnl(side, exit_price, fx_ratio=1.0):
     return side * (exit_price - 1.0) * fx_ratio
 
 
-def settle(pnl, balance, financing=0.0):
+def settle(pnl, balance, financing=0.0, fee_bps: float = PROFIT_FEE_BPS):
     """One account's exit: the profit fee, the bad debt written off against the house, and what is
     left to the client. Financing has already moved the balance at each rollover, so the account
     loses at most its balance after financing (`closeout.rs`, `settle_bad_debt`). Returns
-    `(fee, bad_debt, proceeds)`; the house takes `-pnl + fee - bad_debt`."""
-    fee = profit_fee(pnl)
+    `(fee, bad_debt, proceeds)`; the house takes `-pnl + fee - bad_debt`. `fee_bps` is the profit
+    fee at the position's hold, for a fee that falls with holding time."""
+    fee = profit_fee(pnl, fee_bps)
     equity = balance + pnl - fee - financing
     bad = np.maximum(-equity, 0.0)
     return fee, bad, equity + bad
@@ -113,3 +114,14 @@ def accepted_share(exposure, cap, longs, shorts):
     long_share, short_share = np.clip(long_room, 0.0, 1.0), np.clip(short_room, 0.0, 1.0)
     toward_zero = np.abs(exposure + longs - shorts) <= np.abs(exposure)
     return np.where(toward_zero, 1.0, long_share), np.where(toward_zero, 1.0, short_share)
+
+
+def fee_bps_at(schedule: tuple | None, hold_s: float) -> float:
+    """The profit fee in bps at a hold of `hold_s` under `schedule`, ((hold_s, fee share), ...)
+    rising holds, linear in the logarithm of the hold between its points, its first fee below
+    them and the standard fee past its last; the standard fee with no schedule."""
+    if not schedule:
+        return float(PROFIT_FEE_BPS)
+    holds = np.log([h for h, _ in schedule])
+    fees = np.array([f for _, f in schedule]) * 1e4
+    return float(np.interp(np.log(max(hold_s, 1e-3)), holds, fees, left=fees[0], right=PROFIT_FEE_BPS))

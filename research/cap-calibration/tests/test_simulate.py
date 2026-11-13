@@ -439,3 +439,59 @@ def test_the_farming_variants_scale_hedged_flow_alone():
     hedged = base["desired"] - base["desired_directional"]
     assert none["desired"] - none["desired_directional"] == 0.0
     assert double["desired"] - double["desired_directional"] == pytest.approx(2 * hedged)
+
+
+def test_spreads_are_house_income_on_a_flat_path():
+    without = run(bars(), market(), flow())
+    out = run(bars(), market(), flow(), spread_bps=(2.0,))
+    assert without["spread_income"] == 0.0
+    assert out["spread_income"] > 0.0
+    assert out["nav_end"] == pytest.approx(out["spread_income"])
+    assert float(out["identity_gap"]) < 1e-9
+
+
+def test_a_winning_close_pays_the_schedules_fee_at_its_hold():
+    out = run(bars(gap_at=50, gap=0.01), market(), flow(), fee_schedule=((3600.0, 0.5), (7200.0, 0.1)))
+    # The hour-long hold pays the schedule's 50% on its gain of 2, against the standard 0.2.
+    assert out["fee"] == pytest.approx(1.0, rel=1e-4)
+
+
+@pytest.mark.parametrize("f", [flow(), flow("hedged"), flow(hold_h=0, mean_hold_h=0.25), flow("hedged", hold_h=0, mean_hold_h=0.25)],
+                         ids=["directional", "pair", "churn", "hedged churn"])
+def test_every_fill_pays_the_spread_on_its_notional(f):
+    # 200 of notional opens each hour, as one position or a pair's two legs of 100; each pays the
+    # spread at its open and at its close.
+    out = run(bars(), market(), f, spread_bps=(2.0,))
+    assert out["spread_income"] == pytest.approx(2 * 2e-4 * 200 * prices.WEEK, rel=1e-9)
+    assert out["nav_end"] == pytest.approx(out["spread_income"], rel=1e-9)
+    assert float(out["identity_gap"]) < 1e-9
+
+
+SCHEDULE = ((60.0, 1.0), (7200.0, 0.1))
+
+
+@pytest.mark.parametrize("kind, legs", [("directional", 1), ("hedged", 2)])
+def test_churn_pays_the_schedules_fee_at_its_mean_hold(kind, legs):
+    # As the standard-fee churn tests, at the schedule's fee for a quarter-hour hold: each account
+    # pays it on its own expected gain, so a pair's two accounts pay it on both legs.
+    rate = accounting.fee_bps_at(SCHEDULE, 900.0) / 1e4
+    assert 0.1 < rate < 1.0
+    moves = {h: (0.01, -0.01, 0.0) for h in range(prices.WEEK)}
+    out = run(bars(hour_moves=moves), market(), flow(kind, hold_h=0, mean_hold_h=0.25), fee_schedule=SCHEDULE)
+    sigma = 0.02 / np.sqrt(4 * np.log(2))
+    gain = simulate.GAIN_PER_SD * sigma * np.sqrt(0.25) * (200.0 if kind == "directional" else 100.0 * legs)
+    assert out["fee"] == pytest.approx(rate * gain * prices.WEEK, rel=1e-6)
+    assert out["deposits"] == pytest.approx(rate * gain * prices.WEEK, rel=1e-6)
+    assert float(out["identity_gap"]) < 1e-9
+
+
+def test_a_pairs_winning_leg_pays_the_schedules_fee_at_its_hold():
+    # As `test_a_pair_never_moves_exposure_and_gaps_cost_the_house`, held an hour under a schedule:
+    # the short gains 1 and pays the schedule's fee at an hour; the long's loss past its balance is
+    # bad debt either way.
+    rate = accounting.fee_bps_at(SCHEDULE, 3600.0) / 1e4
+    assert 0.1 < rate < 1.0
+    out = run(bars(gap_at=50, gap=-0.01), market(), flow("hedged"), fee_schedule=SCHEDULE)
+    assert out["bad_debt"] == pytest.approx(0.5, rel=1e-4)
+    assert out["fee"] == pytest.approx(rate, rel=1e-4)
+    assert out["nav_end"] == pytest.approx(rate - 0.5, rel=1e-4)

@@ -95,3 +95,18 @@ def test_accepted_share_fills_the_reducing_side_and_the_crowded_side_up_to_the_c
     long_ok, short_ok = accounting.accepted_share(150.0, 100.0, 10.0, 0.0)  # already past the cap
     assert (long_ok, short_ok) == (0.0, 1.0)
     assert accounting.accepted_share(0.0, 100.0, 50.0, 40.0) == (1.0, 1.0)
+
+
+def test_fee_bps_at_follows_the_schedule_and_falls_back_to_the_standard_fee():
+    schedule = ((300.0, 1.0), (1800.0, 0.1))
+    assert accounting.fee_bps_at(None, 5.0) == accounting.PROFIT_FEE_BPS
+    assert accounting.fee_bps_at(schedule, 10.0) == pytest.approx(10_000)
+    assert accounting.fee_bps_at(schedule, (300.0 * 1800.0) ** 0.5) == pytest.approx(5_500)
+    assert accounting.fee_bps_at(schedule, 7200.0) == pytest.approx(accounting.PROFIT_FEE_BPS)
+
+
+def test_settle_charges_the_fee_it_is_given():
+    fee, bad, proceeds = accounting.settle(np.array([2.0]), np.array([1.0]), fee_bps=5_000)
+    assert fee[0] == pytest.approx(1.0)
+    assert bad[0] == 0.0
+    assert proceeds[0] == pytest.approx(2.0)
