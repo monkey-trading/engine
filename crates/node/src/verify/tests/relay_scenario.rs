@@ -22,7 +22,7 @@ async fn dev_scenario_relayed_collateral() -> anyhow::Result<()> {
 
     let (chain, enclave, attestation) = fixtures();
     let stub = kds_stub(&chain).await;
-    let dir = std::env::temp_dir().join(format!("relayed-collateral-{}", std::process::id()));
+    let dir = crate::test_support::scratch_dir("relayed-collateral");
     std::fs::create_dir_all(&dir)?;
     let (attestation_path, release_path, root_path) =
         (dir.join("attestation.json"), dir.join("release.toml"), dir.join("root.pem"));

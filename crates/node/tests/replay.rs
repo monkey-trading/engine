@@ -111,10 +111,28 @@ fn engine_replay_exits_non_zero_on_a_missing_log() {
     );
 }
 
-/// An empty directory for one test, named after it.
-fn scratch(name: &str) -> PathBuf {
+/// An empty directory for one test, named after it, removed when the test ends. A failed test's stays.
+fn scratch(name: &str) -> Scratch {
     let dir = std::env::temp_dir().join(format!("engine-node-replay-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    dir
+    Scratch(dir)
+}
+
+struct Scratch(PathBuf);
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 }
