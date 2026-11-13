@@ -1,0 +1,2169 @@
+{
+ "curve": [
+  10.0,
+  900.0
+ ],
+ "crypto": {
+  "0.25/BTC-USD": {
+   "who": "recycler",
+   "per_day": 6652.812185566575,
+   "hold_s": 900.0,
+   "theta_bps": 12.0,
+   "size": 6900000.0,
+   "tier": 0,
+   "trades_per_day": 1.3237517771000156,
+   "counted_per_month": 548033235.7194065
+  },
+  "0.25/ETH-USD": {
+   "who": "recycler",
+   "per_day": 22430.852491922367,
+   "hold_s": 900.0,
+   "theta_bps": 12.0,
+   "size": 6900000.0,
+   "tier": 0,
+   "trades_per_day": 9.044392869727934,
+   "counted_per_month": 3744378648.0673647
+  },
+  "0.25/SOL-USD": {
+   "who": "recycler",
+   "per_day": 49501.33241081919,
+   "hold_s": 1800.0,
+   "theta_bps": 12.0,
+   "size": 6900000.0,
+   "tier": 0,
+   "trades_per_day": 11.46887492861222,
+   "counted_per_month": 4748114220.445459
+  },
+  "3.0/BTC-USD": {
+   "who": "recycler",
+   "per_day": 24240.27747298084,
+   "hold_s": 900.0,
+   "theta_bps": 12.0,
+   "size": 6900000.0,
+   "tier": 0,
+   "trades_per_day": 7.324495425106625,
+   "counted_per_month": 3032341105.9941425
+  },
+  "3.0/ETH-USD": {
+   "who": "recycler",
+   "per_day": 78662.68041476989,
+   "hold_s": 900.0,
+   "theta_bps": 20.0,
+   "size": 6900000.0,
+   "tier": 0,
+   "trades_per_day": 11.546083089298516,
+   "counted_per_month": 4780078398.969586
+  },
+  "3.0/SOL-USD": {
+   "who": "recycler",
+   "per_day": 96875.52894692749,
+   "hold_s": 900.0,
+   "theta_bps": 12.0,
+   "size": 6900000.0,
+   "tier": 0,
+   "trades_per_day": 26.803990424924358,
+   "counted_per_month": 11096852035.918684
+  }
+ },
+ "stratum_shares": {
+  "0.25/BTC-USD": [
+   0.0,
+   0.0,
+   0.39327039810201586,
+   0.11735945002649818,
+   0.489370151871486
+  ],
+  "0.25/ETH-USD": [
+   0.0,
+   0.27204493662882645,
+   0.649377576260373,
+   0.06285120581435355,
+   0.015726281296446983
+  ],
+  "0.25/SOL-USD": [
+   0.4963657853303931,
+   0.33527144179640384,
+   0.10420616849782872,
+   0.06481685833609634,
+   -0.0006602539607218858
+  ],
+  "3.0/BTC-USD": [
+   0.0,
+   0.23474017386592214,
+   0.3265414389708827,
+   0.24771083776445083,
+   0.19100754939874437
+  ],
+  "3.0/ETH-USD": [
+   0.0,
+   0.3718771739911915,
+   0.42425520997690974,
+   0.15447565210369577,
+   0.04939196392820289
+  ],
+  "3.0/SOL-USD": [
+   0.26193969546721096,
+   0.3925117800308163,
+   0.22580923878428039,
+   0.09221773284828065,
+   0.02752155286941162
+  ]
+ },
+ "fx_house_loss": {
+  "EUR-USD": {
+   "0.25s": 1193.3389233483877,
+   "3.0s": 2925.360551206929
+  },
+  "GBP-USD": {
+   "0.25s": 1190.7912892324348,
+   "3.0s": 2914.3914833927297
+  },
+  "USD-JPY": {
+   "0.25s": 1667.778874946006,
+   "3.0s": 4416.193413923299
+  },
+  "AUD-USD": {
+   "0.25s": 1579.4608859542125,
+   "3.0s": 4035.9585627127967
+  },
+  "US500": {
+   "0.25s": 3196.69917648242,
+   "3.0s": 11886.835714235953
+  },
+  "US100": {
+   "0.25s": 4738.778577359387,
+   "3.0s": 18076.465608240782
+  },
+  "US30": {
+   "0.25s": 3080.2404434766495,
+   "3.0s": 10816.253161113198
+  },
+  "JP225": {
+   "0.25s": 6332.821898675549,
+   "3.0s": 24170.183518969872
+  }
+ },
+ "triggers": [
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 154407.99167124412,
+    "fx_indices": 62358.821621757495
+   },
+   "fastest": {
+    "crypto": 76380.76032745969,
+    "fx_indices": 22604.909434122805
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 154328.5892239812,
+    "fx_indices": 62283.85615540552
+   },
+   "fastest": {
+    "crypto": 76445.64108869217,
+    "fx_indices": 22578.372718412436
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 157270.92313330347,
+    "fx_indices": 62993.73649443429
+   },
+   "fastest": {
+    "crypto": 77545.55223445944,
+    "fx_indices": 22835.06441175036
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 157333.7048263204,
+    "fx_indices": 62936.25273495508
+   },
+   "fastest": {
+    "crypto": 77624.727021622,
+    "fx_indices": 22814.871853300345
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 158409.47021217586,
+    "fx_indices": 63194.12442874434
+   },
+   "fastest": {
+    "crypto": 77999.61940154078,
+    "fx_indices": 22907.704512845365
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 158460.0767470555,
+    "fx_indices": 63168.17244049394
+   },
+   "fastest": {
+    "crypto": 78068.53687847404,
+    "fx_indices": 22898.58993960935
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 159096.11685548734,
+    "fx_indices": 63301.6194157328
+   },
+   "fastest": {
+    "crypto": 78285.52705366447,
+    "fx_indices": 22946.671163951043
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 159051.34282443742,
+    "fx_indices": 63279.008358070314
+   },
+   "fastest": {
+    "crypto": 78294.1258024378,
+    "fx_indices": 22938.96287872366
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159637.06781656554,
+    "fx_indices": 63375.84903422329
+   },
+   "fastest": {
+    "crypto": 78494.19858135018,
+    "fx_indices": 22973.579206144095
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159624.21517488864,
+    "fx_indices": 63372.808159153436
+   },
+   "fastest": {
+    "crypto": 78502.97729349765,
+    "fx_indices": 22972.559509803723
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 153872.3556031389,
+    "fx_indices": 61598.523488445164
+   },
+   "fastest": {
+    "crypto": 75850.79561913933,
+    "fx_indices": 22329.303353066563
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 152992.7201324574,
+    "fx_indices": 61390.17397153695
+   },
+   "fastest": {
+    "crypto": 75721.39794666215,
+    "fx_indices": 22256.050183433497
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 157073.94421757685,
+    "fx_indices": 62705.446968187694
+   },
+   "fastest": {
+    "crypto": 77402.21861343352,
+    "fx_indices": 22730.560213913872
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 156784.7800101415,
+    "fx_indices": 62603.352397045
+   },
+   "fastest": {
+    "crypto": 77381.16238536048,
+    "fx_indices": 22694.62484980971
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 158242.25893320204,
+    "fx_indices": 63030.87713885233
+   },
+   "fastest": {
+    "crypto": 77926.2316229815,
+    "fx_indices": 22848.527798029325
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 158206.1119285928,
+    "fx_indices": 62986.75695421433
+   },
+   "fastest": {
+    "crypto": 77974.37378854664,
+    "fx_indices": 22832.695942039558
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 158888.62154993086,
+    "fx_indices": 63197.31765610249
+   },
+   "fastest": {
+    "crypto": 78194.78920918278,
+    "fx_indices": 22908.862049395226
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 158896.56039967525,
+    "fx_indices": 63204.11668552667
+   },
+   "fastest": {
+    "crypto": 78239.74073365219,
+    "fx_indices": 22910.923219687313
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159635.12817618833,
+    "fx_indices": 63357.79541547026
+   },
+   "fastest": {
+    "crypto": 78511.4319818345,
+    "fx_indices": 22967.03481665345
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159592.66271331953,
+    "fx_indices": 63356.08830697168
+   },
+   "fastest": {
+    "crypto": 78501.63960343011,
+    "fx_indices": 22966.43824043336
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 154874.98545244243,
+    "fx_indices": 60936.93638336912
+   },
+   "fastest": {
+    "crypto": 75791.7089699338,
+    "fx_indices": 22089.479761085633
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 152413.55815817695,
+    "fx_indices": 60749.409216536435
+   },
+   "fastest": {
+    "crypto": 75306.74232903539,
+    "fx_indices": 22024.336230146426
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 157167.1313446179,
+    "fx_indices": 62448.376664753276
+   },
+   "fastest": {
+    "crypto": 77278.87281189428,
+    "fx_indices": 22637.372902540592
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 156709.68411586015,
+    "fx_indices": 62407.817036430555
+   },
+   "fastest": {
+    "crypto": 77211.17675075104,
+    "fx_indices": 22621.722484686536
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 158235.77818283925,
+    "fx_indices": 62950.364406336754
+   },
+   "fastest": {
+    "crypto": 77860.99626614836,
+    "fx_indices": 22819.342143466325
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 157987.46074725568,
+    "fx_indices": 62914.211306693825
+   },
+   "fastest": {
+    "crypto": 77775.24066870971,
+    "fx_indices": 22804.98256954471
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 158967.65639858332,
+    "fx_indices": 63145.08927076892
+   },
+   "fastest": {
+    "crypto": 78186.25943178414,
+    "fx_indices": 22889.929396569987
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 158692.90839679877,
+    "fx_indices": 63144.405683274905
+   },
+   "fastest": {
+    "crypto": 78108.16236811152,
+    "fx_indices": 22889.475288986767
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159678.29627120725,
+    "fx_indices": 63342.542329448836
+   },
+   "fastest": {
+    "crypto": 78503.20531173136,
+    "fx_indices": 22961.505612939553
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159675.6480973835,
+    "fx_indices": 63362.57165499704
+   },
+   "fastest": {
+    "crypto": 78512.69077451318,
+    "fx_indices": 22968.43575866179
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 157035.48041154078,
+    "fx_indices": 62351.01939957175
+   },
+   "fastest": {
+    "crypto": 77248.8300570978,
+    "fx_indices": 22602.08114902525
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 156065.4023133111,
+    "fx_indices": 61975.28036339062
+   },
+   "fastest": {
+    "crypto": 76926.52661937989,
+    "fx_indices": 22463.78037055406
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 158427.7663343721,
+    "fx_indices": 62959.21036950365
+   },
+   "fastest": {
+    "crypto": 77951.63593025501,
+    "fx_indices": 22822.54878193455
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 158170.6059961369,
+    "fx_indices": 62782.43100301356
+   },
+   "fastest": {
+    "crypto": 77871.36457264292,
+    "fx_indices": 22758.088453403416
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 159024.72007741148,
+    "fx_indices": 63170.11838617808
+   },
+   "fastest": {
+    "crypto": 78237.48141876461,
+    "fx_indices": 22899.002385320033
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 158912.95560846195,
+    "fx_indices": 63076.40041603625
+   },
+   "fastest": {
+    "crypto": 78210.8459436616,
+    "fx_indices": 22865.074143248894
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 159368.44385826704,
+    "fx_indices": 63277.179342263495
+   },
+   "fastest": {
+    "crypto": 78394.94239847448,
+    "fx_indices": 22937.811701360682
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 159370.31617281714,
+    "fx_indices": 63232.13385929992
+   },
+   "fastest": {
+    "crypto": 78403.63101500146,
+    "fx_indices": 22921.49807584755
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159720.14661569617,
+    "fx_indices": 63365.8766575223
+   },
+   "fastest": {
+    "crypto": 78540.90404248117,
+    "fx_indices": 22969.964245721385
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159722.84943234318,
+    "fx_indices": 63358.012212919435
+   },
+   "fastest": {
+    "crypto": 78546.8629671145,
+    "fx_indices": 22967.16864697479
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 156326.73679919317,
+    "fx_indices": 61515.70625851577
+   },
+   "fastest": {
+    "crypto": 76550.29456533171,
+    "fx_indices": 22299.28232422971
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 154144.86576073174,
+    "fx_indices": 60887.979242650705
+   },
+   "fastest": {
+    "crypto": 75936.47517738427,
+    "fx_indices": 22070.327483623907
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 158160.7711814309,
+    "fx_indices": 62674.45509489617
+   },
+   "fastest": {
+    "crypto": 77718.25589205167,
+    "fx_indices": 22719.325741056156
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 157304.34643179202,
+    "fx_indices": 62372.57994892998
+   },
+   "fastest": {
+    "crypto": 77472.79122996422,
+    "fx_indices": 22609.017662653714
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 158901.7374193957,
+    "fx_indices": 63044.972809132305
+   },
+   "fastest": {
+    "crypto": 78142.0646317963,
+    "fx_indices": 22853.637441569816
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 158515.52987369936,
+    "fx_indices": 62874.90617645857
+   },
+   "fastest": {
+    "crypto": 78006.84297912812,
+    "fx_indices": 22791.76091813911
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 159341.94304567273,
+    "fx_indices": 63208.14776054047
+   },
+   "fastest": {
+    "crypto": 78352.79382718264,
+    "fx_indices": 22912.787933875014
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 159131.51374563153,
+    "fx_indices": 63120.9160868593
+   },
+   "fastest": {
+    "crypto": 78284.41511308866,
+    "fx_indices": 22881.21127563899
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159668.514869212,
+    "fx_indices": 63343.317384632865
+   },
+   "fastest": {
+    "crypto": 78511.11598760079,
+    "fx_indices": 22961.78656841282
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159665.79466702457,
+    "fx_indices": 63340.29937741729
+   },
+   "fastest": {
+    "crypto": 78517.99650461391,
+    "fx_indices": 22960.614598973436
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 156036.38091338388,
+    "fx_indices": 60854.86320641637
+   },
+   "fastest": {
+    "crypto": 76071.92022349434,
+    "fx_indices": 22059.72844950312
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 153310.14251235162,
+    "fx_indices": 60522.4988077689
+   },
+   "fastest": {
+    "crypto": 75407.59926928033,
+    "fx_indices": 21938.139465180047
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 158230.6313435751,
+    "fx_indices": 62398.008411861345
+   },
+   "fastest": {
+    "crypto": 77544.55574277525,
+    "fx_indices": 22619.114542851195
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 156951.7693453704,
+    "fx_indices": 62284.47522502728
+   },
+   "fastest": {
+    "crypto": 77225.45163201513,
+    "fx_indices": 22575.824527985867
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 158955.46054240112,
+    "fx_indices": 62947.202181185974
+   },
+   "fastest": {
+    "crypto": 78060.29144049918,
+    "fx_indices": 22818.195845135393
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 158203.9273553697,
+    "fx_indices": 62820.259576624834
+   },
+   "fastest": {
+    "crypto": 77825.7071935438,
+    "fx_indices": 22771.236017207884
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 159212.79045455178,
+    "fx_indices": 63140.73862766932
+   },
+   "fastest": {
+    "crypto": 78242.90809885491,
+    "fx_indices": 22888.352299846716
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 158866.19763959083,
+    "fx_indices": 63107.946488450376
+   },
+   "fastest": {
+    "crypto": 78149.01187481912,
+    "fx_indices": 22875.984141882538
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159689.50199048736,
+    "fx_indices": 63335.32914920294
+   },
+   "fastest": {
+    "crypto": 78511.34836763985,
+    "fx_indices": 22958.890854001682
+   }
+  },
+  {
+   "flow": "current",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159679.82629432227,
+    "fx_indices": 63341.467948374375
+   },
+   "fastest": {
+    "crypto": 78511.74501240568,
+    "fx_indices": 22960.937458573062
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 153790.17221552125,
+    "fx_indices": 62317.402672723685
+   },
+   "fastest": {
+    "crypto": 76203.47030635529,
+    "fx_indices": 22589.895173631397
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 153602.70546258258,
+    "fx_indices": 62213.8798280587
+   },
+   "fastest": {
+    "crypto": 76243.94427536288,
+    "fx_indices": 22548.843522515708
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 156858.4116953518,
+    "fx_indices": 62953.03059616976
+   },
+   "fastest": {
+    "crypto": 77439.02321091045,
+    "fx_indices": 22820.308630294363
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 156904.85720084328,
+    "fx_indices": 62944.931469029456
+   },
+   "fastest": {
+    "crypto": 77498.33536976541,
+    "fx_indices": 22816.264902740793
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 158091.0361959207,
+    "fx_indices": 63166.22244211976
+   },
+   "fastest": {
+    "crypto": 77918.19543357084,
+    "fx_indices": 22897.59011580774
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 158164.29850889393,
+    "fx_indices": 63181.815984284345
+   },
+   "fastest": {
+    "crypto": 77960.49262998451,
+    "fx_indices": 22902.31438427167
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 158967.63154912888,
+    "fx_indices": 63290.241605631454
+   },
+   "fastest": {
+    "crypto": 78262.84779903552,
+    "fx_indices": 22942.54673760348
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 158877.62618490594,
+    "fx_indices": 63284.18874361406
+   },
+   "fastest": {
+    "crypto": 78224.54581677442,
+    "fx_indices": 22939.848292796985
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159645.3586784234,
+    "fx_indices": 63377.06845437948
+   },
+   "fastest": {
+    "crypto": 78507.13594058264,
+    "fx_indices": 22974.021242755363
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 60,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159613.07561921838,
+    "fx_indices": 63369.21713784145
+   },
+   "fastest": {
+    "crypto": 78512.2036670979,
+    "fx_indices": 22971.184092955158
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 151819.87798055206,
+    "fx_indices": 61372.02136146833
+   },
+   "fastest": {
+    "crypto": 75172.28140967245,
+    "fx_indices": 22247.196925558936
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 151763.42999975776,
+    "fx_indices": 61390.76344972181
+   },
+   "fastest": {
+    "crypto": 75283.20724365607,
+    "fx_indices": 22252.138237252846
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 156445.91760781646,
+    "fx_indices": 62629.82225036597
+   },
+   "fastest": {
+    "crypto": 77209.69186407639,
+    "fx_indices": 22703.146451868943
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 156061.95885930973,
+    "fx_indices": 62590.10023605287
+   },
+   "fastest": {
+    "crypto": 77118.7973747026,
+    "fx_indices": 22687.87475097093
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 158092.61317622766,
+    "fx_indices": 63035.837492030034
+   },
+   "fastest": {
+    "crypto": 77901.85850232924,
+    "fx_indices": 22850.325913058237
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 157761.1081910248,
+    "fx_indices": 62976.88763121792
+   },
+   "fastest": {
+    "crypto": 77822.66347395236,
+    "fx_indices": 22828.176134062967
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 158861.1192337154,
+    "fx_indices": 63207.548384531496
+   },
+   "fastest": {
+    "crypto": 78208.75571534502,
+    "fx_indices": 22912.570661642352
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 158689.06474618654,
+    "fx_indices": 63197.349759437624
+   },
+   "fastest": {
+    "crypto": 78185.86166870502,
+    "fx_indices": 22908.429931783605
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159644.4358277303,
+    "fx_indices": 63359.44886652951
+   },
+   "fastest": {
+    "crypto": 78517.62504427106,
+    "fx_indices": 22967.634188329757
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 360,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159560.8058477536,
+    "fx_indices": 63357.33501864828
+   },
+   "fastest": {
+    "crypto": 78482.15912070294,
+    "fx_indices": 22966.87339487049
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 151731.11057676733,
+    "fx_indices": 60863.60582889208
+   },
+   "fastest": {
+    "crypto": 74875.8012958197,
+    "fx_indices": 22062.897627241575
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 151247.55801193943,
+    "fx_indices": 60766.02122483813
+   },
+   "fastest": {
+    "crypto": 74963.7265536603,
+    "fx_indices": 22025.51825548777
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 156357.65217434458,
+    "fx_indices": 62404.04350822756
+   },
+   "fastest": {
+    "crypto": 77041.52078034605,
+    "fx_indices": 22621.302249469707
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 155793.25620156914,
+    "fx_indices": 62339.705449146444
+   },
+   "fastest": {
+    "crypto": 76995.64860040172,
+    "fx_indices": 22597.32435911946
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 157941.8988082893,
+    "fx_indices": 62906.930313824494
+   },
+   "fastest": {
+    "crypto": 77752.74878923176,
+    "fx_indices": 22803.597398744427
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 157440.3902392691,
+    "fx_indices": 62868.05757278553
+   },
+   "fastest": {
+    "crypto": 77693.96098694918,
+    "fx_indices": 22789.42049823392
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 158734.95372281616,
+    "fx_indices": 63156.02271589811
+   },
+   "fastest": {
+    "crypto": 78138.67254737232,
+    "fx_indices": 22893.892741779542
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 158397.35750636554,
+    "fx_indices": 63148.4321458964
+   },
+   "fastest": {
+    "crypto": 78079.05860337168,
+    "fx_indices": 22890.48671138854
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159645.12887302914,
+    "fx_indices": 63342.12896668404
+   },
+   "fastest": {
+    "crypto": 78487.51184269993,
+    "fx_indices": 22961.35577002048
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "marked",
+   "window_min": 1440,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159500.5730059014,
+    "fx_indices": 63352.693725534366
+   },
+   "fastest": {
+    "crypto": 78452.12433712577,
+    "fx_indices": 22965.199410874586
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 155919.87613464255,
+    "fx_indices": 62294.21302161792
+   },
+   "fastest": {
+    "crypto": 76853.91060973998,
+    "fx_indices": 22581.48898587125
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 155350.0128814761,
+    "fx_indices": 56836.12523379772
+   },
+   "fastest": {
+    "crypto": 76634.00151399727,
+    "fx_indices": 19915.518923335367
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 158052.21577367838,
+    "fx_indices": 62930.15096713761
+   },
+   "fastest": {
+    "crypto": 77808.1607213212,
+    "fx_indices": 22812.014824723512
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 157707.43197575505,
+    "fx_indices": 62767.1832900953
+   },
+   "fastest": {
+    "crypto": 77679.6070907411,
+    "fx_indices": 22752.61369734997
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 158942.71052325598,
+    "fx_indices": 63169.033308920465
+   },
+   "fastest": {
+    "crypto": 78196.51245377655,
+    "fx_indices": 22898.609047657454
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 158679.54469192663,
+    "fx_indices": 63075.23455208446
+   },
+   "fastest": {
+    "crypto": 78106.0539834942,
+    "fx_indices": 22864.4527040971
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 159404.503507795,
+    "fx_indices": 63283.68980580923
+   },
+   "fastest": {
+    "crypto": 78401.28843481606,
+    "fx_indices": 22940.17172733613
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 159201.86401533193,
+    "fx_indices": 63231.61180539582
+   },
+   "fastest": {
+    "crypto": 78335.39950203124,
+    "fx_indices": 22921.182362035222
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159713.37988768425,
+    "fx_indices": 63370.27897096749
+   },
+   "fastest": {
+    "crypto": 78540.50228771708,
+    "fx_indices": 22971.560072809545
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 60,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159733.0044143131,
+    "fx_indices": 63360.55410704076
+   },
+   "fastest": {
+    "crypto": 78551.50478769655,
+    "fx_indices": 22967.946045663062
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 153825.62501197527,
+    "fx_indices": 61265.38410221684
+   },
+   "fastest": {
+    "crypto": 75736.61105521335,
+    "fx_indices": 22208.541198510342
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 152690.852122377,
+    "fx_indices": 60834.60531323773
+   },
+   "fastest": {
+    "crypto": 75386.34644061932,
+    "fx_indices": 22048.725039320372
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 157256.5141249625,
+    "fx_indices": 62546.312637805524
+   },
+   "fastest": {
+    "crypto": 77361.66501118016,
+    "fx_indices": 22672.87443614264
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 156494.40994094865,
+    "fx_indices": 62344.3849082775
+   },
+   "fastest": {
+    "crypto": 77188.3271032743,
+    "fx_indices": 22598.487834065505
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 158498.25234752442,
+    "fx_indices": 62994.97658272871
+   },
+   "fastest": {
+    "crypto": 77964.37531216965,
+    "fx_indices": 22835.51394050759
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 157972.6476875099,
+    "fx_indices": 62860.408185933746
+   },
+   "fastest": {
+    "crypto": 77839.49722580747,
+    "fx_indices": 22786.040282223308
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 159184.66449572204,
+    "fx_indices": 63204.727183661686
+   },
+   "fastest": {
+    "crypto": 78287.0711590546,
+    "fx_indices": 22911.547983719658
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 158901.6400359968,
+    "fx_indices": 63135.75319180666
+   },
+   "fastest": {
+    "crypto": 78207.18749558581,
+    "fx_indices": 22885.74599624509
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159638.2328457093,
+    "fx_indices": 63344.526470719924
+   },
+   "fastest": {
+    "crypto": 78508.07642394987,
+    "fx_indices": 22962.22485895112
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 360,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159629.11153331006,
+    "fx_indices": 63342.22470589936
+   },
+   "fastest": {
+    "crypto": 78509.6463092128,
+    "fx_indices": 22961.169803963538
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.05,
+   "scope": "house",
+   "operator": {
+    "crypto": 152829.38327044368,
+    "fx_indices": 60702.71470675947
+   },
+   "fastest": {
+    "crypto": 75134.15846146984,
+    "fx_indices": 22004.57501706427
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.05,
+   "scope": "market",
+   "operator": {
+    "crypto": 151593.42754687942,
+    "fx_indices": 60447.444626706354
+   },
+   "fastest": {
+    "crypto": 74944.40963412795,
+    "fx_indices": 21909.41815697681
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.02,
+   "scope": "house",
+   "operator": {
+    "crypto": 156410.21308281654,
+    "fx_indices": 62282.917884069524
+   },
+   "fastest": {
+    "crypto": 76997.32007888496,
+    "fx_indices": 22577.394528107496
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.02,
+   "scope": "market",
+   "operator": {
+    "crypto": 155775.89810539022,
+    "fx_indices": 62217.172501780165
+   },
+   "fastest": {
+    "crypto": 76934.39454480875,
+    "fx_indices": 22552.275441822425
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.01,
+   "scope": "house",
+   "operator": {
+    "crypto": 157872.14145836292,
+    "fx_indices": 62840.64759448744
+   },
+   "fastest": {
+    "crypto": 77734.28447776326,
+    "fx_indices": 22779.570086670614
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.01,
+   "scope": "market",
+   "operator": {
+    "crypto": 157329.44842726982,
+    "fx_indices": 62805.3198807631
+   },
+   "fastest": {
+    "crypto": 77633.94760193212,
+    "fx_indices": 22765.739178586668
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.005,
+   "scope": "house",
+   "operator": {
+    "crypto": 158760.16767748588,
+    "fx_indices": 63129.102465839955
+   },
+   "fastest": {
+    "crypto": 78104.03189520031,
+    "fx_indices": 22884.13422167473
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.005,
+   "scope": "market",
+   "operator": {
+    "crypto": 158460.08329607476,
+    "fx_indices": 63107.28579086913
+   },
+   "fastest": {
+    "crypto": 78063.20291145952,
+    "fx_indices": 22875.547060766785
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.001,
+   "scope": "house",
+   "operator": {
+    "crypto": 159619.92937894008,
+    "fx_indices": 63338.93573932588
+   },
+   "fastest": {
+    "crypto": 78480.72495770734,
+    "fx_indices": 22960.198233470615
+   }
+  },
+  {
+   "flow": "target",
+   "measure": "realised",
+   "window_min": 1440,
+   "fire_rate": 0.001,
+   "scope": "market",
+   "operator": {
+    "crypto": 159551.47118423495,
+    "fx_indices": 63343.73106518869
+   },
+   "fastest": {
+    "crypto": 78509.4737252874,
+    "fx_indices": 22961.199861199908
+   }
+  }
+ ],
+ "fastest_without_trigger": {
+  "BTC-USD": {
+   "spread": {
+    "0.0": 23345.473894130235,
+    "0.5": 14193.620210229052,
+    "1.0": 10514.316886900133,
+    "1.5": 7237.910471044783,
+    "2.0": 6415.8606174656725,
+    "2.5": 5593.810763886563,
+    "3.0": 4771.760910307454,
+    "3.5": 3949.7110567283435,
+    "4.0": 3869.0637410521476,
+    "4.5": 3789.379669943844,
+    "5.0": 3709.695598835542,
+    "5.5": 3630.0115277272394,
+    "6.0": 3550.327456618936,
+    "6.5": 3470.6433855106334,
+    "7.0": 3390.9593144023306,
+    "7.5": 3311.275243294028,
+    "8.0": 3231.5911721857246,
+    "8.5": 3151.907101077422,
+    "9.0": 3072.223029969119,
+    "9.5": 2994.817309945274,
+    "10.0": 2968.658868263598,
+    "10.5": 2942.500426581921,
+    "11.0": 2916.341984900245,
+    "11.5": 2890.1835432185685,
+    "12.0": 2864.0251015368917,
+    "12.5": 2837.8666598552154,
+    "13.0": 2811.708218173539,
+    "13.5": 2785.5497764918623,
+    "14.0": 2759.3913348101864,
+    "14.5": 2733.2328931285097,
+    "15.0": 2707.074451446834,
+    "15.5": 2680.9160097651575,
+    "16.0": 2654.7575680834807,
+    "16.5": 2628.5991264018044,
+    "17.0": 2602.4406847201276,
+    "17.5": 2576.2822430384517,
+    "18.0": 2550.123801356775,
+    "18.5": 2523.9653596750986,
+    "19.0": 2497.806917993422,
+    "19.5": 2471.648476311746,
+    "20.0": 2445.490034630069
+   },
+   "fee_floor": {
+    "0.1": 23345.473894130235,
+    "0.15": 12498.943038250236,
+    "0.2": 10533.380659251538,
+    "0.25": 8744.99096375883,
+    "0.3": 8744.99096375883,
+    "0.35": 6726.806866406329,
+    "0.4": 2722.4733399132647,
+    "0.45": 2350.104302549461,
+    "0.5": 2290.7921623734405,
+    "0.55": 1922.8126111768313,
+    "0.6": 1709.1667654905168,
+    "0.65": 1495.520919804202,
+    "0.7": 1281.8750741178876,
+    "0.75": 1068.229228431573,
+    "0.8": 854.5833827452581,
+    "0.85": 640.9375370589438,
+    "0.9": 427.29169137262903,
+    "0.95": 213.6458456863148,
+    "1.0": 0.0
+   }
+  },
+  "ETH-USD": {
+   "spread": {
+    "0.0": 54918.3116799851,
+    "0.5": 49301.74370788405,
+    "1.0": 43685.175735783014,
+    "1.5": 38068.60776368196,
+    "2.0": 32452.03979158091,
+    "2.5": 26835.471819479866,
+    "3.0": 21218.90384737882,
+    "3.5": 18977.312634508053,
+    "4.0": 17368.70855902535,
+    "4.5": 15760.104483542646,
+    "5.0": 14151.500408059943,
+    "5.5": 12542.896332577238,
+    "6.0": 10934.292257094537,
+    "6.5": 9325.688181611835,
+    "7.0": 7876.02126822216,
+    "7.5": 7542.86941092481,
+    "8.0": 7209.717553627461,
+    "8.5": 6876.565696330111,
+    "9.0": 6543.413839032762,
+    "9.5": 6210.261981735412,
+    "10.0": 5877.110124438061,
+    "10.5": 5543.9582671407115,
+    "11.0": 5210.8064098433615,
+    "11.5": 4877.654552546012,
+    "12.0": 4544.502695248663,
+    "12.5": 4211.350837951312,
+    "13.0": 3878.1989806539627,
+    "13.5": 3545.047123356612,
+    "14.0": 3211.895266059262,
+    "14.5": 2878.743408761914,
+    "15.0": 2545.591551464562,
+    "15.5": 2212.439694167215,
+    "16.0": 1879.2878368698632,
+    "16.5": 1546.1359795725132,
+    "17.0": 1212.9841222751638,
+    "17.5": 879.8322649778142,
+    "18.0": 546.6804076804647,
+    "18.5": 213.5285503831129,
+    "19.0": 0.0,
+    "19.5": 0.0,
+    "20.0": 0.0
+   },
+   "fee_floor": {
+    "0.1": 54918.3116799851,
+    "0.15": 47106.61529811396,
+    "0.2": 42004.34931114257,
+    "0.25": 34898.14309928846,
+    "0.3": 27791.93688743438,
+    "0.35": 20685.730675580307,
+    "0.4": 15243.627090107422,
+    "0.45": 12973.503439984544,
+    "0.5": 10703.379789861663,
+    "0.55": 8433.256139738782,
+    "0.6": 6998.714313156203,
+    "0.65": 6686.783041902847,
+    "0.7": 4712.534489666423,
+    "0.75": 2738.2859374299915,
+    "0.8": 1600.5355800790967,
+    "0.85": 1021.6336565423961,
+    "0.9": 442.7317330056937,
+    "0.95": 0.0,
+    "1.0": 0.0
+   }
+  },
+  "SOL-USD": {
+   "spread": {
+    "0.0": 111127.02030946047,
+    "0.5": 91903.45547477633,
+    "1.0": 73131.39879824415,
+    "1.5": 55602.77387284089,
+    "2.0": 48480.602542172695,
+    "2.5": 41358.43121150451,
+    "3.0": 34236.259880836325,
+    "3.5": 27114.088550168133,
+    "4.0": 19991.91721949995,
+    "4.5": 13230.343240223516,
+    "5.0": 11529.957602836977,
+    "5.5": 9829.571965450437,
+    "6.0": 8129.186328063902,
+    "6.5": 6428.80069067736,
+    "7.0": 4728.4150532908225,
+    "7.5": 4415.96717906438,
+    "8.0": 4257.43662509522,
+    "8.5": 4098.90607112606,
+    "9.0": 3940.3755171568996,
+    "9.5": 3781.844963187739,
+    "10.0": 3623.314409218578,
+    "10.5": 3464.783855249418,
+    "11.0": 3306.2533012802573,
+    "11.5": 3147.722747311097,
+    "12.0": 2989.192193341937,
+    "12.5": 2830.661639372776,
+    "13.0": 2672.1310854036155,
+    "13.5": 2513.6005314344548,
+    "14.0": 2355.0699774652944,
+    "14.5": 2196.5394234961345,
+    "15.0": 2038.0088695269733,
+    "15.5": 1879.4783155578139,
+    "16.0": 1720.9477615886524,
+    "16.5": 1562.417207619492,
+    "17.0": 1403.8866536503315,
+    "17.5": 1245.3560996811711,
+    "18.0": 1086.8255457120108,
+    "18.5": 928.2949917428505,
+    "19.0": 769.7644377736901,
+    "19.5": 611.2338838045297,
+    "20.0": 472.2402163117065
+   },
+   "fee_floor": {
+    "0.1": 111127.02030946047,
+    "0.15": 104372.43668773581,
+    "0.2": 97548.2688867828,
+    "0.25": 77710.57179098912,
+    "0.3": 68970.56879986804,
+    "0.35": 58611.15556095459,
+    "0.4": 38056.76421390418,
+    "0.45": 33299.496548768,
+    "0.5": 33299.496548768,
+    "0.55": 17968.186748118922,
+    "0.6": 13534.500163302624,
+    "0.65": 12468.014853037965,
+    "0.7": 5718.107826046506,
+    "0.75": 1415.3922750942452,
+    "0.8": 933.5166861170434,
+    "0.85": 612.5435467000282,
+    "0.9": 291.57040728301206,
+    "0.95": 0.0,
+    "1.0": 0.0
+   }
+  }
+ },
+ "fee_floor_target_cost": {
+  "0.1": 0.0,
+  "0.15": 0.04999999999999998,
+  "0.2": 0.10000000000000002,
+  "0.25": 0.15000000000000002,
+  "0.3": 0.19999999999999996,
+  "0.35": 0.24999999999999992,
+  "0.4": 0.30000000000000004,
+  "0.45": 0.35,
+  "0.5": 0.4000000000000001,
+  "0.55": 0.45000000000000007,
+  "0.6": 0.5,
+  "0.65": 0.5499999999999999,
+  "0.7": 0.6000000000000001,
+  "0.75": 0.65,
+  "0.8": 0.7,
+  "0.85": 0.75,
+  "0.9": 0.8000000000000002,
+  "0.95": 0.85,
+  "1.0": 0.8999999999999999
+ }
+}

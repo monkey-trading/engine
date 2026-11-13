@@ -1,0 +1,165 @@
+{
+ "total_cap_at_reference_nav": 214748364.8,
+ "flows": {
+  "current": {
+   "a day, zero": {
+    "window_min": 1440,
+    "threshold_bps_of_total_cap": 0.0,
+    "threshold": 0.0,
+    "fire_share": 5.868544600938967e-05,
+    "raised_share": 4.8904538341158055e-06,
+    "episodes_a_year": 0.5140845070422535,
+    "episode_mean_hours": 0.08333333333333333,
+    "daily_room_mean": 6806273.628237872,
+    "daily_room_p95": 8567127.223504497,
+    "daily_room_max": 10908349.58499235,
+    "window_room_max": 12149534.924409866,
+    "stress": {
+     "pre_opened": {
+      "house_loss": 13058580.983753035,
+      "spells": 115,
+      "spells_raised": 54,
+      "largest_spell": 815168.2387655289,
+      "by_market": {
+       "BTC-USD": 6086711.12668894,
+       "ETH-USD": 6971869.857064093
+      },
+      "raised_minutes": 157.66666666666666,
+      "run_raised": true
+     },
+     "per_spell": {
+      "house_loss": -582362.7719236912,
+      "spells": 137,
+      "spells_raised": 0,
+      "largest_spell": 655168.2387655289,
+      "by_market": {
+       "BTC-USD": 1973879.341713571,
+       "ETH-USD": -2556242.113637262
+      },
+      "raised_minutes": 0.0,
+      "run_raised": false
+     }
+    }
+   },
+   "60 minutes, 22.5 bps of the total cap": {
+    "window_min": 60,
+    "threshold_bps_of_total_cap": 22.5,
+    "threshold": 483183.8208,
+    "fire_share": 0.0031690140845070424,
+    "raised_share": 0.0008621870109546166,
+    "episodes_a_year": 52.95070422535211,
+    "episode_mean_hours": 0.14263754045307445,
+    "daily_room_mean": 18406899.23912608,
+    "daily_room_p95": 20163538.92270449,
+    "daily_room_max": 22504761.284192346,
+    "window_room_max": 3079964.0746757323,
+    "stress": {
+     "pre_opened": {
+      "house_loss": 11438198.061329355,
+      "spells": 94,
+      "spells_raised": 69,
+      "largest_spell": 667894.9140315285,
+      "by_market": {
+       "BTC-USD": 5224577.540684737,
+       "ETH-USD": 6213620.520644618
+      },
+      "raised_minutes": 70.0,
+      "run_raised": true
+     },
+     "per_spell": {
+      "house_loss": -53658.476131895026,
+      "spells": 119,
+      "spells_raised": 0,
+      "largest_spell": 655168.2387655289,
+      "by_market": {
+       "BTC-USD": 2385596.883192902,
+       "ETH-USD": -2439255.359324797
+      },
+      "raised_minutes": 23.833333333333332,
+      "run_raised": false
+     }
+    }
+   }
+  },
+  "target": {
+   "a day, zero": {
+    "window_min": 1440,
+    "threshold_bps_of_total_cap": 0.0,
+    "threshold": 0.0,
+    "fire_share": 0.008744131455399061,
+    "raised_share": 0.006460615545122587,
+    "episodes_a_year": 74.02816901408451,
+    "episode_mean_hours": 0.7645061728395062,
+    "daily_room_mean": 2182759.08049295,
+    "daily_room_p95": 3179293.393354742,
+    "daily_room_max": 4413137.2326310575,
+    "window_room_max": 5046868.8808066845,
+    "stress": {
+     "pre_opened": {
+      "house_loss": 10449505.561046477,
+      "spells": 100,
+      "spells_raised": 72,
+      "largest_spell": 815168.2387655289,
+      "by_market": {
+       "BTC-USD": 6074744.529815744,
+       "ETH-USD": 4374761.031230733
+      },
+      "raised_minutes": 160.0,
+      "run_raised": true
+     },
+     "per_spell": {
+      "house_loss": -582362.7719236912,
+      "spells": 137,
+      "spells_raised": 0,
+      "largest_spell": 655168.2387655289,
+      "by_market": {
+       "BTC-USD": 1973879.341713571,
+       "ETH-USD": -2556242.113637262
+      },
+      "raised_minutes": 0.0,
+      "run_raised": false
+     }
+    }
+   },
+   "60 minutes, 22.5 bps of the total cap": {
+    "window_min": 60,
+    "threshold_bps_of_total_cap": 22.5,
+    "threshold": 483183.8208,
+    "fire_share": 0.010035211267605634,
+    "raised_share": 0.0036024713093375064,
+    "episodes_a_year": 176.84507042253523,
+    "episode_mean_hours": 0.17844799741602066,
+    "daily_room_mean": 13788637.70040317,
+    "daily_room_p95": 14804427.892686741,
+    "daily_room_max": 16009548.931831058,
+    "window_room_max": 2690451.3124992186,
+    "stress": {
+     "pre_opened": {
+      "house_loss": 9230537.991151843,
+      "spells": 90,
+      "spells_raised": 77,
+      "largest_spell": 667894.9140315285,
+      "by_market": {
+       "BTC-USD": 3269305.393730816,
+       "ETH-USD": 5961232.597421029
+      },
+      "raised_minutes": 84.33333333333333,
+      "run_raised": true
+     },
+     "per_spell": {
+      "house_loss": 1086399.374318375,
+      "spells": 63,
+      "spells_raised": 49,
+      "largest_spell": 464468.9607386473,
+      "by_market": {
+       "BTC-USD": 1236544.9950281468,
+       "ETH-USD": -150145.62070977176
+      },
+      "raised_minutes": 69.33333333333333,
+      "run_raised": true
+     }
+    }
+   }
+  }
+ }
+}

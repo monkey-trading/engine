@@ -392,6 +392,12 @@ an index: load only the rule whose hint matches the current action.
   format). Its `order_limits` stage (#700) values the resting-order limits by volume tier against
   wallet recycling and reads their price cost from `sequencer::resting_bench`'s output
   (`results/resting_bench.txt`). Its `README.md` gives the method, results and proposals.
+  `loss-rate-trigger/` sets the house loss-rate trigger's measure, threshold and window for #695
+  (#698): honest flow settled position by position on 10 s paths over the cap study's bars, its loss
+  over each window per market and house-wide, honest bad debt on the rogue study's recorded hours,
+  2025-10-10's unpriced pairs and the latency classes under each candidate, and the launch criterion
+  at the 10 s curve; per-bin series in gitignored `data/`. Its `README.md` gives the method, results
+  and the proposal.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
   `dev-operator-bounds.sh`, the operator's bounds on a dev node: benchmark rates inside and outside the
@@ -794,6 +800,11 @@ Run from the repo root:
   `owner_fx`, `owner_unprice`, `owner_income`, then `owner_report`; #699's `floors`; #700's `order_limits`; with the
   worker and path counts its
   README gives), and its tests with `python -I -m pytest tests`
+- Loss-rate trigger research, from a virtualenv outside the repo with
+  `research/loss-rate-trigger/requirements.txt`, in `research/loss-rate-trigger/`: `python -I run.py
+  <stage>` (`honest --flow current`, `honest --flow target`, `grid`, `stress --flow current`,
+  `stress --flow target`, `latency`, `share`, then `report`), and its tests with
+  `python -I -m pytest tests`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
   `python -I research/close-spread-calibration/run.py`, then
   `python -I research/close-spread-calibration/calibrate.py`, then
