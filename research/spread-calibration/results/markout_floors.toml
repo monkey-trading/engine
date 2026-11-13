@@ -1,0 +1,68 @@
+# BTC-USD (measured, year 1.67 bps)
+markout_floor_bps = "1.68"
+# ETH-USD (measured, year 2.52 bps)
+markout_floor_bps = "2.53"
+# SOL-USD (measured, year 2.52 bps)
+markout_floor_bps = "2.53"
+# EUR-USD (scaled, year 0.27 bps)
+markout_floor_bps = "0.28"
+# GBP-USD (scaled, year 0.26 bps)
+markout_floor_bps = "0.27"
+# USD-JPY (scaled, year 0.37 bps)
+markout_floor_bps = "0.38"
+# AUD-USD (scaled, year 0.36 bps)
+markout_floor_bps = "0.36"
+# US500 (scaled, year 0.69 bps)
+markout_floor_bps = "0.70"
+# US100 (scaled, year 0.91 bps)
+markout_floor_bps = "0.91"
+# US30 (scaled, year 0.65 bps)
+markout_floor_bps = "0.65"
+# JP225 (scaled, year 1.05 bps)
+markout_floor_bps = "1.05"
+# XAU-USD (scaled, year 1.22 bps)
+markout_floor_bps = "1.22"
+# XAG-USD (scaled, year 2.23 bps)
+markout_floor_bps = "2.24"
+# WTI (scaled, year 2.03 bps)
+markout_floor_bps = "2.04"
+# AAPL (scaled, year 1.83 bps)
+markout_floor_bps = "1.83"
+# MSFT (scaled, year 1.64 bps)
+markout_floor_bps = "1.65"
+# NVDA (scaled, year 2.70 bps)
+markout_floor_bps = "2.71"
+# AMZN (scaled, year 2.02 bps)
+markout_floor_bps = "2.03"
+# GOOGL (scaled, year 2.03 bps)
+markout_floor_bps = "2.03"
+# META (scaled, year 2.27 bps)
+markout_floor_bps = "2.28"
+# TSLA (scaled, year 3.46 bps)
+markout_floor_bps = "3.47"
+# AVGO (scaled, year 3.02 bps)
+markout_floor_bps = "3.03"
+# BRK.B (scaled, year 1.23 bps)
+markout_floor_bps = "1.24"
+# JPM (scaled, year 1.69 bps)
+markout_floor_bps = "1.69"
+# V (scaled, year 1.51 bps)
+markout_floor_bps = "1.51"
+# MA (scaled, year 1.55 bps)
+markout_floor_bps = "1.55"
+# LLY (scaled, year 2.33 bps)
+markout_floor_bps = "2.33"
+# JNJ (scaled, year 1.37 bps)
+markout_floor_bps = "1.38"
+# XOM (scaled, year 1.64 bps)
+markout_floor_bps = "1.65"
+# WMT (scaled, year 1.58 bps)
+markout_floor_bps = "1.59"
+# COST (scaled, year 1.48 bps)
+markout_floor_bps = "1.48"
+# NFLX (scaled, year 2.14 bps)
+markout_floor_bps = "2.14"
+# AMD (scaled, year 3.43 bps)
+markout_floor_bps = "3.44"
+# ORCL (scaled, year 3.09 bps)
+markout_floor_bps = "3.10"

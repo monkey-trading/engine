@@ -381,7 +381,10 @@ an index: load only the rule whose hint matches the current action.
   `cap-calibration/model/holdfee.py`) and restate the headline at the owner's values on #614, with
   #549's attacks across the profit-fee bases the operator's bounds admit and the house-loss budget
   the loss-rate trigger (#695) must hold them to (`results/owner_values.md`,
-  `results/owner_criterion.json`). Its `README.md` gives the method, results and proposals.
+  `results/owner_criterion.json`). Its `floors` stage (#699) gives every launch market a markout-spread
+  floor at the year's markout spread, scaled from the hourly bars where no tick data exists, with how
+  often honest accounts reach a toxicity tier at it (`results/markout_floors.toml`, in the genesis's
+  format). Its `README.md` gives the method, results and proposals.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
   `dev-operator-bounds.sh`, the operator's bounds on a dev node: benchmark rates inside and outside the
@@ -772,7 +775,8 @@ Run from the repo root:
   `research/spread-calibration/requirements.txt`, in `research/spread-calibration/`: `python -I run.py
   <stage>` (`spreads`, `latency`, `scaled`, `fee`, `frontier`, `fx_tiers`, `toxicity`, `carrot`,
   `attacks`, `per_market`, `gaps`, `retained`, then `report`; #697's `owner_fee`, `owner_latency`,
-  `owner_fx`, `owner_unprice`, `owner_income`, then `owner_report`; with the worker and path counts its
+  `owner_fx`, `owner_unprice`, `owner_income`, then `owner_report`; #699's `floors`; with the worker and
+  path counts its
   README gives), and its tests with `python -I -m pytest tests`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
   `python -I research/close-spread-calibration/run.py`, then

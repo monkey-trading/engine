@@ -1058,6 +1058,78 @@ def stage_owner_report(args):
     print(owner_report.write(RESULTS)[:2000])
 
 
+def stage_floors(args):
+    """#699: each launch market's markout-spread floor (`calib/floors.py`), from its year's markout
+    spread, measured on the crypto grids and scaled from the hourly bars elsewhere, and the share of
+    honest accounts whose score reaches each tier at it, trailing and at the floor."""
+    import numpy as np
+
+    from calib import floors, toxicity, volatility
+    from calib.common import use
+
+    use("rogue")
+    from model.paths import load_hours, population
+
+    measured = {m: r["sigma_bps"] for m, r in json.loads((RESULTS / "toxicity.json").read_text())["markets"].items()}
+    sigma = volatility.hourly_sigma()
+    ratios = floors.rho(measured, sigma)
+    ratio = float(np.mean(list(ratios.values())))
+    # Honest markouts in units of their hour's own markout spread, pooled over the crypto hours by
+    # stratum weight, as `toxicity` draws them.
+    pop = population()
+    hours = [h for h in load_hours() if h.stratum != "stress"]
+    counts = {}
+    for h in hours:
+        counts[(h.market, h.stratum)] = counts.get((h.market, h.stratum), 0) + 1
+    zs, ws = [], []
+    attack = {}  # per crypto market: (stratum weight, hour's markout spread, latency fills' markouts), as `toxicity`
+    tiers = {r["symbol"]: r["tiers"][0]["bps"] / 1e4 for r in json.loads((RESULTS / "spreads.json").read_text())}
+    for h in hours:
+        rng = np.random.default_rng([h.hour, 699])
+        span = h.analysis
+        length = span.stop - span.start
+        s = toxicity.hour_sigma(h.x, h.step_s, span.start, length)
+        if s <= 0:
+            continue
+        mk = toxicity.random_markouts(h.x, h.step_s, span.start, length, rng)
+        strata, _ = pop[h.market]
+        weight = strata[h.stratum] / counts[(h.market, h.stratum)]
+        zs.append(mk / s)
+        ws.append(np.full(len(mk), weight / len(mk)))
+        k, lag = h.steps(toxicity.HORIZON_S), h.steps(0.25)
+        t = np.arange(span.start, span.stop - k, h.steps(0.25))
+        known = h.x[t] - h.x[t - lag]
+        sel = np.abs(known) >= 2 * tiers[h.market]
+        attack.setdefault(h.market, []).append((weight, s, np.sign(known[sel]) * (h.x[t[sel] + k] - h.x[t[sel] - lag])))
+    rng = np.random.default_rng(699)
+    w = np.concatenate(ws)
+    z0 = rng.choice(np.concatenate(zs), size=400_000, p=w / w.sum())
+    rows = []
+    for spec in genesis_markets_cached():
+        m = spec["symbol"]
+        own = ratios.get(m, ratio)
+        year = measured[m] if m in measured else floors.year_spread_bps(sigma[m], own)
+        floor = floors.floor_bps(year)
+        reach = {case: floors.honest_reach(z0, f, rng) for case, f in floors.scales(sigma[m], own, floor).items()}
+        sweep = {}
+        for share in floors.FLOOR_SHARES:
+            f = floors.floor_bps(year, share)
+            sweep[str(share)] = {"floor_bps": f, "reach_1000": {c: floors.honest_reach(z0, x, rng, windows=(1000,))["1000"]
+                                                               for c, x in floors.scales(sigma[m], own, f).items()}}
+            if m in attack:
+                sweep[str(share)]["latency"] = floors.latency_edge(attack[m], f / 1e4)
+        rows.append({"symbol": m, "asset_class": spec["asset_class"], "source": "measured" if m in measured else "scaled",
+                     "year_bps": year, "floor_bps": floor, "open_hours": int(len(sigma[m])), "reach": reach, "sweep": sweep})
+        print(m, round(year, 3), floor, {c: r["1000"]["4.0"] for c, r in reach.items()}, flush=True)
+    z0_kurtosis = float(((z0 - z0.mean()) ** 4).mean() / z0.var() ** 2)
+    out = {"floor_share": floors.FLOOR_SHARE, "rho_5s": ratio, "rho_by_market": ratios, "honest_z_sd": float(z0.std()),
+           "honest_z_kurtosis": z0_kurtosis, "markets": rows}
+    (RESULTS / "markout_floors.json").write_text(json.dumps(out, indent=1, default=float))
+    (RESULTS / "markout_floors.toml").write_text(floors.toml_lines(rows))
+    (RESULTS / "markout_floors.md").write_text(floors.report(out))
+    print("rho", {k: round(v, 3) for k, v in ratios.items()}, "mean", round(ratio, 3))
+
+
 def genesis_markets_cached():
     from calib.common import genesis_markets
 
@@ -1067,7 +1139,7 @@ def genesis_markets_cached():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("stage", choices=["spreads", "latency", "scaled", "fee", "frontier", "fx_tiers", "per_market", "gaps", "attacks", "toxicity", "carrot", "retained", "report",
-                                          "owner_fee", "owner_latency", "owner_fx", "owner_unprice", "owner_income", "owner_report"])
+                                          "owner_fee", "owner_latency", "owner_fx", "owner_unprice", "owner_income", "owner_report", "floors"])
     parser.add_argument("--workers", type=int, default=3)
     parser.add_argument("--paths", type=int, default=1000)
     parser.add_argument("--only", default=None, help="owner_income: run only the variants whose name contains this")
