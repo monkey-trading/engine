@@ -234,11 +234,12 @@ symbols = [
 
 # Index and commodity futures. A symbol names the contract it quotes, one of the market's `contracts`
 # in config/production-genesis.toml, and the feed sends each contract the market takes now. Shown
-# for US500 (market 20); every other futures market (21 to 25, 30 to 33) needs its own contracts,
+# for US500 (market 20); every other futures market (21, 22, 25 and 30 to 32) needs its own contracts,
 # every one its listing names, rolled off or not. Only a source reached over TLS may set a price.
 # Massive's futures feed covers CME, CBOT, NYMEX and COMEX contracts, so it is one of the two sources
-# markets 20 to 22, 25 and 30 to 32 need, and no integrated vendor quotes DE40 (Eurex), UK100 or
-# BRENT (ICE): a production build refuses the config until each market has its min_sources (#673).
+# markets 20 to 22, 25 and 30 to 32 need, and no integrated vendor is its second: a production
+# build refuses the config until each market has its min_sources (#673). The Eurex and ICE markets
+# (DE40, UK100 and BRENT) are not in the launch genesis.
 # The check reads the genesis listing for the life of the log, so keep every venue and contract it
 # needs even after a relisting lowers min_sources or the market rolls past a contract.
 [[feeds.venues.connections]]
@@ -252,7 +253,7 @@ symbols = [
   { market = 20, symbol = "ESU7", contract = "ESU7" },
   { market = 20, symbol = "ESZ7", contract = "ESZ7" },
   { market = 20, symbol = "ESH8", contract = "ESH8" },
-] # OWNER: add markets 21, 22, 25 and 30 to 32, a second TLS source for each, and sources for 23, 24, 33
+] # OWNER: add markets 21, 22, 25 and 30 to 32, and a second TLS source for each
 
 # US shares, shown for AAPL (market 40).
 [[feeds.venues.connections]]

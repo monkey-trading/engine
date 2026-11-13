@@ -65,11 +65,15 @@ fn a_production_build_refuses_the_template_until_its_futures_and_shares_have_a_s
     for met in [1, 2, 3, 10, 11, 12, 13] {
         assert!(!err.contains(&format!("market {met} (")), "market {met}: {err}");
     }
-    // US 500 and Apple have Massive alone, and every other futures and share market no venue yet.
+    // US 500 and Apple have Massive alone, and every other CME futures and share market no venue yet.
     assert!(err.contains("market 20 (US500) contract ESZ6 has 1 (massive) of 2"), "{err}");
     assert!(err.contains("market 40 (AAPL) has 1 (massive) of 2"), "{err}");
-    for short in (20..=25).chain(30..=33).chain(40..=59) {
+    for short in (20..=22).chain([25]).chain(30..=32).chain(40..=59) {
         assert!(err.contains(&format!("market {short} (")), "market {short}: {err}");
+    }
+    // The Eurex and ICE markets are not in the launch genesis (#673).
+    for deferred in [23, 24, 33] {
+        assert!(!err.contains(&format!("market {deferred} (")), "market {deferred}: {err}");
     }
 }
 
