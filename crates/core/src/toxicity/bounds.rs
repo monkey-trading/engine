@@ -145,17 +145,21 @@ impl Engine {
     }
 
     /// From `V54`, checks `params` change the score tiers in force only within the launch tiers'
-    /// bounds and as a notice whose time has come names them.
+    /// bounds and as a notice whose time has come names them. A `voted` change's notice is its vote's.
     /// Error cases:
     /// - changed tiers outside the launch tiers' bounds (see `check_within_launch`)
-    /// - changed tiers no notice names, or whose notice takes effect later than the sequenced time
-    pub(crate) fn check_score_tier_change(&self, params: &ProtocolParams) -> Result<(), String> {
+    /// - unless `voted`, changed tiers no notice names, or whose notice takes effect later than the
+    ///   sequenced time
+    pub(crate) fn check_score_tier_change(&self, params: &ProtocolParams, voted: bool) -> Result<(), String> {
         let Some(current) = &self.params else { return Ok(()) };
         let tiers = &params.toxicity.score_tiers;
         if self.protocol_version < ProtocolVersion::V54 || *tiers == current.toxicity.score_tiers {
             return Ok(());
         }
         self.check_within_launch(tiers)?;
+        if voted {
+            return Ok(());
+        }
         let notice = self.operator_bounds.notice.as_ref().filter(|notice| notice.score_tiers.as_ref() == Some(tiers));
         match notice {
             None => Err("a score tier change needs a notice of at least seven days".into()),

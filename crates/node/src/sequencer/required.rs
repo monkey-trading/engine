@@ -14,8 +14,41 @@ use tracing::{info, warn};
 use crate::config::Genesis;
 use crate::sequencer::Sequencer;
 use crate::sequencer::genesis::{GENESIS_REF, check_genesis, genesis_commands, rejection};
+use crate::trusted_time::Sample;
 
 impl Sequencer {
+    /// Takes `sample` as the latest trusted time, and sequences any queued required commands it
+    /// admits.
+    /// Error cases:
+    /// - the engine rejects a queued required command
+    /// - the log cannot be written
+    pub(super) fn take_sample(&mut self, sample: Sample) -> anyhow::Result<()> {
+        if self.benchmark_sync_enabled {
+            let (host_ms, now) = (self.clock.now_ms(), self.clock.instant());
+            let ts = self.time.stamp(host_ms, self.last_ts, now);
+            self.benchmark_time_refused |= !self.time.can_admit(host_ms, ts, now);
+        }
+        self.time.update(sample);
+        if self.benchmark_sync_enabled {
+            if let Some(ts) = self.admitted_ts(None) {
+                self.sequence_queued(ts)?;
+            }
+            Ok(())
+        } else {
+            self.sequence_queued_if_admitted()
+        }
+    }
+
+    /// `take_sample` outside `run`, flushing what it sequences: how a test gives a sequencer trusted
+    /// time before it runs.
+    /// Error cases:
+    /// - as `take_sample`, or the log cannot be flushed
+    #[cfg(test)]
+    pub fn trust(&mut self, sample: Sample) -> anyhow::Result<()> {
+        self.take_sample(sample)?;
+        self.flush()
+    }
+
     /// Requires a signed publisher snapshot before catch-up or ordinary sequencing.
     /// Error cases:
     /// - a scheduled legacy log needs activation prerequisites that would charge rollovers first
@@ -71,9 +104,11 @@ impl Sequencer {
     }
 
     /// Records the config's client auth and operator and activates the latest protocol version,
-    /// whichever the log lacks, then checkpoints. All run at the log's next seq, so earlier commands
-    /// keep the rules they ran under, once trusted time admits a stamp (see `sequence_required`).
-    /// `recover` has already refused a log that records another client auth or operator.
+    /// whichever the log lacks, and from `V56` the config's vote contract, then checkpoints. While
+    /// rotation is on under `V56`, activation and the access policy wait for a passed vote instead.
+    /// All run at the log's next seq, so earlier commands keep the rules they ran under, once trusted
+    /// time admits a stamp (see `sequence_required`).
+    /// `recover` has already refused a log that records another client auth, operator or vote contract.
     /// Error cases:
     /// - the engine rejects any of them
     /// - the log cannot be written
@@ -119,6 +154,27 @@ impl Sequencer {
                 cmds.insert(at, Command::Admin(AdminCommand::SetCloseSpreadCeilings { ceilings }));
             }
         }
+        // The vote contract is protocol: the log records the config's once (`recover` has already
+        // refused a log that records another).
+        if let (Some(config), None) = (self.governance, self.engine.governance().config) {
+            cmds.push(Command::Admin(AdminCommand::SetGovernance(config)));
+        }
+        // While rotation is on, only a passed vote activates a version or records the access policy: an
+        // activation under the rules in force, and what follows it under the version it activates.
+        let activated = cmds.iter().find_map(|cmd| match cmd {
+            Command::Admin(AdminCommand::ActivateProtocol { version }) => Some(*version),
+            _ => None,
+        });
+        let version = |admin: &AdminCommand| match admin {
+            AdminCommand::ActivateProtocol { .. } => self.engine.protocol_version(),
+            _ => activated.unwrap_or(self.engine.protocol_version()).max(self.engine.protocol_version()),
+        };
+        let governed =
+            |cmd: &Command| matches!(cmd, Command::Admin(admin) if self.engine.governed_at(version(admin), admin));
+        for cmd in cmds.iter().filter(|cmd| governed(cmd)) {
+            info!(seq = self.next_seq, ?cmd, "rotation is on, so this waits for a passed vote");
+        }
+        cmds.retain(|cmd| !governed(cmd));
         if cmds.is_empty() {
             return Ok(());
         }

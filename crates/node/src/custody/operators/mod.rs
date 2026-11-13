@@ -5,9 +5,11 @@
 //! canonical block they agreed on, and the answer names that block, its hash and its time. A read
 //! that fails leaves the last list in place for as long as `custody.evm.finality_stalled_after`,
 //! then the route answers 503 until a read succeeds. The reader has its own quorum state, apart
-//! from the deposit watcher's.
+//! from the deposit watcher's. With a vote contract configured, the read also takes its open
+//! proposals at the same block (`proposals`).
 
 mod lens;
+mod proposals;
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -80,6 +82,8 @@ pub struct OperatorsReader<R> {
     usdc: Address,
     registry: Address,
     lens: Address,
+    /// The vote contract whose open proposals the read takes; `None` without one.
+    vote: Option<Address>,
     every: Duration,
     reads: watch::Sender<Option<Arc<Read>>>,
 }
@@ -98,7 +102,9 @@ impl OperatorsReader<VaultRpc> {
         let quorum = Quorum::connect(evm, custody.vault.parse().context("custody.vault")?)?.named("operators", false);
         let chain = (custody.chain_id, evm.usdc);
         let (registry, every) = (staking.registry.contract, api.operators_interval);
-        Ok(Some(Self::new(quorum, chain, (registry, lens), every, evm.finality_stalled_after)))
+        let (mut reader, feed) = Self::new(quorum, chain, (registry, lens), every, evm.finality_stalled_after);
+        reader.vote = staking.registry.vote.as_ref().map(|vote| vote.contract);
+        Ok(Some((reader, feed)))
     }
 }
 
@@ -114,7 +120,7 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
     ) -> (Self, OperatorsFeed) {
         let (reads, rx) = watch::channel(None);
         let feed = OperatorsFeed { reads: rx, stale_after };
-        (Self { quorum, chain_id: chain.0, usdc: chain.1, registry, lens, every, reads }, feed)
+        (Self { quorum, chain_id: chain.0, usdc: chain.1, registry, lens, vote: None, every, reads }, feed)
     }
 
     /// Reads the list every interval, forever. A failed read is a Warning and leaves the list in place
@@ -151,7 +157,7 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
     }
 
     /// One read: the quorum's chain and token, the block a majority declares final, the lens's registry,
-    /// overview and every page, all at that block.
+    /// overview and every page, and any vote contract's open proposals, all at that block.
     /// Error cases:
     /// - the providers lack a quorum for any read, serve another chain or token, or name no final block
     /// - the lens answers inconsistently (see `OperatorList::assemble`)
@@ -210,7 +216,24 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
             );
             rows.extend(page);
         }
-        OperatorList::assemble(Reads { block, registry, lens: self.lens, overview, rows }, self.registry)
+        // The proposals are the console's alone: a failed read serves the list with them unavailable.
+        let proposals = match self.vote {
+            None => None,
+            Some(vote) => match self.read_proposals(vote, at, block.time_ms).await {
+                Ok(proposals) => {
+                    info!(alert_resolved = "proposals_read_failed", "the open proposals read again");
+                    Some(proposals)
+                }
+                Err(error) => {
+                    warn!(
+                        alert = "proposals_read_failed",
+                        "the open proposals cannot be read at a final block; the operator list marks them unavailable: {error:#}"
+                    );
+                    Some(proposals::OpenProposals::unavailable(vote))
+                }
+            },
+        };
+        OperatorList::assemble(Reads { block, registry, lens: self.lens, overview, rows, proposals }, self.registry)
     }
 
     /// The lens's return data for `input` at `at`, identical across a majority.

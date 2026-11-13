@@ -243,6 +243,10 @@ pub fn every_event() -> Vec<Event> {
         },
         Event::TurnTaken { turn: 20_754, candidate: account, release: engine_core::eip712::B256::repeat_byte(1) },
         Event::TurnTakenRejected { reason: "turn 20754 is not the turn in effect".into() },
+        Event::ProposalScheduled { proposal: 1, applies_at: 1_793_604_800_000 },
+        Event::RestrictionApplied { proposal: 2, expires_at: 1_793_086_400_000 },
+        Event::ProposalRefused { proposal: 3, reason: "rotation is off, so the timelock governs".into() },
+        Event::RestrictionLapsed { proposal: 2 },
         Event::CatchUpDeferred { due: 1_793_000_000_000 },
         Event::SessionKeyRegistered { account, session_key: account, expires_at: 1_500 },
         Event::SessionKeyRevoked { account, session_key: account },
@@ -306,6 +310,10 @@ pub fn every_event() -> Vec<Event> {
             | Event::TurnRefused { .. }
             | Event::TurnTaken { .. }
             | Event::TurnTakenRejected { .. }
+            | Event::ProposalScheduled { .. }
+            | Event::RestrictionApplied { .. }
+            | Event::ProposalRefused { .. }
+            | Event::RestrictionLapsed { .. }
             | Event::SessionKeyRegistered { .. }
             | Event::SessionKeyRevoked { .. }
             | Event::SessionKeyRejected { .. }

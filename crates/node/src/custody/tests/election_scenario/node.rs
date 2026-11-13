@@ -181,6 +181,10 @@ impl Node {
             checkpoints: post_checkpoints.then_some(work_tx),
             access_policy: source.as_ref().map(|source| source.policy.clone()),
             turn_release: seat.map(|seat| seat.release),
+            governance: chain.vote.map(|(vote, ttl)| engine_core::governance::GovernanceConfig {
+                vote: AccountId(vote.into()),
+                restriction_ttl_ms: ttl,
+            }),
             ..sequencer_config(&dir, manifest_tx)
         };
         let signing = seat.map(|_| {
@@ -467,12 +471,16 @@ pub(super) fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody:
     evm.cursor_path = dir.join("custody.json");
     evm.staking = Some(
         toml::from_str(&format!(
-            "contract = '{:#x}'\ncursor_path = '{}'\n[registry]\ncontract = '{:#x}'{}{}",
+            "contract = '{:#x}'\ncursor_path = '{}'\n[registry]\ncontract = '{:#x}'{}{}{}",
             chain.staking,
             dir.join("staking.json").display(),
             chain.registry,
             chain.lens.map(|lens| format!("\nlens = '{lens:#x}'")).unwrap_or_default(),
-            chain.schedule.map(|schedule| format!("\nschedule = '{schedule:#x}'")).unwrap_or_default()
+            chain.schedule.map(|schedule| format!("\nschedule = '{schedule:#x}'")).unwrap_or_default(),
+            chain
+                .vote
+                .map(|(vote, ttl)| format!("\n[registry.vote]\ncontract = '{vote:#x}'\nrestriction_ttl = '{ttl}ms'"))
+                .unwrap_or_default()
         ))
         .unwrap(),
     );

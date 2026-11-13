@@ -151,32 +151,50 @@ impl Engine {
 
     /// Checks a listing's spread bands are written as the version in force lists them, and that a
     /// relisting changes a listed market's markup (from `V49`) and its spread and margin bands (from
-    /// `V52`) only to the values its notice names, once that notice's time has come. Returns what
-    /// applying the listing spends.
+    /// `V52`) only to the values its notice names, once that notice's time has come. A `voted`
+    /// relisting's notice is its vote's, and it is held to the bounds a notice is: each
+    /// changed band table within its market's launch bands. Changes are measured from the baseline
+    /// (`Engine::baseline_spec`). Returns what applying the listing spends.
     /// Error cases:
     /// - spread bands `check_spread_tiers` refuses
-    /// - a changed markup, spread band table or margin band table no notice names, or whose notice
-    ///   takes effect later than the sequenced time
-    pub(crate) fn check_listing_change(&self, spec: &MarketSpec) -> Result<ListingChange, String> {
+    /// - unless `voted`, a changed markup, spread band table or margin band table no notice names, or
+    ///   whose notice takes effect later than the sequenced time
+    /// - if `voted`, a changed spread band table whose rate at some notional is below the launch rate
+    ///   there or above twice it, or a changed margin band table whose requirement at some notional is
+    ///   below launch's
+    pub(crate) fn check_listing_change(&self, spec: &MarketSpec, voted: bool) -> Result<ListingChange, String> {
         check_spread_tiers(&spec.spread_tiers, spec.asset_class, self.protocol_version)?;
-        let markup = self.check_markup_change(spec)?;
-        let Some(market) = self.markets.get(&spec.id) else {
+        let markup = self.check_markup_change(spec, voted)?;
+        let Some(listed) = self.baseline_spec(spec.id) else {
             return Ok(ListingChange { first: true, markup, ..ListingChange::default() });
         };
         let mut change = ListingChange { markup, ..ListingChange::default() };
         if self.protocol_version < ProtocolVersion::V52 {
             return Ok(change);
         }
+        let launch = self
+            .operator_bounds
+            .launch_bands
+            .get(&spec.id)
+            .expect("V52's activation records every market listed then, and each first listing after it");
         let notice = self.operator_bounds.markups.get(&spec.id);
-        if spec.spread_tiers != market.spec.spread_tiers {
-            let named = notice.filter(|notice| notice.spread_tiers.as_ref() == Some(&spec.spread_tiers));
-            self.check_noticed(spec.id, "spread band", named)?;
-            change.spread = true;
+        if spec.spread_tiers != listed.spread_tiers {
+            if voted {
+                check_spread_within_launch(&spec.spread_tiers, &launch.spread_tiers)?;
+            } else {
+                let named = notice.filter(|notice| notice.spread_tiers.as_ref() == Some(&spec.spread_tiers));
+                self.check_noticed(spec.id, "spread band", named)?;
+                change.spread = true;
+            }
         }
-        if spec.margin_tiers != market.spec.margin_tiers {
-            let named = notice.filter(|notice| notice.margin_tiers.as_ref() == Some(&spec.margin_tiers));
-            self.check_noticed(spec.id, "margin band", named)?;
-            change.margin = true;
+        if spec.margin_tiers != listed.margin_tiers {
+            if voted {
+                check_margin_at_or_above_launch(&spec.margin_tiers, &launch.margin_tiers)?;
+            } else {
+                let named = notice.filter(|notice| notice.margin_tiers.as_ref() == Some(&spec.margin_tiers));
+                self.check_noticed(spec.id, "margin band", named)?;
+                change.margin = true;
+            }
         }
         Ok(change)
     }

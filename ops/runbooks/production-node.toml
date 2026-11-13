@@ -136,6 +136,14 @@ contract = "0x4444444444444444444444444444444444444444" # REPLACE
 # from protocol V51. Absent, no turn is mirrored. Like the lens, it is part of the release.
 # schedule = "0x6666666666666666666666666666666666666666" # REPLACE
 
+# The ParameterVote over the schedule, whose passed proposals the watcher mirrors from protocol V56,
+# and how long a fast-path restriction lasts (at most 7d). The node records both in the log once, so
+# every member's release names the same. Without it, while rotation is on nothing changes the governed
+# parameters. It needs the schedule above.
+# [custody.evm.staking.registry.vote]
+# contract = "0x7777777777777777777777777777777777777777" # REPLACE
+# restriction_ttl = "24h" # OWNER: the restriction lifetime
+
 [checkpoints]
 # A separate endpoint from the custody providers. It signs and funds the relayer's transactions,
 # so it must support eth_sendTransaction and hold a funded relayer dedicated to this log.

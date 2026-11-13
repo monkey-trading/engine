@@ -75,6 +75,8 @@ pub struct VaultRpc {
     registry: Option<Address>,
     /// The registry's schedule, whose rotation sets and turns mirror with them; `None` without one.
     schedule: Option<Address>,
+    /// The vote contract over the schedule, whose passed proposals mirror with them; `None` without one.
+    vote: Option<Address>,
     finality_tag: BlockNumberOrTag,
     withdrawal_finality_tag: BlockNumberOrTag,
     rpc_timeout: Duration,
@@ -289,8 +291,8 @@ impl VaultReader for VaultRpc {
     }
 
     /// Both mirrorable staking events from the configured contract, the operator registry's
-    /// rotation switches and elections, and its schedule's rotation sets and turns, sorted by block
-    /// and log index.
+    /// rotation switches and elections, its schedule's rotation sets and turns, and the vote
+    /// contract's passed proposals, sorted by block and log index.
     /// Without a staking contract the answer is empty.
     /// Error cases:
     /// - the request fails or times out
@@ -305,13 +307,17 @@ impl VaultReader for VaultRpc {
         let mut events = Vec::new();
         if let Some(staking) = self.staking {
             let owned_blocks = blocks.to_vec();
-            let addresses: Vec<Address> = [Some(staking), self.registry, self.schedule].into_iter().flatten().collect();
+            let addresses: Vec<Address> =
+                [Some(staking), self.registry, self.schedule, self.vote].into_iter().flatten().collect();
             let mut signatures = vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH];
             if self.registry.is_some() {
                 signatures.extend(crate::custody::registry::SIGNATURES);
             }
             if self.schedule.is_some() {
                 signatures.extend(crate::custody::registry::SCHEDULE_SIGNATURES);
+            }
+            if self.vote.is_some() {
+                signatures.extend(crate::custody::registry::VOTE_SIGNATURES);
             }
             let batches = stream::iter(owned_blocks.into_iter().map(|block| {
                 let (addresses, signatures) = (addresses.clone(), signatures.clone());
@@ -411,6 +417,7 @@ impl VaultRpc {
             staking: cfg.staking.as_ref().map(|staking| staking.contract),
             registry: cfg.staking.as_ref().map(|staking| staking.registry.contract),
             schedule: cfg.staking.as_ref().and_then(|staking| staking.registry.schedule),
+            vote: cfg.staking.as_ref().and_then(|staking| staking.registry.vote.as_ref()).map(|vote| vote.contract),
             withdrawal_finality_tag: match cfg.withdrawal_finality_tag {
                 FinalityTag::Latest => BlockNumberOrTag::Latest,
                 FinalityTag::Safe => BlockNumberOrTag::Safe,

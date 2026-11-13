@@ -492,3 +492,4 @@ mod redaction;
 mod registry;
 mod schedule;
 mod staking;
+mod vote;

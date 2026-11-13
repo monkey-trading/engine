@@ -368,6 +368,9 @@ impl Metrics {
             Event::TurnTakenRejected { .. } => {
                 rejection("turn_take_refused", "other");
             }
+            Event::ProposalRefused { .. } => {
+                rejection("proposal_refused", "other");
+            }
             Event::CustodyDepositRejected { reason, .. } => {
                 rejection("custody_deposit_rejected", deposit_reject_kind(reason));
             }

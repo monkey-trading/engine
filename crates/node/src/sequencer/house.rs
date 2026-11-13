@@ -1,13 +1,17 @@
 //! What `GET /v1/house/state` answers from memory: the protocol parameters with the seq that set
-//! them, the pending parameter and listing notices, and the latest checkpoint the log holds. The sequencer keeps the seq and the checkpoint
+//! them, the pending parameter and listing notices, from `V56` the vote contract with the passed
+//! changes waiting and the restrictions in force, any close-spread ceiling adoption waiting to take
+//! effect, and the latest checkpoint the log holds. The sequencer keeps the seq and the checkpoint
 //! as it logs them, recovery restores both from the replay it already runs, and the parameters
 //! themselves are the engine's.
 
 use std::collections::BTreeMap;
 
 use engine_core::Engine;
+use engine_core::close_spread::PendingCeiling;
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
+use engine_core::governance::Governance;
 use engine_core::listing_bounds::ListingNotice;
 use engine_core::operator_bounds::ParamsNotice;
 use engine_core::params::ProtocolParams;
@@ -20,11 +24,12 @@ use tokio::sync::oneshot;
 use crate::log::{Checkpoint, Offset};
 use crate::sequencer::{StreamBody, StreamMsg};
 
-/// The `SetParams` `cmd` carries, as an unsigned or a signed admin command.
+/// The `SetParams` `cmd` carries, as an unsigned or a signed admin command, or a passed change.
 pub(crate) fn set_params_of(cmd: &Command) -> Option<&ProtocolParams> {
     let admin = match cmd {
         Command::Admin(admin) => admin,
         Command::SignedAdmin(request) => &request.command,
+        Command::ApplyProposal(voted) => &voted.command,
         _ => return None,
     };
     match admin {
@@ -55,12 +60,13 @@ pub struct ParamsAt {
     pub params: ProtocolParams,
 }
 
-/// The answer: the seq it was read at, the parameters (`None` before the first `SetParams`), the
-/// pending parameter notice (`None` while none waits), from `V54` the toxicity score's protocol
+/// The answer: the seq it was read at, the parameters in force (`None` before the first `SetParams`),
+/// the pending parameter notice (`None` while none waits), from `V54` the toxicity score's protocol
 /// constants, each listed market's pending listing notice (a markup, and from `V52` its spread and
-/// margin bands, in the market read's units), and the latest
-/// checkpoint in the stream's form (`None` before the first). The bands in force are the market
-/// read's.
+/// margin bands, in the market read's units), the mirrored votes (`None` before any is recorded: the
+/// vote contract, each passed change with the time it applies from, each restriction in force with
+/// its end, and the baseline of each field one holds), and the latest checkpoint in the stream's
+/// form (`None` before the first). The bands in force are the market read's.
 #[derive(Clone, Debug, Serialize)]
 pub struct HouseState {
     pub seq: Option<u64>,
@@ -69,6 +75,11 @@ pub struct HouseState {
     pub listing_notices: BTreeMap<MarketId, ListingNotice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score_rules: Option<ScoreRules>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub governance: Option<Governance>,
+    /// A close-spread ceiling adoption waiting to take effect, signed or voted, with its time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_ceiling: Option<PendingCeiling>,
     pub checkpoint: Option<StreamMsg>,
 }
 
@@ -112,9 +123,19 @@ impl Latest {
         let (params_notice, listing_notices) =
             (engine.operator_bounds().notice.clone(), engine.operator_bounds().markups.clone());
         let score_rules = (engine.protocol_version() >= ProtocolVersion::V54).then_some(SCORE_RULES);
-        let checkpoint = self.checkpoint.clone();
-        let state =
-            HouseState { seq: engine.last_seq(), params, params_notice, score_rules, listing_notices, checkpoint };
+        let governance = Some(engine.governance()).filter(|governance| !governance.is_default()).cloned();
+        let (seq, pending_ceiling, checkpoint) =
+            (engine.last_seq(), engine.pending_ceiling().cloned(), self.checkpoint.clone());
+        let state = HouseState {
+            seq,
+            params,
+            params_notice,
+            score_rules,
+            listing_notices,
+            governance,
+            pending_ceiling,
+            checkpoint,
+        };
         Some((std::mem::take(&mut self.waiting), state))
     }
 }

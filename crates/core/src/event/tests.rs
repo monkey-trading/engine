@@ -1,4 +1,5 @@
 use super::*;
+use crate::price::PriceError;
 
 /// The `kind` tag of a JSON object. Deserializing fails when the object has two `kind` keys.
 #[derive(Deserialize)]

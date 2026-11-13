@@ -8,11 +8,12 @@
 //! revocations in `session_keys.rs`, orders and pricing in
 //! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, reserved FIFO
 //! withdrawals in `withdrawal.rs`, MONKEY staking and USDC distributions in `staking.rs`, and the
-//! elected operator key in `election.rs`.
+//! elected operator key in `election.rs`, and an account's equity and margin in `margin.rs`.
 
 use std::collections::{BTreeMap, VecDeque};
 
 mod house;
+mod margin;
 mod market;
 
 pub use market::MarketState;
@@ -22,17 +23,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
 use crate::access::{AccessDeposit, AccessPolicy, CreditScreening, EligibilityClass, HeldDeposit};
-use crate::account::{Account, Position};
+use crate::account::Account;
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
 use crate::close_spread::PendingCeiling;
-use crate::command::{AdminCommand, Command, Sequenced};
+use crate::command::{Command, Sequenced};
 use crate::corporate::CorporateEntitlement;
 use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
 use crate::election::OperatorElection;
 use crate::emissions::{EmissionLedger, Emissions, PeriodResult, TokenUnits};
 use crate::event::Event;
-use crate::fixed::Rounding;
+use crate::governance::Governance;
 pub(crate) use crate::markouts::Markout;
 use crate::merkle::state::{Changed, StateTree, is_zero};
 use crate::operator_bounds::OperatorBounds;
@@ -167,6 +168,10 @@ pub struct Engine {
     /// in effect, and whether its member has taken it.
     #[serde(default, skip_serializing_if = "DailyTurns::is_default")]
     pub(crate) daily_turns: DailyTurns,
+    /// From `V56`, the vote contract, the passed changes waiting out their notice, the restrictions in
+    /// force, and the baseline of each field one holds.
+    #[serde(default, skip_serializing_if = "Governance::is_default")]
+    pub(crate) governance: Governance,
     /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once
     /// (genesis, or one signed install) and changed only by a signed adoption, so `UpsertMarket`
     /// can neither replace nor raise an entry. Absent until installed.
@@ -285,14 +290,14 @@ impl Engine {
         let mut corporate_margin = false;
         let mut early_outcome = None;
         if corporate {
-            let activation =
-                matches!(sequenced.cmd, Command::Admin(AdminCommand::ActivateProtocol { .. })) || staking_activation;
+            let activation = sequenced.cmd.is_activation() || staking_activation;
             // Install authenticated dated history before catch-up, without letting today's
             // incoming quote price any earlier rollover or corporate boundary.
             if sequenced.cmd.is_benchmark_batch() || activation {
                 let result = match &sequenced.cmd {
                     Command::Admin(cmd) => self.unsigned_admin(cmd, &mut events),
                     Command::SignedAdmin(req) => self.signed_admin(req, &mut events),
+                    Command::ApplyProposal(voted) => self.apply_proposal(voted, &mut events),
                     _ => unreachable!("benchmark batches and activations are admin commands"),
                 };
                 if staking_activation && result.is_ok() {
@@ -375,6 +380,11 @@ impl Engine {
                     Ok(()) => events.push(Event::AdminApplied),
                     Err(reason) => events.push(Event::AdminRejected { reason }),
                 },
+                Command::ApplyProposal(voted) => match self.apply_proposal(voted, &mut events) {
+                    Ok(()) => events.push(Event::AdminApplied),
+                    Err(reason) => events.push(Event::AdminRejected { reason }),
+                },
+                Command::PassProposal(passed) => self.pass_proposal(passed, &mut events),
                 Command::Stake { account, amount, block, chain_ref } => {
                     self.stake(*account, *amount, *block, chain_ref, &mut events)
                 }
@@ -388,9 +398,15 @@ impl Engine {
                     self.switch_rotation(*enabled, *election_cancelled, *block, chain_ref, &mut events)
                 }
                 Command::ElectOperator(election) => self.elect_operator(election, &mut events),
-                Command::InstallOperator(installation) => self.install_operator(installation, &mut events),
+                Command::InstallOperator(installation) => {
+                    self.install_operator(installation, &mut events);
+                    self.note_turns_drawn(&events);
+                }
                 Command::AdoptRotationSet(adoption) => self.adopt_rotation_set(adoption, &mut events),
-                Command::AssignTurn(assignment) => self.assign_turn(assignment, &mut events),
+                Command::AssignTurn(assignment) => {
+                    self.assign_turn(assignment, &mut events);
+                    self.note_turns_drawn(&events);
+                }
                 Command::TurnTaken { turn, release } => self.take_turn(*turn, *release, &mut events),
                 Command::RegisterSessionKey { account, session_key, expires_at, auth } => {
                     self.register_session_key(*account, *session_key, *expires_at, auth.as_ref(), &mut events)
@@ -458,38 +474,5 @@ impl Engine {
     /// Every account that has ever been credited, by id.
     pub fn accounts(&self) -> &BTreeMap<AccountId, Account> {
         &self.accounts
-    }
-
-    /// (equity, margin requirement) in USD at current marks, optionally overriding one market's mark
-    /// and FX index.
-    pub fn equity_and_margin(
-        &self,
-        acct: &Account,
-        mark_override: Option<(MarketId, Fixed, Option<Fixed>)>,
-    ) -> (Fixed, Fixed) {
-        self.equity_and_margin_at(acct, |market_id, market, pos| match mark_override {
-            Some((id, mid, fx)) if id == market_id => (mid, fx),
-            _ => (market.mark.unwrap_or(pos.entry), market.fx_mark),
-        })
-    }
-
-    /// (equity, margin requirement) in USD with each position valued at the price and FX index
-    /// `price_of(market id, market, position)` gives: PnL converts rounded down and notional rounded
-    /// up. From `V10` the requirement rounds up, from each position's notional to each band's charge.
-    pub(crate) fn equity_and_margin_at(
-        &self,
-        acct: &Account,
-        price_of: impl Fn(MarketId, &MarketState, &Position) -> (Fixed, Option<Fixed>),
-    ) -> (Fixed, Fixed) {
-        acct.positions
-            .iter()
-            .filter_map(|(market_id, pos)| self.markets.get(market_id).map(|market| (*market_id, pos, market)))
-            .fold((acct.balance, Fixed::ZERO), |(equity, margin), (market_id, pos, market)| {
-                let (price, fx) = price_of(market_id, market, pos);
-                let usd = |amount, rounding| market.spec.quote_currency.to_usd(amount, fx, rounding);
-                let notional = usd(pos.qty.abs().mul_rounded(price, self.charge_rounding()), Rounding::Up);
-                let pnl = usd(pos.unrealised(price, self.protocol_version), Rounding::Down);
-                (equity + pnl, margin + market.spec.margin_for(notional, self.charge_rounding()))
-            })
     }
 }

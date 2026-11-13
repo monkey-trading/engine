@@ -330,6 +330,53 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
   failed member holds its turn until the next boundary, and a member that cannot hand over at all
   needs the governance fallback: rotation off, then `installOperator` once the drawn turns end.
 
+## 7. Parameter votes
+
+From protocol V56, with `[custody.evm.staking.registry.vote]` naming the `ParameterVote` contract over
+the schedule, the members of the rotation set in effect vote on parameter changes while rotation is
+on. Your key, as the turn's operator, keeps benchmark rates, its own stress floor (level 1 at most,
+lapsing after 72 hours), reduce-only and corporate actions; `SetParams`, `UpsertMarket`, the parameter,
+markup and listing notices and close-spread adoptions it signs are refused, and so are the node's own protocol
+activation and access policy, which wait for a vote.
+
+- **Before proposing a command a release added** (a protocol activation, a new field), every member
+  moves to a release that knows it: a node whose release cannot decode a proposal's bytes mirrors it as
+  no command, and the engine refuses it.
+- **Propose.** A member proposes one admin command as the compact JSON the engine writes for it (the
+  `command` of the request `engine admin` prints: no spaces, fields in the engine's order, defaults
+  left out), since the engine refuses any other encoding of the same command:
+  `cast send $VOTE 'propose(bytes,bool)' 0x<hex of the JSON> <fast> --from <candidate>`. The proposal
+  casts the proposer's yes vote. A `SetParams` or `UpsertMarket` names every field: take the values in
+  force, with the baseline from `GET /v1/house/state`'s `governance` section where a restriction holds
+  one, and change only what the vote is for. `GET /v1/operators` shows `command: null` for a proposal
+  whose bytes are no such encoding.
+- **Vote.** Each member of the set the proposal opened under votes with `cast send $VOTE 'vote(uint256)'
+  <id> --from <candidate>`, until the window closes (`normalWindow()` or `fastWindow()`). It passes when
+  the yes weight is more than two thirds of the set's; `GET /v1/operators` lists the open proposals with
+  their weights.
+- **A normal change** needs no notice of its own: its seven days are the vote's. It meets every other
+  bound the operator's command would: a relisting keeps each changed spread band from its launch rate
+  to twice it and each changed margin requirement at or above launch's, new parameters keep every size
+  multiplier at 1x or more and each toxicity score tier within ±50% of its launch score and add-on,
+  a relisting keeps its market's markout floor, and a ceiling covers its market's launch close
+  charge. It takes effect
+  seven days after the engine logs it: `GET /v1/house/state` lists it
+  under `governance.pending` with `applies_at`, and the node applies it at its first command from then.
+  It applies only over the baseline it passed on: a `SetParams` or `UpsertMarket` whose parameters or
+  market changed in the meantime, by another vote or, with rotation off, the operator, is refused rather
+  than undo that change, and so is a ceiling adoption while another waits. A change that applied while
+  a proposal was still open is not caught that way: the proposal carries every field, so check it
+  against the values in force before voting for it. `proposal_rejected`
+  ([alerts.md](alerts.md)) means the command failed its checks then; propose it again over the
+  parameters in force.
+- **The fast path** takes only a higher margin band or close-out level, a stress floor at any level, a
+  lower house or market cap, or reduce-only, with every other field as the baseline sets it. It applies
+  at once as a restriction listed under `governance.restrictions` with its `expires_at`; a fast-path
+  vote on the same command, or on one holding the same bounds, renews it, and nothing lifts it early:
+  new parameters that drop a stress level a restriction holds a floor at are refused. A margin raise
+  has no range beyond each band's validation and closes out the positions it leaves short at once. `proposal_refused` means the engine
+  refused the proposal for the reason in the message.
+
 ## Open questions
 
 These are gaps in the contracts as written. Do not work around them on a live system; the owner

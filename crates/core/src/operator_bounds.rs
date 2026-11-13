@@ -257,13 +257,14 @@ impl Engine {
     }
 
     /// From `V49`, checks a relisting changes a listed market's markup only to the value its notice
-    /// names, once that notice's time has come, and returns whether the relisting spends it.
+    /// names, once that notice's time has come, and returns whether the relisting spends it. A `voted`
+    /// relisting's notice is its vote's.
     /// Error cases:
     /// - a changed markup no notice names, or whose notice takes effect later than the sequenced time
-    pub(crate) fn check_markup_change(&self, spec: &MarketSpec) -> Result<bool, String> {
+    pub(crate) fn check_markup_change(&self, spec: &MarketSpec, voted: bool) -> Result<bool, String> {
         let Some(market) = self.markets.get(&spec.id) else { return Ok(false) };
         let (id, new) = (spec.id, spec.financing.markup_bps);
-        if self.protocol_version < ProtocolVersion::V49 || market.spec.financing.markup_bps == new {
+        if self.protocol_version < ProtocolVersion::V49 || market.spec.financing.markup_bps == new || voted {
             return Ok(false);
         }
         match self.operator_bounds.markups.get(&id).filter(|notice| notice.markup_bps == Some(new)) {
@@ -289,16 +290,19 @@ impl Engine {
 
     /// Checks `params` against the bounds: a changed profit fee or close-out level is within ±50% of
     /// its launch value and named by a notice whose time has come, from `V49` so are changed stress
-    /// parameters, with no range, and from `V55` a changed profit fee curve, within its bound.
+    /// parameters, with no range, and from `V55` a changed profit fee curve, within its bound. A
+    /// `voted` change's notice is its vote's. Changes are measured from the baseline
+    /// (`Engine::baseline_params`).
     /// Error cases:
     /// - a changed rate outside ±50% of its launch value, or from `V55` a profit fee below it
-    /// - a changed rate no notice names, or whose notice takes effect later than the sequenced time
-    /// - from `V49`, changed stress parameters no notice names, or whose notice takes effect later than the
+    /// - unless `voted`, a changed rate no notice names, or whose notice takes effect later than the
     ///   sequenced time
+    /// - from `V49`, unless `voted`, changed stress parameters no notice names, or whose notice takes
+    ///   effect later than the sequenced time
     /// - from `V54`, changed score tiers `Engine::check_score_tier_change` refuses
     /// - a changed profit fee curve that fails `Engine::check_curve_change`
-    pub(crate) fn check_rate_changes(&self, params: &ProtocolParams) -> Result<(), String> {
-        let Some(current) = &self.params else { return Ok(()) };
+    pub(crate) fn check_rate_changes(&self, params: &ProtocolParams, voted: bool) -> Result<(), String> {
+        let Some(current) = &self.baseline_params() else { return Ok(()) };
         // Recorded with the first parameters under `V35`, or at its activation over them.
         let launch =
             self.operator_bounds.launch.expect("launch rates are recorded wherever parameters are set under V35");
@@ -316,6 +320,9 @@ impl Engine {
             if name == "profit_fee_bps" {
                 self.check_fee_floor(new, launched)?;
             }
+            if voted {
+                continue;
+            }
             let notice = self.operator_bounds.notice.as_ref().filter(|notice| match name {
                 "profit_fee_bps" => notice.profit_fee_bps == Some(new),
                 _ => notice.closeout_level_bps == Some(new),
@@ -328,10 +335,10 @@ impl Engine {
                 Some(_) => {}
             }
         }
-        self.check_score_tier_change(params)?;
-        self.check_curve_change(&params.profit_fee_curve, &current.profit_fee_curve)?;
+        self.check_score_tier_change(params, voted)?;
+        self.check_curve_change(&params.profit_fee_curve, &current.profit_fee_curve, voted)?;
         let stress = StressSettings::of(params);
-        if self.protocol_version < ProtocolVersion::V49 || stress == StressSettings::of(current) {
+        if self.protocol_version < ProtocolVersion::V49 || stress == StressSettings::of(current) || voted {
             return Ok(());
         }
         match self.operator_bounds.notice.as_ref().filter(|notice| notice.stress.as_ref() == Some(&stress)) {

@@ -97,6 +97,7 @@ pub mod fixed;
 pub use fixed::Fixed;
 mod funds;
 pub mod futures;
+pub mod governance;
 pub mod holding_fee;
 mod hot_indexes;
 pub mod listing_bounds;

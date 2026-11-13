@@ -314,6 +314,7 @@ pub fn sequencer_config(dir: &Path, manifest: watch::Sender<Manifest>) -> Sequen
         log_heads: None,
         turn_release: None,
         turn_sealing: None,
+        governance: None,
         chain_id: 31337,
         vault: AccountId([0; 20]),
         clock: Arc::new(SystemClock),

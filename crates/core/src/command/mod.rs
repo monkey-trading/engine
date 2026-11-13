@@ -15,6 +15,7 @@ use crate::corporate::CorporateAction;
 use crate::deposits::{CustodyCheckpoint, DepositReceipt, DepositUpdate, LegacyDeposit};
 use crate::election::{RegistryElection, RegistryInstallation};
 use crate::emissions::{EmissionSchedule, TokenUnits};
+use crate::governance::{GovernanceConfig, PassedProposal, VotedChange};
 use crate::listing_bounds::ListingNotice;
 use crate::market::MarketSpec;
 use crate::operator_bounds::ParamsNotice;
@@ -24,6 +25,8 @@ use crate::protocol::ProtocolVersion;
 use crate::staking::StakingConfig;
 use crate::turns::{RegistryRotationSet, RegistryTurn};
 use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
+
+mod predicates;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -184,6 +187,12 @@ pub enum Command {
         turn: u64,
         release: B256,
     },
+    /// From `V56`, the vote contract's `ProposalPassed` event, finalised, credited once under its chain
+    /// reference. Boxed, as `SignedAdmin` is.
+    PassProposal(Box<PassedProposal>),
+    /// From `V56`, a passed normal change whose notice has run, which the node sequences with the
+    /// command it waits with; its outcome is an admin command's.
+    ApplyProposal(Box<VotedChange>),
     /// From `V41`, registers `session_key` to place and cancel orders for `account` until
     /// `expires_at`, capped at `MAX_SESSION_KEY_EXPIRY_MS` ahead, or until revoked; only the
     /// account key's signature authorises it.
@@ -323,6 +332,9 @@ pub enum AdminCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         listing: Option<MarketSpec>,
     },
+    /// From `V56`, records the vote contract the node mirrors and how long a fast-path restriction
+    /// lasts. The node alone sequences it, from its config; a log records it once.
+    SetGovernance(GovernanceConfig),
 }
 
 /// An admin command with the operator's signature, nonce, and expiry, as `engine admin` signs and
@@ -416,76 +428,4 @@ pub struct WithdrawalRequest {
     /// The account's signature, nonce, and expiry, where the log's rules require them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<RequestAuth>,
-}
-
-impl AdminCommand {
-    /// Whether this is a dated publisher snapshot.
-    pub fn is_benchmark_snapshot(&self) -> bool {
-        matches!(self, Self::SetBenchmarkRates(_))
-    }
-
-    /// Whether the operator may sign this command: listings, parameters, benchmark rates, stress
-    /// floors, reduce-only, the emission schedule, corporate actions, the staking config, and from `V35`
-    /// parameter notices and operator rotations, from `V49` markup notices, and from `V52` listing
-    /// notices. The
-    /// node alone sequences the others, from its config and build.
-    pub fn is_operator_command(&self) -> bool {
-        match self {
-            AdminCommand::SetParams(_)
-            | AdminCommand::UpsertMarket(_)
-            | AdminCommand::SetBenchmarkRate { .. }
-            | AdminCommand::SetBenchmarkRates(_)
-            | AdminCommand::SetStressFloor { .. }
-            | AdminCommand::SetReduceOnly { .. }
-            | AdminCommand::InitEmissions(_)
-            | AdminCommand::ScheduleCorporateAction(_)
-            | AdminCommand::InitStaking(_)
-            | AdminCommand::AnnounceParams(_)
-            | AdminCommand::AnnounceMarkup { .. }
-            | AdminCommand::AnnounceListing { .. }
-            | AdminCommand::RotateOperator { .. }
-            | AdminCommand::AdoptCloseSpreadCeiling { .. } => true,
-            AdminCommand::SetClientAuth(_)
-            | AdminCommand::SetAccessPolicy(_)
-            | AdminCommand::SetOperator(_)
-            | AdminCommand::SetToxicityNotional(_)
-            | AdminCommand::SetCloseSpreadCeilings { .. }
-            | AdminCommand::ActivateCustodyFinality { .. }
-            | AdminCommand::ActivateProtocol { .. } => false,
-        }
-    }
-}
-
-impl Command {
-    /// Targets the activation that validates staking cash reserves before closing an overdue epoch.
-    pub(crate) fn changes_staking_reserves(&self, current: ProtocolVersion) -> bool {
-        let admin = match self {
-            Self::Admin(admin) => admin,
-            Self::SignedAdmin(request) => &request.command,
-            _ => return false,
-        };
-        let target = match admin {
-            AdminCommand::ActivateProtocol { version } | AdminCommand::ActivateCustodyFinality { version, .. } => {
-                *version
-            }
-            _ => return false,
-        };
-        (current < ProtocolVersion::V28 && target >= ProtocolVersion::V28)
-            || (current < ProtocolVersion::V29 && target >= ProtocolVersion::V29)
-            || (current < ProtocolVersion::V30 && target >= ProtocolVersion::V30)
-            || (current < ProtocolVersion::V31 && target >= ProtocolVersion::V31)
-    }
-
-    /// Whether this node-only activation must precede dated benchmark catch-up.
-    pub fn is_dated_rate_activation(&self) -> bool {
-        matches!(self,
-            Self::Admin(AdminCommand::ActivateProtocol { version }
-                | AdminCommand::ActivateCustodyFinality { version, .. }) if *version >= ProtocolVersion::V18)
-    }
-
-    /// Whether this carries an atomic dated benchmark snapshot, signed or during genesis.
-    pub fn is_benchmark_batch(&self) -> bool {
-        matches!(self, Self::Admin(AdminCommand::SetBenchmarkRates(_)))
-            || matches!(self, Self::SignedAdmin(req) if matches!(req.command, AdminCommand::SetBenchmarkRates(_)))
-    }
 }

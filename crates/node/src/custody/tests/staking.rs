@@ -121,7 +121,7 @@ async fn mirror_range(
         &mut range,
         from..=to,
         &hashes_through(to),
-        (true, true),
+        (true, true, true),
     )
     .await
 }
@@ -488,3 +488,4 @@ async fn staking_hierarchy_survives_cancellation_and_rejects_changed_cached_anch
 
 mod anchor;
 mod registry;
+mod vote;
