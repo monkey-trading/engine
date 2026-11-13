@@ -157,7 +157,7 @@ it is recorded in the log, and changing it in the config for a log that has begu
   lists every signed admin command in a downloaded archive), and consider making the markets
   reduce-only while the exposed key is still valid ([reduce-only.md](reduce-only.md)). Every admin command is public, and the
   protocol bounds the operator's limits (a profit fee or close-out level moves within 50% after a
-  seven-day notice).
+  seven-day notice, and from protocol V55 the profit fee and its hold curve only up from launch).
 
   Rotating is not enough: until a release whose config names the new key runs, the exposed key can
   also seal a secrets bundle into the enclave. At every restart, before the log's rotation has been

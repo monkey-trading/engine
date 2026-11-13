@@ -101,6 +101,7 @@ impl Engine {
                 market.client_cost = market.client_cost - position.cost() + rounded.cost();
                 if qty.is_zero() {
                     state.positions.remove(&action.market);
+                    state.opened_at.remove(&action.market);
                 } else {
                     state.positions.insert(action.market, rounded);
                 }

@@ -9,7 +9,7 @@ use crate::command::OrderKind;
 use crate::fixed::Rounding;
 use crate::params::NotionalWeighting;
 use crate::protocol::ProtocolVersion;
-use crate::types::{MarketId, OrderId, Side};
+use crate::types::{MarketId, Millis, OrderId, Side};
 
 /// One netted position per market, as on a CFD netting account. `qty` is
 /// signed: long > 0, short < 0.
@@ -94,6 +94,10 @@ pub struct Account {
     #[serde(default, skip_serializing_if = "Fixed::is_zero")]
     pub unfinalised_deposits: Fixed,
     pub positions: BTreeMap<MarketId, Position>,
+    /// From `V55`, each position's open time, by market, which its hold for the profit fee runs from
+    /// (`holding_fee`). Left out of the encoding while empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub opened_at: BTreeMap<MarketId, Millis>,
     pub orders: BTreeMap<OrderId, RestingOrder>,
     /// EWMA of fill markouts in whole bps; see `ToxicityParams`. From `V11` it is the score rounded
     /// down, and `toxicity_fraction` holds the rest.

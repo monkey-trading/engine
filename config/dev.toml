@@ -264,6 +264,25 @@ stress_move_window_ms = 60000
 stress_cooldown_ms = 300000
 # Most orders one account may rest at once, across every market: 1 to 1000.
 max_resting_orders = 100
+# From protocol V55 a realised gain pays the larger of profit_fee_bps and this
+# curve's fee at the hold of the slice it closes (hold_ms from the position's
+# open time, fee_bps of the gain): the whole gain to 10 s, falling to 10% at 15
+# minutes, linear between points with the fee rounded up to the bp, and zero
+# from the last hold, where profit_fee_bps alone applies (#614's decision of
+# 2026-11-13; #697's 10 s curve, eleven holds spaced evenly in its logarithm).
+profit_fee_curve = [
+  { hold_ms = 10000, fee_bps = 10000 },
+  { hold_ms = 15683, fee_bps = 9100 },
+  { hold_ms = 24596, fee_bps = 8200 },
+  { hold_ms = 38573, fee_bps = 7300 },
+  { hold_ms = 60492, fee_bps = 6400 },
+  { hold_ms = 94869, fee_bps = 5500 },
+  { hold_ms = 148781, fee_bps = 4600 },
+  { hold_ms = 233330, fee_bps = 3700 },
+  { hold_ms = 365927, fee_bps = 2800 },
+  { hold_ms = 573877, fee_bps = 1900 },
+  { hold_ms = 900000, fee_bps = 1000 },
+]
 
 [genesis.params.rollover]
 tz = "Europe/London"

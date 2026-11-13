@@ -22,6 +22,7 @@ use crate::eip712::order_hash;
 use crate::engine::Engine;
 use crate::event::{CancelReason, Event, Fill, Reject};
 use crate::fixed::Rounding;
+use crate::holding_fee;
 use crate::protocol::ProtocolVersion;
 use crate::spread_tier::spread_staircase;
 use crate::toxicity::FillMark;
@@ -399,7 +400,9 @@ impl Engine {
         let version = self.protocol_version;
         let realised = sim.positions.entry(exec.market).or_default().apply(priced.delta, priced.price, version);
         let realised = usd(realised, Rounding::Down);
-        sim.balance += realised - profit_fee(realised, params.profit_fee_bps, version);
+        // From `V55` the fee is the closing slice's, at its hold.
+        let (_, fee_bps) = self.close_fee_terms(exec.account, exec.market);
+        sim.balance += realised - profit_fee(realised, fee_bps, version);
         let (equity, required) = self.equity_and_margin(&sim, Some((exec.market, priced.mid, priced.fx)));
         if equity < required {
             return Err(Reject::InsufficientMargin { equity, required });
@@ -420,13 +423,14 @@ impl Engine {
         Ok(())
     }
 
-    /// Books a priced fill: the position, the market aggregates, realised PnL in USD (rounded down)
-    /// and the profit fee against house cash, the PnL in the account's emission period result, and a
-    /// markout to score the flow later (`Engine::mark_fill`).
+    /// Books a priced fill: the position, from `V55` its open time, the market aggregates, realised PnL
+    /// in USD (rounded down) and the profit fee at the closed slice's hold against house cash, the PnL
+    /// in the account's emission period result, and a markout to score the flow later
+    /// (`Engine::mark_fill`).
     fn book(&mut self, exec: &Exec, priced: Priced) -> Fill {
         let params = self.params.as_ref().expect("callers check params are set");
-        let fee_bps = params.profit_fee_bps;
-        let version = self.protocol_version;
+        let (hold, fee_bps) = self.close_fee_terms(exec.account, exec.market);
+        let (version, now) = (self.protocol_version, self.hold_clock_time());
         let market = self.markets.get_mut(&exec.market).expect("priced against this market");
         let acct = self.accounts.get_mut(&exec.account).expect("priced for this account");
 
@@ -442,6 +446,9 @@ impl Engine {
         if position.is_zero() {
             acct.positions.remove(&exec.market);
         }
+        let clock = (now, holding_fee::last_hold(&params.profit_fee_curve));
+        holding_fee::move_open_time(version, &mut acct.opened_at, exec.market, (held, position), clock);
+        let (hold_ms, profit_fee_bps) = holding_fee::closed_terms(held, priced.delta, hold, fee_bps);
         let fee = profit_fee(realised_pnl, fee_bps, version);
         acct.balance += realised_pnl - fee;
         self.house_cash -= realised_pnl - fee;
@@ -462,6 +469,8 @@ impl Engine {
             realised_pnl,
             fx_index: priced.fx,
             profit_fee: fee,
+            hold_ms,
+            profit_fee_bps,
             position,
             liquidation: exec.liquidation,
         }

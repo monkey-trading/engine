@@ -65,7 +65,8 @@ impl Engine {
     /// - `AnnounceParams` and `RotateOperator` with any error case of `Engine::announce_params` and
     ///   `Engine::rotate_operator`
     /// - from `V49`, `SetParams` that changes the stress parameters without a notice whose time has
-    ///   come (see `Engine::check_rate_changes`); `UpsertMarket` that changes a listed market's
+    ///   come, and from `V55` the profit fee below its launch value or the profit fee curve outside
+    ///   its bound or without such a notice (see `Engine::check_rate_changes`); `UpsertMarket` that changes a listed market's
     ///   markup, or from `V52` its bands, without one (`Engine::check_listing_change`); a markup or
     ///   listing notice with any error case of `Engine::announce_markup` or `Engine::announce_listing`
     /// - from `V40`, `SetCloseSpreadCeilings` and `AdoptCloseSpreadCeiling` with any error case of
@@ -369,6 +370,7 @@ impl Engine {
                 self.start_listing_bounds(*version);
                 self.carry_kept_notices(*version);
                 self.start_toxicity_score(*version);
+                self.start_hold_clocks(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
                 self.protocol_version = *version;
                 // Rules before `V47` record no candidate, so one an election already seated is seated before

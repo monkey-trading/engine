@@ -302,8 +302,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/replay/snapshot.rs` — replay restored from a verified state snapshot
 - `src/sequencer/replay/replayed_log.rs` — a log read and replayed before anything is written, and
   the head link and prefix ring the log-head poster reads from it
-- `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, and the pending listing notices, which `GET /v1/house/state` answers from
-- `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, with a pending listing notice, and after a restart
+- `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, and the pending parameter and listing notices, which `GET /v1/house/state` answers from
+- `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, with a pending parameter or listing notice, and after a restart
 - `src/sequencer/replay/authorities.rs` — accepted historical signers for checkpoints a retired key signed
 - `src/sequencer/legacy.rs` — verified legacy activation inputs and pre-writer signature eligibility
 - `src/sequencer/legacy/approvals.rs` — authenticated approval prefixes, bounded receipt proofs and per-obligation release authorization
@@ -433,6 +433,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/access_tests/spreads.rs` — the `V52` dev scenario: fills paying their bands on the open
   and the close, the signed quote stream's closing steps, refused and noticed band changes, ceiling
   floors and a bound first listing, through the signed admin route over TLS, and replay
+- `src/api/access_tests/holding_fee.rs` — the `V55` dev scenario: closes paying the profit fee their
+  hold gives, an add and a flip moving the open time, a close-out of a gaining and a losing position,
+  the account and house reads, a refused cut and a noticed raise over TLS, replay and a restart
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
 - `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof, at the
@@ -2057,6 +2060,11 @@ level: a close-out closes the largest losing position that can trade first, whic
 none trades outside its market's session. A move in an FX market also moves the accounts' positions
 quoted in its currency, which the estimate holds at their marks. The read runs on the sequencer's
 thread (about 9 µs p99 for an account holding all 37 launch markets, 7 µs of it the close-outs, against the 200 µs command budget; `stats::tests::closeout_cost`).
+The read also gives `close_fees`, keyed by market, one entry per position from `V55` and empty
+before it: `{"opened_at", "fee_bps", "falls_at"}`, the position's open time (an add moves it to the
+size-weighted average of the add's time and the open time, counted as no earlier than the add's time
+less the curve's last hold), the profit fee rate in bps a gain closed now pays, and the sequenced
+time that rate next falls, `null` once it is the base. "Now" is the engine's last sequenced time.
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns
 `{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the
@@ -2162,7 +2170,9 @@ key, and a restart accepts the log's rotated key under the config that names the
 long as the chain and vault match. `announce-params` gives the notice a profit fee or close-out level
 change needs, and from `V49` with `--stress-from <params.toml>` the notice for the stress levels, move
 window and cooldown that a `set-params` carrying that file applies, and from `V54` with
-`--score-tiers-from <params.toml>` the notice for the toxicity score's tiers; `announce-markup <market> <bps>
+`--score-tiers-from <params.toml>` the notice for the toxicity score's tiers, and from `V55` with
+`--profit-fee-curve-from <params.toml>` the notice for its `profit_fee_curve`, which must stay at or
+above the launch curve at every hold, as the profit fee stays at or above its launch value; `announce-markup <market> <bps>
 --effective-at <time>` gives the notice a listed market's markup change needs before an
 `upsert-market` carries it. From `V52`, `announce-listing <market>` with `--spreads-from` and
 `--margins-from` (TOML market specs whose bands it names) and `--markup-bps` gives the notice a listed
@@ -2172,17 +2182,22 @@ market's spread band, margin band or markup change needs, and `adopt-close-sprea
 time, or seven days after the election is logged when that is later, and once the staking mirror
 has completed a finalised block stamped at or after the registry's effective time, signing with
 `--rotated`.
-`GET /v1/house/state` returns `{"seq", "params", "score_rules", "listing_notices", "checkpoint"}` from
-memory, signed like the other reads, with no log scan, so a client learns the protocol parameters,
-the pending listing notices and the latest checkpoint without replaying the log. `listing_notices` maps each
+`GET /v1/house/state` returns `{"seq", "params", "params_notice", "score_rules", "listing_notices",
+"checkpoint"}` from memory, signed like the other reads, with no log scan, so a client learns the
+protocol parameters, the pending notices and the latest checkpoint without replaying the log.
+`params_notice` is the pending parameter notice (`null` while none waits): each of
+`profit_fee_bps`, `closeout_level_bps`, `stress`, from `V54` `score_tiers` and from `V55`
+`profit_fee_curve` it names, and `effective_at`. `listing_notices` maps each
 market with a pending notice to it (`spread_tiers` in tenths of a bp, `margin_tiers`, `markup_bps`,
 each left out when not named, and `effective_at`); the bands in force are `GET /v1/markets`'s. `seq` is the log head the read was taken at (`null` on an empty log).
 `params` is `null` until the first `SetParams` applies, then the parameters in force, as the
 `set_params` command encodes them (`profit_fee_bps`, `closeout_level_bps`, `house_total_cap_bps`,
-`house_total_cap_floor` left out when zero, `stress_levels`, and the rest), plus `seq`, the seq of the
+`house_total_cap_floor` left out when zero, `stress_levels`, from `V55` `profit_fee_curve`, and the
+rest), plus `seq`, the seq of the
 `SetParams` that set them (`null` only when a snapshot written before it carried the seq restored the
 node and no `SetParams` has applied since; an activation that converts the parameters in place, as
-`V13`'s divergence shares, `V52`'s 1x multipliers and `V54`'s score tiers do, leaves it at that `SetParams`).
+`V13`'s divergence shares, `V52`'s 1x multipliers, `V54`'s score tiers and `V55`'s default curve and
+launch base do, leaves it at that `SetParams`).
 From `V54`, `score_rules` gives the toxicity score's protocol constants: `horizon_ms`, `half_life_ms`,
 `min_fills`, `weight_cap`, `grid_ms` and `window_ms`; the score's tiers are `params.toxicity.score_tiers`.
 `checkpoint` is `null` until the log holds one, then the

@@ -10,7 +10,10 @@ an index: load only the rule whose hint matches the current action.
 ## Structure
 
 - **crates/core/** — `engine-core`: the protocol state machine. Covers pricing against the index,
-  size and stress spreads, margin and close-out, the profit fee, overnight financing, trading
+  size and stress spreads, margin and close-out, the profit fee (from `V55` falling with holding time
+  along a hold curve from each position's open time, `holding_fee/`, with the open time's own leaf in
+  `merkle/open_time.rs`, the base, from launch to +50%, and the curve, at or above launch at every hold,
+  moved only after notice), overnight financing, trading
   sessions (from `V21` no quote stamped outside a market's hours prices it), markets priced from
   roll-adjusted front futures contracts (`futures.rs`), dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring (from `V54` a stick in `toxicity/`: markouts from
@@ -120,7 +123,7 @@ an index: load only the rule whose hint matches the current action.
   is refused at serve time),
   the dashboard record (`stats/`, held in memory and rebuilt from the log's replay through a sink in it,
   with no file to roll back: `series.rs` 1m/1h/1d buckets with `[stats]` retention, `snapshot.rs` and
-  `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, and, from the full scan's rule, each position's `closeouts` price in `GET /v1/accounts/{address}`, `activity.rs`
+  `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, and, from the full scan's rule, each position's `closeouts` price in `GET /v1/accounts/{address}` (beside, from `V55`, what closing it pays, `close_fees`), `activity.rs`
   the bounded MONKEY feed, `view.rs` the answers) served signed from `api/stats.rs` and `/v1/house`:
   `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity`, `/v1/monkey/distributions` (`distributions.rs`: the
   closed epochs, their operator-share recipients and skipped ranges, in a ring of `[stats] distribution_limit`) and
@@ -178,8 +181,8 @@ an index: load only the rule whose hint matches the current action.
   EIP-4788 entry holding the block's root and reads the relay through a strict majority of its Ethereum providers,
   and sends through its signing endpoint with a relayer key apart from the checkpoint relayer's), the
   `/v1/house/state` read of the protocol parameters (with the seq that set them, and from `V54` the toxicity
-  score's constants) and the latest checkpoint (`api/house_state.rs`, `sequencer/house.rs`), the account read's
-  toxicity score, tier and add-on from `V54`, checkpoint posting
+  score's constants), the pending parameter and listing notices, and the latest checkpoint (`api/house_state.rs`,
+  `sequencer/house.rs`), the account read's toxicity score, tier and add-on from `V54`, checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), at most one signed checkpoint on its way to
   finality at a time (`sequencer/checkpoints/hold_back.rs`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
@@ -419,6 +422,10 @@ an index: load only the rule whose hint matches the current action.
   through every band and a EUR-USD round trip at 0.4bp, each fill at its band's charge, the signed quote
   stream's steps through the bands a close crosses, refused floors, notices and ceilings, a noticed band and
   margin change from its time, a bound first listing, restart and replay;
+  `dev-holding-fee.sh`, the V55 holding-time profit fee on a dev node: a BTC long's closes at 5 s, 60 s,
+  20 and 45 minutes each paying the curve's rate at its hold, an add moving the open time, a flip, a
+  close-out of a gaining and a losing position, the account and house reads, a refused cut and a noticed
+  raise over TLS, restart and replay;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
@@ -567,7 +574,7 @@ an index: load only the rule whose hint matches the current action.
   before, and a job that times out is cancelled rather than failed, so the run continues too.
   `gh run rerun --failed` re-runs the failed, cancelled, and unstarted jobs with `ci-passed`, so a
   re-run after a flake repeats everything the first failure cut short. The test job also runs the
-  corporate-action, operator bounds and parameter notice dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
+  corporate-action, operator bounds, parameter notice and holding-time fee dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
   their own job, `test-production`, which compiles a different feature set.
   `merge-approval.yaml` runs only on merge groups: its `merge-approved` job, the merge-group side of
   the required `merge-approved` check, runs `scripts/check-merge-approved.sh`, which follows the
@@ -719,6 +726,9 @@ Run from the repo root:
   operator/TLS/API scenario with deterministic time and public replay)
 - Spreads dev scenario: `./scripts/dev-spreads.sh` (runs the isolated access-screened trading, signed
   admin over TLS and signed quote stream scenario with deterministic time, restart and public replay)
+- Holding-time fee dev scenario: `./scripts/dev-holding-fee.sh` (runs the isolated access-screened
+  trading, account and house reads and signed admin over TLS scenario with deterministic time, restart
+  and public replay)
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault

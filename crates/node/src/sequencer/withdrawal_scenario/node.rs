@@ -362,6 +362,8 @@ pub(super) fn write_config(
     cfg["genesis"]["markets"][0]["financing"]["markup_bps"] = 0_i64.into();
     cfg["genesis"]["benchmarks"][0]["annual_bps"] = 0_i64.into();
     cfg["genesis"]["params"]["profit_fee_bps"] = 0_i64.into();
+    // Fee-free from V55 too: no hold curve above the zero base.
+    cfg["genesis"]["params"]["profit_fee_curve"] = serde_json::json!([]);
     cfg["genesis"]["params"]["house_total_cap_floor"] = "1000000".into();
     cfg["genesis"]["params"]["stress_levels"].as_array_mut().context("stress levels")?.truncate(1);
     // No toxicity tier adds spread before 20 scored fills, more than any scenario makes.

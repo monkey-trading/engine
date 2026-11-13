@@ -210,6 +210,7 @@ impl AccountLeaf {
             balance,
             unfinalised_deposits,
             positions,
+            opened_at: _,
             orders: _,
             toxicity_bps,
             toxicity_fraction,

@@ -27,13 +27,13 @@ const SOL: MarketId = 3;
 const CHALLENGE: &str = "5a1d0e3f9b2c7a48e6d1f05b3a9c2e718f0e5c2a9b7d41e6a3c0f19d2e84b7c6";
 
 /// The signed admin route over TLS, pinned to the node's key, as `engine admin` reaches it.
-struct Operator {
+pub(super) struct Operator {
     api: NodeApi,
 }
 
 impl Operator {
     /// Serves `node`'s API over TLS on a free loopback port.
-    async fn serving(node: &Node) -> Self {
+    pub(super) async fn serving(node: &Node) -> Self {
         let tls = TlsIdentity::generate().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("https://{}", listener.local_addr().unwrap()).parse().unwrap();
@@ -51,12 +51,12 @@ impl Operator {
         submit(&self.api, &request).await.unwrap()
     }
 
-    async fn applies(&self, node: &Node, command: AdminCommand) {
+    pub(super) async fn applies(&self, node: &Node, command: AdminCommand) {
         let events = self.send(node, command).await;
         assert_eq!(events.last(), Some(&Event::AdminApplied), "{events:?}");
     }
 
-    async fn refuses(&self, node: &Node, command: AdminCommand, reason: &str) {
+    pub(super) async fn refuses(&self, node: &Node, command: AdminCommand, reason: &str) {
         let events = self.send(node, command).await;
         assert!(
             matches!(events.last(), Some(Event::AdminRejected { reason: got }) if got.contains(reason)),
@@ -68,6 +68,18 @@ impl Operator {
 /// A signed market order of `qty` for `client`, quoted at `quoted`, through the order route; the fill's
 /// price.
 async fn fill(node: &Node, client: &SigningKey, market: MarketId, side: Side, qty: &str, quoted: &str) -> Fixed {
+    fill_event(node, client, market, side, qty, quoted).await["price"].as_str().unwrap().parse().unwrap()
+}
+
+/// `fill`'s order; the fill event.
+pub(super) async fn fill_event(
+    node: &Node,
+    client: &SigningKey,
+    market: MarketId,
+    side: Side,
+    qty: &str,
+    quoted: &str,
+) -> Value {
     let account = eip712::address(client.verifying_key());
     let nonce = node.state.query(move |engine| engine.next_request_nonce(account)).await.unwrap();
     let expires_at = node.clock.now_ms() + 60_000;
@@ -86,11 +98,11 @@ async fn fill(node: &Node, client: &SigningKey, market: MarketId, side: Side, qt
     let (status, events) = node.post("/v1/orders", json!(request)).await;
     assert_eq!(status, StatusCode::OK, "{events}");
     let fill = events.as_array().unwrap().iter().find(|event| event["type"] == "fill");
-    fill.unwrap_or_else(|| panic!("{side:?} {qty}: {events}"))["price"].as_str().unwrap().parse().unwrap()
+    fill.unwrap_or_else(|| panic!("{side:?} {qty}: {events}")).clone()
 }
 
 /// Credits `amount` more to a declared `client`.
-async fn fund(node: &Node, client: &SigningKey, amount: i64) {
+pub(super) async fn fund(node: &Node, client: &SigningKey, amount: i64) {
     let account = eip712::address(client.verifying_key());
     let deposit = node
         .state
@@ -115,12 +127,12 @@ async fn balance(node: &Node, client: &SigningKey) -> Fixed {
     node.state.query(move |engine| engine.accounts()[&account].balance).await.unwrap()
 }
 
-/// Prices `market` at `mid` from both venues, stamped now.
-async fn price(node: &Node, market: MarketId, mid: &str) {
+/// Prices `market` at `mid` from both venues, stamped now; the events the prices give.
+pub(super) async fn price(node: &Node, market: MarketId, mid: &str) -> Vec<Event> {
     let ts = node.clock.now_ms();
     let quotes =
         ["a", "b"].map(|source| SourceQuote { source: source.into(), mid: mid.parse().unwrap(), ts, contract: None });
-    node.state.submit(Command::Prices { market, quotes: quotes.to_vec() }).await.unwrap();
+    node.state.submit(Command::Prices { market, quotes: quotes.to_vec() }).await.unwrap()
 }
 
 /// `account`'s BTC quote from a fresh signed stream connection, verified frame by frame.
@@ -257,8 +269,14 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
     params.stress_levels[0].size_spread_multiplier_bps = 0;
     let stress = Some(StressSettings::of(&params));
     let due = node.clock.now_ms() + NOTICE_MS;
-    let zero =
-        ParamsNotice { profit_fee_bps: None, closeout_level_bps: None, stress, score_tiers: None, effective_at: due };
+    let zero = ParamsNotice {
+        profit_fee_bps: None,
+        closeout_level_bps: None,
+        stress,
+        profit_fee_curve: None,
+        effective_at: due,
+        score_tiers: None,
+    };
     let reason = "every stress level's size multiplier is at least 10000 bps";
     operator.refuses(&node, AdminCommand::AnnounceParams(zero), reason).await;
 
@@ -311,8 +329,14 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
     toxic.toxicity.score_tiers[top].extra_spread_bps = 7;
     let tiers_notice = |params: &engine_core::params::ProtocolParams, effective_at| {
         let score_tiers = Some(params.toxicity.score_tiers.clone());
-        let notice =
-            ParamsNotice { profit_fee_bps: None, closeout_level_bps: None, stress: None, score_tiers, effective_at };
+        let notice = ParamsNotice {
+            profit_fee_bps: None,
+            closeout_level_bps: None,
+            stress: None,
+            score_tiers,
+            effective_at,
+            profit_fee_curve: None,
+        };
         AdminCommand::AnnounceParams(notice)
     };
     operator.applies(&node, tiers_notice(&toxic, node.clock.now_ms() + NOTICE_MS)).await;

@@ -112,10 +112,11 @@ pub enum AdminAction {
         market: Option<MarketId>,
     },
     /// Give notice of a new profit fee and/or close-out level (from V35), of new stress parameters
-    /// (from V49), and of new toxicity score tiers (from V54): a `set-params` carrying them applies
-    /// only from `--effective-at`, at least seven days after the notice is logged, and the fee, the
-    /// level and each tier's score and add-on must each stay within 50% of their launch values. It
-    /// replaces a pending notice, whatever that names.
+    /// (from V49), of new toxicity score tiers (from V54), and of a new profit fee curve (from V55): a
+    /// `set-params` carrying them applies only from `--effective-at`, at least seven days after the
+    /// notice is logged, and the fee, the level and each tier's score and add-on must each stay within
+    /// 50% of their launch values, from V55 with the fee at or above its launch value and the curve at
+    /// or above its launch curve at every hold. It replaces a pending notice, whatever that names.
     AnnounceParams {
         #[arg(long)]
         profit_fee_bps: Option<i64>,
@@ -128,6 +129,9 @@ pub enum AdminAction {
         /// A TOML parameters file whose toxicity score tiers a later `set-params` applies.
         #[arg(long)]
         score_tiers_from: Option<PathBuf>,
+        /// A TOML parameters file whose profit fee curve a later `set-params` applies.
+        #[arg(long)]
+        profit_fee_curve_from: Option<PathBuf>,
         /// When the new values may apply from, in RFC 3339 (`2027-01-01T00:00:00Z`).
         #[arg(long)]
         effective_at: DateTime<Utc>,

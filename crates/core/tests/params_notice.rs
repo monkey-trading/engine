@@ -42,6 +42,7 @@ fn stress_notice(params: &ProtocolParams, effective_at: Millis) -> AdminCommand 
         profit_fee_bps: None,
         closeout_level_bps: None,
         stress,
+        profit_fee_curve: None,
         effective_at,
         score_tiers: None,
     })
@@ -154,6 +155,7 @@ fn a_rate_and_stress_notice_is_spent_part_by_part_and_a_new_notice_replaces_it()
         profit_fee_bps: Some(fee),
         closeout_level_bps: None,
         stress,
+        profit_fee_curve: None,
         effective_at: due,
         score_tiers: None,
     };
@@ -170,6 +172,7 @@ fn a_rate_and_stress_notice_is_spent_part_by_part_and_a_new_notice_replaces_it()
         profit_fee_bps: Some(fee),
         closeout_level_bps: None,
         stress: None,
+        profit_fee_curve: None,
         effective_at,
         score_tiers: None,
     };

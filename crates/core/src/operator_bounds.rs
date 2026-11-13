@@ -14,13 +14,15 @@
 //! (`listing_bounds`).
 //!
 //! From `V54` the toxicity score's tiers take the same notice, within ±50% of their launch values
-//! (`toxicity`).
+//! (`toxicity`). From `V55` the profit fee moves only up from its launch value, and a notice may name
+//! a new profit fee curve, at or above its launch curve at every hold (`holding_fee`).
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::engine::Engine;
+use crate::holding_fee::{CurvePoint, spend_curve_notice};
 use crate::listing_bounds::{LaunchBands, ListingNotice};
 use crate::market::MarketSpec;
 use crate::params::{MAX_RATE_BPS, ProtocolParams, StressLevel};
@@ -55,6 +57,9 @@ pub struct ParamsNotice {
     /// From `V54`, new toxicity score tiers, left out of the encoding when none are named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score_tiers: Option<Vec<ScoreTier>>,
+    /// From `V55`, a new profit fee curve, left out of the encoding when none is named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profit_fee_curve: Option<Vec<CurvePoint>>,
     /// The sequenced time the new values may apply from.
     pub effective_at: Millis,
 }
@@ -119,6 +124,10 @@ pub struct OperatorBounds {
     /// parameters set under `V54`, or of its activation over parameters already set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_score_tiers: Option<Vec<ScoreTier>>,
+    /// From `V55`, the profit fee curve in force when parameters are first set under `V55` or when it
+    /// activates over them, which every later curve stays at or above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_curve: Option<Vec<CurvePoint>>,
 }
 
 impl OperatorBounds {
@@ -135,6 +144,7 @@ impl ParamsNotice {
             && self.closeout_level_bps.is_none()
             && self.stress.is_none()
             && self.score_tiers.is_none()
+            && self.profit_fee_curve.is_none()
     }
 }
 
@@ -171,6 +181,7 @@ impl Engine {
     /// - stress parameters before `V49`, or ones that, with the other parameters in force, fail
     ///   `ProtocolParams::validate_for` or `ProtocolParams::check_closing_spread`
     /// - score tiers `Engine::check_score_tier_notice` refuses
+    /// - from `V55`, a profit fee below its launch value; a curve `Engine::check_curve_notice` refuses
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_params(&mut self, notice: &ParamsNotice) -> Result<(), String> {
         self.require_bounds_protocol("a parameter notice")?;
@@ -192,6 +203,7 @@ impl Engine {
         if let Some(tiers) = &notice.score_tiers {
             self.check_score_tier_notice(tiers)?;
         }
+        self.check_curve_notice(notice.profit_fee_curve.as_deref())?;
         if notice.names_nothing() {
             return Err("a parameter notice names no rate".into());
         }
@@ -205,6 +217,7 @@ impl Engine {
                     launch.profit_fee_bps
                 ));
             }
+            self.check_fee_floor(fee, launch.profit_fee_bps)?;
         }
         if let Some(level) = notice.closeout_level_bps {
             if !(1..=MAX_RATE_BPS).contains(&level) {
@@ -275,14 +288,15 @@ impl Engine {
     }
 
     /// Checks `params` against the bounds: a changed profit fee or close-out level is within ±50% of
-    /// its launch value and named by a notice whose time has come, and from `V49` so are changed
-    /// stress parameters, with no range.
+    /// its launch value and named by a notice whose time has come, from `V49` so are changed stress
+    /// parameters, with no range, and from `V55` a changed profit fee curve, within its bound.
     /// Error cases:
-    /// - a changed rate outside ±50% of its launch value
+    /// - a changed rate outside ±50% of its launch value, or from `V55` a profit fee below it
     /// - a changed rate no notice names, or whose notice takes effect later than the sequenced time
     /// - from `V49`, changed stress parameters no notice names, or whose notice takes effect later than the
     ///   sequenced time
     /// - from `V54`, changed score tiers `Engine::check_score_tier_change` refuses
+    /// - a changed profit fee curve that fails `Engine::check_curve_change`
     pub(crate) fn check_rate_changes(&self, params: &ProtocolParams) -> Result<(), String> {
         let Some(current) = &self.params else { return Ok(()) };
         // Recorded with the first parameters under `V35`, or at its activation over them.
@@ -299,6 +313,9 @@ impl Engine {
             if !within_half(new.into(), launched.into()) {
                 return Err(format!("{name} {new} is outside ±50% of its launch value {launched}"));
             }
+            if name == "profit_fee_bps" {
+                self.check_fee_floor(new, launched)?;
+            }
             let notice = self.operator_bounds.notice.as_ref().filter(|notice| match name {
                 "profit_fee_bps" => notice.profit_fee_bps == Some(new),
                 _ => notice.closeout_level_bps == Some(new),
@@ -312,6 +329,7 @@ impl Engine {
             }
         }
         self.check_score_tier_change(params)?;
+        self.check_curve_change(&params.profit_fee_curve, &current.profit_fee_curve)?;
         let stress = StressSettings::of(params);
         if self.protocol_version < ProtocolVersion::V49 || stress == StressSettings::of(current) {
             return Ok(());
@@ -326,11 +344,12 @@ impl Engine {
     }
 
     /// After new parameters apply: records the launch rates and score tiers if these are the first,
-    /// and spends the notice of each rate, of the stress parameters, and of the score tiers, that
-    /// changed.
+    /// and spends the notice of each rate, of the stress parameters, of the score tiers, and of the
+    /// profit fee curve, that changed.
     pub(crate) fn settle_rate_changes(&mut self, before: Option<&ProtocolParams>, params: &ProtocolParams) {
         self.record_launch_rates();
         self.record_launch_score_tiers();
+        self.record_launch_curve();
         let Some(before) = before else { return };
         let tiers = &params.toxicity.score_tiers;
         let spends_tiers = *tiers != before.toxicity.score_tiers;
@@ -349,6 +368,7 @@ impl Engine {
         if spends_tiers && notice.score_tiers.as_ref() == Some(tiers) {
             notice.score_tiers = None;
         }
+        spend_curve_notice(notice, &before.profit_fee_curve, &params.profit_fee_curve);
         if notice.names_nothing() {
             self.operator_bounds.notice = None;
         }

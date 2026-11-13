@@ -342,6 +342,8 @@ fn fill(market: MarketId) -> Fill {
         realised_pnl: Fixed::ZERO,
         fx_index: None,
         profit_fee: Fixed::ZERO,
+        hold_ms: None,
+        profit_fee_bps: None,
         position: Fixed::ONE,
         liquidation: false,
     }

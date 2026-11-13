@@ -223,7 +223,7 @@ fn an_existing_v1_log_activates_at_its_next_seq_and_still_verifies() {
     // A log written as one file before segments existed continues as the first segment.
     crate::sequencer::fixture_tests::copy_fixture(V1_DEV, dir.join("00000000000000000000.jsonl"));
     let logged = log_entries(&dir);
-    let before = replay(&logged).unwrap().engine.params().cloned().expect("the log sets parameters");
+    let mut carried = replay(&logged).unwrap().engine.params().cloned().expect("the log sets parameters");
     let mut seq = recover_with(&dir, &signed(31_337), finished_genesis(&logged)).unwrap();
     let weighting = dev_config().genesis.params.toxicity.notional.unwrap();
     seq.carry_toxicity_notional(weighting).unwrap();
@@ -235,11 +235,11 @@ fn an_existing_v1_log_activates_at_its_next_seq_and_still_verifies() {
     assert_eq!((replayed.commands, replayed.checkpoints), (68, 6));
     assert_eq!(replayed.activations, [(ProtocolVersion::LATEST, 67)]);
     // Activation also turns its absolute divergence triggers of 15 and 20 bps into 60% and 80% of its
-    // widest bound, 25 bps: the shares the dev config takes; and its toxicity into `V54`'s form.
-    let mut carried = before;
+    // widest bound, 25 bps: the shares the dev config takes; its toxicity into `V54`'s form; and the default curve.
     carried.toxicity.notional = Some(weighting);
     carried.share_divergence_triggers(25);
     carried.convert_to_score();
+    carried.profit_fee_curve = engine_core::holding_fee::DEFAULT_PROFIT_FEE_CURVE.to_vec();
     assert_eq!(replayed.engine.params(), Some(&carried));
     let triggers = |p: &ProtocolParams| p.stress_levels.iter().map(|level| level.trigger.clone()).collect::<Vec<_>>();
     assert_eq!(triggers(&carried), triggers(&dev_config().genesis.params));

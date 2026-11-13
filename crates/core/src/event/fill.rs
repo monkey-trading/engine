@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
-use crate::types::{AccountId, MarketId, OrderId, Side};
+use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,6 +35,12 @@ pub struct Fill {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fx_index: Option<Fixed>,
     pub profit_fee: Fixed,
+    /// From `V55`, the hold of the slice the fill closes, from its position's open time, and the fee
+    /// rate a gain on it pays (`holding_fee`); both absent for a fill that closes nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold_ms: Option<Millis>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profit_fee_bps: Option<i64>,
     /// Signed position after the fill.
     pub position: Fixed,
     pub liquidation: bool,

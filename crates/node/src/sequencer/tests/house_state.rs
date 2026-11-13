@@ -4,8 +4,9 @@
 use super::*;
 
 use engine_core::eip712;
+use engine_core::holding_fee::{CurvePoint, DEFAULT_PROFIT_FEE_CURVE};
 use engine_core::listing_bounds::ListingNotice;
-use engine_core::operator_bounds::NOTICE_MS;
+use engine_core::operator_bounds::{NOTICE_MS, ParamsNotice};
 use engine_core::spread_tier::SpreadTier;
 use k256::ecdsa::SigningKey;
 
@@ -84,7 +85,9 @@ fn a_log_with_no_command_has_neither_parameters_nor_a_checkpoint() {
     let dir = scratch_dir("house-state-empty");
     let (mut seq, _) = try_recover(&dir, &ClientAuth::Unsigned);
     let state = read(seq.as_mut().unwrap());
-    let expected = serde_json::json!({ "seq": null, "params": null, "listing_notices": {}, "checkpoint": null });
+    let expected = serde_json::json!({
+        "seq": null, "params": null, "params_notice": null, "listing_notices": {}, "checkpoint": null
+    });
     assert_eq!(serde_json::to_value(state).unwrap(), expected);
 }
 
@@ -192,4 +195,36 @@ fn a_pending_listing_notice_is_listed_in_the_market_reads_units_and_across_a_res
 
     let mut recovered = start(&dir, &clock, false);
     assert_eq!(read(&mut recovered).listing_notices.get(&1), Some(&notice));
+}
+
+#[test]
+fn a_pending_parameter_notice_and_the_profit_fee_curve_are_listed_and_kept_across_a_restart() {
+    let dir = scratch_dir("house-state-params-notice");
+    let clock = Arc::new(TestClock::at(START));
+    let mut seq = start(&dir, &clock, true);
+    let state = serde_json::to_value(read(&mut seq)).unwrap();
+    assert_eq!(state["params_notice"], serde_json::Value::Null, "{state}");
+    let curve = serde_json::to_value(DEFAULT_PROFIT_FEE_CURVE).unwrap();
+    assert_eq!(state["params"]["profit_fee_curve"], curve, "{state}");
+    let raised: Vec<CurvePoint> = DEFAULT_PROFIT_FEE_CURVE
+        .iter()
+        .map(|point| CurvePoint { fee_bps: point.fee_bps.max(2_000), ..*point })
+        .collect();
+    let notice = ParamsNotice {
+        profit_fee_bps: Some(1_200),
+        closeout_level_bps: None,
+        stress: None,
+        profit_fee_curve: Some(raised),
+        effective_at: clock.now_ms() + NOTICE_MS + 60_000,
+        score_tiers: None,
+    };
+    let events = operate(&mut seq, &clock, AdminCommand::AnnounceParams(notice.clone()));
+    assert_eq!(events, [Event::AdminApplied]);
+    assert_eq!(read(&mut seq).params_notice, Some(notice.clone()));
+    let listed = serde_json::to_value(read(&mut seq)).unwrap();
+    assert_eq!(listed["params_notice"]["profit_fee_curve"][9]["fee_bps"], 2_000, "{listed}");
+    drop(seq);
+
+    let mut recovered = start(&dir, &clock, false);
+    assert_eq!(read(&mut recovered).params_notice, Some(notice));
 }

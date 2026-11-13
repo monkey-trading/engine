@@ -22,7 +22,8 @@
 //!   mirror reference (its UTF-8 bytes). From `V38`, kind 24 holds the exit terms (no id), and the
 //!   queued withdrawal (33) and receipt-backed pending deposit (34) leaves are ABI-encoded for the
 //!   vault's exit (`exit.rs`). From `V54`, kind 25 is an account's toxicity score (`address`) and
-//!   kind 26 a market's markout spread history (`uint32`) (`toxicity.rs`).
+//!   kind 26 a market's markout spread history (`uint32`) (`toxicity.rs`). From `V55`, kind 27 is a
+//!   position's open time (`address` account, `uint32` market) (`open_time.rs`).
 //! - **Paths.** The key's bits, most significant first, are the path from the root: bit `d`,
 //!   `(uint256(key) >> (255 - d)) & 1`, picks the child at depth `d + 1`, 0 left and 1 right.
 //! - **Leaves.** `keccak256(abi.encodePacked(bytes1(0x00), key, valueHash))`; each kind's
@@ -53,6 +54,8 @@ mod withdrawal;
 pub use withdrawal::*;
 mod exit;
 pub use exit::*;
+mod open_time;
+pub use open_time::{open_time_hash, open_time_key};
 mod toxicity;
 pub use toxicity::{markout_spread_key, toxicity_score_key};
 pub(crate) mod state;

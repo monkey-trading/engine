@@ -186,7 +186,10 @@ from protocol V52 no spread band is below its class's floor, a listed market's s
 change only after a seven-day notice and within its launch bands, a close pays no more than its
 market's ceiling, and a ceiling is installed or adopted only at or above what a close in the first
 band pays at the widest admitted stress, under the parameters in force then and those the market
-launched with, so a change past those bounds is in scope. With `[checkpoints]` configured, startup verifies the replayed log
+launched with, so a change past those bounds is in scope. From protocol V55 no hold pays a lower profit
+fee than at launch: the base fee moves only from its launch value up to half again, and the hold curve
+only to one at or above its launch curve at every hold, each after a seven-day notice, so a change past
+those bounds is in scope too. With `[checkpoints]` configured, startup verifies the replayed log
 against the latest posted vault commitment at custody finality and refuses a shorter or conflicting log before serving or opening
 history for writes; checkpoint signatures verify
 against their chain, vault, and named signer. Those checks reach only as far as the vault's

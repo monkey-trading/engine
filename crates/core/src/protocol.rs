@@ -310,11 +310,21 @@ pub enum ProtocolVersion {
     /// launch tiers where the parameters name none, and gives a market listed with no floor its
     /// asset class's: 0.1 bp for FX, bonds and rates, 0.5 bp for indices, and 1 bp for the rest.
     V54,
+    /// The profit fee falls with holding time (`holding_fee`): a realised gain pays the larger of
+    /// the base fee and the hold curve's fee at the hold of the slice it closes, the hold running
+    /// from the position's open time, which an add moves to the size-weighted average of now and
+    /// the open time raised to no earlier than now less the curve's last hold, and a flip restarts.
+    /// The base moves only from its launch value up to +50%, and the curve only to one at or above
+    /// its launch curve at every hold, reaching at most 30 minutes, each after a seven-day notice.
+    /// Before it a curve in the parameters charges nothing; activation raises a base cut below its
+    /// launch value back to it, gives parameters that name no curve the default one, and gives each
+    /// held position the open time `activation - the curve's last hold`.
+    V55,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V54;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V55;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

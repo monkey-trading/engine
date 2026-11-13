@@ -108,6 +108,11 @@ this crate and reproduce the signed state roots exactly.
   ceiling is installed or adopted only at or above its market's launch close charge, which counts the
   first band at the widest multiplier, and an adoption for a market not yet listed binds the listing
   its first listing must be
+- From protocol `V55`, the profit fee falls with holding time (`src/holding_fee/`): a realised gain
+  pays the larger of the base fee and a hold curve's fee at the hold since the position's open time,
+  which an add moves to the size-weighted average with the open time counted as no older than the
+  curve's last hold; the base moves only up from launch, to +50%, and
+  the curve only to one at or above its launch curve at every hold, each after a seven-day notice
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -272,6 +277,14 @@ this crate and reproduce the signed state roots exactly.
   adoption binds
 - `src/close_spread.rs` — the V40 close-spread ceilings: the genesis registry, the seven-day
   adoption, the pricing-site clamp and reversal refusal, and the listing guards
+- `src/holding_fee/mod.rs` — the V55 holding-time profit fee: the hold curve, its default, its shape
+  and launch bounds, each position's open time, what a close pays now and when it next falls, and
+  activation; unit tests in `src/holding_fee/tests.rs`
+- `src/merkle/open_time.rs` — the V55 open-time leaves, kind 27, beside each position's leaf
+- `tests/holding_fee.rs` — the fee at each hold, losses, adds, flips, close-outs, the margin check on
+  a flip, close-all pieces, splits, activation, and what a close pays now
+- `tests/holding_fee_bounds.rs` — the bounds on the base fee and the curve, their notices, and the
+  launch fee held from below at every hold
 - `tests/params_notice.rs` — the V49 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
@@ -433,7 +446,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V54` parts (`v15.rs` to `v54.rs`)
+  `V15` to `V55` parts (`v15.rs` to `v55.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -736,6 +749,28 @@ V53's activation carries the notice through the sets the log keeps then, as thei
 would have. Before V53 no set records a carried notice, and the state encodes as before, so earlier
 logs replay unchanged. Its session is in `examples/reference_log/v53.rs`.
 
+Protocol V55 makes the profit fee fall with holding time (`src/holding_fee/`). A realised gain pays
+the larger of `profit_fee_bps` and the parameters' `profit_fee_curve` at the hold of the slice it
+closes, rounded up; a loss pays nothing. The curve is a table of `{hold_ms, fee_bps}` points, holds
+ascending to at most 30 minutes and fees never rising: the first fee at and below the first hold,
+linear between points with the fee rounded up to the bp, and zero at and past the last hold, where
+the base alone applies. A hold runs from the position's open time (`Account::opened_at`, its own
+state-tree leaf, kind 27, beside the position leaf the vault hashes): opening sets it to the fill's
+time, an add moves it to the size-weighted average of now and the open time raised to no earlier
+than now less the curve's last hold, rounded towards now, so the units held lend the add at most the
+curve's length of age, a reduction leaves it, a flip closes the position at its hold and opens the
+rest now, a close-out is a close, and a split keeps it. A risk-adding fill's margin check counts the fee at the closing slice's
+hold, and a fill that closes some of a position names its hold and rate (`hold_ms`,
+`profit_fee_bps`). From V55 `profit_fee_bps` moves only from its launch value up to +50%, and a curve
+change, which `AnnounceParams` names, only to one at or above the launch curve at every hold before
+rounding, each from its notice's time. A hold runs to the command's stamp, also for a close-out a
+catch-up runs at an earlier boundary. Before V55 a curve in the parameters charges nothing and a
+notice names none. Activation raises a base cut below its launch value back to it, gives parameters
+that name no curve the default one, the full fee to 10 s falling to 10% at 15 minutes
+(`DEFAULT_PROFIT_FEE_CURVE`), records the curve in force as the launch curve, and gives each held
+position the open time `activation - the curve's last hold`, so its next close pays the base. No earlier log names a curve or keeps an open time, so earlier logs
+replay unchanged. Its session is in `examples/reference_log/v55.rs`.
+
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
 is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
@@ -860,7 +895,8 @@ Run `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored -
 in a quiet CPU window. The optimized dev profile benchmarks 100 samples per scenario; setup and
 index recovery are outside steady-state timings. It measures `Engine::apply`, including event
 allocation and drop, but excludes log I/O and checkpoint hashing, and signatures except in the
-batch scenarios, whose requests are signed and so include the signature check. These figures are
+batch scenarios, whose requests are signed and so include the signature check, and which run under
+the latest protocol version, so a close-all's fills pay every spread and fee rule in force. These figures are
 command-processing regression guards, not an end-to-end service latency promise.
 
 | Scenario | Accounts | p99 budget |

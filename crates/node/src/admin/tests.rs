@@ -148,6 +148,7 @@ fn each_action_builds_its_admin_command() {
                 closeout_level_bps: None,
                 stress: None,
                 score_tiers: None,
+                profit_fee_curve: None,
                 effective_at: 1_798_761_600_000,
             }),
         ),
@@ -231,7 +232,8 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
         panic!("announce-params gives notice")
     };
     assert_eq!(notice.stress, Some(StressSettings::of(&dev_config().genesis.params)));
-    assert_eq!((notice.profit_fee_bps, notice.closeout_level_bps, notice.score_tiers), (None, None, None));
+    let named = (notice.profit_fee_bps, notice.closeout_level_bps, &notice.score_tiers, &notice.profit_fee_curve);
+    assert_eq!(named, (None, None, &None, &None));
     // A score tier notice takes the tiers of the file a later `set-params` carries.
     let AdminCommand::AnnounceParams(notice) =
         action(&["announce-params", "--score-tiers-from", &params, "--effective-at", at]).command().unwrap()
@@ -239,6 +241,13 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
         panic!("announce-params gives notice")
     };
     assert_eq!(notice.score_tiers, Some(dev_config().genesis.params.toxicity.score_tiers));
+    // A profit fee curve notice takes the curve of the file a later `set-params` carries.
+    let AdminCommand::AnnounceParams(notice) =
+        action(&["announce-params", "--profit-fee-curve-from", &params, "--effective-at", at]).command().unwrap()
+    else {
+        panic!("announce-params gives notice")
+    };
+    assert_eq!(notice.profit_fee_curve, Some(dev_config().genesis.params.profit_fee_curve));
     assert_eq!(notice.stress, None);
 
     let mut wide = dev_config().genesis.params;

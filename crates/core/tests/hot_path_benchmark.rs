@@ -7,11 +7,12 @@ mod toxicity;
 use std::time::Instant;
 
 use chrono::NaiveDateTime;
-use common::batch::{cancel_all, close_all, funded, market_order};
+use common::batch::{cancel_all, close_all, market_order};
 use common::close_spread::rest;
-use common::session_keys::fresh_key;
+use common::session_keys::{fresh_key, funded_at};
 use common::{BTC, Client, ETH, Harness, acct, f, market, ny, us_equities};
 use engine_core::Engine;
+use engine_core::account::Position;
 use engine_core::command::{AdminCommand, CloseEntry, Command, OrderKind, Sequenced};
 use engine_core::market::{MarketSpec, PriceRules};
 use engine_core::params::DEFAULT_MAX_RESTING_ORDERS;
@@ -235,9 +236,10 @@ fn halted() -> Harness {
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn batch_command_latency() {
     // Each sample is its own account, holding a position in every launch market and a full set of
-    // resting orders, among 100k accounts. A signed, screened cancel-all or close-all is built
-    // outside the timed region, so the timing is the engine's apply of it, signature check included.
-    let (mut h, client, _) = funded();
+    // resting orders, among 100k accounts, under the latest rules. A signed, screened cancel-all or
+    // close-all is built outside the timed region, so the timing is the engine's apply of it,
+    // signature check included.
+    let (mut h, client, _) = funded_at(ProtocolVersion::LATEST);
     h.price(ETH, "3000");
     market_order(&mut h, &client, BTC, Side::Buy, "0.5", "100000");
     market_order(&mut h, &client, ETH, Side::Sell, "5", "3000");
@@ -266,9 +268,12 @@ fn batch_command_latency() {
         // BTC long and ETH short as the harness holds them, and ETH's position in every copy;
         // AAPL is unpriced, so its close-all entry is a rejection.
         value["positions"] = json!({});
+        value["opened_at"] = json!({});
         for id in ids.iter().filter(|id| **id != common::AAPL) {
             let held = if *id == BTC { template["positions"][BTC.to_string()].clone() } else { position.clone() };
             value["positions"][id.to_string()] = held;
+            // Each position holds the open time the harness client's ETH position took.
+            value["opened_at"][id.to_string()] = template["opened_at"][ETH.to_string()].clone();
         }
         value["orders"] = json!({});
         for index in 0..DEFAULT_MAX_RESTING_ORDERS {
@@ -289,21 +294,24 @@ fn batch_command_latency() {
         let key = serde_json::to_value(AccountId(address)).unwrap().as_str().unwrap().to_owned();
         let mut filler = template.clone();
         filler["positions"] = json!({});
+        filler["opened_at"] = json!({});
         filler["orders"] = json!({});
         accounts.insert(key, filler);
     }
-    // The aggregates of each market match the positions held: the harness client's and every sample's.
-    let (long, short) = (f("0.5"), f("-5"));
+    // The aggregates of each market match the positions held, at the entries the harness client's
+    // fills booked: its own and every sample's.
+    let held: Position = serde_json::from_value(template["positions"][BTC.to_string()].clone()).unwrap();
+    let copied: Position = serde_json::from_value(position.clone()).unwrap();
     for id in &ids {
-        let holders = SAMPLES as i128 + i128::from(*id == BTC || *id == ETH);
-        let (qty, entry) = match *id {
-            BTC => (long.raw() * holders, f("100000")),
-            common::AAPL => (0, f("0")),
-            _ => (short.raw() * holders, f("3000")),
+        let holders = SAMPLES as i64 + i64::from(*id == BTC || *id == ETH);
+        let (qty, cost) = match *id {
+            BTC => (held.qty.mul_int(holders), held.cost().mul_int(holders)),
+            common::AAPL => (engine_core::Fixed::ZERO, engine_core::Fixed::ZERO),
+            _ => (copied.qty.mul_int(holders), copied.cost().mul_int(holders)),
         };
         let market = &mut state["markets"][id.to_string()];
-        market["client_qty"] = json!(engine_core::Fixed::from_raw(qty));
-        market["client_cost"] = json!(engine_core::Fixed::from_raw(qty * entry.raw() / 1_000_000_000));
+        market["client_qty"] = json!(qty);
+        market["client_cost"] = json!(cost);
     }
     // Each sample has made the declaration the harness client has.
     let declared = state["eligibility"][client.account.to_string()].clone();
@@ -314,6 +322,12 @@ fn batch_command_latency() {
     state["next_order_id"] = json!(next_order);
     state["markouts"] = json!([]);
     h.engine = serde_json::from_value(state).expect("benchmark fixture");
+    for (id, market) in h.engine.markets() {
+        let positions = h.engine.accounts().values().filter_map(|acct| acct.positions.get(id));
+        let (qty, cost) =
+            positions.fold((engine_core::Fixed::ZERO, engine_core::Fixed::ZERO), |(q, c), p| (q + p.qty, c + p.cost()));
+        assert_eq!((market.client_qty, market.client_cost), (qty, cost), "market {id}'s aggregates");
+    }
     apply(&mut h.engine, h.ts, Command::Tick);
 
     let mut cancel_times = Vec::with_capacity(SAMPLES);

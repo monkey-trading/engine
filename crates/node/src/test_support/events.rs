@@ -100,6 +100,8 @@ pub fn every_event() -> Vec<Event> {
         realised_pnl: -amount,
         fx_index: Some(amount),
         profit_fee: Fixed::ZERO,
+        hold_ms: None,
+        profit_fee_bps: None,
         position: amount,
         liquidation: true,
     };

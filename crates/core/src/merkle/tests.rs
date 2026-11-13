@@ -191,6 +191,20 @@ fn an_update_hashes_only_the_nodes_above_leaves_that_changed() {
     assert_eq!(small.update(unchanged), 0);
 }
 
+#[test]
+fn an_open_time_leaf_is_keyed_as_its_position_is_and_hashes_its_int64_abi_word() {
+    let (account, market): (AccountId, MarketId) = (AccountId([7; 20]), 3);
+    let key = [&[27u8][..], &account.0, &market.to_be_bytes()].concat();
+    assert_eq!(open_time_key(account, market), keccak(&[&key]));
+    // `abi.encode(int64)`: the value sign-extended to a 32-byte big-endian word.
+    let mut word = [0xff; 32];
+    word[24..].copy_from_slice(&(-5i64).to_be_bytes());
+    assert_eq!(open_time_hash(-5), keccak(&[&word]));
+    let mut word = [0; 32];
+    word[24..].copy_from_slice(&1_792_000_000_000i64.to_be_bytes());
+    assert_eq!(open_time_hash(1_792_000_000_000), keccak(&[&word]));
+}
+
 // ── Helpers ──
 
 /// A key spread over the key space, like the hashed keys the engine uses.
