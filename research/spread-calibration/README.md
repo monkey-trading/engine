@@ -315,6 +315,39 @@ the strategy by $1k to $31k a day per market; what it pays is the take the sprea
 and financing discounts, which a kept wallet's holds of 15 to 30 minutes would earn, so the figure
 leans towards recycling.
 
+## Resting-order limits by tier (#700)
+
+The owner set resting-order limits of 25, 50, 100 and 250 at tiers 0 to 3 and gated their promotion
+on this calibration (#614, decision D11). `run.py order_limits` gives what they are worth and what
+they cost, in `results/order_limits.md`.
+
+**Worth against recycling: nothing.** The strategies a recycled wallet runs, latency arbitrage and
+unpriced pairs, trade with market orders. A resting order fills at the engine's price when that
+price reaches it, which gives no lead over the venues, so none of them rests an order and none
+forfeits anything when a fresh wallet's limit falls to 25. What recycling forfeits is the other
+carrots' value and the wallets: at the owner's fee, $2k to $11k a day on an honest node's 0.25 s
+lead against $3k to $28k of add-on avoided, and under $500 a day on the operator's 3 s view against
+$58k to $250k (each as the account's profit). The limits add nothing to either.
+
+**Cost: the limits do not bound it.** A price visits only the resting orders its mid has reached
+(`hot_indexes`): with every one of 100k accounts holding tier 0's 25 limits away from the price, a
+price's stamp stays at 0.11 ms. But a limit the spread keeps out of reach fails on slippage and
+stays resting, so it is visited and priced again on every price in its market.
+`crates/node/src/sequencer/resting_bench.rs` loads such limits into one market of a 100k-account
+sequencer: each adds about 0.58 us to every price, and about 1,500 take a price's own stamp to
+`price_wait_budget`'s 1 ms median. That is 61 wallets at tier 0's 25, or 6 at tier 3's 250; every
+account at tier 0's limit makes each price take 1.8 s. Since #688 every market's first band charges
+a spread (2 bps on BTC-USD), so every market has such a band.
+
+**Proposal.** Keep 25, 50, 100 and 250 as each tier's convenience: they cost the toxic strategies
+nothing and an honest fresh wallet can still hold a stop and a target on twelve positions. They
+cannot bound the sequencer's work, which grows with the number of wallets, not any one account's
+limit. Before #694's promotion the engine should visit only limits a price can fill: index a limit
+at the mid where the market's least spread first lets it fill (a buy at `P` at `P / (1 + s)`),
+re-indexed when the spread bands change after their notice, or else cap the out-of-reach limits a
+market holds. The run was on a shared machine under load; the slope, not the absolute times, carries
+the result.
+
 ## The attack classes against the launch criterion
 
 Each of #549's classes at its genesis value and at the proposals, as the operator's take a day at
@@ -439,8 +472,13 @@ python -I run.py owner_unprice --workers 3
 python -I run.py owner_income --workers 3 --paths 1000 --only "launch, bound"
 python -I run.py owner_income --workers 3 --paths 500
 python -I run.py owner_report
+python -I run.py order_limits
 python -I -m pytest tests
 ```
+
+`order_limits` reads `results/resting_bench.txt`: the `WAIT` lines of
+`cargo test -p engine-node --lib sequencer::resting_bench -- --ignored --nocapture --test-threads=1`,
+run from the repository root in a quiet CPU window.
 
 `owner_income` keeps the variants already in `results/owner_income.json`, so the second command runs
 the sensitivities at 500 paths beside the two 1,000-path headline runs. With `retained` and
@@ -454,8 +492,9 @@ proposal on the corrected model, not the committed figures, which are #623's rec
   `spreads.py` (tiers), `latency.py` (the latency rule on a grid), `jump.py` (a jump stress trigger
   variant), `fee.py` (schedules, the hold clock, honest cost), `toxicity.py` (the score),
   `carrot.py` (volume tiers), `target.py` (target flow), `unprice.py` (#549's unpriced-spell measure
-  at the calibrated spreads), `report.py`, `floors.py` (every market's markout-spread floor, #699),
-  `owner_report.py` (#697's results page and the trigger's budgets).
+  at the calibrated spreads), `report.py`, `order_limits.py` (#700's resting-order limits),
+  `floors.py` (every market's markout-spread floor, #699), `owner_report.py` (#697's results page
+  and the trigger's budgets).
 - `tests/`: the fee, hold clock, score, tiers, target flow, spreads and latency rule on hand cases,
   and D7's fee table, the tenths, the admitted discount tables and each tier's fee in the latency
   best response.

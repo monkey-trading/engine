@@ -1,0 +1,156 @@
+{
+ "worth": {
+  "BTC-USD@0.25s": {
+   "keeper_per_day": 5510.414401929263,
+   "recycler_per_day": 6652.812185566575,
+   "recycler_hold_s": 900.0,
+   "kept_tier": 3,
+   "gain_per_day": 3288.199414316439,
+   "best_price_per_day": 2144.4778789020256,
+   "leverage_per_day": 75.61643835616438,
+   "wallets_per_day": 1.3237517771000156,
+   "forfeited_per_day": 2221.41806903529,
+   "resting_orders_per_day": 0.0
+  },
+  "ETH-USD@0.25s": {
+   "keeper_per_day": 17648.46578954408,
+   "recycler_per_day": 22430.852491922367,
+   "recycler_hold_s": 900.0,
+   "kept_tier": 3,
+   "gain_per_day": 22466.271888404186,
+   "best_price_per_day": 10988.937336719438,
+   "leverage_per_day": 75.61643835616438,
+   "wallets_per_day": 9.044392869727934,
+   "forfeited_per_day": 11073.59816794533,
+   "resting_orders_per_day": 0.0
+  },
+  "SOL-USD@0.25s": {
+   "keeper_per_day": 30313.904655250946,
+   "recycler_per_day": 49501.33241081919,
+   "recycler_hold_s": 1800.0,
+   "kept_tier": 3,
+   "gain_per_day": 28488.68532267275,
+   "best_price_per_day": 9289.7886921759,
+   "leverage_per_day": 756.1643835616438,
+   "wallets_per_day": 11.46887492861222,
+   "forfeited_per_day": 10057.421950666156,
+   "resting_orders_per_day": 0.0
+  },
+  "BTC-USD@3.0s": {
+   "keeper_per_day": 24229.548939863587,
+   "recycler_per_day": 66175.0990990802,
+   "recycler_hold_s": 3.0,
+   "kept_tier": 0,
+   "gain_per_day": 57697.433792921736,
+   "best_price_per_day": 0.0,
+   "leverage_per_day": 0.0,
+   "wallets_per_day": 143.82099371787547,
+   "forfeited_per_day": 143.82099371787547,
+   "resting_orders_per_day": 0.0
+  },
+  "ETH-USD@3.0s": {
+   "keeper_per_day": 64022.24705753936,
+   "recycler_per_day": 87123.45845026981,
+   "recycler_hold_s": 5.0,
+   "kept_tier": 0,
+   "gain_per_day": 86474.52096682772,
+   "best_price_per_day": 0.0,
+   "leverage_per_day": 0.0,
+   "wallets_per_day": 147.1377727013135,
+   "forfeited_per_day": 147.1377727013135,
+   "resting_orders_per_day": 0.0
+  },
+  "SOL-USD@3.0s": {
+   "keeper_per_day": 72725.29922230536,
+   "recycler_per_day": 192122.11238422667,
+   "recycler_hold_s": 5.0,
+   "kept_tier": 0,
+   "gain_per_day": 250418.87367258975,
+   "best_price_per_day": 0.0,
+   "leverage_per_day": 0.0,
+   "wallets_per_day": 426.09169617361493,
+   "forfeited_per_day": 426.09169617361493,
+   "resting_orders_per_day": 0.0
+  }
+ },
+ "cost": {
+  "bench": [
+   {
+    "orders": 0,
+    "samples": 200,
+    "p50_us": 115,
+    "p99_us": 5499,
+    "max_us": 20088
+   },
+   {
+    "orders": 1000,
+    "samples": 200,
+    "p50_us": 649,
+    "p99_us": 923,
+    "max_us": 941
+   },
+   {
+    "orders": 10000,
+    "samples": 200,
+    "p50_us": 5163,
+    "p99_us": 9519,
+    "max_us": 20252
+   },
+   {
+    "orders": 100000,
+    "samples": 200,
+    "p50_us": 52194,
+    "p99_us": 120230,
+    "max_us": 120319
+   },
+   {
+    "orders": 1000000,
+    "samples": 20,
+    "p50_us": 624430,
+    "p99_us": 940777,
+    "max_us": 940777
+   },
+   {
+    "orders": 2500000,
+    "samples": 20,
+    "p50_us": 1766205,
+    "p99_us": 2542247,
+    "max_us": 2542247
+   }
+  ],
+  "away": [
+   {
+    "orders": 2500000,
+    "samples": 200,
+    "p50_us": 111,
+    "p99_us": 283,
+    "max_us": 1010
+   }
+  ],
+  "base_us": 115.0,
+  "per_order_us": 0.5780682,
+  "orders_within_median_budget": 1530.9612256823675,
+  "tiers": [
+   {
+    "limit": 25,
+    "wallets_to_fill_budget": 61.2384490272947,
+    "price_stamp_every_account_at_limit_us": 1445285.5
+   },
+   {
+    "limit": 50,
+    "wallets_to_fill_budget": 30.61922451364735,
+    "price_stamp_every_account_at_limit_us": 2890456.0
+   },
+   {
+    "limit": 100,
+    "wallets_to_fill_budget": 15.309612256823675,
+    "price_stamp_every_account_at_limit_us": 5780797.0
+   },
+   {
+    "limit": 250,
+    "wallets_to_fill_budget": 6.12384490272947,
+    "price_stamp_every_account_at_limit_us": 14451820.0
+   }
+  ]
+ }
+}

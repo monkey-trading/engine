@@ -23,18 +23,18 @@ use crate::sequencer::{Sequencer, SequencerConfig};
 use crate::tee::EnclaveKey;
 use crate::test_support::{dev_config, empty_custody_frontier, sample_around, scratch_dir, sequencer_config};
 
-const ACCOUNTS: u32 = 100_000;
+pub(super) const ACCOUNTS: u32 = 100_000;
 
 /// A gated sequencer holding `ACCOUNTS` funded accounts, its checkpoints final.
-struct Rig {
-    seq: Sequencer,
+pub(super) struct Rig {
+    pub(super) seq: Sequencer,
     queued: Receiver<Work>,
     clock: Arc<TestClock>,
     round: u32,
 }
 
 /// The `index`th funded account.
-fn account(index: u32) -> AccountId {
+pub(super) fn account(index: u32) -> AccountId {
     let mut bytes = [1; 20];
     bytes[16..].copy_from_slice(&index.to_be_bytes());
     AccountId(bytes)
@@ -42,6 +42,11 @@ fn account(index: u32) -> AccountId {
 
 impl Rig {
     fn new(name: &str) -> Self {
+        Self::with_genesis(name, &dev_config().genesis)
+    }
+
+    /// As `new`, from `genesis` in place of the development config's.
+    pub(super) fn with_genesis(name: &str, genesis: &crate::config::Genesis) -> Self {
         let dir = scratch_dir(name);
         let clock = Arc::new(TestClock::default());
         let (sink, queued) = mpsc::channel(1024);
@@ -60,7 +65,7 @@ impl Rig {
             Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(4096).0, withdrawals).unwrap();
         seq.track_stats(crate::test_support::stats());
         seq.activate_legacy_protocol().unwrap();
-        seq.genesis(&dev_config().genesis).unwrap();
+        seq.genesis(genesis).unwrap();
         seq.trust(sample_around(clock.as_ref())).unwrap();
         seq.sequence(empty_custody_frontier()).unwrap();
         seq.checkpoint().unwrap();
@@ -101,7 +106,7 @@ impl Rig {
     }
 
     /// A two-venue price for market 1, moving every call so the mark changes.
-    fn price(&self, step: u32) -> Command {
+    pub(super) fn price(&self, step: u32) -> Command {
         let mid = Fixed::from_int(100_000 + i64::from(step % 2));
         let ts = self.clock.as_ref().now_ms();
         let quotes =
@@ -111,7 +116,7 @@ impl Rig {
 }
 
 /// Prints one measured item: its samples' p50, p99 and worst, in microseconds.
-fn report(name: &str, mut times: Vec<u128>) {
+pub(super) fn report(name: &str, mut times: Vec<u128>) {
     times.sort_unstable();
     let n = times.len();
     println!(
@@ -123,7 +128,7 @@ fn report(name: &str, mut times: Vec<u128>) {
 }
 
 /// Runs `f`, returning microseconds it took and its result.
-fn time<T>(f: impl FnOnce() -> T) -> (u128, T) {
+pub(super) fn time<T>(f: impl FnOnce() -> T) -> (u128, T) {
     let began = Instant::now();
     let out = f();
     (began.elapsed().as_micros(), out)
