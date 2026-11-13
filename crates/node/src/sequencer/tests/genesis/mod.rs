@@ -316,7 +316,11 @@ fn a_genesis_set_before_v52_resumes_under_the_bands_and_multipliers_v52_converts
     genesis.params.stress_levels[0].size_spread_multiplier_bps = 0;
     let first = genesis.markets[0].spread_tiers[0].up_to;
     genesis.markets[0].spread_tiers = vec![SpreadTier::bps(first, 0), SpreadTier::bps(None, 8)];
-    let written = genesis_commands(&genesis);
+    // Before `V40` a log installs no ceilings; the activation carries the config's.
+    let written: Vec<_> = genesis_commands(&genesis)
+        .into_iter()
+        .filter(|cmd| !matches!(cmd, Command::Admin(AdminCommand::SetCloseSpreadCeilings { .. })))
+        .collect();
     old_genesis_log(&dir, &signed(31_337), ProtocolVersion::V23, written.clone(), Vec::new());
 
     let mut converted = genesis;
