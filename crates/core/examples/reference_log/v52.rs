@@ -18,7 +18,7 @@ use crate::common::{BTC, Client, Harness, f, market};
 use crate::v51::MEMBER_SEEDS;
 
 /// The seed of the key this part trades through.
-const CLIENT_SEED: u8 = 0x52;
+const CLIENT_SEED: u8 = 0x62;
 /// The market this part lists through a bound ceiling adoption.
 const LISTED: MarketId = 52;
 
