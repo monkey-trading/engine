@@ -19,12 +19,15 @@ use crate::sequencer::pipeline::{Batch, MAX_IN_FLIGHT};
 use crate::sequencer::{Request, Sequencer};
 use crate::test_support::{capture_alerts_and_resolutions, dev_config, sample_around, scratch_dir, sequencer_config};
 
+/// How long, in real time, a test waits for the sync thread to start or report a sync.
+const SYNC_WAIT: Duration = Duration::from_secs(10);
+
 #[tokio::test(start_paused = true)]
 async fn a_sync_held_past_the_bound_pages_once_and_stamps_nothing_until_it_finishes() {
     let (mut seq, permits, entered) = held_sequencer("pipeline-held");
     let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
     stage_ticks(&mut seq, 1);
-    entered.recv().expect("the thread starts the first sync");
+    entered.recv_timeout(SYNC_WAIT).expect("the thread starts the first sync");
     let (tx, mut rx) = mpsc::channel(4);
     // Inside the bound the next request is taken while the sync runs.
     tx.send(query()).await.unwrap();
@@ -53,7 +56,7 @@ async fn a_sync_held_past_the_bound_pages_once_and_stamps_nothing_until_it_finis
     tokio::time::resume();
     stage_ticks(&mut seq, 1);
     permits.send(Verdict::Pass).unwrap();
-    entered.recv().expect("the thread starts the successor's sync on its own");
+    entered.recv_timeout(SYNC_WAIT).expect("the thread starts the successor's sync on its own");
     let taken = timeout(Duration::from_secs(10), seq.next_request(&mut rx)).await.expect("a finished sync frees it");
     assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
     let end = resolved.try_recv().expect("the finished sync resolves the hold");
@@ -132,18 +135,19 @@ async fn a_kept_request_waits_when_a_younger_batch_crosses_the_bound_while_the_r
     // flight. A's sync finishes, B is inside its bound, and the hold's resolution is logged — a
     // write the host blocks until B is past its own bound. The kept request is judged again and
     // waits behind B's held sync, which pages.
-    let (mut seq, permits, _entered) = held_sequencer("pipeline-kept-rejudged");
+    let (mut seq, permits, entered) = held_sequencer("pipeline-kept-rejudged");
     stage_ticks(&mut seq, 1);
     let deadline = tokio::time::Instant::now() + MAX_SYNC_HOLD;
+    // B is staged only once the thread is inside A's sync, so B's sync is a job of its own: a thread
+    // that took A only after B was queued would report A only with B.
+    entered.recv_timeout(SYNC_WAIT).expect("the thread starts A's sync");
     tokio::time::advance(Duration::from_secs(1)).await;
     stage_ticks(&mut seq, 1);
     tokio::time::advance(MAX_SYNC_HOLD - Duration::from_secs(1)).await;
     assert!(seq.admit(query(), deadline).is_none(), "past A's deadline the request is kept");
     seq.pipeline.as_mut().unwrap().held = true;
     permits.send(Verdict::Pass).unwrap();
-    while seq.pipeline.as_ref().unwrap().shared.done.lock().unwrap().is_empty() {
-        std::thread::yield_now();
-    }
+    await_reported(&seq, 1);
     crate::test_tracing::keep_callsites_interested();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let layer = BlockedResolution { by: Duration::from_secs(2), seen: seen.clone() };
@@ -163,10 +167,7 @@ async fn a_sync_that_finished_inside_the_bound_is_no_hold() {
     let (_guard, mut alerts, _resolved) = capture_alerts_and_resolutions();
     stage_ticks(&mut seq, 1);
     permits.send(Verdict::Pass).unwrap();
-    let pipeline = seq.pipeline.as_ref().expect("the pipeline runs");
-    while pipeline.shared.done.lock().unwrap().is_empty() {
-        std::thread::yield_now();
-    }
+    await_reported(&seq, 1);
     tokio::time::advance(MAX_SYNC_HOLD).await;
     let (tx, mut rx) = mpsc::channel(4);
     tx.send(query()).await.unwrap();
@@ -183,7 +184,8 @@ async fn a_restart_resolves_an_episode_an_earlier_run_left_open() {
     let (mut seq, _permits, _entered) = held_sequencer("pipeline-held-restart");
     let (tx, mut rx) = mpsc::channel(4);
     tx.send(query()).await.unwrap();
-    assert!(matches!(seq.next_request(&mut rx).await.unwrap(), Some(Request::Query(_))));
+    let taken = timeout(Duration::from_secs(1), seq.next_request(&mut rx)).await.expect("nothing is in flight");
+    assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
     let end = resolved.try_recv().expect("the first look with nothing held resolves a leftover episode");
     assert_eq!(end.get("alert_resolved").map(String::as_str), Some("log_sync_held"));
 }
@@ -228,6 +230,15 @@ fn stage_ticks(seq: &mut Sequencer, batches: usize) {
         let release = seq.stage(Batch::default()).unwrap();
         seq.submit(release).unwrap();
     }
+}
+
+/// Waits until the sync thread has reported `count` finished syncs not yet taken, failing past
+/// `SYNC_WAIT`.
+fn await_reported(seq: &Sequencer, count: usize) {
+    let shared = &seq.pipeline.as_ref().expect("the pipeline runs").shared;
+    let done = shared.done.lock().unwrap();
+    let (_done, wait) = shared.ready.wait_timeout_while(done, SYNC_WAIT, |done| done.len() < count).unwrap();
+    assert!(!wait.timed_out(), "the sync thread reports {count} finished syncs");
 }
 
 fn query() -> Request {
