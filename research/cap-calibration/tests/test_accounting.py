@@ -97,16 +97,40 @@ def test_accepted_share_fills_the_reducing_side_and_the_crowded_side_up_to_the_c
     assert accounting.accepted_share(0.0, 100.0, 50.0, 40.0) == (1.0, 1.0)
 
 
-def test_fee_bps_at_follows_the_schedule_and_falls_back_to_the_standard_fee():
-    schedule = ((300.0, 1.0), (1800.0, 0.1))
+# The owner's schedule as the engine's table (#614, decisions D3 and D7).
+D3 = ((1.0, 1.0), (2.0, 0.9083), (4.0, 0.8166), (7.5, 0.7335), (15.0, 0.6418), (30.0, 0.55), (60.0, 0.4583),
+      (120.0, 0.3666), (240.0, 0.2749), (450.0, 0.1918), (900.0, 0.10))
+
+
+def test_hold_fee_is_the_engines_table_above_the_discounted_base():
+    fee = accounting.HoldFee(points=D3)
+    assert float(fee.bps(0.2)) == 10_000  # the first fee at or below the first hold
+    assert float(fee.bps(1.5)) == 9_542  # 9,541.5 between the first two points, rounded up
+    assert float(fee.bps(29.999)) == 5_501  # truncating would fall below the curve
+    assert float(fee.bps(899.999)) == 1_001
+    assert float(fee.bps(900.0)) == accounting.PROFIT_FEE_BPS  # zero at the last hold: the base alone
+    tier3 = accounting.HoldFee(points=D3, discount=0.2)
+    assert float(tier3.bps(899.0)) > 1_000 and float(tier3.bps(900.0)) == 800 and float(tier3.bps(7200.0)) == 800
+    raised = accounting.HoldFee(points=D3, base_bps=1_500, discount=0.2)
+    assert float(raised.bps(3600.0)) == 1_200
+    assert float(raised.bps(300.0)) == float(fee.bps(300.0)) > 1_200
+
+
+def test_hold_fee_in_logs_is_623s_family_and_none_is_the_standard_fee():
+    fee = accounting.HoldFee(points=((300.0, 1.0), (1800.0, 0.1)), interp="log")
     assert accounting.fee_bps_at(None, 5.0) == accounting.PROFIT_FEE_BPS
-    assert accounting.fee_bps_at(schedule, 10.0) == pytest.approx(10_000)
-    assert accounting.fee_bps_at(schedule, (300.0 * 1800.0) ** 0.5) == pytest.approx(5_500)
-    assert accounting.fee_bps_at(schedule, 7200.0) == pytest.approx(accounting.PROFIT_FEE_BPS)
+    assert float(accounting.fee_bps_at(fee, 10.0)) == pytest.approx(10_000)
+    assert float(accounting.fee_bps_at(fee, (300.0 * 1800.0) ** 0.5)) == pytest.approx(5_500)
+    assert float(accounting.fee_bps_at(fee, 7200.0)) == pytest.approx(accounting.PROFIT_FEE_BPS)
 
 
-def test_settle_charges_the_fee_it_is_given():
+def test_settle_charges_the_fee_it_is_given_on_the_pnl_after_the_spread():
     fee, bad, proceeds = accounting.settle(np.array([2.0]), np.array([1.0]), fee_bps=5_000)
     assert fee[0] == pytest.approx(1.0)
     assert bad[0] == 0.0
     assert proceeds[0] == pytest.approx(2.0)
+    # Both fills' spreads (0.5) came off the price: the fee is on 1.5. The house booked the spread at
+    # the open, so the account's proceeds are its balance and price gain less the fee.
+    fee, bad, proceeds = accounting.settle(np.array([2.0, 0.3]), np.array([1.0, 1.0]), fee_bps=5_000, spread_cost=0.5)
+    assert fee == pytest.approx([0.75, 0.0])
+    assert proceeds == pytest.approx([2.25, 1.3])

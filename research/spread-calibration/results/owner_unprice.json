@@ -1,0 +1,237 @@
+{
+ "pair_notional": 50000000.0,
+ "fees": {
+  "0.08": {
+   "unprice": [
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.01,
+     "usd_year": 7937184.509230262,
+     "usd_year_lo": -54756933.72659922,
+     "usd_year_hi": 102257899.08917268,
+     "paying_spells_year": 332.5231296402056,
+     "unpriced_s_year": 269109.65139920043
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.02,
+     "usd_year": -68354668.72642857,
+     "usd_year_lo": -98216132.61592062,
+     "usd_year_hi": -42693465.5114586,
+     "paying_spells_year": 36.68760708166762,
+     "unpriced_s_year": 262154.5649343232
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.05,
+     "usd_year": -72686430.11305371,
+     "usd_year_lo": -102345842.81861708,
+     "usd_year_hi": -47329632.36589133,
+     "paying_spells_year": 0.0,
+     "unpriced_s_year": 259835.1744146202
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "SOL-USD",
+     "margin": 0.1,
+     "usd_year": -36950293.41183402,
+     "usd_year_lo": -55757945.402466096,
+     "usd_year_hi": -21058241.39731613,
+     "paying_spells_year": 0.0,
+     "unpriced_s_year": 123694.60194174758
+    }
+   ],
+   "stress_hours": {
+    "0.01": 30558329.411673564,
+    "0.02": -1780988.0317507216,
+    "0.05": -4192787.0493384628,
+    "0.1": -6091529.636381738
+   }
+  },
+  "0.1": {
+   "unprice": [
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.01,
+     "usd_year": 1303964.0838419162,
+     "usd_year_lo": -59869724.96295484,
+     "usd_year_hi": 91867750.46280636,
+     "paying_spells_year": 310.51056539120503,
+     "unpriced_s_year": 265857.66190748144
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.02,
+     "usd_year": -72720095.72959773,
+     "usd_year_lo": -104111414.53577775,
+     "usd_year_hi": -45628742.53759493,
+     "paying_spells_year": 36.68760708166762,
+     "unpriced_s_year": 262158.60057110223
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.05,
+     "usd_year": -76710796.06507498,
+     "usd_year_lo": -107780353.14151627,
+     "usd_year_hi": -50049613.15669118,
+     "paying_spells_year": 0.0,
+     "unpriced_s_year": 259835.1744146202
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "SOL-USD",
+     "margin": 0.1,
+     "usd_year": -39909283.098316215,
+     "usd_year_lo": -60450166.385709204,
+     "usd_year_hi": -22604271.42841214,
+     "paying_spells_year": 0.0,
+     "unpriced_s_year": 123694.60194174758
+    }
+   ],
+   "stress_hours": {
+    "0.01": 23909427.69561327,
+    "0.02": -1546117.718435256,
+    "0.05": -4685419.762621565,
+    "0.1": -6689412.045477172
+   }
+  },
+  "0.12": {
+   "unprice": [
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.01,
+     "usd_year": -7665285.289416769,
+     "usd_year_lo": -67291942.08325614,
+     "usd_year_hi": 78478202.6042494,
+     "paying_spells_year": 303.17304397487146,
+     "unpriced_s_year": 265425.8487721302
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.02,
+     "usd_year": -76509081.3022669,
+     "usd_year_lo": -109562366.882897,
+     "usd_year_hi": -47904786.53677211,
+     "paying_spells_year": 29.350085665334095,
+     "unpriced_s_year": 261617.45836664765
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.05,
+     "usd_year": -80735162.01709628,
+     "usd_year_lo": -113394614.48459823,
+     "usd_year_hi": -52720410.00345729,
+     "paying_spells_year": 0.0,
+     "unpriced_s_year": 259835.1744146202
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "SOL-USD",
+     "margin": 0.1,
+     "usd_year": -42868272.784798436,
+     "usd_year_lo": -65110191.83557607,
+     "usd_year_hi": -24240002.72535984,
+     "paying_spells_year": 0.0,
+     "unpriced_s_year": 123694.60194174758
+    }
+   ],
+   "stress_hours": {
+    "0.01": 18309935.149698514,
+    "0.02": -1987594.5272453001,
+    "0.05": -4793806.992616524,
+    "0.1": -7287294.454572609
+   }
+  },
+  "0.15": {
+   "unprice": [
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.01,
+     "usd_year": -18837094.1771017,
+     "usd_year_lo": -76001707.00126807,
+     "usd_year_hi": 60627974.861023515,
+     "paying_spells_year": 273.8229583095374,
+     "unpriced_s_year": 265184.4443175328
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.02,
+     "usd_year": -83131614.2519814,
+     "usd_year_lo": -118544030.84968492,
+     "usd_year_hi": -52827206.70681432,
+     "paying_spells_year": 29.350085665334095,
+     "unpriced_s_year": 261624.79588806396
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "BTC-USD+ETH-USD",
+     "margin": 0.05,
+     "usd_year": -86771710.9451282,
+     "usd_year_lo": -122100083.51843202,
+     "usd_year_hi": -56711644.07657855,
+     "paying_spells_year": 0.0,
+     "unpriced_s_year": 259835.1744146202
+    },
+    {
+     "kind": "causal",
+     "spell_s": 300,
+     "trigger_bps_5s": 40.0,
+     "markets": "SOL-USD",
+     "margin": 0.1,
+     "usd_year": -47306757.31452175,
+     "usd_year_lo": -72270077.69775924,
+     "usd_year_hi": -26664022.481231216,
+     "paying_spells_year": 0.0,
+     "unpriced_s_year": 123694.60194174758
+    }
+   ],
+   "stress_hours": {
+    "0.01": 11132711.368228704,
+    "0.02": -1984852.178920271,
+    "0.05": -5327423.920218506,
+    "0.1": -8184118.0682157595
+   }
+  }
+ }
+}

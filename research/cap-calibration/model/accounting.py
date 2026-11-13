@@ -6,6 +6,8 @@ relative to the entry price, so a position's notional at entry is 1 and its pric
 `price / entry_price`. `side` is +1 for a long and -1 for a short.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
 
 PROFIT_FEE_BPS = 1000  # genesis.params.profit_fee_bps
@@ -46,13 +48,15 @@ def realised_pnl(side, exit_price, fx_ratio=1.0):
     return side * (exit_price - 1.0) * fx_ratio
 
 
-def settle(pnl, balance, financing=0.0, fee_bps: float = PROFIT_FEE_BPS):
+def settle(pnl, balance, financing=0.0, fee_bps: float = PROFIT_FEE_BPS, spread_cost=0.0):
     """One account's exit: the profit fee, the bad debt written off against the house, and what is
     left to the client. Financing has already moved the balance at each rollover, so the account
     loses at most its balance after financing (`closeout.rs`, `settle_bad_debt`). Returns
     `(fee, bad_debt, proceeds)`; the house takes `-pnl + fee - bad_debt`. `fee_bps` is the profit
-    fee at the position's hold, for a fee that falls with holding time."""
-    fee = profit_fee(pnl, fee_bps)
+    fee at the position's hold, for a fee that falls with holding time. `spread_cost` is what both
+    fills' spreads took from the price, which the house books when the position opens: the engine
+    realises PnL at the spread-adjusted fill prices, so the fee is on `pnl - spread_cost`."""
+    fee = profit_fee(pnl - spread_cost, fee_bps)
     equity = balance + pnl - fee - financing
     bad = np.maximum(-equity, 0.0)
     return fee, bad, equity + bad
@@ -116,12 +120,36 @@ def accepted_share(exposure, cap, longs, shorts):
     return np.where(toward_zero, 1.0, long_share), np.where(toward_zero, 1.0, short_share)
 
 
-def fee_bps_at(schedule: tuple | None, hold_s: float) -> float:
-    """The profit fee in bps at a hold of `hold_s` under `schedule`, ((hold_s, fee share), ...)
-    rising holds, linear in the logarithm of the hold between its points, its first fee below
-    them and the standard fee past its last; the standard fee with no schedule."""
-    if not schedule:
-        return float(PROFIT_FEE_BPS)
-    holds = np.log([h for h, _ in schedule])
-    fees = np.array([f for _, f in schedule]) * 1e4
-    return float(np.interp(np.log(max(hold_s, 1e-3)), holds, fees, left=fees[0], right=PROFIT_FEE_BPS))
+@dataclass(frozen=True)
+class HoldFee:
+    """The profit fee as a function of a closed position's hold, `max(base x (1 - discount),
+    C(hold))` (#614, decision D7): `points` are the hold curve C's ((hold_s, fee share), ...) at
+    rising holds, `base_bps` is `profit_fee_bps` and `discount` the volume tier's share off it.
+
+    `interp="engine"` is the engine's table: C is the first fee at or below the first hold, linear
+    between points below the last, rounded up to the bp, and zero at and past the last hold, where
+    the discounted base alone applies. `interp="log"` is #623's family: linear in the logarithm of
+    the hold between points, the first fee below them, the base past the last."""
+
+    points: tuple
+    base_bps: float = PROFIT_FEE_BPS
+    discount: float = 0.0
+    interp: str = "engine"
+
+    def bps(self, hold_s):
+        hold = np.asarray(hold_s, dtype=float)
+        holds = np.array([h for h, _ in self.points], dtype=float)
+        fees = np.array([f for _, f in self.points], dtype=float) * 1e4
+        floor = self.base_bps * (1 - self.discount)
+        if self.interp == "log":
+            curve = np.interp(np.log(np.maximum(hold, 1e-3)), np.log(holds), fees, left=fees[0], right=floor)
+        elif self.interp == "engine":
+            curve = np.where(hold >= holds[-1], 0.0, np.ceil(np.interp(hold, holds, fees, left=fees[0]) - 1e-9))
+        else:
+            raise ValueError(f"unknown interpolation {self.interp}")
+        return np.maximum(curve, floor)
+
+
+def fee_bps_at(fee: HoldFee | None, hold_s):
+    """The profit fee in bps at a hold of `hold_s` under `fee`; the standard fee with none."""
+    return float(PROFIT_FEE_BPS) if fee is None else fee.bps(hold_s)

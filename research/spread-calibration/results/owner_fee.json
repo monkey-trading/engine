@@ -1,0 +1,1074 @@
+{
+ "points": [
+  [
+   1.0,
+   1.0
+  ],
+  [
+   2.0,
+   0.9083
+  ],
+  [
+   4.0,
+   0.8166
+  ],
+  [
+   7.5,
+   0.7335
+  ],
+  [
+   15.0,
+   0.6418
+  ],
+  [
+   30.0,
+   0.55
+  ],
+  [
+   60.0,
+   0.4583
+  ],
+  [
+   120.0,
+   0.3666
+  ],
+  [
+   240.0,
+   0.2749
+  ],
+  [
+   450.0,
+   0.1918
+  ],
+  [
+   900.0,
+   0.1
+  ]
+ ],
+ "launch_discounts": [
+  0.0,
+  0.0,
+  0.1,
+  0.2
+ ],
+ "at_holds_tier_0": {
+  "0.5": 1.0,
+  "1.0": 1.0,
+  "1.5": 0.9542,
+  "29.999": 0.5501,
+  "30.0": 0.55,
+  "300.0": 0.2512,
+  "899.999": 0.1001,
+  "900.0": 0.1
+ },
+ "rows": [
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.05,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.05,
+   "held_from_below": false,
+   "first_hold_below_launch_s": 900.0
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.125,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.1375,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.0,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.05,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.1
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.15
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  },
+  {
+   "base": 0.15,
+   "discounts": [
+    0.0,
+    0.0,
+    0.1,
+    0.2
+   ],
+   "falls_with_hold": true,
+   "higher_tier_never_pays_more": true,
+   "most_below_launch": 0.0,
+   "held_from_below": true,
+   "first_hold_below_launch_s": null
+  }
+ ]
+}

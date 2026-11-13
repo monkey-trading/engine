@@ -52,6 +52,12 @@ def best_tier_bps(move_bps: float, adverse: float) -> int:
     return max(1, math.ceil(move_bps + adverse - 1e-9))
 
 
+def best_tier_tenths(move_bps: float, adverse: float) -> float:
+    """Tenths of a bp covering the lag move and ordinary flow's edge, at least a tenth: the unit and
+    floor of FX and index spreads (#614, decision D6)."""
+    return max(1, math.ceil((move_bps + adverse) * 10 - 1e-9)) / 10
+
+
 def calibrate(moves: dict) -> list[dict]:
     """A row per launch market: the move it covers, the proposed tiers, the genesis tiers, and the
     check against published norms."""

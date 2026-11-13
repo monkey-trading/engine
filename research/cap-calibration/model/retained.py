@@ -150,6 +150,7 @@ def lane_rows(out: dict, variant: str, n: int, grid: np.ndarray) -> list[dict]:
             | {key: stats[key] for key in STAT_KEYS}
             | {"distributed_mean": float(out["distributed"][:, lane].mean()), "min_cash_p01": float(np.quantile(lowest, 0.01)),
                "spread_income_mean": (float(out["spread_income"][:, lane].mean()) if "spread_income" in out else 0.0)}
+            | {f"{k}_mean": float(out[k][:, lane].mean()) for k in ("filled", "churn_fee", "churn_fee_central", "churn_fee_gross") if k in out}
         )
     return rows
 

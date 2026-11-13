@@ -31,6 +31,36 @@ import numpy as np
 
 BASE = 0.10
 STEP = 0.05
+# The owner's schedule (#614, decision D3: 100% to 1 s, 10% at 15 minutes) as the engine's table
+# (the plan's "Engine design notes"): (hold in seconds, fee share), linear between points with the
+# fee rounded up to the bp, never below the log-linear curve and at most 0.81 points above it.
+D3_POINTS = ((1.0, 1.0), (2.0, 0.9083), (4.0, 0.8166), (7.5, 0.7335), (15.0, 0.6418), (30.0, 0.55), (60.0, 0.4583),
+             (120.0, 0.3666), (240.0, 0.2749), (450.0, 0.1918), (900.0, 0.10))
+# The volume tiers' discounts on the base at launch (#614, decision D7; F7): tiers 2 and 3 pay 9% and
+# 8% past the curve.
+LAUNCH_DISCOUNTS = (0.0, 0.0, 0.10, 0.20)
+
+
+def curve_points(held_to_s: float, until_s: float, points: int = 11) -> tuple:
+    """A hold curve as a table: the full fee to `held_to_s`, falling linearly in the logarithm of the
+    hold to `BASE` at `until_s`, at `points` log-spaced holds. Linear between them, the table sits
+    on or above the log-linear curve."""
+    holds = np.exp(np.linspace(np.log(held_to_s), np.log(until_s), points))
+    holds[0], holds[-1] = held_to_s, until_s
+    fees = 1 - (1 - BASE) * np.log(holds / held_to_s) / np.log(until_s / held_to_s)
+    return tuple((float(h), float(np.ceil(f * 1e4 - 1e-9) / 1e4)) for h, f in zip(holds, fees))
+
+
+def d7(hold_s, base: float = BASE, discount: float = 0.0, points: tuple = D3_POINTS) -> np.ndarray:
+    """The fee share at `hold_s` under #614 decision D7's function, `max(base x (1 - discount),
+    C(hold))`. `C` is the engine's table `points`: the first fee at or below the first hold, linear
+    between points below the last, rounded up to the bp, and zero at and past the last hold, where
+    the discounted base alone applies."""
+    hold = np.asarray(hold_s, dtype=float)
+    holds = np.array([h for h, _ in points])
+    fees = np.array([f for _, f in points]) * 1e4
+    curve = np.where(hold >= holds[-1], 0.0, np.ceil(np.interp(hold, holds, fees, left=fees[0]) - 1e-9))
+    return np.maximum(curve / 1e4, base * (1 - discount))
 
 
 def required(year: dict, size: float, budget_per_day: float) -> dict[float, float]:
@@ -73,15 +103,16 @@ def schedule_take(year: dict, size: float, schedule: dict[float, float]) -> dict
     return out
 
 
-def honest_cost(holding_rows: list[dict], schedule: dict[float, float], points: int = 64, from_s: float = 0.0,
-                to_s: float = float("inf")) -> dict:
+def honest_cost(holding_rows: list[dict], schedule: dict[float, float] | None, points: int = 64, from_s: float = 0.0,
+                to_s: float = float("inf"), fee_fn=None) -> dict:
     """What the schedule costs ordinary flow, from the #111 flow's holding-time profile: each
     bucket's share of notional, with holds log-uniform inside it (the first bucket from half a
     second, the open last bucket to four times its start), each hold's gross profit taken as
     proportional to notional times the square root of the hold (a zero-edge position's expected
     gain). Gives the share of honest profit that pays more than 10%, and the extra fee as a share of
     honest gross profit, over the holds in `[from_s, to_s)`: the target client's holds are 15 minutes
-    or more (#614), and the shorter holds are the flow the schedule is meant to make uneconomic."""
+    or more (#614), and the shorter holds are the flow the schedule is meant to make uneconomic.
+    `fee_fn(holds)`, when given, is the fee in place of `schedule`'s."""
     profit, over, extra = 0.0, 0.0, 0.0
     for r in holding_rows:
         lo0, hi0 = max(float(r["hold_from_s"]), 0.5), float(r["hold_to_s"])
@@ -93,7 +124,7 @@ def honest_cost(holding_rows: list[dict], schedule: dict[float, float], points: 
         r = dict(r, notional_share=float(r["notional_share"]) * np.log(hi / lo) / np.log(hi0 / lo0))
         holds = np.exp(np.linspace(np.log(lo), np.log(hi), points))
         weight = float(r["notional_share"]) * np.sqrt(holds) / points
-        f = fee_at(schedule, holds)
+        f = fee_fn(holds) if fee_fn else fee_at(schedule, holds)
         profit += weight.sum()
         over += weight[f > BASE + 1e-9].sum()
         extra += (weight * (f - BASE)).sum()

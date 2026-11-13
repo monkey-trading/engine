@@ -47,3 +47,22 @@ def test_recycling_forfeits_the_kept_tiers_best_price_on_large_fills():
     r = carrot.recycling(t, 2.0, MARKET, 20, 0.0)
     assert r["kept_tier"] >= 2 and r["recycled_tier"] < r["kept_tier"]
     assert r["benefits"]["best_price"] == pytest.approx((4.0 - 2.0) / 1e4 * 1.5e6 / 2e6 * 100e6)
+
+
+def test_a_keeper_pays_its_tiers_fee_and_a_recycler_tier_0s():
+    # Long holds past the curve: a keeper whose volume earns tier 3 pays the base less 20%, which a
+    # recycler at tier 0 never does.
+    from calib import fee
+
+    year = {(1800.0, 5.0): (1.0, 0.0, 1000.0)}
+    calls = []
+
+    def tier_fee(hold, tier):
+        calls.append(tier)
+        return fee.d7(hold, 0.10, fee.LAUNCH_DISCOUNTS[tier])
+
+    out = carrot.best_responses(year, {}, MARKET, 2.0, 20, 50e6, tier_fee)
+    assert out["keeper"]["tier"] == 3 and 3 in calls
+    flat = carrot.best_responses(year, {1.0: 0.10}, MARKET, 2.0, 20, 50e6)
+    assert out["keeper"]["per_day"] > flat["keeper"]["per_day"]
+    assert out["recycler"]["per_day"] == pytest.approx(flat["recycler"]["per_day"])

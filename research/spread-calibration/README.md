@@ -32,10 +32,9 @@ either flow, with two exceptions to note:
 - **Altering the unauthenticated Databento quotes** ($360k a day at current flow) passes only
   because the share grew. No pricing parameter reaches it; authenticating the quotes does.
 
-The retained NAV stays at $107M on both flows: the exposure caps' refusals set it, not house
-cash. At 100x, BTC-USD and ETH-USD alone go from a 40% chance of NAV below zero at genesis pricing
-to none with the spreads and fee. The tables are in `results/report.md`. The changes are
-proposals: this study changes no genesis value.
+The retained NAV stays at $107M on both flows: the exposure caps' refusals set it, as before. Over
+90 days current flow pays $456M of spread income and $55M of profit fees ($30M of it from churn),
+target flow $135M and $36M.
 
 ## Owner decisions
 
@@ -60,11 +59,99 @@ proposal in this README, the answer stands:
 - **Databento** (proposal 6): the engine now prices only from sources over TLS (#622), and #673
   settles second sources.
 
-The figures in this study are before a correction to the house income model, which charges the
-churn profit fee on the price gain at each cohort's mean hold and adds both fills' spread income
-beside it. The engine charges the fee on realised PnL after the spread, so the model overstates
-house income and the operator's honest share. #697 makes the correction and re-states the headline
-at the owner's values.
+The figures in the sections after the next are before a correction to the house income model,
+which charged the churn profit fee on the price gain at each cohort's mean hold and added both
+fills' spread income beside it. The engine charges the fee on realised PnL after the spread, so the
+model overstated house income and the operator's honest share. The next section makes the
+correction and restates the headline at the owner's values (#697).
+
+## The corrected headline at the owner's values (#697)
+
+**Bottom line.** On the corrected income model, bounded below on the fee as the next paragraph
+describes, and on the genesis's 34 launch markets (#685 deferred DE40, UK100 and Brent), the
+operator's honest share is $1.14M a day on current flow and $385k on target flow ($1.17M and $389k
+on the central estimate), against $1.77M and $483k before the correction at #623's proposals on 37
+markets. At the owner's values every attack class together takes about $640k a day on current flow
+and $528k on target flow, so the launch criterion holds on current flow and fails on target flow.
+Each class alone is below either share. For the criterion to hold on target flow, the loss-rate
+trigger (#695) must hold the classes the house pays, which are the ones it can see (latency
+arbitrage, unpriced pairs and the held sync's kill option), to **at most $423k a day of house
+loss**, against $601k unbounded: a cut of at least 30%. On current flow their budget is $1.22M a
+day, which they are within. The trigger must also bound two things the daily figures leave out:
+unpriced pairs on 2025-10-10's four stress hours, $24.4M to the operator in one day, and the fastest
+honest client's $102k a day, which #614's decision D9 sets at zero. Raising the profit fee's base,
+which the bounds allow up to 15%, does not move the operator's latency take; holding the full fee to
+10 s instead of 1 s halves it and brings target flow within the criterion before the trigger (the
+proposal below). The tables are in `results/owner_values.md` and the budgets in
+`results/owner_criterion.json`.
+
+**The correction.** #623's house model charged churn (flow held under an hour) the profit fee on its
+gross price gain at each class's mean hold, and added both fills' spreads beside it. The engine
+charges the fee on realised PnL at the spread-adjusted fill prices (`execution/mod.rs`, `book`), so
+a winning short hold pays the spread out of its gain. The cap study's model now charges a churn
+class `fee(h) * sigma * sqrt(h) * psi(2 s / (sigma * sqrt(h)))`, `psi(u) = E[max(Z - u, 0)]`, over
+its holds, and a position held an hour or more the fee on its realised PnL less the spread
+(`research/cap-calibration/model/holdfee.py`). The fee is #614's decision D7 on the engine's table
+of D3's schedule (eleven points, linear, rounded up to the bp, at most 0.81 points above the
+log-linear curve). The derived flow records each churn class's mean hold and mean square-root hold,
+not the distribution, so the integral is bounded: the share takes the least fee any distribution of
+holds with those two moments allows, a linear programme whose optimum sits on at most three holds,
+and every account pays tier 3's fee, the least any tier pays past the curve. The central estimate
+tilts the measured within-hour holding profile to each class's moments instead. #614's decision D5
+is not modelled: every account trades at the market's own leverage, as tiers 2 and 3 do. An account
+below tier 2 pays a higher fee but holds less notional where the market allows more than 20x (tier
+0) or 50x (tier 1), and the flow data does not say how volume spreads across tiers; tier 2 takes
+$25M of counted volume over five days or more. At the owner's values, charging churn as #623 did
+overstates the share by $103k a day on current flow and $13k on target flow against the lower bound,
+and by $73k and $10k against the central estimate.
+
+| A day | Current flow | Target flow |
+|---|---|---|
+| Honest share, lower bound | $1.14M | $385k |
+| Honest share, central estimate | $1.17M | $389k |
+| Honest share, no tier discount | $1.16M | $405k |
+| #623 at its proposal, before the correction (37 markets) | $1.77M | $483k |
+| Latency arbitrage, crypto, the operator's 3 s view | $265k | $265k |
+| Latency arbitrage, FX and indices at D6's tenths | $197k | $197k |
+| Unpriced pairs at 1% margin, tier 3's 8% fee | $17k | $17k |
+| Skimming client fills | $159k | $47k |
+| Held sync's kill option | $2k | $2k |
+| **All together** | **$640k** | **$528k** |
+| Fastest honest client, 0.25 s | $102k | $102k |
+
+The retained NAV stays at $107M on both flows: the exposure caps' refusals set it, as before. Over
+90 days current flow pays $474M of spread income and $57M of profit fees ($31M of it from churn),
+target flow $141M and $38M.
+
+**FX and index first tiers (D6).** Under the owner's fee, latency arbitrage on the launch genesis's
+eight FX and index markets takes $246k a day of house loss at D6's tenths, $161k at 1 bp and $553k
+at the owner's reference tiers, measured at each market's exact spread as the crypto takes are (size
+tiers, the stick and recycling); #623's upper bound (the whole position at the first tier, no stick)
+gives $676k, $456k and $1.17M, and on that bound all the classes together take $984k a day on
+current flow, below its share, and $872k on target flow. These are several times #623's, which held
+the full fee to 5 minutes: the owner's 1 s schedule leaves short holds two-thirds of their gains.
+Per market in `results/owner_values.md`. #623's zero on EUR-USD and GBP-USD at 1 bp came from its
+interpolation, which read past its largest measured spread as zero; measured at the spread, each
+takes about $1.6k a day under the owner's fee.
+
+**Across the fee bases and discounts (D7).** The bounds admit a base from launch's 10% to 15% and
+tier discounts no larger than launch's, ordered by tier. On every admitted combination, checked
+every hundredth of a second to an hour, each tier's fee falls with the hold, a higher tier never
+pays more than a lower one, and every tier pays at least its launch fee at every hold: the ordering
+guarantee and the protection of the calibrated fee from below hold. A higher base raises the share
+($1.16M and $405k at 12.5%, $1.18M and $425k at 15%), lowers the fastest client's take to $82k and
+turns the pairs' year negative, but leaves the operator's latency take where it is: its best holds
+are 3 to 5 s, where the curve sets the fee, and its best strategy recycles wallets at tier 0, where
+no discount applies. The 5% cut the owner ruled out (#614, 2026-11-12) would put every tier up to 5
+points under its launch fee from 15 minutes.
+
+**Proposal for the owner.** The lever on the operator's latency take is the curve's short end, which
+D7 lets move only upwards: holding the full fee to 10 s, still reaching 10% at 15 minutes, takes the
+crypto take from $265k to $160k and the FX and index take from $197k to $63k, so all the classes
+together fall to about $289k a day on target flow, within its share, while target flow pays nothing
+more and holds under 15 minutes pay 44% of their gains instead of 33%. Holding it to 60 s gives the
+same takes for 61%. It does not reach the fastest client, whose best holds are 15 to 30 minutes, nor
+the stress day's pairs: the trigger still has to bound those.
 
 ## The question
 
@@ -310,8 +397,20 @@ python -I run.py per_market --workers 3 --paths 2000
 python -I run.py gaps
 python -I run.py retained --workers 3 --paths 1000
 python -I run.py report
+python -I run.py owner_fee
+python -I run.py owner_latency
+python -I run.py owner_fx --workers 3
+python -I run.py owner_unprice --workers 3
+python -I run.py owner_income --workers 3 --paths 1000 --only "launch, bound"
+python -I run.py owner_income --workers 3 --paths 500
+python -I run.py owner_report
 python -I -m pytest tests
 ```
+
+`owner_income` keeps the variants already in `results/owner_income.json`, so the second command runs
+the sensitivities at 500 paths beside the two 1,000-path headline runs. With `retained` and
+`per_market`, it runs the cap study's corrected model: re-running those two stages gives #623's
+proposal on the corrected model, not the committed figures, which are #623's record.
 
 ## Files
 
@@ -320,6 +419,10 @@ python -I -m pytest tests
   `spreads.py` (tiers), `latency.py` (the latency rule on a grid), `jump.py` (a jump stress
   trigger variant), `fee.py` (schedules, the hold clock, honest cost), `toxicity.py` (the score),
   `carrot.py` (volume tiers), `target.py` (target flow), `unprice.py` (#549's unpriced-spell
-  measure at the calibrated spreads), `report.py`.
-- `tests/`: the fee, hold clock, score, tiers, target flow, spreads and latency rule on hand cases.
-- `results/`: each stage's output and `report.md`.
+  measure at the calibrated spreads), `report.py`, `owner_report.py` (#697's results page and
+  the trigger's budgets).
+- `tests/`: the fee, hold clock, score, tiers, target flow, spreads and latency rule on hand cases,
+  and D7's fee table, the tenths, the admitted discount tables and each tier's fee in the latency
+  best response.
+- `results/`: each stage's output and `report.md`; #697's `owner_*.json`, `owner_values.md` and
+  `owner_criterion.json`.

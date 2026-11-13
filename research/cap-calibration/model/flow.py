@@ -29,6 +29,7 @@ class FlowClass:
     mean_hold_h: float
     mean_sqrt_hold_h: float
     long_share: float
+    min_hold_s: float = 0.0  # no hold in the class is shorter (the target flow's kept part is held 15 minutes or more)
 
 
 @dataclass
@@ -40,6 +41,7 @@ class Flow:
     long_share_ar1: float
     long_share_resid_sd: float
     long_share_slope: float  # on the previous hour's return
+    holding: tuple = ()  # ((hold_from_s, hold_to_s, notional share), ...): every closed position's holds
 
 
 def schedule_key(tiers: list[dict]) -> str:
@@ -161,6 +163,8 @@ def load(derived: Path) -> Flow:
         bounds.append(float(r["notional_upto_usd"]))
         shares.append(float(r["margin_share"]))
     sizes = {k: (np.array(b), np.array(v)) for k, (b, v) in sizes.items()}
+    with (derived / "papertrade_holding.csv").open() as fh:
+        holding = tuple((float(r["hold_from_s"]), float(r["hold_to_s"]), float(r["notional_share"])) for r in csv.DictReader(fh))
     return Flow(
         classes=classes,
         leverage=leverage,
@@ -169,6 +173,7 @@ def load(derived: Path) -> Flow:
         long_share_ar1=summary["long_share_ar1"],
         long_share_resid_sd=summary["long_share_resid_sd"],
         long_share_slope=summary["long_share_slope_on_prev_hour_return"],
+        holding=holding,
     )
 
 

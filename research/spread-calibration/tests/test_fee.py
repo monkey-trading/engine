@@ -71,3 +71,47 @@ def test_slicing_an_aged_position_pays_at_the_slices_steady_age():
         holds.append(c.close(-1.0, 10.0 * k))
         c.add(1.0, 10.0 * k)
     assert holds[-1] == pytest.approx(fee.gamed_age(10.0, 10.0), rel=1e-6)
+
+
+def test_d7_is_the_engines_table_above_the_tiers_discounted_base():
+    assert float(fee.d7(0.2)) == 1.0  # the first fee at or below the first hold
+    assert float(fee.d7(1.5)) == pytest.approx(0.9542)  # 9,541.5 bps between the first two points, rounded up
+    assert float(fee.d7(29.999)) == pytest.approx(0.5501)  # truncating would fall below the curve
+    assert float(fee.d7(899.999)) == pytest.approx(0.1001)
+    assert float(fee.d7(900.0)) == pytest.approx(0.10)  # zero at the last hold: the base alone
+    assert float(fee.d7(3600.0, discount=0.2)) == pytest.approx(0.08)
+    assert float(fee.d7(3600.0, base=0.15, discount=0.2)) == pytest.approx(0.12)
+    assert float(fee.d7(300.0, base=0.15, discount=0.2)) == float(fee.d7(300.0)) > 0.12
+
+
+def test_d7s_table_never_falls_below_the_log_linear_schedule_and_is_at_most_081_points_above():
+    holds = np.arange(1.0, 900.0, 0.001)
+    curve = fee.fee_at(fee.family(1.0, 900.0, 1.0), holds)
+    table = fee.d7(holds)
+    assert (table >= curve - 1e-12).all()
+    assert (table - curve).max() < 0.0081  # 0.80 points from the points, a bp more from the rounding
+
+
+def test_the_tenths_round_up_and_floor_at_a_tenth():
+    from calib import spreads
+
+    assert spreads.best_tier_tenths(0.1992, 0.1809) == 0.4
+    assert spreads.best_tier_tenths(0.8041, 0.1809) == 1.0
+    assert spreads.best_tier_tenths(0.0, 0.0) == 0.1
+
+
+def test_the_admitted_discount_tables_are_ordered_and_never_above_launch():
+    import run
+
+    tables = run.owner_discounts()
+    assert fee.LAUNCH_DISCOUNTS in tables and (0.0, 0.0, 0.0, 0.0) in tables
+    for d in tables:
+        assert list(d) == sorted(d)
+        assert all(x <= launch + 1e-12 for x, launch in zip(d, fee.LAUNCH_DISCOUNTS))
+
+
+def test_a_curve_table_starts_full_reaches_the_base_and_never_falls_below_its_log_linear_curve():
+    points = fee.curve_points(10.0, 900.0)
+    assert points[0] == (10.0, 1.0) and points[-1][1] == pytest.approx(fee.BASE)
+    holds = np.arange(10.0, 900.0, 0.01)
+    assert (fee.d7(holds, points=points) >= fee.fee_at(fee.family(1.0, 900.0, 10.0), holds) - 1e-12).all()
