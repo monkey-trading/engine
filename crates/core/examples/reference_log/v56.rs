@@ -2,8 +2,8 @@
 //! vote contract; a passed normal margin raise waits its seven days and applies, a fast-path stress
 //! floor and close-out level apply at once and lapse at their lifetime, a fast-path margin cut is
 //! refused, the turn's key's governed commands are refused while rotation is on, a voted relisting
-//! is held to the listing bounds without a listing notice, and voted score tiers to the toxicity
-//! bounds without a parameter notice.
+//! is held to the listing bounds without a listing notice, and voted score tiers and fee curve to
+//! the toxicity and holding-fee bounds without a parameter notice.
 
 use engine_core::Fixed;
 use engine_core::command::{AdminCommand, Command};
@@ -28,7 +28,8 @@ const TTL_MS: Millis = 24 * 60 * 60 * 1000;
 /// cut and a proposal whose bytes are no command are refused; the turn's key's own SetParams is
 /// refused. BTC's spread bands at twice their launch rates apply by a normal vote with no listing
 /// notice, while three times them are refused at application, and score tiers at one and a half times
-/// their launch scores apply by a normal vote with no parameter notice.
+/// their launch scores, with the fee curve's second point raised 50 bps, apply by a normal vote with
+/// no parameter notice.
 pub(crate) fn session(h: &mut Harness) {
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V56 });
     h.admin(AdminCommand::SetGovernance(GovernanceConfig { vote: AccountId([0x52; 20]), restriction_ttl_ms: TTL_MS }));
@@ -55,6 +56,12 @@ pub(crate) fn session(h: &mut Harness) {
     let launch = h.engine.operator_bounds().launch_score_tiers.clone().expect("recorded at V54");
     for (tier, launched) in tiers.toxicity.score_tiers.iter_mut().zip(&launch) {
         tier.min_score = Fixed::from_raw(launched.min_score.raw() * 3 / 2);
+    }
+    // From `V55` the same vote raises the fee curve's second point, at or above its launch curve.
+    if let [first, second, ..] = &mut tiers.profit_fee_curve[..]
+        && second.fee_bps + 50 <= first.fee_bps
+    {
+        second.fee_bps += 50;
     }
     let tiers = AdminCommand::SetParams(tiers);
     for (proposal, command) in [(6, wider.clone()), (7, too_wide.clone()), (8, tiers.clone())] {

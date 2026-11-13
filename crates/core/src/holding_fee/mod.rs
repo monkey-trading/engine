@@ -165,16 +165,24 @@ impl Engine {
 
     /// From `V55`, checks parameters change the curve only to one within its bound
     /// (`check_curve_bound`), named by a notice whose time has come. Before `V55` a curve charges
-    /// nothing, so it changes freely.
+    /// nothing, so it changes freely. A `voted` change's notice is its vote's.
     /// Error cases:
     /// - from `V55`, a changed curve `check_curve_bound` refuses
-    /// - from `V55`, a changed curve no notice names, or whose notice takes effect later than the
-    ///   sequenced time
-    pub(crate) fn check_curve_change(&self, curve: &[CurvePoint], current: &[CurvePoint]) -> Result<(), String> {
+    /// - from `V55`, unless `voted`, a changed curve no notice names, or whose notice takes effect
+    ///   later than the sequenced time
+    pub(crate) fn check_curve_change(
+        &self,
+        curve: &[CurvePoint],
+        current: &[CurvePoint],
+        voted: bool,
+    ) -> Result<(), String> {
         if curve == current || self.protocol_version < ProtocolVersion::V55 {
             return Ok(());
         }
         self.check_curve_bound(curve)?;
+        if voted {
+            return Ok(());
+        }
         let named =
             self.operator_bounds.notice.as_ref().filter(|notice| notice.profit_fee_curve.as_deref() == Some(curve));
         match named {

@@ -198,6 +198,7 @@ fn while_rotation_is_on_the_operators_and_the_nodes_governed_commands_are_refuse
         closeout_level_bps: None,
         stress: None,
         score_tiers: None,
+        profit_fee_curve: None,
         effective_at: h.ts + NOTICE_MS,
     });
     for command in [fee.clone(), margin(&h, BTC, 1_500), notice.clone()] {
@@ -434,6 +435,8 @@ fn canonical_bytes_decode_and_anything_else_does_not() {
 
 #[path = "parameter_votes/baseline.rs"]
 mod baseline;
+#[path = "parameter_votes/holding_fee.rs"]
+mod holding_fee;
 #[path = "parameter_votes/limits.rs"]
 mod limits;
 #[path = "parameter_votes/listing.rs"]

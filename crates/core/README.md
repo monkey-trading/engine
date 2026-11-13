@@ -51,11 +51,11 @@ this crate and reproduce the signed state roots exactly.
   genesis runs unsigned
 - From protocol `V46`, a signed benchmark rate moves at most 300 bps per day from the applied rates
   next to its date (`src/benchmark.rs`), a market holding positions stays on its benchmark
-  (`src/operator_bounds.rs`), and the operator's stress floor is at most level 1 and lapses after 72
+  (`src/operator_bounds/`), and the operator's stress floor is at most level 1 and lapses after 72
   hours (`src/stress.rs`)
 - From protocol `V49`, the stress parameters and a listed market's financing markup change only
-  after a seven-day notice, as the profit fee and close-out level do (`src/operator_bounds.rs`)
-- From protocol `V35`, the operator's powers are bounded (`src/operator_bounds.rs`). The profit fee
+  after a seven-day notice, as the profit fee and close-out level do (`src/operator_bounds/`)
+- From protocol `V35`, the operator's powers are bounded (`src/operator_bounds/`). The profit fee
   and the close-out level change only within ±50% of their launch values, the rates in force when
   parameters are first set under `V35` or when it activates, and only from the time a signed
   `announce_params` names, at least seven days after it is logged (`NOTICE_MS`); a `set_params`
@@ -245,7 +245,7 @@ this crate and reproduce the signed state roots exactly.
 - `src/closeout.rs` — account close-out and bad-debt write-off
 - `src/benchmark.rs` — dated publisher snapshots, effective-date lookup, staleness, and retention;
   from `V46`, the cap on a signed rate (`split_by_cap`), which `check_held_benchmark` in
-  `src/operator_bounds.rs` keeps a relisting from going around
+  `src/operator_bounds/` keeps a relisting from going around
 - `src/funds.rs` — legacy and mock deposits, withdrawals, house capital, and overnight financing
 - `src/deposits.rs` — exact custody receipts, sequencer-confirmed principal locks, finality,
   canonical reversals, and atomic moves of reincluded deposits to their replacement receipts
@@ -270,7 +270,8 @@ this crate and reproduce the signed state roots exactly.
 - `tests/withdrawals/setup.rs` — shared Engine::apply-driven withdrawal setup
 - `src/admin/mod.rs` — operator commands and signed admin commands; `src/admin/quote_currency.rs`
   checks a listing's quote currency
-- `src/operator_bounds.rs` — the V35 bounds: launch rates, rate notices, price-rule checks, and operator rotation
+- `src/operator_bounds/mod.rs` — the V35 bounds: launch rates, rate notices and price-rule checks
+- `src/operator_bounds/rotation.rs` — the V35 operator rotation: a signed `RotateOperator` and its seven-day notice
 - `src/spread_tier.rs` — size spread bands: the `V52` unit in tenths of a bp beside the whole-bps
   encoding earlier listings keep, the class floors, and the band staircase; unit tests in
   `src/spread_tier/tests.rs`
@@ -305,6 +306,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/parameter_votes/limits.rs` — `V56`: a refused drawn turn keeping votes governing until an installation, a restriction lapsing at a walked boundary, and the caps on waiting changes and restrictions
 - `tests/parameter_votes/listing.rs` — `V56`: a voted relisting held to the listing bounds without a notice, the operator's listing notice refused while rotation is on, the size multiplier and close charge floors on voted changes, and a relisting under a margin restriction measured from the baseline
 - `tests/parameter_votes/toxicity.rs` — `V56`: a voted score tier change held to ±50% of launch without a notice, and a voted relisting keeping its markout floor
+- `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch
 - `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, and the turn's time in office
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
 - `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
@@ -798,9 +800,10 @@ admin command its bytes are the canonical JSON of. A normal change applies no so
 after it is logged, when the node sequences `ApplyProposal`, under every check its command meets but
 the notices the vote's own replaces, so the ±50% range of the launch profit fee and close-out level,
 lower-only close-spread ceilings at or above the launch close charge, the size multipliers' 1x floor,
-V52's listing bounds and V54's toxicity bounds still hold, a voted relisting keeping each changed band
+V52's listing bounds, V54's toxicity bounds and V55's holding-fee bounds still hold, a voted relisting keeping each changed band
 table within its market's launch bands as a listing notice would and its markout floor, and voted
-score tiers staying within ±50% of launch; a `SetParams` or `UpsertMarket` applies only over the
+score tiers staying within ±50% of launch, a voted base fee at or above launch and a voted curve at
+or above its launch curve; a `SetParams` or `UpsertMarket` applies only over the
 baseline it was mirrored against, and a ceiling adoption only while none waits. A fast-path proposal applies at once as a
 restriction, refused if any field moves away from lower risk: a higher margin band or close-out level,
 a stress floor, a lower house or market cap or floor, or reduce-only. The values in force are the

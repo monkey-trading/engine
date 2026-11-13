@@ -14,8 +14,9 @@
 //!   profit fee and close-out level, lower-only close-spread ceilings at or above their market's launch
 //!   close charge, the 1x floor on each stress level's size multiplier, a listing notice's bounds,
 //!   each changed spread band table from its launch rates to twice them and each changed margin band
-//!   table at or above launch's, and the toxicity score's, each tier within ±50% of its launch score
-//!   and add-on and a market's markout floor fixed at its listing. A `SetParams` or `UpsertMarket`
+//!   table at or above launch's, the toxicity score's, each tier within ±50% of its launch score and
+//!   add-on and a market's markout floor fixed at its listing, and the holding-time fee's, the base fee
+//!   never below its launch value and the curve at or above its launch curve at every hold. A `SetParams` or `UpsertMarket`
 //!   applies only over the baseline it was mirrored against, so a change applied while it waits is
 //!   never undone by it, and a ceiling adoption only while none waits. It carries every field, so
 //!   members check it against the values in force when they vote.

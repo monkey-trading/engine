@@ -357,7 +357,8 @@ activation and access policy, which wait for a vote.
 - **A normal change** needs no notice of its own: its seven days are the vote's. It meets every other
   bound the operator's command would: a relisting keeps each changed spread band from its launch rate
   to twice it and each changed margin requirement at or above launch's, new parameters keep every size
-  multiplier at 1x or more and each toxicity score tier within ±50% of its launch score and add-on,
+  multiplier at 1x or more, each toxicity score tier within ±50% of its launch score and add-on, the
+  profit fee base at or above its launch value and the fee curve at or above its launch curve,
   a relisting keeps its market's markout floor, and a ceiling covers its market's launch close
   charge. It takes effect
   seven days after the engine logs it: `GET /v1/house/state` lists it

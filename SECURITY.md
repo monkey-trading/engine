@@ -376,7 +376,9 @@ vote contract carries no limits, and the engine holds each change to the ±50% r
 profit fee and close-out level, lower-only close-spread ceilings at or above their market's launch
 close charge, the V52 listing bounds (each spread band from its launch rate to twice it, each margin
 requirement at or above launch's, no stress level's size multiplier below 1x), V54's toxicity bounds
-(each score tier within ±50% of launch, markout floors fixed) and each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
+(each score tier within ±50% of launch, markout floors fixed), V55's holding-fee bounds (the base fee
+from its launch value up to +50%, the curve at or above its launch curve at every hold and reaching
+at most 30 minutes) and each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
 can set the other parameters to any valid value after seven days' notice, and a normal change applies only over the
 parameters or market it passed on; a fast-path proposal applies at once but only as a restriction that
 moves fields toward lower risk and lapses at the recorded lifetime, at most seven days, and its margin
