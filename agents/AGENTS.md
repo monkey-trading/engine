@@ -147,7 +147,10 @@ an index: load only the rule whose hint matches the current action.
   rotation sets and turns once the schedule is read to name the registry, `custody/registry.rs`; a
   daily turn's member takes the keys from the finalised schedule once trusted time reaches the turn's
   boundary, in the generation the schedule fixed, with no chain wait after it (`handover/turns.rs`),
-  and logs `TurnTaken` with its first command in each turn, `sequencer/turns.rs`), the
+  and logs `TurnTaken` with its first command in each turn once its keys are sealed in that
+  generation, sealing them there first when the schedule names it afresh, `sequencer/turns.rs` and
+  `node/turn_keys.rs`; an incumbent that stopped for a turn's member keeps the log's turns, and
+  admits a later turn's member the set gave notice), the
   standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
   segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up,
   taking only entries whose command seals continue the copy and raising `operator_log_rollback`, with

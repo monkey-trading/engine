@@ -376,21 +376,21 @@ async fn named_release(vault: &impl CheckpointChain) -> anyhow::Result<CurrentRe
 }
 
 /// Raises `release_superseded` (Critical) once the vault's current release at finality is no longer
-/// `sealed` in `generation`, the release and generation the keys are sealed in, reading it every
-/// `every`: a restart would then find no keys to open, so they must be handed to the release the
-/// vault names before this node stops. The read does not wait for the vault's generation to fold
+/// the release and generation `store`'s keys are sealed in, reading it every `every`: a restart would
+/// then find no keys to open, so they must be handed to the release the vault names before this node
+/// stops. The read does not wait for the vault's generation to fold
 /// the change: the running release is superseded from the block the change reads at finality, and
 /// the fold can lag that by anyone's `syncRelease`. From a daily turn's boundary by `trusted` time,
-/// the finalised schedule naming this release in `generation` for that turn names it too, as the
-/// vault does from then (`handover::turns`); a turn naming another release pages only once
-/// `TURN_HANDOVER_GRACE_MS` has passed since its boundary, as the turn's member takes the keys from this
-/// node meanwhile. A failed read is retried.
+/// the finalised schedule naming this release in the keys' generation for that turn names it too, as
+/// the vault does from then (`handover::turns`); a turn naming another release, or this one in another
+/// generation, pages only once `TURN_HANDOVER_GRACE_MS` has passed since its boundary, as the turn's
+/// member takes the keys from this node meanwhile, or this node seals them in the turn's generation as
+/// it takes the turn (`sequencer::turns`). A failed read is retried.
 /// Error cases:
 /// - none; it runs until the node stops
 pub(super) async fn watch_release(
     vault: impl CheckpointChain,
-    sealed: Release,
-    generation: u64,
+    store: Arc<KeyStore>,
     every: Duration,
     trusted: crate::trusted_time::TrustedClock,
 ) -> anyhow::Result<()> {
@@ -398,6 +398,7 @@ pub(super) async fn watch_release(
     let mut tick = tokio::time::interval(every);
     loop {
         tick.tick().await;
+        let (sealed, generation) = (store.release(), store.generation());
         let current = match named_release(&vault).await {
             Ok(current) => current,
             Err(e) => {
@@ -414,7 +415,10 @@ pub(super) async fn watch_release(
         };
         if !named && handing_over {
             if !waiting {
-                info!("a daily turn names another release from its boundary: waiting for its member to take the keys");
+                info!(
+                    "a daily turn names another holding from its boundary: waiting for its member to take the keys, or \
+                     for this node to seal them in the turn's generation as it takes the turn"
+                );
             }
             waiting = true;
             continue;

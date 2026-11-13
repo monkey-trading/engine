@@ -135,6 +135,28 @@ fn archive_listings_must_be_canonical_and_ordered() {
 }
 
 #[test]
+fn a_listing_or_segment_failing_its_check_is_an_integrity_failure() {
+    use super::archive::{ArchiveIntegrity, check_listing, validate_listing};
+    let listed = crate::log::SegmentInfo {
+        file: "00000000000000000000.jsonl".into(),
+        first_seq: 0,
+        last_seq: 0,
+        bytes: 3,
+        sha256: super::sha256(b"abc"),
+    };
+    check_listing(&listed, b"abc").unwrap();
+    for (what, err) in [
+        ("other bytes", check_listing(&listed, b"abd").unwrap_err()),
+        (
+            "a name for another seq",
+            validate_listing(&crate::log::SegmentInfo { first_seq: 1, ..listed.clone() }).unwrap_err(),
+        ),
+    ] {
+        assert!(err.downcast_ref::<ArchiveIntegrity>().is_some(), "{what}: {err:#}");
+    }
+}
+
+#[test]
 fn truncate_refuses_a_checkpoint_the_copy_lacks() {
     let dir = scratch_dir("standby-truncate-missing");
     let mut writer = open_writer(&dir, 100);

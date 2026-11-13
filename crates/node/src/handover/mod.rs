@@ -444,11 +444,13 @@ pub(crate) async fn vault_signers(
 /// Fetches the predecessor's published log into this node's log directory before the handover
 /// connects: the completed segments the archive lists, checked against their listings. The final
 /// segments arrive with the keys instead — the archive serves only completed segments, and this
-/// fetches while the predecessor's API is still up. A fetch failure is not fatal: a local copy
+/// fetches while the predecessor's API is still up. A transport failure is not fatal: a local copy
 /// from an earlier start may exist, and the strict tail checks at the handover decide; a fetched
-/// copy that does not replay is fatal, surfacing a poisoned mirror before the predecessor stops.
+/// copy that fails its integrity checks or does not replay is fatal, surfacing a poisoned mirror
+/// before the predecessor stops.
 /// Error cases:
-/// - a fetched file differs from its listing, or the fetched copy does not replay against `signer`
+/// - the archive fails its integrity checks (`ArchiveIntegrity`), or the restored copy does not replay
+///   against `signers`
 pub(crate) async fn sync_predecessor_log(
     cfg: &NodeConfig,
     source: &Source,
@@ -466,13 +468,11 @@ pub(crate) async fn sync_predecessor_log(
         crate::standby::archive::refresh_archive(&client, &origins, dir, |_| Ok(())).await
     };
     if let Err(e) = fetch {
-        // A transport failure is not fatal — a local copy from an earlier attempt may exist, and
-        // the handover's replay decides. An integrity failure (a file that differs from its
-        // listing, a copy that does not open) is: the local prefix cannot be trusted.
-        // Transport failures (timeouts, unreachable origins, over-bound bodies) are non-fatal;
-        // only an integrity failure — a listing the bytes do not match — refuses the start.
-        let text = format!("{e:#}");
-        if text.contains("differs from its listing") || text.contains("manifest") || text.contains("not canonical") {
+        // Only an integrity failure refuses the start: the archive's bytes or listings fail their
+        // checks, so the local prefix cannot be trusted. Any other failure — an origin that is
+        // unreachable, slow, or answers an error — is not: a local copy from an earlier attempt may
+        // exist, the handover carries the rest, and its replay decides.
+        if e.downcast_ref::<crate::standby::archive::ArchiveIntegrity>().is_some() {
             return Err(e).context("the predecessor's published log failed integrity checks");
         }
         warn!("fetching the predecessor's published log failed: {e:#}");

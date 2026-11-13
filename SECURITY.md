@@ -344,9 +344,12 @@ a turn's key signs from its boundary only when a set mirrored at least seven day
 the vault names the turn's release, in the generation the schedule fixed, from the boundary without a
 transaction, and both enclaves of a handover accept the turn's member from the finalised schedule
 once their trusted time reaches the boundary, the turn the schedule names then being the only holding
-named, and the incumbent hands over only a turn its own log accepted, so a host that holds an
+named, and the incumbent hands over only a turn its own log accepted, or, once it has stopped for a
+member whose transfer never confirmed, one the turns its log held at the stop show it will accept, so a host that holds an
 enclave's Roughtime replies back can delay a handover but not bring it forward, and a turn drawn
-within a finality period of its boundary waits for finality; the member earns the operator's share only from
+within a finality period of its boundary waits for finality; a holder the schedule names again in a new
+generation, after a turn nobody took, seals its live keys in that generation on its sequencing thread
+before it logs `TurnTaken`, so no copy is sealed after it has stopped for a handover; the member earns the operator's share only from
 its enclave's `TurnTaken` to the end of its turn, and an incumbent past its turn earns nothing;
 promotion over turns, which is the liveness rule's, is not built yet, so a failed member holds its
 turn until the next boundary and the governance fallback (rotation off and `installOperator` once the

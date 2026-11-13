@@ -45,6 +45,8 @@ pub(crate) struct ScheduledTurn {
     pub admin_key: AccountId,
     pub release: [u8; 32],
     pub generation: u64,
+    /// The rotation set the turn was drawn from.
+    pub set: u32,
     /// The operator the turn takes over from, unless it is the member itself.
     pub source: Option<HandoverSource>,
 }

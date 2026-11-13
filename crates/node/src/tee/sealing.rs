@@ -92,17 +92,24 @@ struct SealedFile {
     ciphertext: String,
 }
 
-/// This release's sealed keys: the file, its key, and what it holds. Only the certificate task
-/// writes after startup, so the lock is never contended; it keeps the file and `keys` in step.
+/// This release's sealed keys: the file, its key, and what it holds. After startup only the
+/// certificate task and, when a daily turn names this release in another generation, the sequencer
+/// write, so the lock is rarely contended; it keeps the file, its generation and the keys in step.
 pub(crate) struct KeyStore {
-    path: PathBuf,
     platform: Platform,
     config_sha256: [u8; 32],
-    generation: u64,
     /// The TCB the file's key is derived at, kept across reseals.
     tcb: u64,
     key: LessSafeKey,
-    keys: Mutex<KeySet>,
+    sealed: Mutex<Sealed>,
+}
+
+/// The file the keys are sealed in, the vault's generation of the release it is sealed in, and the
+/// keys it holds.
+struct Sealed {
+    path: PathBuf,
+    generation: u64,
+    keys: KeySet,
 }
 
 impl Sealer for MockSealer {
@@ -173,7 +180,8 @@ impl KeyStore {
             .open_in_place(Nonce::assume_unique_for_key(nonce), aad(&release, generation, sealed.tcb), &mut ciphertext)
             .map_err(|_| anyhow::anyhow!("{} does not open under this release's sealing key", path.display()))?;
         let keys: KeySet = serde_json::from_slice(plaintext).context("the sealed keys do not parse")?;
-        Ok(Some(Self { path, platform, config_sha256, generation, tcb: sealed.tcb, key, keys: Mutex::new(keys) }))
+        let tcb = sealed.tcb;
+        Ok(Some(Self { platform, config_sha256, tcb, key, sealed: Mutex::new(Sealed { path, generation, keys }) }))
     }
 
     /// Seals `keys` as this release's first file in `dir` for the vault's `generation` of it, for
@@ -193,14 +201,17 @@ impl KeyStore {
         ensure!(!path.exists(), "{} already exists", path.display());
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         let key = aead_key(sealer, platform.tcb)?;
-        let store = Self { path, platform, config_sha256, generation, tcb: platform.tcb, key, keys: Mutex::new(keys) };
-        store.write(&store.lock())?;
+        let sealed = Mutex::new(Sealed { path, generation, keys });
+        let store = Self { platform, config_sha256, tcb: platform.tcb, key, sealed };
+        let sealed = store.lock();
+        store.write(&sealed.path, generation, &sealed.keys)?;
+        drop(sealed);
         Ok(store)
     }
 
     /// A copy of the keys.
     pub fn keys(&self) -> KeySet {
-        self.lock().clone()
+        self.lock().keys.clone()
     }
 
     /// What the platform reported when the store opened.
@@ -215,7 +226,7 @@ impl KeyStore {
 
     /// The vault's generation of the release the keys are sealed in.
     pub fn generation(&self) -> u64 {
-        self.generation
+        self.lock().generation
     }
 
     /// Applies `change` and seals the result over the file; on failure the file and the keys keep
@@ -223,26 +234,44 @@ impl KeyStore {
     /// Error cases:
     /// - the file cannot be written and synced
     pub fn update(&self, change: impl FnOnce(&mut KeySet)) -> anyhow::Result<()> {
-        let mut keys = self.lock();
-        let mut changed = keys.clone();
+        let mut sealed = self.lock();
+        let mut changed = sealed.keys.clone();
         change(&mut changed);
-        self.write(&changed)?;
-        *keys = changed;
+        self.write(&sealed.path, sealed.generation, &changed)?;
+        sealed.keys = changed;
         Ok(())
     }
 
-    /// Seals `keys` into a new file beside the current one, syncs it, and renames it over the
-    /// current one, so a crash leaves one whole file or the other.
+    /// Seals the keys again as this release's file for the vault's `generation` of it, beside the
+    /// current one, and seals every later change there: a daily turn that names this release in a
+    /// new generation while it holds the keys. The earlier file stays, and no start opens it again,
+    /// since no later turn or release names its generation. On failure the store keeps its file.
+    /// Error cases:
+    /// - the file cannot be written and synced
+    pub fn reseal(&self, generation: u64) -> anyhow::Result<()> {
+        let mut sealed = self.lock();
+        if sealed.generation == generation {
+            return Ok(());
+        }
+        let dir = sealed.path.parent().context("the sealed file has a directory")?;
+        let path = file_for(dir, &self.release(), generation);
+        self.write(&path, generation, &sealed.keys)?;
+        (sealed.path, sealed.generation) = (path, generation);
+        Ok(())
+    }
+
+    /// Seals `keys` for `generation` into a new file beside `path`, syncs it, and renames it over
+    /// `path`, so a crash leaves one whole file or the other.
     /// Error cases:
     /// - encryption, the write, a sync, or the rename fails
-    fn write(&self, keys: &KeySet) -> anyhow::Result<()> {
+    fn write(&self, path: &Path, generation: u64, keys: &KeySet) -> anyhow::Result<()> {
         let mut nonce = [0u8; NONCE_LEN];
         SystemRandom::new().fill(&mut nonce).map_err(|_| anyhow::anyhow!("the RNG failed"))?;
         let mut ciphertext = serde_json::to_vec(keys).context("encoding the keys")?;
         self.key
             .seal_in_place_append_tag(
                 Nonce::assume_unique_for_key(nonce),
-                aad(&self.release(), self.generation, self.tcb),
+                aad(&self.release(), generation, self.tcb),
                 &mut ciphertext,
             )
             .map_err(|_| anyhow::anyhow!("sealing the keys failed"))?;
@@ -250,17 +279,18 @@ impl KeyStore {
             format: FORMAT,
             launch_digest: hex::encode(self.platform.launch_digest),
             config_sha256: hex::encode(self.config_sha256),
-            generation: self.generation,
+            generation,
             tcb: self.tcb,
             nonce: hex::encode(nonce),
             ciphertext: hex::encode(ciphertext),
         };
-        write_replacing(&self.path, &serde_json::to_vec(&sealed)?)
+        write_replacing(path, &serde_json::to_vec(&sealed)?)
     }
 
-    /// The keys, whether or not a panic interrupted an earlier holder: `update` replaces them whole.
-    fn lock(&self) -> MutexGuard<'_, KeySet> {
-        self.keys.lock().unwrap_or_else(PoisonError::into_inner)
+    /// The sealed file and its keys, whether or not a panic interrupted an earlier holder: `update`
+    /// and `reseal` replace them whole.
+    fn lock(&self) -> MutexGuard<'_, Sealed> {
+        self.sealed.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

@@ -166,6 +166,42 @@ fn a_failed_update_keeps_the_file_and_the_keys() {
 }
 
 #[test]
+fn a_reseal_moves_the_keys_and_every_later_change_into_the_new_generation() {
+    let dir = scratch_dir("sealing-reseal");
+    let sealer = MockSealer { launch_digest: RELEASE };
+    let keys = KeySet::generate().unwrap();
+    let store = KeyStore::create(&dir, &sealer, CONFIG, GEN, keys.clone()).unwrap();
+    store.reseal(GEN + 2).unwrap();
+    assert_eq!(store.generation(), GEN + 2);
+    let resealed = KeyStore::open(&dir, &sealer, CONFIG, GEN + 2).unwrap().expect("the keys in the new generation");
+    assert_eq!(resealed.keys(), keys);
+
+    // A later change is sealed in the new generation, and the earlier file keeps what it held.
+    store.update(|keys| keys.set_certificate("https://ca.test/dir", &[vec![9u8; 4].into()])).unwrap();
+    assert_eq!(KeyStore::open(&dir, &sealer, CONFIG, GEN + 2).unwrap().unwrap().keys(), store.keys());
+    assert_eq!(KeyStore::open(&dir, &sealer, CONFIG, GEN).unwrap().unwrap().keys(), keys);
+    // Sealing in the generation the store holds writes nothing.
+    let path = file_for(&dir, &store.release(), GEN + 2);
+    let before = std::fs::read(&path).unwrap();
+    store.reseal(GEN + 2).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), before, "a reseal in the same generation rewrote the file");
+}
+
+#[test]
+fn a_failed_reseal_keeps_the_generation_and_the_file_changes_go_to() {
+    let dir = scratch_dir("sealing-failed-reseal");
+    let sealer = MockSealer { launch_digest: RELEASE };
+    let store = KeyStore::create(&dir, &sealer, CONFIG, GEN, KeySet::generate().unwrap()).unwrap();
+    // A directory where the new generation's partial file goes makes the write fail.
+    std::fs::create_dir(file_for(&dir, &store.release(), GEN + 1).with_extension("partial")).unwrap();
+    assert!(store.reseal(GEN + 1).is_err(), "the reseal succeeded");
+    assert_eq!(store.generation(), GEN);
+    store.update(|keys| keys.set_certificate("https://ca.test/dir", &[vec![1u8].into()])).unwrap();
+    assert_eq!(KeyStore::open(&dir, &sealer, CONFIG, GEN).unwrap().unwrap().keys(), store.keys());
+    assert!(KeyStore::open(&dir, &sealer, CONFIG, GEN + 1).unwrap().is_none(), "keys sealed in the new generation");
+}
+
+#[test]
 fn the_release_id_is_the_vaults_and_the_stand_in_key_depends_on_the_measurement_and_tcb() {
     let release = Release { launch_digest: RELEASE, config_sha256: CONFIG };
     let expected: [u8; 32] = Keccak256::digest([RELEASE.as_slice(), &CONFIG].concat()).into();

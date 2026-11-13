@@ -9,6 +9,20 @@ use super::{BODY_TIMEOUT, FETCH_TIMEOUT, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_LISTINGS
 use crate::log::MANIFEST;
 use crate::log::SegmentInfo;
 
+/// What the archive served failed its integrity checks: a file differs from its listing, or the
+/// listings are not canonical or not in order. Any other failure — an origin that is unreachable,
+/// slow, or answers an error, or a body over its bound — is a transport failure.
+#[derive(Debug)]
+pub(crate) struct ArchiveIntegrity(String);
+
+impl std::fmt::Display for ArchiveIntegrity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ArchiveIntegrity {}
+
 /// A cold start: fetches the published manifest and every completed segment it lists into the
 /// empty copy, checking each file against its listing, and writes the manifest. A missing
 /// manifest (a fresh deployment) leaves the copy empty for the stream to fill from seq 0.
@@ -106,20 +120,22 @@ pub(crate) async fn refresh_archive(
 /// One listing's file name must be the canonical segment name for its first seq, so a manifest
 /// can never point a write outside the copy, and listings must be ordered and bounded.
 /// Error cases:
-/// - a name is not canonical, a seq regresses or repeats, or the list exceeds the bound
+/// - the name is not canonical (`ArchiveIntegrity`)
 pub(super) fn validate_listing(listed: &SegmentInfo) -> anyhow::Result<()> {
-    ensure!(
-        crate::log::segment_seq(&listed.file) == Some(listed.first_seq),
-        "archive listing {:?} is not the canonical segment name for seq {}",
-        listed.file,
-        listed.first_seq
-    );
+    if crate::log::segment_seq(&listed.file) != Some(listed.first_seq) {
+        return Err(ArchiveIntegrity(format!(
+            "archive listing {:?} is not the canonical segment name for seq {}",
+            listed.file, listed.first_seq
+        ))
+        .into());
+    }
     Ok(())
 }
 
 /// The archive's manifest: one segment listing a line, oldest first, validated before use.
 /// Error cases:
-/// - the fetch fails, a line is not a listing, or the listings are unordered or unbounded
+/// - the fetch fails, a line is not a listing, or the listings are unbounded
+/// - a listing is not canonical, or the listings are unordered (`ArchiveIntegrity`)
 pub(crate) async fn fetch_manifest(archive: &reqwest::Client, origins: &[String]) -> anyhow::Result<Vec<SegmentInfo>> {
     let bytes = fetch_archive_bytes(archive, origins, MANIFEST, None).await?;
     let listings: Vec<SegmentInfo> = bytes
@@ -131,8 +147,8 @@ pub(crate) async fn fetch_manifest(archive: &reqwest::Client, origins: &[String]
     let mut previous = None;
     for listed in &listings {
         validate_listing(listed)?;
-        if let Some(first) = previous {
-            ensure!(listed.first_seq > first, "the archive's listings are not strictly ordered");
+        if previous.is_some_and(|first| listed.first_seq <= first) {
+            return Err(ArchiveIntegrity("the archive's listings are not strictly ordered".into()).into());
         }
         previous = Some(listed.first_seq);
     }
@@ -141,13 +157,11 @@ pub(crate) async fn fetch_manifest(archive: &reqwest::Client, origins: &[String]
 
 /// A fetched segment must match its listing's size and hash.
 /// Error cases:
-/// - the bytes differ from the listing
-fn check_listing(listed: &SegmentInfo, bytes: &[u8]) -> anyhow::Result<()> {
-    ensure!(
-        bytes.len() as u64 == listed.bytes && sha256(bytes) == listed.sha256,
-        "archive segment {} differs from its listing",
-        listed.file
-    );
+/// - the bytes differ from the listing (`ArchiveIntegrity`)
+pub(super) fn check_listing(listed: &SegmentInfo, bytes: &[u8]) -> anyhow::Result<()> {
+    if bytes.len() as u64 != listed.bytes || sha256(bytes) != listed.sha256 {
+        return Err(ArchiveIntegrity(format!("archive segment {} differs from its listing", listed.file)).into());
+    }
     Ok(())
 }
 

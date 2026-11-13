@@ -31,6 +31,7 @@ mod marks;
 mod price_feeds;
 pub(crate) mod secrets;
 mod ticker;
+mod turn_keys;
 pub use keys::{KeyStart, parse_launch_digest};
 use ticker::run_ticker;
 mod preflight;
@@ -41,6 +42,7 @@ mod signer_history;
 use crate::limits::{ApiLimits, run_retain};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
+use crate::sequencer::turns::TurnSealing;
 use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
 use crate::stats::Stats;
 use crate::telemetry::Telemetry;
@@ -207,6 +209,11 @@ async fn serve_node(
     let (manifest_tx, manifest_rx) = watch::channel(Manifest::default());
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let (signing_tx, signing_rx) = watch::channel(true);
+    // Only a rotating node with sealed keys holds a release the schedule can name; reading the vault,
+    // it takes each turn once the keys are sealed in the generation the schedule holds for it.
+    let turn_store = store.clone().filter(|_| cfg.operator.rotation_enabled);
+    let turn_vault = if turn_store.is_some() { crate::handover::vault_reader(&cfg)? } else { None };
+    let (turn_generations, generations) = watch::channel(Default::default());
     let mut seq_cfg = SequencerConfig {
         access_policy: cfg.access.as_ref().map(crate::config::AccessSection::policy),
         log_dir: &cfg.node.log_dir,
@@ -231,11 +238,11 @@ async fn serve_node(
         checkpoint_signing: Some(signing_tx),
         registry_operator,
         log_heads: None,
-        // Only a rotating node with sealed keys holds a release the schedule can name.
-        turn_release: store
-            .as_ref()
-            .filter(|_| cfg.operator.rotation_enabled)
-            .map(|store| engine_core::eip712::B256::from(store.release().id())),
+        turn_release: turn_store.as_ref().map(|store| engine_core::eip712::B256::from(store.release().id())),
+        turn_sealing: turn_store
+            .clone()
+            .filter(|_| turn_vault.is_some())
+            .map(|store| TurnSealing::new(store, generations)),
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())
         .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?
@@ -279,6 +286,13 @@ async fn serve_node(
         marks.activate().inspect_err(|e| error!(alert = "marks_cache_failed", "refusing to serve: {e:#}"))?;
     let marks_rx = marks::track(&mut seq);
 
+    // Before anything is sequenced, so a turn whose keys are sealed in its generation is taken first.
+    if let (Some(store), Some(vault)) = (&turn_store, &turn_vault) {
+        match turn_keys::read_generations(vault, &store.release(), &seq.untaken_turns()).await {
+            Ok(read) => drop(turn_generations.send_replace(read)),
+            Err(e) => warn!("reading the schedule's generations of this node's turns failed at start: {e:#}"),
+        }
+    }
     let (tx, rx) = mpsc::channel::<Request>(CHANNEL_CAPACITY);
     let marks_task = marks::task(marks_store, tx.downgrade(), marks_backfill, marks_sources, marks::live(marks_rx));
     let recovery = seq.take_recovery_checkpoints();
@@ -312,9 +326,14 @@ async fn serve_node(
     if let Some(store) = &store
         && let Some(vault) = crate::handover::vault_reader(&cfg)?
     {
-        let (release, generation) = (store.release(), store.generation());
-        let (every, trusted) = (keys::RELEASE_CHECK_EVERY, trusted());
-        tasks.spawn(async move { ("release", keys::watch_release(vault, release, generation, every, trusted).await) });
+        let (store, every, trusted) = (store.clone(), keys::RELEASE_CHECK_EVERY, trusted());
+        tasks.spawn(async move { ("release", keys::watch_release(vault, store, every, trusted).await) });
+    }
+    if let (Some(store), Some(vault)) = (turn_store, turn_vault) {
+        let (release, every) = (store.release(), keys::RELEASE_CHECK_EVERY);
+        let watch =
+            turn_keys::watch_turn_generations(vault, release, operator.address, tx.clone(), turn_generations, every);
+        tasks.spawn(async move { ("turn generations", watch.await) });
     }
     if store.is_some() && cfg.operator.rotation_enabled {
         // The incumbent pages when an election names another operator and, past the effective

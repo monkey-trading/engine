@@ -57,4 +57,7 @@ pub struct SequencerConfig<'a> {
     /// This enclave's release, which takes each daily turn the log assigns the config's operator key
     /// with a `TurnTaken` before anything else in it; `None` where this node takes no turn.
     pub(crate) turn_release: Option<engine_core::eip712::B256>,
+    /// With sealed keys, the generation each `TurnTaken` waits for them to be sealed in; `None` takes
+    /// each turn as it applies.
+    pub(crate) turn_sealing: Option<crate::sequencer::turns::TurnSealing>,
 }

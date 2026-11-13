@@ -194,7 +194,7 @@ Rebuilt from the log. None changes the books.
 
 | Alert | Level | Meaning and response |
 | --- | --- | --- |
-| `release_superseded` | Critical | The vault names another release or generation; a restart would find no keys. From a daily turn's boundary that names another member, it pages only once 15 minutes have passed without the member taking the keys. See [deploy-and-rollback.md](deploy-and-rollback.md), "Upgrade to a new release, step 2", or for a turn [operator-candidate.md](operator-candidate.md), "Daily turns". |
+| `release_superseded` | Critical | The vault names another release or generation; a restart would find no keys. From a daily turn's boundary that names another member, it pages only once 15 minutes have passed without the member taking the keys; one that names this node again in a new generation pages likewise while the node has not sealed its keys in it. See [deploy-and-rollback.md](deploy-and-rollback.md), "Upgrade to a new release, step 2", or for a turn [operator-candidate.md](operator-candidate.md), "Daily turns". |
 | `handover_unconfirmed` | Critical | A handover has not been confirmed or acknowledged. See [deploy-and-rollback.md](deploy-and-rollback.md), "Upgrade to a new release, step 5". |
 | `handover_failed` | Critical | The node stopped before a successor confirmed; its keys no longer open. See [key-recovery.md](key-recovery.md), "The running release stopped". |
 | `operator_elected` | Warning | An election names another operator (incumbent). See [operator-candidate.md](operator-candidate.md), "Handing the node to the next operator". |

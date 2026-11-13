@@ -81,6 +81,7 @@ impl CheckpointRpc {
             admin_key: AccountId(member.adminKey.0.0),
             release: member.release.0,
             generation: drawn.generation,
+            set: drawn.setId,
             source,
         }))
     }

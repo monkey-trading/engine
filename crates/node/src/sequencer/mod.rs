@@ -117,6 +117,8 @@ pub struct Sequencer {
     registry_operator: Option<crate::checkpoints::RegistryOperator>,
     /// This enclave's release, which takes the daily turns the log assigns `operator` (see `take_turn`).
     turn_release: Option<engine_core::eip712::B256>,
+    /// With sealed keys, the generation each `TurnTaken` waits for them to be sealed in.
+    turn_sealing: Option<turns::TurnSealing>,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
     claims: claims::Claims,
@@ -475,7 +477,7 @@ mod snapshots;
 pub use genesis::{GenesisProgress, genesis_commands};
 mod quotes;
 mod required;
-mod turns;
+pub(crate) mod turns;
 
 #[cfg(test)]
 mod batch_tests;

@@ -1,6 +1,8 @@
 //! The handover's pieces: what each step binds, the encryption of the keys, the framing, and what
 //! each kind of evidence proves. `predecessor`'s tests run the whole handover over loopback.
 
+mod archive;
+
 use super::*;
 
 use crate::config::NodeConfig;

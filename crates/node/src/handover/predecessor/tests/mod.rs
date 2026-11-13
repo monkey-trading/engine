@@ -295,6 +295,7 @@ impl Exchange {
             secrets: Some(secrets.clone()),
             engine: engine.as_ref().map(mpsc::Sender::downgrade),
             logged: std::sync::Mutex::new(None),
+            retained: std::sync::Mutex::new(None),
         };
         let run = tokio::spawn(predecessor.run());
         let successor_log = successor.node.log_dir.clone();

@@ -162,6 +162,33 @@ impl DailyTurns {
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
+
+    /// Why an assignment from `set` naming `candidate` with `admin_key` cannot apply its key at
+    /// `applies_at`, if it cannot: the set is not kept, does not name them, or was logged less than
+    /// seven days before.
+    pub fn set_refusal(
+        &self,
+        set: u32,
+        candidate: AccountId,
+        admin_key: AccountId,
+        applies_at: Millis,
+    ) -> Option<String> {
+        let notice = |recorded: &RotationSet| recorded.logged_at + NOTICE_MS <= applies_at;
+        let member = |recorded: &RotationSet| {
+            recorded.members.iter().any(|m| m.candidate == candidate && m.admin_key == admin_key)
+        };
+        match self.sets.get(&set) {
+            None => Some(format!("set {set} is not among the sets mirrored")),
+            Some(recorded) if !member(recorded) => {
+                Some(format!("set {set} does not name candidate {candidate} with key {admin_key}"))
+            }
+            Some(recorded) if !notice(recorded) => Some(format!(
+                "set {set} was logged at {}, less than seven days before the turn applies at {applies_at}",
+                recorded.logged_at
+            )),
+            Some(_) => None,
+        }
+    }
 }
 
 /// When `turn` starts: 22:30 UTC on its day of the Unix epoch, or `None` past the latest stamp.
@@ -268,25 +295,11 @@ impl Engine {
         admin_key: AccountId,
         applies_at: Millis,
     ) -> Option<String> {
-        let notice = |recorded: &RotationSet| recorded.logged_at + NOTICE_MS <= applies_at;
-        let member = |recorded: &RotationSet| {
-            recorded.members.iter().any(|m| m.candidate == candidate && m.admin_key == admin_key)
-        };
         // A turn before the one in effect has ended too: the one in effect started at its end or later.
         if turn_end(turn) <= self.now {
             Some(format!("turn {turn} ended before its assignment was mirrored"))
         } else {
-            match self.daily_turns.sets.get(&set) {
-                None => Some(format!("set {set} is not among the sets mirrored")),
-                Some(recorded) if !member(recorded) => {
-                    Some(format!("set {set} does not name candidate {candidate} with key {admin_key}"))
-                }
-                Some(recorded) if !notice(recorded) => Some(format!(
-                    "set {set} was logged at {}, less than seven days before the turn applies at {applies_at}",
-                    recorded.logged_at
-                )),
-                Some(_) => None,
-            }
+            self.daily_turns.set_refusal(set, candidate, admin_key, applies_at)
         }
     }
 
