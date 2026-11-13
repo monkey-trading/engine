@@ -403,7 +403,7 @@ impl Engine {
     /// - a corporate instruction, which only the signed operator channel accepts
     /// - from `V8`, an operator command once any deposit or house capital is credited
     /// - the emission schedule, which only the operator's signature initialises
-    /// - a parameter or markup notice or an operator rotation, which only the operator's signature
+    /// - a parameter, markup or listing notice or an operator rotation, which only the operator's signature
     ///   records
     /// - any error case of `admin`
     pub(crate) fn unsigned_admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {

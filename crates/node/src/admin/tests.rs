@@ -270,12 +270,23 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
         panic!("adopt-close-spread-ceiling adopts")
     };
     assert_eq!(listing, Some(spec));
-    let invalid = write("invalid-bands.toml", &SOL.replace("tenth_bps = 20", "tenth_bps = -1"));
-    for args in [
-        vec!["announce-listing", "3", "--spreads-from", &invalid, "--effective-at", at],
-        [&adopt[..], &["--listing", &invalid]].concat(),
-    ] {
-        assert!(action(&args).command().is_err(), "{args:?}");
+    let invalid = write("invalid-bands.toml", &SOL.replace("tenth_bps = 20", "tenth_bps = 9"));
+    // A crypto band below its 1bp floor, and one in whole bps, which the latest version refuses.
+    let whole = write(
+        "whole-bands.toml",
+        &SOL.replace("tenth_bps = 20", "bps = 2")
+            .replace("tenth_bps = 40", "bps = 4")
+            .replace("tenth_bps = 80", "bps = 8"),
+    );
+    for file in [&invalid, &whole] {
+        for args in [
+            vec!["upsert-market", file],
+            vec!["announce-listing", "3", "--spreads-from", file, "--effective-at", at],
+            [&adopt[..], &["--listing", file]].concat(),
+        ] {
+            let err = format!("{:#}", action(&args).command().unwrap_err());
+            assert!(err.contains("floor") || err.contains("tenth_bps"), "{args:?}: {err}");
+        }
     }
 }
 

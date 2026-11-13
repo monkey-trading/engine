@@ -108,8 +108,11 @@ impl Engine {
         if notice.names_nothing() {
             return Err("a listing notice names nothing".into());
         }
-        // Activation records every market listed then, and each first listing after it.
-        let launch = &self.operator_bounds.launch_bands[&market];
+        let launch = self
+            .operator_bounds
+            .launch_bands
+            .get(&market)
+            .expect("V52's activation records every market listed then, and each first listing after it");
         if let Some(tiers) = &notice.spread_tiers {
             validate_spread_tiers("spread_tiers", tiers)?;
             check_spread_tiers(tiers, listed.spec.asset_class, self.protocol_version)?;

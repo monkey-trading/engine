@@ -12,6 +12,7 @@ use engine_core::market::MarketSpec;
 use engine_core::operator_bounds::{ParamsNotice, StressSettings};
 use engine_core::params::ProtocolParams;
 use engine_core::protocol::ProtocolVersion;
+use engine_core::spread_tier::check_spread_tiers;
 
 use crate::admin::{AdminAction, input};
 
@@ -84,13 +85,16 @@ impl AdminAction {
     }
 }
 
-/// The market spec in `file`, checked as `MarketSpec::validate` checks it.
+/// The market spec in `file`, checked as the node, which runs the latest version, would list it.
 /// Error cases:
 /// - a file that cannot be read or parsed
-/// - a spec that fails `MarketSpec::validate`
+/// - a spec that fails `MarketSpec::validate` or `check_spread_tiers`
 fn read_spec(file: &Path) -> anyhow::Result<MarketSpec> {
     let spec: MarketSpec = input::read_toml(file)?;
-    spec.validate().map_err(anyhow::Error::msg).with_context(|| file.display().to_string())?;
+    spec.validate()
+        .and_then(|()| check_spread_tiers(&spec.spread_tiers, spec.asset_class, ProtocolVersion::LATEST))
+        .map_err(anyhow::Error::msg)
+        .with_context(|| file.display().to_string())?;
     Ok(spec)
 }
 
