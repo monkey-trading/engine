@@ -16,7 +16,7 @@ use crate::common::{BTC, Client, Harness, f};
 use crate::v51::MEMBER_SEEDS;
 
 /// The seed of the key this part trades through.
-const CLIENT_SEED: u8 = 0x63;
+const CLIENT_SEED: u8 = 0x64;
 
 fn sign(h: &mut Harness, command: AdminCommand) -> Vec<Event> {
     h.operate_as(MEMBER_SEEDS[0], command)
@@ -46,7 +46,7 @@ pub(crate) fn session(h: &mut Harness) {
         account: None,
         payer: Some(client.account),
         amount: f("2000000"),
-        chain_ref: "0xhouse:53".into(),
+        chain_ref: "0xhouse:55".into(),
     };
     let ev = evidence(h, eip712::deposit_screening_hash(&house), None, Some(client.account));
     h.cmd(Command::AccessDeposit { deposit: house, evidence: ev });
