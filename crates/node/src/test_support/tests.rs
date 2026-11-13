@@ -80,3 +80,21 @@ fn asking_again_clears_the_directory_but_a_path_request_does_not() {
     });
     assert!(!handle.join().unwrap().exists());
 }
+
+/// The cleanup rests on libtest giving each test a thread of its own that ends with it, also with
+/// `--test-threads=1`; on the main thread a directory would outlive its test.
+#[test]
+fn a_test_runs_on_a_thread_of_its_own() {
+    let thread = std::thread::current();
+    assert_ne!(thread.name(), Some("main"), "{thread:?}");
+    assert!(thread.name().is_some_and(|name| name.ends_with("a_test_runs_on_a_thread_of_its_own")), "{thread:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_directory_asked_for_in_a_multi_thread_test_body_outlives_its_workers() {
+    let dir = scratch_dir("test-support-multi-thread");
+    std::fs::create_dir_all(&dir).unwrap();
+    let worker = tokio::spawn(async { tokio::task::yield_now().await });
+    worker.await.unwrap();
+    assert!(dir.exists());
+}

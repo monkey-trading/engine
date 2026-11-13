@@ -4,6 +4,9 @@
 //! it owns it: when that thread ends, which for a test is when the test has finished, the directory is
 //! removed. A test whose thread panicked keeps its directories, so a failure can be inspected for as
 //! long as the test process lives. `keep_scratch` keeps one on a passing test.
+//!
+//! Ask for a directory on the test's own thread, not in a spawned thread or a `spawn_blocking` closure:
+//! that thread's end would remove it while the test still uses it.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
