@@ -5,7 +5,9 @@ audit LOG [--allow A|B] [--transient C|D] [--window SECONDS] [--now ISO]
   An alert named in --allow is ignored. One named in --transient is a Warning a retry clears,
   such as an RPC provider that has not yet reached the common final block: it is tolerated and
   reported when its `alert_resolved` follows within the window, and a violation when it persists
-  past the window or never resolves. Any other alert is a violation. A wrong outcome is caught by
+  past the window or never resolves. `NAME=SECONDS` gives one alert its own window: a missed
+  Roughtime round warns `trusted_time_no_sample` until the next round, an interval and a query
+  timeout later, and the sequencer halts only past its 60 s grace. Any other alert is a violation. A wrong outcome is caught by
   the scenario's own checks, so a blip that coincides with one still fails the run there.
   Exit 0: fine. 1: violations. 2: a transient alert is open but younger than the window.
 selftest
@@ -31,11 +33,15 @@ def field(line, name):
 
 
 def audit(lines, allow, transient, window, now):
-    """Returns (status, report lines)."""
+    """Returns (status, report lines). `transient` maps an alert to its window, or None for the default."""
     report, open_alerts, status = [], {}, 0
     for line in lines:
         found = LINE.match(line)
         if not found:
+            if "first trusted time sample: sequencing started" in line:
+                # A restarted node samples afresh and never resolves its predecessor's open warning.
+                for key in [k for k in open_alerts if k[0] == "trusted_time_no_sample"]:
+                    del open_alerts[key]
             continue
         stamp, fraction, resolved, name = found.groups()
         if name in allow:
@@ -50,15 +56,17 @@ def audit(lines, allow, transient, window, now):
             open_alerts.setdefault(key, when)
         elif key in open_alerts:
             lasted = (when - open_alerts.pop(key)).total_seconds()
-            if lasted <= window:
+            limit = transient[name] or window
+            if lasted <= limit:
                 report.append(f"tolerated: {key} cleared after {lasted:.2f}s")
             else:
-                report.append(f"violation: {key} persisted {lasted:.2f}s, past the {window}s window")
+                report.append(f"violation: {key} persisted {lasted:.2f}s, past the {limit}s window")
                 status = 1
     for key, since in open_alerts.items():
         age = (now - since).total_seconds()
-        if age > window:
-            report.append(f"violation: {key} still open after {age:.2f}s, past the {window}s window")
+        limit = transient[key[0]] or window
+        if age > limit:
+            report.append(f"violation: {key} still open after {age:.2f}s, past the {limit}s window")
             status = 1
         elif status == 0:
             report.append(f"pending: {key} open for {age:.2f}s")
@@ -71,23 +79,47 @@ def selftest():
     warn = '2026-01-01T00:00:{s}Z  WARN engine_node::custody::quorum: provider failed alert="custody_rpc_provider_failed" provider="p" operation="finality"'
     clear = '2026-01-01T00:00:{s}Z  INFO engine_node::custody::quorum: provider recovered alert_resolved="custody_rpc_provider_failed" provider="p" operation="finality"'
     other = '2026-01-01T00:00:01.000000Z  WARN x: y alert="api_accept_failed"'
-    transient = {"custody_rpc_provider_failed"}
+    transient = {"custody_rpc_provider_failed": None}
     cases = [
         ("a warning that clears in 0.2s", [warn.format(s="10.100000"), clear.format(s="10.300000")], set(), 0),
         ("a warning that clears after 30s", [warn.format(s="10.100000"), clear.format(s="40.100000")], set(), 1),
         ("a warning that never clears", [warn.format(s="10.100000")], set(), 1),
         ("a warning still young", [warn.format(s="58.000000")], set(), 2),
         ("an unrelated alert", [other], set(), 1),
-        ("an allowed alert that persists", [warn.format(s="10.100000")], transient, 0),
+        ("an allowed alert that persists", [warn.format(s="10.100000")], set(transient), 0),
     ]
     for name, lines, allow, want in cases:
         got, report = audit(lines, allow, transient, 5, now)
         assert got == want, f"{name}: exit {got}, want {want}: {report}"
+    miss = '2026-01-01T00:00:{s}Z  WARN engine_node::trusted_time: no trusted time sample: only 1 replies, 2 needed alert="trusted_time_no_sample"'
+    back = '2026-01-01T00:00:{s}Z  INFO engine_node::trusted_time: restored alert_resolved="trusted_time_no_sample"'
+    slow = {"trusted_time_no_sample": 30}
+    for name, lines, want in [
+        ("a missed round that clears in 12s", [miss.format(s="10.000000"), back.format(s="22.000000")], 0),
+        ("a missed round that clears after 40s", [miss.format(s="10.000000"), back.format(s="50.000000")], 1),
+        ("a missed round never recovering", [miss.format(s="10.000000")], 1),
+        ("a missed round still young", [miss.format(s="45.000000")], 2),
+    ]:
+        got, report = audit(lines, set(), slow, 5, now)
+        assert got == want, f"{name}: exit {got}, want {want}: {report}"
+    boot = '2026-01-01T00:00:30.000000Z  INFO engine_node::trusted_time::gate: first trusted time sample: sequencing started'
+    got, report = audit([miss.format(s="10.000000"), boot], set(), slow, 5, now)
+    assert got == 0, f"a restart after a missed round: exit {got}: {report}"
     with tempfile.NamedTemporaryFile("w+") as log:  # the command line, end to end
         log.write(warn.format(s="10.100000") + "\n" + clear.format(s="10.300000") + "\n")
         log.flush()
         assert run(["audit", log.name, "--transient", "custody_rpc_provider_failed"]) == 0
-    print("PASS: a quick-clearing provider warning passes; a persisting or unresolved one fails")
+    with tempfile.NamedTemporaryFile("w+") as log:  # a per-alert window on the command line
+        log.write(miss.format(s="10.000000") + "\n" + back.format(s="22.000000") + "\n")
+        log.flush()
+        assert run(["audit", log.name, "--transient", "trusted_time_no_sample=30"]) == 0
+        assert run(["audit", log.name, "--transient", "trusted_time_no_sample"]) == 1
+        try:  # an unexpanded shell variable must refuse, not pass
+            run(["audit", log.name, "--transient", "trusted_time_no_sample=$time_clear_seconds"])
+            raise AssertionError("a non-numeric window was accepted")
+        except SystemExit as refused:
+            assert refused.code == 2
+    print("PASS: a quick-clearing warning passes; a persisting or unresolved one fails")
 
 
 def run(argv):
@@ -104,8 +136,15 @@ def run(argv):
         selftest()
         return 0
     with open(args.log, errors="replace") as log:
-        status, report = audit(log, set(args.allow.split("|")) - {""}, set(args.transient.split("|")) - {""},
-                               args.window, datetime.now(timezone.utc))
+        transient = {}
+        for item in filter(None, args.transient.split("|")):
+            name, _, seconds = item.partition("=")
+            try:
+                transient[name] = float(seconds) if seconds else None
+            except ValueError:
+                parser.error(f"--transient {item!r}: the window is not a number")
+        status, report = audit(log, set(args.allow.split("|")) - {""}, transient, args.window,
+                               datetime.now(timezone.utc))
     print("\n".join(report))
     return status
 

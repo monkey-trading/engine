@@ -75,14 +75,17 @@ fail() {
 }
 
 # Fails on an alert in the node log that is not in $1 (a `|` list), except a Warning a retry clears
-# (an RPC provider that has not caught up): that one is tolerated and logged when it resolves
+# (an RPC provider that has not caught up, a missed Roughtime round): that one is tolerated and logged when it resolves
 # within ALERT_CLEAR_SECONDS, and fails when it persists past it.
 alert_clear_seconds="${ALERT_CLEAR_SECONDS:-5}"
+# A missed public Roughtime round warns `trusted_time_no_sample` until the next round (the config's
+# 10 s interval plus its 15 s query timeout); the sequencer halts only past a 60 s grace.
+time_clear_seconds="${TIME_CLEAR_SECONDS:-30}"
 audit_alerts() {
-  local out status=0 deadline=$((SECONDS + alert_clear_seconds + 2))
+  local out status=0 deadline=$((SECONDS + time_clear_seconds + 2))
   while :; do
     out="$(python3 -I "$root/scripts/dev-alert-audit.py" audit "$work/node.log" --allow "$1" \
-      --transient 'custody_rpc_provider_failed|custody_rpc_provider_disagreed|custody_rpc_failed|custody_chain_unsettled' \
+      --transient 'custody_rpc_provider_failed|custody_rpc_provider_disagreed|custody_rpc_failed|custody_chain_unsettled|trusted_time_no_sample='"$time_clear_seconds" \
       --window "$alert_clear_seconds")" && status=0 || status=$?
     # Young and still open: give it the rest of its window to clear.
     if [[ "$status" == 2 && "$SECONDS" -lt "$deadline" ]]; then sleep 1; continue; fi
