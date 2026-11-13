@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from model import accounting, holdfee, prices, simulate
+from model import flow as model_flow
 from model.flow import Flow, FlowClass
 
 LEVERAGE = 200.0
@@ -511,3 +512,83 @@ def test_a_pairs_winning_leg_pays_the_schedules_fee_at_its_hold(spread_bps):
     assert out["bad_debt"] == pytest.approx(0.5, rel=1e-4)
     assert out["fee"] == pytest.approx(rate * gain, rel=1e-4)
     assert out["nav_end"] == pytest.approx(rate * gain - 0.5 + out["spread_income"], rel=1e-4)
+
+
+TWO_SIZES = (np.array([1.0, 199.9, 200.0, 1999.9, 2000.0]), np.array([0.0, 0.0, 0.5, 0.5, 1.0]))  # half the margin in orders of 200, half in 2,000
+TWO_BANDS = ((1000.0, 2.0), (None, 6.0))  # 2 bps to 1,000 of notional, 6 above
+# The large orders' cell runs from 1,999.9 to 2,000 and pays the rate at its lower bound
+# (`flow.spread_table`): (1,000 * 2 + 999.9 * 6) / 1,999.9, a hair under 4 bps.
+LARGE_BPS = float(accounting.staircase_rate(1999.9, TWO_BANDS))
+
+
+def test_the_orders_that_fit_pay_their_own_mean_spread():
+    # Under a room of 1,000 only the orders of 200 fit, all in the first band; with a room past
+    # 2,000 the orders of 2,000 fit too and pay about (1,000 * 2 + 1,000 * 6) / 2,000 = 4 bps.
+    f = flow()
+    f.sizes = {key: TWO_SIZES for key in f.sizes}
+    tables = {kind: [model_flow.spread_table(TWO_SIZES, TWO_BANDS)] for kind in simulate.KINDS}
+    total_cap = np.full((1, 1), 1e12)
+    small = simulate.order_fits(np.zeros((1, 1, 1)), np.full((1, 1, 1), 1000.0), total_cap, f, "capped", ["S"], tables)
+    assert small["long"][0, 0, 0] == pytest.approx(0.5)
+    assert small["long_rate"][0, 0, 0] == pytest.approx(2e-4)
+    large = simulate.order_fits(np.zeros((1, 1, 1)), np.full((1, 1, 1), 5000.0), total_cap, f, "capped", ["S"], tables)
+    assert large["long"][0, 0, 0] == pytest.approx(1.0)
+    assert LARGE_BPS == pytest.approx(4.0, rel=1e-4)
+    assert large["long_rate"][0, 0, 0] == pytest.approx((0.5 * 2 + 0.5 * LARGE_BPS) * 1e-4)
+    nothing = simulate.order_fits(np.zeros((1, 1, 1)), np.zeros((1, 1, 1)), total_cap, f, "capped", ["S"], tables)
+    assert nothing["long"][0, 0, 0] == nothing["long_rate"][0, 0, 0] == 0.0
+
+
+@pytest.mark.parametrize("f", [flow(hold_h=0, mean_hold_h=0.25), flow("hedged", hold_h=0, mean_hold_h=0.25)], ids=["churn", "hedged churn"])
+def test_one_band_prices_churn_as_its_spread(f):
+    # A single band is a flat spread, and churn pays both fills within its hour: the same income,
+    # fees and NAV as `spread_bps`.
+    moves = {h: (0.01, -0.01, 0.0) for h in range(prices.WEEK)}
+    flat = run(bars(hour_moves=moves), market(), f, spread_bps=(2.0,), fee_schedule=SCHEDULE)
+    banded = run(bars(hour_moves=moves), market(), f, spread_bands=(((None, 2.0),),), fee_schedule=SCHEDULE)
+    for key in ("spread_income", "fee", "nav_end", "deposits"):
+        assert banded[key] == pytest.approx(flat[key], rel=1e-9)
+
+
+@pytest.mark.parametrize("f", [flow(), flow("hedged")], ids=["directional", "pair"])
+def test_with_size_bands_a_position_pays_its_closing_spread_at_its_exit(f):
+    # Each hour opens 200 of notional held an hour. `spread_bps` charges both fills at the open; with
+    # bands the closing fill pays at the exit, so the position opened in the week's last hour, which
+    # settles past the horizon, has paid only its opening spread.
+    flat = run(bars(), market(), f, spread_bps=(2.0,))
+    banded = run(bars(), market(), f, spread_bands=(((None, 2.0),),))
+    last_close = 2e-4 * 200
+    assert banded["spread_income"] == pytest.approx(flat["spread_income"] - last_close, rel=1e-9)
+    assert banded["nav_end"] == pytest.approx(flat["nav_end"] - last_close, rel=1e-9)
+    assert banded["nav_end"] == pytest.approx(banded["spread_income"], rel=1e-9)
+    assert float(banded["identity_gap"]) < 1e-9
+
+
+def test_a_position_past_its_balance_pays_no_closing_spread():
+    # The long opened at hour 49 gaps 1% against it at hour 50's open: at 200:1 it loses 2 on a balance
+    # of 1, leaves nothing to its client, and the house takes no closing spread from it.
+    calm = run(bars(), market(), flow(), spread_bands=(((None, 2.0),),))
+    gapped = run(bars(gap_at=50, gap=-0.01), market(), flow(), spread_bands=(((None, 2.0),),))
+    assert gapped["bad_debt"] > 0
+    assert gapped["spread_income"] == pytest.approx(calm["spread_income"] - 2e-4 * 200, rel=1e-9)
+    assert float(gapped["identity_gap"]) < 1e-9
+
+
+def test_with_size_bands_each_order_pays_its_own_bands():
+    # Half the margin in orders of 200 of notional, half in 2,000, each hour with room for both: the
+    # income is both fills of each at its own staircase, 2 bps on the small orders and 4 on the large,
+    # but for the closing fill of the last hour's position, which settles past the horizon.
+    f = flow()
+    f.sizes = {key: TWO_SIZES for key in f.sizes}
+    out = run(bars(), market(), f, spread_bands=(TWO_BANDS,))
+    assert out["spread_income"] == pytest.approx((0.5 * 2e-4 + 0.5 * LARGE_BPS / 1e4) * 200 * (2 * prices.WEEK - 1), rel=1e-9)
+    assert out["nav_end"] == pytest.approx(out["spread_income"], rel=1e-9)
+    # Under a 1,000 floor the large orders never fit, and the small ones pay the first band.
+    small = run(bars(), market(), f, floor=1000.0, spread_bands=(TWO_BANDS,))
+    assert small["filled"] == pytest.approx(0.5 * 200 * prices.WEEK, rel=1e-9)
+    assert small["spread_income"] == pytest.approx(2e-4 * small["filled"] * (2 * prices.WEEK - 1) / prices.WEEK, rel=1e-9)
+
+
+def test_a_scenario_prices_by_spread_bps_or_bands_not_both():
+    with pytest.raises(ValueError):
+        run(bars(), market(), flow(), spread_bps=(2.0,), spread_bands=(((None, 2.0),),))

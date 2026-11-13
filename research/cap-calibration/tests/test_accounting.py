@@ -134,3 +134,20 @@ def test_settle_charges_the_fee_it_is_given_on_the_pnl_after_the_spread():
     fee, bad, proceeds = accounting.settle(np.array([2.0, 0.3]), np.array([1.0, 1.0]), fee_bps=5_000, spread_cost=0.5)
     assert fee == pytest.approx([0.75, 0.0])
     assert proceeds == pytest.approx([2.25, 1.3])
+
+
+BTC_BANDS = ((2e6, 2.0), (1e7, 4.0), (None, 8.0))  # the genesis's BTC-USD spread bands, in bps
+
+
+@pytest.mark.parametrize("notional, bps", [(0.0, 2.0), (1e6, 2.0), (2e6, 2.0), (5e6, (2e6 * 2 + 3e6 * 4) / 5e6),
+                                           (2e7, (2e6 * 2 + 8e6 * 4 + 1e7 * 8) / 2e7)])
+def test_staircase_rate_charges_each_slice_of_the_position_at_its_band(notional, bps):
+    # `execution/mod.rs`, `spread_staircase`: a fill opening $5M of BTC-USD from flat pays 2 bps on
+    # the first $2M and 4 on the next $3M, 3.2 bps of its notional.
+    assert float(accounting.staircase_rate(notional, BTC_BANDS)) == pytest.approx(bps)
+
+
+def test_staircase_rate_never_falls_with_the_position():
+    rates = accounting.staircase_rate(np.geomspace(1.0, 1e9, 200), BTC_BANDS)
+    assert (np.diff(rates) >= -1e-12).all()
+    assert rates[-1] < 8.0
