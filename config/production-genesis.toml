@@ -109,6 +109,8 @@
 #   Sunday 17:00 to Friday 17:00 ET and the platform is closed on Christmas Day
 #   and New Year's Day (25 December, 1 January); neither says when a closure
 #   starts or how a Saturday Christmas is treated.
+#   Re-read on 2026-11-12: the same operating procedures (effective 16 Oct 2026)
+#   and the hours page, unchanged, give no closure start or Saturday rule.
 #   NOT VERIFIED: that 17:00 ET start of each closure, and the closure on
 #   24 Dec 2027.
 # - US 500, US Tech 100, Wall St 30 (ids 20-22) and gold, silver, WTI
@@ -126,7 +128,11 @@
 #   at 12:00 CT on Labor Day.
 #   CME's site refused automated reads on 2026-10-29 (HTTP 403), so no
 #   holiday hours could be read from it; the first, Thanksgiving 2026, should
-#   be out about two weeks ahead.
+#   be out about two weeks ahead. Re-tried on 2026-11-12: cmegroup.com still
+#   refused automated reads (HTTP 403, including its 2026 Thanksgiving clearing
+#   advisory), and only third-party summaries, which disagree (12:00 or 12:15 CT
+#   for equity, 12:30 or 13:30 CT for metals and energy), carry Thanksgiving's
+#   hours, so nothing is verified and the closures below are unchanged.
 #   NOT VERIFIED, the libraries disagree and the schedule takes the earliest:
 #   equity on 27 Nov 2026, 24 Dec 2026 and 26 Nov 2027 (12:00 or 12:15 CT),
 #   Juneteenth 2027 (12:00 CT or no halt) and Good Friday 2027 (shut, or open
