@@ -8,9 +8,9 @@ use engine_node::NodeConfig;
 
 use crate::{DEV, production_genesis};
 
-/// Each launch market's first band in tenths of a bp: PR #623's `results/spread_tiers.toml`, and on FX
+/// Each launch market's first band in tenths of a bp: #623's `results/spread_tiers.toml`, and on FX
 /// and indices the tenths D6 derives from its 3s moves, pending the owner's confirmation.
-const FIRST_BANDS: [(&str, i64); 37] = [
+const FIRST_BANDS: [(&str, i64); 34] = [
     ("BTC-USD", 20),
     ("ETH-USD", 30),
     ("SOL-USD", 20),
@@ -21,13 +21,10 @@ const FIRST_BANDS: [(&str, i64); 37] = [
     ("US500", 7),
     ("US100", 9),
     ("US30", 7),
-    ("DE40", 9),
-    ("UK100", 7),
     ("JP225", 10),
     ("XAU-USD", 20),
     ("XAG-USD", 20),
     ("WTI", 20),
-    ("BRENT", 30),
     ("AAPL", 20),
     ("MSFT", 20),
     ("NVDA", 30),
