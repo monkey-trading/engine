@@ -1,14 +1,14 @@
-"""Markets beyond the launch 37: clones of launch markets.
+"""Markets beyond the launch set: clones of launch markets.
 
-There is no history for markets 38 and up, so each is a clone of a launch market, its template:
-it takes the template's margin bands, financing, cap fraction and session calendar, and its
-returns follow the template's history with weight `shared` and an independent draw of the same
+There is no history for markets beyond the genesis's, so each is a clone of a launch market, its
+template: it takes the template's margin bands, financing, cap fraction and session calendar, and
+its returns follow the template's history with weight `shared` and an independent draw of the same
 template's history with the rest (`prices.build`), so it correlates `shared` with its template,
 `shared ** 2` with another clone of that template, and `shared` times the template's correlation
 with any other market. Its flow is the template's, scaled (`flow`), or one set by `flow_mode`.
 Templates are the launch markets quoted in USD, drawn by asset class in the proportions of
-`class_weights`; within a class they cycle in launch order, so a run of any length is the same
-list extended.
+`class_weights`; within a class they cycle in launch order, so a run of any length is the same list
+extended.
 """
 
 import csv

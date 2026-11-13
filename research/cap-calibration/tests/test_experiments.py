@@ -66,3 +66,23 @@ def test_the_study_inputs_give_btc_and_eth_the_genesis_100x_bands_and_a_flow_pro
         i = markets.symbols.index(symbol)
         assert markets.margin_rate[i] == pytest.approx(0.01)
         assert all((kind, "capped", markets.schedule[i]) in flow.sizes for kind in ("directional", "hedged"))
+
+
+def test_the_study_inputs_are_the_genesis_markets():
+    from catalogue import load_genesis
+    from run import inputs
+
+    _, _, bars, _, markets = inputs()
+    assert set(markets.symbols) == {m["symbol"] for m in load_genesis()["markets"]}
+    assert bars.shape[1] == len(markets.symbols)
+
+
+def test_a_genesis_market_without_bars_is_refused(monkeypatch):
+    import catalogue
+    import run
+
+    genesis = catalogue.load_genesis()
+    genesis["markets"].append(dict(genesis["markets"][0], symbol="NEW-MARKET"))
+    monkeypatch.setattr(catalogue, "load_genesis", lambda path=None: genesis)
+    with pytest.raises(ValueError, match="NEW-MARKET"):
+        run.inputs()

@@ -267,7 +267,27 @@ What the data says about the brief's farming premise:
 
 ### Launch markets
 
-`config/production-genesis.toml` lists 37 markets. `fetch/markets.py` pulls, for each:
+The study runs on the markets `config/production-genesis.toml` lists: 34 since #685 deferred DE40,
+UK100 and BRENT (#673). `data/derived/` keeps the bars and statistics of all 37, and `run.py`
+drops the ones the genesis no longer lists. The committed `results/` are from the 37-market
+genesis; in the `retained` stage the 37-market count is now the 34 launch markets and three clones.
+A re-run on main moves these figures this README and the genesis cite. **Toxicity (#130):** not
+because of the deferral, since the same run on the 37-market genesis gives the same values, but
+because #535 set BTC-USD and ETH-USD to 1% margin after the calibration (#408), which raises their
+median fill from $100k to $1M and their p99 from $3.2M to $14.8M, so ETH-USD rather than Brent binds
+the memory. `memory` rises from $11,259,036 to $17,626,099 and `prior` from $5,629,518 to
+$8,813,050, a toxic account reaches tier 1 within 100 median-size fills rather than 75, and the
+half-second burst crosses tier 1 1.0% of the time rather than 3.9%. The tier thresholds (1 and 2
+bps) and their whole-bps spreads (2 and 3) do not change. The genesis keeps the committed values
+until the owner decides; F3 (#690) replaces this score. **Stress (#133):** every chosen value is
+unchanged (the 60 s window, 75 and 200 bps moves, divergence share 6001, utilisation 9500); the
+flow-weighted utilisation fire rates in that section rise by up to 1.5 points (on a uniform $10M,
+29.4% to 30.5% at 7000 and 12.7% to 13.2% at 9000), and still no level below 9500 passes. The
+`per-market` stage prices each market alone, so the deferral leaves it as it was. The `joint`,
+`sensitivity` and `retained` stages were not re-run on 34 markets; their totals scale with the
+market count (at $1M a market, $34M rather than $37M), and their tables are the 37-market record.
+
+When the study ran, the genesis listed 37 markets. `fetch/markets.py` pulls, for each:
 
 | Data | Source |
 |---|---|
