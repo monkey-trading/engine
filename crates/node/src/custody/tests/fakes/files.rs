@@ -31,8 +31,7 @@ pub(in crate::custody::tests) fn evm_toml(dir: &Path, max_block_range: u64) -> S
 
 /// A fresh, empty directory for one test.
 pub(in crate::custody::tests) fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("engine-custody-test-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::test_support::scratch_dir(&format!("custody-{name}"));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

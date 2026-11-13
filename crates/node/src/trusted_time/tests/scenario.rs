@@ -210,7 +210,7 @@ impl Node {
     /// queues `cfg`'s genesis if the log is empty, and starts the trusted time task, whose samples
     /// are handed to the sequencer as they come.
     async fn boot(name: &str, clock: Arc<TestClock>, cfg: NodeConfig, fresh: bool) -> Self {
-        let dir = std::env::temp_dir().join(format!("engine-trusted-time-{}-{name}", std::process::id()));
+        let dir = crate::test_support::scratch_path(&format!("trusted-time-{name}"));
         if fresh {
             let _ = std::fs::remove_dir_all(&dir);
         }

@@ -374,7 +374,7 @@ async fn dev_scenario_attestation_verifier() -> anyhow::Result<()> {
     let ark_pem = pem(&chain.ark);
     let opts = options(&stub, &ark_pem);
 
-    let dir = std::env::temp_dir().join(format!("attestation-verifier-{}", std::process::id()));
+    let dir = crate::test_support::scratch_dir("attestation-verifier");
     std::fs::create_dir_all(&dir)?;
     let attestation_path = dir.join("attestation.json");
     let release_path = dir.join("release.toml");

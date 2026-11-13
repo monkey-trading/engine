@@ -4,9 +4,11 @@
 mod alerts;
 mod events;
 mod readers;
+mod scratch;
 pub use alerts::{capture_alerts, capture_alerts_and_resolutions};
 pub use events::every_event;
 pub use readers::{marks_reader, stats};
+pub use scratch::{keep_scratch, scratch_dir, scratch_path};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -260,13 +262,6 @@ pub async fn keep_time_fresh(tx: mpsc::WeakSender<Request>) {
 
 #[cfg(test)]
 mod tests;
-
-/// An empty directory for one test, named after it.
-pub fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("engine-node-test-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
 
 /// An operator public key nobody has published: the uncompressed SEC1 hex of a fresh random key.
 pub fn own_operator_key() -> String {

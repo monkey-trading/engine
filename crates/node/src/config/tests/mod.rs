@@ -352,7 +352,9 @@ fn a_malformed_config_line_is_named_but_never_quoted() {
     let line = anvil.lines().position(|l| l.contains("rpc_url")).unwrap() + 1;
     let text =
         anvil.replace("rpc_url = \"http://127.0.0.1:8545\"", "rpc_url = [\"https://rpc.example/v2/secret-key\"]");
-    let path = std::env::temp_dir().join(format!("engine-config-test-{}.toml", std::process::id()));
+    let dir = crate::test_support::scratch_dir("config-malformed-line");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.toml");
     std::fs::write(&path, text).unwrap();
 
     let err = format!("{:#}", NodeConfig::load(&path).unwrap_err());
