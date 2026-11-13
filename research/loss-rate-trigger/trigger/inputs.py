@@ -139,6 +139,5 @@ def grid_weights() -> dict:
     out = {}
     for market, v in sample["markets"].items():
         for k, s in enumerate(v["strata"]):
-            if (market, k) in counts:
-                out[(market, k)] = s["hours"] / counts[(market, k)] * 8760 / v["year_hours"]
+            out[(market, k)] = s["hours"] / counts[(market, k)] * 8760 / v["year_hours"]
     return out

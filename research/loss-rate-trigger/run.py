@@ -496,14 +496,18 @@ RECOMMENDED = (("a day, zero", 1440, 0.0), ("60 minutes, 22.5 bps of the total c
 
 def stage_recommend(args):
     """The recommended trigger and its alternative at their exact thresholds: the house-wide marked loss
-    over the window, on both flows, with honest flow's fire rate, time raised and raised spells, the room
-    it leaves an attacker a day and in its worst window, and 2025-10-10's pairs under it."""
+    over the window, on both flows, with honest flow's fire rate, time raised and its periods, the room
+    it leaves an attacker a day and in its worst window, the latency classes it leaves (as `latency`
+    measures them), and 2025-10-10's pairs under it."""
     import numpy as np
 
     from trigger import inputs, windows
-    from trigger.paths import BIN_S, BINS_PER_HOUR
+    from trigger.paths import BIN_S, BINS_PER_HOUR, CLOSED
 
     total_cap = REFERENCE_NAV * inputs.genesis()["params"]["house_total_cap_bps"] / 1e4
+    latency = json.loads((RESULTS / "latency.json").read_text())
+    bars = np.load(inputs.CAP / "data" / "derived" / "hourly_bars.npz")
+    symbols = [str(x) for x in bars["symbols"]]
     out = {"total_cap_at_reference_nav": total_cap, "flows": {}}
     for flow_name in ("current", "target"):
         series = np.load(DATA / f"honest_{flow_name}.npz")["house/marked"].astype(np.float64)
@@ -517,7 +521,21 @@ def stage_recommend(args):
             hm = windows.hourly_max(reading, BINS_PER_HOUR)
             days = len(series) // (24 * BINS_PER_HOUR)
             room = windows.disjoint_room(series[: days * 24 * BINS_PER_HOUR], w, t).reshape(days, -1).sum(axis=1)
-            res[name] = {"window_min": wm, "threshold_bps_of_total_cap": bps, "threshold": t,
+            # Each latency class sits out the raised time: crypto by volatility stratum, FX and indices overall.
+            n_hours = len(up) // BINS_PER_HOUR
+            takes = {}
+            for lag, who in ((3.0, "operator"), (0.25, "fastest")):
+                crypto = 0.0
+                for m in CRYPTO:
+                    b = bars["bars"][:n_hours, symbols.index(m)]
+                    st = np.repeat(windows.strata((b[:, 1].astype(float) - b[:, 2]) / 1e6, b[:, 0] != CLOSED), BINS_PER_HOUR)
+                    raised_s = [float(up[: len(st)][st == k].mean()) for k in range(5)]
+                    kept = sum(sh * (1 - r) for sh, r in zip(latency["stratum_shares"][f"{lag}/{m}"], raised_s))
+                    crypto += latency["crypto"][f"{lag}/{m}"]["per_day"] * kept
+                fx = sum(r[f"{lag}s"] for r in latency["fx_house_loss"].values()) * (1 - float(up.mean()))
+                keep = OPERATOR_KEEPS if who == "operator" else 1.0
+                takes[who] = {"crypto": crypto * keep, "fx_indices": fx * keep}
+            res[name] = {"window_min": wm, "threshold_bps_of_total_cap": bps, "threshold": t, "latency": takes,
                          "fire_share": float((hm >= t).mean()), "raised_share": float(up.mean()), "episodes_a_year": len(starts) / days * 365,
                          "episode_mean_hours": float(up.sum()) / max(len(starts), 1) * BIN_S / 3600,
                          "daily_room_mean": float(room.mean()), "daily_room_p95": float(np.quantile(room, 0.95)), "daily_room_max": float(room.max()),
@@ -612,7 +630,7 @@ def stage_latency(args):
                             res[who] = {"crypto": crypto * keep, "fx_indices": fxs * keep}
                         out["triggers"].append(res)
     # What reaches the fastest client without a trigger: an extra cost on each of its fills (the
-    # linear bound `carrot.best_responses` uses), or a flat fee floor over its holds of 15 minutes or more.
+    # linear bound `carrot.best_responses` uses), or a floor under the fee at every hold.
     fastest = {}
     for m in CRYPTO:
         y = years[(0.25, m)]

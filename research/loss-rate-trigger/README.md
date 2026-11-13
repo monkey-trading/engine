@@ -181,7 +181,8 @@ and closes at 30 bps.
   move it catches. In the worst single day of 102 weeks the room is $4.41M on target flow and $10.9M
   on current flow.
 - **Latency arbitrage, crypto, the operator's 3 s view:** $160k a day at the 10 s curve (its best
-  holds are now 15 minutes, recycling wallets at tier 0); $158k under the trigger, which it sits out.
+  holds are now 15 minutes, recycling wallets at tier 0); $158k under the trigger, which it sits out
+  (`run.py recommend`, at the exact threshold on target flow).
 - **Latency arbitrage, FX and indices at D6's tenths:** $63k a day, unchanged.
 - **Unpriced pairs at 1% margin on ordinary days:** #697's $17k a day; the trigger can only lower it.
 - **Unpriced pairs over 2025-10-10's four stress hours:** with the engine's level spreads, one $50M
@@ -292,7 +293,8 @@ fee, as #697 runs it; with #697's conventions it gives #697's $30.56M exactly. T
   its pairs ahead at level 0, one per spell, so a crash's raised levels reach only their closes.
 
 The loss trigger runs beside the fast-move trigger, fed by honest flow's per-bin loss over that day
-and the day before, with each spell's loss added when the market prices again, and the level re-read
+and the day before on the bridged bars (`honest`), with the stress markets' bad debt in the four hours
+from honest flow on their recorded trades, and each spell's loss added when the market prices again, and the level re-read
 after every loss, as the engine reads it on every command. While the trigger holds level 2 the
 operator either waits or runs spells with the rule's target re-derived from its costs; each candidate
 keeps the better of the two over the day. Under a realised reading the operator keeps each winning
@@ -322,8 +324,9 @@ the room a day and in the worst window, and the stress day's pairs.
   the shortest windows' tails come from the recorded crypto hours, which cover three markets.
 - **The flow does not respond to prices or to the trigger.** Honest income uses the genesis's bands
   on unrefused flow, so it is above #697's figures ($6.81M a day on current flow against #697's
-  $5.70M of distributions), which makes a negative threshold look safer than it is and is why the
-  proposal uses zero.
+  $5.70M of distributions). Less income would fire the day's trigger more often: $200k a day less on
+  target flow is a threshold of -$200k on these results, which fires in about 1.3% of hours. Financing
+  is left out; it adds to the house's income.
 - **Each attack is measured alone**, with honest flow's loss as the background; together they add
   to the reading, which raises the fire rate a little and lowers what each takes.
 - **Latency under the trigger** is #697's best response with its take cut by honest flow's raised time

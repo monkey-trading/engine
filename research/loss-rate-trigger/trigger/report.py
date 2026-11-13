@@ -93,12 +93,14 @@ def write(results: Path) -> str:
     rows = []
     for flow in ("current", "target"):
         for name, r in rec["flows"][flow].items():
+            lat = r["latency"]
             rows.append([flow, name, usd(r["threshold"]), pct(r["fire_share"]), pct(r["raised_share"]), f"{r['episodes_a_year']:.0f}",
                          f"{r['episode_mean_hours']:.1f}", usd(r["daily_room_mean"]), usd(r["daily_room_p95"]), usd(r["window_room_max"]),
-                         usd(r["stress"]["pre_opened"]["house_loss"]), usd(r["stress"]["per_spell"]["house_loss"])])
+                         usd(r["stress"]["pre_opened"]["house_loss"]), usd(r["stress"]["per_spell"]["house_loss"]),
+                         usd(lat["operator"]["crypto"] + lat["operator"]["fx_indices"]), usd(lat["fastest"]["crypto"] + lat["fastest"]["fx_indices"])])
     out += table(["Flow", "Trigger", "Threshold", "Hours fired", "Time raised", "Raised periods a year", "Mean period, hours",
-                  "Room a day, mean", "p95", "Room in the worst window", "2025-10-10, pairs opened ahead", "One pair reopened per spell"],
-                 rows) + [""]
+                  "Room a day, mean", "p95", "Room in the worst window", "2025-10-10, pairs opened ahead", "One pair reopened per spell",
+                  "Operator's latency take", "Fastest client"], rows) + [""]
 
     out += ["## The launch criterion at the 10 s curve", "",
             "The operator's take a day by attack class (80% of its own accounts' profit, as #623 counts it), against its honest share "

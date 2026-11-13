@@ -803,7 +803,7 @@ Run from the repo root:
 - Loss-rate trigger research, from a virtualenv outside the repo with
   `research/loss-rate-trigger/requirements.txt`, in `research/loss-rate-trigger/`: `python -I run.py
   <stage>` (`honest --flow current`, `honest --flow target`, `grid`, `stress --flow current`,
-  `stress --flow target`, `latency`, `share`, then `report`), and its tests with
+  `stress --flow target`, `latency`, `recommend`, `share`, then `report`), and its tests with
   `python -I -m pytest tests`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
   `python -I research/close-spread-calibration/run.py`, then
