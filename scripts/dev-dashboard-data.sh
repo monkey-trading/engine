@@ -72,7 +72,7 @@ sed -e "s|127.0.0.1:8080|127.0.0.1:$api_port|" \
   -e "s|data/dev|$work|g" \
   -e 's|^stats_interval = .*|stats_interval = "1s"|' \
   -e 's|^per_account = .*|per_account = { per_second = 100, burst = 200 }|' \
-  -e 's|^spread_tiers = \[{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }\]|spread_tiers = [{ tenth_bps = 40 }]|' \
+  -e '/^symbol = "BTC-USD"$/,/^spread_tiers = / s|^spread_tiers = .*|spread_tiers = [{ tenth_bps = 40 }]|' \
   "$root/config/dev.toml" > "$work/node.toml"
 cat >> "$work/node.toml" <<CONFIG
 
@@ -87,6 +87,9 @@ CONFIG
 for edit in ":$api_port\"" 'stats_interval = "1s"' "$work/log\"" 'spread_tiers = [{ tenth_bps = 40 }]'; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"
 done
+# Only BTC-USD's bands change: another market's would move its launch close charge past its ceiling.
+[[ "$(grep -cF 'spread_tiers = [{ tenth_bps = 40 }]' "$work/node.toml")" == 1 ]] \
+  || fail "the spread band edit reached a market other than BTC-USD"
 
 max_drift="$(awk -F'"' '/^max_drift = / { print $2 }' "$root/config/dev.toml")"
 [[ "$max_drift" =~ ^[0-9]+s$ ]] || fail "expected time.max_drift in whole seconds, got '$max_drift'"

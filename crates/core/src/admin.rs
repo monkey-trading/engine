@@ -71,7 +71,7 @@ impl Engine {
     ///   `Engine::install_close_spread_ceilings` and `Engine::adopt_close_spread_ceiling`;
     ///   `UpsertMarket` of a market the ceiling registry has no entry for, or changing the
     ///   `asset_class` or `quote_currency` of a market with one; `ActivateProtocol` carrying a
-    ///   version past `V40` while a listed market has no adopted ceiling (see
+    ///   version past `V40` while a listed market has no adopted ceiling, or to `V52` over a low one (see
     ///   `Engine::check_close_spread_activation`)
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {

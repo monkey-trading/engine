@@ -140,23 +140,27 @@ struct Held<'a> {
 /// closes first. Each price is the worst of its own and the steps before it, so it holds for every
 /// smaller order even where a tier charges less than the one before: a close's average falls as it
 /// reaches cheaper tiers, and a reversal's then rises, so between two steps no order's average is
-/// worse than both ends'. A side with no step cannot open any size.
+/// worse than both ends'. A reversal's average spread falls and then rises with its size, so the
+/// sizes a close-spread ceiling admits are one range; when the smallest reversal is refused, the side
+/// ends at the whole close, since a reversal step would cover sizes that are refused. A side with no
+/// step cannot open any size.
 fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held: &Held) -> Vec<Step> {
     let quote = |qty: Fixed| quoter.quote(account, market, side, qty).ok();
     let fits = |qty: Fixed| quote(qty).filter(|quote| quote.declined.is_none()).map(|quote| quote.price);
     let same_side = held.qty.is_zero() || held.qty.signum() == side.sign();
     let holding = held.qty.abs();
+    // The largest size known to fill, which includes closing what the account holds on the other
+    // side (at most the input bound, past which no order is placeable).
+    let closing = holding.min(Fixed::MAX_INPUT);
+    let reverses = same_side || quote(closing + held.floor).is_some();
     let closes = held.tops.iter().rev().filter(|top| !same_side && **top < holding).map(|top| holding - *top);
-    let opens = held.tops.iter().filter_map(|top| {
+    let opens = held.tops.iter().filter(|_| reverses).filter_map(|top| {
         let qty = if same_side { *top - holding } else { *top + holding };
         qty.is_positive().then_some(qty)
     });
     let orders = closes.chain(opens);
     let mut steps: Vec<Step> = Vec::new();
-    // The largest size known to fill, which includes closing what the account holds on the other
-    // side (at most the input bound, past which no order is placeable), and whether a tier's top is
-    // declined.
-    let closing = held.qty.abs().min(Fixed::MAX_INPUT);
+    // Whether a tier's top is declined.
     let (mut known, mut declined) = (if same_side { Fixed::ZERO } else { closing }, false);
     for qty in orders {
         let Some(priced) = quote(qty) else { continue };
@@ -171,20 +175,25 @@ fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held
         steps.push(Step { qty, price: priced.price, declined: priced.declined });
     }
     if !declined {
-        // The unbounded last tier: double until the account cannot open the size.
-        let mut probe = known.max(held.floor);
-        let mut over = None;
-        for _ in 0..DOUBLINGS {
-            probe = probe.mul_int(2);
-            if fits(probe).is_none() {
-                over = Some(probe);
-                break;
+        let step = if reverses {
+            // The unbounded last tier: double until the account cannot open the size.
+            let mut probe = known.max(held.floor);
+            let mut over = None;
+            for _ in 0..DOUBLINGS {
+                probe = probe.mul_int(2);
+                if fits(probe).is_none() {
+                    over = Some(probe);
+                    break;
+                }
+                known = probe;
             }
-            known = probe;
-        }
-        let step = match over {
-            Some(over) => largest(&fits, held.floor, known, over),
-            None => fits(known).map(|price| Step { qty: known, price, declined: None }),
+            match over {
+                Some(over) => largest(&fits, held.floor, known, over),
+                None => fits(known).map(|price| Step { qty: known, price, declined: None }),
+            }
+        } else {
+            // No reversal is quoted, so the side ends at the whole close.
+            fits(closing).map(|price| Step { qty: closing, price, declined: None })
         };
         let step = step.filter(|step| steps.last().is_none_or(|last| step.qty > last.qty));
         steps.extend(step);

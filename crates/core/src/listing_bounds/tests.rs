@@ -103,3 +103,13 @@ fn margin_bands_compare_before_each_bands_rounding() {
     let rounded = |table: &[Tier]| crate::market::staircase(table, Fixed::ZERO, past, crate::fixed::Rounding::Up);
     assert_eq!(rounded(&launch) - rounded(&merged), Fixed::from_raw(1));
 }
+
+#[test]
+fn margin_bounds_compare_up_to_the_largest_notional() {
+    // A bound at the largest notional times the largest rate overflows 128 bits.
+    let largest = Fixed::from_raw(i128::MAX);
+    let launch = vec![Tier { up_to: Some(largest), bps: 10_000 }, Tier { up_to: None, bps: 10_000 }];
+    assert!(check_margin_at_or_above_launch(&launch, &launch).is_ok());
+    let lower = vec![Tier { up_to: Some(largest), bps: 9_999 }, Tier { up_to: None, bps: 10_000 }];
+    assert!(check_margin_at_or_above_launch(&lower, &launch).is_err());
+}

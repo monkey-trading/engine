@@ -16,10 +16,10 @@
 //! which counts the first band at the widest size multiplier: an install or adoption below it, under
 //! the parameters in force or those the market launched under, is refused, an adoption for a market
 //! not yet listed binds the listing that market's first listing must be, and that first listing is
-//! refused while its own launch close charge exceeds the ceiling. The activation raises a listed
-//! market's ceiling, and a pending adoption's value, to its launch close charge. A pure close's
-//! charge clamps to the ceiling before the check that a spread stays under the price, so a pure close
-//! always prices.
+//! refused while its own launch close charge exceeds the ceiling. Since a ceiling only falls, `V52`
+//! does not activate over a listed market whose ceiling, or pending adoption, is below the launch
+//! close charge the activation sets: such a log needs a fresh start. A pure close's charge clamps to
+//! the ceiling before the check that a spread stays under the price, so a pure close always prices.
 
 use std::collections::BTreeMap;
 
@@ -99,26 +99,6 @@ impl Engine {
             ));
         }
         Ok(())
-    }
-
-    /// On `V52`'s activation, once launch bands are recorded: raises each listed market's ceiling,
-    /// and a pending adoption's value for one, to its launch close charge rounded up to a whole bp,
-    /// so no ceiling set before closes paid the size spread waives it.
-    pub(crate) fn raise_ceilings_to_launch(&mut self) {
-        let floor = |launch: &crate::listing_bounds::LaunchBands| {
-            ((launch.close_charge_tenth_bps + 9) / 10).min(MAX_CLOSE_SPREAD_BPS)
-        };
-        let launch_bands = &self.operator_bounds.launch_bands;
-        for (market, ceiling) in self.close_spread_ceilings.iter_mut().flatten() {
-            if let Some(launch) = launch_bands.get(market) {
-                *ceiling = (*ceiling).max(floor(launch));
-            }
-        }
-        if let Some(pending) = self.pending_ceiling.as_mut()
-            && let Some(launch) = launch_bands.get(&pending.market)
-        {
-            pending.max_close_spread_bps = pending.max_close_spread_bps.max(floor(launch));
-        }
     }
 
     /// The adopted close-spread ceilings by market, once genesis (or one signed install) records
@@ -314,13 +294,19 @@ impl Engine {
     }
 
     /// Checks an activation carrying `version` past `V40`: every listed market must have an
-    /// adopted ceiling, since from `V40` a close's spread is bounded by its market's entry.
+    /// adopted ceiling, since from `V40` a close's spread is bounded by its market's entry; and one
+    /// carrying it to `V52` from before it: no listed market's ceiling, or pending adoption's value,
+    /// is below the launch close charge under the bands and parameters as the activation converts
+    /// them, since a ceiling cannot be raised.
     /// Error cases:
     /// - activating `V40` or later while a listed market has no adopted ceiling
+    /// - activating `V52` or later from before it while a listed market's ceiling or pending
+    ///   adoption is below its launch close charge
     pub(crate) fn check_close_spread_activation(&self, version: ProtocolVersion) -> Result<(), String> {
         if version < ProtocolVersion::V40 {
             return Ok(());
         }
+        self.check_ceilings_cover_v52(version)?;
         let missing: Vec<_> = self
             .markets
             .keys()
@@ -331,6 +317,41 @@ impl Engine {
                 "markets {missing:?} are listed without a close-spread ceiling; adopt one for each before protocol {:?}",
                 ProtocolVersion::V40
             ));
+        }
+        Ok(())
+    }
+
+    /// Checks an activation carrying `version` to `V52` from before it leaves no listed market's
+    /// ceiling, or pending adoption's value, below its launch close charge under the bands and
+    /// parameters the activation converts.
+    /// Error cases:
+    /// - see `Engine::check_close_spread_activation`
+    fn check_ceilings_cover_v52(&self, version: ProtocolVersion) -> Result<(), String> {
+        if self.protocol_version >= ProtocolVersion::V52 || version < ProtocolVersion::V52 {
+            return Ok(());
+        }
+        let (Some(params), Some(ceilings)) = (&self.params, &self.close_spread_ceilings) else { return Ok(()) };
+        let mut params = params.clone();
+        params.raise_size_multipliers();
+        for (id, market) in self.markets.iter() {
+            let pending = self.pending_ceiling.as_ref().filter(|pending| pending.market == *id);
+            let Some(ceiling) =
+                ceilings.get(id).copied().into_iter().chain(pending.map(|p| p.max_close_spread_bps)).min()
+            else {
+                continue;
+            };
+            let mut spec = market.spec.clone();
+            spec.convert_spread_tiers();
+            let charge = launch_close_charge_tenth_bps(&params, &spec);
+            if ceiling * 10 < charge {
+                return Err(format!(
+                    "protocol {:?} cannot activate: market {id}'s close-spread ceiling of {ceiling}bps is below its \
+                     launch close charge of {}.{}bps, and a ceiling cannot be raised, so the log needs a fresh start",
+                    ProtocolVersion::V52,
+                    charge / 10,
+                    charge % 10
+                ));
+            }
         }
         Ok(())
     }

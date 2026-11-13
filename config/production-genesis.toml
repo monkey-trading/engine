@@ -18,10 +18,10 @@
 # - Fees (#9, launch fee schedule): a 10% profit fee, and financing markups
 #   over the benchmark of 2.5% for indices, commodities and shares, 1% for FX,
 #   and 5% for crypto.
-# - Size spreads (#614, decisions D1, D2 and D6): #623's calibrated tiers
-#   (research/spread-calibration/results/spread_tiers.toml), in tenths of a bp
-#   from protocol V52, each band twice the one before, paid by every fill on
-#   the slice it opens or closes. FX and index first bands are the tenths D6
+# - Size spreads (#614, decisions D1, D2 and D6): the calibrated tiers in
+#   PR #623's research/spread-calibration/results/spread_tiers.toml, in
+#   tenths of a bp from protocol V52, each band twice the one before, paid by
+#   every fill on the slice it opens or closes. FX and index first bands are the tenths D6
 #   derives from #623's 3s moves (0.4bp on EUR-USD and GBP-USD, 0.5 on USD-JPY
 #   and AUD-USD, 0.7 on US500, US30 and UK100, 0.9 on US100 and DE40, 1.0 on
 #   JP225), PENDING THE OWNER'S CONFIRMATION before promotion; another choice

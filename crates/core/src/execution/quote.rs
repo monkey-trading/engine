@@ -13,7 +13,8 @@ pub struct Quote {
     pub price: Fixed,
     /// The index mid the price is made from.
     pub mid: Fixed,
-    /// The spread in the price, in basis points of the mid.
+    /// The spread in the price, in whole basis points of the mid, truncated; `price` minus `mid` is
+    /// exact.
     pub spread_bps: i64,
     /// Whether the order grows the account's absolute position in the market.
     pub increases: bool,

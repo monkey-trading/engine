@@ -114,8 +114,8 @@ change only seven days after a signed notice, as the profit fee and close-out le
 a listed market's spread and margin bands, and only within its launch bands: at every size a spread
 stays between its launch rate and twice it, and margin at or above launch's. A market's close-spread
 ceiling is set no lower than what a close in its first band could pay at the widest admitted stress
-when it was set or when the market launched, and a market not yet listed can only be listed as the
-ceiling adoption that preceded it named it.
+when it was set or when the market launched, and a market whose ceiling was adopted after genesis
+can only be listed as that adoption named it.
 While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
 distribution, which it claims from the vault as a staker claims its own; from V50 the fifth is split
 among the operators by their time in office during the epoch.

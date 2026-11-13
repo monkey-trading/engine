@@ -681,8 +681,9 @@ tenths of a bp, under the parameters in force and under those the market launche
 or adoption below it is refused, and an adoption for a market not yet listed names the listing it
 binds, which that market's first listing must be, refused while its launch close charge exceeds the
 ceiling. Activation writes every listed band in tenths of a bp, raises each to its floor and each
-multiplier to 1x, records the launch bands with each market's launch close charge, and raises a
-lower ceiling, or a pending adoption's lower value, to that charge. Bands listed earlier keep their whole-bps encoding,
+multiplier to 1x, and records the launch bands with each market's launch close charge; since a
+ceiling only falls, it is refused while a listed market's ceiling or pending adoption is below that
+charge, and such a log needs a fresh start. Bands listed earlier keep their whole-bps encoding,
 a listing notice naming only a markup encodes as V49's did, and nothing else is recorded before V52,
 so earlier logs replay unchanged. Its session is in `examples/reference_log/v52.rs`.
 

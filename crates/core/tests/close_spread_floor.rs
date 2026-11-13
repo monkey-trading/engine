@@ -1,8 +1,8 @@
 //! `V52`'s floor under the close-spread ceilings, through `Engine::apply`: a ceiling covers its
 //! market's launch close charge, which counts the first spread band at the widest size multiplier,
 //! and an adoption for a market not yet listed binds the listing that market's first listing must be;
-//! no adoption goes below the charge a market launched with, and the activation raises lower
-//! ceilings to it. The genesis harness's launch close charge is 10bps: a 5bp stress minimum and a 3bp
+//! no adoption goes below the charge a market launched with, and `V52` does not activate over a
+//! lower ceiling. The genesis harness's launch close charge is 10bps: a 5bp stress minimum and a 3bp
 //! add-on, plus the first band's 1bp at level 1's 2x.
 
 mod common;
@@ -174,29 +174,31 @@ fn a_lower_add_on_admits_no_ceiling_below_the_charge_its_market_launched_with() 
 }
 
 #[test]
-fn activation_raises_lower_ceilings_and_a_pending_adoption_to_the_launch_close_charge() {
-    // Before `V52` an adoption may lower an entry to zero, which waives a close's whole spread.
+fn v52_does_not_activate_over_a_ceiling_or_pending_adoption_below_the_launch_close_charge() {
+    // Before `V52` an adoption may lower an entry to zero, which waives a close's whole spread, and a
+    // ceiling only falls, so the activation is refused and the log keeps its version.
+    let refuses = |events: &[engine_core::event::Event]| {
+        let reason = refused(events);
+        let below = "protocol V52 cannot activate: market 2's close-spread ceiling of 0bps is below its launch";
+        assert!(reason.starts_with(below) && reason.ends_with("so the log needs a fresh start"), "{reason}");
+    };
     let mut h = common::close_spread::harness();
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V51 });
     assert!(applied(&h.operate(adopt(ETH, 0, h.ts + NOTICE_MS, None))));
+    let pending = h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V52 }));
+    refuses(&pending);
     h.advance_to(h.ts + NOTICE_MS);
     h.cmd(Command::Tick);
     assert_eq!(h.engine.close_spread_ceilings().unwrap()[&ETH], 0);
-    let due = h.ts + NOTICE_MS;
-    assert!(applied(&h.operate(adopt(BTC, 0, due, None))));
+    let events = h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V52 }));
+    refuses(&events);
+    assert_eq!(h.engine.protocol_version(), ProtocolVersion::V51);
+    // Every ceiling covering its charge, as the harness's genesis entries do, lets it activate.
+    let mut h = common::close_spread::harness();
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V51 });
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V52 });
-    // Each launch close charge, rounded up to a whole bp.
-    let launched =
-        |h: &Harness, market| (h.engine.operator_bounds().launch_bands[&market].close_charge_tenth_bps + 9) / 10;
-    let ceilings = h.engine.close_spread_ceilings().unwrap();
-    assert!(launched(&h, ETH) > 0);
-    assert_eq!(ceilings[&ETH], launched(&h, ETH));
-    // An entry already above it stays.
-    assert!(launched(&h, AAPL) < 15);
-    assert_eq!(ceilings[&AAPL], 15);
-    h.advance_to(due);
-    h.cmd(Command::Tick);
-    assert_eq!(h.engine.close_spread_ceilings().unwrap()[&BTC], launched(&h, BTC));
+    let launched = |market| h.engine.operator_bounds().launch_bands[&market].close_charge_tenth_bps;
+    assert!([BTC, ETH, AAPL].into_iter().all(|market| launched(market) > 0));
 }
 
 #[test]

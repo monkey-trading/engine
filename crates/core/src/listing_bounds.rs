@@ -12,6 +12,7 @@
 
 use std::iter::once;
 
+use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
@@ -75,9 +76,9 @@ impl ListingNotice {
 impl Engine {
     /// On an activation carrying `version` to `V52` or later from before it: raises each stress
     /// level's size multiplier to at least 1x, writes every listed market's spread bands in tenths of
-    /// a bp, each raised to its class's floor, takes the result, the margin bands and the launch close
-    /// charge as the market's launch bands, and raises the ceilings to them (see
-    /// `Engine::raise_ceilings_to_launch`).
+    /// a bp, each raised to its class's floor, and takes the result, the margin bands and the launch
+    /// close charge as the market's launch bands, which `Engine::check_close_spread_activation` has
+    /// checked every ceiling covers.
     pub(crate) fn start_listing_bounds(&mut self, version: ProtocolVersion) {
         if self.protocol_version >= ProtocolVersion::V52 || version < ProtocolVersion::V52 {
             return;
@@ -92,7 +93,6 @@ impl Engine {
             let launch = self.launch_of(&self.markets[&id].spec);
             self.operator_bounds.launch_bands.insert(id, launch);
         }
-        self.raise_ceilings_to_launch();
     }
 
     /// `spec` as its market's launch bands, with its launch close charge under the parameters in
@@ -244,18 +244,17 @@ fn check_spread_within_launch(tiers: &[SpreadTier], launch: &[SpreadTier]) -> Re
 }
 
 /// The margin `tiers` require on `notional` before rounding, in raw units times bps: each band's
-/// rate times the slice of the notional inside it.
-fn exact_requirement(tiers: &[Tier], notional: Fixed) -> i128 {
+/// rate times the slice of the notional inside it. The sum is wide enough for any bound a table
+/// validates.
+fn exact_requirement(tiers: &[Tier], notional: Fixed) -> U256 {
     let mut low = Fixed::ZERO;
-    tiers
-        .iter()
-        .map(|tier| {
-            let high = tier.up_to.map_or(notional, |up_to| up_to.min(notional));
-            let slice = (high - low.min(high)).raw();
-            low = low.max(high);
-            slice * i128::from(tier.bps)
-        })
-        .sum()
+    tiers.iter().fold(U256::ZERO, |sum, tier| {
+        let high = tier.up_to.map_or(notional, |up_to| up_to.min(notional));
+        // Bounds are positive and increasing, so the slice is never negative.
+        let slice = (high - low.min(high)).raw().unsigned_abs();
+        low = low.max(high);
+        sum + U256::from(slice) * U256::from(tier.bps.unsigned_abs())
+    })
 }
 
 /// Checks that at every notional the margin `tiers` require is at least what `launch` requires,

@@ -301,6 +301,34 @@ fn a_close_steps_at_each_tier_it_closes_through_and_each_step_covers_every_small
     assert_eq!((close.qty, close.price), (Fixed::from_int(120), whole));
 }
 
+#[test]
+fn a_side_whose_smallest_reversal_the_ceiling_refuses_ends_at_the_whole_close() {
+    let mut engine = engine();
+    for cmd in holding_through_every_tier() {
+        apply(&mut engine, T0, cmd);
+    }
+    // At level 2, 10bps and 4x, closing the 120 BTC through every tier costs 27.3bps a unit, over a
+    // 26bps ceiling, so a sell just past the position is refused, while 40 BTC more at the first
+    // tier's 18bps brings the average to 25bps, under it.
+    let mut state = serde_json::to_value(&engine).unwrap();
+    state["markets"]["1"]["stress"]["level"] = serde_json::json!(2);
+    state["markets"]["1"]["stress"]["auto"] = serde_json::json!(2);
+    state["close_spread_ceilings"]["1"] = serde_json::json!(26);
+    let engine: Engine = serde_json::from_value(state).unwrap();
+    let held = Fixed::from_int(120);
+    assert!(engine.quote(TRADER, BTC, Side::Sell, held + fixed("0.01")).is_err());
+    assert_eq!(engine.quote(TRADER, BTC, Side::Sell, Fixed::from_int(160)).unwrap().declined, None);
+    let quote = read(&engine, TRADER, BTC);
+    let qtys: Vec<Fixed> = quote.bid.iter().map(|step| step.qty).collect();
+    assert_eq!(qtys, [20, 100, 120].map(Fixed::from_int), "{quote:?}");
+    // Each step's size fills, and so does every smaller order, at no better than its step.
+    for units in 1..=120 {
+        let qty = Fixed::from_int(units);
+        let step = quote.bid.iter().find(|step| step.qty >= qty).expect("a step");
+        assert!(step.price <= fitting(&engine, TRADER, BTC, Side::Sell, qty), "{qty}: {step:?}");
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn the_stream_quotes_partial_closes_and_a_reversal_through_the_tiers() {
     let mut rig = Rig::new();
