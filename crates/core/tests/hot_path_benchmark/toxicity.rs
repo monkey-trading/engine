@@ -41,6 +41,9 @@ fn toxicity_fill_latency() {
         let mut state = serde_json::to_value(&h.engine).expect("fixture encoding");
         state["markouts"] = json!(markouts);
         h.engine = serde_json::from_value(state).expect("benchmark fixture");
+        // The recovered engine's indexes and tree, outside the samples.
+        h.engine.restore_indexes();
+        h.engine.state_root();
         let mut times = Vec::with_capacity(2 * SAMPLES);
         for sample in 0..SAMPLES {
             for side in [Side::Buy, Side::Sell] {
@@ -160,5 +163,6 @@ fn scored_fixture(version: ProtocolVersion, count: usize, stop: Option<&str>) ->
         }
     }
     h.engine = serde_json::from_value(state).expect("benchmark fixture");
+    h.engine.restore_indexes();
     (h, client, keys)
 }

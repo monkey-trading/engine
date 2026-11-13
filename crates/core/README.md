@@ -895,12 +895,15 @@ compilation disabled, and two build jobs on a Mac17,9 with 15 logical CPUs and 2
 Finalising a MONKEY emission period in which 100,000 accounts lost measured 35 ms, as one sample on
 25 October 2026 on the same machine, with other workspace builds running.
 
-The toxicity score's cost from `V54` (`toxicity_fill_latency` and `toxicity_trigger_latency`, each
-against `V51` running the same commands), measured on 13 November 2026 on the same machine with
-other workspace builds running: a signed fill among 100,000 accounts scored an hour before, with
-2,000 markouts within the horizon and a full hour of spread history, 531 / 903 us p50 / p99 against
-562 / 752; scoring 2,200 due markouts 0.9 ms against 0.4 ms, and the state root after it 26 ms
-against 24 ms; one price triggering 20,001 stops 54 ms against 48 ms, about 0.3 us more a fill.
+The toxicity score's cost from `V54` (`toxicity_fill_latency` and `toxicity_trigger_latency` in
+`tests/hot_path_benchmark/toxicity.rs`, each against `V52` running the same commands), as CI's `test`
+job measured it on 13 November 2026, beside the other benchmarks: a signed fill among 100,000
+accounts scored an hour before, with 2,000 markouts within the horizon and every launch market
+holding an hour of spread history, 1,045 / 1,095 us p50 / p99 against 1,565 / 1,652 (the
+signature check dominates both); scoring 2,200 due markouts 2.0 ms against 0.8 ms, about 0.5 us a
+markout, and the state root after it 50 ms against 47 ms; one price triggering 20,001 stops 227 ms
+against 236 ms, no more a fill. Budgets: a fill's p99 2 ms, scoring 50 ms, the root after it 100 ms,
+and the triggered fills twice `V52`'s and 10 ms.
 
 The baseline is main commit `e4b4f5cf79816f1167fb4c0e17dcd2ff0024cdb0`, with the same benchmark
 source copied into its test directory. Measurements ran sequentially with competing workspace
