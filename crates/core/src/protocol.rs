@@ -287,11 +287,19 @@ pub enum ProtocolVersion {
     /// every listed band in tenths, raises each to its floor and each multiplier to 1x, and takes the
     /// result as the launch bands.
     V52,
+    /// Daily turns keep a key's notice across sets, and count no office past the first turn's application.
+    /// A member's notice starts with the first of the unbroken run of mirrored sets, each the one
+    /// mirrored before the next, that named its candidate with its key: a set mirrored late that names
+    /// a member unchanged keeps its notice, and so does a set the engine no longer keeps. Before any
+    /// turn is in effect, the account in office holds it only until the first accepted turn applies,
+    /// so the first command past that boundary credits it nothing for the time since. The activation
+    /// carries the notice through the sets the log keeps then.
+    V53,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V52;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V53;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

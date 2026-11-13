@@ -97,7 +97,9 @@ this crate and reproduce the signed state roots exactly.
   its boundary, or from its mirror when that is later; a turn whose key no set mirrored seven days
   earlier names is credited and refused (`turn_refused`), keeping the key in effect. The member's node
   logs `turn_taken` with its first command in the turn, and while turns run the operator's share
-  counts its time in office from then to the end of its turn
+  counts its time in office from then to the end of its turn. From `V53` a member's notice carries
+  across the sets that name it unchanged, and the account in office before turns run holds it only
+  until the first turn applies
 - From protocol `V52`, a listed market's spread and margin bands move only as a listing notice of at
   least seven days names them (`src/listing_bounds.rs`): at every notional a spread rate stays from
   its launch rate to twice it and the margin requirement at or above launch's; a close-spread
@@ -233,7 +235,8 @@ this crate and reproduce the signed state roots exactly.
 - `tests/withdrawal_pagination.rs` — bounded scans, global positions, empty account continuations, and restart
 - `tests/withdrawal_finality.rs` — payout capacity that waits for receipt finality and ignores reversals
 - `tests/withdrawals/setup.rs` — shared Engine::apply-driven withdrawal setup
-- `src/admin.rs` — operator commands and signed admin commands
+- `src/admin/mod.rs` — operator commands and signed admin commands; `src/admin/quote_currency.rs`
+  checks a listing's quote currency
 - `src/operator_bounds.rs` — the V35 bounds: launch rates, rate notices, price-rule checks, and operator rotation
 - `src/spread_tier.rs` — size spread bands: the `V52` unit in tenths of a bp beside the whole-bps
   encoding earlier listings keep, the class floors, and the band staircase; unit tests in
@@ -254,9 +257,10 @@ this crate and reproduce the signed state roots exactly.
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
 - `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record; from `V47`, the candidate seated and the account the operator's share goes to; from `V48`, the timelock-only installation the failed-key fallback mirrors
 - `tests/operator_election.rs` — the V37 elections: refusals, the effective time and its seven-day floor, cancellation, and the refused signed rotation
-- `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, `TurnTaken`, and the turn's time in office
+- `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, and the turn's time in office
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
-- `tests/operator_share/daily_turns.rs` — `V51`: a member earns from its `TurnTaken` to its turn's end, and no one before or after
+- `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
+- `tests/operator_share/daily_turns.rs` — `V51`: a member earns from its `TurnTaken` to its turn's end, and no one before or after; from `V53`, the account before the first turn only until that turn applies
 - `tests/operator_install.rs` — `V48`: the timelock's installed operator: refusals, the seven-day log notice with no finalised frontier, replaced rotations, and the refused signed rotation
 - `tests/operator_share.rs` — `V47`: the operator's fifth of a distribution, with rotation on and off, an epoch that distributes nothing, a built-up sweep, an operator that also stakes, and the leaf's claim and exit proofs
 - `tests/operator_share/elections.rs` — who earns the share as elections, handovers, cancellations and signed rotations move the operator in effect
@@ -396,7 +400,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V52` parts (`v15.rs` to `v52.rs`)
+  `V15` to `V53` parts (`v15.rs` to `v53.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -686,6 +690,18 @@ ceiling only falls, it is refused while a listed market's ceiling or pending ado
 charge, and such a log needs a fresh start. Bands listed earlier keep their whole-bps encoding,
 a listing notice naming only a markup encodes as V49's did, and nothing else is recorded before V52,
 so earlier logs replay unchanged. Its session is in `examples/reference_log/v52.rs`.
+
+Protocol V53 keeps a member's notice across sets and counts no office past the first turn's application. A
+set records, for each member the set mirrored before it named with the same key, when the log's
+notice of that key began, so a member's notice runs from the first of the unbroken run of mirrored
+sets naming its candidate with its key: a set mirrored late that names a member unchanged keeps its
+notice, and so does a set the engine no longer keeps. A turn is checked against its own set for its
+member and against that notice for the seven days. Before any turn is in effect, at the start of the
+turns or after an installation ended them, the account in office holds it only until the first
+accepted turn applies, so the first command past that boundary credits it nothing for the time since.
+V53's activation carries the notice through the sets the log keeps then, as their adoptions under V53
+would have. Before V53 no set records a carried notice, and the state encodes as before, so earlier
+logs replay unchanged. Its session is in `examples/reference_log/v53.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

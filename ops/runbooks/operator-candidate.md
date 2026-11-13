@@ -317,6 +317,13 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
   as section 4 describes.
 - **A turn the engine refused.** `turn_refused` ([alerts.md](alerts.md)) means no set mirrored at
   least seven days earlier names your candidate with your key: the key in effect stays for that turn.
+  From V53 the seven days run from the first of the unbroken run of mirrored sets that named your
+  candidate with that key, so a set mirrored late that names you unchanged keeps your notice, while
+  a new key, or a return after a set that dropped you, waits seven days again.
+- **A new protocol version.** A node activates its build's newest protocol version when it boots, and
+  a build that predates a version cannot read a log that activated it. Move every candidate in the
+  rotation sets to a release that implements the version before any member boots one, or the next
+  member on an older release cannot take the keys and the log.
 - **Rotation off.** Turning rotation off stops draws; the turns already drawn stand, and the last
   member stays named until the timelock installs an operator once they end.
 - **Liveness.** `promote` reverts while a schedule is named: promotion over turns is not built yet. A

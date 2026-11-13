@@ -125,7 +125,9 @@ margin before the set takes effect. Anyone draws each day's turn, from a day bef
 boundary until the boundary, from the set in effect at the start of that window, seeded by an Ethereum
 RANDAO mix relayed to Arbitrum, and a candidate may hold consecutive turns. From the boundary the vault names the turn's release, the incumbent hands the member the keys
 and the log, and the engine applies the member's admin key; the member earns the operator's share
-from the moment it takes its turn to the end of it.
+from the moment it takes its turn to the end of it. From V53 a member's seven days' notice carries
+across the unbroken run of sets that name it with the same key, and the operator in office before
+the first turn earns only until that turn applies: its boundary, or its mirror when that is later.
 
 The reasoning behind each of these choices is recorded in the decision issues
 [#1](https://github.com/0xjevons/monkeytrading/issues/1) to

@@ -2,7 +2,8 @@
 //! assignments mirrored once under their chain references, a drawn key signing from its boundary, a
 //! reassignment or promotion after its boundary from its mirror, a key without seven days' notice in a
 //! mirrored set refused, `RotateOperator` refused while rotation is on, and `TurnTaken` accepted only
-//! for the turn in effect.
+//! for the turn in effect; from `V53`, a member's notice kept across sets that name it unchanged
+//! (`daily_turns/notice.rs`).
 
 mod common;
 
@@ -46,8 +47,13 @@ fn members() -> Vec<SetMember> {
 
 /// Mirrors set `set` of `members`, returning its events.
 fn adopt(h: &mut Harness, set: u32, members: Vec<SetMember>) -> Vec<Event> {
-    let (block, chain_ref) = (h.log.len() as u64, format!("0xset:{set}:{}", h.log.len()));
     let effective_at = h.ts + NOTICE_MS + 60_000;
+    adopt_effective(h, set, members, effective_at)
+}
+
+/// `adopt`, taking effect on chain at `effective_at`.
+fn adopt_effective(h: &mut Harness, set: u32, members: Vec<SetMember>, effective_at: Millis) -> Vec<Event> {
+    let (block, chain_ref) = (h.log.len() as u64, format!("0xset:{set}:{}", h.log.len()));
     let adoption =
         RegistryRotationSet { set, epoch: set.into(), effective_at, quorum: true, members, block, chain_ref };
     h.cmd(Command::AdoptRotationSet(adoption))
@@ -55,10 +61,15 @@ fn adopt(h: &mut Harness, set: u32, members: Vec<SetMember>) -> Vec<Event> {
 
 /// Mirrors `turn` for `member` of set 1 at `position` for `reason`, returning its events.
 fn assign(h: &mut Harness, turn: u64, member: usize, position: u16, reason: TurnReason) -> Vec<Event> {
+    assign_from(h, 1, turn, member, position, reason)
+}
+
+/// `assign`, drawn from set `set`.
+fn assign_from(h: &mut Harness, set: u32, turn: u64, member: usize, position: u16, reason: TurnReason) -> Vec<Event> {
     let (block, chain_ref) = (h.log.len() as u64, format!("0xturn:{turn}:{position}"));
     h.cmd(Command::AssignTurn(RegistryTurn {
         turn,
-        set: 1,
+        set,
         position,
         reason,
         candidate: CANDIDATES[member],
@@ -397,3 +408,6 @@ fn an_election_is_refused_once_the_schedule_adopted_a_set() {
     };
     refused(&h.cmd(Command::ElectOperator(election)), "whose schedule adopts rotation sets");
 }
+
+#[path = "daily_turns/notice.rs"]
+mod notice;

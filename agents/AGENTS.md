@@ -38,7 +38,8 @@ an index: load only the rule whose hint matches the current action.
   turn assignments mirrored the same way, a turn's admin key from its boundary or, mirrored later, from
   its mirror, refused (`turn_refused`) unless a set mirrored seven days earlier names it, and the
   member's `TurnTaken`, from which the operator's share counts its time in office to its turn's end,
-  `tests/daily_turns.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
+  `tests/daily_turns.rs`; from `V53`, a member's notice carried across sets that name it unchanged,
+  and no office past the first turn's application for the account in it before turns run), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
@@ -49,7 +50,7 @@ an index: load only the rule whose hint matches the current action.
   with house NAV and exposure caps in `engine/house.rs`, per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,
   `corporate/` for dividend/split instructions, captures and ex-date adjustments,
-  `admin.rs`, `stress.rs`, `auth.rs`). `withdrawal.rs` reserves FIFO requests and creates
+  `admin/`, `stress.rs`, `auth.rs`). `withdrawal.rs` reserves FIFO requests and creates
   whole-USDC partial approvals under the V22 rules; `merkle/withdrawal.rs` proves each approval
   against a root. `tests/corporate_actions/` exercises cash, calendars, splits and replay. Unit
   tests sit
