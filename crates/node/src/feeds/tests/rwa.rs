@@ -25,7 +25,7 @@ use crate::feeds::tests::fake::{WAIT, fast, listen};
 use crate::feeds::tests::rwa_support::{Applied, TlsFront, around_the_clock, events_of, listing, priced, wait_for};
 use crate::feeds::tests::scenario::Node;
 use crate::feeds::tests::vendors::{KEY, Prices, serve_massive, serve_tradermade};
-use crate::feeds::venue;
+use crate::feeds::venue::{self, Credentials};
 use crate::replay_path;
 use crate::test_support::dev_config;
 
@@ -177,10 +177,11 @@ async fn start_vendors(node: &Node, open_at: &Arc<AtomicI64>) -> Vec<AbortHandle
                 contract: contract.map(Into::into),
             })
             .collect();
-        let api_key = Some(ApiKey::from_env("VENDOR_API_KEY", |_| Some(KEY.into())).expect("a key"));
+        let key = ApiKey::from_env("VENDOR_API_KEY", |_| Some(KEY.into())).expect("a key");
         let api_key_env = Some("VENDOR_API_KEY".into());
-        let conn = VenueConnection { venue, url, api_key_env, api_key_secret: None, symbols };
-        let feed = tokio::spawn(venue::run(conn, api_key, fast(WAIT), tls.client.clone(), node.tx.clone()));
+        let conn = VenueConnection { venue, url, api_key_env, api_key_secret: None, oauth: None, symbols };
+        let credentials = Credentials::ApiKey(key);
+        let feed = tokio::spawn(venue::run(conn, credentials, fast(WAIT), tls.client.clone(), node.tx.clone()));
         tasks.push(feed.abort_handle());
     }
     tasks

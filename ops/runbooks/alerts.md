@@ -96,9 +96,10 @@ Rebuilt from the log. None changes the books.
 | --- | --- | --- |
 | `market_no_price` | Critical | An open market a feed prices has no usable price. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "A market has no price". |
 | `market_unfed` | Warning | No configured feed prices this market, so it cannot trade. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Find what is down". |
-| `venue_feed_down` | Warning | A venue or vendor connection is down and retrying. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "A crypto venue is down or quiet". |
+| `venue_feed_down` | Warning | A venue or vendor connection is down and retrying, for CME also when it has no bearer token to connect with. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "A crypto venue is down or quiet" and "CME Group's feed". |
 | `venue_symbol_silent` | Warning | A symbol has had no fresh quote while its market is open. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "A crypto venue is down or quiet". |
-| `venue_message_refused` | Warning | A venue message was refused (key redacted). See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Find what is down". |
+| `venue_token_failed` | Warning | CME's token endpoint failed or refused a bearer token request; it resolves at the next request it grants. Fields: `venue`, `feed`. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "CME Group's feed". |
+| `venue_message_refused` | Warning | A venue message was refused, or CME refused a login or subscription (excerpted only from a venue that holds no credential). See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Find what is down" and "CME Group's feed". |
 | `venue_clock_ahead` | Warning | A venue's timestamps are well ahead of the host clock. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Find what is down". |
 | `venue_delayed` | Warning | A venue's stream may be further behind than `feeds.venues.max_delay`, so its quotes do not count. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Find what is down". |
 | `prices_rejected` | Warning | The engine refused a price update; the reason is in the message. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Find what is down". |

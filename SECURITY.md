@@ -284,7 +284,8 @@ withdrawals for seven days or retire the signer, which the vault then refuses fo
 checkpoints until the timelock installs one, and for MONKEY and USDC claims until that signer posts
 a checkpoint, which an exit that starts first rules out; the node signs no withdrawal while either
 holds. The
-node's own credentials, its RPC provider keys, market-data vendor keys, and alert webhook URLs, reach
+node's own credentials, its RPC provider keys, market-data vendor keys and OAuth client credentials,
+and alert webhook URLs, reach
 it only encrypted to a one-time key its quote proves an enclave of the release holds, which the
 operator's tool checks against the release manifest first, under the signature of the operator key
 in effect: the attested config names which secret each field reads, and fixes each RPC provider's
@@ -450,8 +451,8 @@ meanwhile only while its sources' spread, in whole basis points of their median,
 `max_divergence_bps`, so with the two sources BTC-USD and ETH-USD take, the stalled leg moves the
 index at most about 13 bps from the venue still quoting (half their 25 bps, plus the rounding to
 whole basis points), and past that the market has no price. This rests on those venues writing a
-pong behind what they sent before reading its ping, as they were measured to; Massive's and
-TraderMade's connections, which were not measured, re-date nothing. A
+pong behind what they sent before reading its ping, as they were measured to; Massive's,
+TraderMade's and CME Group's connections, which were not measured, re-date nothing. A
 production market needs two sources fresh, so a delay past the bound on either leaves it without a
 price. Every part of this rests on the monotonic clock's rate, as do
 the Roughtime round trips that place trusted time and with them `time.max_drift`. The enclave image

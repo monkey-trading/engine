@@ -363,7 +363,7 @@ async fn start_venue(node: &Node, venue: Venue, serve: fn(TcpListener) -> JoinHa
         Venue::Bitstamp => [(1, "btcusd"), (2, "ethusd")],
         Venue::Coinbase => [(1, "BTC-USD"), (2, "ETH-USD")],
         Venue::Kraken => [(1, "BTC/USD"), (2, "ETH/USD")],
-        Venue::Massive | Venue::Tradermade => {
+        Venue::Cme | Venue::Massive | Venue::Tradermade => {
             unreachable!("only the crypto venues price BTC and ETH")
         }
     };

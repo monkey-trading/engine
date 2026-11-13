@@ -5,12 +5,15 @@
 //!
 //! `venue` runs one supervised task per venue connection; each venue's adapter builds its opening
 //! messages and reads its messages into books: the crypto venues (`bitstamp`, `coinbase`,
-//! `kraken`), and the market-data vendors that price FX, index and commodity futures, and US
-//! stocks (`massive`, `tradermade`). Every venue is reached over TLS that ends in the enclave, the
-//! only sources that may set or move a price. A new source is an adapter plus a `Venue` variant.
+//! `kraken`), the market-data vendors that price FX, index and commodity futures, and US stocks
+//! (`massive`, `tradermade`), and CME Group's own API for its exchanges' futures (`cme`). Every
+//! venue is reached over TLS that ends in the enclave, the only sources that may set or move a
+//! price. A new source is an adapter plus a `Venue` variant.
 //! The mock feed serves local development.
 
 mod bitstamp;
+mod cme;
+pub(crate) use cme::check_symbol as check_cme_symbol;
 mod coinbase;
 mod kraken;
 mod massive;

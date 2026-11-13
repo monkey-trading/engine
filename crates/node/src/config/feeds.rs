@@ -13,6 +13,7 @@ use serde::Deserialize;
 use tokio_tungstenite::tungstenite::http::Uri;
 
 use crate::config::{SecretName, SecretValue};
+use crate::feeds::check_cme_symbol;
 
 /// Massive's real-time WebSocket endpoints, one per asset class, by path.
 const MASSIVE_PATHS: [&str; 3] = ["/forex", "/futures", "/stocks"];
@@ -32,6 +33,8 @@ pub enum FeedProvider {
 #[serde(rename_all = "snake_case")]
 pub enum Venue {
     Bitstamp,
+    /// CME Group's real-time WebSocket API: its own exchanges' futures.
+    Cme,
     Coinbase,
     Kraken,
     /// Massive (formerly Polygon.io): FX, futures, and US stock quotes.
@@ -116,7 +119,24 @@ pub struct VenueConnection {
     /// The delivered secret holding the vendor's API key, in place of `api_key_env`. Until it is
     /// delivered this connection stays off, under `secret_missing`.
     pub api_key_secret: Option<SecretName>,
+    /// The OAuth login whose bearer token the WebSocket handshake carries: required for CME and
+    /// refused for every other venue.
+    pub oauth: Option<OAuthSection>,
     pub symbols: Vec<VenueSymbol>,
+}
+
+/// An OAuth 2.0 client-credentials login (RFC 6749, section 4.4) at the venue's token endpoint. The
+/// client ID and its secret are delivered secrets: a production build reads no credential from the
+/// environment, and until both are delivered the connection stays off, under `secret_missing`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OAuthSection {
+    /// The token endpoint: `https://` on the venue's own domain.
+    pub token_url: String,
+    /// The delivered secret holding the client ID, CME's API ID.
+    pub client_id_secret: SecretName,
+    /// The delivered secret holding the client secret, the API ID's password.
+    pub client_secret_secret: SecretName,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -130,7 +150,8 @@ pub struct VenueSymbol {
     pub contract: Option<String>,
 }
 
-/// A vendor API key. `Debug` hides it; read it with `expose` where it is used.
+/// A vendor credential: an API key, an OAuth client ID or secret, or a bearer token. `Debug` hides
+/// it; read it with `expose` where it is used.
 #[derive(Clone)]
 pub struct ApiKey(String);
 
@@ -156,6 +177,7 @@ impl Venue {
     pub fn name(self) -> &'static str {
         match self {
             Venue::Bitstamp => "bitstamp",
+            Venue::Cme => "cme",
             Venue::Coinbase => "coinbase",
             Venue::Kraken => "kraken",
             Venue::Massive => "massive",
@@ -167,6 +189,7 @@ impl Venue {
     fn domain(self) -> &'static str {
         match self {
             Venue::Bitstamp => "bitstamp.net",
+            Venue::Cme => "cmegroup.com",
             Venue::Coinbase => "coinbase.com",
             Venue::Kraken => "kraken.com",
             Venue::Massive => "massive.com",
@@ -183,6 +206,11 @@ impl Venue {
     pub(super) fn needs_key(self) -> bool {
         matches!(self, Venue::Massive | Venue::Tradermade)
     }
+
+    /// Whether the venue's WebSocket handshake needs an OAuth bearer token.
+    fn needs_oauth(self) -> bool {
+        self == Venue::Cme
+    }
 }
 
 impl ApiKey {
@@ -197,6 +225,11 @@ impl ApiKey {
     /// The key a delivered secret holds.
     pub(crate) fn delivered(value: &SecretValue) -> Self {
         ApiKey(value.expose().to_owned())
+    }
+
+    /// A credential the node obtained or derived, such as a bearer token.
+    pub(crate) fn obtained(value: String) -> Self {
+        ApiKey(value)
     }
 
     /// The key, for the one place that authenticates with it.
@@ -228,6 +261,9 @@ impl VenuesSection {
     /// - a URL that does not parse as `wss://` with a host on the venue's own domain (for Massive,
     ///   with one of its feed paths)
     /// - an API key missing for a vendor or given for a public venue
+    /// - an OAuth login missing for CME or given for another venue, or its token URL not `https://`
+    ///   on the venue's own domain
+    /// - a CME symbol that does not name, as `<product>:<YYYYMM>`, the contract it quotes
     /// - a symbol listed twice on one connection, or a market and contract, or a URL, listed twice
     ///   for one venue
     pub(super) fn validate(&self) -> anyhow::Result<()> {
@@ -246,6 +282,7 @@ impl VenuesSection {
         let mut endpoints = BTreeSet::new();
         for conn in &self.connections {
             let name = conn.venue.name();
+            ensure!(conn.oauth.is_some() == conn.venue.needs_oauth(), "{name} oauth must be set exactly for cme");
             conn.validate_endpoint()?;
             // A venue's alerts name the connection by its URL, so no two of its connections share one.
             ensure!(endpoints.insert((conn.venue, conn.url.as_str())), "{name} lists url {} twice", conn.url);
@@ -261,6 +298,10 @@ impl VenuesSection {
             let mut symbols = BTreeSet::new();
             for s in &conn.symbols {
                 ensure!(symbols.insert(s.symbol.as_str()), "{name} lists symbol {} twice", s.symbol);
+                if conn.venue == Venue::Cme {
+                    check_cme_symbol(&s.symbol, s.contract.as_deref())
+                        .map_err(|reason| anyhow!("{name} symbol {}: {reason}", s.symbol))?;
+                }
                 let contract = s.contract.as_deref().map(|c| format!(" contract {c}")).unwrap_or_default();
                 ensure!(
                     instruments.insert((conn.venue, s.market, s.contract.as_deref())),
@@ -274,7 +315,7 @@ impl VenuesSection {
 }
 
 impl VenueConnection {
-    /// Checks the endpoint is the venue's own, over TLS.
+    /// Checks the endpoint, and any token endpoint, is the venue's own, over TLS.
     /// Error cases:
     /// - as for `VenuesSection::validate`
     fn validate_endpoint(&self) -> anyhow::Result<()> {
@@ -285,6 +326,12 @@ impl VenueConnection {
         ensure!(uri.host().is_some_and(|host| self.venue.serves(host)), "{name} url must be on {domain}");
         if self.venue == Venue::Massive {
             ensure!(MASSIVE_PATHS.contains(&uri.path()), "{name} url must be one of its {MASSIVE_PATHS:?} feeds");
+        }
+        if let Some(oauth) = &self.oauth {
+            let token: Uri = oauth.token_url.parse().with_context(|| format!("{name} oauth.token_url"))?;
+            ensure!(token.scheme_str() == Some("https"), "{name} oauth.token_url must be https://");
+            let on_domain = token.host().is_some_and(|host| self.venue.serves(host));
+            ensure!(on_domain, "{name} oauth.token_url must be on {domain}");
         }
         Ok(())
     }

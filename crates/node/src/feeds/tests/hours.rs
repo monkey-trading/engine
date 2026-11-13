@@ -22,7 +22,7 @@ use crate::config::{Genesis, Venue, VenueConnection, VenueSymbol};
 use crate::feeds::tests::fake::{accept, bitstamp_book, fast, kraken_book, listen, next_alert, send, stream};
 use crate::feeds::tests::rwa_support::{around_the_clock, commands, events_of, listing, priced, wait_for};
 use crate::feeds::tests::scenario::Node;
-use crate::feeds::venue::{self, Timing, tls_config};
+use crate::feeds::venue::{self, Credentials, Timing, tls_config};
 use crate::test_support::{Alert, LOADED_WAIT, capture_alerts, dev_config};
 
 const US500: MarketId = 20;
@@ -307,8 +307,8 @@ fn start_feed_timed(node: &Node, venue: Venue, symbols: &[(MarketId, &str, Optio
             contract: contract.map(Into::into),
         })
         .collect();
-    let conn = VenueConnection { venue, url, api_key_env: None, api_key_secret: None, symbols };
-    tokio::spawn(venue::run(conn, None, timing, tls_config().expect("tls config"), node.tx.clone()));
+    let conn = VenueConnection { venue, url, api_key_env: None, api_key_secret: None, oauth: None, symbols };
+    tokio::spawn(venue::run(conn, Credentials::Public, timing, tls_config().expect("tls config"), node.tx.clone()));
 }
 
 /// The contracts the quotes of `applied` name, in order.

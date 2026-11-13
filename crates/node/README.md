@@ -149,11 +149,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   a symbol's book since one read before its ping sequences that book's mid again, stamped no later
   than the venue's clock when the ping went out, for up to 5 s after the book was read
 - Live FX, index and commodity futures, and US share prices from market-data vendors: Massive
-  (FX, futures, and stocks feeds) and TraderMade over WebSocket with their API keys; quotes for a
+  (FX, futures, and stocks feeds) and TraderMade over WebSocket with their API keys, and CME Group's
+  WebSocket API for its exchanges' futures, whose handshake carries an OAuth bearer token fetched
+  with a delivered client ID and secret and replaced before it expires; quotes for a
   futures contract carry its name, and a feed holds back quotes stamped or sent while their market
   is closed and quotes for a contract the market does not take
-- Alerts for refused venue messages (at most one a minute per venue, counting the rest, with any API
-  key redacted), venue outages, symbols with no fresh quote while their market is open, venue
+- Alerts for refused venue messages (at most one a minute per venue, counting the rest, excerpted
+  only from a venue that holds no credential), a bearer token request a venue's token endpoint fails or refuses,
+  venue outages, symbols with no fresh quote while their market is open, venue
   times well ahead of the host clock, a venue stream past its delay bound, and a host clock falling
   behind monotonic time
 - A `house_deficit` alert when house NAV falls below zero, at most one a minute while it keeps
@@ -1001,7 +1004,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   burst, past which updates coalesce to the newest), holding a repeat of the sequenced mid until
   the engine's quote is half of `stale_after` or the market's `max_age_ms` old, and the emit timer
   that releases what the budget held or a repeat that falls due
-- `src/feeds/venue/transport.rs` — a connection's messages and pings over a WebSocket over TLS
+- `src/feeds/venue/transport.rs` — a connection's messages and pings over a WebSocket over TLS,
+  and a close frame read by its code and the length of its reason; its tests are in
+  `src/feeds/venue/transport/tests.rs`
 - `src/feeds/venue/delay.rs` — how far behind a connection's stream can be, from its pings on the
   monotonic clock, refusing frames past `feeds.venues.max_delay` and giving each quote the time its
   bound runs out; its tests are in `src/feeds/venue/delay/tests.rs`
@@ -1022,13 +1027,28 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the emit path arming its timer and clearing its memory, and the engine's index compared at every
   millisecond against an engine handed every update, under sequencer delays inside and past the
   refresh margin
-- `src/feeds/venue/setup.rs` — the TLS client config and reconnect backoff every connection shares
+- `src/feeds/venue/setup.rs` — the timing from the config, the TLS client config and reconnect
+  backoff every connection shares
+- `src/feeds/venue/auth.rs` — what a connection authenticates with: an API key, or an OAuth client
+  of the venue's token endpoint whose bearer token the handshake carries, refetched three quarters
+  of the way through its life, and the `venue_token_failed` alert; its tests, against the loopback
+  CME token endpoint, are in `src/feeds/venue/auth/tests.rs`
+- `src/feeds/venue/replace.rs` — the connection that replaces one on a fresh token, opened beside it
+  and switched to once it is subscribed, a ping sent then is answered, and a book it then sends is
+  in hand (or a ping interval has passed), that ping answered within `feeds.venues.max_delay` or
+  sent again, so the venue's quotes run on under a current delay bound;
+  one that fails leaves the old connection streaming for a retry on a new token; its tests are in
+  `src/feeds/venue/replace/tests.rs`
+- `src/feeds/venue/receive.rs` — reading one venue message into the books a connection holds
 - `src/feeds/venue/tests.rs` — venue task unit tests: alert throttling and silence windows on
   paused time, held quotes against the engine's rule, kept books for unsubscribed symbols, the
   freshness rule, and backoff
 - `src/feeds/coinbase.rs`, `src/feeds/bitstamp.rs` — venue adapters
 - `src/feeds/massive.rs`, `src/feeds/tradermade.rs` — the Massive and TraderMade adapters: login,
   subscription, and quotes; Massive's tests are in `src/feeds/massive/tests.rs`
+- `src/feeds/cme/mod.rs` — the CME Group adapter: its login status, the top-of-book subscription of
+  each product whole, outrights only, each `TOB` restated whole, and the config check that a symbol
+  names its contract by product code and period; its message-shape tests are in `src/feeds/cme/tests.rs`
 - `src/feeds/kraken/mod.rs` — the Kraken adapter: a kept order book verified against Kraken's
   checksum; `src/feeds/kraken/tests.rs` replays recorded book messages against it
 - `src/feeds/tests/mod.rs` — venue tasks against loopback venues: what they sequence, refuse,
@@ -1063,6 +1083,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   Kraken stand-ins price BTC-USD; a toxic client pays its tier's add-on from its 21st fill, as the
   test computes from the moves, an edgeless client stays at the best price, round trips leave the
   score at its tier, and the log replays and a restart recovers the score
+- `src/feeds/tests/cme_support.rs` — a loopback CME token endpoint and market data stream behind TLS
+- `src/feeds/tests/cme.rs` — the CME feed against the loopback CME: rollovers with no gap in its
+  quotes, a slow or failed replacement, connections ended at their token's expiry, a quiet closure,
+  a refused token alerted with no credential or token logged, and the dev scenario, which prices US
+  500 from CME and Massive through the sequencer and replays the log
 - `src/feeds/tests/hours.rs` — quotes held back while a market is closed and for a contract the
   market does not take, without silence alerts
 - `src/feeds/tests/rwa_support.rs` — schedules open around the clock, signed relistings, a record
@@ -2737,6 +2762,20 @@ api_key_env = "MASSIVE_API_KEY"
 symbols = [{ market = 20, symbol = "ESZ6", contract = "ESZ6" }, { market = 20, symbol = "ESH7", contract = "ESH7" }]
 ```
 
+A CME Group connection logs in with OAuth instead of a key: its `oauth` names CME's token endpoint and
+the delivered secrets holding the API ID and its password, which no build reads from the
+environment. A symbol names a contract as CME's subscription does, by product code and period
+(`ES:202612`), since a contract code's one-digit year does not fix the decade, and the config refuses
+one that does not name its `contract`:
+
+```toml
+[[feeds.venues.connections]]
+venue = "cme"
+url = "wss://markets.api.cmegroup.com/marketdatastream/v1"
+oauth = { token_url = "https://auth.cmegroup.com/as/token.oauth2", client_id_secret = "cme_api_id", client_secret_secret = "cme_api_password" }
+symbols = [{ market = 20, symbol = "ES:202612", contract = "ESZ6" }, { market = 20, symbol = "ES:202703", contract = "ESH7" }]
+```
+
 ### Dated benchmark worker
 
 Append `config/benchmark-publishers.toml` to a complete node config to enable publisher ingestion.
@@ -2857,6 +2896,9 @@ cargo test -p engine-node --features production --lib production_build
 # Dev scenario: loopback crypto venues price BTC-USD; a toxic client's tier from its 21st fill, an
 # edgeless client at the best price, round trips that leave the score, a replay and a restart
 ./scripts/dev-toxicity.sh
+# Dev scenario: a loopback CME token endpoint and stream behind TLS price US 500 beside a loopback
+# Massive across token rollovers; a refused token alerts and leaves it unpriced, and the log replays
+./scripts/dev-cme-feeds.sh
 # Dev scenario: a signed dividend and four-for-one split through the TLS API, restart and replay
 ./scripts/dev-corporate-actions.sh
 # Dev scenario: the Certificate Transparency watcher against a mock node and a loopback stand-in

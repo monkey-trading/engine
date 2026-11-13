@@ -203,8 +203,12 @@ an index: load only the rule whose hint matches the current action.
   signed request, never on a schedule. It also has price feeds: live crypto
   venue WebSockets and RWA market-data vendors (`feeds/`, one adapter per venue: Massive and
   TraderMade over WebSocket, with API keys from the delivered secrets the config names, or in a
-  development build environment variables; every venue is reached over TLS that ends in the
-  enclave, the only sources that may set a price; `feeds/venue/delay.rs`
+  development build environment variables, and CME Group's WebSocket API for its exchanges'
+  futures (`feeds/cme/`), whose handshake carries an OAuth bearer token the node fetches with a
+  delivered client ID and secret (`feeds/venue/auth.rs`), each connection replaced before its token
+  expires by one opened beside it on the next (`feeds/venue/replace.rs`); every
+  venue is reached over TLS that ends in the enclave, the only sources that may set a price;
+  `feeds/venue/delay.rs`
   bounds how far behind a connection's stream can be from its pings on the monotonic clock, past
   which its frames count as no quote, `feeds/venue/standing.rs` re-sequences a quiet book on
   Coinbase, Kraken and Bitstamp connections for up to 5 s, stamped at the answered ping, and
@@ -326,7 +330,8 @@ an index: load only the rule whose hint matches the current action.
   `ct-watch.toml` is the Certificate Transparency watcher's config, documenting what it needs: the
   domain, the node and its release manifest, the logs to follow, and alert routing.
   A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,
-  `api_key_secret`, or `url_secret`, with `[tee.sealing.secrets]` to receive them; a `production` build
+  `api_key_secret`, a CME connection's `oauth.client_id_secret` and `oauth.client_secret_secret`, or
+  `url_secret`, with `[tee.sealing.secrets]` to receive them; a `production` build
   refuses `api_key_env` and `url_env`, but for `run --standby`, which no enclave runs.
   `test-keys.toml` lists the keys whose private keys the repo publishes for development (the dev
   configs' operator key, explicit published mock enclave signer, shared access-source test
@@ -470,7 +475,8 @@ an index: load only the rule whose hint matches the current action.
   vault's Anvil fixture; `dev-rwa-feeds.sh`, the RWA price feeds dev scenario against local
   stand-ins for the market-data vendors; `dev-toxicity.sh`, the toxicity score's dev scenario against
   loopback crypto venue stand-ins: a toxic client's tier from its 21st fill, an edgeless client at the
-  best price, round trips that leave a score at its tier, and a replay and restart; `dev-signed-api.sh`, the signed API answers scenario:
+  best price, round trips that leave a score at its tier, and a replay and restart; `dev-cme-feeds.sh`, the CME Group feed dev scenario against
+  a local stand-in for CME's token endpoint and stream beside a local Massive; `dev-signed-api.sh`, the signed API answers scenario:
   verified responses and stream frames, and refused tampering, replay and gaps; `dev-key-lifecycle.sh`,
   the enclave key lifecycle scenario on Anvil (keys only for the vault's current release,
   registration of new keys, a restart with a withdrawal outstanding, a refused start without the
@@ -524,7 +530,7 @@ an index: load only the rule whose hint matches the current action.
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the spreads scenario (its own job, compiling the node's tests), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
-  score dev scenario (`dev-toxicity`), the signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
+  score dev scenario (`dev-toxicity`), the CME Group feed dev scenario, the signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
@@ -670,6 +676,12 @@ Run from the repo root:
   then the log replays; no vendor account or key)
 - Toxicity score dev scenario: `./scripts/dev-toxicity.sh` (loopback Coinbase and Kraken stand-ins
   price BTC-USD under the dev genesis's 1 bp fixture floor; needs only Cargo, about four minutes)
+- CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token
+  endpoint and market data stream issues twelve-second tokens, answers later logins late, and prices
+  US 500 beside a loopback Massive; US 500 fills throughout two rollovers, each switching to a
+  connection opened beside the old one, a refused token raises `venue_token_failed` then
+  `venue_feed_down` and leaves US 500 unpriced with no credential or token logged, and the log
+  replays; no CME account or key)
 - Attestation verifier dev scenario: `./scripts/dev-attestation-verifier.sh` (a loopback
   key-distribution stand-in issues a test certificate chain; a test-signed SEV-SNP report verifies
   against a release manifest and names the release, while a mock quote, an unlisted configuration,

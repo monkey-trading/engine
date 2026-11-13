@@ -108,9 +108,10 @@ shows only a market that never priced. Match the alerts to the cause:
 
 | Alert | Level | Meaning | Do |
 | --- | --- | --- | --- |
-| `venue_feed_down` | Warning | A connection to a venue or vendor is down; the node reconnects with backoff (`reconnect_min` to `reconnect_max`). Fields: `venue`, `feed`. | Check the vendor's status and the account (plan, key, entitlement, connection limit). Nothing to do on the node. |
+| `venue_feed_down` | Warning | A connection to a venue or vendor is down; the node reconnects with backoff (`reconnect_min` to `reconnect_max`). For CME it is also a reconnect with no bearer token to connect with. Fields: `venue`, `feed`. | Check the vendor's status and the account (plan, key, entitlement, connection limit); for CME, see [CME Group's feed](#cme-groups-feed). Nothing to do on the node. |
 | `venue_symbol_silent` | Warning | A symbol has had no fresh quote for `feeds.venues.timeout` while its market is open. The connection is replaced. | Check the symbol is still the vendor's (a ticker or contract change); a wrong symbol is a config fix. |
-| `venue_message_refused` | Warning | The node refused a vendor message (malformed, unknown). At most one a minute, with a count; API keys are redacted. | Read the excerpt. A vendor format change needs a node release. |
+| `venue_token_failed` | Warning | CME's token endpoint failed or refused a bearer token request. While the connection's token has life left, the feed still prices. It resolves at the next request the endpoint grants. Fields: `venue`, `feed`. | See [CME Group's feed](#cme-groups-feed). |
+| `venue_message_refused` | Warning | The node refused a vendor message (malformed, unknown), or CME refused a login or subscription. At most one a minute, with a count. A venue that holds no credential has the message excerpted; one that does (CME, Massive, TraderMade) has it named by its length and a SHA-256 prefix, since it could echo a credential. | Read the reason and the excerpt, or tell messages apart by their hashes. A vendor format change needs a node release; for CME's refusals, see [CME Group's feed](#cme-groups-feed). |
 | `venue_clock_ahead` | Warning | A venue's timestamps are well ahead of the host clock. | Check `clock_drift` and the host clock; quotes ahead of sequenced time are rejected (`prices_rejected`, reason `quote_ahead`). |
 | `venue_delayed` | Warning | A connection's pings show its stream may be further behind than `feeds.venues.max_delay`, so what it reads counts as no quote, and a market needing that venue has no price. It resolves when a frame next counts. Fields: `venue`, `feed`. | Check the network path to the venue, and the host's load. If the path is healthy, the host may be holding the stream back: read [incident-response.md](incident-response.md). |
 | `prices_rejected` | Warning | The engine refused a price update. The `reason` is one of `unknown_market`, `malformed_quote`, `quote_ahead`, `market_closed`, `contract_not_taken`, `other`. | `contract_not_taken` on a futures market means a quote for a contract the market is not on: see below. |
@@ -152,6 +153,45 @@ time its listing names.
   The vendors' symbols for the new contract must be in the config first; that is a new release.
 - `contract_not_taken` in `prices_rejected`: a quote for a contract the market is not taking now.
   Expected around a roll; persistent means the feed's symbols and the listing's contracts disagree.
+
+### CME Group's feed
+
+Markets 20 to 22, 25 and 30 to 32 price from Massive and from CME Group's own WebSocket API. A CME
+connection's handshake carries a bearer token the node fetches from CME's token endpoint with the
+API ID and its password, the delivered secrets the connection's `oauth` names. Without both, the
+connection stays off under `secret_missing`, and those markets have Massive alone, which is no price
+at `min_sources = 2`. Three quarters of the way through a token's life the node fetches the next
+while the connection streams, opens a second connection on it, and switches to that once it is
+subscribed, so CME's quotes run on; a rollover raises nothing. If the second connection fails, the
+first streams on and the node tries again on a new token after a backoff, until the first's token
+expires.
+
+- **A failed or refused token request.** The first raises `venue_token_failed` with `venue = "cme"`
+  and the endpoint's answer by its HTTP status and OAuth error code, such as
+  `token request refused (401 Unauthorized): invalid_client` (the endpoint's own text is not logged);
+  the next request the endpoint grants resolves it. While the connection's token still has life, the
+  feed keeps pricing and retries the refresh with backoff, so the alert gives warning before the
+  token expires: with CME's 30-minute tokens, refreshed at three quarters of their life, about seven
+  minutes. Once the token expires the connection ends, and the reconnect, with no token, raises
+  `venue_feed_down` too. Check that the API ID is entitled and that the delivered values are for CME's
+  production environment: CME issues them per environment. New values are a new delivery, which the
+  node takes at its next restart ([key-recovery.md](key-recovery.md), "Secrets").
+- **A refused login.** CME answers `LOGINERR`: `venue_message_refused` with "login refused", then
+  `venue_feed_down` as above. Each new try at a rollover fetches its own token, and so does each
+  reconnect but one that opens on a token a rollover fetched ahead.
+- **A refused subscription.** CME answers `SUBSCRIPTION_ERROR`: `venue_message_refused` names each
+  error's code, such as "subscription refused: ERROR_400" (CME's message text is not logged), and
+  the connection is replaced once it has gone `feeds.venues.timeout` without a fresh quote. The node
+  subscribes to each product whole and passes over the contracts no symbol names, so a contract CME
+  no longer lists cannot refuse the rest. A symbol names a contract by product code and period
+  (`ES:202612`); a wrong one is a config fix, a new
+  release. CME's documentation lists the codes `ERROR_400`, `ERROR_401` and `ERROR_403` and does not
+  define the last two: take those to CME with the API ID. The node subscribes a connection's
+  products in one request, so a refusal for one exchange's entitlement can cost every product on it.
+- **A refused top of book.** A `TOB` naming a configured contract under an instrument that is not
+  its outright, such as a calendar spread sharing its period (`ESZ6-ESH7`), or naming it twice, is
+  refused whole: `venue_message_refused` names the contract and the message's length and hash. The
+  node takes no price from it; take the time and the contract to CME.
 
 ### Benchmark rates
 

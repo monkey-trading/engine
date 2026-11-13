@@ -1,7 +1,8 @@
 //! Secrets the config names but never holds. The file's SHA-256 is attested and the file is
 //! published, so a credential reaches the node only in a delivered bundle (`crate::secrets`), and the
 //! config says which secret each field reads: `{name}` inside a URL's path or query for a provider's
-//! key, `api_key_secret` for a vendor's, and `url_secret` for an alert webhook's URL.
+//! key, `api_key_secret` for a vendor's, `oauth.client_id_secret` and `oauth.client_secret_secret`
+//! for a vendor's OAuth login, and `url_secret` for an alert webhook's URL.
 //!
 //! A URL names only its key, never its origin. The custody quorum's providers credit deposits, so
 //! the host and scheme stay in the file the timelock approves (the release's config hash), and a
@@ -75,7 +76,8 @@ pub(crate) enum SecretUse {
     /// keys, a smaller custody quorum would weaken what credits deposits, and no screening source
     /// would admit what it should refuse. The node holds until it has every one.
     Required,
-    /// A vendor's API key: the node runs without that connection, and its markets go unpriced.
+    /// A vendor's API key or OAuth client credentials: the node runs without that connection, and
+    /// its markets go unpriced.
     VendorKey,
     /// An alert webhook's URL: the node runs, and those alerts are only logged.
     WebhookUrl,
@@ -321,8 +323,14 @@ impl NodeConfig {
             url(&access.endpoint, "access.endpoint".to_owned())?;
         }
         for connection in self.feeds.venues.iter().flat_map(|venues| &venues.connections) {
-            if let Some(name) = &connection.api_key_secret {
-                let field = format!("feeds.venues.connections[{}].api_key_secret", connection.url);
+            let oauth = connection.oauth.iter().flat_map(|oauth| {
+                [
+                    ("oauth.client_id_secret", &oauth.client_id_secret),
+                    ("oauth.client_secret_secret", &oauth.client_secret_secret),
+                ]
+            });
+            for (key, name) in connection.api_key_secret.iter().map(|name| ("api_key_secret", name)).chain(oauth) {
+                let field = format!("feeds.venues.connections[{}].{key}", connection.url);
                 named.push(NamedSecret { name: name.clone(), field, usage: SecretUse::VendorKey });
             }
         }

@@ -114,6 +114,17 @@ impl DelayProbe {
         not_after.unwrap_or_else(std::time::Instant::now)
     }
 
+    /// Takes over the bounds `earlier`, the pings of the connection this one replaces, noted for
+    /// quotes not yet sequenced, keeping the stricter of two for one quote.
+    pub(super) fn keep_bounds(&mut self, earlier: DelayProbe) {
+        for (symbol, noted) in earlier.not_after {
+            let kept = self.not_after.entry(symbol).or_default();
+            for (ts, not_after) in noted {
+                kept.entry(ts).and_modify(|kept| *kept = (*kept).min(not_after)).or_insert(not_after);
+            }
+        }
+    }
+
     /// How long the oldest unanswered ping has waited at `now`.
     fn waiting(&self, now: Instant) -> Option<Duration> {
         self.unanswered.front().map(|ping| now.saturating_duration_since(ping.sent))

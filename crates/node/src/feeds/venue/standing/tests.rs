@@ -9,6 +9,7 @@ use crate::clock::now_ms;
 use crate::config::{VenueConnection, VenueSymbol};
 use crate::feeds::tests::fake::{FakeEngine, WAIT, fast};
 use crate::feeds::tests::rwa_support::around_the_clock;
+use crate::feeds::venue::Credentials;
 use crate::feeds::venue::adapter::Adapter;
 use crate::feeds::venue::setup::tls_config;
 
@@ -340,7 +341,7 @@ fn a_redated_quote_dated_ahead_of_a_stepped_back_host_clock_is_refused_and_its_b
 #[test]
 fn only_venues_measured_to_answer_pings_in_order_redate() {
     let measured = [Venue::Bitstamp, Venue::Coinbase, Venue::Kraken];
-    let others = [Venue::Massive, Venue::Tradermade];
+    let others = [Venue::Cme, Venue::Massive, Venue::Tradermade];
     measured.into_iter().for_each(|venue| assert!(redates(venue), "{venue:?}"));
     others.into_iter().for_each(|venue| assert!(!redates(venue), "{venue:?}"));
 }
@@ -374,9 +375,10 @@ fn feed_into(venue: Venue, symbols: &[(MarketId, &str)], tx: mpsc::Sender<crate:
         url: "ws://127.0.0.1:1".into(),
         api_key_env: None,
         api_key_secret: None,
+        oauth: None,
         symbols: symbols.collect(),
     };
-    VenueFeed::new(conn, None, fast(WAIT), tls_config().expect("tls config"), tx)
+    VenueFeed::new(conn, Credentials::Public, fast(WAIT), tls_config().expect("tls config"), tx)
 }
 
 /// A Bitstamp feed for `btcusd` (market 1) with a 2 s delay bound, and the adapter it reads with:

@@ -13,12 +13,14 @@ use std::time::Duration;
 use anyhow::Context;
 use engine_core::types::AccountId;
 use futures_util::future::BoxFuture;
+use rustls::ClientConfig;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval_at, sleep, timeout};
 use tracing::{error, info, warn};
 
-use crate::config::{ApiKey, NamedSecret, NodeConfig, SecretUse, Values, VenueConnection};
+use crate::config::{ApiKey, NamedSecret, NodeConfig, SecretName, SecretUse, Values, VenueConnection};
+use crate::feeds::venue::{Credentials, OAuthClient};
 use crate::handover::fetch_secrets;
 use crate::node::keys::{KeyStart, attestor_for, sealer};
 use crate::secrets::{Authority, Listener, SignedBundle};
@@ -72,9 +74,10 @@ struct Moving<'a> {
 }
 
 impl Delivered {
-    /// Whether `connection` names a key this start lacks, so it stays off.
+    /// Whether `connection` names a key or OAuth secret this start lacks, so it stays off.
     pub(crate) fn withholds(&self, connection: &VenueConnection) -> bool {
-        connection.api_key_secret.as_ref().is_some_and(|name| !self.values.contains_key(name))
+        let oauth = connection.oauth.iter().flat_map(|oauth| [&oauth.client_id_secret, &oauth.client_secret_secret]);
+        connection.api_key_secret.iter().chain(oauth).any(|name| !self.values.contains_key(name))
     }
 
     /// `connection`'s API key: the delivered one it names, or the variable it names.
@@ -85,6 +88,28 @@ impl Delivered {
             Some(name) => Ok(self.values.get(name).map(ApiKey::delivered)),
             None => connection.api_key(|var| std::env::var(var).ok()),
         }
+    }
+
+    /// What `connection` authenticates with: a client of its token endpoint, over TLS with `tls` and
+    /// bounded by `timeout`, with the delivered OAuth secrets it names, or its API key, or nothing.
+    /// Error cases:
+    /// - a named OAuth secret is not delivered (see `withholds`), or the token endpoint's client
+    ///   cannot be built
+    /// - a named variable is unset or empty
+    pub(crate) fn credentials(
+        &self,
+        connection: &VenueConnection,
+        tls: &ClientConfig,
+        timeout: Duration,
+    ) -> anyhow::Result<Credentials> {
+        let Some(oauth) = &connection.oauth else {
+            return Ok(self.api_key(connection)?.map_or(Credentials::Public, Credentials::ApiKey));
+        };
+        let delivered = |name: &SecretName| {
+            self.values.get(name).map(ApiKey::delivered).with_context(|| format!("secret {name} is not delivered"))
+        };
+        let (id, secret) = (delivered(&oauth.client_id_secret)?, delivered(&oauth.client_secret_secret)?);
+        Ok(Credentials::OAuth(OAuthClient::new(&oauth.token_url, id, secret, tls, timeout)?))
     }
 }
 

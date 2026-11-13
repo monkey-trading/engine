@@ -8,6 +8,8 @@ use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 
 use crate::alerts;
+use crate::config::SecretValue;
+use crate::feeds::venue::tls_config;
 use crate::handover::{receive, send};
 use crate::metrics::Metrics;
 use crate::secrets::delivery::{self, Hello, Offer, Reply};
@@ -168,6 +170,31 @@ async fn a_public_venue_is_never_withheld() {
     connection.api_key_secret = None;
     assert!(!delivered.withholds(&connection), "no secret to lack");
     assert!(delivered.api_key(&connection).unwrap().is_none(), "a public venue has no key");
+}
+
+#[tokio::test]
+async fn an_oauth_connection_is_withheld_until_both_its_secrets_are_delivered() {
+    let mut connection = config("startup-oauth").feeds.venues.as_ref().unwrap().connections[0].clone();
+    connection.api_key_secret = None;
+    let oauth = "token_url = 'https://auth.cmegroup.com/as/token.oauth2'\nclient_id_secret = 'cme_id'\n\
+                 client_secret_secret = 'cme_secret'";
+    connection.oauth = Some(toml::from_str(oauth).unwrap());
+    let tls = tls_config().unwrap();
+    let name = |name: &str| SecretName::try_from(name.to_owned()).unwrap();
+    // Either secret alone leaves the connection off.
+    for (only, value) in [("cme_id", "FAKE-id"), ("cme_secret", "FAKE-secret")] {
+        let mut partial = Delivered::default();
+        partial.values.insert(name(only), SecretValue::test(value));
+        assert!(partial.withholds(&connection), "only {only} is delivered");
+        assert!(partial.credentials(&connection, &tls, Duration::from_secs(1)).is_err());
+    }
+    let mut delivered = Delivered::default();
+    delivered.values.insert(name("cme_id"), SecretValue::test("FAKE-id"));
+    delivered.values.insert(name("cme_secret"), SecretValue::test("FAKE-secret"));
+    assert!(!delivered.withholds(&connection));
+    let credentials = delivered.credentials(&connection, &tls, Duration::from_secs(1)).unwrap();
+    assert!(matches!(credentials, Credentials::OAuth(_)), "{credentials:?}");
+    assert!(!format!("{credentials:?}").contains("FAKE"), "{credentials:?}");
 }
 
 #[tokio::test]
