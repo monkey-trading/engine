@@ -345,7 +345,11 @@ draw deadline chooses between that turn's seed and the fallback, a member's list
 read when the draw lands, so a deregistration or approval withdrawal that lands inside the window lets
 the drawer choose by ordering its draw around it, and nothing in the node draws, so a turn nobody
 draws leaves the member before it named;
-a turn's key signs from its boundary only when a set mirrored at least seven days earlier names it;
+a turn's key signs from its boundary only when a set mirrored at least seven days earlier names it,
+from V53 counting from the first of the unbroken run of mirrored sets that named its candidate with
+that key; a node activates its build's newest protocol version at boot, and an older build cannot
+read the log after that, so every member of the rotation sets must run a release that implements a
+version before any member's node activates it;
 the vault names the turn's release, in the generation the schedule fixed, from the boundary without a
 transaction, and both enclaves of a handover accept the turn's member from the finalised schedule
 once their trusted time reaches the boundary, the turn the schedule names then being the only holding
@@ -355,7 +359,9 @@ enclave's Roughtime replies back can delay a handover but not bring it forward, 
 within a finality period of its boundary waits for finality; a holder the schedule names again in a new
 generation, after a turn nobody took, seals its live keys in that generation on its sequencing thread
 before it logs `TurnTaken`, so no copy is sealed after it has stopped for a handover; the member earns the operator's share only from
-its enclave's `TurnTaken` to the end of its turn, and an incumbent past its turn earns nothing;
+its enclave's `TurnTaken` to the end of its turn, an incumbent past its turn earns nothing, and from
+V53 the operator in office before the first turn earns nothing past the moment that turn applies, its
+boundary or its mirror when later;
 promotion over turns, which is the liveness rule's, is not built yet, so a failed member holds its
 turn until the next boundary and the governance fallback (rotation off and `installOperator` once the
 drawn turns end) applies; the enclave keys and the vault's current release do not yet follow an election (#44); the dev configurations explicitly

@@ -1,6 +1,7 @@
 //! `V51`: under daily turns the operator's share counts a member's time in office from its
 //! `TurnTaken` to the end of its turn. The time between a turn's boundary and its member's
-//! `TurnTaken`, and an incumbent's time past its turn, go to stakers.
+//! `TurnTaken`, and an incumbent's time past its turn, go to stakers. From `V53` the account in office
+//! before any turn is in effect holds it only until the first turn applies.
 
 use engine_core::staking::TimeInOffice;
 use engine_core::turns::{DAY_MS, RegistryRotationSet, RegistryTurn, SetMember, TurnReason, boundary};
@@ -12,7 +13,12 @@ const MEMBER: AccountId = AccountId([0xd1; 20]);
 
 /// `at` under `V51` with rotation on and a set naming `MEMBER` under `key()` mirrored now.
 fn with_set(excess: u128) -> Harness {
-    let mut h = at(ProtocolVersion::V51, excess);
+    with_set_under(ProtocolVersion::V51, excess)
+}
+
+/// `with_set` under `version`.
+fn with_set_under(version: ProtocolVersion, excess: u128) -> Harness {
+    let mut h = at(version, excess);
     switch(&mut h, true);
     let members = vec![SetMember { candidate: MEMBER, admin_key: key(), weight: TokenUnits(1) }];
     let (block, chain_ref) = (h.log.len() as u64, "0xset:1".to_owned());
@@ -116,4 +122,32 @@ fn a_drawn_turn_keeps_earning_after_rotation_turns_off() {
     h.advance(HOUR_MS);
     h.cmd(Command::Tick);
     assert_eq!(office(&h).served.get(&MEMBER), Some(&(2 * HOUR_MS)));
+}
+
+#[test]
+fn before_any_turn_the_account_in_office_holds_it_only_until_the_first_turn_applies_from_v53() {
+    for version in [ProtocolVersion::V51, ProtocolVersion::V53] {
+        let mut h = with_set_under(version, 1_000_000_000);
+        let (start, turn) = epoch_with_boundary(&h);
+        let begins = boundary(turn).unwrap();
+        assign(&mut h, turn);
+        h.advance_to(start);
+        h.cmd(Command::Tick);
+        stake(&mut h, STAKER_A, 1);
+        // Nothing is sequenced from the boundary until the member's `TurnTaken`, an hour later.
+        h.advance_to(begins + HOUR_MS);
+        let release = alloy_primitives::B256::repeat_byte(7);
+        let taken = h.cmd(Command::TurnTaken { turn, release });
+        assert_eq!(taken.last(), Some(&Event::TurnTaken { turn, candidate: MEMBER, release }));
+        let config = h.engine.staking().unwrap().config;
+        let close_at = config.epoch_end(config.epochs_elapsed(h.ts));
+        let events = close(&mut h);
+        // Under `V51` the key in effect's address is credited the hour past the boundary; from `V53`
+        // its office ends as the first turn applies, and the hour goes to stakers.
+        let incumbent = if version == ProtocolVersion::V53 { begins - start } else { begins + HOUR_MS - start };
+        let part = |served: Millis| 200_000_000_u128 * served as u128 / DAY_MS as u128;
+        let mut expected = vec![(operator().address, part(incumbent)), (MEMBER, part(close_at - begins - HOUR_MS))];
+        expected.sort();
+        assert_eq!(shares(&events), expected, "{version:?}");
+    }
 }

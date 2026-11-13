@@ -14,10 +14,13 @@
 //!   authorised, so the previous turn's key signs nothing from then.
 //! - A turn whose key no set mirrored at least seven days before the turn applies names is refused:
 //!   credited, with the key in effect kept. A set's adoption is the log's notice of every key in it.
+//!   From `V53` the notice runs from the first of the unbroken run of mirrored sets naming the member's
+//!   candidate with that key, so a set mirrored late that names a member unchanged keeps its notice.
 //! - `RotateOperator` stays refused while rotation is on (`operator_bounds`).
 //! - The member's enclave logs `TurnTaken` when it first sequences its turn. While turns run, the
 //!   operator's share counts the member's time in office from then to the end of its turn; time
-//!   before a member takes its turn, or after its turn has ended, goes to stakers.
+//!   before a member takes its turn, or after its turn has ended, goes to stakers. From `V53` the
+//!   account in office before any turn is in effect holds it only until the first turn applies.
 //!
 //! A mirror that contradicts the log (before `V51` or staking, a reference already credited, a set
 //! out of order or malformed) is refused as `ElectionRejected`, as an election's is, and holds the
@@ -72,9 +75,14 @@ pub struct RotationSet {
     pub epoch: u64,
     /// When it takes effect on chain, in milliseconds.
     pub effective_at: Millis,
-    /// The sequenced time it was mirrored at: the log's notice of its keys starts here.
+    /// The sequenced time it was mirrored at: the log's notice of its keys starts here, but for the
+    /// members `noticed` lists.
     pub logged_at: Millis,
     pub members: Vec<SetMember>,
+    /// From `V53`, for each member the set mirrored before this one named with the same key, by
+    /// candidate, when the log's notice of that key began: the notice that set held for it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub noticed: BTreeMap<AccountId, Millis>,
 }
 
 /// One member of a rotation set.
@@ -164,8 +172,9 @@ impl DailyTurns {
     }
 
     /// Why an assignment from `set` naming `candidate` with `admin_key` cannot apply its key at
-    /// `applies_at`, if it cannot: the set is not kept, does not name them, or was logged less than
-    /// seven days before.
+    /// `applies_at`, if it cannot: the set is not kept, does not name them, or the log's notice of
+    /// that key began less than seven days before, from `V53` at the first of the unbroken run of
+    /// mirrored sets that named them.
     pub fn set_refusal(
         &self,
         set: u32,
@@ -173,21 +182,45 @@ impl DailyTurns {
         admin_key: AccountId,
         applies_at: Millis,
     ) -> Option<String> {
-        let notice = |recorded: &RotationSet| recorded.logged_at + NOTICE_MS <= applies_at;
-        let member = |recorded: &RotationSet| {
-            recorded.members.iter().any(|m| m.candidate == candidate && m.admin_key == admin_key)
-        };
+        let notice = |recorded: &RotationSet| recorded.noticed_at(candidate) + NOTICE_MS <= applies_at;
         match self.sets.get(&set) {
             None => Some(format!("set {set} is not among the sets mirrored")),
-            Some(recorded) if !member(recorded) => {
+            Some(recorded) if !recorded.names(candidate, admin_key) => {
                 Some(format!("set {set} does not name candidate {candidate} with key {admin_key}"))
             }
-            Some(recorded) if !notice(recorded) => Some(format!(
-                "set {set} was logged at {}, less than seven days before the turn applies at {applies_at}",
-                recorded.logged_at
-            )),
+            Some(recorded) if !notice(recorded) => Some(match recorded.noticed.get(&candidate) {
+                None => format!(
+                    "set {set} was logged at {}, less than seven days before the turn applies at {applies_at}",
+                    recorded.logged_at
+                ),
+                Some(noticed) => format!(
+                    "set {set} names the key the log has named since {noticed}, less than seven days before the \
+                     turn applies at {applies_at}"
+                ),
+            }),
             Some(_) => None,
         }
+    }
+}
+
+impl RotationSet {
+    /// Whether it names `candidate` with `admin_key`.
+    pub(crate) fn names(&self, candidate: AccountId, admin_key: AccountId) -> bool {
+        self.members.iter().any(|m| m.candidate == candidate && m.admin_key == admin_key)
+    }
+
+    /// When the log's notice of the key it names for `candidate` began.
+    pub(crate) fn noticed_at(&self, candidate: AccountId) -> Millis {
+        self.noticed.get(&candidate).copied().unwrap_or(self.logged_at)
+    }
+
+    /// The notice each of `members` that this set names with the same key carries from it.
+    fn carried_to(&self, members: &[SetMember]) -> BTreeMap<AccountId, Millis> {
+        members
+            .iter()
+            .filter(|m| self.names(m.candidate, m.admin_key))
+            .map(|m| (m.candidate, self.noticed_at(m.candidate)))
+            .collect()
     }
 }
 
@@ -237,12 +270,38 @@ impl Engine {
             return;
         }
         self.credit_registry_mirror(chain_ref, block);
-        let recorded = RotationSet { epoch, effective_at, logged_at: self.now, members: members.clone() };
+        let noticed = self.carried_notice(members);
+        let recorded = RotationSet { epoch, effective_at, logged_at: self.now, members: members.clone(), noticed };
         self.daily_turns.sets.insert(set, recorded);
         while !self.still_drawable() {
             self.daily_turns.sets.pop_first();
         }
         events.push(Event::RotationSetAdopted { set, epoch, effective_at });
+    }
+
+    /// From `V53`, the notice each of `members` keeps from the set mirrored last, which named its
+    /// candidate with the same key: the notice that set held for it. That set is always kept.
+    fn carried_notice(&self, members: &[SetMember]) -> BTreeMap<AccountId, Millis> {
+        let previous = self.daily_turns.sets.last_key_value().map(|(_, previous)| previous);
+        let Some(previous) = previous.filter(|_| self.protocol_version >= ProtocolVersion::V53) else {
+            return BTreeMap::new();
+        };
+        previous.carried_to(members)
+    }
+
+    /// At `V53`'s activation, by an `ActivateProtocol` to `version`, carries the notice through the sets
+    /// the log keeps, oldest first, as their adoptions under `V53` would have: a set mirrored late
+    /// before the activation keeps the notice the kept set before it gave its unchanged members. A set
+    /// the log no longer keeps carries nothing.
+    pub(crate) fn carry_kept_notices(&mut self, version: ProtocolVersion) {
+        if self.protocol_version >= ProtocolVersion::V53 || version < ProtocolVersion::V53 {
+            return;
+        }
+        let kept: Vec<u32> = self.daily_turns.sets.keys().copied().collect();
+        for pair in kept.windows(2) {
+            let carried = self.daily_turns.sets[&pair[0]].carried_to(&self.daily_turns.sets[&pair[1]].members);
+            self.daily_turns.sets.get_mut(&pair[1]).expect("a kept set").noticed = carried;
+        }
     }
 
     /// Whether the oldest set kept may still be drawn from: a turn draws from the set in effect at its
@@ -364,6 +423,15 @@ impl Engine {
             .taken
             .is_some_and(|taken| (taken.turn, taken.position) == (in_effect.turn, in_effect.position));
         Some(taken.then(|| (in_effect.candidate, turn_end(in_effect.turn))))
+    }
+
+    /// From `V53`, when the first accepted turn waiting to apply does, which ends the office of the
+    /// account in it before any turn is in effect; `Millis::MAX` before `V53` or with none waiting.
+    pub(crate) fn first_turn_applies_at(&self) -> Millis {
+        if self.protocol_version < ProtocolVersion::V53 {
+            return Millis::MAX;
+        }
+        self.daily_turns.assigned.values().map(|assigned| assigned.applies_at).min().unwrap_or(Millis::MAX)
     }
 
     /// From `V51`, whether a mirrored turn is in effect or waits to apply: until an installation ends

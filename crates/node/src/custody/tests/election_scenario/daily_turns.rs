@@ -201,16 +201,15 @@ async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
 
         // A minute past the boundary one block past it is mined, and the incumbent's next command
         // hands the operator key to the turn's. The incumbent held the office until its turn ended,
-        // or, before any turn, until this command.
+        // or, before any turn, until this one applied (`V53`).
         holder.node.advance_to(start + 60_000).await;
         chain.mine_at(start_secs + 30).await;
         holder.node.submit(Command::Tick).await;
         let (at_boundary, _) = office(&holder.node).await;
-        let until = if k == 0 { start + 60_000 } else { start };
         let incumbent_account = AccountId(members[incumbent].candidate.into());
         assert_eq!(
             at_boundary,
-            credited(before, incumbent_account, until - before_at),
+            credited(before, incumbent_account, start - before_at),
             "turn {turn}: office at the boundary"
         );
 

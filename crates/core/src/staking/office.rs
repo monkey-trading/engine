@@ -13,7 +13,8 @@
 //!
 //! From `V51`, once a daily turn has applied, the account in office is the turn's member from its
 //! `TurnTaken` to the end of its turn (`turns`), so the time before a member takes its turn, and an
-//! incumbent's time past its turn, are no one's.
+//! incumbent's time past its turn, are no one's. From `V53`, before any turn is in effect, the account
+//! in office holds it only until the first accepted turn applies.
 
 use std::collections::BTreeMap;
 
@@ -43,10 +44,10 @@ impl Engine {
             return;
         }
         // From `V51`, once a turn has applied, the member holds the office from its `TurnTaken` to the
-        // end of its turn.
+        // end of its turn; from `V53`, the account before it only until the first turn applies.
         let holder = match self.turn_office() {
             Some(turn) => turn,
-            None => self.operator_share_account().map(|account| (account, Millis::MAX)),
+            None => self.operator_share_account().map(|account| (account, self.first_turn_applies_at())),
         };
         let (Some((holder, until)), Some(staking)) = (holder, self.staking.as_mut()) else { return };
         let office = staking.office.as_mut().expect("V50 counts time in office once staking is initialised");
