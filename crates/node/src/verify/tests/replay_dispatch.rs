@@ -122,22 +122,18 @@ async fn dev_scenario_replay_dispatch_trusts_the_attested_signer() -> anyhow::Re
     Ok(())
 }
 
-/// Locates the built `engine` binary next to this test executable (`target/<profile>/engine`).
+/// Locates the built `engine` binary (`target/<profile>/engine`) in the nearest directory above
+/// this test executable, however deep Cargo's layout nests the test executable under that profile.
 /// Error cases:
-/// - the path cannot be derived or the binary was not built
+/// - the binary was not built
 pub(super) fn engine_binary() -> anyhow::Result<std::path::PathBuf> {
     let exe = std::env::current_exe().context("the test executable path")?;
-    let binary = exe
-        .parent()
-        .and_then(Path::parent)
-        .map(|dir| dir.join("engine"))
-        .context("deriving the target directory from the test executable")?;
-    ensure!(
-        binary.is_file(),
-        "the engine binary was not found at {}; build it first (scripts/dev-attestation-verifier.sh does)",
-        binary.display()
-    );
-    Ok(binary)
+    exe.ancestors().skip(1).map(|dir| dir.join("engine")).find(|binary| binary.is_file()).with_context(|| {
+        format!(
+            "the engine binary was not found above {}; build it first (scripts/dev-attestation-verifier.sh does)",
+            exe.display()
+        )
+    })
 }
 
 /// Runs `engine replay` on `log` with the attestation inputs, plus `extra` arguments, while the

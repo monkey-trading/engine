@@ -169,7 +169,6 @@ impl Chain {
     /// Error cases:
     /// - a local transaction or the registration's authorization fails
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn register_candidate(
         &self,
         account: Address,
