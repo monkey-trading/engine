@@ -63,6 +63,8 @@ pub struct DepositWatcher<V> {
     /// The registry's schedule mirrored with it, and whether the schedule has been read to name
     /// the registry.
     schedule: Option<(Address, bool)>,
+    /// The vote contract mirrored with them, and whether it has been read to name the schedule.
+    vote: Option<(Address, bool)>,
     /// Blocks the final block sits below the tagged block.
     confirmations: u64,
     pub(super) chain: ProvenChain,
@@ -144,6 +146,11 @@ impl<V: VaultReader> DepositWatcher<V> {
                 .as_ref()
                 .and_then(|staking| staking.registry.schedule)
                 .map(|schedule| (schedule, false)),
+            vote: cfg
+                .staking
+                .as_ref()
+                .and_then(|staking| staking.registry.vote.as_ref())
+                .map(|vote| (vote.contract, false)),
             confirmations: cfg.confirmations,
             chain,
             max_block_range: cfg.max_block_range,

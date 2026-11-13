@@ -28,10 +28,10 @@ an index: load only the rule whose hint matches the current action.
   `AccessCloseAll` in `execution/cancel.rs` and `execution/batch.rs`: one signed request cancels every resting order, or closes the named
   markets' whole positions as the single reduce-only market order, on one nonce, from `V45` at most
   `Fixed::MAX_INPUT` units per entry), USD settlement of markets quoted in other currencies, admin commands signed
-  by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
+  by the operator key the log records and, from `V35`, bounded (`operator_bounds/`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
   seven-day key rotation, and from `V46` signed benchmark rates capped at 300 bps per day from the applied rates next to their
-  date in `benchmark.rs`, a market holding positions kept on its benchmark, and a stress floor of at most level 1 lapsing after 72 hours in `stress.rs`, and from `V49` stress parameters and a listed market's markup moved only after a seven-day notice, and from `V52` a listed market's spread and margin bands moved only by a seven-day listing notice and within its launch bands, in `listing_bounds.rs`); from `V52`, every fill's size spread, in tenths of a bp, on the slice that closes a position as on the slice that grows it, with each class's floor and no stress multiplier below 1x (`spread_tier.rs`, `execution/`); the spread a close can pay, from `V40`, capped per market
+  date in `benchmark.rs`, a market holding positions kept on its benchmark, and a stress floor of at most level 1 lapsing after 72 hours in `stress.rs`, and from `V49` stress parameters and a listed market's markup moved only after a seven-day notice, and from `V52` a listed market's spread and margin bands moved only by a seven-day listing notice and within its launch bands, in `listing_bounds.rs`, and from `V56`, while rotation is on, the governed parameters, listings, close-spread adoptions, access policy and protocol activation changed only by a stake-weighted vote of the rotation set, in `governance/`: passed proposals mirrored once, a normal change applying seven days after it is logged, a fast-path restriction in force at once as the stricter of the baseline and every restriction and lapsing at its recorded lifetime, `tests/parameter_votes.rs`); from `V52`, every fill's size spread, in tenths of a bp, on the slice that closes a position as on the slice that grows it, with each class's floor and no stress multiplier below 1x (`spread_tier.rs`, `execution/`); the spread a close can pay, from `V40`, capped per market
   (`close_spread.rs`: a ceiling registry adopted at genesis, kept apart from `MarketSpec`, clamps every close at
   the pricing site, refuses a reversal over its ceiling while the pure close stays open, and admits a post-genesis
   entry only by a signed seven-day adoption that can only lower it, and from `V52` at least the market's launch close
@@ -160,7 +160,10 @@ an index: load only the rule whose hint matches the current action.
   and logs `TurnTaken` with its first command in each turn once its keys are sealed in that
   generation, sealing them there first when the schedule names it afresh, `sequencer/turns.rs` and
   `node/turn_keys.rs`; an incumbent that stopped for a turn's member keeps the log's turns, and
-  admits a later turn's member the set gave notice), the
+  admits a later turn's member the set gave notice; from V56 the vote contract's passed proposals,
+  decoded as the admin command their bytes are the canonical JSON of, once it is read to name the
+  schedule, with `ApplyProposal` sequenced for a passed change once its seven days have run,
+  `sequencer/governance.rs`, and a start refused on a log recording another vote contract), the
   standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
   segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up,
   taking only entries whose command seals continue the copy and raising `operator_log_rollback`, with
@@ -171,7 +174,8 @@ an index: load only the rule whose hint matches the current action.
   `engine replay --attestation` pairs one attestation with each signer), the
   `/v1/operator` read of the key in effect, its pending rotation, the last election, and the rotation
   sets, today's and tomorrow's turns and the turn history paged from the log (`stats/turns.rs`), the
-  `/v1/operators` list of the registry's approved candidates with their stake and role (`custody/operators/`:
+  `/v1/operators` list of the registry's approved candidates with their stake and role, and with a vote
+  contract its open proposals (`custody/operators/`, the proposals in `proposals.rs`:
   `RegistryLens` read over its own custody quorum at one final block every `api.operators_interval`, the answer
   naming the block; 404 without `custody.evm.staking.registry.lens`), the seed relayer
   (`seed_relay/`, `[seed_relay]`, in either mode: each poll reads the seed receiver on Arbitrum through its own
@@ -181,7 +185,8 @@ an index: load only the rule whose hint matches the current action.
   EIP-4788 entry holding the block's root and reads the relay through a strict majority of its Ethereum providers,
   and sends through its signing endpoint with a relayer key apart from the checkpoint relayer's), the
   `/v1/house/state` read of the protocol parameters (with the seq that set them, and from `V54` the toxicity
-  score's constants), the pending parameter and listing notices, and the latest checkpoint (`api/house_state.rs`,
+  score's constants), the pending parameter and listing notices, from V56 the recorded vote contract with the
+  passed changes waiting and the restrictions in force, and the latest checkpoint (`api/house_state.rs`,
   `sequencer/house.rs`), the account read's toxicity score, tier and add-on from `V54`, checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), at most one signed checkpoint on its way to
   finality at a time (`sequencer/checkpoints/hold_back.rs`), with strict signature replay and startup checks
@@ -298,7 +303,11 @@ an index: load only the rule whose hint matches the current action.
   `src/SeedReceiver.sol` on Arbitrum records it only from the relay's aliased address, for that epoch and
   before the draw deadline, and answers each turn's final seed, the last earlier seed hashed with the
   turn number when none arrived; the schedule falls back to its own last seed only on the receiver's
-  `NoRelayedSeed`, and the timelock replaces the receiver after an Ethereum fork. `test/fixtures/seed-relay/mainnet.json` is recorded mainnet data, which
+  `NoRelayedSeed`, and the timelock replaces the receiver after an Ethereum fork.
+  `src/ParameterVote.sol` takes the votes that change the engine's governed parameters while rotation is on: a
+  member of the schedule's rotation set in effect proposes a command, members of that set vote yes with the weights
+  it adopted, and the vote that takes the yes weight past two thirds of its total emits `ProposalPassed`, which the
+  engine mirrors from `V56` and holds to its own limits. `test/fixtures/seed-relay/mainnet.json` is recorded mainnet data, which
   `scripts/seed-relay-fixtures.sh` regenerates. `foundry.toml` enables the
   optimizer, without which the vault exceeds EIP-170's size limit.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
@@ -315,6 +324,9 @@ an index: load only the rule whose hint matches the current action.
   `custody.vault` under `eip712`, and `operator.public_key`, with the same chain id and vault, are
   recorded in the log when it first activates the protocol versions that need them, so changing
   either needs a fresh log.
+  The optional `[custody.evm.staking.registry.vote]` names the `ParameterVote` contract over the schedule
+  and its `restriction_ttl` (at most seven days), which the node records in the log once V56 applies; a
+  log recording another is refused.
   `api.stats_interval` (default 60 s) spaces the full account scans behind the dashboard figures and
   `api.stats_light_interval` (default 5 s) the light ones between them, and
   `[stats]` tunes the dashboard record's retention (1m ~48h, 1h ~90d, 1d unbounded by default), its
@@ -452,6 +464,11 @@ an index: load only the rule whose hint matches the current action.
   `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
   `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
+  `dev-parameter-votes.sh`, the parameter votes scenario on Anvil: a three-member set of 40:30:30 votes on
+  `ParameterVote`, a margin raise passing with 70% applies seven warped days after it is logged while one with
+  60% never passes, a fast-path level-2 stress floor applies at once, survives the operator's own floor and
+  lapses at its lifetime, a fast-path margin cut is refused, the operator's SetParams is refused, and the log
+  replays;
   `dev-operator-share.sh`, the operator's share of distributions on Anvil: an elected candidate and a
   staker each claim their share, an epoch below the floor pays neither, and the candidate's unclaimed
   leaf registers and pays through the vault's exit; then, from `V50`, an election taking effect halfway
@@ -538,7 +555,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation dev scenario (`dev-daily-rotation`), the enclave key
+  deposit finality scenarios, the MONKEY staking, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation and parameter votes dev scenarios (`dev-daily-rotation`), the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
@@ -767,6 +784,9 @@ Run from the repo root:
   through the real custody quorum, sequencer and API that the deployer's key is refused and the
   elected key applies from the effective time; needs Anvil, Forge, Python 3, and installed Soldeer
   dependencies)
+- Parameter votes dev scenario: `./scripts/dev-parameter-votes.sh` (the same requirements as the operator
+  election scenario; one Anvil chain with warped time and the vote contract over the schedule; CI runs it in
+  the daily rotation job)
 - Operator's share dev scenario: `./scripts/dev-operator-share.sh` (the same requirements; a real
   election mirrored into the sequencer, a close above the floor crediting the candidate a fifth and
   stakers the rest, both claims through the vault, an epoch below the floor paying neither, and the

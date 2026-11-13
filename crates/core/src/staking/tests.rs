@@ -307,8 +307,11 @@ fn v31_activation_rejects_unrepresentable_inherited_reserves_without_mutation() 
         engine.init_staking(&config(1_000)).unwrap();
         engine.staking.as_mut().unwrap().distributed = UsdcUnits(distributed);
         engine.withdrawal_cash = Some(Fixed::from_raw(cash));
-        let result = engine
-            .admin(&crate::command::AdminCommand::ActivateProtocol { version: ProtocolVersion::V31 }, &mut Vec::new());
+        let result = engine.admin(
+            &crate::command::AdminCommand::ActivateProtocol { version: ProtocolVersion::V31 },
+            false,
+            &mut Vec::new(),
+        );
         assert!(result.is_err(), "{result:?}");
         assert_eq!(engine.protocol_version, ProtocolVersion::V30);
         assert_eq!(engine.withdrawal_cash, Some(Fixed::from_raw(cash)));

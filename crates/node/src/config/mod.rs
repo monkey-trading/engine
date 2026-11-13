@@ -36,7 +36,7 @@ pub use access::AccessSection;
 pub use standby::StandbySection;
 mod custody;
 mod standby;
-pub use custody::{EvmCustodySection, FinalityTag, RpcProviderSection};
+pub use custody::{EvmCustodySection, FinalityTag, RpcProviderSection, VoteCustodySection};
 mod feeds;
 pub use feeds::*;
 mod marks;

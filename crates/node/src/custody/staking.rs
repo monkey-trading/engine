@@ -10,10 +10,11 @@ use std::path::Path;
 
 use alloy::primitives::{B256, U256};
 use anyhow::{Context, anyhow, bail};
-use engine_core::command::Command;
+use engine_core::command::{AdminCommand, Command};
 use engine_core::election::{RegistryElection, RegistryInstallation};
 use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
+use engine_core::governance::PassedProposal;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::turns::{RegistryRotationSet, RegistryTurn, SetMember, TurnReason};
 use engine_core::types::{AccountId, Millis};
@@ -28,8 +29,9 @@ use crate::custody::sizing::AdaptiveSize;
 use crate::custody::stall::{PollError, Stall};
 use crate::sequencer::Request;
 /// One mirrorable event: from the staking contract, a stake or an unstake the cooldown has passed;
-/// from the operator registry, a rotation switch or an election.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// from the operator registry, a rotation switch or an election; from its schedule, a set or a turn;
+/// from the vote contract, a passed proposal.
+#[derive(Clone, Debug, PartialEq)]
 pub struct StakingEvent {
     pub block: u64,
     pub block_hash: B256,
@@ -38,7 +40,7 @@ pub struct StakingEvent {
     pub kind: StakingEventKind,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum StakingEventKind {
     /// `amount` MONKEY base units staked by `account`.
     Staked { account: AccountId, amount: u128 },
@@ -57,6 +59,9 @@ pub enum StakingEventKind {
     RotationSetAdopted { set: u32, epoch: u64, effective_at: Millis, quorum: bool, members: Vec<SetMember> },
     /// The schedule named `candidate`, under `admin_key`, for `turn`.
     TurnAssigned { turn: u64, set: u32, position: u16, reason: TurnReason, candidate: AccountId, admin_key: AccountId },
+    /// The vote contract passed `proposal`, whose command bytes hash to `command_hash` and are the
+    /// canonical JSON of `command`, or of no admin command when it is `None`.
+    ProposalPassed { proposal: u64, fast: bool, command_hash: B256, command: Option<Box<AdminCommand>> },
 }
 
 impl StakingEvent {
@@ -107,6 +112,17 @@ impl StakingEvent {
                     block,
                     chain_ref,
                 })
+            }
+            StakingEventKind::ProposalPassed { proposal, fast, command_hash, command } => {
+                let command = command.map(|command| *command);
+                Command::PassProposal(Box::new(PassedProposal {
+                    proposal,
+                    fast,
+                    command_hash,
+                    command,
+                    block,
+                    chain_ref,
+                }))
             }
         }
     }
@@ -195,8 +211,9 @@ impl StakingCursor {
 /// deployer: while it is false the poll read no staking code at `to`, and since the registry
 /// deploys the staking contract atomically no event can legitimately exist in the window, so any
 /// event is a contradiction that stalls rather than mirrors. Its second half is whether a configured
-/// schedule has been read to name the registry: a schedule event before then stalls the same way. A
-/// failed event read halves `range`; a completed chunk lets it grow back.
+/// schedule has been read to name the registry, and its third whether a configured vote contract has
+/// been read to name the schedule: a schedule or vote event before then stalls the same way. A failed
+/// event read halves `range`; a completed chunk lets it grow back.
 /// Error cases:
 /// - stalled: a read fails, an event is on an unproven block, an event arrives before the
 ///   registry binding is verified, or the engine refuses a mirror
@@ -210,7 +227,7 @@ pub(super) async fn mirror<V: VaultReader>(
     range: &mut AdaptiveSize,
     window: std::ops::RangeInclusive<u64>,
     hashes: &std::collections::BTreeMap<u64, B256>,
-    (bound, schedule_bound): (bool, bool),
+    (bound, schedule_bound, vote_bound): (bool, bool, bool),
 ) -> Result<(), PollError> {
     let (from, to) = (*window.start(), *window.end());
     if from > to {
@@ -262,6 +279,11 @@ pub(super) async fn mirror<V: VaultReader>(
     if !schedule_bound && events.iter().any(from_schedule) {
         return Err(PollError::inconsistent(anyhow!(
             "the window names schedule events, but the schedule has not been read to name the registry"
+        )));
+    }
+    if !vote_bound && events.iter().any(|event| matches!(event.kind, StakingEventKind::ProposalPassed { .. })) {
+        return Err(PollError::inconsistent(anyhow!(
+            "the window names vote events, but the vote contract has not been read to name the schedule"
         )));
     }
     for event in events {
@@ -326,6 +348,10 @@ async fn mirror_one(tx: &mpsc::Sender<Request>, event: StakingEvent) -> Result<(
             StakingEventKind::TurnAssigned { turn, position, candidate, .. } => {
                 // A turn the engine credits but refuses (`turn_refused`) is not a disagreement.
                 info!(turn, position, %candidate, "turn assignment mirrored");
+            }
+            StakingEventKind::ProposalPassed { proposal, fast, .. } => {
+                // A proposal the engine credits but refuses (`proposal_refused`) is not a disagreement.
+                info!(proposal, fast, "passed proposal mirrored");
             }
         }
         Ok(())

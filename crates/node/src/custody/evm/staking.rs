@@ -144,9 +144,28 @@ impl<V: VaultReader> DepositWatcher<V> {
                 Some(_) => self.schedule = Some((schedule, true)),
             }
         }
+        // So must the vote contract's schedule: its proposals vote by the schedule's sets.
+        if let (Some((vote, false)), Some((schedule, _))) = (self.vote, self.schedule) {
+            let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
+            let out = self
+                .vault
+                .contract_call(BlockRef { number: to, hash }, vote, crate::custody::registry::vote_schedule_call())
+                .await
+                .map_err(PollError::rpc)?;
+            match crate::custody::registry::decode_vote_schedule(&out).map_err(PollError::rpc)? {
+                None => info!(to, "the vote contract is not deployed at this window's end"),
+                Some(recorded) if recorded != schedule => {
+                    return Err(PollError::inconsistent(anyhow!(
+                        "the vote contract {vote} records schedule {recorded}, not the configured {schedule}"
+                    )));
+                }
+                Some(_) => self.vote = Some((vote, true)),
+            }
+        }
         let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");
         let bound = self.registry.is_some_and(|(_, bound)| bound);
         let schedule_bound = self.schedule.is_none_or(|(_, bound)| bound);
+        let vote_bound = self.vote.is_none_or(|(_, bound)| bound);
         let window = from..=to;
         staking::mirror(
             &self.vault,
@@ -156,7 +175,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             &mut self.staking_range,
             window,
             &hashes,
-            (bound, schedule_bound),
+            (bound, schedule_bound, vote_bound),
         )
         .await
     }

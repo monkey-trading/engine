@@ -235,6 +235,10 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         | Event::TurnRefused { .. }
         | Event::TurnTaken { .. }
         | Event::TurnTakenRejected { .. }
+        | Event::ProposalScheduled { .. }
+        | Event::RestrictionApplied { .. }
+        | Event::ProposalRefused { .. }
+        | Event::RestrictionLapsed { .. }
         | Event::CatchUpDeferred { .. } => bail!("event is not an account-history kind"),
     };
     kind_id(kind)

@@ -30,6 +30,8 @@ use crate::protocol::ProtocolVersion;
 use crate::toxicity::ScoreTier;
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis};
 
+mod rotation;
+
 /// How long before a rate change or an operator rotation takes effect it is logged: seven days.
 pub const NOTICE_MS: Millis = 7 * 24 * 60 * 60 * 1000;
 
@@ -257,13 +259,14 @@ impl Engine {
     }
 
     /// From `V49`, checks a relisting changes a listed market's markup only to the value its notice
-    /// names, once that notice's time has come, and returns whether the relisting spends it.
+    /// names, once that notice's time has come, and returns whether the relisting spends it. A `voted`
+    /// relisting's notice is its vote's.
     /// Error cases:
     /// - a changed markup no notice names, or whose notice takes effect later than the sequenced time
-    pub(crate) fn check_markup_change(&self, spec: &MarketSpec) -> Result<bool, String> {
+    pub(crate) fn check_markup_change(&self, spec: &MarketSpec, voted: bool) -> Result<bool, String> {
         let Some(market) = self.markets.get(&spec.id) else { return Ok(false) };
         let (id, new) = (spec.id, spec.financing.markup_bps);
-        if self.protocol_version < ProtocolVersion::V49 || market.spec.financing.markup_bps == new {
+        if self.protocol_version < ProtocolVersion::V49 || market.spec.financing.markup_bps == new || voted {
             return Ok(false);
         }
         match self.operator_bounds.markups.get(&id).filter(|notice| notice.markup_bps == Some(new)) {
@@ -289,16 +292,19 @@ impl Engine {
 
     /// Checks `params` against the bounds: a changed profit fee or close-out level is within ±50% of
     /// its launch value and named by a notice whose time has come, from `V49` so are changed stress
-    /// parameters, with no range, and from `V55` a changed profit fee curve, within its bound.
+    /// parameters, with no range, and from `V55` a changed profit fee curve, within its bound. A
+    /// `voted` change's notice is its vote's. Changes are measured from the baseline
+    /// (`Engine::baseline_params`).
     /// Error cases:
     /// - a changed rate outside ±50% of its launch value, or from `V55` a profit fee below it
-    /// - a changed rate no notice names, or whose notice takes effect later than the sequenced time
-    /// - from `V49`, changed stress parameters no notice names, or whose notice takes effect later than the
+    /// - unless `voted`, a changed rate no notice names, or whose notice takes effect later than the
     ///   sequenced time
+    /// - from `V49`, unless `voted`, changed stress parameters no notice names, or whose notice takes
+    ///   effect later than the sequenced time
     /// - from `V54`, changed score tiers `Engine::check_score_tier_change` refuses
     /// - a changed profit fee curve that fails `Engine::check_curve_change`
-    pub(crate) fn check_rate_changes(&self, params: &ProtocolParams) -> Result<(), String> {
-        let Some(current) = &self.params else { return Ok(()) };
+    pub(crate) fn check_rate_changes(&self, params: &ProtocolParams, voted: bool) -> Result<(), String> {
+        let Some(current) = &self.baseline_params() else { return Ok(()) };
         // Recorded with the first parameters under `V35`, or at its activation over them.
         let launch =
             self.operator_bounds.launch.expect("launch rates are recorded wherever parameters are set under V35");
@@ -316,6 +322,9 @@ impl Engine {
             if name == "profit_fee_bps" {
                 self.check_fee_floor(new, launched)?;
             }
+            if voted {
+                continue;
+            }
             let notice = self.operator_bounds.notice.as_ref().filter(|notice| match name {
                 "profit_fee_bps" => notice.profit_fee_bps == Some(new),
                 _ => notice.closeout_level_bps == Some(new),
@@ -328,10 +337,10 @@ impl Engine {
                 Some(_) => {}
             }
         }
-        self.check_score_tier_change(params)?;
-        self.check_curve_change(&params.profit_fee_curve, &current.profit_fee_curve)?;
+        self.check_score_tier_change(params, voted)?;
+        self.check_curve_change(&params.profit_fee_curve, &current.profit_fee_curve, voted)?;
         let stress = StressSettings::of(params);
-        if self.protocol_version < ProtocolVersion::V49 || stress == StressSettings::of(current) {
+        if self.protocol_version < ProtocolVersion::V49 || stress == StressSettings::of(current) || voted {
             return Ok(());
         }
         match self.operator_bounds.notice.as_ref().filter(|notice| notice.stress.as_ref() == Some(&stress)) {
@@ -372,49 +381,6 @@ impl Engine {
         if notice.names_nothing() {
             self.operator_bounds.notice = None;
         }
-    }
-
-    /// Records a rotation to `address`, replacing any pending one, from seven days after now.
-    /// Error cases:
-    /// - before `V35`, or with no operator recorded
-    /// - from `V37`, while rotation is on, when only an election moves the key
-    /// - from `V37`, while an uncancelled elected handover waits to take effect, even with rotation
-    ///   off: only that handover moves the key until it applies or the registry cancels it
-    /// - from `V48`, while an installed handover waits to take effect, even with rotation off: only
-    ///   that handover moves the key until it applies
-    /// - the zero address, or the address already operating
-    pub(crate) fn rotate_operator(&mut self, address: AccountId) -> Result<(), String> {
-        self.require_bounds_protocol("an operator rotation")?;
-        if self.rotation_by_election() {
-            return Err("while rotation is on, only an election moves the operator key".into());
-        }
-        let operator = self.operator.ok_or("no operator is recorded")?;
-        if address == AccountId([0; 20]) || address == operator.address {
-            return Err("an operator rotation names a new, nonzero address".into());
-        }
-        if self.operator_bounds.rotation.is_some_and(|rotation| self.is_elected(rotation)) {
-            return Err("while an elected handover waits, only it moves the operator key".into());
-        }
-        if self.protocol_version >= ProtocolVersion::V48
-            && self.operator_bounds.rotation.is_some_and(|rotation| self.is_installed(rotation))
-        {
-            return Err("while an installed handover waits, only it moves the operator key".into());
-        }
-        self.operator_bounds.rotation = Some(PendingRotation { address, effective_at: self.now + NOTICE_MS });
-        Ok(())
-    }
-
-    /// Hands the operator's role to the pending rotation's address once it is due (see
-    /// `Engine::due_rotation`), before the command stamped `ts` is authorised, so the old key signs
-    /// nothing from then.
-    pub(crate) fn apply_due_rotation(&mut self, ts: Millis) {
-        let Some(rotation) = self.due_rotation(ts) else {
-            return;
-        };
-        // A rotation is recorded only beside a recorded operator, which is never removed.
-        self.operator.as_mut().expect("a rotation needs a recorded operator").address = rotation.address;
-        self.operator_bounds.rotation = None;
-        self.operator_bounds.rotations += 1;
     }
 
     /// Checks a relisting leaves priced the markets that hold positions and depend on its price: the

@@ -88,9 +88,9 @@ impl Engine {
 }
 
 impl Engine {
-    /// Whether a market takes no new risk: its own flag, or every market's.
+    /// Whether a market takes no new risk: its own flag, every market's, or from `V56` a restriction.
     pub fn is_reduce_only(&self, market: &MarketState) -> bool {
-        market.reduce_only || self.global_reduce_only
+        market.reduce_only || self.global_reduce_only || self.governance.reduce_only(market.spec.id)
     }
 
     /// Updates a market's open flag from its schedule, emitting the transition. Before `V17` an

@@ -299,7 +299,7 @@ impl VaultReader for FakeChain {
         to: Address,
         data: alloy::primitives::Bytes,
     ) -> anyhow::Result<alloy::primitives::Bytes> {
-        self.0.lock().unwrap().epochs.answer(at, to, &data)
+        self.0.lock().unwrap().answer_call(at, to, &data)
     }
 }
 

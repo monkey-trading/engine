@@ -6,7 +6,7 @@
 //! protocol activation run no catch-up, so they drain nothing.
 
 use anyhow::{Result, bail};
-use engine_core::command::{AdminCommand, Command};
+use engine_core::command::Command;
 use engine_core::event::Event;
 use engine_core::types::Millis;
 use tracing::info;
@@ -27,8 +27,7 @@ impl Sequencer {
             return Ok(None);
         }
         let snapshot = cmd.is_benchmark_batch();
-        let activation =
-            cmd.is_dated_rate_activation() || matches!(cmd, Command::Admin(AdminCommand::ActivateProtocol { .. }));
+        let activation = cmd.is_dated_rate_activation() || cmd.is_activation();
         if !snapshot && !activation {
             self.drain_catch_up(ts)?;
         }

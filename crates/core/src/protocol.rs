@@ -320,11 +320,22 @@ pub enum ProtocolVersion {
     /// launch value back to it, gives parameters that name no curve the default one, and gives each
     /// held position the open time `activation - the curve's last hold`.
     V55,
+    /// Parameter changes by stake-weighted operator vote (`governance`). While rotation is on, the
+    /// governed parameters, listings, toxicity weighting, close-spread ceiling adoptions, the access
+    /// policy and protocol activation change only by a passed proposal, mirrored from finalised
+    /// events and credited once, and the operator's signed commands for them, and the node's unsigned
+    /// ones, are refused. A normal change applies no sooner than seven days after it is logged, under
+    /// every check its command meets but the notices the vote's own replaces. A fast-path proposal
+    /// applies at once as a restriction that only raises a margin or the close-out level, sets a
+    /// stress floor, lowers a house or market cap, or makes a market reduce-only: the values in force
+    /// are the stricter of the baseline and every restriction, which lapses after the recorded
+    /// lifetime unless renewed.
+    V56,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V55;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V56;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

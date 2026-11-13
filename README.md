@@ -140,6 +140,14 @@ from the moment it takes its turn to the end of it. From V53 a member's seven da
 across the unbroken run of sets that name it with the same key, and the operator in office before
 the first turn earns only until that turn applies: its boundary, or its mirror when that is later.
 
+From protocol V56, while rotation is on, the parameters, listings and protocol upgrades change only by
+a vote of the rotation set's members, weighted by the stake the set snapshotted: a proposal passes with
+more than two thirds of the weight. A normal change takes effect seven days after the engine logs it,
+so anyone holding a position can act first. A fast-path change takes effect at once, but only as a
+restriction that reduces risk (a higher margin or close-out level, a stress floor, a lower house cap,
+or reduce-only), which lapses after a recorded lifetime unless another vote renews it. The operator of
+the day keeps benchmark rates, its own bounded stress floor, reduce-only and corporate actions.
+
 The reasoning behind each of these choices is recorded in the decision issues
 [#1](https://github.com/0xjevons/monkeytrading/issues/1) to
 [#16](https://github.com/0xjevons/monkeytrading/issues/16).

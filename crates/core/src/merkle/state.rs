@@ -18,6 +18,7 @@ use crate::deposits::CustodyCheckpoint;
 use crate::election::OperatorElection;
 use crate::emissions::{Emissions, TokenUnits};
 use crate::engine::{Engine, Markout};
+use crate::governance::Governance;
 use crate::merkle::exit::ExitLeaves;
 use crate::merkle::leaf::{
     deposit_key, deposit_transaction_key, emission_ledger_hash, emission_ledger_key, legacy_deposit_key,
@@ -98,6 +99,9 @@ struct Globals<'a> {
     /// From `V51`; omitted until the schedule's first mirrored event, so earlier roots stand.
     #[serde(skip_serializing_if = "DailyTurns::is_default")]
     daily_turns: &'a DailyTurns,
+    /// From `V56`; omitted until the vote contract is recorded, so earlier roots stand.
+    #[serde(skip_serializing_if = "Governance::is_default")]
+    governance: &'a Governance,
     /// From `V40`; omitted until the registry is installed, so earlier roots stand.
     #[serde(skip_serializing_if = "Option::is_none")]
     close_spread_ceilings: &'a Option<BTreeMap<MarketId, i64>>,
@@ -440,6 +444,7 @@ impl Engine {
             operator_bounds,
             operator_election,
             daily_turns,
+            governance,
             close_spread_ceilings,
             pending_ceiling,
             session_keys: _,
@@ -478,6 +483,7 @@ impl Engine {
             operator_bounds,
             operator_election,
             daily_turns,
+            governance,
             close_spread_ceilings,
             pending_ceiling,
         }

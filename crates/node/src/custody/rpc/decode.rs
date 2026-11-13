@@ -62,7 +62,8 @@ impl VaultRpc {
         let staking = self.staking.context("a staking event without a configured staking contract")?;
         let from_registry = self.registry == Some(log.address());
         let from_schedule = self.schedule == Some(log.address());
-        if log.removed || (log.address() != staking && !from_registry && !from_schedule) {
+        let from_vote = self.vote == Some(log.address());
+        if log.removed || (log.address() != staking && !from_registry && !from_schedule && !from_vote) {
             bail!("unexpected log from {} (removed: {})", log.address(), log.removed);
         }
         let block = log.block_number.context("log without a block number")?;
@@ -76,6 +77,7 @@ impl VaultRpc {
         let kind = match log.topic0() {
             _ if from_registry => crate::custody::registry::decode(log)?,
             _ if from_schedule => crate::custody::registry::decode_schedule(log)?,
+            _ if from_vote => crate::custody::registry::decode_vote(log)?,
             Some(&Staked::SIGNATURE_HASH) => {
                 let event = Staked::decode_log(&log.inner).context("decoding Staked")?.data;
                 StakingEventKind::Staked { account: AccountId(event.account.into()), amount: units(event.amount)? }

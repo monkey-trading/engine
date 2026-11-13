@@ -5,7 +5,8 @@
 //! floor is at most `MAX_OPERATOR_STRESS_FLOOR` and lapses to the automatic level
 //! `STRESS_FLOOR_LAPSE_MS` of sequenced time after it is set, so no floor reaches or holds the higher
 //! levels. A signed `SetParams` still rewrites the levels and their triggers at once, which `V46`
-//! does not bound.
+//! does not bound. From `V56` a fast-path vote's stress floor (`governance`) sits beside the
+//! operator's, at any level, and the operator's own floor neither lowers nor clears it.
 
 use std::collections::VecDeque;
 
@@ -80,7 +81,7 @@ impl Engine {
     ) {
         let cap = self.market_cap(&self.markets[&market_id].spec, self.house_nav());
         let now = self.now;
-        let global_floor = self.global_stress_floor;
+        let global_floor = self.global_stress_floor.max(self.governance.stress_floor(market_id));
         let params = self.params.as_ref().expect("callers check params are set");
         let market = self.markets.get_mut(&market_id).expect("callers pass a listed market");
 
@@ -110,7 +111,7 @@ impl Engine {
     /// its level, since nothing fills there.
     pub(crate) fn refresh_stress(&mut self, market_id: MarketId, nav: Fixed, events: &mut Vec<Event>) {
         let now = self.now;
-        let global_floor = self.global_stress_floor;
+        let global_floor = self.global_stress_floor.max(self.governance.stress_floor(market_id));
         let market = self.markets.get(&market_id).expect("callers pass a listed market");
         let cap = self.market_cap(&market.spec, nav);
         if !market.open {
@@ -147,7 +148,7 @@ impl Engine {
         if self.protocol_version < ProtocolVersion::V13 {
             return;
         }
-        let admin = matches!(cmd, Command::Admin(_) | Command::SignedAdmin(_));
+        let admin = matches!(cmd, Command::Admin(_) | Command::SignedAdmin(_) | Command::ApplyProposal(_));
         let outcome = if admin { events.pop() } else { None };
         let nav = self.house_nav();
         let ids: Vec<MarketId> = self.markets.keys().copied().collect();
@@ -234,8 +235,10 @@ impl Engine {
         let Some(params) = &self.params else { return };
         let max_level = params.stress_levels.len() - 1;
         let global_floor = self.global_stress_floor;
+        let governance = &self.governance;
         for (market_id, market) in self.markets.iter_mut() {
-            set_stress_level(*market_id, market, global_floor, max_level, events);
+            let floor = global_floor.max(governance.stress_floor(*market_id));
+            set_stress_level(*market_id, market, floor, max_level, events);
         }
     }
 }
@@ -303,8 +306,9 @@ fn record_move(window: &mut VecDeque<MoveBucket>, now: Millis, mid: Fixed, windo
     (mid - low).bps_of(low).max((high - mid).bps_of(high))
 }
 
-/// Sets a market's effective stress level to the highest of its automatic level and both floors,
-/// capped at the top level, emitting a change.
+/// Sets a market's effective stress level to the highest of its automatic level, its own floor and
+/// `global_floor`, every market's (with, from `V56`, the restrictions' floor in it), capped at the top
+/// level, emitting a change.
 fn set_stress_level(
     market_id: MarketId,
     market: &mut MarketState,

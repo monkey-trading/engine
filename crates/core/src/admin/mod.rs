@@ -7,7 +7,8 @@
 //! not. Client auth, the operator, and protocol activation stay commands only the node sequences.
 //! The operator can raise a market's stress level but never push it below what the automatic
 //! triggers set, and from `V8` neither a reduce-only mode nor a spread stops a trade that reduces
-//! or closes a position in an open market with a price.
+//! or closes a position in an open market with a price. From `V56`, while rotation is on, only a
+//! passed vote applies the governed commands (`governance`).
 
 use crate::command::{AdminCommand, AdminRequest};
 use crate::deposits::legacy_chain_reference;
@@ -75,7 +76,13 @@ impl Engine {
     ///   `asset_class` or `quote_currency` of a market with one; `ActivateProtocol` carrying a
     ///   version past `V40` while a listed market has no adopted ceiling, or to `V52` over a low one (see
     ///   `Engine::check_close_spread_activation`); from `V54`, a markout floor `Engine::check_markout_floor` refuses
-    pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
+    /// - from `V56`, `SetGovernance` with any error case of `Engine::set_governance`; `SetParams` that
+    ///   removes a stress level a restriction holds a floor at (see `Engine::check_restricted_levels`)
+    ///
+    /// A `voted` command is a passed vote's, whose seven days' notice replaces the parameter, markup
+    /// and ceiling notices. From `V56` new parameters and listings set the baseline, and the values in
+    /// force stay the stricter of it and the restrictions (`governance`).
+    pub(crate) fn admin(&mut self, cmd: &AdminCommand, voted: bool, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {
             AdminCommand::ScheduleCorporateAction(action) => self.schedule_corporate_action(action, events)?,
             AdminCommand::SetAccessPolicy(policy) => {
@@ -105,11 +112,13 @@ impl Engine {
                 }
                 let bounded = self.protocol_version >= ProtocolVersion::V35;
                 if bounded {
-                    self.check_rate_changes(params)?;
+                    self.check_rate_changes(params, voted)?;
                 }
-                let before = self.params.clone().filter(|_| bounded);
+                self.check_restricted_levels(params)?;
+                let before = self.baseline_params().filter(|_| bounded);
                 self.next_rollover = Some(params.rollover.next_after(self.now));
                 self.params = Some(params.clone());
+                self.rebase(None);
                 if bounded {
                     self.settle_rate_changes(before.as_ref(), params);
                 }
@@ -138,7 +147,7 @@ impl Engine {
                     self.check_priceable(spec)?;
                 }
                 self.check_held_benchmark(spec)?;
-                let change = self.check_listing_change(spec)?;
+                let change = self.check_listing_change(spec, voted)?;
                 if let Some(params) = self.params.as_ref().filter(|_| self.protocol_version >= ProtocolVersion::V13) {
                     params.check_divergence_reachable(spec)?;
                 }
@@ -185,6 +194,7 @@ impl Engine {
                     }
                 }
                 self.end_unpriced_interval(spec.id);
+                self.rebase(Some(spec.id));
                 self.settle_listing_change(spec, change);
                 self.refresh_session(spec.id, events);
                 // A new listing for a market others convert at can change what its index converts
@@ -394,8 +404,9 @@ impl Engine {
             AdminCommand::RotateOperator { address } => self.rotate_operator(*address)?,
             AdminCommand::SetCloseSpreadCeilings { ceilings } => self.install_close_spread_ceilings(ceilings)?,
             AdminCommand::AdoptCloseSpreadCeiling { market, max_close_spread_bps, effective_at, listing } => {
-                self.adopt_close_spread_ceiling(*market, *max_close_spread_bps, *effective_at, listing.as_ref())?
+                self.adopt_close_spread_ceiling(*market, *max_close_spread_bps, *effective_at, listing.as_ref(), voted)?
             }
+            AdminCommand::SetGovernance(config) => self.set_governance(config)?,
         }
         Ok(())
     }
@@ -409,8 +420,13 @@ impl Engine {
     /// - the emission schedule, which only the operator's signature initialises
     /// - a parameter, markup or listing notice or an operator rotation, which only the operator's signature
     ///   records
+    /// - from `V56`, while rotation is on, a command only a vote applies (see
+    ///   `Engine::refused_outside_vote`)
     /// - any error case of `admin`
     pub(crate) fn unsigned_admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
+        if self.refused_outside_vote(cmd) {
+            return Err("while rotation is on, only a passed vote applies this command".into());
+        }
         if matches!(cmd, AdminCommand::ScheduleCorporateAction(_)) {
             return Err("corporate instructions require the signed operator channel".into());
         }
@@ -432,7 +448,7 @@ impl Engine {
         ) {
             return Err("the operator signs a parameter notice or a rotation".into());
         }
-        self.admin(cmd, events)
+        self.admin(cmd, false, events)
     }
 
     /// Applies an admin command the operator signed. A command whose signature and nonce pass uses
@@ -443,6 +459,8 @@ impl Engine {
     ///   operator's next, or an expiry passed or too far ahead (see `Engine::authorise_admin`)
     /// - a command only the node sequences: `SetClientAuth`, `SetOperator`, `SetToxicityNotional`, or
     ///   `ActivateProtocol`
+    /// - from `V56`, while rotation is on, a command only a vote applies (see
+    ///   `Engine::refused_outside_vote`)
     /// - any error case of `admin`
     pub(crate) fn signed_admin(&mut self, req: &AdminRequest, events: &mut Vec<Event>) -> Result<(), String> {
         if self.protocol_version < ProtocolVersion::V8 {
@@ -452,7 +470,10 @@ impl Engine {
         if !req.command.is_operator_command() {
             return Err("the operator may not send this command".into());
         }
-        self.admin(&req.command, events)
+        if self.refused_outside_vote(&req.command) {
+            return Err("while rotation is on, only a passed vote changes this".into());
+        }
+        self.admin(&req.command, false, events)
     }
 }
 

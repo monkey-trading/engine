@@ -90,6 +90,9 @@ pub(super) struct Chain {
     pub(super) lens: Option<Address>,
     /// The `OperatorSchedule` the registry names, once a scenario deploys one.
     pub(super) schedule: Option<Address>,
+    /// The `ParameterVote` over the schedule and the restriction lifetime the node records with it, once
+    /// a scenario deploys one.
+    pub(super) vote: Option<(Address, engine_core::types::Millis)>,
     /// The tag the custody watcher's staking mirror and the vault's readers take as final: the head,
     /// or on a chain started with `start_with_trailing_finality`, Anvil's finalized block.
     pub(super) release_tag: FinalityTag,
@@ -169,6 +172,7 @@ impl Chain {
             staking: Address::ZERO,
             lens: None,
             schedule: None,
+            vote: None,
             release_tag,
             salts: 0,
         };

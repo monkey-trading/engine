@@ -302,7 +302,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/replay/snapshot.rs` — replay restored from a verified state snapshot
 - `src/sequencer/replay/replayed_log.rs` — a log read and replayed before anything is written, and
   the head link and prefix ring the log-head poster reads from it
-- `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, and the pending parameter and listing notices, which `GET /v1/house/state` answers from
+- `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, signed, unsigned or voted, and the pending parameter and listing notices, which `GET /v1/house/state` answers from, with the mirrored votes
+- `src/sequencer/governance.rs` — the `ApplyProposal` this node sequences for each passed change whose seven days have run
 - `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, with a pending parameter or listing notice, and after a restart
 - `src/sequencer/replay/authorities.rs` — accepted historical signers for checkpoints a retired key signed
 - `src/sequencer/legacy.rs` — verified legacy activation inputs and pre-writer signature eligibility
@@ -391,6 +392,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/tests/operator/hold.rs` — which keys end a benchmark hold: a recorded key the
   registry seats again over a due rotation, an installation's own due key, and a rotation back to a
   formerly installed key
+- `src/sequencer/tests/operator/governance.rs` — parameter votes: the config's vote contract recorded
+  once and another refused at recovery, a passed change applied at the first stamp past its notice and
+  behind a benchmark snapshot, the access policy a V56 start leaves to a vote, a voted relisting ending
+  a retired benchmark's alerts, and a waiting ceiling adoption in `/v1/house/state`
 - `src/sequencer/tests/rotation.rs` — an operator rotation through the sequencer, and recovery after it
 - `src/sequencer/batch_tests.rs` — batching: a batch ends after `MAX_BATCH` requests of any kind
 - `src/sequencer/margin_tests.rs` — the margin and solvency dev scenario on the dev genesis (a
@@ -876,6 +881,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   its head
 - `src/custody/tests/election_scenario/node.rs` — the scenario's sequencer on a test clock, custody
   watcher, and API, and a daily turn member's seat: its own operator key and turn release
+- `src/custody/tests/election_scenario/parameter_votes.rs` — the parameter votes dev scenario
 - `src/custody/tests/election_scenario/daily_turns.rs` — the daily rotation dev scenario
   `scripts/dev-daily-rotation.sh` runs: a rotation set of three, five turns drawn from relayed seeds,
   and at each boundary the turn's key, the handover while finality trails, `TurnTaken`, the time in
@@ -914,24 +920,26 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   plus two private candidate anchors, with O(N log(N/chunk)) header work and one configured chunk of full hashes
   across polls while their endpoint stays canonical
 - `src/custody/evm/types.rs` — the canonical deposit, staking-event, finality and reader types
-- `src/custody/evm/staking.rs` — staking catch-up proofs anchored independently of deposit progress
+- `src/custody/evm/staking.rs` — staking catch-up proofs anchored independently of deposit progress, and the registry, schedule and vote contract bindings checked at a window's end
 - `src/custody/tests/fakes/files.rs` — temporary directories, custody test configurations, and the
   stored deposit cursor
-- `src/custody/tests/fakes/schedule.rs` — the schedule the fake chain's registry names, and the
-  registry that schedule records
+- `src/custody/tests/fakes/schedule.rs` — the schedule the fake chain's registry names, the
+  registry that schedule records, and the schedule a vote contract records
 - `src/custody/tests/fakes/sequencer.rs` — in-memory sequencer stand-ins for the watcher tests, with no
   log and no trusted time
 - `src/custody/tests/fakes/logs.rs` — log lines captured from a test's tasks, for alert assertions
 - `src/custody/tests/fakes/epochs.rs` — the fake chain's signer history and earlier epochs' log heads,
   answered as contract calls
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
-- `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, and its schedule's rotation set and turn events, decoded for the staking mirror
+- `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, its schedule's rotation set and turn events, and the vote contract's passed proposals, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
+- `src/custody/tests/rpc/vote.rs` — passed proposals decoded only from the configured vote contract, with their canonical command or none, and a command not hashing to its event refused
+- `src/custody/tests/staking/vote.rs` — passed proposals mirrored only once the vote contract is read to name the configured schedule
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, the staking contract's deployer checked against the configured registry, and the schedule checked against the one the registry and the config name and against the registry it records
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, the pending listing notices, and the latest checkpoint
 - `src/api/operator.rs` — `GET /v1/operator`: the key in effect, its pending rotation, whether rotation is on, the last election, and from `V51` the rotation set in effect and the next with its time, today's and tomorrow's turns, and the turn history (`?before=&limit=`)
 - `src/api/operator_list.rs` — `GET /v1/operators`: the list `custody/operators/` last read, 404 without a lens and 503 before the first read or once it is stale
-- `src/custody/operators/` — the operator list's reader over its own custody quorum: `lens.rs` is the `RegistryLens` ABI and the checks that make the list, `mod.rs` the reader, its loop and the feed the API serves from, `tests.rs` the stand-in providers
+- `src/custody/operators/` — the operator list's reader over its own custody quorum: `lens.rs` is the `RegistryLens` ABI and the checks that make the list, `proposals.rs` the vote contract's open proposals read at the same block (its tests in `proposals/tests.rs`), `mod.rs` the reader, its loop and the feed the API serves from, `tests.rs` the stand-in providers
 - `src/stats/distributions.rs` — the bounded history of closed distribution epochs behind `GET /v1/monkey/distributions`
 - `src/stats/turns.rs` — the bounded history of turn assignments, with each member's `TurnTaken`, that `GET /v1/operator` pages
 - `src/custody/tests/election_scenario/staking_reads.rs` — the staking reads dev scenario
@@ -2221,7 +2229,18 @@ up for `custody.evm.finality_stalled_after`, after which the route answers 503 u
 `custody.evm.staking.registry.lens` the route answers 404 and the node runs as before. With
 `custody.evm.staking.registry.schedule`, the registry's `OperatorSchedule`, the watcher mirrors its
 `RotationSetAdopted` and `TurnAssigned` events with the registry's from protocol `V51`, once a read at a
-window's end shows the schedule names the configured registry, and refuses a schedule event before then. Building the answer from the lens's return data at 100 candidates takes about 80 µs for the quorum's votes, the decode and the checks and about 100 µs for its 46 KB of JSON (`operators::tests::build_cost_at_the_registry_limit`); a read makes six lens calls to each provider, none on the sequencer's thread. A 200-epoch page of `/v1/monkey/distributions` from a full history of 100,000 epochs takes about 4 µs under the record's lock and 130 µs with its 63 KB of JSON (`stats::tests::distributions::page_cost_from_a_full_history`). A refused registry mirror raises a Critical `election_rejected` alert and
+window's end shows the schedule names the configured registry, and refuses a schedule event before then. With
+`[custody.evm.staking.registry.vote]`, the `ParameterVote` over the schedule and its `restriction_ttl`, the node
+records both in the log once protocol `V56` applies (`SetGovernance`), and refuses to start on a log that records
+another; the watcher mirrors the vote contract's `ProposalPassed` events from `V56`, once a read at a window's end
+shows the vote contract names the configured schedule, each carrying the admin command its bytes are the canonical
+JSON of, and the sequencer sequences `ApplyProposal` for a passed normal change at its first stamp past its seven
+days. While rotation is on, the node skips its own protocol activation and access policy, which wait for a vote.
+`GET /v1/house/state` adds a `governance` section, the recorded contract, each change waiting with its
+`applies_at`, each restriction in force with its `expires_at`, and the baseline of each field one holds, and
+`GET /v1/operators` adds the vote contract's open `proposals`, read at the same block, newest first, with each one's
+weights, window and decoded command, or marked `unavailable` when the read fails. A credited proposal the engine refuses raises the `proposal_refused` Warning,
+and a passed change the engine refuses at its time `proposal_rejected`. Building the answer from the lens's return data at 100 candidates takes about 80 µs for the quorum's votes, the decode and the checks and about 100 µs for its 46 KB of JSON (`operators::tests::build_cost_at_the_registry_limit`); a read makes six lens calls to each provider, none on the sequencer's thread. A 200-epoch page of `/v1/monkey/distributions` from a full history of 100,000 epochs takes about 4 µs under the record's lock and 130 µs with its 63 KB of JSON (`stats::tests::distributions::page_cost_from_a_full_history`). A refused registry mirror raises a Critical `election_rejected` alert and
 holds the staking mirror behind it. With real attestation, `rotate-operator` and the admin route refuse an address that `config/test-keys.toml` lists, and the route refuses a request such a key signs unless it is the configured operator's, and the route admits a pending rotation's key only once its time has come by the node's clock. `engine replay` prints the operator a log records. A node
 whose `tee.provider` is not `mock` refuses to start with an operator key that
 `config/test-keys.toml` lists, in either SEC1 encoding: the repository publishes those keys' private

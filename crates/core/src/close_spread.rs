@@ -106,6 +106,11 @@ impl Engine {
         self.close_spread_ceilings.as_ref()
     }
 
+    /// The ceiling adoption waiting to take effect, if one is.
+    pub fn pending_ceiling(&self) -> Option<&PendingCeiling> {
+        self.pending_ceiling.as_ref()
+    }
+
     /// Applies the pending adoption once its notice has run, before the command stamped `ts` acts,
     /// with the listing it binds, if it names one.
     pub(crate) fn apply_due_ceiling(&mut self, ts: Millis) {
@@ -171,11 +176,13 @@ impl Engine {
     /// entry for a market the registry has none for — a market not yet listed — or a strictly
     /// lower value for an adopted one, in effect from `effective_at`. The adoption binds from
     /// `V40`, like the registry itself. From `V52` an adoption for a market not yet listed names
-    /// the `listing` its first listing must be.
+    /// the `listing` its first listing must be. A `voted` adoption's notice is its vote's: it takes
+    /// effect from its time, or at once when that has come.
     /// Error cases:
     /// - before the registry is installed
     /// - a value outside 0..=9999 bps, or not strictly below an adopted entry's
-    /// - an effective time less than seven days after the sequenced time, or past the latest stamp
+    /// - unless `voted`, an effective time less than seven days after the sequenced time
+    /// - an effective time past the latest stamp
     /// - a listing before `V52`, or from `V52` one for a listed market, none for a market not yet
     ///   listed, or one that is for another market, fails `MarketSpec::validate` or
     ///   `check_spread_tiers`
@@ -187,6 +194,7 @@ impl Engine {
         max_close_spread_bps: i64,
         effective_at: Millis,
         listing: Option<&MarketSpec>,
+        voted: bool,
     ) -> Result<(), String> {
         let ceilings =
             self.close_spread_ceilings.as_ref().ok_or("the close-spread ceiling registry is not installed")?;
@@ -198,7 +206,7 @@ impl Engine {
         {
             return Err(format!("market {market}'s close-spread ceiling can only be lowered from {current}bps"));
         }
-        if effective_at < self.now + NOTICE_MS {
+        if effective_at < self.now + NOTICE_MS && !voted {
             return Err(format!("a ceiling adoption takes effect no sooner than {}", self.now + NOTICE_MS));
         }
         if effective_at > MAX_STAMP_MS {
@@ -207,6 +215,9 @@ impl Engine {
         self.check_adopted_floor(market, max_close_spread_bps, listing)?;
         let listing = listing.cloned();
         self.pending_ceiling = Some(PendingCeiling { market, max_close_spread_bps, effective_at, listing });
+        if voted {
+            self.apply_due_ceiling(self.now);
+        }
         Ok(())
     }
 

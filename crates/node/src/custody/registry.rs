@@ -1,13 +1,15 @@
 //! The operator registry's mirrorable events, as `contracts/src/OperatorRegistry.sol` declares
-//! them, and its schedule's, as `contracts/src/OperatorSchedule.sol` does, decoded for the staking
-//! mirror, which reads them in the same proven blocks as the staking contract's.
+//! them, its schedule's, as `contracts/src/OperatorSchedule.sol` does, and the vote contract's, as
+//! `contracts/src/ParameterVote.sol` does, decoded for the staking mirror, which reads them in the
+//! same proven blocks as the staking contract's.
 
-use alloy::primitives::B256;
+use alloy::primitives::{B256, keccak256};
 use alloy::rpc::types::Log;
 use alloy::sol;
-use alloy::sol_types::SolEvent;
+use alloy::sol_types::{SolCall, SolEvent};
 use anyhow::{Context, bail, ensure};
 use engine_core::emissions::TokenUnits;
+use engine_core::governance::decode_command;
 use engine_core::turns::{SetMember, TurnReason};
 use engine_core::types::AccountId;
 
@@ -36,6 +38,16 @@ sol! {
         bytes32 release,
         uint64 generation
     );
+    event ProposalPassed(
+        uint256 indexed id,
+        uint32 indexed setId,
+        bool fast,
+        uint256 yesWeight,
+        uint256 totalWeight,
+        bytes32 commandHash,
+        bytes command
+    );
+    function schedule() external view returns (address);
 }
 
 /// The topics of the registry events the engine mirrors.
@@ -134,6 +146,52 @@ pub(super) fn decode_schedule(log: &Log) -> anyhow::Result<StakingEventKind> {
         }
         other => bail!("unexpected schedule event {other:?}"),
     }
+}
+
+/// The topics of the vote contract's events the engine mirrors.
+pub(super) const VOTE_SIGNATURES: [B256; 1] = [ProposalPassed::SIGNATURE_HASH];
+
+/// The engine's view of a vote log: a passed proposal, with the admin command its bytes are the
+/// canonical JSON of, or none when they are not.
+/// Error cases:
+/// - the log is not `ProposalPassed`, or does not decode
+/// - an id past `u64`, or a command that does not hash to the hash the event carries
+pub(super) fn decode_vote(log: &Log) -> anyhow::Result<StakingEventKind> {
+    match log.topic0() {
+        Some(&ProposalPassed::SIGNATURE_HASH) => {
+            let event = ProposalPassed::decode_log(&log.inner).context("decoding ProposalPassed")?.data;
+            let proposal = u64::try_from(event.id).with_context(|| format!("proposal id {} exceeds u64", event.id))?;
+            ensure!(
+                keccak256(&event.command) == event.commandHash,
+                "proposal {proposal}'s command does not hash to the hash its event carries"
+            );
+            Ok(StakingEventKind::ProposalPassed {
+                proposal,
+                fast: event.fast,
+                command_hash: event.commandHash,
+                command: decode_command(&event.command).map(Box::new),
+            })
+        }
+        other => bail!("unexpected vote event {other:?}"),
+    }
+}
+
+/// The schedule `schedule()`'s return data names: the vote contract's, which must be the configured
+/// one; `None` for empty data, where the vote contract has no code yet.
+/// Error cases:
+/// - non-empty data that does not decode as an address
+pub(super) fn decode_vote_schedule(
+    out: &alloy::primitives::Bytes,
+) -> anyhow::Result<Option<alloy::primitives::Address>> {
+    if out.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(scheduleCall::abi_decode_returns(out).context("decoding the vote contract's schedule")?))
+}
+
+/// The call that reads a vote contract's schedule.
+pub(super) fn vote_schedule_call() -> alloy::primitives::Bytes {
+    scheduleCall {}.abi_encode().into()
 }
 
 /// `seconds` as milliseconds, if they fit `i64`.

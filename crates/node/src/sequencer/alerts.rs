@@ -230,6 +230,10 @@ pub(super) fn alert_on(event: &Event) {
         Event::TurnTakenRejected { reason } => {
             warn!(alert = "turn_take_refused", "this node's TurnTaken was refused: {reason}");
         }
+        // A passed proposal the rules refuse changes nothing: the members' vote did not take effect.
+        Event::ProposalRefused { proposal, reason } => {
+            warn!(alert = "proposal_refused", proposal, "a passed proposal changes nothing: {reason}");
+        }
         Event::PricesRejected { market, reason } => {
             // The reason can carry a per-quote value, so it goes in the message, not the episode key.
             warn!(alert = "prices_rejected", market, "price update refused: {reason}");

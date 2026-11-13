@@ -368,7 +368,23 @@ V53 the operator in office before the first turn earns nothing past the moment t
 boundary or its mirror when later;
 promotion over turns, which is the liveness rule's, is not built yet, so a failed member holds its
 turn until the next boundary and the governance fallback (rotation off and `installOperator` once the
-drawn turns end) applies; the enclave keys and the vault's current release do not yet follow an election (#44); the dev configurations explicitly
+drawn turns end) applies; from V56, while rotation is on, the governed parameters, listings,
+close-spread adoptions, the access policy and protocol activation change only by a proposal the
+rotation set passes with more than two thirds of its snapshotted weight on the vote contract, which
+the engine mirrors from finalised events, so the operator's own commands for them are refused; the
+vote contract carries no limits, and the engine holds each change to the ±50% range of the launch
+profit fee and close-out level, lower-only close-spread ceilings at or above their market's launch
+close charge, the V52 listing bounds (each spread band from its launch rate to twice it, each margin
+requirement at or above launch's, no stress level's size multiplier below 1x), V54's toxicity bounds
+(each score tier within ±50% of launch, markout floors fixed), V55's holding-fee bounds (the base fee
+from its launch value up to +50%, the curve at or above its launch curve at every hold and reaching
+at most 30 minutes) and each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
+can set the other parameters to any valid value after seven days' notice, and a normal change applies only over the
+parameters or market it passed on; a fast-path proposal applies at once but only as a restriction that
+moves fields toward lower risk and lapses at the recorded lifetime, at most seven days, and its margin
+raise is bounded only by each band's validation, so it can close out leveraged positions at once with
+no notice; the node sequences a normal change once its notice has run, so a host that withholds commands
+can delay one as it delays any command; the enclave keys and the vault's current release do not yet follow an election (#44); the dev configurations explicitly
 use a published mock-only signer, which real attestation refuses; the custody adapter requires a strict
 majority of at least three configured independent RPC providers to agree on deposits, block hashes
 and finality, with reads compared at the same block height and empty log responses requiring the

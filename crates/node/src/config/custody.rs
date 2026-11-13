@@ -104,6 +104,49 @@ pub struct RegistryCustodySection {
     /// the registry above. Absent, no turn is mirrored.
     #[serde(default)]
     pub schedule: Option<Address>,
+    /// The `ParameterVote` contract over the schedule, whose passed proposals the watcher mirrors
+    /// from `V56`, and the restriction lifetime the node records with it. Absent, no vote is
+    /// mirrored, and while rotation is on nothing changes the governed parameters.
+    #[serde(default)]
+    pub vote: Option<VoteCustodySection>,
+}
+
+/// The vote contract the watcher mirrors, which the node records in the log once `V56` applies.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoteCustodySection {
+    /// The `ParameterVote` contract, whose `schedule()` is the schedule above; the watcher refuses
+    /// another.
+    pub contract: Address,
+    /// How long a fast-path restriction lasts after it is logged, unless another fast-path vote
+    /// renews it: protocol, recorded once, at most seven days.
+    #[serde(with = "humantime_serde")]
+    pub restriction_ttl: Duration,
+}
+
+impl VoteCustodySection {
+    /// The restriction lifetime in milliseconds, as the engine records it.
+    /// Error cases:
+    /// - zero, past seven days, or not a whole number of milliseconds
+    pub fn ttl_ms(&self) -> anyhow::Result<engine_core::types::Millis> {
+        let ms = i64::try_from(self.restriction_ttl.as_millis()).unwrap_or(i64::MAX);
+        if Duration::from_millis(ms.unsigned_abs()) != self.restriction_ttl
+            || !(1..=engine_core::operator_bounds::NOTICE_MS).contains(&ms)
+        {
+            bail!("custody.evm.staking.registry.vote.restriction_ttl must be whole milliseconds from 1ms to 7 days");
+        }
+        Ok(ms)
+    }
+
+    /// What the node records in the log once `V56` applies.
+    /// Error cases:
+    /// - as `ttl_ms`
+    pub fn governance(&self) -> anyhow::Result<engine_core::governance::GovernanceConfig> {
+        Ok(engine_core::governance::GovernanceConfig {
+            vote: engine_core::types::AccountId(self.contract.0.0),
+            restriction_ttl_ms: self.ttl_ms()?,
+        })
+    }
 }
 
 /// Independently operated RPC service; its name identifies alerts without exposing credentials.
@@ -124,6 +167,8 @@ impl NodeConfig {
     /// - a range, interval, or timeout in `[custody.evm]` is zero
     /// - `custody.evm.staking.registry.lens` is the token, the vault, the staking contract, or the registry
     /// - `custody.evm.staking.registry.schedule` is any of those, or the lens
+    /// - `custody.evm.staking.registry.vote` without a schedule, its contract any of those or the
+    ///   schedule, or a restriction lifetime of zero, past seven days, or not whole milliseconds
     /// - `genesis.house_capital` is not zero with EVM custody
     pub(super) fn validate_custody(&self) -> anyhow::Result<()> {
         let evm = match (self.custody.provider, &self.custody.evm) {
@@ -174,6 +219,17 @@ impl NodeConfig {
                 bail!(
                     "custody.evm.staking.registry.schedule must be the operator schedule, not the token, vault, staking contract, registry, or lens"
                 );
+            }
+            if let Some(vote) = &staking.registry.vote {
+                let schedule =
+                    staking.registry.schedule.context("custody.evm.staking.registry.vote needs a schedule")?;
+                let others = [evm.usdc, vault, staking.contract, staking.registry.contract, schedule];
+                if others.contains(&vote.contract) || staking.registry.lens == Some(vote.contract) {
+                    bail!(
+                        "custody.evm.staking.registry.vote.contract must be the vote contract, not the token, vault, staking contract, registry, lens, or schedule"
+                    );
+                }
+                vote.ttl_ms()?;
             }
         }
         if self.genesis.house_capital != Fixed::ZERO {

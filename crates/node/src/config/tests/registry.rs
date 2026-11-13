@@ -55,3 +55,31 @@ fn the_operator_list_is_read_more_often_than_it_goes_stale() {
     let anvil = std::fs::read_to_string(ANVIL).unwrap().replacen("[api]", "[api]\noperators_interval = \"10m\"", 1);
     toml::from_str::<NodeConfig>(&anvil).unwrap().validate().expect("no lens, no stale bound");
 }
+
+#[test]
+fn the_vote_contract_needs_the_schedule_a_contract_of_its_own_and_a_lifetime_up_to_seven_days() {
+    let schedule = "0x6666666666666666666666666666666666666666";
+    let lens = "0x5555555555555555555555555555555555555555";
+    let with = |schedule: Option<&str>, vote: &str, ttl: &str| {
+        let schedule = schedule.map(|schedule| format!("schedule = '{schedule}'\n")).unwrap_or_default();
+        let vote = format!("[custody.evm.staking.registry.vote]\ncontract = '{vote}'\nrestriction_ttl = '{ttl}'\n");
+        format!("{}{schedule}{vote}", anvil_with_lens(lens))
+    };
+    let own = "0x7777777777777777777777777777777777777777";
+    let cfg: NodeConfig = toml::from_str(&with(Some(schedule), own, "24h")).unwrap();
+    cfg.validate().expect("a vote contract of its own with a day's lifetime loads");
+    let vote = cfg.custody.evm.unwrap().staking.unwrap().registry.vote.unwrap();
+    let governance = vote.governance().unwrap();
+    assert_eq!(
+        (governance.vote.0, governance.restriction_ttl_ms),
+        (own.parse::<alloy::primitives::Address>().unwrap().0.0, 86_400_000)
+    );
+    assert_validation_fails(&with(None, own, "24h"), "custody.evm.staking.registry.vote needs a schedule");
+    for taken in [schedule, lens, "0x4444444444444444444444444444444444444444"] {
+        assert_validation_fails(&with(Some(schedule), taken, "24h"), "vote.contract must be the vote contract");
+    }
+    for ttl in ["0s", "7days 1ms", "1500us"] {
+        assert_validation_fails(&with(Some(schedule), own, ttl), "restriction_ttl must be whole milliseconds");
+    }
+    toml::from_str::<NodeConfig>(&with(Some(schedule), own, "7days")).unwrap().validate().expect("seven days loads");
+}

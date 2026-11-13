@@ -16,27 +16,29 @@ const USDC: Address = Address::repeat_byte(0x0c);
 const REGISTRY: Address = Address::repeat_byte(0x0a);
 const LENS: Address = Address::repeat_byte(0x0b);
 const FINAL: u64 = 1_000;
-const FINAL_TIME: u64 = 1_792_504_800;
+pub(super) const FINAL_TIME: u64 = 1_792_504_800;
 
 /// The block the stand-in chain declares final.
-fn final_block() -> BlockRef {
+pub(super) fn final_block() -> BlockRef {
     BlockRef { number: FINAL, hash: B256::repeat_byte(0xf1) }
 }
 
 /// What a provider says the lens holds, and what it did when asked.
 #[derive(Clone)]
-struct Model {
+pub(super) struct Model {
     chain_id: u64,
     token: Option<Address>,
     tagged: Option<BlockRef>,
     lens_registry: Address,
     overview: Overview,
     rows: Vec<Row>,
+    /// The vote contract's proposals, by id from 1.
+    pub(super) proposals: Vec<super::proposals::ProposalView>,
 }
 
 #[derive(Clone)]
-struct Provider {
-    model: Model,
+pub(super) struct Provider {
+    pub(super) model: Model,
     /// The selector of each lens call made, in order, shared by every clone.
     calls: Arc<Mutex<Vec<[u8; 4]>>>,
     /// Fails every lens call, as a provider that lost the block's state.
@@ -116,6 +118,7 @@ impl Provider {
             lens_registry: REGISTRY,
             overview: overview(count),
             rows: (0..count).map(|index| row(index, count)).collect(),
+            proposals: Vec::new(),
         };
         Self { model, calls: Arc::default(), down: false, fails: None, fail_from: None }
     }
@@ -158,6 +161,9 @@ impl VaultReader for Provider {
     }
 
     async fn contract_call(&self, at: BlockRef, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
+        if to == super::proposals::tests::VOTE && at == final_block() {
+            return super::proposals::tests::answer(&self.model.proposals, &self.calls, &data);
+        }
         anyhow::ensure!(at == final_block() && to == LENS, "the call is not to the lens at the final block");
         anyhow::ensure!(!self.down, "the provider lost the block's state");
         let selector: [u8; 4] = data[..4].try_into().unwrap();
@@ -183,14 +189,14 @@ impl VaultReader for Provider {
 }
 
 /// A reader over three providers, honest or as `tweak` leaves them, and its feed.
-fn reader(providers: [Provider; 3], stale_after: Duration) -> (OperatorsReader<Provider>, OperatorsFeed) {
+pub(super) fn reader(providers: [Provider; 3], stale_after: Duration) -> (OperatorsReader<Provider>, OperatorsFeed) {
     let quorum = Quorum::new(providers.into_iter().enumerate().map(|(i, p)| (format!("p{i}"), p)).collect())
         .unwrap()
         .named("operators", false);
     OperatorsReader::new(quorum, (CHAIN_ID, USDC), (REGISTRY, LENS), Duration::from_secs(60), stale_after)
 }
 
-fn honest(count: usize) -> [Provider; 3] {
+pub(super) fn honest(count: usize) -> [Provider; 3] {
     let provider = Provider::with(count);
     [provider.clone(), provider.clone(), provider]
 }
@@ -205,7 +211,7 @@ pub(crate) async fn feed_with_a_list(count: usize, stale_after: Duration) -> Ope
     feed
 }
 
-fn json_of(list: &OperatorList) -> Value {
+pub(super) fn json_of(list: &OperatorList) -> Value {
     serde_json::to_value(list).unwrap()
 }
 

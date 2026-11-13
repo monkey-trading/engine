@@ -51,11 +51,11 @@ this crate and reproduce the signed state roots exactly.
   genesis runs unsigned
 - From protocol `V46`, a signed benchmark rate moves at most 300 bps per day from the applied rates
   next to its date (`src/benchmark.rs`), a market holding positions stays on its benchmark
-  (`src/operator_bounds.rs`), and the operator's stress floor is at most level 1 and lapses after 72
+  (`src/operator_bounds/`), and the operator's stress floor is at most level 1 and lapses after 72
   hours (`src/stress.rs`)
 - From protocol `V49`, the stress parameters and a listed market's financing markup change only
-  after a seven-day notice, as the profit fee and close-out level do (`src/operator_bounds.rs`)
-- From protocol `V35`, the operator's powers are bounded (`src/operator_bounds.rs`). The profit fee
+  after a seven-day notice, as the profit fee and close-out level do (`src/operator_bounds/`)
+- From protocol `V35`, the operator's powers are bounded (`src/operator_bounds/`). The profit fee
   and the close-out level change only within ±50% of their launch values, the rates in force when
   parameters are first set under `V35` or when it activates, and only from the time a signed
   `announce_params` names, at least seven days after it is logged (`NOTICE_MS`); a `set_params`
@@ -113,6 +113,13 @@ this crate and reproduce the signed state roots exactly.
   which an add moves to the size-weighted average with the open time counted as no older than the
   curve's last hold; the base moves only up from launch, to +50%, and
   the curve only to one at or above its launch curve at every hold, each after a seven-day notice
+- From protocol `V56`, parameter changes by stake-weighted operator vote (`src/governance/`): while
+  rotation is on, the parameters, listings, toxicity weighting, close-spread adoptions, the access
+  policy and protocol activation change only by a proposal the rotation set passes on the vote
+  contract, mirrored as `pass_proposal` and credited once. A normal change waits seven days and
+  applies when the node sequences `apply_proposal`; a fast-path proposal applies at once as a
+  restriction that only raises a margin or the close-out level, sets a stress floor, lowers a cap, or
+  makes a market reduce-only, and lapses at the recorded lifetime unless renewed
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -213,6 +220,7 @@ this crate and reproduce the signed state roots exactly.
 - `src/lib.rs` — module index and the protocol summary
 - `src/engine/mod.rs` — engine state, command dispatch, sessions, and USD valuation
 - `src/engine/house.rs` — house NAV, gross exposure, and the caps set from them
+- `src/engine/margin.rs` — an account's equity and margin requirement at marks
 - `src/engine/market.rs` — per-market state: quotes, marks, positions, resting orders, and futures
   roll position
 - `src/hot_indexes/mod.rs` — derived holder, trigger, pending-receipt and above-frontier coverage indexes, rebuilt after recovery
@@ -237,7 +245,7 @@ this crate and reproduce the signed state roots exactly.
 - `src/closeout.rs` — account close-out and bad-debt write-off
 - `src/benchmark.rs` — dated publisher snapshots, effective-date lookup, staleness, and retention;
   from `V46`, the cap on a signed rate (`split_by_cap`), which `check_held_benchmark` in
-  `src/operator_bounds.rs` keeps a relisting from going around
+  `src/operator_bounds/` keeps a relisting from going around
 - `src/funds.rs` — legacy and mock deposits, withdrawals, house capital, and overnight financing
 - `src/deposits.rs` — exact custody receipts, sequencer-confirmed principal locks, finality,
   canonical reversals, and atomic moves of reincluded deposits to their replacement receipts
@@ -262,7 +270,8 @@ this crate and reproduce the signed state roots exactly.
 - `tests/withdrawals/setup.rs` — shared Engine::apply-driven withdrawal setup
 - `src/admin/mod.rs` — operator commands and signed admin commands; `src/admin/quote_currency.rs`
   checks a listing's quote currency
-- `src/operator_bounds.rs` — the V35 bounds: launch rates, rate notices, price-rule checks, and operator rotation
+- `src/operator_bounds/mod.rs` — the V35 bounds: launch rates, rate notices and price-rule checks
+- `src/operator_bounds/rotation.rs` — the V35 operator rotation: a signed `RotateOperator` and its seven-day notice
 - `src/spread_tier.rs` — size spread bands: the `V52` unit in tenths of a bp beside the whole-bps
   encoding earlier listings keep, the class floors, and the band staircase; unit tests in
   `src/spread_tier/tests.rs`
@@ -290,6 +299,14 @@ this crate and reproduce the signed state roots exactly.
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
 - `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record; from `V47`, the candidate seated and the account the operator's share goes to; from `V48`, the timelock-only installation the failed-key fallback mirrors
 - `tests/operator_election.rs` — the V37 elections: refusals, the effective time and its seven-day floor, cancellation, and the refused signed rotation
+- `src/governance/mod.rs` — the V56 parameter votes: the recorded vote contract, passed proposals mirrored once, the normal changes waiting out their notice and `ApplyProposal`, the governed commands, and the canonical command bytes a proposal carries
+- `src/governance/restriction.rs` — the V56 fast-path restrictions: what one may carry, the values in force as the stricter of the baseline and every restriction, the baselines, renewal and lapse
+- `tests/parameter_votes.rs` — `V56`: mirror refusals and crediting, a normal change no sooner than seven days after it is logged, the notices a vote replaces and the launch range it keeps, the operator's and the node's governed commands refused while rotation is on, fast-path refusals, the operator's levers beside a restriction, renewal and lapse, a normal vote under a restriction, and canonical bytes
+- `tests/parameter_votes/baseline.rs` — `V56`: voted commands meeting their own checks, a voted change applying only over the baseline it passed on, parameters under a restriction moving only the baseline, renewal after the baseline moves, restricted stress levels, and the one waiting ceiling adoption
+- `tests/parameter_votes/limits.rs` — `V56`: a refused drawn turn keeping votes governing until an installation, a restriction lapsing at a walked boundary, and the caps on waiting changes and restrictions
+- `tests/parameter_votes/listing.rs` — `V56`: a voted relisting held to the listing bounds without a notice, the operator's listing notice refused while rotation is on, the size multiplier and close charge floors on voted changes, and a relisting under a margin restriction measured from the baseline
+- `tests/parameter_votes/toxicity.rs` — `V56`: a voted score tier change held to ±50% of launch without a notice, and a voted relisting keeping its markout floor
+- `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch
 - `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, and the turn's time in office
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
 - `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
@@ -347,7 +364,8 @@ this crate and reproduce the signed state roots exactly.
   expiry cap, the order/cancel-only scope a session key signs within, and from `V42` the refilling
   budget of new addresses an account may introduce
 - `src/account.rs` — accounts, netted positions, and resting orders
-- `src/command.rs` / `src/event/` (its tests in `tests.rs`) — engine inputs and outputs
+- `src/command/mod.rs` / `src/event/` (its tests in `tests.rs`, the typed refusals in `reject.rs`) — engine inputs and outputs
+- `src/command/predicates.rs` — what kind of command a `Command` or `AdminCommand` is: who may sign it, and which activations and snapshots it carries
 - `src/types.rs` — ids, sides, and asset classes
 - `tests/` — protocol tests through `Engine::apply`, with a shared harness, its signing client
   (`client.rs`), protocol-version constructors (`versions.rs`), and the reference-log format in
@@ -446,7 +464,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V55` parts (`v15.rs` to `v55.rs`)
+  `V15` to `V56` parts (`v15.rs` to `v56.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -770,6 +788,32 @@ that name no curve the default one, the full fee to 10 s falling to 10% at 15 mi
 (`DEFAULT_PROFIT_FEE_CURVE`), records the curve in force as the launch curve, and gives each held
 position the open time `activation - the curve's last hold`, so its next close pays the base. No earlier log names a curve or keeps an open time, so earlier logs
 replay unchanged. Its session is in `examples/reference_log/v55.rs`.
+
+Protocol V56 adds parameter changes by stake-weighted operator vote. The node records the vote
+contract (`ParameterVote`) and how long a fast-path restriction lasts, at most seven days, once. While
+rotation is on, the parameters, listings, toxicity weighting, close-spread adoptions, the access
+policy and protocol activation change only by a proposal the members of the rotation set in effect
+when it opened pass with more than two thirds of the set's weight: the operator's signed commands for
+them, and its parameter, markup and listing notices, are refused, and so are the node's own unsigned ones, so a
+protocol activation waits for a vote. The engine mirrors each passed proposal, credited once, with the
+admin command its bytes are the canonical JSON of. A normal change applies no sooner than seven days
+after it is logged, when the node sequences `ApplyProposal`, under every check its command meets but
+the notices the vote's own replaces, so the ±50% range of the launch profit fee and close-out level,
+lower-only close-spread ceilings at or above the launch close charge, the size multipliers' 1x floor,
+V52's listing bounds, V54's toxicity bounds and V55's holding-fee bounds still hold, a voted relisting keeping each changed band
+table within its market's launch bands as a listing notice would and its markout floor, and voted
+score tiers staying within ±50% of launch, a voted base fee at or above launch and a voted curve at
+or above its launch curve; a `SetParams` or `UpsertMarket` applies only over the
+baseline it was mirrored against, and a ceiling adoption only while none waits. A fast-path proposal applies at once as a
+restriction, refused if any field moves away from lower risk: a higher margin band or close-out level,
+a stress floor, a lower house or market cap or floor, or reduce-only. The values in force are the
+stricter of the baseline and every restriction; only a normal vote, or the operator with rotation off,
+moves the baseline, so a restriction's lapse leaves every later vote standing. The operator's own
+stress floor and reduce-only sit beside the restrictions and cannot clear one. A restriction lapses
+at its lifetime unless a vote on the same command, or the same bounds, renews it, and parameters that drop
+a stress level a restriction holds a floor at are refused. Before V56 nothing records a vote, and the state
+encodes as before, so earlier logs replay unchanged. Its session is in
+`examples/reference_log/v56.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

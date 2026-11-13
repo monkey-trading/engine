@@ -10,6 +10,8 @@ use engine_core::emissions::TokenUnits;
 use engine_core::types::{AccountId, Millis};
 use serde::Serialize;
 
+use crate::custody::operators::proposals::OpenProposals;
+
 sol! {
     struct Parameters {
         uint64 epochLength;
@@ -74,9 +76,9 @@ pub(crate) struct BlockStamp {
     pub time_ms: Millis,
 }
 
-/// What `GET /v1/operators` answers: the registry's switch, parameters and operators, and every listed
-/// candidate, all read at one block.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// What `GET /v1/operators` answers: the registry's switch, parameters and operators, every listed
+/// candidate, and with a vote contract its open proposals, all read at one block.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct OperatorList {
     pub(crate) block: BlockStamp,
     registry: AccountId,
@@ -96,6 +98,9 @@ pub struct OperatorList {
     pending_promotion: bool,
     /// Listed (approved) candidates by registration order, at most 100.
     candidates: Vec<CandidateView>,
+    /// The vote contract's proposals still taking votes; absent without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proposals: Option<OpenProposals>,
 }
 
 /// The registry's election parameters in force; durations are seconds.
@@ -163,6 +168,7 @@ pub(super) struct Reads {
     pub lens: Address,
     pub overview: Overview,
     pub rows: Vec<Row>,
+    pub proposals: Option<OpenProposals>,
 }
 
 /// A MONKEY amount, refusing one past `u128`.
@@ -207,7 +213,7 @@ impl OperatorList {
     /// Error cases:
     /// - any of those checks fails, or an amount or time is out of range
     pub(super) fn assemble(reads: Reads, configured_registry: Address) -> anyhow::Result<Self> {
-        let Reads { block, registry, lens, overview, mut rows } = reads;
+        let Reads { block, registry, lens, overview, mut rows, proposals } = reads;
         ensure!(
             registry == configured_registry,
             "the lens reads registry {registry}, not the configured {configured_registry}"
@@ -257,6 +263,7 @@ impl OperatorList {
                 .transpose()?,
             pending_promotion: overview.pendingPromotion,
             candidates,
+            proposals,
         })
     }
 }

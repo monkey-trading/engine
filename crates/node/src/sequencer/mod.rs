@@ -67,7 +67,7 @@ use crate::metrics::Metrics;
 use crate::sequencer::alerts::{BenchmarkAlerts, DeficitAlert, alert_on, reinstated_receipt, resolve_reversal};
 use crate::snapshot::{Progress, RecoveryBase};
 use crate::tee::EnclaveKey;
-use crate::trusted_time::{Sample, TimeGate};
+use crate::trusted_time::TimeGate;
 
 /// Most requests of any kind taken into one batch before it is flushed and answered.
 const MAX_BATCH: usize = 1024;
@@ -119,6 +119,7 @@ pub struct Sequencer {
     turn_release: Option<engine_core::eip712::B256>,
     /// With sealed keys, the generation each `TurnTaken` waits for them to be sealed in.
     turn_sealing: Option<turns::TurnSealing>,
+    governance: Option<engine_core::governance::GovernanceConfig>,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
     claims: claims::Claims,
@@ -314,6 +315,7 @@ impl Sequencer {
         if self.benchmark_sync && !matches!(&cmd, Command::SignedAdmin(req) if req.command.is_benchmark_snapshot()) {
             return Ok(None);
         }
+        self.apply_due_changes(ts, &cmd)?;
         let snapshot = matches!(&cmd, Command::SignedAdmin(req) if req.command.is_benchmark_snapshot());
         let Some(events) = self.stamp(ts, cmd)? else {
             // Frozen mid-request: refuse like an unadmitted stamp, dropping the reply.
@@ -333,38 +335,6 @@ impl Sequencer {
         Ok(Some(events))
     }
 
-    /// Takes `sample` as the latest trusted time, and sequences any queued required commands it
-    /// admits.
-    /// Error cases:
-    /// - the engine rejects a queued required command
-    /// - the log cannot be written
-    fn take_sample(&mut self, sample: Sample) -> anyhow::Result<()> {
-        if self.benchmark_sync_enabled {
-            let (host_ms, now) = (self.clock.now_ms(), self.clock.instant());
-            let ts = self.time.stamp(host_ms, self.last_ts, now);
-            self.benchmark_time_refused |= !self.time.can_admit(host_ms, ts, now);
-        }
-        self.time.update(sample);
-        if self.benchmark_sync_enabled {
-            if let Some(ts) = self.admitted_ts(None) {
-                self.sequence_queued(ts)?;
-            }
-            Ok(())
-        } else {
-            self.sequence_queued_if_admitted()
-        }
-    }
-
-    /// `take_sample` outside `run`, flushing what it sequences: how a test gives a sequencer trusted
-    /// time before it runs.
-    /// Error cases:
-    /// - as `take_sample`, or the log cannot be flushed
-    #[cfg(test)]
-    pub fn trust(&mut self, sample: Sample) -> anyhow::Result<()> {
-        self.take_sample(sample)?;
-        self.flush()
-    }
-
     /// Applies one command at `ts`, logs it with its events, signs any approved withdrawal, and
     /// checkpoints on schedule. The command's span carries its seq as `id`.
     /// Error cases:
@@ -379,8 +349,8 @@ impl Sequencer {
         }
         let previous_schedule =
             house::set_params_of(&cmd).map(|_| self.engine.params().map(|params| params.rollover.clone()));
-        let previous_benchmarks =
-            matches!(&cmd, Command::Admin(_) | Command::SignedAdmin(_)).then(|| BenchmarkAlerts::listed(&self.engine));
+        let admin = matches!(&cmd, Command::Admin(_) | Command::SignedAdmin(_) | Command::ApplyProposal(_));
+        let previous_benchmarks = admin.then(|| BenchmarkAlerts::listed(&self.engine));
         let sequenced = Sequenced { seq: self.next_seq, ts, cmd };
         let _span = info_span!("command", id = sequenced.seq).entered();
         legacy::check_activation_ledger(&sequenced.cmd, &self.legacy_deposits)?;
@@ -473,6 +443,7 @@ impl Sequencer {
 
 mod alerts;
 pub(crate) mod genesis;
+mod governance;
 mod snapshots;
 pub use genesis::{GenesisProgress, genesis_commands};
 mod quotes;
@@ -481,6 +452,10 @@ pub(crate) mod turns;
 
 #[cfg(test)]
 mod batch_tests;
+#[cfg(test)]
+mod checkpoint_tests;
+#[cfg(test)]
+pub(crate) mod fixture_tests;
 #[cfg(test)]
 mod margin_tests;
 #[cfg(test)]
@@ -493,8 +468,3 @@ mod resting_bench;
 pub(crate) mod tests;
 #[cfg(test)]
 mod wait_bench;
-
-#[cfg(test)]
-mod checkpoint_tests;
-#[cfg(test)]
-pub(crate) mod fixture_tests;
