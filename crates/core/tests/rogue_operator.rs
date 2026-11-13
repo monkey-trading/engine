@@ -14,6 +14,7 @@ use engine_core::event::{Event, Fill, Reject};
 use engine_core::market::Tier;
 use engine_core::params::{NotionalWeighting, ProtocolParams, StressLevel, ToxicityParams, ToxicityTier};
 use engine_core::session::Schedule;
+use engine_core::spread_tier::SpreadTier;
 use engine_core::types::{AccountId, AssetClass, Side};
 
 /// Genesis toxicity: a 2 s horizon, the calibrated prior and memory, and tiers at 1 and 2 bps
@@ -40,11 +41,8 @@ fn genesis_btc(h: &mut Harness) {
         Tier { up_to: Some(f("10000000")), bps: 200 },
         Tier { up_to: None, bps: 500 },
     ];
-    spec.spread_tiers = vec![
-        Tier { up_to: Some(f("2000000")), bps: 0 },
-        Tier { up_to: Some(f("10000000")), bps: 3 },
-        Tier { up_to: None, bps: 8 },
-    ];
+    spec.spread_tiers =
+        vec![SpreadTier::bps(Some(f("2000000")), 0), SpreadTier::bps(Some(f("10000000")), 3), SpreadTier::bps(None, 8)];
     h.operator_admin(AdminCommand::UpsertMarket(spec));
 }
 

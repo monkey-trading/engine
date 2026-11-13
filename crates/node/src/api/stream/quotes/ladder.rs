@@ -17,10 +17,11 @@ const HALVINGS: usize = 64;
 const DOUBLINGS: usize = 64;
 
 /// A market's quotes for one account. A buy pays `ask` and a sell receives `bid`; an order takes
-/// the price of the first step whose `qty` is at least its own. That price is the average for the
-/// step's whole size, which is at least that of any smaller order but for the rounding of a fill's
-/// cost up to a unit (`Engine::quote`), so an order quoted at it fills within its slippage bound
-/// while nothing moves, and one with a `declined` step is declined.
+/// the price of the first step whose `qty` is at least its own. That price is the worst average of
+/// the step's size and the steps before it, which is at least that of any smaller order but for the
+/// rounding of a fill's cost up to a unit (`Engine::quote`), so an order quoted at it fills within
+/// its slippage bound while nothing moves, and one with a `declined` step is declined. A whole
+/// position's close is priced exactly by `close`, not by the step at its size.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename = "quote")]
 pub(super) struct MarketQuote {
@@ -129,22 +130,28 @@ struct Held<'a> {
     tops: &'a [Fixed],
 }
 
-/// The steps of one side, by size: each spread tier's top as the account would reach it, with the
-/// reason a fill of that size is declined, if one is; the largest size that fills below the first
-/// declined top, where there is one; and the largest size the account can open in the unbounded
-/// last tier, unless a tier before it was declined. An order grows the absolute position from the
-/// account's, so it is shorter than a top by what the account holds on its own side, and longer by
-/// what it holds on the other, which it closes first. Each price is the worst of its own and the
-/// steps before it, so it holds for every smaller order even where a tier charges less than the
-/// one before. A side with no step cannot open any size.
+/// The steps of one side, by size: on the side that closes the account's position, each spread
+/// tier's top the position closes down to, since from `V52` a close pays the tiers it closes through,
+/// dearest first; then each top as the account would reach it, with the reason a fill of that size
+/// is declined, if one is; the largest size that fills below the first declined top, where there is
+/// one; and the largest size the account can open in the unbounded last tier, unless a tier before
+/// it was declined. An order grows the absolute position from the account's, so it is shorter than a
+/// top by what the account holds on its own side, and longer by what it holds on the other, which it
+/// closes first. Each price is the worst of its own and the steps before it, so it holds for every
+/// smaller order even where a tier charges less than the one before: a close's average falls as it
+/// reaches cheaper tiers, and a reversal's then rises, so between two steps no order's average is
+/// worse than both ends'. A side with no step cannot open any size.
 fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held: &Held) -> Vec<Step> {
     let quote = |qty: Fixed| quoter.quote(account, market, side, qty).ok();
     let fits = |qty: Fixed| quote(qty).filter(|quote| quote.declined.is_none()).map(|quote| quote.price);
     let same_side = held.qty.is_zero() || held.qty.signum() == side.sign();
-    let orders = held.tops.iter().filter_map(|top| {
-        let qty = if same_side { *top - held.qty.abs() } else { *top + held.qty.abs() };
+    let holding = held.qty.abs();
+    let closes = held.tops.iter().rev().filter(|top| !same_side && **top < holding).map(|top| holding - *top);
+    let opens = held.tops.iter().filter_map(|top| {
+        let qty = if same_side { *top - holding } else { *top + holding };
         qty.is_positive().then_some(qty)
     });
+    let orders = closes.chain(opens);
     let mut steps: Vec<Step> = Vec::new();
     // The largest size known to fill, which includes closing what the account holds on the other
     // side (at most the input bound, past which no order is placeable), and whether a tier's top is

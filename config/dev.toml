@@ -304,6 +304,11 @@ size_spread_multiplier_bps = 40000
 min_spread_bps = 10
 trigger = { divergence_share_bps = 8000, move_bps = 300, utilisation_bps = 9500 }
 
+# Size spread bands are in tenths of a bp (protocol V52): #623's calibrated
+# tiers, each band doubling the one before, every fill paying them on the slice
+# it opens or closes. FX and index first bands are the tenths #614's D6 derives,
+# pending the owner's confirmation before production promotion.
+
 # --- Crypto: 24/7 ---------------------------------------------------------
 
 [[genesis.markets]]
@@ -314,7 +319,7 @@ max_slippage_bps = 25
 house_cap_bps = 3000
 house_cap_floor = "300000"
 margin_tiers = [{ up_to = "2000000", bps = 100 }, { up_to = "10000000", bps = 200 }, { bps = 500 }]
-spread_tiers = [{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 3 }, { bps = 8 }]
+spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
@@ -327,7 +332,7 @@ max_slippage_bps = 25
 house_cap_bps = 2000
 house_cap_floor = "200000"
 margin_tiers = [{ up_to = "2000000", bps = 100 }, { up_to = "10000000", bps = 200 }, { bps = 500 }]
-spread_tiers = [{ up_to = "1000000", bps = 0 }, { up_to = "5000000", bps = 3 }, { bps = 8 }]
+spread_tiers = [{ up_to = "1000000", tenth_bps = 30 }, { up_to = "5000000", tenth_bps = 60 }, { tenth_bps = 120 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
@@ -342,7 +347,7 @@ max_slippage_bps = 5
 house_cap_bps = 5000
 house_cap_floor = "500000"
 margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100 }, { bps = 300 }]
-spread_tiers = [{ up_to = "10000000", bps = 0 }, { up_to = "50000000", bps = 1 }, { bps = 3 }]
+spread_tiers = [{ up_to = "10000000", tenth_bps = 4 }, { up_to = "50000000", tenth_bps = 8 }, { tenth_bps = 16 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 5, min_sources = 2 }
 financing = { benchmark = "ESTR", markup_bps = 80, day_basis = 360 }
 
@@ -362,7 +367,7 @@ max_slippage_bps = 10
 house_cap_bps = 5000
 house_cap_floor = "500000"
 margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100 }, { bps = 500 }]
-spread_tiers = [{ up_to = "5000000", bps = 0 }, { up_to = "25000000", bps = 1 }, { bps = 4 }]
+spread_tiers = [{ up_to = "5000000", tenth_bps = 7 }, { up_to = "25000000", tenth_bps = 14 }, { tenth_bps = 28 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
@@ -388,7 +393,7 @@ quote_currency = { currency = "eur", fx_market = 10 }
 max_slippage_bps = 10
 house_cap_bps = 5000
 margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100 }, { bps = 500 }]
-spread_tiers = [{ up_to = "5000000", bps = 0 }, { up_to = "25000000", bps = 1 }, { bps = 4 }]
+spread_tiers = [{ up_to = "5000000", tenth_bps = 9 }, { up_to = "25000000", tenth_bps = 18 }, { tenth_bps = 36 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "ESTR", markup_bps = 250, day_basis = 360 }
 
@@ -414,7 +419,7 @@ max_slippage_bps = 10
 house_cap_bps = 3000
 house_cap_floor = "300000"
 margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
-spread_tiers = [{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 2 }, { bps = 6 }]
+spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
@@ -440,7 +445,7 @@ house_cap_bps = 1000
 house_cap_floor = "100000"
 min_order_notional = "10"
 margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 2000 }, { bps = 5000 }]
-spread_tiers = [{ up_to = "500000", bps = 0 }, { up_to = "2000000", bps = 3 }, { bps = 10 }]
+spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
@@ -459,9 +464,11 @@ closed_dates = ["2026-11-26", "2026-12-25", "2027-01-01"]
 # --- Close-spread ceilings (protocol V40, #344) -------------------------------
 # The most each market's closes pay, whatever the parameters do. These are
 # unequal TEST FIXTURES, not calibrated values: production's come from #147's
-# calibration. The launch close charge here (widest stress minimum 10bps plus
-# the 3bps top toxicity add-on) is 13bps, and the engine refuses a nonzero
-# ceiling below it.
+# calibration. A market's launch close charge here is the widest stress minimum
+# 10bps, the 3bps top toxicity add-on and, from protocol V52, its first spread
+# band at the widest 4x multiplier (EUR-USD 14.6bps, US500 15.8, DE40 16.6,
+# BTC-USD, XAU-USD and AAPL 21, ETH-USD 25), and the engine refuses a ceiling
+# below it.
 [[genesis.close_spread_ceilings]]
 market = 1
 max_close_spread_bps = 30
@@ -472,20 +479,20 @@ max_close_spread_bps = 30
 
 [[genesis.close_spread_ceilings]]
 market = 10
-max_close_spread_bps = 13
+max_close_spread_bps = 15
 
 [[genesis.close_spread_ceilings]]
 market = 20
-max_close_spread_bps = 15
+max_close_spread_bps = 16
 
 [[genesis.close_spread_ceilings]]
 market = 23
-max_close_spread_bps = 15
+max_close_spread_bps = 17
 
 [[genesis.close_spread_ceilings]]
 market = 30
-max_close_spread_bps = 20
+max_close_spread_bps = 25
 
 [[genesis.close_spread_ceilings]]
 market = 40
-max_close_spread_bps = 20
+max_close_spread_bps = 25

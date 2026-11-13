@@ -158,7 +158,7 @@ mod tests {
         apply(&mut engine, Command::Admin(AdminCommand::SetParams(params)));
         let mut market = config.genesis.markets.into_iter().find(|market| market.id == 1).unwrap();
         market.house_cap_floor = Fixed::from_int(1_000_000);
-        market.spread_tiers.iter_mut().for_each(|tier| tier.bps = 0);
+        market.spread_tiers = vec![engine_core::spread_tier::SpreadTier::bps(None, 0)];
         apply(&mut engine, Command::Admin(AdminCommand::UpsertMarket(market)));
         apply(&mut engine, Command::HouseCapital { amount: Fixed::from_int(10), chain_ref: "queue-api-house".into() });
         for account in [A, B] {

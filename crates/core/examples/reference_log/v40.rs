@@ -125,7 +125,12 @@ pub(crate) fn session(h: &mut Harness) {
     assert_eq!(
         h.operate_as(
             ELECTED_SEED,
-            AdminCommand::AdoptCloseSpreadCeiling { market: 39, max_close_spread_bps: 20, effective_at: adopted },
+            AdminCommand::AdoptCloseSpreadCeiling {
+                market: 39,
+                max_close_spread_bps: 20,
+                effective_at: adopted,
+                listing: None
+            },
         )
         .last(),
         Some(&Event::AdminApplied)
@@ -142,7 +147,12 @@ pub(crate) fn session(h: &mut Harness) {
     assert_eq!(h.operate_as(ELECTED_SEED, AdminCommand::UpsertMarket(silver)).last(), Some(&Event::AdminApplied));
     let raised = h.operate_as(
         ELECTED_SEED,
-        AdminCommand::AdoptCloseSpreadCeiling { market: 39, max_close_spread_bps: 21, effective_at: h.ts + NOTICE_MS },
+        AdminCommand::AdoptCloseSpreadCeiling {
+            market: 39,
+            max_close_spread_bps: 21,
+            effective_at: h.ts + NOTICE_MS,
+            listing: None,
+        },
     );
     assert!(
         matches!(raised.last(), Some(Event::AdminRejected { reason }) if reason.contains("can only be lowered")),

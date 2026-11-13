@@ -130,6 +130,24 @@ fn rounded_arithmetic_rounds_the_exact_result_once_in_the_direction_asked() {
 }
 
 #[test]
+fn tenths_of_a_bp_round_once_and_agree_with_whole_bps() {
+    // 0.4bp of 1.000000001: 0.0000400000004, below one unit and rounded either way.
+    let amount = f("1.000000001");
+    assert_eq!(amount.mul_tenth_bps_rounded(4, Rounding::Up), f("0.000040001"));
+    assert_eq!(amount.mul_tenth_bps_rounded(4, Rounding::Down), f("0.00004"));
+    assert_eq!(f("-1.000000001").mul_tenth_bps_rounded(4, Rounding::Down), f("-0.000040001"));
+    // A whole number of bps written in tenths is the same charge, in every rounding and sign.
+    for raw in [1, 9, 99_999, 1_234_567_891, -77_777_777_777, i128::from(i64::MAX)] {
+        for bps in [0, 1, 3, 25, 10_000] {
+            for rounding in [Rounding::Up, Rounding::Down, Rounding::TowardZero] {
+                let value = Fixed::from_raw(raw);
+                assert_eq!(value.mul_tenth_bps_rounded(bps * 10, rounding), value.mul_bps_rounded(bps, rounding));
+            }
+        }
+    }
+}
+
+#[test]
 fn truncating_products_and_quotients_overflow_only_outside_the_range() {
     // 1.71e11 units at an index of 1e9: the scaled product, 1.71e38, is past `i128`, the result
     // is not. Each sign truncates toward zero, as the plain formula does where it fits.

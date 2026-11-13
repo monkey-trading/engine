@@ -11,6 +11,13 @@
 //! ceiling enters only by a signed adoption logged at least seven days before it takes effect —
 //! the governance channel, with the notice the other operator bounds use — and an entry can only
 //! be lowered, never raised.
+//!
+//! From `V52` closes pay the size spread, so a ceiling is at least its market's launch close charge,
+//! which counts the first band at the widest size multiplier: an install or adoption below it is
+//! refused, an adoption for a market not yet listed binds the listing that market's first listing
+//! must be, and that first listing is refused while its own launch close charge exceeds the
+//! ceiling. A pure close's charge clamps to the ceiling before the check that a spread stays under
+//! the price, so a pure close always prices.
 
 use std::collections::BTreeMap;
 
@@ -25,6 +32,7 @@ use crate::market::MarketSpec;
 use crate::operator_bounds::NOTICE_MS;
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
+use crate::spread_tier::check_spread_tiers;
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis, OrderId, Side};
 
 /// The most a close-spread ceiling may be: 9,999 bps, an arithmetic limit, not an economic range.
@@ -39,13 +47,17 @@ pub struct CloseSpreadCeiling {
 }
 
 /// A ceiling adoption waiting out its notice.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PendingCeiling {
     pub market: MarketId,
     pub max_close_spread_bps: i64,
     /// The sequenced time the adoption takes effect.
     pub effective_at: Millis,
+    /// From `V52`, the listing an adoption for a market not yet listed binds; left out of the
+    /// encoding when none is named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing: Option<MarketSpec>,
 }
 
 /// The largest close charge `params` allow: the widest stress minimum spread plus the top toxicity
@@ -56,6 +68,33 @@ pub(crate) fn launch_close_charge_bps(params: &ProtocolParams) -> i64 {
     stress + toxicity
 }
 
+/// From `V52`, the largest charge a close in its first band can pay in `spec`'s market under
+/// `params`, in tenths of a bp: the widest stress minimum and the top toxicity add-on, plus the
+/// first spread band at the widest size multiplier, rounded up.
+pub(crate) fn launch_close_charge_tenth_bps(params: &ProtocolParams, spec: &MarketSpec) -> i64 {
+    let multiplier = params.stress_levels.iter().map(|level| level.size_spread_multiplier_bps).max().unwrap_or(0);
+    let first = spec.spread_tiers.first().map_or(0, |tier| tier.tenth_bps());
+    // Validated rates (0 to 100,000 tenths, and a 0 to 100,000 bps multiplier) keep this inside i64
+    // and non-negative, so adding the divisor less one rounds up.
+    launch_close_charge_bps(params) * 10 + (first * multiplier + 9_999) / 10_000
+}
+
+/// Checks a ceiling covers `spec`'s launch close charge under `params`.
+/// Error cases:
+/// - a ceiling below the launch close charge, in tenths of a bp
+fn check_ceiling_floor(params: &ProtocolParams, spec: &MarketSpec, ceiling_bps: i64) -> Result<(), String> {
+    let floor = launch_close_charge_tenth_bps(params, spec);
+    if ceiling_bps * 10 < floor {
+        return Err(format!(
+            "market {}'s close-spread ceiling of {ceiling_bps}bps is below its launch close charge of {}.{}bps",
+            spec.id,
+            floor / 10,
+            floor % 10
+        ));
+    }
+    Ok(())
+}
+
 impl Engine {
     /// The adopted close-spread ceilings by market, once genesis (or one signed install) records
     /// them; `None` until then.
@@ -63,21 +102,19 @@ impl Engine {
         self.close_spread_ceilings.as_ref()
     }
 
-    /// The ceiling adoption whose notice has run at `ts`, if one is pending.
-    pub(crate) fn due_ceiling(&self, ts: Millis) -> Option<PendingCeiling> {
-        self.pending_ceiling.filter(|pending| pending.effective_at <= ts)
-    }
-
-    /// Applies the pending adoption once its notice has run (see `Engine::due_ceiling`), before
-    /// the command stamped `ts` acts.
+    /// Applies the pending adoption once its notice has run, before the command stamped `ts` acts,
+    /// with the listing it binds, if it names one.
     pub(crate) fn apply_due_ceiling(&mut self, ts: Millis) {
-        let Some(pending) = self.due_ceiling(ts) else { return };
+        let Some(pending) = self.pending_ceiling.take_if(|pending| pending.effective_at <= ts) else { return };
         // The registry outlives its install command: adoption needs it (see
         // `Engine::adopt_close_spread_ceiling`).
         self.close_spread_ceilings
             .get_or_insert_with(BTreeMap::new)
             .insert(pending.market, pending.max_close_spread_bps);
-        self.pending_ceiling = None;
+        // A market listed while the adoption waited was held to its listing already.
+        if let Some(listing) = pending.listing.filter(|_| !self.markets.contains_key(&pending.market)) {
+            self.operator_bounds.proposed_listings.insert(pending.market, listing);
+        }
     }
 
     /// Installs the close-spread ceiling registry: one entry per listed market, adopted in a
@@ -91,6 +128,7 @@ impl Engine {
     /// - a listed market with no entry
     /// - a value outside 0..=9999 bps, or a nonzero value below the parameters' largest close
     ///   charge, which would clamp a launch close by more than the rounding unit
+    /// - from `V52`, a value below its listed market's launch close charge, zero included
     pub(crate) fn install_close_spread_ceilings(&mut self, ceilings: &[CloseSpreadCeiling]) -> Result<(), String> {
         if self.close_spread_ceilings.is_some() {
             return Err("the close-spread ceiling registry is already installed".into());
@@ -110,6 +148,11 @@ impl Engine {
                     "a nonzero ceiling below the {floor}bps largest close charge would clamp a launch close"
                 ));
             }
+            if let Some(market) = self.markets.get(&ceiling.market)
+                && self.protocol_version >= ProtocolVersion::V52
+            {
+                check_ceiling_floor(params, &market.spec, ceiling.max_close_spread_bps)?;
+            }
         }
 
         if let Some(id) = self.markets.keys().find(|id| !registry.contains_key(*id)) {
@@ -122,16 +165,22 @@ impl Engine {
     /// Records a signed adoption of one close-spread ceiling, replacing any pending adoption: an
     /// entry for a market the registry has none for — a market not yet listed — or a strictly
     /// lower value for an adopted one, in effect from `effective_at`. The adoption binds from
-    /// `V40`, like the registry itself.
+    /// `V40`, like the registry itself. From `V52` an adoption for a market not yet listed names
+    /// the `listing` its first listing must be.
     /// Error cases:
     /// - before the registry is installed
     /// - a value outside 0..=9999 bps, or not strictly below an adopted entry's
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
+    /// - a listing before `V52`, or from `V52` one for a listed market, none for a market not yet
+    ///   listed, or one that is for another market, fails `MarketSpec::validate` or
+    ///   `check_spread_tiers`
+    /// - from `V52`, a value below the launch close charge of the listed market or of the listing
     pub(crate) fn adopt_close_spread_ceiling(
         &mut self,
         market: MarketId,
         max_close_spread_bps: i64,
         effective_at: Millis,
+        listing: Option<&MarketSpec>,
     ) -> Result<(), String> {
         let ceilings =
             self.close_spread_ceilings.as_ref().ok_or("the close-spread ceiling registry is not installed")?;
@@ -149,16 +198,55 @@ impl Engine {
         if effective_at > MAX_STAMP_MS {
             return Err(format!("a ceiling adoption takes effect no later than {MAX_STAMP_MS}"));
         }
-        self.pending_ceiling = Some(PendingCeiling { market, max_close_spread_bps, effective_at });
+        self.check_adopted_floor(market, max_close_spread_bps, listing)?;
+        let listing = listing.cloned();
+        self.pending_ceiling = Some(PendingCeiling { market, max_close_spread_bps, effective_at, listing });
         Ok(())
+    }
+
+    /// Checks an adoption's listing and floor: none before `V52`, and from `V52` the ceiling covers
+    /// the launch close charge of the listed market, or of the listing an adoption for a market not
+    /// yet listed names.
+    /// Error cases:
+    /// - see `Engine::adopt_close_spread_ceiling`
+    fn check_adopted_floor(&self, market: MarketId, ceiling: i64, listing: Option<&MarketSpec>) -> Result<(), String> {
+        if self.protocol_version < ProtocolVersion::V52 {
+            return match listing {
+                Some(_) => Err(format!("an adoption's listing needs protocol {:?}", ProtocolVersion::V52)),
+                None => Ok(()),
+            };
+        }
+        // The registry is installed only once parameters are set.
+        let params = self.params.as_ref().expect("an installed registry has parameters");
+        let spec = match (self.markets.get(&market), listing) {
+            (Some(_), Some(_)) => return Err(format!("market {market} is listed, so its adoption names no listing")),
+            (None, None) => {
+                return Err(format!("market {market} is not listed, so its adoption names the listing it binds"));
+            }
+            (Some(listed), None) => &listed.spec,
+            (None, Some(spec)) => {
+                if spec.id != market {
+                    return Err(format!("an adoption for market {market} names a listing of market {}", spec.id));
+                }
+                spec.validate()?;
+                check_spread_tiers(&spec.spread_tiers, spec.asset_class, self.protocol_version)?;
+                spec
+            }
+        };
+        check_ceiling_floor(params, spec, ceiling)
     }
 
     /// Checks a listing against the ceiling registry, from `V40` once the registry is installed:
     /// a market with no entry cannot be listed, and an entry follows its market id, so a listed
-    /// market's `asset_class` and `quote_currency` — its instrument's identity — cannot change.
+    /// market's `asset_class` and `quote_currency` — its instrument's identity — cannot change. From
+    /// `V52` a market's first listing is the one its adoption bound, if one did, and its launch close
+    /// charge is within its ceiling.
     /// Error cases:
     /// - a listing of a market the registry has no entry for
     /// - a change of `asset_class` or `quote_currency` on a market with an entry
+    /// - from `V52`, a first listing other than the one an applied or pending adoption bound, or
+    ///   whose launch close charge under the parameters in force exceeds its ceiling or a pending
+    ///   adoption's lower value
     pub(crate) fn check_listing_ceilings(&self, spec: &MarketSpec) -> Result<(), String> {
         if self.protocol_version < ProtocolVersion::V40 {
             return Ok(());
@@ -178,6 +266,22 @@ impl Engine {
             if market.spec.quote_currency != spec.quote_currency {
                 return Err(format!("market {} has a ceiling, so its quote currency cannot change", spec.id));
             }
+        } else if self.protocol_version >= ProtocolVersion::V52 {
+            // An adoption still waiting out its notice binds the listing too, and its lower value is
+            // the one the listing will close under.
+            let pending = self.pending_ceiling.as_ref().filter(|pending| pending.market == spec.id);
+            let proposals =
+                [self.operator_bounds.proposed_listings.get(&spec.id), pending.and_then(|p| p.listing.as_ref())];
+            if proposals.into_iter().flatten().any(|proposal| proposal != spec) {
+                return Err(format!(
+                    "market {}'s first listing must be the listing its ceiling adoption bound",
+                    spec.id
+                ));
+            }
+            // The registry is installed only once parameters are set.
+            let params = self.params.as_ref().expect("an installed registry has parameters");
+            let ceiling = pending.map_or(ceilings[&spec.id], |pending| pending.max_close_spread_bps);
+            check_ceiling_floor(params, spec, ceiling.min(ceilings[&spec.id]))?;
         }
         Ok(())
     }

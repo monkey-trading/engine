@@ -256,7 +256,8 @@ fn a_close_out_judges_and_ranks_an_account_at_the_index_it_fills_at() {
 #[test]
 fn a_listing_before_any_parameters_is_applied_without_a_close_out_check() {
     let mut engine = Engine::new();
-    let btc = market(BTC, "BTC-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000);
+    let mut btc = market(BTC, "BTC-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000);
+    btc.convert_spread_tiers();
     let cmds = [
         AdminCommand::SetClientAuth(ClientAuth::Unsigned),
         AdminCommand::SetOperator(operator()),

@@ -3,11 +3,13 @@
 //! Every fill is against the house at the live index mid plus a spread made of three parts:
 //! - the stress level's minimum spread (zero in normal conditions);
 //! - the account's toxicity add-on (zero for normal flow);
-//! - the size spread, charged only on the slice of the trade that grows the account's absolute
-//!   position through the market's size bands.
+//! - the size spread, charged through the market's size bands on the slice of the trade that grows
+//!   the account's absolute position, and from `V52` on the slice that closes it too, both at the
+//!   stress level's multiplier.
 //!
-//! Normal trades therefore fill at the mid. A market quoted in another currency than USD fills only
-//! while its FX market has a price, and its realised PnL converts to USD at that FX index.
+//! Before `V52` normal trades fill at the mid; from `V52` every fill pays its bands' charge. A market
+//! quoted in another currency than USD fills only while its FX market has a price, and its realised
+//! PnL converts to USD at that FX index.
 
 use std::cell::OnceCell;
 
@@ -20,11 +22,11 @@ use crate::eip712::order_hash;
 use crate::engine::{Engine, Markout};
 use crate::event::{CancelReason, Event, Fill, Reject};
 use crate::fixed::Rounding;
-use crate::market::staircase;
 use crate::protocol::ProtocolVersion;
+use crate::spread_tier::spread_staircase;
 use crate::types::{AccountId, MarketId, OrderId, Side};
 
-use self::validation::{growth, profit_fee};
+use self::validation::{closing, growth, profit_fee};
 
 /// What the live price is checked against before filling.
 #[derive(Clone, Copy)]
@@ -312,35 +314,47 @@ impl Engine {
 
         let stress = &params.stress_levels[market.stress.level];
         let toxicity_bps = if exec.liquidation { 0 } else { params.toxicity_spread_bps(acct.toxicity_bps) };
+        // From `V52` the slice that closes the position pays the size spread too.
+        let finer = self.protocol_version >= ProtocolVersion::V52;
+        let (close_from, close_to) = if finer { closing(pos.qty, delta) } else { (Fixed::ZERO, Fixed::ZERO) };
         // The spread per unit as its parts, every charge rounded as `charge` says: the stress and
-        // toxicity charge over the whole quantity, and the size cost per unit, charged only on the
-        // slice that grows the position. Widening the growth slice outwards can only add to its
-        // cost, and dividing the size cost by qty (not by notional) keeps full precision.
+        // toxicity charge over the whole quantity, and the size cost per unit, charged on the slice
+        // that grows the position and the slice that closes it. Widening each slice outwards can
+        // only add to its cost, and dividing the size cost by qty (not by notional) keeps full
+        // precision.
         let parts = |charge: Rounding| {
-            let (from, to) =
-                (usd(grow_from.mul(mid), Rounding::Down), usd(grow_to.mul_rounded(mid, charge), Rounding::Up));
-            let size_cost_usd = staircase(&market.spec.spread_tiers, from, to, charge)
+            let slice_cost = |from: Fixed, to: Fixed| {
+                let (from, to) = (usd(from.mul(mid), Rounding::Down), usd(to.mul_rounded(mid, charge), Rounding::Up));
+                spread_staircase(&market.spec.spread_tiers, from, to, charge)
+            };
+            let size_cost_usd = (slice_cost(grow_from, grow_to) + slice_cost(close_from, close_to))
                 .mul_bps_rounded(stress.size_spread_multiplier_bps, charge);
             let size_cost = currency.from_usd(size_cost_usd, fx, Rounding::Up);
             let base = mid.mul_bps_rounded(stress.min_spread_bps + toxicity_bps, charge);
             (base, size_cost.div_rounded(qty, charge))
         };
-        let spread = |charge: Rounding| {
-            let (base, size) = parts(charge);
-            base + size
-        };
         // The truncated spread decides whether a spread reaches the price. From `V10` the spread rounds
         // up, and a sell's stops a unit short of the price, so rounding never makes it reach the price.
         // From `V40`, a reversal over its ceiling is classified first: its refusal fills a triggered
         // order's closing slice, which stays executable when the blended spread reaches the price.
+        // From `V52` a pure close's spread is clamped to its ceiling before the check, so it prices.
         let closes = !pos.qty.is_zero() && (exec.side == Side::Buy) != pos.qty.is_positive();
+        let truncated = {
+            let (base, size) = parts(Rounding::TowardZero);
+            base + size
+        };
         let over_ceiling = self.protocol_version >= ProtocolVersion::V40
             && closes
             && increases
             && self
                 .close_spread_ceiling(exec.market)
-                .is_some_and(|ceiling| spread(Rounding::TowardZero).raw() * 10_000 > mid.raw() * i128::from(ceiling));
-        if !over_ceiling && spread(Rounding::TowardZero) >= mid {
+                .is_some_and(|ceiling| truncated.raw() * 10_000 > mid.raw() * i128::from(ceiling));
+        let checked = if finer && closes && !increases {
+            self.bounded_close_charge(exec.market, exec.side, pos.qty, increases, truncated, mid)?
+        } else {
+            truncated
+        };
+        if !over_ceiling && checked >= mid {
             return Err(Reject::InvalidOrder { reason: "spread at this size reaches the price".into() });
         }
         let charge = self.charge_rounding();

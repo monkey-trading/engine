@@ -18,16 +18,20 @@ def load(name):
 
 
 C = load("ceilings")
-PARAMS = {"stress_levels": [{"min_spread_bps": 0}, {"min_spread_bps": 2}, {"min_spread_bps": 10}],
+PARAMS = {"stress_levels": [{"min_spread_bps": 0, "size_spread_multiplier_bps": 10_000},
+                           {"min_spread_bps": 2, "size_spread_multiplier_bps": 20_000},
+                           {"min_spread_bps": 10, "size_spread_multiplier_bps": 40_000}],
           "toxicity": {"tiers": [{"extra_spread_bps": 1}, {"extra_spread_bps": 3}]}}
 
 
 def item(p99=100.0, upper=110.0, validation_p99=90.0, hours=2_000, divergence=10, age=1_000, margin=50,
-         symbol="X", asset_class="fx"):
+         symbol="X", asset_class="fx", first_tenth_bps=0):
     interval = None if upper is None else {"p975_bps": upper}
     return {"market": {"id": 1, "symbol": symbol, "asset_class": asset_class,
                        "price_rules": {"max_age_ms": age, "max_divergence_bps": divergence},
-                       "margin_tiers": [{"bps": margin}]},
+                       "margin_tiers": [{"bps": margin}],
+                       "spread_tiers": [{"up_to": "1000000", "tenth_bps": first_tenth_bps},
+                                        {"tenth_bps": 2 * first_tenth_bps}]},
             "calibration": {"active_hours": hours, "abs_hourly_p99_bps": p99,
                             "hourly_p99_week_block_bootstrap": interval},
             "validation": {"active_hours": 500, "abs_hourly_p99_bps": validation_p99, "abs_hourly_max_bps": 300.0}}
@@ -38,6 +42,30 @@ class CeilingTests(unittest.TestCase):
         self.assertEqual(C.launch_close_charge_bps(PARAMS), 13)
         self.assertEqual(C.launch_close_charge_bps(
             {"stress_levels": [{"min_spread_bps": 4}], "toxicity": {"tiers": []}}), 4)
+
+    def test_floor_counts_the_first_band_at_the_widest_multiplier_in_tenths(self):
+        # 13 bps of stress minimum and add-on, plus 0.7 bp at 4x, 2.8 bps: 15.8 bps, which a 16-bp ceiling covers.
+        market = {"spread_tiers": [{"up_to": "5000000", "tenth_bps": 7}, {"tenth_bps": 14}]}
+        self.assertEqual(C.launch_close_charge_tenth_bps(PARAMS, market), 158)
+        self.assertEqual((C.floor_bps(158), C.floor_bps(150), C.floor_bps(151)), (16, 15, 16))
+        # A band written in whole bps charges ten tenths a bp.
+        self.assertEqual(C.launch_close_charge_tenth_bps(PARAMS, {"spread_tiers": [{"bps": 2}]}), 210)
+        # The first band at the multiplier rounds up to a whole tenth: 0.3 bp at 1.5x is 0.45 bp, counted 0.5.
+        widest = {"stress_levels": [{"min_spread_bps": 10, "size_spread_multiplier_bps": 15_000}],
+                  "toxicity": {"tiers": []}}
+        self.assertEqual(C.launch_close_charge_tenth_bps(widest, {"spread_tiers": [{"tenth_bps": 3}]}), 105)
+
+    def test_each_market_takes_its_own_floor(self):
+        row = C.propose(item(upper=20.0, validation_p99=20.0, first_tenth_bps=7), PARAMS)
+        self.assertEqual((row["launch_close_charge_tenth_bps"], row["floor_bps"]), (158, 16))
+        self.assertEqual((row["proposed_ceiling_bps"], row["ceiling_binding_constraint"]), (16, "launch charge"))
+        self.assertGreaterEqual(row["proposed_ceiling_bps"] * 10, row["launch_close_charge_tenth_bps"])
+        wide = C.propose(item(upper=20.0, validation_p99=20.0, first_tenth_bps=30), PARAMS)
+        self.assertEqual((wide["floor_bps"], wide["proposed_ceiling_bps"]), (25, 25))
+        # A need above the floor rounds up to the step, not to the floor.
+        above = C.propose(item(upper=600.0, validation_p99=100.0, first_tenth_bps=7), PARAMS)
+        self.assertEqual((above["proposed_ceiling_bps"], above["ceiling_binding_constraint"]),
+                         (25, "reference-risk need"))
 
     def test_horizon_scale_is_square_root_of_time(self):
         self.assertAlmostEqual(C.horizon_scale(3_600_000), 1)

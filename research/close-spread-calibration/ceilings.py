@@ -1,22 +1,24 @@
 """Per-market close-spread ceilings: the most an operator could ever legitimately need to charge.
 
-The ceiling is a fixed limit on operator power, so it is not a forecast of price moves. A close is
-charged only a stress minimum and a toxicity add-on (a pure close pays no size spread, and a
-liquidation waives toxicity), which exist to cover one risk: the index being stale or off the true
-price when a client closes. The engine bounds that risk per market in its price rules (a quote may be
+The ceiling is a fixed limit on operator power, so it is not a forecast of price moves. From V52 a
+close is charged a stress minimum, a toxicity add-on (a liquidation waives it) and the size spread on
+the slice it closes. The minimum and add-on exist to cover one risk: the index being stale or off the
+true price when a client closes. The engine bounds that risk per market in its price rules (a quote may be
 `max_age_ms` old, and the sources it medians may differ by `max_divergence_bps`). `compute_index` truncates the sources' spread to whole bps before comparing
 it with that limit, so a market limited to `max_divergence_bps` admits sources just under one bp
 beyond it; the need counts the exclusive bound:
 
     need = (max_divergence_bps + 1) + hourly tail move * sqrt(max_age_ms / 1 hour)
 
-and the ceiling is the smallest multiple of 5 bps at or above the need, never below the largest
-charge the launch parameters already allow. The method is fixed on the calibration sample and tested
-on the later validation sample; the proposed value then refits on both samples (the larger tail).
-Gaps, closures and contract rolls change margin and close-out risk, not this need: a price jump is
-not a spread (see the README). The tail is therefore the in-bar move (close against the bar's own
-open); the open against the previous close is left out. The two folded cash indices carry their
-overnight move inside the bar, which overstates their tail.
+and the ceiling is the smallest multiple of 5 bps at or above the need, never below the market's
+launch close charge: the widest stress minimum and the top toxicity add-on, plus the market's first
+spread band at the widest size multiplier (from V52 the engine refuses a ceiling below it). The
+method is fixed on the calibration sample and tested on the later validation sample; the proposed
+value then refits on both samples (the larger tail). Gaps, closures and contract rolls change margin
+and close-out risk, not this need: a price jump is not a spread (see the README). The tail is
+therefore the in-bar move (close against the bar's own open); the open against the previous close is
+left out. The two folded cash indices carry their overnight move inside the bar, which overstates
+their tail.
 """
 
 import math
@@ -41,10 +43,28 @@ PROXY_SYMBOLS = {"DE40": "cash index standing in for a longer-session future; ov
 
 
 def launch_close_charge_bps(params):
-    """The largest nominal charge the launch parameters put on a voluntary pure close."""
+    """The widest stress minimum plus the top toxicity add-on: the most a close pays before its size spread."""
     stress = max(level["min_spread_bps"] for level in params["stress_levels"])
     toxicity = max((tier["extra_spread_bps"] for tier in params["toxicity"]["tiers"]), default=0)
     return stress + toxicity
+
+
+def tenth_bps(tier):
+    """A spread band's rate in tenths of a bp; a band written in whole bps charges ten tenths a bp."""
+    return tier["tenth_bps"] if "tenth_bps" in tier else tier["bps"] * 10
+
+
+def launch_close_charge_tenth_bps(params, market):
+    """The engine's floor for a market's ceiling from V52, in tenths of a bp: `launch_close_charge_bps` plus the
+    first spread band at the widest size multiplier, rounded up (`close_spread::launch_close_charge_tenth_bps`)."""
+    multiplier = max(level["size_spread_multiplier_bps"] for level in params["stress_levels"])
+    first = tenth_bps(market["spread_tiers"][0])
+    return launch_close_charge_bps(params) * 10 + -(-first * multiplier // 10_000)
+
+
+def floor_bps(charge_tenth_bps):
+    """The least whole-bps ceiling the engine admits over a launch close charge: `ceiling * 10 >= charge`."""
+    return -(-charge_tenth_bps // 10)
 
 
 def horizon_scale(max_age_ms):
@@ -60,10 +80,10 @@ def need_bps(divergence_bps, hourly_tail_bps, max_age_ms):
     return divergence_bps + 1 + hourly_tail_bps * horizon_scale(max_age_ms)
 
 
-def round_up(value_bps, floor_bps, step=LAUNCH_STEP_BPS):
-    """Smallest multiple of `step` at or above `value_bps`, never below `floor_bps`."""
-    if value_bps <= floor_bps:
-        return floor_bps
+def round_up(value_bps, floor, step=LAUNCH_STEP_BPS):
+    """Smallest multiple of `step` at or above `value_bps`, never below `floor` (whole bps)."""
+    if value_bps <= floor:
+        return floor
     return int(math.ceil(value_bps / step - 1e-12)) * step
 
 
@@ -79,11 +99,12 @@ def exceedance(rows, unit, divergence_bps, max_age_ms, ceiling_bps):
     return float(np.mean(needs > ceiling_bps))
 
 
-def propose(item, params, floor_bps=None):
+def propose(item, params):
     """One results row for one market, from its statistics and the genesis it is listed under."""
     market = item["market"]
     rules = market["price_rules"]
-    floor = launch_close_charge_bps(params) if floor_bps is None else floor_bps
+    charge = launch_close_charge_tenth_bps(params, market)
+    floor = floor_bps(charge)
     margin = market["margin_tiers"][0]["bps"]
     calibration, validation = item["calibration"], item["validation"]
     interval = calibration.get("hourly_p99_week_block_bootstrap")
@@ -91,7 +112,7 @@ def propose(item, params, floor_bps=None):
         "market_id": market["id"], "symbol": market["symbol"], "asset_class": market["asset_class"],
         "source": item.get("source"), "ticker": item.get("ticker"), "instrument_note": item.get("instrument_note"),
         "max_age_ms": rules["max_age_ms"], "max_divergence_bps": rules["max_divergence_bps"],
-        "min_initial_margin_bps": margin, "launch_close_charge_bps": floor,
+        "min_initial_margin_bps": margin, "launch_close_charge_tenth_bps": charge, "floor_bps": floor,
         "calibration_active_hours": calibration["active_hours"],
         "validation_active_hours": validation["active_hours"],
         "evidence_flags": CLASS_FLAGS[market["asset_class"]] + (

@@ -362,16 +362,23 @@ impl Client {
 }
 
 impl Stream {
-    /// Receives an actual public authorization while retaining other accounts' messages in order.
+    /// Receives an actual public authorization of whole USDC while retaining other accounts' messages
+    /// in order.
+    /// Error cases:
+    /// - see `Stream::payout_of`
+    pub async fn payout(&mut self, account: AccountId, amount: i64) -> anyhow::Result<SignedWithdrawal> {
+        self.payout_of(account, Fixed::from_int(amount)).await
+    }
+
+    /// Receives an actual public authorization of `amount` while retaining other accounts' messages
+    /// in order.
     /// Error cases:
     /// - the stream ends/fails or the expected payout is absent past its deadline
-    pub async fn payout(&mut self, account: AccountId, amount: i64) -> anyhow::Result<SignedWithdrawal> {
+    pub async fn payout_of(&mut self, account: AccountId, amount: Fixed) -> anyhow::Result<SignedWithdrawal> {
         timeout(LOADED_WAIT, async {
             loop {
-                if let Some(index) = self
-                    .pending
-                    .iter()
-                    .position(|payout| payout.account == account && payout.amount == Fixed::from_int(amount))
+                if let Some(index) =
+                    self.pending.iter().position(|payout| payout.account == account && payout.amount == amount)
                 {
                     return self.pending.remove(index).context("located pending payout");
                 }

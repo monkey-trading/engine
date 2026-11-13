@@ -1,13 +1,14 @@
 //! The production genesis: it loads as a dev node's genesis, every market validates and carries the
 //! launch decisions, and markets on one venue share one calendar. Sequenced as the node sequences
 //! it, each market opens and closes on its venue's hours through weeks with holidays and early
-//! closes. `divergence` checks the stress levels each market reaches, and `futures` the contracts
-//! the index and commodity markets roll through.
+//! closes. `divergence` checks the stress levels each market reaches, `futures` the contracts the
+//! index and commodity markets roll through, and `spreads` their size spreads.
 
 #[path = "../common/access.rs"]
 pub mod access;
 mod divergence;
 mod futures;
+mod spreads;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -162,16 +163,6 @@ fn the_production_genesis_applies_the_launch_decisions() {
             Some(same) => assert_eq!(market.house_cap_bps, same.house_cap_bps, "{symbol}"),
             None if symbol == "SOL-USD" => assert_eq!(market.house_cap_bps, 1_000),
             None => assert!(class_caps.contains(&market.house_cap_bps), "{symbol}"),
-        }
-        // Size spreads are dev's for the same market, or for a dev market of the same asset class.
-        match dev.markets.iter().find(|d| d.id == market.id) {
-            Some(same) => assert_eq!(market.spread_tiers, same.spread_tiers, "{symbol}"),
-            None => assert!(
-                dev.markets
-                    .iter()
-                    .any(|d| d.asset_class == market.asset_class && d.spread_tiers == market.spread_tiers),
-                "{symbol}"
-            ),
         }
     }
 }

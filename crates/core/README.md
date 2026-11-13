@@ -13,7 +13,10 @@ this crate and reproduce the signed state roots exactly.
   from protocol `V6` with a fixed dollar floor under each so trading opens from a zero or negative
   house
 - Instant fills at the median of several venues, refused when quotes are stale or divergent
-- Zero spread at normal size, fixed-bps size spreads on position growth, widened under stress
+- Before protocol `V52`, zero spread at normal size and fixed-bps size spreads on position growth,
+  widened under stress; from `V52`, every fill pays its market's size spread bands in tenths of a bp,
+  on the slice that closes a position as on the slice that grows it, with no band below its class's
+  floor (a tenth of a bp on FX and indices, 1bp elsewhere) and no stress multiplier below 1x
 - Indicative quotes with bounded slippage: orders are declined only when the bound is exceeded
 - A flat fee on realised profit only, and daily CFD financing at a benchmark rate plus markup
 - USD accounts: markets quoted in euros, pounds, or yen accrue PnL in that currency and convert it to
@@ -95,6 +98,11 @@ this crate and reproduce the signed state roots exactly.
   earlier names is credited and refused (`turn_refused`), keeping the key in effect. The member's node
   logs `turn_taken` with its first command in the turn, and while turns run the operator's share
   counts its time in office from then to the end of its turn
+- From protocol `V52`, a listed market's spread and margin bands move only as a listing notice of at
+  least seven days names them (`src/listing_bounds.rs`): at every notional a spread rate stays from
+  its launch rate to twice it and the margin requirement at or above launch's; a close-spread
+  ceiling covers its market's launch close charge, which counts the first band at the widest
+  multiplier, and an adoption for a market not yet listed binds the listing its first listing must be
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -226,6 +234,18 @@ this crate and reproduce the signed state roots exactly.
 - `tests/withdrawals/setup.rs` — shared Engine::apply-driven withdrawal setup
 - `src/admin.rs` — operator commands and signed admin commands
 - `src/operator_bounds.rs` — the V35 bounds: launch rates, rate notices, price-rule checks, and operator rotation
+- `src/spread_tier.rs` — size spread bands: the `V52` unit in tenths of a bp beside the whole-bps
+  encoding earlier listings keep, the class floors, and the band staircase; unit tests in
+  `src/spread_tier/tests.rs`
+- `src/listing_bounds.rs` — the V52 listing bounds: listing notices, launch bands, the curve checks a
+  notice passes, and activation's conversion; unit tests in `src/listing_bounds/tests.rs`
+- `tests/fill_spreads.rs` — `V52`'s size spread on every fill: round trips, partial closes through
+  each band, reversals, the stress multiplier, reduce-only orders, close-all, closing limits, stops
+  and close-outs, and a pure close at the widest admitted parameters
+- `tests/listing_notice.rs` — `V52`'s listing notices and bounds, the class floors, the multiplier
+  floor, and activation's conversion
+- `tests/close_spread_floor.rs` — `V52`'s floor under the close-spread ceilings and the listing an
+  adoption binds
 - `src/close_spread.rs` — the V40 close-spread ceilings: the genesis registry, the seven-day
   adoption, the pricing-site clamp and reversal refusal, and the listing guards
 - `tests/params_notice.rs` — the V49 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay
@@ -325,7 +345,8 @@ this crate and reproduce the signed state roots exactly.
 - `tests/invariants/` — property tests over generated sessions (`main.rs`), the session generator
   (`session.rs`), the per-version checks each command must pass (`checks.rs`), fills at one price
   (`rounding.rs`), spreads and margin against their exact
-  amounts (`charges.rs`), and toxicity scores against their markouts (`toxicity.rs`)
+  amounts (`charges.rs`), from `V52` the spread on every open, partial close and reversal against its
+  exact amount (`closing_charges.rs`), and toxicity scores against their markouts (`toxicity.rs`)
 - `tests/invariants/state_root.rs` — incremental roots against a rebuild, with every account's
   proof and entitlement proof checked, every emission budget accounted for, and no entitlement
   falling, under generated sessions
@@ -374,7 +395,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V51` parts (`v15.rs` to `v51.rs`)
+  `V15` to `V52` parts (`v15.rs` to `v52.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -639,6 +660,28 @@ share counts that member's time in office from it to the end of its turn: the ti
 takes its turn, and an incumbent's time past its turn, go to stakers. An installation ends the turns.
 Before V51 nothing records a set or a turn, and the state encodes as before, so earlier logs replay
 unchanged. Its session is in `examples/reference_log/v51.rs`.
+
+Protocol V52 makes every fill pay its market's size spread. The slice of a trade that closes a
+position pays the market's bands over the notional it closes, as the slice that grows a position
+always has, both at the stress level's multiplier, so a round trip pays the staircase twice, and
+reduce-only orders, closing limits and stops, close-all and close-outs pay it too; a close-out still
+pays no toxicity add-on. Bands are in tenths of a bp (`SpreadTier`, apart from the margin bands'
+whole-bps `Tier`), and none is below its class's floor: a tenth of a bp on FX and index markets, 1bp
+on every other. No stress level's size multiplier is below 1x. A pure close's charge clamps to its
+ceiling before the check that a spread stays under the price, so a pure close always prices. A
+listed market's spread bands, margin bands and markup move only as a listing notice names them, once
+its seven days have run: `AnnounceListing` names any of the three, `AnnounceMarkup` the markup alone,
+and each market keeps one notice. At every notional a noticed spread rate stays from the launch rate
+to twice it, and the margin requirement at or above launch's; the launch bands are the listing in
+force at activation, or a market's first listing after it, and a new listing needs no notice. A
+close-spread ceiling is at least its market's launch close charge, the widest stress minimum and the
+top toxicity add-on plus the first band at the widest multiplier, in tenths of a bp: an install or
+adoption below it is refused, and an adoption for a market not yet listed names the listing it
+binds, which that market's first listing must be, refused while its launch close charge exceeds the
+ceiling. Activation writes every listed band in tenths of a bp, raises each to its floor and each
+multiplier to 1x, and records the launch bands. Bands listed earlier keep their whole-bps encoding,
+a listing notice naming only a markup encodes as V49's did, and nothing else is recorded before V52,
+so earlier logs replay unchanged. Its session is in `examples/reference_log/v52.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

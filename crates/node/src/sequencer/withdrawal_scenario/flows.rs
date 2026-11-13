@@ -198,26 +198,27 @@ pub(super) async fn shortfall_and_fifo() -> anyhow::Result<()> {
     node.client.wait_mark(200).await?;
     filled(&node.client.order(&a, Side::Sell, "1").await?)?;
     filled(&node.client.order(&b, Side::Sell, "1").await?)?;
-    node.client.wait_balance(&a, "110").await?;
-    node.client.wait_balance(&b, "110").await?;
+    // Each win is 100 less the basis point both fills pay: bought at 100.01, sold at 199.98.
+    node.client.wait_balance(&a, "109.97").await?;
+    node.client.wait_balance(&b, "109.97").await?;
     filled(&node.client.order(&loser, Side::Buy, "0.1").await?)?;
     node.wait_withdrawals_enabled(last_seq(&node.dir.join("log"))?).await?;
     let mut stream = node.client.stream().await?;
-    let request = node.client.withdrawal(&a, "110").await?;
+    let request = node.client.withdrawal(&a, "109.97").await?;
     let events = node.client.request_withdrawal(&request).await?;
     ensure!(
         approvals(&events) == [(a.account, Fixed::from_int(40), 1)],
         "head was not partially approved against actual collateral: {events:?}"
     );
-    let request = node.client.withdrawal(&b, "110").await?;
+    let request = node.client.withdrawal(&b, "109.97").await?;
     let events = node.client.request_withdrawal(&request).await?;
     ensure!(approvals(&events).is_empty(), "follower passed the partial head: {events:?}");
-    queue(&node.client, &[(a.account, "70"), (b.account, "110")]).await?;
+    queue(&node.client, &[(a.account, "69.97"), (b.account, "109.97")]).await?;
     node.client.wait_balance(&a, "0").await?;
     node.client.wait_balance(&b, "0").await?;
     let account = node.client.get(&format!("/v1/accounts/{}/withdrawals", b.account)).await?;
     ensure!(
-        account["queue"][0]["position"] == 2 && account["queue"][0]["remaining"] == "110",
+        account["queue"][0]["position"] == 2 && account["queue"][0]["remaining"] == "109.97",
         "account queue position is not public FIFO position"
     );
     let rejection = node.client.order(&a, Side::Buy, "1").await?;
@@ -235,7 +236,7 @@ pub(super) async fn shortfall_and_fifo() -> anyhow::Result<()> {
     node.services.set_price(100);
     node.client.wait_mark(100).await?;
     node.client.wait_balance(&loser, "0").await?;
-    queue(&node.client, &[(a.account, "70"), (b.account, "110")]).await?;
+    queue(&node.client, &[(a.account, "69.97"), (b.account, "109.97")]).await?;
     ensure!(
         node.chain.read(node.chain.vault, totalWithdrawnCall {}).await? == U256::from(40_000_000),
         "trader loss manufactured a payment"
@@ -248,28 +249,29 @@ pub(super) async fn shortfall_and_fifo() -> anyhow::Result<()> {
     node.chain.deposit(loser.address(), 40, false).await?;
     node.client.wait_finalised(&loser).await?;
     pay(&node, &stream.payout(a.account, 40).await?).await?;
-    queue(&node.client, &[(a.account, "30"), (b.account, "110")]).await?;
+    queue(&node.client, &[(a.account, "29.97"), (b.account, "109.97")]).await?;
     node.chain.deposit(node.chain.funder, 60, true).await?;
-    let head = stream.payout(a.account, 30).await?;
-    let follower = stream.payout(b.account, 30).await?;
+    let head = stream.payout_of(a.account, "29.97".parse()?).await?;
+    let follower = stream.payout_of(b.account, "30.03".parse()?).await?;
     ensure!(
         head.approved_seq == follower.approved_seq,
         "one replenishment should finish the head before partially approving its follower"
     );
     pay(&node, &head).await?;
     pay(&node, &follower).await?;
-    queue(&node.client, &[(b.account, "80")]).await?;
+    queue(&node.client, &[(b.account, "79.94")]).await?;
     node.chain.deposit(loser.address(), 80, false).await?;
     node.client.wait_finalised(&loser).await?;
-    pay(&node, &stream.payout(b.account, 80).await?).await?;
+    pay(&node, &stream.payout_of(b.account, "79.94".parse()?).await?).await?;
     queue(&node.client, &[]).await?;
     node.client.wait_balance(&loser, "120").await?;
+    // The 220 USDC deposited less the winners' 219.94 leaves the six cents the spreads moved to the house.
     ensure!(
-        node.chain.read(node.chain.vault, totalWithdrawnCall {}).await? == U256::from(220_000_000),
+        node.chain.read(node.chain.vault, totalWithdrawnCall {}).await? == U256::from(219_940_000),
         "FIFO payments differ from collateral deposits"
     );
     ensure!(
-        node.chain.read(node.chain.token, balanceOfCall { owner: node.chain.vault }).await? == U256::ZERO,
+        node.chain.read(node.chain.token, balanceOfCall { owner: node.chain.vault }).await? == U256::from(60_000),
         "all approved liquidity should be paid"
     );
     drop(stream);
@@ -289,9 +291,9 @@ pub(super) async fn shortfall_and_fifo() -> anyhow::Result<()> {
             == [
                 (a.account, Fixed::from_int(40), 1),
                 (a.account, Fixed::from_int(40), 2),
-                (a.account, Fixed::from_int(30), 3),
-                (b.account, Fixed::from_int(30), 1),
-                (b.account, Fixed::from_int(80), 2)
+                (a.account, "29.97".parse()?, 3),
+                (b.account, "30.03".parse()?, 1),
+                (b.account, "79.94".parse()?, 2)
             ],
         "public log violates FIFO approval order"
     );

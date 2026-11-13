@@ -11,9 +11,10 @@ use engine_core::Fixed;
 use engine_core::command::{AdminCommand, Command, OrderKind};
 use engine_core::event::{Event, Reject};
 use engine_core::fixed::Rounding;
-use engine_core::market::{MarketSpec, QuoteCurrency, Tier, staircase};
+use engine_core::market::{MarketSpec, QuoteCurrency, Tier};
 use engine_core::params::ProtocolParams;
 use engine_core::session::Schedule;
+use engine_core::spread_tier::{SpreadTier, spread_staircase};
 use engine_core::types::{AssetClass, MarketId, Side};
 
 #[test]
@@ -108,17 +109,17 @@ fn the_minimum_notional_and_the_size_spread_round_toward_the_house() {
     let band = |contracts: i64| {
         let usd = euros.to_usd(notional.mul_int(contracts), Some(fx), Rounding::Down);
         let start = Fixed::from_int((usd.raw() / Fixed::ONE.raw()) as i64 - 5);
-        [Tier { up_to: Some(start), bps: 0 }, Tier { up_to: Some(start + f("10")), bps: 10_000 }]
+        [SpreadTier::bps(Some(start), 0), SpreadTier::bps(Some(start + f("10")), 10_000)]
     };
     spec.min_order_notional = Fixed::ZERO;
-    spec.spread_tiers = [&band(1)[..], &band(2), &[Tier { up_to: None, bps: 0 }]].concat();
+    spec.spread_tiers = [&band(1)[..], &band(2), &[SpreadTier::bps(None, 0)]].concat();
     h.admin(AdminCommand::UpsertMarket(spec.clone()));
     for held in [0, 1] {
         let events = h.order(a, DE40, Side::Buy, "1", OrderKind::Stop { price: f("20001.37") });
         let fill = fills(&events)[0].clone();
         let cost = |low: Rounding, high: Rounding, back: Rounding| {
             let usd = |contracts: i64, round| euros.to_usd(notional.mul_int(contracts), Some(fx), round);
-            let slice = staircase(&spec.spread_tiers, usd(held, low), usd(held + 1, high), Rounding::TowardZero);
+            let slice = spread_staircase(&spec.spread_tiers, usd(held, low), usd(held + 1, high), Rounding::TowardZero);
             euros.from_usd(slice, Some(fx), back)
         };
         let charged = cost(Rounding::Down, Rounding::Up, Rounding::Up);
@@ -194,7 +195,7 @@ fn a_position_built_from_many_orders_converts_without_overflow() {
     // USD: in range, though its scaled product with the index is not.
     let (mut h, a) = (Harness::fx(), acct(1));
     h.admin(AdminCommand::SetParams(ProtocolParams { house_total_cap_bps: 100_000, ..params() }));
-    let flat = vec![Tier { up_to: None, bps: 0 }];
+    let flat = vec![SpreadTier::bps(None, 0)];
     let spec = MarketSpec {
         margin_tiers: vec![Tier { up_to: None, bps: 1 }],
         spread_tiers: flat,

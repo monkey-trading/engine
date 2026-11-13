@@ -1,6 +1,7 @@
 """Evidence for the closing-path choices: reversal blending and raw-unit rounding.
 
-Both use `execution.adjustment`, which agrees with `Engine::apply` on the shared vectors.
+The reversal grid prices with `execution.adjustment_v52`, the rounding evidence with the V17
+`execution.adjustment`; each agrees with `Engine::apply` on its shared vectors.
 """
 
 import importlib.util
@@ -36,36 +37,41 @@ SEED = 147
 
 
 def tiers(spec):
-    """Genesis spread tiers as (upper bound in raw USD, bps); the last tier is open."""
-    return [(None if "up_to" not in tier else EXEC.raw(tier["up_to"]), tier["bps"])
+    """Genesis spread tiers as (upper bound in raw USD, tenths of a bp); the last tier is open. A band in
+    whole bps reads as ten tenths a bp, as V52's activation writes it."""
+    return [(None if "up_to" not in tier else EXEC.raw(tier["up_to"]),
+             tier["tenth_bps"] if "tenth_bps" in tier else tier["bps"] * 10)
             for tier in spec["spread_tiers"]]
 
 
 def reversal(spec, level, position_usd, open_fraction, toxicity_bps=TOXICITY_BPS):
-    """Sell through a long position of `position_usd`, opening `open_fraction` of it on the other side."""
+    """Sell through a long position of `position_usd`, opening `open_fraction` of it on the other side: the
+    unbounded V52 charge in bps, which a ceiling clamps for a pure close (fraction 0) and refuses above it
+    for a reversal."""
     _, minimum, multiplier = level
     quantity = position_usd // MID
     opening = round(quantity * open_fraction)
-    result = EXEC.adjustment(mid=EXEC.raw(MID), current=EXEC.raw(quantity), quantity=EXEC.raw(quantity + opening),
-                             buy=False, tiers=tiers(spec), minimum_bps=minimum, toxicity_bps=toxicity_bps,
-                             multiplier_bps=multiplier)
+    result = EXEC.adjustment_v52(mid=EXEC.raw(MID), current=EXEC.raw(quantity),
+                                 quantity=EXEC.raw(quantity + opening), buy=False, tiers=tiers(spec),
+                                 minimum_bps=minimum, toxicity_bps=toxicity_bps, multiplier_bps=multiplier)
     return result["adjustment_raw"] * 10_000 / EXEC.raw(MID)
 
 
 def reversal_rows(items, ceilings, levels=LEVELS, toxicity_bps=TOXICITY_BPS):
-    """Blended per-unit spread of reversals against each market's ceiling and a pure close's charge."""
+    """Blended per-unit spread of reversals against each market's ceiling, beside the same position's pure close."""
     rows = []
     for item in items:
         spec = item["market"]
         ceiling = ceilings[spec["symbol"]]
         for level in levels:
-            pure = level[1] + toxicity_bps
             for position in POSITIONS_USD:
+                pure = reversal(spec, level, position, 0.0, toxicity_bps)
                 for fraction in OPEN_FRACTIONS:
                     blended = reversal(spec, level, position, fraction, toxicity_bps)
                     rows.append({"symbol": spec["symbol"], "asset_class": spec["asset_class"],
                                  "stress_level": level[0], "position_usd": position,
-                                 "opening_over_closing": fraction, "pure_close_bps": pure,
+                                 "opening_over_closing": fraction, "pure_close_bps": round(pure, 3),
+                                 "pure_close_clamped": pure > ceiling,
                                  "blended_reversal_bps": round(blended, 3), "ceiling_bps": ceiling,
                                  "exceeds_ceiling": blended > ceiling})
     return rows

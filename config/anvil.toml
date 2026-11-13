@@ -208,7 +208,7 @@ asset_class = "crypto"
 max_slippage_bps = 25
 house_cap_bps = 3000
 margin_tiers = [{ up_to = "1000000", bps = 1000 }, { bps = 2000 }]
-spread_tiers = [{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 3 }, { bps = 8 }]
+spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
@@ -220,15 +220,17 @@ asset_class = "crypto"
 max_slippage_bps = 25
 house_cap_bps = 2000
 margin_tiers = [{ up_to = "1000000", bps = 1000 }, { bps = 2000 }]
-spread_tiers = [{ up_to = "1000000", bps = 0 }, { up_to = "5000000", bps = 3 }, { bps = 8 }]
+spread_tiers = [{ up_to = "1000000", tenth_bps = 30 }, { up_to = "5000000", tenth_bps = 60 }, { tenth_bps = 120 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
 
 # --- Close-spread ceilings (protocol V40, #344) -------------------------------
 # Unequal TEST FIXTURES, not calibrated values: production's come from #147's
-# calibration. The launch close charge (widest stress minimum 10bps plus the
-# 3bps top toxicity add-on) is 13bps.
+# calibration. A market's launch close charge is the widest stress minimum
+# 10bps, the 3bps top toxicity add-on and, from protocol V52, its first spread
+# band (in tenths of a bp) at the widest 4x multiplier: 21bps on BTC-USD and
+# 25bps on ETH-USD.
 [[genesis.close_spread_ceilings]]
 market = 1
 max_close_spread_bps = 30

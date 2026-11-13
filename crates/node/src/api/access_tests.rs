@@ -9,6 +9,7 @@ mod pre_deposit_budgets;
 mod reissue;
 mod session_keys;
 mod source;
+mod spreads;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;

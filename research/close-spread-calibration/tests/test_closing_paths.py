@@ -1,4 +1,4 @@
-"""Reversal blending and rounding evidence agree with the price model."""
+"""Reversal blending, at V52, and rounding evidence, at V17, agree with the price model."""
 
 import importlib.util
 import json
@@ -10,32 +10,42 @@ SPEC = importlib.util.spec_from_file_location("closing_paths", HERE / "closing_p
 P = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(P)
 FIXTURES = json.loads((HERE / "fixtures/engine-v17.json").read_text())
-FLAT = {"spread_tiers": [{"bps": 0}]}
-STEEP = {"spread_tiers": [{"bps": 100}]}
+FLAT = {"spread_tiers": [{"tenth_bps": 0}]}
+STEEP = {"spread_tiers": [{"tenth_bps": 1_000}]}
+# 1 bp to $100,000 of notional, 100 bps above.
+BANDED = {"spread_tiers": [{"up_to": "100000", "tenth_bps": 10}, {"tenth_bps": 1_000}]}
 TOP = P.LEVELS[2]
 
 
 class ClosingPathTests(unittest.TestCase):
-    def test_pure_close_spread_is_the_stress_plus_toxicity_charge_whatever_the_tiers(self):
-        self.assertAlmostEqual(P.reversal(STEEP, TOP, 100_000, 0.0), 13)
+    def test_bands_read_in_tenths_and_whole_bps_read_as_ten_tenths(self):
+        self.assertEqual(P.tiers({"spread_tiers": [{"up_to": "1", "bps": 2}, {"tenth_bps": 7}]}),
+                         [(P.EXEC.raw("1"), 20), (None, 7)])
+
+    def test_pure_close_pays_its_closing_slice_through_the_bands(self):
+        # Closing $100,000 at 100 bps and 4x is $4,000 over 1,000 units: 400 bps, on top of the 13.
+        self.assertAlmostEqual(P.reversal(STEEP, TOP, 100_000, 0.0), 13 + 400)
         self.assertAlmostEqual(P.reversal(FLAT, TOP, 100_000, 2.0), 13)
 
-    def test_size_cost_of_the_opening_slice_is_blended_over_the_whole_fill(self):
-        # Close 1,000 units and open 1,000: 400 bps on the opening $100,000 is $4,000, or $2 a unit over 2,000
-        # units, which is 200 bps of the $100 index.
-        self.assertAlmostEqual(P.reversal(STEEP, TOP, 100_000, 1.0), 13 + 200, places=2)
+    def test_both_slices_pay_before_the_multiplier_and_blend_over_the_whole_fill(self):
+        # Close 1,000 units and open 1,000: 100 bps on $200,000 at 4x is $8,000, or $4 a unit over 2,000 units,
+        # which is 400 bps of the $100 index.
+        self.assertAlmostEqual(P.reversal(STEEP, TOP, 100_000, 1.0), 13 + 400, places=2)
 
-    def test_blended_spread_grows_with_the_opening_share(self):
-        values = [P.reversal(STEEP, P.LEVELS[0], 100_000, fraction) for fraction in P.OPEN_FRACTIONS]
+    def test_blended_spread_never_falls_with_the_opening_share_through_rising_bands(self):
+        values = [P.reversal(BANDED, P.LEVELS[0], 100_000, fraction) for fraction in P.OPEN_FRACTIONS]
         self.assertEqual(values, sorted(values))
+        self.assertLess(values[0], values[-1])
 
     def test_rows_flag_only_ceiling_breaches(self):
-        item = {"market": {"symbol": "T", "asset_class": "equity", "spread_tiers": STEEP["spread_tiers"]}}
+        item = {"market": {"symbol": "T", "asset_class": "equity", "spread_tiers": BANDED["spread_tiers"]}}
         rows = P.reversal_rows([item], {"T": 20})
         for row in rows:
             self.assertEqual(row["exceeds_ceiling"], row["blended_reversal_bps"] > 20)
-        self.assertTrue(any(row["exceeds_ceiling"] for row in rows))
-        self.assertTrue(any(not row["exceeds_ceiling"] for row in rows))
+            self.assertEqual(row["pure_close_clamped"], row["pure_close_bps"] > 20)
+        for flag in ("exceeds_ceiling", "pure_close_clamped"):
+            self.assertTrue(any(row[flag] for row in rows))
+            self.assertTrue(any(not row[flag] for row in rows))
 
     def test_rounding_rows_agree_with_engine_vectors(self):
         by_name = {vector["name"]: vector for vector in FIXTURES}

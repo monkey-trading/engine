@@ -19,6 +19,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub const DECIMALS: u32 = 9;
 const SCALE: i128 = 10i128.pow(DECIMALS);
 const BPS: i128 = 10_000;
+/// Tenths of a basis point in one.
+const TENTH_BPS: i128 = 100_000;
 
 /// The internal representation of [`Fixed`]'s `Deserialize` input: a decimal string or an integer.
 #[derive(Deserialize)]
@@ -255,6 +257,12 @@ impl Fixed {
     /// `bps` basis points of this value, rounded as `rounding` says.
     pub fn mul_bps_rounded(self, bps: i64, rounding: Rounding) -> Fixed {
         Fixed(in_range(mul_div_raw(self.0, bps as i128, BPS, rounding)))
+    }
+
+    /// `tenth_bps` tenths of a basis point of this value, rounded as `rounding` says. A whole number
+    /// of bps in tenths (`bps * 10`) gives exactly what `mul_bps_rounded` gives for it.
+    pub fn mul_tenth_bps_rounded(self, tenth_bps: i64, rounding: Rounding) -> Fixed {
+        Fixed(in_range(mul_div_raw(self.0, tenth_bps as i128, TENTH_BPS, rounding)))
     }
 
     /// Product with a whole number.

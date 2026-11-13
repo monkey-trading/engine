@@ -273,11 +273,25 @@ pub enum ProtocolVersion {
     /// operator's share counts time in office from the member's `TurnTaken` to the end of its turn,
     /// and the time before a member takes its turn goes to stakers.
     V51,
+    /// Every fill pays its market's size spread (`spread_tier`), in tenths of a bp: the slice that
+    /// closes the position pays through the same bands as the slice that grows it, over the notional
+    /// it closes, both at the stress level's multiplier, and a pure close's charge clamps to its
+    /// ceiling before the check that a spread stays under the price, so a pure close always prices.
+    /// No spread band is below its class's floor, a tenth of a bp on FX and index markets and 1bp on
+    /// every other, and no stress level's size multiplier is below 1x. A listed market's spread and
+    /// margin bands move only as a listing notice of at least seven days names them: at every
+    /// notional the spread rate stays from its launch rate to twice it, and the margin requirement at
+    /// or above launch's (`listing_bounds`). A close-spread ceiling is at least its market's launch
+    /// close charge, which counts the first band at the widest multiplier, and an adoption for a
+    /// market not yet listed binds the listing that market's first listing must be. Activation writes
+    /// every listed band in tenths, raises each to its floor and each multiplier to 1x, and takes the
+    /// result as the launch bands.
+    V52,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V51;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V52;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

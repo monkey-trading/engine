@@ -16,7 +16,10 @@ pub(crate) const MAX_RATE_BPS: i64 = 10_000;
 /// The largest benchmark rate accepted, either sign: 100% a year.
 pub const MAX_BENCHMARK_BPS: i64 = 10_000;
 /// The most a multiplier or house cap may be: ten times.
-const MAX_MULTIPLE_BPS: i64 = 100_000;
+pub(crate) const MAX_MULTIPLE_BPS: i64 = 100_000;
+/// From `V52`, the least a stress level's size multiplier may be: one times, so no level waives the
+/// size spread.
+pub(crate) const MIN_SIZE_MULTIPLIER_BPS: i64 = 10_000;
 /// The longest markout horizon: one hour. A horizon near `i64::MAX` overflows a markout's due time,
 /// and before `V11` markouts are marked in fill order, so one queued under a long horizon holds back
 /// every later one once the horizon is lowered; the cap bounds that wait.
@@ -237,13 +240,23 @@ impl ProtocolParams {
         Ok(())
     }
 
-    /// Checks the parameters as `validate` does, and that each divergence trigger takes the form
-    /// `version` evaluates: absolute bps before `V13`, and from `V13` a share of each market's bound.
+    /// Checks the parameters as `validate` does, that each divergence trigger takes the form
+    /// `version` evaluates: absolute bps before `V13`, and from `V13` a share of each market's bound,
+    /// and from `V52` that every stress level's size multiplier is at least 1x.
     /// Error cases:
     /// - any case `validate` refuses
     /// - a divergence share before `V13`, or an absolute divergence from `V13`
+    /// - from `V52`, a size multiplier below 10000 bps
     pub fn validate_for(&self, version: ProtocolVersion) -> Result<(), String> {
         self.validate()?;
+        if version >= ProtocolVersion::V52
+            && self.stress_levels.iter().any(|level| level.size_spread_multiplier_bps < MIN_SIZE_MULTIPLIER_BPS)
+        {
+            return Err(format!(
+                "from protocol {:?} every stress level's size multiplier is at least {MIN_SIZE_MULTIPLIER_BPS} bps",
+                ProtocolVersion::V52
+            ));
+        }
         let mut triggers = self.stress_levels.iter().filter_map(|level| level.trigger.as_ref());
         if version >= ProtocolVersion::V13 {
             if triggers.any(|t| t.divergence_bps.is_some()) {
@@ -283,6 +296,14 @@ impl ProtocolParams {
                 let share = bps.saturating_mul(MAX_RATE_BPS) / widest_bound.max(1);
                 trigger.divergence_share_bps = Some(share.min(MAX_RATE_BPS));
             }
+        }
+    }
+
+    /// Raises every stress level's size multiplier to at least 1x: how `V52`'s activation converts
+    /// parameters, and the form a config under `V52` gives earlier ones.
+    pub fn raise_size_multipliers(&mut self) {
+        for level in &mut self.stress_levels {
+            level.size_spread_multiplier_bps = level.size_spread_multiplier_bps.max(MIN_SIZE_MULTIPLIER_BPS);
         }
     }
 

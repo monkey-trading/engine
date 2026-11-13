@@ -21,6 +21,7 @@
 mod access;
 mod charges;
 mod checks;
+mod closing_charges;
 #[path = "../common/mod.rs"]
 mod common;
 mod rounding;

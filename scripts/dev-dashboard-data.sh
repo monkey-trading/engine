@@ -2,7 +2,8 @@
 # Dev scenario for the House and MONKEY pages' data, on a node with config/dev.toml's mocks (static
 # mock mids), a synthetic signed access source, and `api.stats_interval = "1s"`:
 #   1. three accounts fund and declare, then trade both ways in two markets (BTC-USD and ETH-USD): a
-#      long and a short in each, and one account's round trip in BTC, which pays the spread twice (20 bps here, set by the config);
+#      long and a short in each, and one account's round trip in BTC, which pays the spread twice (4 bps here, set by the config, the
+#      widest one band can be under BTC's 30 bps close-spread ceiling at the widest stress);
 #   2. GET /v1/house carries the open interest, open margin, positions, and each market's long,
 #      short and net those positions give, and GET /v1/house/positions holds the same notional in
 #      its close-out and profit buckets and names no account;
@@ -71,7 +72,7 @@ sed -e "s|127.0.0.1:8080|127.0.0.1:$api_port|" \
   -e "s|data/dev|$work|g" \
   -e 's|^stats_interval = .*|stats_interval = "1s"|' \
   -e 's|^per_account = .*|per_account = { per_second = 100, burst = 200 }|' \
-  -e 's|^spread_tiers = \[{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 3 }, { bps = 8 }\]|spread_tiers = [{ bps = 20 }]|' \
+  -e 's|^spread_tiers = \[{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }\]|spread_tiers = [{ tenth_bps = 40 }]|' \
   "$root/config/dev.toml" > "$work/node.toml"
 cat >> "$work/node.toml" <<CONFIG
 
@@ -83,7 +84,7 @@ max_age = "30s"
 max_response_bytes = 4096
 max_in_flight = 8
 CONFIG
-for edit in ":$api_port\"" 'stats_interval = "1s"' "$work/log\"" 'spread_tiers = [{ bps = 20 }]'; do
+for edit in ":$api_port\"" 'stats_interval = "1s"' "$work/log\"" 'spread_tiers = [{ tenth_bps = 40 }]'; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"
 done
 
@@ -173,7 +174,7 @@ trade 1 sell 1 1
 trade 2 buy 2 10
 trade 1 sell 2 5
 sleep 9
-# BTC's spread is 20 bps in this config, so the round trip loses far more than the mock index moves.
+# BTC's spread is 4 bps in this config, so the round trip loses far more than the mock index moves.
 trade 2 buy 1 1
 trade 2 sell 1 1
 

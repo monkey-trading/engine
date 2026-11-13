@@ -34,13 +34,15 @@ fn dev_scenario_germany_40_pnl_moves_with_eur_usd_alone_and_stops_while_eur_usd_
     assert_eq!(funded, [Event::Deposited { account: access::account(1), amount: f("100000") }]);
     node.price(EURUSD, "1.08");
     node.price(DE40, "23500");
+    // The open pays Germany 40's 0.9bp first band on its 50,760 USD: 4.23 EUR, 2.115 a unit.
     let fill = node.order(Side::Buy, "2", "23500").expect("the long opens");
-    assert_eq!((fill.price, fill.fx_index), (f("23500"), Some(f("1.08"))));
+    assert_eq!((fill.price, fill.fx_index), (f("23502.115"), Some(f("1.08"))));
     node.price(DE40, "23600");
 
-    // EUR-USD moves while Germany 40 holds at 23,600: the 200 EUR of PnL, and 0.5% margin on
+    // EUR-USD moves while Germany 40 holds at 23,600: the 195.77 EUR of PnL, and 0.5% margin on
     // 47,200 EUR, move with EUR-USD alone.
-    for (fx, pnl, margin) in [("1.08", "216", "254.88"), ("1.1", "220", "259.6"), ("1.05", "210", "247.8")] {
+    let moves = [("1.08", "211.4316", "254.88"), ("1.1", "215.347", "259.6"), ("1.05", "205.5585", "247.8")];
+    for (fx, pnl, margin) in moves {
         node.price(EURUSD, fx);
         node.price(DE40, "23600");
         assert_eq!(node.pnl_and_margin(), (f(pnl), f(margin)), "EUR-USD at {fx}");
@@ -52,12 +54,13 @@ fn dev_scenario_germany_40_pnl_moves_with_eur_usd_alone_and_stops_while_eur_usd_
     for side in [Side::Buy, Side::Sell] {
         assert_eq!(node.order(side, "2", "23600").unwrap_err(), Reject::NoFxPrice { fx_market: EURUSD });
     }
-    assert_eq!(node.pnl_and_margin(), (f("210"), f("247.8")));
+    assert_eq!(node.pnl_and_margin(), (f("205.5585"), f("247.8")));
 
-    // EUR-USD prices again, and closing realises the 200 EUR at that index.
+    // EUR-USD prices again, and closing realises the PnL at that index, less the 0.9bp the close pays
+    // on its 50,032 USD: 4.248 EUR, so 191.522 EUR in all.
     node.price(EURUSD, "1.06");
     let close = node.order(Side::Sell, "2", "23600").expect("the long closes");
-    assert_eq!((close.realised_pnl, close.fx_index), (f("212"), Some(f("1.06"))));
+    assert_eq!((close.realised_pnl, close.fx_index), (f("203.01332"), Some(f("1.06"))));
 }
 
 /// An engine built from the dev config's genesis, applying commands at a clock the test moves.

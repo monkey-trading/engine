@@ -5,8 +5,11 @@
 //! - The house takes the other side of every trade. There is no order book and there are no
 //!   external LPs. House exposure is capped per market and in total as a fraction of house NAV,
 //!   from `V6` with a fixed dollar floor under each cap.
-//! - Fills happen at once at a multi-venue index mid. Normal size pays no spread. Very large
-//!   positions pay fixed-bps size spreads, which widen under stress.
+//! - Fills happen at once at a multi-venue index mid. Before `V52` normal size pays no spread and
+//!   very large positions pay fixed-bps size spreads, which widen under stress. From `V52` every
+//!   fill pays its market's size spread, in tenths of a bp, on the slice that closes a position as
+//!   on the slice that grows it, no band is below its class's floor, and a listed market's spread
+//!   and margin bands move only after a seven-day notice, within bounds set by its launch bands.
 //! - Losers pay nothing; winners pay a flat fee on realised profit. Positions held overnight pay
 //!   or receive CFD financing.
 //! - Margin is shared across the account at professional-client leverage, with close-out at 50% and
@@ -89,6 +92,7 @@ pub use fixed::Fixed;
 mod funds;
 pub mod futures;
 mod hot_indexes;
+pub mod listing_bounds;
 pub mod market;
 mod markouts;
 mod marks;
@@ -99,6 +103,7 @@ pub mod price;
 pub mod protocol;
 pub mod session;
 pub mod session_keys;
+pub mod spread_tier;
 pub mod staking;
 pub use staking::{Staking, StakingConfig, UsdcUnits};
 pub mod stress;

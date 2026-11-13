@@ -53,7 +53,12 @@ pub(crate) fn session(h: &mut Harness) {
     assert_eq!(
         h.operate_as(
             ELECTED_SEED,
-            AdminCommand::AdoptCloseSpreadCeiling { market: GRS, max_close_spread_bps: 30, effective_at: adopted },
+            AdminCommand::AdoptCloseSpreadCeiling {
+                market: GRS,
+                max_close_spread_bps: 30,
+                effective_at: adopted,
+                listing: None
+            },
         )
         .last(),
         Some(&Event::AdminApplied)

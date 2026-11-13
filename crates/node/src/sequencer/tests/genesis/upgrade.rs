@@ -156,7 +156,12 @@ fn a_signed_adoption_after_the_carry_survives_restart_under_the_unchanged_config
     let adopt = Command::SignedAdmin(Box::new(crate::admin::sign(
         &key,
         &operator,
-        AdminCommand::AdoptCloseSpreadCeiling { market: 77, max_close_spread_bps: 25, effective_at: ts + notice_ms },
+        AdminCommand::AdoptCloseSpreadCeiling {
+            market: 77,
+            max_close_spread_bps: 25,
+            effective_at: ts + notice_ms,
+            listing: None,
+        },
         0,
         ts + 60_000,
     )));

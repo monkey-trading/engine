@@ -1,14 +1,15 @@
 //! The ladder against the engine it is read from: every step is checked with `Engine::quote` and,
 //! where it matters, by placing the order.
 
-use engine_core::command::{Command, OrderKind, OrderRequest, Sequenced};
+use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest, Sequenced};
 use engine_core::event::{Event, Reject};
 use engine_core::price::SourceQuote;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, MarketId, Millis, Side};
 use engine_core::{Engine, Fixed};
 
 use super::ladder::{MarketQuote, Step, largest, market_quote};
-use super::tests::{T0, TRADER, engine};
+use super::tests::{INTERVAL, Rig, T0, TRADER, engine};
 
 const BTC: MarketId = 1;
 const ETH: MarketId = 2;
@@ -260,4 +261,60 @@ fn a_position_past_the_input_bound_is_quoted_to_close_at_the_bound() {
     // The closing side is quoted up to the bound too, not left empty: an order of that size fills.
     let quote = read(&engine, MARGIN, BTC);
     assert_eq!(quote.bid.last().map(|step| step.qty), Some(Fixed::MAX_INPUT), "{quote:?}");
+}
+
+/// `TRADER` long 120 BTC at 100,000 ($12m, through all three of BTC's tiers), with house capacity
+/// for it, then `V52`, under which a close pays the tiers it closes through.
+fn holding_through_every_tier() -> [Command; 3] {
+    let capital = Command::HouseCapital { amount: Fixed::from_int(90_000_000), chain_ref: "0xh".into() };
+    let (qty, mid) = (Fixed::from_int(120), Fixed::from_int(100_000));
+    let v52 = Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V52 });
+    [capital, order(TRADER, BTC, Side::Buy, qty, mid, 10_000), v52]
+}
+
+#[test]
+fn a_close_steps_at_each_tier_it_closes_through_and_each_step_covers_every_smaller_order() {
+    let mut engine = engine();
+    for cmd in holding_through_every_tier() {
+        let events = apply(&mut engine, T0, cmd);
+        assert!(!events.iter().any(|event| matches!(event, Event::AdminRejected { .. })), "{events:?}");
+    }
+    let quote = read(&engine, TRADER, BTC);
+    // Selling closes the long to 10m (20 BTC) in the top tier and to 2m (100 BTC) through the middle,
+    // then reverses through 2m (140) and 10m (220) of short.
+    let qtys: Vec<Fixed> = quote.bid.iter().map(|step| step.qty).collect();
+    assert_eq!(qtys[..4], [20, 100, 140, 220].map(Fixed::from_int), "{quote:?}");
+    assert_eq!(quote.bid[0].price, fitting(&engine, TRADER, BTC, Side::Sell, Fixed::from_int(20)));
+    // An order takes the first step at least its size, whose price is no better than its own.
+    for units in (1..=260).step_by(7) {
+        let qty = Fixed::from_int(units);
+        let Some(step) = quote.bid.iter().find(|step| step.qty >= qty) else { continue };
+        let own = engine.quote(TRADER, BTC, Side::Sell, qty).unwrap();
+        if own.declined.is_none() {
+            assert!(step.price <= own.price, "{qty}: {step:?} against {own:?}");
+        }
+    }
+    // The whole close is the close quote's, exactly.
+    let close = quote.close.expect("a position is held");
+    let whole = fitting(&engine, TRADER, BTC, Side::Sell, Fixed::from_int(120));
+    assert_eq!((close.qty, close.price), (Fixed::from_int(120), whole));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_stream_quotes_partial_closes_and_a_reversal_through_the_tiers() {
+    let mut rig = Rig::new();
+    for cmd in holding_through_every_tier() {
+        rig.sequence(cmd);
+    }
+    rig.subscribe("[1]");
+    let quotes = rig.within(INTERVAL).await.expect("the first quotes");
+    let step = |step: &serde_json::Value, key: &str| -> Fixed { step[key].as_str().unwrap().parse().unwrap() };
+    let bid = quotes[0]["bid"].as_array().unwrap();
+    let qtys: Vec<Fixed> = bid.iter().map(|s| step(s, "qty")).collect();
+    assert_eq!(qtys[..4], [20, 100, 140, 220].map(Fixed::from_int), "{bid:?}");
+    // A sell's steps never improve as they grow, and the close is quoted below the mid.
+    let prices: Vec<Fixed> = bid.iter().map(|s| step(s, "price")).collect();
+    assert!(prices.windows(2).all(|pair| pair[1] <= pair[0]), "{prices:?}");
+    assert_eq!(quotes[0]["close"]["qty"], "120");
+    assert!(step(&quotes[0]["close"], "price") < Fixed::from_int(100_000));
 }

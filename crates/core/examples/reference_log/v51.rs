@@ -16,7 +16,7 @@ use crate::v47::close;
 use crate::v50::ELECTED_SEED;
 
 /// The seeds of the two members' admin keys, and their candidate addresses.
-const MEMBER_SEEDS: [u8; 2] = [0x5c, 0x5d];
+pub(crate) const MEMBER_SEEDS: [u8; 2] = [0x5c, 0x5d];
 const MEMBERS: [AccountId; 2] = [AccountId([0x5e; 20]), AccountId([0x5f; 20])];
 
 /// `V51` activates with `V50`'s elected operator in effect and rotation on. A set of two members

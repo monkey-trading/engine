@@ -1,0 +1,924 @@
+[
+  {
+    "name": "calm-close-in-top-band",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "50",
+    "quantity": "10",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 0,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 20,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 99880000000,
+    "expected_quantity_raw": 10000000000,
+    "expected_spread_bps": 12
+  },
+  {
+    "name": "calm-close-across-top-and-middle-bands",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "50",
+    "quantity": "25",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 0,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 20,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 99896600000,
+    "expected_quantity_raw": 25000000000,
+    "expected_spread_bps": 10
+  },
+  {
+    "name": "calm-close-in-middle-band",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "25",
+    "quantity": "10",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 0,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 20,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 99963000000,
+    "expected_quantity_raw": 10000000000,
+    "expected_spread_bps": 3
+  },
+  {
+    "name": "calm-close-in-first-band",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "8",
+    "quantity": "5",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 0,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 20,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 99985000000,
+    "expected_quantity_raw": 5000000000,
+    "expected_spread_bps": 1
+  },
+  {
+    "name": "calm-close-through-every-band",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "50",
+    "quantity": "50",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 0,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 20,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 99934200000,
+    "expected_quantity_raw": 50000000000,
+    "expected_spread_bps": 6
+  },
+  {
+    "name": "elevated-close-in-middle-band-odd-index",
+    "mid": "100.123456789",
+    "opening_mid": "100.123456789",
+    "current": "25",
+    "quantity": "10",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 2,
+    "toxicity_bps": 2,
+    "multiplier_bps": 20000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 20,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 100009316047,
+    "expected_quantity_raw": 10000000000,
+    "expected_spread_bps": 11
+  },
+  {
+    "name": "top-short-close-in-top-band",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "-50",
+    "quantity": "10",
+    "buy": true,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 80,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 100610000000,
+    "expected_quantity_raw": 10000000000,
+    "expected_spread_bps": 61
+  },
+  {
+    "name": "top-close-across-middle-and-first-bands",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "25",
+    "quantity": "20",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 30,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 99744000000,
+    "expected_quantity_raw": 20000000000,
+    "expected_spread_bps": 25
+  },
+  {
+    "name": "top-close-through-every-band-clamped",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "50",
+    "quantity": "50",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 25,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 99750000000,
+    "expected_quantity_raw": 50000000000,
+    "expected_spread_bps": 25
+  },
+  {
+    "name": "top-short-close-through-every-band-clamped",
+    "mid": "99.987654321",
+    "opening_mid": "99.987654321",
+    "current": "-50",
+    "quantity": "50",
+    "buy": true,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 25,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 100237623456,
+    "expected_quantity_raw": 50000000000,
+    "expected_spread_bps": 24
+  },
+  {
+    "name": "top-reduce-only-clamps-quantity",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "25",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 20,
+    "reduce_only": true,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 99810000000,
+    "expected_quantity_raw": 10000000000,
+    "expected_spread_bps": 19
+  },
+  {
+    "name": "calm-reversal-within-ceiling",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "25",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 0,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 15,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 99980600000,
+    "expected_quantity_raw": 25000000000,
+    "expected_spread_bps": 1
+  },
+  {
+    "name": "top-reversal-within-ceiling",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "-10",
+    "quantity": "25",
+    "buy": true,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 30,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 100207600000,
+    "expected_quantity_raw": 25000000000,
+    "expected_spread_bps": 20
+  },
+  {
+    "name": "top-reversal-over-ceiling",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "40",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 20,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_refusal": "close_spread_ceiling"
+  },
+  {
+    "name": "top-reversal-reaching-price-is-over-ceiling",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "30",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        10
+      ],
+      [
+        null,
+        100000
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 30,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_refusal": "close_spread_ceiling"
+  },
+  {
+    "name": "top-close-reaching-price-clamped",
+    "mid": "400",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "10",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        10
+      ],
+      [
+        null,
+        100000
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 30,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 398800000000,
+    "expected_quantity_raw": 10000000000,
+    "expected_spread_bps": 30
+  },
+  {
+    "name": "top-short-close-reaching-price-clamped",
+    "mid": "400",
+    "opening_mid": "100",
+    "current": "-10",
+    "quantity": "10",
+    "buy": true,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        10
+      ],
+      [
+        null,
+        100000
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 30,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 401200000000,
+    "expected_quantity_raw": 10000000000,
+    "expected_spread_bps": 30
+  },
+  {
+    "name": "top-add-crosses-bands-unbounded",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "25",
+    "buy": true,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 20,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 100344400000,
+    "expected_quantity_raw": 25000000000,
+    "expected_spread_bps": 34
+  },
+  {
+    "name": "calm-open-through-every-band",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "0",
+    "quantity": "40",
+    "buy": true,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 0,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 20,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 100052250000,
+    "expected_quantity_raw": 40000000000,
+    "expected_spread_bps": 5
+  },
+  {
+    "name": "top-liquidation",
+    "mid": "90",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "10",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 20,
+    "reduce_only": false,
+    "liquidation": true,
+    "deposit": "110",
+    "expected_price_raw": 89856000000,
+    "expected_quantity_raw": 10000000000,
+    "expected_spread_bps": 16,
+    "expected_bad_debt_raw": 0
+  },
+  {
+    "name": "top-liquidation-gap-clamped-bad-debt",
+    "mid": "80",
+    "opening_mid": "100",
+    "current": "50",
+    "quantity": "50",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 25,
+    "reduce_only": false,
+    "liquidation": true,
+    "deposit": "600",
+    "expected_price_raw": 79800000000,
+    "expected_quantity_raw": 50000000000,
+    "expected_spread_bps": 25,
+    "expected_bad_debt_raw": 429660000000
+  },
+  {
+    "name": "top-eur-close-across-bands",
+    "mid": "100.5",
+    "opening_mid": "100.5",
+    "current": "30",
+    "quantity": "12",
+    "buy": false,
+    "currency": "EUR",
+    "fx": "1.25",
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 60,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 100050460000,
+    "expected_quantity_raw": 12000000000,
+    "expected_spread_bps": 44
+  },
+  {
+    "name": "elevated-jpy-fx-short-close-sub-bp-bands",
+    "mid": "150.123456789",
+    "opening_mid": "150.123456789",
+    "current": "-3000",
+    "quantity": "2500",
+    "buy": true,
+    "currency": "JPY",
+    "fx": "150.123456789",
+    "asset_class": "fx",
+    "minimum_bps": 2,
+    "toxicity_bps": 2,
+    "multiplier_bps": 20000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        4
+      ],
+      [
+        "5000",
+        8
+      ],
+      [
+        null,
+        16
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 15,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 150205123950,
+    "expected_quantity_raw": 2500000000000,
+    "expected_spread_bps": 5
+  },
+  {
+    "name": "elevated-eur-fx-reversal-sub-bp-bands",
+    "mid": "1.0875",
+    "opening_mid": "1.0875",
+    "current": "2000",
+    "quantity": "5000",
+    "buy": false,
+    "currency": "EUR",
+    "fx": "1.0875",
+    "asset_class": "fx",
+    "minimum_bps": 2,
+    "toxicity_bps": 2,
+    "multiplier_bps": 20000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        4
+      ],
+      [
+        "5000",
+        8
+      ],
+      [
+        null,
+        16
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 15,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 1086920425,
+    "expected_quantity_raw": 5000000000000,
+    "expected_spread_bps": 5
+  },
+  {
+    "name": "calm-close-bands-listed-in-bps",
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "40",
+    "quantity": "30",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 0,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        20
+      ],
+      [
+        "3000",
+        50
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": true,
+    "ceiling_bps": 20,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 99926666666,
+    "expected_quantity_raw": 30000000000,
+    "expected_spread_bps": 7
+  },
+  {
+    "name": "top-raw-unit-close-floors-to-zero",
+    "mid": "0.000000333",
+    "opening_mid": "0.000000333",
+    "current": "10",
+    "quantity": "5",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "asset_class": "crypto",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers_tenth_bps": [
+      [
+        "1000",
+        15
+      ],
+      [
+        "3000",
+        37
+      ],
+      [
+        null,
+        120
+      ]
+    ],
+    "listed_in_bps": false,
+    "ceiling_bps": 25,
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "expected_price_raw": 333,
+    "expected_quantity_raw": 5000000000,
+    "expected_spread_bps": 0
+  }
+]

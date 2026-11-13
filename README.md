@@ -29,11 +29,13 @@ price to pick off. A quote shown to a client is a guide rather than a promise: a
 at the live price, and is declined only if that price is worse than the quote by more than the
 client's slippage bound.
 
-Ordinary orders pay no spread. Very large positions pay a fixed number of basis points on the part
-that takes them past each size band, and spreads widen at times of stress, when venues diverge,
-prices move fast, or the house's exposure runs high. Accounts whose trades are consistently
-followed by a move in their favour, the mark of trading on prices that are about to change, pay a
-small additional spread on every trade.
+Every fill pays its market's size spread: a number of tenths of a basis point on each part of the
+position it opens or closes, by size band, tight at small and medium sizes and wider above, so a
+round trip pays it on the way in and again on the way out. No market quotes a zero spread: no band
+is below a tenth of a basis point on FX and indices, or 1 basis point elsewhere. Spreads widen at
+times of stress, when venues diverge, prices move fast, or the house's exposure runs high. Accounts
+whose trades are consistently followed by a move in their favour, the mark of trading on prices
+that are about to change, pay a small additional spread on every trade.
 
 Losing trades pay nothing. Winning trades pay a fixed share of the profit they realise, and
 positions held over the daily rollover pay or receive financing at a benchmark interest rate plus
@@ -108,7 +110,11 @@ Because stakers own the house NAV these powers move value towards, from protocol
 rate moves at most 300 bps a day from the applied rates next to its date, a market holding positions
 stays on its benchmark, and the operator's stress floor is at most level 1 and lapses after 72 hours.
 From V49 a market's financing markup and the stress levels and triggers in the signed parameters
-change only seven days after a signed notice, as the profit fee and close-out level do.
+change only seven days after a signed notice, as the profit fee and close-out level do. From V52 so do
+a listed market's spread and margin bands, and only within its launch bands: at every size a spread
+stays between its launch rate and twice it, and margin at or above launch's. A market's close-spread
+ceiling covers what a close in its first band can pay at the widest admitted stress, and a market
+not yet listed can only be listed as the ceiling adoption that preceded it named it.
 While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
 distribution, which it claims from the vault as a staker claims its own; from V50 the fifth is split
 among the operators by their time in office during the epoch.
