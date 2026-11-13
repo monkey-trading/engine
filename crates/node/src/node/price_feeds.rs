@@ -14,8 +14,8 @@ use crate::sequencer::Request;
 
 /// Spawns into `tasks` the feeds `feeds` configures, each sending its prices to `tx`.
 /// Error cases:
-/// - `provider = "venues"` without `[feeds.venues]`, or the venues' TLS config or a delivered key
-///   does not read
+/// - `provider = "venues"` without `[feeds.venues]`, or the venues' TLS config or a connection's
+///   credentials do not read
 pub(super) fn spawn(
     tasks: &mut JoinSet<TaskResult>,
     feeds: FeedsSection,
@@ -40,9 +40,9 @@ pub(super) fn spawn(
                 if delivered.withholds(&conn) {
                     continue;
                 }
-                let api_key = delivered.api_key(&conn)?;
+                let credentials = delivered.credentials(&conn, &tls, timing.timeout)?;
                 info!(venue = name, url = %conn.url, symbols = conn.symbols.len(), "starting venue feed");
-                tasks.spawn(async move { (name, venue::run(conn, api_key, timing, tls, feed_tx).await) });
+                tasks.spawn(async move { (name, venue::run(conn, credentials, timing, tls, feed_tx).await) });
             }
         }
     }

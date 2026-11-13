@@ -40,7 +40,8 @@ async fn refusals_alert_again_after_the_window_with_the_count_between() {
 async fn a_vendor_key_echoed_back_never_reaches_an_alert() {
     let (_guard, mut alerts) = capture_alerts();
     let mut feed = kraken_feed(&[(1, "BTC/USD")], WAIT);
-    feed.api_key = Some(ApiKey::from_env("VENDOR_API_KEY", |_| Some("vendor-secret".into())).unwrap());
+    feed.credentials =
+        Credentials::ApiKey(ApiKey::from_env("VENDOR_API_KEY", |_| Some("vendor-secret".into())).unwrap());
 
     feed.refuse("login refused for vendor-secret", r#"{"type":"login_reject","key":"vendor-secret"}"#);
     feed.dropped(&anyhow::anyhow!("authentication with vendor-secret failed"), Duration::from_secs(1));
@@ -86,8 +87,14 @@ fn a_kept_book_for_a_symbol_not_subscribed_is_refused_before_it_is_kept() {
         (Venue::Kraken, ["BTC/USD", "ETH/USD"], one_sided_kraken),
     ];
     for (venue, symbols, message) in cases {
-        let conn =
-            VenueConnection { venue, url: String::new(), api_key_env: None, api_key_secret: None, symbols: Vec::new() };
+        let conn = VenueConnection {
+            venue,
+            url: String::new(),
+            api_key_env: None,
+            api_key_secret: None,
+            oauth: None,
+            symbols: Vec::new(),
+        };
         let refused = Adapter::new(&conn, None, &symbols).read(&message, NOW);
         assert!(
             matches!(&refused, Err(Refusal::Connection(reason)) if reason.contains("SOL") && reason.contains("not subscribed")),
@@ -319,7 +326,7 @@ async fn settling_a_connection_drops_the_confirmation_it_awaited() {
         }
     });
     let conn = kraken_feed(&[(1, "BTC/USD")], WAIT).conn;
-    let mut feed = VenueFeed::new(conn, None, fast(WAIT), tls_config().unwrap(), tx);
+    let mut feed = VenueFeed::new(conn, Credentials::Public, fast(WAIT), tls_config().unwrap(), tx);
     let (_reply, awaited) = oneshot::channel();
     feed.confirming = Some(awaited);
     feed.unconfirmed.insert("BTC/USD".into());
@@ -348,6 +355,24 @@ fn a_quote_is_sent_only_while_its_market_stays_open_until_the_sequencer_stamps_i
     assert!(feed.in_session(1, shut, shut));
 }
 
+#[test]
+fn a_cme_read_waits_at_least_two_heartbeat_intervals_and_any_other_the_timeout() {
+    let connection = |venue| VenueConnection {
+        venue,
+        url: String::new(),
+        api_key_env: None,
+        api_key_secret: None,
+        oauth: None,
+        symbols: Vec::new(),
+    };
+    let cme = Adapter::new(&connection(Venue::Cme), None, &["ES:202612"]);
+    // CME's heartbeat comes every ten seconds, the template's timeout.
+    assert_eq!(cme.read_timeout(Duration::from_secs(10)), Duration::from_secs(20));
+    assert_eq!(cme.read_timeout(Duration::from_secs(30)), Duration::from_secs(30));
+    let kraken = Adapter::new(&connection(Venue::Kraken), None, &["BTC/USD"]);
+    assert_eq!(kraken.read_timeout(Duration::from_secs(10)), Duration::from_secs(10));
+}
+
 // ── Helpers ──
 
 /// A Kraken feed for `symbols` that is never run, for calling its alert paths directly.
@@ -362,7 +387,13 @@ fn feed_at(venue: Venue, url: &str, symbols: &[(MarketId, &str)], timeout: Durat
         symbol: (*symbol).into(),
         contract: None,
     });
-    let conn =
-        VenueConnection { venue, url: url.into(), api_key_env: None, api_key_secret: None, symbols: symbols.collect() };
-    VenueFeed::new(conn, None, fast(timeout), tls_config().unwrap(), mpsc::channel(1).0)
+    let conn = VenueConnection {
+        venue,
+        url: url.into(),
+        api_key_env: None,
+        api_key_secret: None,
+        oauth: None,
+        symbols: symbols.collect(),
+    };
+    VenueFeed::new(conn, Credentials::Public, fast(timeout), tls_config().unwrap(), mpsc::channel(1).0)
 }

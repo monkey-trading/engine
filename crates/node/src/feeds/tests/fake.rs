@@ -22,7 +22,7 @@ use tokio_tungstenite::{WebSocketStream, accept_async};
 use crate::clock::now_ms;
 use crate::config::{Venue, VenueConnection, VenueSymbol};
 use crate::feeds::kraken;
-use crate::feeds::venue::{self, Timing};
+use crate::feeds::venue::{self, Credentials, Timing};
 use crate::sequencer::{Query, Request};
 use crate::test_support::{Alert, dev_config};
 
@@ -164,6 +164,13 @@ pub fn spawn_feed(
     symbols: &[(MarketId, &str)],
     timing: Timing,
 ) -> (mpsc::Receiver<Request>, JoinHandle<anyhow::Result<()>>) {
+    let (feed_tx, rx) = fake_sequencer();
+    (rx, spawn_feed_into(feed_tx, venue, url, symbols, timing))
+}
+
+/// Where a feed sends its requests, and what it sequences: each command is also applied to a
+/// `FakeEngine`, which answers the feed's queries, and a quote past its delay bound is dropped.
+pub fn fake_sequencer() -> (mpsc::Sender<Request>, mpsc::Receiver<Request>) {
     let (feed_tx, mut feed_rx) = mpsc::channel(1024);
     let (tx, rx) = mpsc::channel(1024);
     tokio::spawn(async move {
@@ -180,6 +187,8 @@ pub fn spawn_feed(
                             return;
                         }
                     }
+                    // As the sequencer does, a quote past its delay bound is dropped.
+                    Some(Request::Quote { not_after, .. }) if std::time::Instant::now() > not_after => {}
                     Some(Request::Quote { cmd, .. }) => {
                         engine.apply(cmd.clone());
                         if tx.send(Request::Submit { cmd, reply: None }).await.is_err() {
@@ -204,7 +213,7 @@ pub fn spawn_feed(
             }
         }
     });
-    (rx, spawn_feed_into(feed_tx, venue, url, symbols, timing))
+    (feed_tx, rx)
 }
 
 /// Runs a venue task for `venue` against `url`, sequencing into `tx`.
@@ -225,9 +234,10 @@ pub fn spawn_feed_into(
         url: url.to_owned(),
         api_key_env: None,
         api_key_secret: None,
+        oauth: None,
         symbols: symbols.collect(),
     };
-    tokio::spawn(venue::run(conn, None, timing, venue::tls_config().expect("tls config"), tx))
+    tokio::spawn(venue::run(conn, Credentials::Public, timing, venue::tls_config().expect("tls config"), tx))
 }
 
 /// The next price command the feed sequences, failing the test after `WAIT`.

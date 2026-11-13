@@ -206,7 +206,82 @@ fn venue_timing_paces_from_the_quote_spacing_not_the_mock_interval() {
     cfg.validate().expect("a mock tick past the venue timeout stays valid");
 }
 
+#[test]
+fn a_cme_connection_names_its_oauth_secrets_and_each_contract_by_product_and_period() {
+    let cfg = with_cme();
+    cfg.validate().unwrap();
+    let named = cfg.named_secrets().unwrap();
+    let url = "wss://markets.api.cmegroup.com/marketdatastream/v1";
+    let listed: Vec<(String, String)> =
+        named.iter().map(|field| (field.field.clone(), field.name.to_string())).collect();
+    let expected = [("client_id_secret", "cme_api_id"), ("client_secret_secret", "cme_api_secret")]
+        .map(|(key, name)| (format!("feeds.venues.connections[{url}].oauth.{key}"), name.to_owned()));
+    assert_eq!(listed, expected);
+    // Without its secrets the connection stays off; the node runs.
+    assert!(named.iter().all(|field| field.usage == crate::config::SecretUse::VendorKey));
+}
+
+#[test]
+fn cme_settings_that_would_fail_or_could_be_forged_are_refused() {
+    type Edit = fn(&mut Vec<VenueConnection>);
+    let cases: [(&str, Edit); 10] = [
+        ("cme oauth must be set exactly for cme", |c| c[2].oauth = None),
+        ("coinbase oauth must be set exactly for cme", |c| c[0].oauth = c[2].oauth.clone()),
+        ("cme api_key_env must be set exactly for a vendor", |c| c[2].api_key_env = Some("CME_KEY".into())),
+        ("cme oauth.token_url must be https://", |c| {
+            c[2].oauth.as_mut().unwrap().token_url = "http://auth.cmegroup.com/as/token.oauth2".into()
+        }),
+        ("cme oauth.token_url must be on cmegroup.com", |c| {
+            c[2].oauth.as_mut().unwrap().token_url = "https://auth.example.com/as/token.oauth2".into()
+        }),
+        ("cme url must be on cmegroup.com", |c| c[2].url = "wss://markets.api.example.com/marketdatastream/v1".into()),
+        ("cme symbol ESZ6: not <product>:<YYYYMM>", |c| c[2].symbols[0].symbol = "ESZ6".into()),
+        ("cme symbol ES:202603: names ESH6, not contract ESZ6", |c| c[2].symbols[0].symbol = "ES:202603".into()),
+        ("cme symbol ES:202612: a CME symbol names the contract it quotes", |c| c[2].symbols[0].contract = None),
+        ("cme lists symbol ES:202612 twice", |c| c[2].symbols[1] = c[2].symbols[0].clone()),
+    ];
+    for (expected, edit) in cases {
+        let mut cfg = with_cme();
+        edit(&mut cfg.feeds.venues.as_mut().unwrap().connections);
+        let err = format!("{:#}", cfg.validate().unwrap_err());
+        assert!(err.contains(expected), "expected {expected:?}, got {err}");
+    }
+}
+
+// Runs in the production lane too, which filters on `production_build`: no build reads CME's
+// credentials from a value in the file or the environment, only from a delivered bundle.
+#[test]
+fn a_production_build_reads_cme_credentials_only_as_delivered_secrets() {
+    let cfg = with_cme();
+    cfg.refuse_environment_secrets_at_load(true).unwrap();
+    let base = "token_url = 'https://auth.cmegroup.com/as/token.oauth2'";
+    for (field, value) in [("client_id_env", "'CME_API_ID'"), ("client_id", "'cme-api-id'"), ("client_secret", "'pw'")]
+    {
+        let oauth = format!("{base}\nclient_id_secret = 'a'\nclient_secret_secret = 'b'\n{field} = {value}");
+        let err = toml::from_str::<OAuthSection>(&oauth).unwrap_err().to_string();
+        assert!(err.contains(&format!("unknown field `{field}`")), "{field}: {err}");
+    }
+}
+
 // ── Helpers ──
+
+/// The committed dev config taking delivered secrets, with a CME connection after its crypto venues
+/// that quotes two of US 500's contracts.
+fn with_cme() -> NodeConfig {
+    let dev = std::fs::read_to_string(DEV).unwrap();
+    let (head, tail) = dev.split_once("\n[time]\n").expect("dev.toml has a [time] section");
+    let cme = r#"
+[[feeds.venues.connections]]
+venue = "cme"
+url = "wss://markets.api.cmegroup.com/marketdatastream/v1"
+oauth = { token_url = "https://auth.cmegroup.com/as/token.oauth2", client_id_secret = "cme_api_id", client_secret_secret = "cme_api_secret" }
+symbols = [{ market = 20, symbol = "ES:202612", contract = "ESZ6" }, { market = 20, symbol = "ES:202703", contract = "ESH7" }]
+"#;
+    let mut cfg: NodeConfig = toml::from_str(&format!("{head}\n{cme}\n[time]\n{tail}")).unwrap();
+    cfg.tee.use_published_mock_key = false;
+    cfg.tee.sealing = Some(toml::from_str("dir = 'keys'\n[secrets]\nlisten = '127.0.0.1:9472'").unwrap());
+    cfg
+}
 
 /// The committed dev config with `VENDORS` after its crypto venues: Coinbase and Kraken
 /// at indices 0 and 1, then Massive's three feeds and TraderMade.

@@ -233,15 +233,13 @@ symbols = [
 ]
 
 # Index and commodity futures. A symbol names the contract it quotes, one of the market's `contracts`
-# in config/production-genesis.toml, and the feed sends each contract the market takes now. Shown
-# for US500 (market 20); every other futures market (21, 22, 25 and 30 to 32) needs its own contracts,
-# every one its listing names, rolled off or not. Only a source reached over TLS may set a price.
-# Massive's futures feed covers CME, CBOT, NYMEX and COMEX contracts, so it is one of the two sources
-# markets 20 to 22, 25 and 30 to 32 need, and no integrated vendor is its second: a production
-# build refuses the config until each market has its min_sources (#673). The Eurex and ICE markets
-# (DE40, UK100 and BRENT) are not in the launch genesis.
-# The check reads the genesis listing for the life of the log, so keep every venue and contract it
-# needs even after a relisting lowers min_sources or the market rolls past a contract.
+# in config/production-genesis.toml, and the feed sends each contract the market takes now. Every
+# contract a listing names is listed here, rolled off or not: the check reads the genesis listing for
+# the life of the log, so keep every venue and contract it needs even after a relisting lowers
+# min_sources or the market rolls past a contract. Only a source reached over TLS may set a price.
+# Markets 20 to 22, 25 and 30 to 32 trade on CME Group's exchanges and price from two sources:
+# Massive's futures feed, and CME Group's own WebSocket API below. The Eurex and ICE markets (DE40,
+# UK100 and BRENT) are not in the launch genesis.
 [[feeds.venues.connections]]
 venue = "massive"
 url = "wss://socket.massive.com/futures"
@@ -253,7 +251,125 @@ symbols = [
   { market = 20, symbol = "ESU7", contract = "ESU7" },
   { market = 20, symbol = "ESZ7", contract = "ESZ7" },
   { market = 20, symbol = "ESH8", contract = "ESH8" },
-] # OWNER: add markets 21, 22, 25 and 30 to 32, and a second TLS source for each
+  { market = 21, symbol = "NQZ6", contract = "NQZ6" },
+  { market = 21, symbol = "NQH7", contract = "NQH7" },
+  { market = 21, symbol = "NQM7", contract = "NQM7" },
+  { market = 21, symbol = "NQU7", contract = "NQU7" },
+  { market = 21, symbol = "NQZ7", contract = "NQZ7" },
+  { market = 21, symbol = "NQH8", contract = "NQH8" },
+  { market = 22, symbol = "YMZ6", contract = "YMZ6" },
+  { market = 22, symbol = "YMH7", contract = "YMH7" },
+  { market = 22, symbol = "YMM7", contract = "YMM7" },
+  { market = 22, symbol = "YMU7", contract = "YMU7" },
+  { market = 22, symbol = "YMZ7", contract = "YMZ7" },
+  { market = 22, symbol = "YMH8", contract = "YMH8" },
+  { market = 25, symbol = "NIYZ6", contract = "NIYZ6" },
+  { market = 25, symbol = "NIYH7", contract = "NIYH7" },
+  { market = 25, symbol = "NIYM7", contract = "NIYM7" },
+  { market = 25, symbol = "NIYU7", contract = "NIYU7" },
+  { market = 25, symbol = "NIYZ7", contract = "NIYZ7" },
+  { market = 25, symbol = "NIYH8", contract = "NIYH8" },
+  { market = 30, symbol = "GCZ6", contract = "GCZ6" },
+  { market = 30, symbol = "GCG7", contract = "GCG7" },
+  { market = 30, symbol = "GCJ7", contract = "GCJ7" },
+  { market = 30, symbol = "GCM7", contract = "GCM7" },
+  { market = 30, symbol = "GCQ7", contract = "GCQ7" },
+  { market = 30, symbol = "GCV7", contract = "GCV7" },
+  { market = 30, symbol = "GCZ7", contract = "GCZ7" },
+  { market = 30, symbol = "GCG8", contract = "GCG8" },
+  { market = 30, symbol = "GCJ8", contract = "GCJ8" },
+  { market = 31, symbol = "SIZ6", contract = "SIZ6" },
+  { market = 31, symbol = "SIH7", contract = "SIH7" },
+  { market = 31, symbol = "SIK7", contract = "SIK7" },
+  { market = 31, symbol = "SIN7", contract = "SIN7" },
+  { market = 31, symbol = "SIU7", contract = "SIU7" },
+  { market = 31, symbol = "SIZ7", contract = "SIZ7" },
+  { market = 31, symbol = "SIH8", contract = "SIH8" },
+  { market = 31, symbol = "SIK8", contract = "SIK8" },
+  { market = 32, symbol = "CLZ6", contract = "CLZ6" },
+  { market = 32, symbol = "CLF7", contract = "CLF7" },
+  { market = 32, symbol = "CLG7", contract = "CLG7" },
+  { market = 32, symbol = "CLH7", contract = "CLH7" },
+  { market = 32, symbol = "CLJ7", contract = "CLJ7" },
+  { market = 32, symbol = "CLK7", contract = "CLK7" },
+  { market = 32, symbol = "CLM7", contract = "CLM7" },
+  { market = 32, symbol = "CLN7", contract = "CLN7" },
+  { market = 32, symbol = "CLQ7", contract = "CLQ7" },
+  { market = 32, symbol = "CLU7", contract = "CLU7" },
+  { market = 32, symbol = "CLV7", contract = "CLV7" },
+  { market = 32, symbol = "CLX7", contract = "CLX7" },
+  { market = 32, symbol = "CLZ7", contract = "CLZ7" },
+  { market = 32, symbol = "CLF8", contract = "CLF8" },
+  { market = 32, symbol = "CLG8", contract = "CLG8" },
+  { market = 32, symbol = "CLH8", contract = "CLH8" },
+]
+
+# CME Group's API names a contract by its product code and period (YYYYMM). Its handshake carries a
+# bearer token from CME's token endpoint, which the node fetches with the API ID and its password,
+# two delivered secrets; until both are delivered the connection stays off, under secret_missing.
+[[feeds.venues.connections]]
+venue = "cme"
+url = "wss://markets.api.cmegroup.com/marketdatastream/v1"
+oauth = { token_url = "https://auth.cmegroup.com/as/token.oauth2", client_id_secret = "cme_api_id", client_secret_secret = "cme_api_password" } # OWNER: the secret names; promote after #683's owner action
+symbols = [
+  { market = 20, symbol = "ES:202612", contract = "ESZ6" },
+  { market = 20, symbol = "ES:202703", contract = "ESH7" },
+  { market = 20, symbol = "ES:202706", contract = "ESM7" },
+  { market = 20, symbol = "ES:202709", contract = "ESU7" },
+  { market = 20, symbol = "ES:202712", contract = "ESZ7" },
+  { market = 20, symbol = "ES:202803", contract = "ESH8" },
+  { market = 21, symbol = "NQ:202612", contract = "NQZ6" },
+  { market = 21, symbol = "NQ:202703", contract = "NQH7" },
+  { market = 21, symbol = "NQ:202706", contract = "NQM7" },
+  { market = 21, symbol = "NQ:202709", contract = "NQU7" },
+  { market = 21, symbol = "NQ:202712", contract = "NQZ7" },
+  { market = 21, symbol = "NQ:202803", contract = "NQH8" },
+  { market = 22, symbol = "YM:202612", contract = "YMZ6" },
+  { market = 22, symbol = "YM:202703", contract = "YMH7" },
+  { market = 22, symbol = "YM:202706", contract = "YMM7" },
+  { market = 22, symbol = "YM:202709", contract = "YMU7" },
+  { market = 22, symbol = "YM:202712", contract = "YMZ7" },
+  { market = 22, symbol = "YM:202803", contract = "YMH8" },
+  { market = 25, symbol = "NIY:202612", contract = "NIYZ6" },
+  { market = 25, symbol = "NIY:202703", contract = "NIYH7" },
+  { market = 25, symbol = "NIY:202706", contract = "NIYM7" },
+  { market = 25, symbol = "NIY:202709", contract = "NIYU7" },
+  { market = 25, symbol = "NIY:202712", contract = "NIYZ7" },
+  { market = 25, symbol = "NIY:202803", contract = "NIYH8" },
+  { market = 30, symbol = "GC:202612", contract = "GCZ6" },
+  { market = 30, symbol = "GC:202702", contract = "GCG7" },
+  { market = 30, symbol = "GC:202704", contract = "GCJ7" },
+  { market = 30, symbol = "GC:202706", contract = "GCM7" },
+  { market = 30, symbol = "GC:202708", contract = "GCQ7" },
+  { market = 30, symbol = "GC:202710", contract = "GCV7" },
+  { market = 30, symbol = "GC:202712", contract = "GCZ7" },
+  { market = 30, symbol = "GC:202802", contract = "GCG8" },
+  { market = 30, symbol = "GC:202804", contract = "GCJ8" },
+  { market = 31, symbol = "SI:202612", contract = "SIZ6" },
+  { market = 31, symbol = "SI:202703", contract = "SIH7" },
+  { market = 31, symbol = "SI:202705", contract = "SIK7" },
+  { market = 31, symbol = "SI:202707", contract = "SIN7" },
+  { market = 31, symbol = "SI:202709", contract = "SIU7" },
+  { market = 31, symbol = "SI:202712", contract = "SIZ7" },
+  { market = 31, symbol = "SI:202803", contract = "SIH8" },
+  { market = 31, symbol = "SI:202805", contract = "SIK8" },
+  { market = 32, symbol = "CL:202612", contract = "CLZ6" },
+  { market = 32, symbol = "CL:202701", contract = "CLF7" },
+  { market = 32, symbol = "CL:202702", contract = "CLG7" },
+  { market = 32, symbol = "CL:202703", contract = "CLH7" },
+  { market = 32, symbol = "CL:202704", contract = "CLJ7" },
+  { market = 32, symbol = "CL:202705", contract = "CLK7" },
+  { market = 32, symbol = "CL:202706", contract = "CLM7" },
+  { market = 32, symbol = "CL:202707", contract = "CLN7" },
+  { market = 32, symbol = "CL:202708", contract = "CLQ7" },
+  { market = 32, symbol = "CL:202709", contract = "CLU7" },
+  { market = 32, symbol = "CL:202710", contract = "CLV7" },
+  { market = 32, symbol = "CL:202711", contract = "CLX7" },
+  { market = 32, symbol = "CL:202712", contract = "CLZ7" },
+  { market = 32, symbol = "CL:202801", contract = "CLF8" },
+  { market = 32, symbol = "CL:202802", contract = "CLG8" },
+  { market = 32, symbol = "CL:202803", contract = "CLH8" },
+]
 
 # US shares, shown for AAPL (market 40).
 [[feeds.venues.connections]]

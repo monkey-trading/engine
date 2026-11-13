@@ -1,4 +1,5 @@
-//! What every venue connection shares: the TLS client config, and the backoff between attempts.
+//! What every venue connection shares: its timing from the config, the TLS client config, and the
+//! backoff between attempts.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,7 +8,28 @@ use anyhow::Context;
 use rustls::crypto::ring;
 use rustls::{ClientConfig, RootCertStore};
 
+use crate::config::VenuesSection;
 use crate::feeds::venue::Timing;
+
+impl Timing {
+    /// The timing a venue section configures: `min_quote_spacing` is the per-symbol sequencing
+    /// pace; the mock feed's tick (`feeds.interval`) never governs venue feeds.
+    pub fn for_venues(venues: &VenuesSection) -> Self {
+        Timing::new(venues.min_quote_spacing, venues)
+    }
+
+    fn new(min_quote_spacing: Duration, venues: &VenuesSection) -> Self {
+        Timing {
+            interval: min_quote_spacing,
+            timeout: venues.timeout,
+            reconnect_min: venues.reconnect_min,
+            reconnect_max: venues.reconnect_max,
+            stale_after: venues.stale_after,
+            ping_interval: venues.ping_interval,
+            max_delay: venues.max_delay,
+        }
+    }
+}
 
 /// The TLS client config every venue connection shares: ring as the crypto provider, and
 /// Mozilla's roots compiled into the binary, so the host's certificate store is never trusted.

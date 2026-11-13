@@ -311,10 +311,11 @@ fn feed_with_rules(known: bool) -> (VenueFeed, mpsc::Receiver<Request>) {
         url: "wss://ws.kraken.com/v2".into(),
         api_key_env: None,
         api_key_secret: None,
+        oauth: None,
         symbols,
     };
     let (tx, rx) = mpsc::channel(16);
-    let mut feed = VenueFeed::new(conn, None, fast(Duration::from_secs(5)), tls_config().unwrap(), tx);
+    let mut feed = VenueFeed::new(conn, Credentials::Public, fast(Duration::from_secs(5)), tls_config().unwrap(), tx);
     if known {
         feed.max_age.insert(1, RULES.max_age_ms);
     }

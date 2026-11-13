@@ -5,12 +5,13 @@
 use std::time::Duration;
 
 use engine_core::types::{MarketId, Millis};
+use sha2::{Digest, Sha256};
 use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::clock::now_ms;
-use crate::config::ApiKey;
 use crate::feeds::venue::VenueFeed;
+use crate::feeds::venue::auth::redact;
 
 /// How much of a refused message its log line keeps.
 const EXCERPT_CHARS: usize = 200;
@@ -85,9 +86,10 @@ impl VenueFeed {
         }
     }
 
-    /// Logs a refused message, alerting at most once per `REALERT_AFTER`. The connection's API key
-    /// never reaches the log, though a venue may echo it. The message may have changed a book, so
-    /// every standing book is forgotten (see `standing`).
+    /// Logs a refused message, alerting at most once per `REALERT_AFTER`, with an excerpt of it from
+    /// a venue that holds no credential. One that does could echo a credential or token in some
+    /// encoding, so its message is named only by its length and a hash that tells messages apart.
+    /// The message may have changed a book, so every standing book is forgotten (see `standing`).
     pub(super) fn refuse(&mut self, reason: &str, text: &str) {
         self.standing.clear();
         let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
@@ -96,7 +98,11 @@ impl VenueFeed {
             debug!(venue, feed, reason, "venue message refused");
             return;
         };
-        let excerpt: String = self.redact(text).chars().take(EXCERPT_CHARS).collect();
+        let excerpt: String = if self.credentials.secrets().is_empty() {
+            text.chars().take(EXCERPT_CHARS).collect()
+        } else {
+            format!("a {}-byte message, SHA-256 {}", text.len(), hex::encode(&Sha256::digest(text.as_bytes())[..4]))
+        };
         // The reason and excerpt differ from message to message, so the connection alone is the key.
         warn!(
             alert = "venue_message_refused",
@@ -119,11 +125,8 @@ impl VenueFeed {
         }
     }
 
-    /// `text` with the connection's API key replaced.
-    fn redact(&self, text: &str) -> String {
-        match self.api_key.as_ref().map(ApiKey::expose).filter(|key| !key.is_empty()) {
-            Some(key) => text.replace(key, "<redacted>"),
-            None => text.to_owned(),
-        }
+    /// `text` with the connection's credentials and tokens replaced.
+    pub(super) fn redact(&self, text: &str) -> String {
+        redact(text, &self.secrets())
     }
 }

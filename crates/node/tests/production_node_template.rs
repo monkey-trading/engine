@@ -1,13 +1,13 @@
 //! The production node template. Assembled as the deploy runbook says, with the benchmark
 //! publishers and the production genesis, it loads and validates as a node config, and it holds what
-//! a production build requires of one but for the futures and share markets' second TLS source,
-//! open in #673. Every placeholder carries a marker, so none is mistaken for a value.
+//! a production build requires of one but for the share markets' second TLS source (#684). Every
+//! placeholder carries a marker, so none is mistaken for a value.
 
 use std::fs;
 use std::path::Path;
 
 use engine_node::NodeConfig;
-use engine_node::config::{CustodyProvider, FeedProvider, TeeProvider};
+use engine_node::config::{CustodyProvider, FeedProvider, TeeProvider, Venue};
 
 const TEMPLATE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/runbooks/production-node.toml");
 const PUBLISHERS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/benchmark-publishers.toml");
@@ -59,22 +59,36 @@ fn the_template_holds_what_a_production_build_requires() {
 }
 
 #[test]
-fn a_production_build_refuses_the_template_until_its_futures_and_shares_have_a_second_tls_source() {
+fn a_production_build_refuses_the_template_until_its_shares_have_a_second_tls_source() {
     let err = assembled("min-sources").refuse_unmet_min_sources(true).unwrap_err().to_string();
-    // Crypto from Coinbase and Kraken, and FX from Massive and TraderMade, meet min_sources 2.
-    for met in [1, 2, 3, 10, 11, 12, 13] {
+    // Crypto from Coinbase and Kraken, FX from Massive and TraderMade, and the CME Group exchanges'
+    // index and commodity futures, every contract, from Massive and CME meet min_sources 2.
+    for met in [1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 25, 30, 31, 32] {
         assert!(!err.contains(&format!("market {met} (")), "market {met}: {err}");
     }
-    // US 500 and Apple have Massive alone, and every other CME futures and share market no venue yet.
-    assert!(err.contains("market 20 (US500) contract ESZ6 has 1 (massive) of 2"), "{err}");
+    // Apple has Massive alone, and every other share market no venue yet.
     assert!(err.contains("market 40 (AAPL) has 1 (massive) of 2"), "{err}");
-    for short in (20..=22).chain([25]).chain(30..=32).chain(40..=59) {
+    for short in 40..=59 {
         assert!(err.contains(&format!("market {short} (")), "market {short}: {err}");
     }
     // The Eurex and ICE markets are not in the launch genesis (#673).
     for deferred in [23, 24, 33] {
         assert!(!err.contains(&format!("market {deferred} (")), "market {deferred}: {err}");
     }
+}
+
+#[test]
+fn the_cme_connection_names_cme_endpoints_and_its_oauth_secrets() {
+    let cfg = assembled("cme");
+    let venues = cfg.feeds.venues.as_ref().expect("[feeds.venues]");
+    let cme = venues.connections.iter().find(|conn| conn.venue == Venue::Cme).expect("a CME connection");
+    let oauth = cme.oauth.as_ref().expect("CME's OAuth login");
+    assert_eq!(oauth.token_url, "https://auth.cmegroup.com/as/token.oauth2");
+    assert_eq!(cme.url, "wss://markets.api.cmegroup.com/marketdatastream/v1");
+    assert_eq!(
+        (oauth.client_id_secret.to_string(), oauth.client_secret_secret.to_string()),
+        ("cme_api_id".into(), "cme_api_password".into())
+    );
 }
 
 #[test]

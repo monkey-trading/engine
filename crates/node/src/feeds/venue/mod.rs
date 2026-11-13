@@ -10,11 +10,15 @@
 //! and a symbol whose market is closed is not counted as silent. A frame read while the stream may
 //! be further behind than `timing.max_delay` counts as no quote (see `delay`), and a book its
 //! pings show the venue still showed is sequenced again, so a quiet venue does not age out (see
-//! `standing`).
+//! `standing`). A venue whose handshake carries an OAuth bearer token has each connection replaced
+//! on a fresh one before its own expires, the replacement opening beside it (see `auth`, `replace`).
 
 mod adapter;
 use adapter::Adapter;
 mod alerts;
+mod auth;
+pub use auth::{Credentials, OAuthClient};
+use auth::{Token, TokenEnd};
 mod confirm;
 use confirm::Confirmation;
 mod delay;
@@ -25,11 +29,14 @@ mod standing;
 use standing::{StandingBooks, redates};
 mod quotes;
 use quotes::Pending;
+mod receive;
+mod replace;
+use replace::Replacing;
 mod setup;
-use setup::next_attempt;
 pub use setup::tls_config;
+use setup::{next_attempt, next_backoff};
 mod transport;
-use transport::{Incoming, Link};
+use transport::Incoming;
 mod validation;
 pub(super) use validation::{check_size, check_time, to_quote};
 
@@ -50,7 +57,7 @@ use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout, time
 use tracing::info;
 
 use crate::clock::now_ms;
-use crate::config::{ApiKey, VenueConnection, VenuesSection};
+use crate::config::VenueConnection;
 use crate::sequencer::Request;
 use crate::throttle::Throttle;
 
@@ -70,6 +77,9 @@ pub(super) enum Frame {
     Books(Vec<Book>),
     /// An acknowledgement, heartbeat, or status message: nothing to price.
     Control,
+    /// The venue's acceptance of the subscription: nothing to price either, but a replacement
+    /// connection is ready once it has it (see `replace`).
+    Subscribed,
     /// Messages the venue's protocol needs sent back, such as the subscription once a login is
     /// accepted.
     Reply(Vec<String>),
@@ -98,7 +108,7 @@ pub struct Timing {
     /// market's `max_age_ms` old, whichever is shorter.
     pub interval: Duration,
     /// The deadline for a read: the login, the subscription, and each message after, whatever its
-    /// market's hours.
+    /// market's hours, or longer for a venue with a slower heartbeat (see `Adapter::read_timeout`).
     pub timeout: Duration,
     pub reconnect_min: Duration,
     pub reconnect_max: Duration,
@@ -120,8 +130,11 @@ pub(super) struct Instrument {
 /// One venue's feed task and the alert state that outlives each connection.
 struct VenueFeed {
     conn: VenueConnection,
-    /// The vendor's API key, for a venue whose feed needs one.
-    api_key: Option<ApiKey>,
+    /// What the connection authenticates with.
+    credentials: Credentials,
+    /// The bearer token the current connection opened on, and one fetched ahead for the next.
+    token: Option<Token>,
+    next_token: Option<Token>,
     /// The connection's symbols, mapped to what they quote.
     instruments: BTreeMap<String, Instrument>,
     timing: Timing,
@@ -168,32 +181,12 @@ struct VenueFeed {
     standing: StandingBooks,
 }
 
-impl Timing {
-    /// The timing a venue section configures: `min_quote_spacing` is the per-symbol sequencing
-    /// pace; the mock feed's tick (`feeds.interval`) never governs venue feeds.
-    pub fn for_venues(venues: &VenuesSection) -> Self {
-        Timing::new(venues.min_quote_spacing, venues)
-    }
-
-    fn new(min_quote_spacing: Duration, venues: &VenuesSection) -> Self {
-        Timing {
-            interval: min_quote_spacing,
-            timeout: venues.timeout,
-            reconnect_min: venues.reconnect_min,
-            reconnect_max: venues.reconnect_max,
-            stale_after: venues.stale_after,
-            ping_interval: venues.ping_interval,
-            max_delay: venues.max_delay,
-        }
-    }
-}
-
 impl VenueFeed {
     /// A feed for `conn`, with no outage, refusal, or silence on record, and every symbol's
     /// silence counted from now.
     fn new(
         conn: VenueConnection,
-        api_key: Option<ApiKey>,
+        credentials: Credentials,
         timing: Timing,
         tls: Arc<ClientConfig>,
         tx: mpsc::Sender<Request>,
@@ -207,7 +200,9 @@ impl VenueFeed {
         let last_quote = instruments.keys().map(|symbol| (symbol.clone(), started)).collect();
         VenueFeed {
             conn,
-            api_key,
+            credentials,
+            token: None,
+            next_token: None,
             instruments,
             timing,
             tls,
@@ -243,7 +238,8 @@ impl VenueFeed {
             let Err(error) = self.relay().await;
             self.settle().await;
             if self.tx.is_closed() {
-                return Err(error.context("sequencer gone"));
+                // The supervisor logs what the task returns, so it is redacted as a log line is.
+                return Err(anyhow!(self.redact(&format!("{error:#}"))).context("sequencer gone"));
             }
             let (wait, next) = next_attempt(backoff, self.quoted, &self.timing);
             self.dropped(&error, wait);
@@ -257,26 +253,30 @@ impl VenueFeed {
     /// (see `emit`), at most one per symbol per `timing.interval` past a short burst. Once the
     /// sequencer has applied it, the venue counts as quoting that symbol while the quote the engine
     /// holds from it is no older than `timing.stale_after` or the market's `max_age_ms` (see
-    /// `confirm`). Every read has `timing.timeout` to produce a message, whether or not any market
-    /// is open, so a stalled login or a dead connection is replaced instead of hanging unseen
-    /// through a closure.
+    /// `confirm`). Every read has `timing.timeout` to produce a message, or longer for a venue
+    /// whose heartbeat is slower (see `Adapter::read_timeout`), whether or not any market is open,
+    /// so a stalled login or a dead connection is replaced instead of hanging unseen through a
+    /// closure.
     /// Error cases:
     /// - connecting or sending the opening messages fails or takes longer than `timing.timeout`
-    /// - no message arrives within `timing.timeout`, whatever its market's hours
+    /// - no message arrives within that read timeout, whatever its market's hours
     /// - the connection sequences no fresh quote within `timing.timeout` while a market it quotes
     ///   is open, or the venue closes it or asks for a reconnect
     /// - a symbol goes silent, so the connection is replaced to resubscribe it
     /// - a ping goes unanswered for `timing.timeout`, or cannot be sent within it
+    /// - its bearer token cannot be had, or expires before a replacement on a fresh one takes over
+    ///   (see `auth` and `replace`)
     /// - the connection fails, or the sequencer has gone away
     async fn relay(&mut self) -> anyhow::Result<Infallible> {
-        let connect = transport::connect(&self.conn, self.tls.clone());
+        self.open_token().await?;
+        let connect = transport::connect(&self.conn, self.bearer(), self.tls.clone());
         let mut link = timeout(self.timing.timeout, connect).await.context("connect timed out")?.context("connect")?;
         // Pinged before it opens, so the answer arrives ahead of the first book.
         self.delay = DelayProbe::default();
         self.standing.connected(redates(self.conn.venue));
         self.ping(&mut link).await?;
         let symbols: Vec<&str> = self.instruments.keys().map(String::as_str).collect();
-        let mut adapter = Adapter::new(&self.conn, self.api_key.as_ref(), &symbols);
+        let mut adapter = Adapter::new(&self.conn, self.credentials.api_key(), &symbols);
         let opening = adapter.opening(&symbols);
         timeout(self.timing.timeout, link.send_all(opening))
             .await
@@ -307,14 +307,19 @@ impl VenueFeed {
         // the subscription, and each message after must arrive within it, and any message met
         // sets the next. It outlives each select below, which the checks arm would otherwise
         // restart it past.
-        let mut read_deadline = Instant::now() + self.timing.timeout;
+        let read_timeout = adapter.read_timeout(self.timing.timeout);
+        let mut read_deadline = Instant::now() + read_timeout;
+        let mut rollover = self.rollover();
+        let mut replacing: Option<Replacing> = None;
+        // The wait before trying again on a new token after a replacement fails.
+        let mut retry = self.timing.reconnect_min;
         loop {
             tokio::select! {
                 message = timeout_at(read_deadline, link.stream.next()) => {
                     let message = message.context("read timed out")?.context("connection closed")?.context("read")?;
                     // A pong shows the connection is alive, not that the venue's protocol is moving.
                     if !matches!(message, Incoming::Pong(_)) {
-                        read_deadline = Instant::now() + self.timing.timeout;
+                        read_deadline = Instant::now() + read_timeout;
                     }
                     match message {
                         Incoming::Text(text) => {
@@ -349,6 +354,38 @@ impl VenueFeed {
                 _ = &mut emit_wake => {
                     rearm(&mut emit_wake, self.emit(&mut buffered, &mut spent).await?);
                 }
+                end = &mut rollover => match end {
+                    // The replacement opens on the fresh token while this connection streams on.
+                    TokenEnd::Fresh(token) => {
+                        replacing = Some(self.replace(&token));
+                        self.next_token = Some(token);
+                        rollover = self.expiry();
+                    }
+                    TokenEnd::Expired => bail!("the connection's bearer token expired"),
+                },
+                replaced = async {
+                    match &mut replacing {
+                        Some(replacement) => replacement.await,
+                        None => pending().await,
+                    }
+                } => {
+                    replacing = None;
+                    match self.switch(replaced, &mut link, &mut adapter) {
+                        Some(books) => {
+                            (read_deadline, waiting_since) = (Instant::now() + read_timeout, Instant::now());
+                            (rollover, retry) = (self.rollover(), self.timing.reconnect_min);
+                            for text in books {
+                                self.receive(&mut adapter, &mut link, &text, &mut buffered).await?;
+                            }
+                            rearm(&mut emit_wake, self.emit(&mut buffered, &mut spent).await?);
+                        }
+                        // The current connection streams on, and a new token is tried after a wait.
+                        None => {
+                            rollover = self.retry_rollover(retry);
+                            retry = next_backoff(retry, self.timing.reconnect_max);
+                        }
+                    }
+                }
                 _ = checks.tick() => {
                     if self.check_silent() {
                         bail!("resubscribing after a symbol went silent");
@@ -369,59 +406,6 @@ impl VenueFeed {
                 }
             }
         }
-    }
-
-    /// Reads one text message into `buffered`, refusing what does not parse or check, and sends
-    /// any reply the venue's protocol asks for.
-    /// Error cases:
-    /// - the venue asked for a reconnect, or the adapter's state no longer matches the venue's,
-    ///   including a refused book from an adapter that keeps state
-    /// - a reply cannot be sent
-    async fn receive(
-        &mut self,
-        adapter: &mut Adapter,
-        link: &mut Link,
-        text: &str,
-        buffered: &mut BTreeMap<String, Pending>,
-    ) -> anyhow::Result<()> {
-        let now = now_ms();
-        let books = match adapter.read(text, now) {
-            Ok(Frame::Books(books)) => books,
-            Ok(Frame::Control) => return Ok(()),
-            Ok(Frame::Reply(messages)) => {
-                return timeout(self.timing.timeout, link.send_all(messages)).await.context("reply timed out")?;
-            }
-            Ok(Frame::Reconnect) => bail!("the venue asked for a reconnect"),
-            Err(Refusal::Message(reason)) => {
-                self.refuse(&reason, text);
-                return Ok(());
-            }
-            Err(Refusal::Connection(reason)) => {
-                self.refuse(&reason, text);
-                bail!("resyncing: {reason}");
-            }
-        };
-        // The adapter has kept what the message changes; only the quotes wait for the stream.
-        if !self.stream_current() {
-            books.iter().for_each(|book| self.standing.forget(&book.symbol));
-            return Ok(());
-        }
-        for book in books {
-            match to_quote(self.conn.venue, &self.instruments, book, now) {
-                Ok((symbol, quote)) => match self.take_book(&symbol, quote, now, buffered) {
-                    Ok(ts) => {
-                        self.delay.note_read(&symbol, ts, self.timing.max_delay);
-                    }
-                    Err(lead_ms) => self.clock_ahead(self.instruments[&symbol].market, lead_ms),
-                },
-                Err(reason) if adapter.keeps_state() => {
-                    self.refuse(&reason, text);
-                    bail!("resyncing: {reason}");
-                }
-                Err(reason) => self.refuse(&reason, text),
-            }
-        }
-        Ok(())
     }
 
     /// Whether the engine's last confirmed hours have `market` closed at `ts`. A market whose
@@ -466,17 +450,17 @@ impl VenueFeed {
 }
 
 /// Streams one venue's quotes into the sequencer until the sequencer goes away, authenticating
-/// with `api_key` where the venue needs one.
+/// with `credentials`.
 /// Error cases:
 /// - the sequencer has gone away
 pub async fn run(
     conn: VenueConnection,
-    api_key: Option<ApiKey>,
+    credentials: Credentials,
     timing: Timing,
     tls: Arc<ClientConfig>,
     tx: mpsc::Sender<Request>,
 ) -> anyhow::Result<()> {
-    VenueFeed::new(conn, api_key, timing, tls, tx).run().await
+    VenueFeed::new(conn, credentials, timing, tls, tx).run().await
 }
 
 #[cfg(test)]

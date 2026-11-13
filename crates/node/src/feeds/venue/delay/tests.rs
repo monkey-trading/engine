@@ -141,3 +141,26 @@ fn a_quote_with_no_bound_noted_is_already_past_it() {
     assert!(probe.take_not_after("BTC", 1_000) <= std::time::Instant::now());
     assert!(probe.take_not_after("BTC", 999) >= before);
 }
+
+#[test]
+fn a_replacement_keeps_the_stricter_bound_noted_for_each_quote_not_yet_sequenced() {
+    let start = Instant::now();
+    let max_delay = Duration::from_secs(2);
+    let answered = |sent: Instant| {
+        let mut probe = DelayProbe::default();
+        let payload = probe.sent(sent, 0);
+        probe.answered(&payload).expect("a ping answered");
+        probe
+    };
+    // The old connection's ping went out first, so its bounds are the stricter.
+    let (mut earlier, mut later) = (answered(start), answered(start + Duration::from_secs(1)));
+    earlier.note_read("ES:202612", 1_000, max_delay);
+    earlier.note_read("ES:202703", 1_000, max_delay);
+    later.note_read("ES:202612", 1_000, max_delay);
+    later.note_read("ES:202612", 2_000, max_delay);
+    later.keep_bounds(earlier);
+    let bound = |sent: Instant| Some((sent + max_delay).into_std());
+    assert_eq!(later.peek_not_after("ES:202612", 1_000), bound(start));
+    assert_eq!(later.peek_not_after("ES:202703", 1_000), bound(start));
+    assert_eq!(later.peek_not_after("ES:202612", 2_000), bound(start + Duration::from_secs(1)));
+}

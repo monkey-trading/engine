@@ -1,6 +1,8 @@
 //! Venue feed tasks against loopback venues: what they sequence, what they refuse, and how they
 //! reconnect.
 
+mod cme;
+pub(super) mod cme_support;
 mod delay;
 mod emission;
 pub(super) mod fake;
