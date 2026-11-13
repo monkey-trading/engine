@@ -56,6 +56,8 @@ proposal in this README, the answer stands:
   requirement only, in place of the table's shares of the maximum.
 - **FX and index first tiers** (proposal 7): spread rates in tenths of a basis point.
 - **Resting-order limits:** 25, 50, 100 and 250 at tiers 0 to 3, subject to their calibration.
+- **Markout-spread floors** (2026-11-13): each market's score is floored at the full year's markout
+  spread, not half of it, by the scaling the floors section below describes (#699).
 - **Databento** (proposal 6): the engine now prices only from sources over TLS (#622), and #673
   settles second sources.
 
@@ -256,6 +258,38 @@ Against the year's single spread instead, edgeless accounts reach the first tier
 1,000 fills, and a latency fill carries 2.1 to 3.2 standard errors (`results/toxicity.json`,
 `fixed`).
 
+## Markout-spread floors for every launch market (#699)
+
+The score divides each markout by its market's trailing-hour markout spread, never below a
+per-market floor (#690), so a quiet hour, or a host that holds the index still, cannot inflate
+honest accounts' scores past what the floor allows. **The owner set each market's floor at the full
+year's markout spread (#614, 2026-11-13).** #623 had proposed half of it and measured it on BTC-USD,
+ETH-USD and SOL-USD only. `run.py floors` gives each of the genesis's 34 launch markets one, in
+`results/markout_floors.toml` in the genesis's format (a decimal of bps under the field name #690
+settles), with the tables in `results/markout_floors.md`.
+
+**Method, accepted by the owner on the same date.** Where there is no tick data, the year's markout
+spread is scaled from the market's hourly bars as the lag move is (`calib/volatility.py`): a
+Brownian path with each open hour's Parkinson volatility moves `sigma * sqrt(5 / 3600)` in root mean
+square over 5 s, and the crypto markets' measured spreads are 0.87 of that scaling of their own bars
+(0.92, 0.90 and 0.79 on BTC-USD, ETH-USD and SOL-USD). The ratio is crypto's; applying it to FX,
+indices, commodities and shares is the assumption. The floor is the result rounded up to the
+hundredth of a bp: 0.27 to 0.38 bps on FX, 0.65 to 1.05 on indices, 1.22 to 2.24 on commodities,
+1.24 to 3.47 on shares, and 1.68, 2.53 and 2.53 on the crypto markets.
+
+**Honest accounts at the floor.** Scored against their hour's spread (standing in for the trailing
+hour, as in #623's score calibration), or the floor in hours quieter than it, at most 0.15% of
+edgeless accounts reach tier 1 within 1,000 fills on any market, and none reach tier 2. The floor
+binds in the host's best case: every markout scored against the floor, as when the index is held
+still for the trailing hour and then released. Then 0.5% to 1.5% of honest accounts reach tier 1
+within 1,000 fills (1.3% at worst in the sweep's separate draw of 4,000 accounts) and at most 0.2%
+tier 2, against 16% at the median market and 19% at worst at half the year's spread. The latency
+trader still reaches tier 1 at the 20-fill minimum on every crypto market (1.4 to 1.8 standard
+errors a fill, against 1.6 to 2.0 at half). How far the host can hold an index still within its
+staleness bounds is not measured here, so the second case is an upper bound.
+`results/markout_floors.md` gives the same measures at half, three quarters and one and a half times
+the year's spread.
+
 ## Volume tiers
 
 | Counted volume, 30 days | Requests a second | Best-price size | Leverage | Fee floor | Financing discount | Emissions |
@@ -391,6 +425,7 @@ python -I run.py fee
 python -I run.py frontier
 python -I run.py fx_tiers
 python -I run.py toxicity
+python -I run.py floors
 python -I run.py carrot
 python -I run.py attacks --workers 3
 python -I run.py per_market --workers 3 --paths 2000
@@ -416,11 +451,11 @@ proposal on the corrected model, not the committed figures, which are #623's rec
 
 - `run.py`: the stages.
 - `calib/`: `common.py` (the sibling studies and the genesis), `volatility.py` (lag moves),
-  `spreads.py` (tiers), `latency.py` (the latency rule on a grid), `jump.py` (a jump stress
-  trigger variant), `fee.py` (schedules, the hold clock, honest cost), `toxicity.py` (the score),
-  `carrot.py` (volume tiers), `target.py` (target flow), `unprice.py` (#549's unpriced-spell
-  measure at the calibrated spreads), `report.py`, `owner_report.py` (#697's results page and
-  the trigger's budgets).
+  `spreads.py` (tiers), `latency.py` (the latency rule on a grid), `jump.py` (a jump stress trigger
+  variant), `fee.py` (schedules, the hold clock, honest cost), `toxicity.py` (the score),
+  `carrot.py` (volume tiers), `target.py` (target flow), `unprice.py` (#549's unpriced-spell measure
+  at the calibrated spreads), `report.py`, `floors.py` (every market's markout-spread floor, #699),
+  `owner_report.py` (#697's results page and the trigger's budgets).
 - `tests/`: the fee, hold clock, score, tiers, target flow, spreads and latency rule on hand cases,
   and D7's fee table, the tenths, the admitted discount tables and each tier's fee in the latency
   best response.
