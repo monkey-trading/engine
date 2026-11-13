@@ -153,7 +153,7 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
     //    distributed.
     s.losses(&[(s.stakers[0], "1")], "100000", "99600").await;
     // A winning short sells high and buys back low; the house pays the 900 win, less the 40.18 its
-    // spreads pay.
+    // spreads pay and the 10% profit fee on the 859.82 it realises.
     s.wins(&[(s.stakers[1], "1")], "100900", "100000").await;
     assert!(s.house_nav().await < FLOOR);
     let events = s.next_epoch().await;
