@@ -2,8 +2,8 @@
 # Dev scenario for the House and MONKEY pages' data, on a node with config/dev.toml's mocks (static
 # mock mids), a synthetic signed access source, and `api.stats_interval = "1s"`:
 #   1. three accounts fund and declare, then trade both ways in two markets (BTC-USD and ETH-USD): a
-#      long and a short in each, and one account's round trip in BTC, which pays the spread twice (3.5 bps here, set by the config, the
-#      widest one band can be under BTC's 30 bps close-spread ceiling at the widest stress);
+#      long and a short in each, and one account's round trip in BTC, which pays the spread twice (3.5 bps here, set by the config, a
+#      band whose launch close charge, 29 bps, fits under BTC's 30 bps close-spread ceiling);
 #   2. GET /v1/house carries the open interest, open margin, positions, and each market's long,
 #      short and net those positions give, and GET /v1/house/positions holds the same notional in
 #      its close-out and profit buckets and names no account;
@@ -87,7 +87,7 @@ CONFIG
 for edit in ":$api_port\"" 'stats_interval = "1s"' "$work/log\"" 'spread_tiers = [{ tenth_bps = 35 }]'; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"
 done
-# Only BTC-USD's bands change: another market's would move its launch close charge past its ceiling.
+# Only BTC-USD's bands change.
 [[ "$(grep -cF 'spread_tiers = [{ tenth_bps = 35 }]' "$work/node.toml")" == 1 ]] \
   || fail "the spread band edit reached a market other than BTC-USD"
 
