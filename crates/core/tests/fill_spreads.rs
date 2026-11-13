@@ -168,8 +168,14 @@ fn a_pure_close_prices_at_the_widest_admitted_parameters() {
 fn announce_and_apply(h: &mut common::Harness, params: engine_core::params::ProtocolParams) {
     let stress = Some(StressSettings::of(&params));
     let due = h.ts + NOTICE_MS;
-    let notice =
-        ParamsNotice { profit_fee_bps: None, closeout_level_bps: None, stress, score_tiers: None, effective_at: due };
+    let notice = ParamsNotice {
+        profit_fee_bps: None,
+        closeout_level_bps: None,
+        stress,
+        profit_fee_curve: None,
+        effective_at: due,
+        score_tiers: None,
+    };
     h.operator_admin(AdminCommand::AnnounceParams(notice));
     h.advance_to(due);
     h.operator_admin(AdminCommand::SetParams(params));

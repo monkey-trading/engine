@@ -138,6 +138,8 @@ impl Scenario {
         .await;
         let mut genesis = dev_config().genesis;
         genesis.house_capital = Fixed::ZERO;
+        // The epochs' sums charge the flat 10% profit fee; the holding-time fee has a scenario of its own.
+        genesis.params.profit_fee_curve.clear();
         genesis.staking =
             Some(StakingConfig { liquidity_floor: FLOOR, epoch_ms: EPOCH_MS, start_ms: NOW, cooldown_ms: COOLDOWN_MS });
         let section: CheckpointSection = toml::from_str(&format!(

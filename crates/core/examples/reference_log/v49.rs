@@ -36,8 +36,14 @@ pub(crate) fn session(h: &mut Harness) {
 
     let due = h.ts + NOTICE_MS;
     let stress = Some(StressSettings::of(&params));
-    let notice =
-        ParamsNotice { profit_fee_bps: None, closeout_level_bps: None, stress, effective_at: due, score_tiers: None };
+    let notice = ParamsNotice {
+        profit_fee_bps: None,
+        closeout_level_bps: None,
+        stress,
+        profit_fee_curve: None,
+        effective_at: due,
+        score_tiers: None,
+    };
     applied(&sign(h, AdminCommand::AnnounceParams(notice)));
     let markup_bps = relisted.financing.markup_bps;
     applied(&sign(h, AdminCommand::AnnounceMarkup { market: BTC, markup_bps, effective_at: due }));

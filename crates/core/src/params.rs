@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
 use crate::fixed::Rounding;
+use crate::holding_fee::{CurvePoint, validate_curve};
 use crate::market::MarketSpec;
 use crate::protocol::ProtocolVersion;
 use crate::toxicity::{HORIZON_MS, ScoreTier, validate_score_tiers};
@@ -61,6 +62,13 @@ pub struct ProtocolParams {
     /// the encoding at its default, so parameters that name none keep the roots they had.
     #[serde(default = "default_max_resting_orders", skip_serializing_if = "is_default_max_resting_orders")]
     pub max_resting_orders: usize,
+    /// From `V55`, the hold curve the profit fee falls along (`holding_fee`): a realised gain pays the
+    /// larger of `profit_fee_bps` and the curve's fee at the hold of the slice it closes; with no
+    /// points, the base alone applies. Before `V55` a curve charges nothing, and parameters naming none
+    /// take `holding_fee::DEFAULT_PROFIT_FEE_CURVE` when `V55` activates. Left out of the encoding
+    /// while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profit_fee_curve: Vec<CurvePoint>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,6 +173,7 @@ impl ProtocolParams {
     /// - score tiers that fail `toxicity::validate_score_tiers`
     /// - a rollover time that does not exist (hour above 23 or minute above 59)
     /// - a resting-order cap outside 1..=1000
+    /// - a profit fee curve that fails `holding_fee::validate_curve`
     pub fn validate(&self) -> Result<(), String> {
         let rate = 0..=MAX_RATE_BPS;
         if !(0..MAX_RATE_BPS).contains(&self.profit_fee_bps) {
@@ -221,7 +230,7 @@ impl ProtocolParams {
         if !(1..=MAX_RESTING_ORDERS).contains(&self.max_resting_orders) {
             return Err("max_resting_orders must be in 1..=1000".into());
         }
-        Ok(())
+        validate_curve(&self.profit_fee_curve)
     }
 
     /// Checks a trade that only reduces a position can always fill: the widest stress spread plus

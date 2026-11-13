@@ -32,6 +32,7 @@ fn notice(score_tiers: Vec<ScoreTier>, effective_at: i64) -> AdminCommand {
         stress: None,
         score_tiers: Some(score_tiers),
         effective_at,
+        profit_fee_curve: None,
     })
 }
 

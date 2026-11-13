@@ -3,7 +3,7 @@
 //! Single-threaded and deterministic. Time comes only from the sequencer's stamp. This file holds
 //! the state, dispatch, time, sessions, and USD valuation; house NAV and the exposure caps set
 //! from it live in `house.rs`; per-market state lives in `market.rs`,
-//! venue prices and marks in `marks.rs`, funds and financing in `funds.rs`, admin in `admin.rs`,
+//! venue prices and marks in `marks.rs`, funds and financing in `funds.rs`, admin in `admin/`,
 //! stress levels in `stress.rs`, client request auth in `auth.rs`, session-key registrations and
 //! revocations in `session_keys.rs`, orders and pricing in
 //! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, reserved FIFO

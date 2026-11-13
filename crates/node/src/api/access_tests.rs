@@ -4,6 +4,7 @@ mod admission;
 mod batch;
 mod cancel;
 mod declarations;
+mod holding_fee;
 mod pre_deposit;
 mod pre_deposit_budgets;
 mod reissue;

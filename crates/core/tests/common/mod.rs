@@ -357,6 +357,7 @@ pub fn params() -> ProtocolParams {
         rollover: Rollover { tz: chrono_tz::Europe::London, hour: 22, minute: 0 },
         house_total_cap_floor: Fixed::ZERO,
         max_resting_orders: DEFAULT_MAX_RESTING_ORDERS,
+        profit_fee_curve: vec![],
     }
 }
 

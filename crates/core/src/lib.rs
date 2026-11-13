@@ -10,8 +10,9 @@
 //!   fill pays its market's size spread, in tenths of a bp, on the slice that closes a position as
 //!   on the slice that grows it, no band is below its class's floor, and a listed market's spread
 //!   and margin bands move only after a seven-day notice, within bounds set by its launch bands.
-//! - Losers pay nothing; winners pay a flat fee on realised profit. Positions held overnight pay
-//!   or receive CFD financing.
+//! - Losers pay nothing; winners pay a fee on realised profit, flat before `V55` and from it falling
+//!   with how long the position was held, from the whole gain to the flat fee. Positions held
+//!   overnight pay or receive CFD financing.
 //! - Margin is shared across the account at professional-client leverage, with close-out at 50% and
 //!   negative balance protection. From `V6`, close-outs also follow financing and parameter or
 //!   listing changes.
@@ -96,6 +97,7 @@ pub mod fixed;
 pub use fixed::Fixed;
 mod funds;
 pub mod futures;
+pub mod holding_fee;
 mod hot_indexes;
 pub mod listing_bounds;
 pub mod market;

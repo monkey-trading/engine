@@ -40,9 +40,14 @@ how many standard errors an account's recent edge sits above zero, in each marke
 price movement, weighted over time and by size: every account starts on the best price, none pays
 more before 20 fills, and round trips at an unchanged price cannot dilute it.
 
-Losing trades pay nothing. Winning trades pay a fixed share of the profit they realise, and
-positions held over the daily rollover pay or receive financing at a benchmark interest rate plus
-or minus a markup. Under V18, a separate operator worker fetches dated rates from the official
+Losing trades pay nothing. Winning trades pay a share of the profit they realise, which from protocol
+V55 falls with how long the position was held: the whole gain on a close within 10 seconds of the
+open, falling to the standard 10% at 15 minutes. Adding to a position moves its open time to the
+size-weighted average of the times its units were added, so an add does not restart the clock, with
+the units already held counted as no older than the curve's end (15 minutes at launch): a small
+position held for days cannot lend its age to a large one added to it.
+Positions held over the daily rollover pay or receive financing at a
+benchmark interest rate plus or minus a markup. Under V18, a separate operator worker fetches dated rates from the official
 publishers. After downtime, each missed rollover uses the rate effective on its local date. The
 worker setup and stale-rate policy are in [engine-node](crates/node/README.md#dated-benchmark-worker).
 
@@ -118,7 +123,9 @@ a listed market's spread and margin bands, and only within its launch bands: at 
 stays between its launch rate and twice it, and margin at or above launch's. A market's close-spread
 ceiling is set no lower than what a close in its first band could pay at the widest admitted stress
 when it was set or when the market launched, and a market whose ceiling was adopted after genesis
-can only be listed as that adoption named it.
+can only be listed as that adoption named it. From V55 the profit fee moves only up from its launch
+value, to at most half again, and the fee that short holds pay only to a curve at or above the launch
+curve at every hold, each after the same notice, so no hold pays less than at launch.
 While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
 distribution, which it claims from the vault as a staker claims its own; from V50 the fifth is split
 among the operators by their time in office during the epoch.

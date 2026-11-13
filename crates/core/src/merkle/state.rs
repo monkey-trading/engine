@@ -220,6 +220,7 @@ impl Engine {
             (pending_deposit_key(&reference), leaf)
         }));
         changes.extend(markouts.into_iter().map(|index| (markout_key(index), self.markout(index).map(markout_hash))));
+        changes.extend(self.open_time_leaves(&positions));
         let position_leaves: Vec<((AccountId, MarketId), Option<Position>)> = positions
             .into_iter()
             .map(|(id, market)| {

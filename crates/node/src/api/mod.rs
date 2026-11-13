@@ -184,6 +184,8 @@ pub(crate) struct AccountView {
     toxicity: Option<engine_core::toxicity::ToxicityStanding>,
     /// Where each position's market must reach for the account to fall below its close-out level.
     closeouts: Vec<crate::stats::PositionCloseout>,
+    /// From `V55`, what closing each position pays now: its open time, the fee rate and when it falls.
+    close_fees: BTreeMap<MarketId, engine_core::holding_fee::CloseFee>,
 }
 
 #[derive(Serialize)]
@@ -392,7 +394,7 @@ async fn house(State(s): State<ApiState>) -> ApiResult<HouseView> {
     Ok(Json(view))
 }
 
-/// One account's balance, equity, margin, positions, orders, and each position's close-out.
+/// One account's balance, equity, margin, positions, orders, and each position's close-out and close fee.
 /// Error cases:
 /// - the address is malformed
 /// - the account has never been credited
@@ -419,6 +421,7 @@ pub(crate) fn account_view(e: &Engine, id: AccountId) -> Option<AccountView> {
         toxicity_bps: acct.toxicity_bps,
         toxicity: e.toxicity_standing(id),
         closeouts,
+        close_fees: e.close_fees(id),
     })
 }
 

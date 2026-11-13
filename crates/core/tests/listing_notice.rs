@@ -219,7 +219,13 @@ fn from_v52_no_stress_level_waives_the_size_spread() {
     assert_eq!(refused(&h.operate(AdminCommand::SetParams(params.clone()))), reason);
     let stress = Some(StressSettings::of(&params));
     let at = h.ts + NOTICE_MS;
-    let notice =
-        ParamsNotice { profit_fee_bps: None, closeout_level_bps: None, stress, score_tiers: None, effective_at: at };
+    let notice = ParamsNotice {
+        profit_fee_bps: None,
+        closeout_level_bps: None,
+        stress,
+        profit_fee_curve: None,
+        effective_at: at,
+        score_tiers: None,
+    };
     assert_eq!(refused(&h.operate(AdminCommand::AnnounceParams(notice))), reason);
 }

@@ -31,6 +31,7 @@ fn params() -> ProtocolParams {
         rollover: rollover(chrono_tz::Europe::London, 22, 0),
         house_total_cap_floor: Fixed::ZERO,
         max_resting_orders: DEFAULT_MAX_RESTING_ORDERS,
+        profit_fee_curve: vec![],
     }
 }
 
