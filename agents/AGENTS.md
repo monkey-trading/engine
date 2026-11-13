@@ -390,7 +390,7 @@ an index: load only the rule whose hint matches the current action.
   `dev-spreads.sh`, the V52 spreads on a dev node: opposite BTC positions to $12m opened and closed in legs
   through every band and a EUR-USD round trip at 0.4bp, each fill at its band's charge, the signed quote
   stream's steps through the bands a close crosses, refused floors, notices and ceilings, a noticed band and
-  margin change from its time, a bound first listing, and replay;
+  margin change from its time, a bound first listing, restart and replay;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
@@ -676,7 +676,7 @@ Run from the repo root:
 - Parameter notice dev scenario: `./scripts/dev-params-notice.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic time and public replay)
 - Spreads dev scenario: `./scripts/dev-spreads.sh` (runs the isolated access-screened trading, signed
-  admin over TLS and signed quote stream scenario with deterministic time and public replay)
+  admin over TLS and signed quote stream scenario with deterministic time, restart and public replay)
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault
