@@ -331,11 +331,17 @@ pub enum ProtocolVersion {
     /// are the stricter of the baseline and every restriction, which lapses after the recorded
     /// lifetime unless renewed.
     V56,
+    /// An add's averaged open time is clamped at the launch curve's last hold, 15 minutes at launch,
+    /// whatever curve is in force: the open time is raised to no earlier than now less that hold
+    /// before averaging, so a later curve that reaches further, noticed or voted, cannot widen the
+    /// age an add borrows. A log launched with no curve has no hold to pin and clamps at the curve in
+    /// force's, as before. Activation keeps every held position's open time.
+    V57,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V56;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V57;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

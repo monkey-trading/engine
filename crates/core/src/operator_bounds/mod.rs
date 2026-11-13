@@ -126,8 +126,8 @@ pub struct OperatorBounds {
     /// parameters set under `V54`, or of its activation over parameters already set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_score_tiers: Option<Vec<ScoreTier>>,
-    /// From `V55`, the profit fee curve in force when parameters are first set under `V55` or when it
-    /// activates over them, which every later curve stays at or above.
+    /// From `V55`, the curve in force at the first parameters set under `V55` or at its activation over
+    /// them: later curves stay at or above it, and from `V57` its last hold, if any, clamps an add's age.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_curve: Option<Vec<CurvePoint>>,
 }

@@ -440,7 +440,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   floors and a bound first listing, through the signed admin route over TLS, and replay
 - `src/api/access_tests/holding_fee.rs` — the `V55` dev scenario: closes paying the profit fee their
   hold gives, an add and a flip moving the open time, a close-out of a gaining and a losing position,
-  the account and house reads, a refused cut and a noticed raise over TLS, replay and a restart
+  the account and house reads, a refused cut and a noticed raise over TLS, from `V57` an add after a
+  noticed curve extension clamped at the launch curve's last hold, replay and a restart
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
 - `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof, at the
@@ -2071,8 +2072,9 @@ thread (about 9 µs p99 for an account holding all 37 launch markets, 7 µs of i
 The read also gives `close_fees`, keyed by market, one entry per position from `V55` and empty
 before it: `{"opened_at", "fee_bps", "falls_at"}`, the position's open time (an add moves it to the
 size-weighted average of the add's time and the open time, counted as no earlier than the add's time
-less the curve's last hold), the profit fee rate in bps a gain closed now pays, and the sequenced
-time that rate next falls, `null` once it is the base. "Now" is the engine's last sequenced time.
+less the curve's last hold, from `V57` the launch curve's), the profit fee rate in bps a gain closed
+now pays, and the sequenced time that rate next falls, `null` once it is the base. "Now" is the
+engine's last sequenced time.
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns
 `{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the
