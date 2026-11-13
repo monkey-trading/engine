@@ -1,0 +1,7 @@
+WAIT price_stamp_with_2500000_resting_orders_away samples=200 p50_us=111 p99_us=283 max_us=1010
+WAIT price_stamp_rechecking_0_resting_orders samples=200 p50_us=115 p99_us=5499 max_us=20088
+WAIT price_stamp_rechecking_1000_resting_orders samples=200 p50_us=649 p99_us=923 max_us=941
+WAIT price_stamp_rechecking_10000_resting_orders samples=200 p50_us=5163 p99_us=9519 max_us=20252
+WAIT price_stamp_rechecking_100000_resting_orders samples=200 p50_us=52194 p99_us=120230 max_us=120319
+WAIT price_stamp_rechecking_1000000_resting_orders samples=20 p50_us=624430 p99_us=940777 max_us=940777
+WAIT price_stamp_rechecking_2500000_resting_orders samples=20 p50_us=1766205 p99_us=2542247 max_us=2542247

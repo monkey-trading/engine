@@ -488,6 +488,8 @@ mod metrics_tests;
 #[cfg(test)]
 mod pace_tests;
 #[cfg(test)]
+mod resting_bench;
+#[cfg(test)]
 pub(crate) mod tests;
 #[cfg(test)]
 mod wait_bench;

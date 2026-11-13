@@ -1130,6 +1130,38 @@ def stage_floors(args):
     print("rho", {k: round(v, 3) for k, v in ratios.items()}, "mean", round(ratio, 3))
 
 
+def stage_order_limits(args):
+    """#700: the resting-order limits by tier (#614, decision D11), what they are worth against wallet
+    recycling and what they cost the sequencer (`calib/order_limits.py`). The worth is the latency
+    strategy's recycling at the owner's fee (100% to 1 s, 10% at 15 minutes, #614 decision D3);
+    the cost is `crates/node/src/sequencer/resting_bench.rs`'s output in `results/resting_bench.txt`."""
+    from calib import carrot, fee, order_limits, toxicity
+
+    schedule = fee.family(1.0, 900.0, 1.0)
+    markets = crypto_markets()
+    worth = {}
+    for lag in (0.25, 3.0):
+        for m in CRYPTO:
+            r = carrot.best_responses(latency_market_year(lag, m), schedule, markets[m], toxicity.Z_TIERS[0][1], toxicity.MIN_FILLS, SIZE)
+            worth[f"{m}@{lag}s"] = {"keeper_per_day": r["keeper"]["per_day"], "recycler_per_day": r["recycler"]["per_day"],
+                                    "recycler_hold_s": r["recycler"].get("hold_s"), **r.get("at_recycler_best", {}),
+                                    "resting_orders_per_day": 0.0}
+    bench = order_limits.parse_bench((RESULTS / "resting_bench.txt").read_text())
+    base, slope = order_limits.per_order_us(bench)
+    within = order_limits.orders_within(base, slope)
+    away = order_limits.parse_bench((RESULTS / "resting_bench.txt").read_text(), order_limits.AWAY)
+    cost = {"bench": bench, "away": away, "base_us": base, "per_order_us": slope, "orders_within_median_budget": within,
+            "tiers": [{"limit": n, "wallets_to_fill_budget": within / n,
+                       "price_stamp_every_account_at_limit_us": base + slope * order_limits.ACCOUNTS * n}
+                      for n in order_limits.TIER_LIMITS]}
+    out = {"worth": worth, "cost": cost}
+    (RESULTS / "order_limits.json").write_text(json.dumps(out, indent=1, default=float))
+    (RESULTS / "order_limits.md").write_text(order_limits.report(out))
+    print(f"base {base:.0f} us, {slope:.3f} us an order, {within:,.0f} orders within the median budget")
+    for k, v in worth.items():
+        print(k, round(v["recycler_per_day"]), {x: round(v[x]) for x in ("gain_per_day", "forfeited_per_day") if x in v})
+
+
 def genesis_markets_cached():
     from calib.common import genesis_markets
 
@@ -1139,7 +1171,7 @@ def genesis_markets_cached():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("stage", choices=["spreads", "latency", "scaled", "fee", "frontier", "fx_tiers", "per_market", "gaps", "attacks", "toxicity", "carrot", "retained", "report",
-                                          "owner_fee", "owner_latency", "owner_fx", "owner_unprice", "owner_income", "owner_report", "floors"])
+                                          "owner_fee", "owner_latency", "owner_fx", "owner_unprice", "owner_income", "owner_report", "floors", "order_limits"])
     parser.add_argument("--workers", type=int, default=3)
     parser.add_argument("--paths", type=int, default=1000)
     parser.add_argument("--only", default=None, help="owner_income: run only the variants whose name contains this")
