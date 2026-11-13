@@ -5,7 +5,7 @@ it, so once the house has earned it the floor is the NAV the house keeps. The st
 at that floor, the worst case for solvency: it opens each 90-day run with the floor as capital and
 sweeps everything above it at every `sweep_epoch_h`, so fees never build a cushion. Exposure caps
 are the genesis NAV shares (`house_cap_bps`, `house_total_cap_bps`) with no dollar floors, so the
-floor is also what the caps are a share of. Markets beyond the launch 37 are clones
+floor is also what the caps are a share of. Markets beyond the genesis's launch set are clones
 (`expansion.py`).
 
 For each market count and variant the floor goes up a geometric grid on the same paths. The

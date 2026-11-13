@@ -37,6 +37,14 @@ def inputs():
 
     bars, symbols = prices.load_bars(DERIVED / "hourly_bars.npz")
     genesis = load_genesis()
+    # The derived bars cover every market the study has priced; the genesis lists the launch markets
+    # (#685 deferred DE40, UK100 and BRENT), and the study runs on those.
+    listed = {m["symbol"] for m in genesis["markets"]}
+    missing = sorted(listed - set(symbols))
+    if missing:
+        raise ValueError(f"no hourly bars for genesis markets {missing}: re-run derive-markets")
+    keep = [i for i, symbol in enumerate(symbols) if symbol in listed]
+    bars, symbols = bars[:, keep], [symbols[i] for i in keep]
     flow = with_genesis_profiles(load(DERIVED), [m for m in genesis["markets"] if m["symbol"] in symbols])
     benchmarks = {r["benchmark"]: float(r["bps"]) for r in read_rows(DERIVED / "benchmarks.csv")}
     markets = simulate.load_markets(genesis, symbols, load_mix(DERIVED, symbols), bars, benchmarks)
