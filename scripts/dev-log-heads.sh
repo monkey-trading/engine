@@ -85,7 +85,7 @@ audit_alerts() {
   local out status=0 deadline=$((SECONDS + time_clear_seconds + 2))
   while :; do
     out="$(python3 -I "$root/scripts/dev-alert-audit.py" audit "$work/node.log" --allow "$1" \
-      --transient 'custody_rpc_provider_failed|custody_rpc_provider_disagreed|custody_rpc_failed|custody_chain_unsettled|trusted_time_no_sample=$time_clear_seconds' \
+      --transient 'custody_rpc_provider_failed|custody_rpc_provider_disagreed|custody_rpc_failed|custody_chain_unsettled|trusted_time_no_sample='"$time_clear_seconds" \
       --window "$alert_clear_seconds")" && status=0 || status=$?
     # Young and still open: give it the rest of its window to clear.
     if [[ "$status" == 2 && "$SECONDS" -lt "$deadline" ]]; then sleep 1; continue; fi

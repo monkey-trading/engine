@@ -114,6 +114,11 @@ def selftest():
         log.flush()
         assert run(["audit", log.name, "--transient", "trusted_time_no_sample=30"]) == 0
         assert run(["audit", log.name, "--transient", "trusted_time_no_sample"]) == 1
+        try:  # an unexpanded shell variable must refuse, not pass
+            run(["audit", log.name, "--transient", "trusted_time_no_sample=$time_clear_seconds"])
+            raise AssertionError("a non-numeric window was accepted")
+        except SystemExit as refused:
+            assert refused.code == 2
     print("PASS: a quick-clearing warning passes; a persisting or unresolved one fails")
 
 
@@ -134,7 +139,10 @@ def run(argv):
         transient = {}
         for item in filter(None, args.transient.split("|")):
             name, _, seconds = item.partition("=")
-            transient[name] = float(seconds) if seconds else None
+            try:
+                transient[name] = float(seconds) if seconds else None
+            except ValueError:
+                parser.error(f"--transient {item!r}: the window is not a number")
         status, report = audit(log, set(args.allow.split("|")) - {""}, transient, args.window,
                                datetime.now(timezone.utc))
     print("\n".join(report))
