@@ -8,6 +8,7 @@ use common::{AAPL, BTC, ETH, Harness, acct, f, market, ny, operator, params, us_
 use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest, Sequenced};
 use engine_core::event::{Event, Reject};
+use engine_core::market::MarketSpec;
 use engine_core::params::ProtocolParams;
 use engine_core::price::{PriceError, SourceQuote};
 use engine_core::protocol::ProtocolVersion;
@@ -256,7 +257,11 @@ fn a_close_out_judges_and_ranks_an_account_at_the_index_it_fills_at() {
 #[test]
 fn a_listing_before_any_parameters_is_applied_without_a_close_out_check() {
     let mut engine = Engine::new();
-    let mut btc = market(BTC, "BTC-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000);
+    // From `V54` a new listing names its markout floor.
+    let mut btc = MarketSpec {
+        markout_floor_bps: Some(f("1")),
+        ..market(BTC, "BTC-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000)
+    };
     btc.convert_spread_tiers();
     let cmds = [
         AdminCommand::SetClientAuth(ClientAuth::Unsigned),

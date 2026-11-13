@@ -11,12 +11,15 @@ from pathlib import Path
 SPEC = importlib.util.spec_from_file_location("execution", Path(__file__).resolve().parent / "execution.py")
 EXEC = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(EXEC)
+CEILINGS_SPEC = importlib.util.spec_from_file_location("ceilings", Path(__file__).resolve().parent / "ceilings.py")
+CEILINGS = importlib.util.module_from_spec(CEILINGS_SPEC)
+CEILINGS_SPEC.loader.exec_module(CEILINGS)
 
 SCALE = EXEC.SCALE
 # The launch stress levels as (name, minimum spread bps, size-spread multiplier bps), and the top toxicity
 # add-on; `levels_from` reads the same from the pinned parameters, and these are the defaults for tests.
 LEVELS = (("calm", 0, 10_000), ("elevated", 2, 20_000), ("top", 10, 40_000))
-TOXICITY_BPS = 3
+TOXICITY_BPS = 5
 
 
 def levels_from(params):
@@ -25,7 +28,7 @@ def levels_from(params):
     stress = params["stress_levels"]
     if len(stress) != len(names):
         raise ValueError("expected three stress levels")
-    toxicity = max((tier["extra_spread_bps"] for tier in params["toxicity"]["tiers"]), default=0)
+    toxicity = CEILINGS.top_toxicity_bps(params)
     return tuple((name, level["min_spread_bps"], level["size_spread_multiplier_bps"])
                  for name, level in zip(names, stress)), toxicity
 
@@ -91,14 +94,15 @@ def rounding_rows(charge_bps=13, mids=(1, 10, 777, 7_777, 77_777, 777_777, 77_77
     return rows
 
 
-def pure_close_excess_atoms(trials=20_000):
-    """Largest raw-unit excess of a pure close's adjustment over its exact nominal bound, over seeded fills."""
+def pure_close_excess_atoms(trials=20_000, top_toxicity_bps=TOXICITY_BPS):
+    """Largest raw-unit excess of a pure close's adjustment over its exact nominal bound, over seeded fills
+    with toxicity add-ons up to `top_toxicity_bps`."""
     generator = random.Random(SEED)
     worst = 0
     for _ in range(trials):
         mid = generator.randrange(1, 10**12)
         minimum = generator.randrange(0, 11)
-        toxicity = generator.randrange(0, 4)
+        toxicity = generator.randrange(0, top_toxicity_bps + 1)
         sell = bool(generator.getrandbits(1))
         if minimum + toxicity == 0 or (sell and mid == 1):
             continue

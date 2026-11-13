@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_CEILING
 D = Decimal
 ATOM = D("0.000000001")
 BPS = D(10_000)
-CANDIDATES_BPS = (0, 1, 2, 3, 5, 10, 13, 25, 50, 100)
+CANDIDATES_BPS = (0, 1, 2, 3, 5, 10, 15, 25, 50, 100)
 
 
 def charge(amount, rate_bps):
@@ -68,7 +68,7 @@ def paired_gap(*, notional, margin_bps, move, cap_bps, minimum_bps, toxicity_bps
     }
 
 
-def frontier(market, profit_fee_bps, closeout_level_bps):
+def frontier(market, profit_fee_bps, closeout_level_bps, toxicity_bps):
     """Sweep explicit synthetic gap/capital assumptions and inherited proxy shocks."""
     spec = market["market"]
     shocks = {"synthetic_flat": D(0), "synthetic_up_1pct": D("0.01"),
@@ -93,7 +93,7 @@ def frontier(market, profit_fee_bps, closeout_level_bps):
                 for shock, move in shocks.items():
                     for capital_fraction in (D(0), D("0.01"), D("0.1")):
                         result = paired_gap(notional=notional, margin_bps=tier["bps"], move=move,
-                                            cap_bps=cap, minimum_bps=requested, toxicity_bps=3,
+                                            cap_bps=cap, minimum_bps=requested, toxicity_bps=toxicity_bps,
                                             closeout_level_bps=closeout_level_bps,
                                             margin_tiers=spec["margin_tiers"],
                                             profit_fee_bps=profit_fee_bps,
@@ -102,7 +102,7 @@ def frontier(market, profit_fee_bps, closeout_level_bps):
                         rows.append({"symbol": spec["symbol"], "margin_band": band,
                                      "notional_per_leg_usd": str(notional), "marginal_margin_bps": tier["bps"],
                                      "candidate_cap_bps": cap, "requested_stress_minimum_bps": requested,
-                                     "requested_toxicity_bps": 3,
+                                     "requested_toxicity_bps": toxicity_bps,
                                      "shock": shock, "move_fraction": str(move),
                                      "capital_fraction_gross_notional": str(capital_fraction),
                                      **{key: None if value is None else str(value) for key, value in result.items()}})

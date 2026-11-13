@@ -68,6 +68,11 @@
 //!   ex-date open, before opening execution, in order with missed financing. Splits round each
 //!   scaled price once and settle rounded-off position fractions in cash, and a failed split
 //!   blocks its market.
+//! - From `V54`, the toxicity score only worsens a price: each fill's markout is the index's move in
+//!   its favour 5 s later, in units of its market's markout spread; the score is how many standard
+//!   errors an account's decayed, size-capped edge sits above zero, its tiers add spread from 20
+//!   decayed fills, and quantity a closing fill matches at the same index within the horizon scores
+//!   nothing, so round trips cannot dilute it.
 
 pub mod access;
 pub mod account;
@@ -107,6 +112,7 @@ pub mod spread_tier;
 pub mod staking;
 pub use staking::{Staking, StakingConfig, UsdcUnits};
 pub mod stress;
+pub mod toxicity;
 mod tracked;
 pub mod turns;
 pub mod types;

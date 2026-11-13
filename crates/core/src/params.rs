@@ -9,6 +9,7 @@ use crate::Fixed;
 use crate::fixed::Rounding;
 use crate::market::MarketSpec;
 use crate::protocol::ProtocolVersion;
+use crate::toxicity::{HORIZON_MS, ScoreTier, validate_score_tiers};
 use crate::types::Millis;
 
 /// The most any per-trade rate may be: 100%.
@@ -96,19 +97,27 @@ pub struct StressTrigger {
 
 /// Markout-based flow scoring. Each fill is marked against the index `horizon_ms` later; the
 /// account's score averages those markouts in bps (positive means the trader won). Persistent
-/// winners on short horizons are picking off stale prices and pay a wider spread.
+/// winners on short horizons are picking off stale prices and pay a wider spread. From `V54` the
+/// score is `toxicity`'s, whose horizon is the protocol's 5 s and whose tiers are `score_tiers`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToxicityParams {
+    /// From `V54`, the protocol's `toxicity::HORIZON_MS`.
     pub horizon_ms: i64,
     /// Before `V11`, the weight of each new markout in the score's EWMA, in bps.
     pub ewma_weight_bps: i64,
     /// From `V11`, how a score weighs markouts by their fills' notional. Parameters set before `V11`
-    /// have none, and are left out of the encoding.
+    /// have none, and are left out of the encoding. Unused from `V54`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notional: Option<NotionalWeighting>,
-    /// Ascending by `min_score_bps`; the highest tier reached applies.
+    /// Before `V54`, ascending by `min_score_bps`; the highest tier reached applies. Empty from `V54`.
+    #[serde(default)]
     pub tiers: Vec<ToxicityTier>,
+    /// From `V54`, the score's tiers, ascending by `min_score`; the highest tier reached applies.
+    /// Parameters set before `V54` may name them for its activation to take up. Left out of the
+    /// encoding while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub score_tiers: Vec<ScoreTier>,
 }
 
 /// From `V11`, an account's toxicity score is the notional-weighted average of its fills' markouts
@@ -153,6 +162,7 @@ impl ProtocolParams {
     /// - a toxicity horizon outside 1..=3600000 ms, an EWMA weight outside 1..=10000 bps, tiers
     ///   not strictly ascending, or an extra spread outside 0..=10000 bps
     /// - notional weighting that fails `NotionalWeighting::validate`
+    /// - score tiers that fail `toxicity::validate_score_tiers`
     /// - a rollover time that does not exist (hour above 23 or minute above 59)
     /// - a resting-order cap outside 1..=1000
     pub fn validate(&self) -> Result<(), String> {
@@ -204,6 +214,7 @@ impl ProtocolParams {
         if let Some(notional) = &tox.notional {
             notional.validate()?;
         }
+        validate_score_tiers(&tox.score_tiers)?;
         if self.rollover.hour > 23 || self.rollover.minute > 59 {
             return Err("invalid rollover time".into());
         }
@@ -221,7 +232,7 @@ impl ProtocolParams {
     ///   more
     pub fn check_closing_spread(&self) -> Result<(), String> {
         let stress = self.stress_levels.iter().map(|level| level.min_spread_bps).max().unwrap_or(0);
-        let toxicity = self.toxicity.tiers.iter().map(|tier| tier.extra_spread_bps).max().unwrap_or(0);
+        let toxicity = self.top_toxicity_add_on_bps();
         if stress + toxicity >= MAX_RATE_BPS {
             return Err(format!(
                 "stress and toxicity spreads of {stress} and {toxicity} bps reach the price, so no closing trade could fill"
@@ -240,13 +251,24 @@ impl ProtocolParams {
         Ok(())
     }
 
+    /// The widest toxicity add-on a tier can charge: of the score's tiers from `V54`, and of the
+    /// tiers before it, since the parameters of each version carry only their own.
+    pub fn top_toxicity_add_on_bps(&self) -> i64 {
+        let before = self.toxicity.tiers.iter().map(|tier| tier.extra_spread_bps);
+        let score = self.toxicity.score_tiers.iter().map(|tier| tier.extra_spread_bps);
+        before.chain(score).max().unwrap_or(0)
+    }
+
     /// Checks the parameters as `validate` does, that each divergence trigger takes the form
     /// `version` evaluates: absolute bps before `V13`, and from `V13` a share of each market's bound,
-    /// and from `V52` that every stress level's size multiplier is at least 1x.
+    /// from `V52` that every stress level's size multiplier is at least 1x, and from `V54` that the
+    /// toxicity parameters are the score's.
     /// Error cases:
     /// - any case `validate` refuses
     /// - a divergence share before `V13`, or an absolute divergence from `V13`
     /// - from `V52`, a size multiplier below 10000 bps
+    /// - from `V54`, no score tiers, tiers of the earlier score, or a horizon other than
+    ///   `toxicity::HORIZON_MS`
     pub fn validate_for(&self, version: ProtocolVersion) -> Result<(), String> {
         self.validate()?;
         if version >= ProtocolVersion::V52
@@ -255,6 +277,14 @@ impl ProtocolParams {
             return Err(format!(
                 "from protocol {:?} every stress level's size multiplier is at least {MIN_SIZE_MULTIPLIER_BPS} bps",
                 ProtocolVersion::V52
+            ));
+        }
+        let tox = &self.toxicity;
+        let earlier = tox.score_tiers.is_empty() || !tox.tiers.is_empty() || tox.horizon_ms != HORIZON_MS;
+        if version >= ProtocolVersion::V54 && earlier {
+            return Err(format!(
+                "from protocol {:?} toxicity takes score_tiers, no tiers, and a horizon of {HORIZON_MS} ms",
+                ProtocolVersion::V54
             ));
         }
         let mut triggers = self.stress_levels.iter().filter_map(|level| level.trigger.as_ref());

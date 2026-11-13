@@ -19,11 +19,12 @@ use crate::account::{Account, RestingOrder};
 use crate::auth::RequestScope;
 use crate::command::{OrderKind, OrderRequest};
 use crate::eip712::order_hash;
-use crate::engine::{Engine, Markout};
+use crate::engine::Engine;
 use crate::event::{CancelReason, Event, Fill, Reject};
 use crate::fixed::Rounding;
 use crate::protocol::ProtocolVersion;
 use crate::spread_tier::spread_staircase;
+use crate::toxicity::FillMark;
 use crate::types::{AccountId, MarketId, OrderId, Side};
 
 use self::validation::{closing, growth, profit_fee};
@@ -313,7 +314,7 @@ impl Engine {
         }
 
         let stress = &params.stress_levels[market.stress.level];
-        let toxicity_bps = if exec.liquidation { 0 } else { params.toxicity_spread_bps(acct.toxicity_bps) };
+        let toxicity_bps = if exec.liquidation { 0 } else { self.toxicity_add_on_bps(exec.account) };
         // From `V52` the slice that closes the position pays the size spread too.
         let finer = self.protocol_version >= ProtocolVersion::V52;
         let (close_from, close_to) = if finer { closing(pos.qty, delta) } else { (Fixed::ZERO, Fixed::ZERO) };
@@ -421,16 +422,16 @@ impl Engine {
 
     /// Books a priced fill: the position, the market aggregates, realised PnL in USD (rounded down)
     /// and the profit fee against house cash, the PnL in the account's emission period result, and a
-    /// markout to score the flow later.
+    /// markout to score the flow later (`Engine::mark_fill`).
     fn book(&mut self, exec: &Exec, priced: Priced) -> Fill {
         let params = self.params.as_ref().expect("callers check params are set");
         let fee_bps = params.profit_fee_bps;
         let version = self.protocol_version;
-        let markout_due = self.now + params.toxicity.horizon_ms;
         let market = self.markets.get_mut(&exec.market).expect("priced against this market");
         let acct = self.accounts.get_mut(&exec.account).expect("priced for this account");
 
         let pos = acct.positions.entry(exec.market).or_default();
+        let held = pos.qty;
         market.client_qty -= pos.qty;
         market.client_cost -= pos.cost();
         let realised = pos.apply(priced.delta, priced.price, version);
@@ -447,12 +448,8 @@ impl Engine {
 
         self.record_position(exec.account, exec.market);
         self.record_period_result(exec.account, realised_pnl, Fixed::ZERO);
-        if !exec.liquidation {
-            let quote = self.markets[&exec.market].spec.quote_currency;
-            let notional = quote.to_usd(priced.qty.mul(priced.price), priced.fx, Rounding::Down);
-            let (account, market, side, price) = (exec.account, exec.market, exec.side, priced.price);
-            self.record_markout(Markout { due: markout_due, account, market, side, price, notional });
-        }
+        let mark = FillMark { held, qty: priced.qty, index: priced.mid, price: priced.price, fx: priced.fx };
+        self.mark_fill(exec, mark);
         Fill {
             account: exec.account,
             order_id: exec.order_id,

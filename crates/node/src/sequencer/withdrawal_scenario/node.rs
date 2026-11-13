@@ -364,9 +364,7 @@ pub(super) fn write_config(
     cfg["genesis"]["params"]["profit_fee_bps"] = 0_i64.into();
     cfg["genesis"]["params"]["house_total_cap_floor"] = "1000000".into();
     cfg["genesis"]["params"]["stress_levels"].as_array_mut().context("stress levels")?.truncate(1);
-    for tier in cfg["genesis"]["params"]["toxicity"]["tiers"].as_array_mut().context("toxicity tiers")? {
-        tier["extra_spread_bps"] = 0_i64.into();
-    }
+    // No toxicity tier adds spread before 20 scored fills, more than any scenario makes.
     let checkpoints = serde_json::json!({"rpc_url":services.rpcs[0],"relayer":format!("{:#x}", chain.relayer),"retry_interval":"80ms","rpc_timeout":"3s"});
     cfg.as_object_mut().context("config table")?.insert("checkpoints".into(), checkpoints);
     // Every funded account declares against this synthetic source; house funding and screened

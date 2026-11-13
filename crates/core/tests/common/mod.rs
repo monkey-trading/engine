@@ -13,6 +13,7 @@ pub mod reference;
 pub mod session_keys;
 pub mod spreads;
 pub mod stress;
+pub mod toxicity;
 mod versions;
 
 use std::collections::BTreeMap;
@@ -351,6 +352,7 @@ pub fn params() -> ProtocolParams {
             ewma_weight_bps: 5_000,
             notional: Some(NotionalWeighting { prior: Fixed::from_int(10_000), memory: Fixed::from_int(10_000_000) }),
             tiers: vec![ToxicityTier { min_score_bps: 20, extra_spread_bps: 3 }],
+            score_tiers: vec![],
         },
         rollover: Rollover { tz: chrono_tz::Europe::London, hour: 22, minute: 0 },
         house_total_cap_floor: Fixed::ZERO,
@@ -380,6 +382,7 @@ pub fn market(id: MarketId, symbol: &str, class: AssetClass, schedule: Schedule,
         min_order_notional: Fixed::ZERO,
         house_cap_floor: Fixed::ZERO,
         contracts: vec![],
+        markout_floor_bps: None,
     }
 }
 

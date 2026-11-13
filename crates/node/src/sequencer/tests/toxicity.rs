@@ -1,9 +1,10 @@
 //! An existing log's parameters, set before `V11`, taking the config's toxicity notional weighting so
-//! that the latest version can activate over them.
+//! that the latest version can activate over them, and its listings taking their markout floors.
 
 use super::*;
 
 use engine_core::close_spread::CloseSpreadCeiling;
+use engine_core::toxicity::default_markout_floor_bps;
 
 const V9_REFERENCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v9.jsonl");
 
@@ -21,6 +22,11 @@ fn an_existing_log_without_notional_weighting_is_refused_the_latest_version() {
     let mut seq = recover(&dir, &signed(31_337));
     seq.carry_toxicity_notional(weighting).unwrap();
     seq.activate_protocol().unwrap();
+    // Its listings, which named no markout floor, took their asset classes' at the activation.
+    for market in replay(&log_entries(&dir)).unwrap().engine.markets().values() {
+        let floor = default_markout_floor_bps(market.spec.asset_class);
+        assert_eq!(market.spec.markout_floor_bps, Some(floor), "{}", market.spec.symbol);
+    }
     let written = log_entries(&dir).len();
     let mut seq = recover(&dir, &signed(31_337));
     seq.carry_toxicity_notional(weighting).unwrap();

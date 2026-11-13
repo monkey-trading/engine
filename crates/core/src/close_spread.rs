@@ -66,8 +66,7 @@ pub struct PendingCeiling {
 /// add-on, the sum a pure close pays at the most stressful admitted parameters.
 pub(crate) fn launch_close_charge_bps(params: &ProtocolParams) -> i64 {
     let stress = params.stress_levels.iter().map(|level| level.min_spread_bps).max().unwrap_or(0);
-    let toxicity = params.toxicity.tiers.iter().map(|tier| tier.extra_spread_bps).max().unwrap_or(0);
-    stress + toxicity
+    stress + params.top_toxicity_add_on_bps()
 }
 
 /// From `V52`, the largest charge a close in its first band can pay in `spec`'s market under
@@ -330,9 +329,23 @@ impl Engine {
         if self.protocol_version >= ProtocolVersion::V52 || version < ProtocolVersion::V52 {
             return Ok(());
         }
-        let (Some(params), Some(ceilings)) = (&self.params, &self.close_spread_ceilings) else { return Ok(()) };
+        let Some(params) = &self.params else { return Ok(()) };
         let mut params = params.clone();
         params.raise_size_multipliers();
+        self.check_ceilings_cover(&params, ProtocolVersion::V52)
+    }
+
+    /// Checks an activation to `activating` leaves no listed market's ceiling, or pending adoption's
+    /// value, below its launch close charge under `params`, the parameters as it converts them, with
+    /// the market's bands as `V52`'s activation writes them, since a ceiling cannot be raised.
+    /// Error cases:
+    /// - a listed market's ceiling or pending adoption below its launch close charge
+    pub(crate) fn check_ceilings_cover(
+        &self,
+        params: &ProtocolParams,
+        activating: ProtocolVersion,
+    ) -> Result<(), String> {
+        let Some(ceilings) = &self.close_spread_ceilings else { return Ok(()) };
         for (id, market) in self.markets.iter() {
             let pending = self.pending_ceiling.as_ref().filter(|pending| pending.market == *id);
             let Some(ceiling) =
@@ -341,13 +354,14 @@ impl Engine {
                 continue;
             };
             let mut spec = market.spec.clone();
-            spec.convert_spread_tiers();
-            let charge = launch_close_charge_tenth_bps(&params, &spec);
+            if self.protocol_version < ProtocolVersion::V52 {
+                spec.convert_spread_tiers();
+            }
+            let charge = launch_close_charge_tenth_bps(params, &spec);
             if ceiling * 10 < charge {
                 return Err(format!(
-                    "protocol {:?} cannot activate: market {id}'s close-spread ceiling of {ceiling}bps is below its \
-                     launch close charge of {}.{}bps, and a ceiling cannot be raised, so the log needs a fresh start",
-                    ProtocolVersion::V52,
+                    "protocol {activating:?} cannot activate: market {id}'s close-spread ceiling of {ceiling}bps is below \
+                     its launch close charge of {}.{}bps, and a ceiling cannot be raised, so the log needs a fresh start",
                     charge / 10,
                     charge % 10
                 ));

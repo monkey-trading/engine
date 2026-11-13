@@ -295,11 +295,26 @@ pub enum ProtocolVersion {
     /// so the first command past that boundary credits it nothing for the time since. The activation
     /// carries the notice through the sets the log keeps then.
     V53,
+    /// The toxicity score only worsens a price, and round trips cannot dilute it (`toxicity`). A
+    /// fill's markout is the index's move from the fill's index to the market's tradeable index 5 s
+    /// later, in units of the market's markout spread: the root mean square of its index's 5 s
+    /// changes over the trailing hour, never below the floor its listing names. The score is the
+    /// account's decayed weighted markout sum over the root of its decayed squared weights, with a
+    /// 7-day half-life and each weight capped at four times the account's decayed mean fill; from 20
+    /// decayed fills its tiers add spread. A fill matches the account's opposite fills within the
+    /// horizon newest-first, the quantity it closes against what they opened and the quantity it
+    /// opens against what they closed, and quantity matched at the same index scores nothing. Tier
+    /// thresholds and add-ons move only after a seven-day notice, within ±50% of
+    /// launch with an add-on of at least 1 bp, and a market's floor only at its listing. Activation
+    /// drops queued markouts, clears the `V11` scores and starts every account neutral, sets the
+    /// launch tiers where the parameters name none, and gives a market listed with no floor its
+    /// asset class's: 0.1 bp for FX, bonds and rates, 0.5 bp for indices, and 1 bp for the rest.
+    V54,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V53;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V54;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

@@ -1,8 +1,8 @@
 {
   "engine_revision": "41a9ef4a52cb26ac592c5a0e372f610d8d1ba067",
   "input_sha256": {
-    "genesis_inventory": "0911509b7751402bce9d4506850f79037462bd94b02e1c28b5def5010b74cef3",
-    "genesis_file_informational": "07ebcd942126f96ce754cb5ffbb1c29c71456c9b1f6cb10f574e49c8691e12fd",
+    "genesis_inventory": "2626ad9d79233d70c7d15dc9d8a57c1d00d9fa1ab4ea5b8f38cff93ca1488c23",
+    "genesis_file_informational": "c7f9d813931f2bfcfb47ab6cbb7cd31ab05ddb34adf757969e4daa7fba770c6a",
     "bars": "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522",
     "catalogue.py": "90bda1cc31a5b885318a7d475a4095c464ee589f79fec7b78028fa9294ae1f9c",
     "derive/markets.py": "32629c08a2adcb27109f4dddd529828ccc81421fd583245e673d9108d1edd428",
@@ -27,16 +27,16 @@
       "minute": 0
     },
     "toxicity": {
-      "horizon_ms": 2000,
+      "horizon_ms": 5000,
       "ewma_weight_bps": 1000,
-      "tiers": [
+      "score_tiers": [
         {
-          "min_score_bps": 1,
+          "min_score": "4",
           "extra_spread_bps": 2
         },
         {
-          "min_score_bps": 2,
-          "extra_spread_bps": 3
+          "min_score": "8",
+          "extra_spread_bps": 5
         }
       ],
       "notional": {
@@ -111,6 +111,7 @@
           "max_divergence_bps": 25,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 500,
@@ -195,6 +196,7 @@
           "max_divergence_bps": 25,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 500,
@@ -275,6 +277,7 @@
           "max_divergence_bps": 25,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 500,
@@ -356,6 +359,7 @@
           "max_divergence_bps": 5,
           "min_sources": 2
         },
+        "markout_floor_bps": "0.1",
         "financing": {
           "benchmark": "ESTR",
           "markup_bps": 100,
@@ -461,6 +465,7 @@
           "max_divergence_bps": 5,
           "min_sources": 2
         },
+        "markout_floor_bps": "0.1",
         "financing": {
           "benchmark": "SONIA",
           "markup_bps": 100,
@@ -570,6 +575,7 @@
           "max_divergence_bps": 5,
           "min_sources": 2
         },
+        "markout_floor_bps": "0.1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 100,
@@ -675,6 +681,7 @@
           "max_divergence_bps": 5,
           "min_sources": 2
         },
+        "markout_floor_bps": "0.1",
         "financing": {
           "benchmark": "AONIA",
           "markup_bps": 100,
@@ -780,6 +787,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "0.5",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -971,6 +979,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "0.5",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -1162,6 +1171,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "0.5",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -1317,914 +1327,6 @@
     },
     {
       "market": {
-        "id": 23,
-        "symbol": "DE40",
-        "asset_class": "index",
-        "quote_currency": {
-          "currency": "eur",
-          "fx_market": 10
-        },
-        "max_slippage_bps": 10,
-        "house_cap_bps": 5000,
-        "margin_tiers": [
-          {
-            "up_to": "5000000",
-            "bps": 50
-          },
-          {
-            "up_to": "25000000",
-            "bps": 100
-          },
-          {
-            "bps": 500
-          }
-        ],
-        "spread_tiers": [
-          {
-            "up_to": "5000000",
-            "tenth_bps": 9
-          },
-          {
-            "up_to": "25000000",
-            "tenth_bps": 18
-          },
-          {
-            "tenth_bps": 36
-          }
-        ],
-        "price_rules": {
-          "max_age_ms": 1000,
-          "max_divergence_bps": 10,
-          "min_sources": 2
-        },
-        "financing": {
-          "benchmark": "ESTR",
-          "markup_bps": 250,
-          "day_basis": 360
-        },
-        "contracts": [
-          {
-            "contract": "FDAXZ6",
-            "from": "2026-09-10T14:30:00Z"
-          },
-          {
-            "contract": "FDAXH7",
-            "from": "2026-12-10T14:30:00Z"
-          },
-          {
-            "contract": "FDAXM7",
-            "from": "2027-03-11T14:30:00Z"
-          },
-          {
-            "contract": "FDAXU7",
-            "from": "2027-06-10T14:30:00Z"
-          },
-          {
-            "contract": "FDAXZ7",
-            "from": "2027-09-09T14:30:00Z"
-          },
-          {
-            "contract": "FDAXH8",
-            "from": "2027-12-09T14:30:00Z"
-          }
-        ],
-        "schedule": {
-          "kind": "weekly",
-          "tz": "Europe/Berlin",
-          "windows": [
-            {
-              "open": "Mon 02:10",
-              "close": "Mon 22:00"
-            },
-            {
-              "open": "Tue 02:10",
-              "close": "Tue 22:00"
-            },
-            {
-              "open": "Wed 02:10",
-              "close": "Wed 22:00"
-            },
-            {
-              "open": "Thu 02:10",
-              "close": "Thu 22:00"
-            },
-            {
-              "open": "Fri 02:10",
-              "close": "Fri 22:00"
-            }
-          ],
-          "closed_dates": [
-            "2026-12-24",
-            "2026-12-25",
-            "2026-12-31",
-            "2027-01-01",
-            "2027-03-26",
-            "2027-03-29",
-            "2027-12-24",
-            "2027-12-31"
-          ],
-          "special_sessions": [
-            {
-              "from": "2026-10-26T01:10:00",
-              "to": "2026-10-26T02:10:00"
-            },
-            {
-              "from": "2026-10-27T01:10:00",
-              "to": "2026-10-27T02:10:00"
-            },
-            {
-              "from": "2026-10-28T01:10:00",
-              "to": "2026-10-28T02:10:00"
-            },
-            {
-              "from": "2026-10-29T01:10:00",
-              "to": "2026-10-29T02:10:00"
-            },
-            {
-              "from": "2026-10-30T01:10:00",
-              "to": "2026-10-30T02:10:00"
-            },
-            {
-              "from": "2026-11-02T01:10:00",
-              "to": "2026-11-02T02:10:00"
-            },
-            {
-              "from": "2026-11-03T01:10:00",
-              "to": "2026-11-03T02:10:00"
-            },
-            {
-              "from": "2026-11-04T01:10:00",
-              "to": "2026-11-04T02:10:00"
-            },
-            {
-              "from": "2026-11-05T01:10:00",
-              "to": "2026-11-05T02:10:00"
-            },
-            {
-              "from": "2026-11-06T01:10:00",
-              "to": "2026-11-06T02:10:00"
-            },
-            {
-              "from": "2026-11-09T01:10:00",
-              "to": "2026-11-09T02:10:00"
-            },
-            {
-              "from": "2026-11-10T01:10:00",
-              "to": "2026-11-10T02:10:00"
-            },
-            {
-              "from": "2026-11-11T01:10:00",
-              "to": "2026-11-11T02:10:00"
-            },
-            {
-              "from": "2026-11-12T01:10:00",
-              "to": "2026-11-12T02:10:00"
-            },
-            {
-              "from": "2026-11-13T01:10:00",
-              "to": "2026-11-13T02:10:00"
-            },
-            {
-              "from": "2026-11-16T01:10:00",
-              "to": "2026-11-16T02:10:00"
-            },
-            {
-              "from": "2026-11-17T01:10:00",
-              "to": "2026-11-17T02:10:00"
-            },
-            {
-              "from": "2026-11-18T01:10:00",
-              "to": "2026-11-18T02:10:00"
-            },
-            {
-              "from": "2026-11-19T01:10:00",
-              "to": "2026-11-19T02:10:00"
-            },
-            {
-              "from": "2026-11-20T01:10:00",
-              "to": "2026-11-20T02:10:00"
-            },
-            {
-              "from": "2026-11-23T01:10:00",
-              "to": "2026-11-23T02:10:00"
-            },
-            {
-              "from": "2026-11-24T01:10:00",
-              "to": "2026-11-24T02:10:00"
-            },
-            {
-              "from": "2026-11-25T01:10:00",
-              "to": "2026-11-25T02:10:00"
-            },
-            {
-              "from": "2026-11-26T01:10:00",
-              "to": "2026-11-26T02:10:00"
-            },
-            {
-              "from": "2026-11-27T01:10:00",
-              "to": "2026-11-27T02:10:00"
-            },
-            {
-              "from": "2026-11-30T01:10:00",
-              "to": "2026-11-30T02:10:00"
-            },
-            {
-              "from": "2026-12-01T01:10:00",
-              "to": "2026-12-01T02:10:00"
-            },
-            {
-              "from": "2026-12-02T01:10:00",
-              "to": "2026-12-02T02:10:00"
-            },
-            {
-              "from": "2026-12-03T01:10:00",
-              "to": "2026-12-03T02:10:00"
-            },
-            {
-              "from": "2026-12-04T01:10:00",
-              "to": "2026-12-04T02:10:00"
-            },
-            {
-              "from": "2026-12-07T01:10:00",
-              "to": "2026-12-07T02:10:00"
-            },
-            {
-              "from": "2026-12-08T01:10:00",
-              "to": "2026-12-08T02:10:00"
-            },
-            {
-              "from": "2026-12-09T01:10:00",
-              "to": "2026-12-09T02:10:00"
-            },
-            {
-              "from": "2026-12-10T01:10:00",
-              "to": "2026-12-10T02:10:00"
-            },
-            {
-              "from": "2026-12-11T01:10:00",
-              "to": "2026-12-11T02:10:00"
-            },
-            {
-              "from": "2026-12-14T01:10:00",
-              "to": "2026-12-14T02:10:00"
-            },
-            {
-              "from": "2026-12-15T01:10:00",
-              "to": "2026-12-15T02:10:00"
-            },
-            {
-              "from": "2026-12-16T01:10:00",
-              "to": "2026-12-16T02:10:00"
-            },
-            {
-              "from": "2026-12-17T01:10:00",
-              "to": "2026-12-17T02:10:00"
-            },
-            {
-              "from": "2026-12-18T01:10:00",
-              "to": "2026-12-18T02:10:00"
-            },
-            {
-              "from": "2026-12-21T01:10:00",
-              "to": "2026-12-21T02:10:00"
-            },
-            {
-              "from": "2026-12-22T01:10:00",
-              "to": "2026-12-22T02:10:00"
-            },
-            {
-              "from": "2026-12-23T01:10:00",
-              "to": "2026-12-23T02:10:00"
-            },
-            {
-              "from": "2026-12-28T01:10:00",
-              "to": "2026-12-28T02:10:00"
-            },
-            {
-              "from": "2026-12-29T01:10:00",
-              "to": "2026-12-29T02:10:00"
-            },
-            {
-              "from": "2026-12-30T01:10:00",
-              "to": "2026-12-30T02:10:00"
-            },
-            {
-              "from": "2027-01-04T01:10:00",
-              "to": "2027-01-04T02:10:00"
-            },
-            {
-              "from": "2027-01-05T01:10:00",
-              "to": "2027-01-05T02:10:00"
-            },
-            {
-              "from": "2027-01-06T01:10:00",
-              "to": "2027-01-06T02:10:00"
-            },
-            {
-              "from": "2027-01-07T01:10:00",
-              "to": "2027-01-07T02:10:00"
-            },
-            {
-              "from": "2027-01-08T01:10:00",
-              "to": "2027-01-08T02:10:00"
-            },
-            {
-              "from": "2027-01-11T01:10:00",
-              "to": "2027-01-11T02:10:00"
-            },
-            {
-              "from": "2027-01-12T01:10:00",
-              "to": "2027-01-12T02:10:00"
-            },
-            {
-              "from": "2027-01-13T01:10:00",
-              "to": "2027-01-13T02:10:00"
-            },
-            {
-              "from": "2027-01-14T01:10:00",
-              "to": "2027-01-14T02:10:00"
-            },
-            {
-              "from": "2027-01-15T01:10:00",
-              "to": "2027-01-15T02:10:00"
-            },
-            {
-              "from": "2027-01-18T01:10:00",
-              "to": "2027-01-18T02:10:00"
-            },
-            {
-              "from": "2027-01-19T01:10:00",
-              "to": "2027-01-19T02:10:00"
-            },
-            {
-              "from": "2027-01-20T01:10:00",
-              "to": "2027-01-20T02:10:00"
-            },
-            {
-              "from": "2027-01-21T01:10:00",
-              "to": "2027-01-21T02:10:00"
-            },
-            {
-              "from": "2027-01-22T01:10:00",
-              "to": "2027-01-22T02:10:00"
-            },
-            {
-              "from": "2027-01-25T01:10:00",
-              "to": "2027-01-25T02:10:00"
-            },
-            {
-              "from": "2027-01-26T01:10:00",
-              "to": "2027-01-26T02:10:00"
-            },
-            {
-              "from": "2027-01-27T01:10:00",
-              "to": "2027-01-27T02:10:00"
-            },
-            {
-              "from": "2027-01-28T01:10:00",
-              "to": "2027-01-28T02:10:00"
-            },
-            {
-              "from": "2027-01-29T01:10:00",
-              "to": "2027-01-29T02:10:00"
-            },
-            {
-              "from": "2027-02-01T01:10:00",
-              "to": "2027-02-01T02:10:00"
-            },
-            {
-              "from": "2027-02-02T01:10:00",
-              "to": "2027-02-02T02:10:00"
-            },
-            {
-              "from": "2027-02-03T01:10:00",
-              "to": "2027-02-03T02:10:00"
-            },
-            {
-              "from": "2027-02-04T01:10:00",
-              "to": "2027-02-04T02:10:00"
-            },
-            {
-              "from": "2027-02-05T01:10:00",
-              "to": "2027-02-05T02:10:00"
-            },
-            {
-              "from": "2027-02-08T01:10:00",
-              "to": "2027-02-08T02:10:00"
-            },
-            {
-              "from": "2027-02-09T01:10:00",
-              "to": "2027-02-09T02:10:00"
-            },
-            {
-              "from": "2027-02-10T01:10:00",
-              "to": "2027-02-10T02:10:00"
-            },
-            {
-              "from": "2027-02-11T01:10:00",
-              "to": "2027-02-11T02:10:00"
-            },
-            {
-              "from": "2027-02-12T01:10:00",
-              "to": "2027-02-12T02:10:00"
-            },
-            {
-              "from": "2027-02-15T01:10:00",
-              "to": "2027-02-15T02:10:00"
-            },
-            {
-              "from": "2027-02-16T01:10:00",
-              "to": "2027-02-16T02:10:00"
-            },
-            {
-              "from": "2027-02-17T01:10:00",
-              "to": "2027-02-17T02:10:00"
-            },
-            {
-              "from": "2027-02-18T01:10:00",
-              "to": "2027-02-18T02:10:00"
-            },
-            {
-              "from": "2027-02-19T01:10:00",
-              "to": "2027-02-19T02:10:00"
-            },
-            {
-              "from": "2027-02-22T01:10:00",
-              "to": "2027-02-22T02:10:00"
-            },
-            {
-              "from": "2027-02-23T01:10:00",
-              "to": "2027-02-23T02:10:00"
-            },
-            {
-              "from": "2027-02-24T01:10:00",
-              "to": "2027-02-24T02:10:00"
-            },
-            {
-              "from": "2027-02-25T01:10:00",
-              "to": "2027-02-25T02:10:00"
-            },
-            {
-              "from": "2027-02-26T01:10:00",
-              "to": "2027-02-26T02:10:00"
-            },
-            {
-              "from": "2027-03-01T01:10:00",
-              "to": "2027-03-01T02:10:00"
-            },
-            {
-              "from": "2027-03-02T01:10:00",
-              "to": "2027-03-02T02:10:00"
-            },
-            {
-              "from": "2027-03-03T01:10:00",
-              "to": "2027-03-03T02:10:00"
-            },
-            {
-              "from": "2027-03-04T01:10:00",
-              "to": "2027-03-04T02:10:00"
-            },
-            {
-              "from": "2027-03-05T01:10:00",
-              "to": "2027-03-05T02:10:00"
-            },
-            {
-              "from": "2027-03-08T01:10:00",
-              "to": "2027-03-08T02:10:00"
-            },
-            {
-              "from": "2027-03-09T01:10:00",
-              "to": "2027-03-09T02:10:00"
-            },
-            {
-              "from": "2027-03-10T01:10:00",
-              "to": "2027-03-10T02:10:00"
-            },
-            {
-              "from": "2027-03-11T01:10:00",
-              "to": "2027-03-11T02:10:00"
-            },
-            {
-              "from": "2027-03-12T01:10:00",
-              "to": "2027-03-12T02:10:00"
-            },
-            {
-              "from": "2027-03-15T01:10:00",
-              "to": "2027-03-15T02:10:00"
-            },
-            {
-              "from": "2027-03-16T01:10:00",
-              "to": "2027-03-16T02:10:00"
-            },
-            {
-              "from": "2027-03-17T01:10:00",
-              "to": "2027-03-17T02:10:00"
-            },
-            {
-              "from": "2027-03-18T01:10:00",
-              "to": "2027-03-18T02:10:00"
-            },
-            {
-              "from": "2027-03-19T01:10:00",
-              "to": "2027-03-19T02:10:00"
-            },
-            {
-              "from": "2027-03-22T01:10:00",
-              "to": "2027-03-22T02:10:00"
-            },
-            {
-              "from": "2027-03-23T01:10:00",
-              "to": "2027-03-23T02:10:00"
-            },
-            {
-              "from": "2027-03-24T01:10:00",
-              "to": "2027-03-24T02:10:00"
-            },
-            {
-              "from": "2027-03-25T01:10:00",
-              "to": "2027-03-25T02:10:00"
-            },
-            {
-              "from": "2027-11-01T01:10:00",
-              "to": "2027-11-01T02:10:00"
-            },
-            {
-              "from": "2027-11-02T01:10:00",
-              "to": "2027-11-02T02:10:00"
-            },
-            {
-              "from": "2027-11-03T01:10:00",
-              "to": "2027-11-03T02:10:00"
-            },
-            {
-              "from": "2027-11-04T01:10:00",
-              "to": "2027-11-04T02:10:00"
-            },
-            {
-              "from": "2027-11-05T01:10:00",
-              "to": "2027-11-05T02:10:00"
-            },
-            {
-              "from": "2027-11-08T01:10:00",
-              "to": "2027-11-08T02:10:00"
-            },
-            {
-              "from": "2027-11-09T01:10:00",
-              "to": "2027-11-09T02:10:00"
-            },
-            {
-              "from": "2027-11-10T01:10:00",
-              "to": "2027-11-10T02:10:00"
-            },
-            {
-              "from": "2027-11-11T01:10:00",
-              "to": "2027-11-11T02:10:00"
-            },
-            {
-              "from": "2027-11-12T01:10:00",
-              "to": "2027-11-12T02:10:00"
-            },
-            {
-              "from": "2027-11-15T01:10:00",
-              "to": "2027-11-15T02:10:00"
-            },
-            {
-              "from": "2027-11-16T01:10:00",
-              "to": "2027-11-16T02:10:00"
-            },
-            {
-              "from": "2027-11-17T01:10:00",
-              "to": "2027-11-17T02:10:00"
-            },
-            {
-              "from": "2027-11-18T01:10:00",
-              "to": "2027-11-18T02:10:00"
-            },
-            {
-              "from": "2027-11-19T01:10:00",
-              "to": "2027-11-19T02:10:00"
-            },
-            {
-              "from": "2027-11-22T01:10:00",
-              "to": "2027-11-22T02:10:00"
-            },
-            {
-              "from": "2027-11-23T01:10:00",
-              "to": "2027-11-23T02:10:00"
-            },
-            {
-              "from": "2027-11-24T01:10:00",
-              "to": "2027-11-24T02:10:00"
-            },
-            {
-              "from": "2027-11-25T01:10:00",
-              "to": "2027-11-25T02:10:00"
-            },
-            {
-              "from": "2027-11-26T01:10:00",
-              "to": "2027-11-26T02:10:00"
-            },
-            {
-              "from": "2027-11-29T01:10:00",
-              "to": "2027-11-29T02:10:00"
-            },
-            {
-              "from": "2027-11-30T01:10:00",
-              "to": "2027-11-30T02:10:00"
-            },
-            {
-              "from": "2027-12-01T01:10:00",
-              "to": "2027-12-01T02:10:00"
-            },
-            {
-              "from": "2027-12-02T01:10:00",
-              "to": "2027-12-02T02:10:00"
-            },
-            {
-              "from": "2027-12-03T01:10:00",
-              "to": "2027-12-03T02:10:00"
-            },
-            {
-              "from": "2027-12-06T01:10:00",
-              "to": "2027-12-06T02:10:00"
-            },
-            {
-              "from": "2027-12-07T01:10:00",
-              "to": "2027-12-07T02:10:00"
-            },
-            {
-              "from": "2027-12-08T01:10:00",
-              "to": "2027-12-08T02:10:00"
-            },
-            {
-              "from": "2027-12-09T01:10:00",
-              "to": "2027-12-09T02:10:00"
-            },
-            {
-              "from": "2027-12-10T01:10:00",
-              "to": "2027-12-10T02:10:00"
-            },
-            {
-              "from": "2027-12-13T01:10:00",
-              "to": "2027-12-13T02:10:00"
-            },
-            {
-              "from": "2027-12-14T01:10:00",
-              "to": "2027-12-14T02:10:00"
-            },
-            {
-              "from": "2027-12-15T01:10:00",
-              "to": "2027-12-15T02:10:00"
-            },
-            {
-              "from": "2027-12-16T01:10:00",
-              "to": "2027-12-16T02:10:00"
-            },
-            {
-              "from": "2027-12-17T01:10:00",
-              "to": "2027-12-17T02:10:00"
-            },
-            {
-              "from": "2027-12-20T01:10:00",
-              "to": "2027-12-20T02:10:00"
-            },
-            {
-              "from": "2027-12-21T01:10:00",
-              "to": "2027-12-21T02:10:00"
-            },
-            {
-              "from": "2027-12-22T01:10:00",
-              "to": "2027-12-22T02:10:00"
-            },
-            {
-              "from": "2027-12-23T01:10:00",
-              "to": "2027-12-23T02:10:00"
-            },
-            {
-              "from": "2027-12-27T01:10:00",
-              "to": "2027-12-27T02:10:00"
-            },
-            {
-              "from": "2027-12-28T01:10:00",
-              "to": "2027-12-28T02:10:00"
-            },
-            {
-              "from": "2027-12-29T01:10:00",
-              "to": "2027-12-29T02:10:00"
-            },
-            {
-              "from": "2027-12-30T01:10:00",
-              "to": "2027-12-30T02:10:00"
-            }
-          ]
-        }
-      },
-      "source": "yahoo",
-      "ticker": "^GDAXI",
-      "instrument_note": "DAX cash index; the venue's future trades longer hours, so gaps are overstated",
-      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
-      "calibration": {
-        "active_hours": 3370,
-        "abs_hourly_p99_bps": 126.84860265620195,
-        "abs_hourly_max_bps": 598.262716267205,
-        "abs_gap_max_bps": 629.709556010006,
-        "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 106.71649567014191,
-          "p975_bps": 151.9123133107431,
-          "replicates": 200,
-          "seed": 147,
-          "replicate_sha256": "8f92207b677dd2cbecbfd56257e578294846ecc4a5d5336c1fdc719de92b76a0",
-          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
-        },
-        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
-        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
-      },
-      "validation": {
-        "active_hours": 1071,
-        "abs_hourly_p99_bps": 115.56702320465429,
-        "abs_hourly_max_bps": 180.31641837100256,
-        "abs_gap_max_bps": 166.63309688478216,
-        "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 90.47685082941783,
-          "p975_bps": 132.5437677993184,
-          "replicates": 200,
-          "seed": 147,
-          "replicate_sha256": "f2041772218641cba5f019168afe94984b536e02c0898bfcd3984b7ae20a4e1c",
-          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
-        },
-        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
-        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
-      }
-    },
-    {
-      "market": {
-        "id": 24,
-        "symbol": "UK100",
-        "asset_class": "index",
-        "quote_currency": {
-          "currency": "gbp",
-          "fx_market": 11
-        },
-        "max_slippage_bps": 10,
-        "house_cap_bps": 5000,
-        "margin_tiers": [
-          {
-            "up_to": "5000000",
-            "bps": 50
-          },
-          {
-            "up_to": "25000000",
-            "bps": 100
-          },
-          {
-            "bps": 500
-          }
-        ],
-        "spread_tiers": [
-          {
-            "up_to": "5000000",
-            "tenth_bps": 7
-          },
-          {
-            "up_to": "25000000",
-            "tenth_bps": 14
-          },
-          {
-            "tenth_bps": 28
-          }
-        ],
-        "price_rules": {
-          "max_age_ms": 1000,
-          "max_divergence_bps": 10,
-          "min_sources": 2
-        },
-        "financing": {
-          "benchmark": "SONIA",
-          "markup_bps": 250,
-          "day_basis": 365
-        },
-        "contracts": [
-          {
-            "contract": "ZZ6",
-            "from": "2026-09-10T14:30:00Z"
-          },
-          {
-            "contract": "ZH7",
-            "from": "2026-12-10T14:30:00Z"
-          },
-          {
-            "contract": "ZM7",
-            "from": "2027-03-11T14:30:00Z"
-          },
-          {
-            "contract": "ZU7",
-            "from": "2027-06-10T14:30:00Z"
-          },
-          {
-            "contract": "ZZ7",
-            "from": "2027-09-09T14:30:00Z"
-          },
-          {
-            "contract": "ZH8",
-            "from": "2027-12-09T14:30:00Z"
-          }
-        ],
-        "schedule": {
-          "kind": "weekly",
-          "tz": "Europe/London",
-          "windows": [
-            {
-              "open": "Mon 01:00",
-              "close": "Mon 21:00"
-            },
-            {
-              "open": "Tue 01:00",
-              "close": "Tue 21:00"
-            },
-            {
-              "open": "Wed 01:00",
-              "close": "Wed 21:00"
-            },
-            {
-              "open": "Thu 01:00",
-              "close": "Thu 21:00"
-            },
-            {
-              "open": "Fri 01:00",
-              "close": "Fri 21:00"
-            }
-          ],
-          "closed_dates": [
-            "2026-12-25",
-            "2026-12-28",
-            "2027-01-01",
-            "2027-03-26",
-            "2027-03-29",
-            "2027-05-03",
-            "2027-05-31",
-            "2027-08-30",
-            "2027-12-27",
-            "2027-12-28"
-          ],
-          "closures": [
-            {
-              "from": "2026-12-24T12:30:00",
-              "to": "2026-12-24T21:00:00"
-            },
-            {
-              "from": "2026-12-31T12:30:00",
-              "to": "2026-12-31T21:00:00"
-            },
-            {
-              "from": "2027-12-24T12:30:00",
-              "to": "2027-12-24T21:00:00"
-            },
-            {
-              "from": "2027-12-31T12:30:00",
-              "to": "2027-12-31T21:00:00"
-            }
-          ]
-        }
-      },
-      "source": "yahoo",
-      "ticker": "^FTSE",
-      "instrument_note": "FTSE 100 cash index; the venue's future trades longer hours, so gaps are overstated",
-      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
-      "calibration": {
-        "active_hours": 3375,
-        "abs_hourly_p99_bps": 86.82475927787047,
-        "abs_hourly_max_bps": 446.67862533096286,
-        "abs_gap_max_bps": 508.790134152299,
-        "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 69.23918453140048,
-          "p975_bps": 103.15845213253778,
-          "replicates": 200,
-          "seed": 147,
-          "replicate_sha256": "63bebe8ba0dc1d4ce4faa4dec40213818b5ae6c315c8bddbb408f26f5e8fafc9",
-          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
-        },
-        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
-        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
-      },
-      "validation": {
-        "active_hours": 1053,
-        "abs_hourly_p99_bps": 88.55556524043884,
-        "abs_hourly_max_bps": 182.33717026764833,
-        "abs_gap_max_bps": 110.29721614919994,
-        "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 75.0271307365616,
-          "p975_bps": 96.29338133348789,
-          "replicates": 200,
-          "seed": 147,
-          "replicate_sha256": "fd227bdb6c54f3910388f9947cf16f65e8713d0f9dc920af64953ed7adca99d4",
-          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
-        },
-        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
-        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
-      }
-    },
-    {
-      "market": {
         "id": 25,
         "symbol": "JP225",
         "asset_class": "index",
@@ -2265,6 +1367,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "0.5",
         "financing": {
           "benchmark": "TONA",
           "markup_bps": 250,
@@ -2432,6 +1535,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2631,6 +1735,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2826,6 +1931,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3021,233 +2127,6 @@
     },
     {
       "market": {
-        "id": 33,
-        "symbol": "BRENT",
-        "asset_class": "commodity",
-        "max_slippage_bps": 10,
-        "house_cap_bps": 3000,
-        "margin_tiers": [
-          {
-            "up_to": "2000000",
-            "bps": 100
-          },
-          {
-            "bps": 500
-          }
-        ],
-        "spread_tiers": [
-          {
-            "up_to": "2000000",
-            "tenth_bps": 30
-          },
-          {
-            "up_to": "10000000",
-            "tenth_bps": 60
-          },
-          {
-            "tenth_bps": 120
-          }
-        ],
-        "price_rules": {
-          "max_age_ms": 1000,
-          "max_divergence_bps": 10,
-          "min_sources": 2
-        },
-        "financing": {
-          "benchmark": "SOFR",
-          "markup_bps": 250,
-          "day_basis": 360
-        },
-        "contracts": [
-          {
-            "contract": "BRNZ6",
-            "from": "2026-09-28T14:30:00Z"
-          },
-          {
-            "contract": "BRNF7",
-            "from": "2026-10-28T14:30:00Z"
-          },
-          {
-            "contract": "BRNG7",
-            "from": "2026-11-26T14:30:00Z"
-          },
-          {
-            "contract": "BRNH7",
-            "from": "2026-12-23T14:30:00Z"
-          },
-          {
-            "contract": "BRNJ7",
-            "from": "2027-01-27T14:30:00Z"
-          },
-          {
-            "contract": "BRNK7",
-            "from": "2027-02-24T14:30:00Z"
-          },
-          {
-            "contract": "BRNM7",
-            "from": "2027-03-25T14:30:00Z"
-          },
-          {
-            "contract": "BRNN7",
-            "from": "2027-04-28T14:30:00Z"
-          },
-          {
-            "contract": "BRNQ7",
-            "from": "2027-05-26T14:30:00Z"
-          },
-          {
-            "contract": "BRNU7",
-            "from": "2027-06-28T14:30:00Z"
-          },
-          {
-            "contract": "BRNV7",
-            "from": "2027-07-28T14:30:00Z"
-          },
-          {
-            "contract": "BRNX7",
-            "from": "2027-08-26T14:30:00Z"
-          },
-          {
-            "contract": "BRNZ7",
-            "from": "2027-09-28T14:30:00Z"
-          },
-          {
-            "contract": "BRNF8",
-            "from": "2027-10-27T14:30:00Z"
-          },
-          {
-            "contract": "BRNG8",
-            "from": "2027-11-26T14:30:00Z"
-          },
-          {
-            "contract": "BRNH8",
-            "from": "2027-12-23T14:30:00Z"
-          },
-          {
-            "contract": "BRNJ8",
-            "from": "2028-01-27T14:30:00Z"
-          }
-        ],
-        "schedule": {
-          "kind": "weekly",
-          "tz": "America/New_York",
-          "windows": [
-            {
-              "open": "Sun 18:00",
-              "close": "Mon 18:00"
-            },
-            {
-              "open": "Mon 20:00",
-              "close": "Tue 18:00"
-            },
-            {
-              "open": "Tue 20:00",
-              "close": "Wed 18:00"
-            },
-            {
-              "open": "Wed 20:00",
-              "close": "Thu 18:00"
-            },
-            {
-              "open": "Thu 20:00",
-              "close": "Fri 18:00"
-            }
-          ],
-          "closures": [
-            {
-              "from": "2026-11-26T13:30:00",
-              "to": "2026-11-26T18:00:00"
-            },
-            {
-              "from": "2026-11-27T15:00:00",
-              "to": "2026-11-27T18:00:00"
-            },
-            {
-              "from": "2026-12-24T14:00:00",
-              "to": "2026-12-25T18:00:00"
-            },
-            {
-              "from": "2026-12-31T15:00:00",
-              "to": "2027-01-01T18:00:00"
-            },
-            {
-              "from": "2027-03-25T20:00:00",
-              "to": "2027-03-26T18:00:00"
-            },
-            {
-              "from": "2027-05-31T13:30:00",
-              "to": "2027-05-31T18:00:00"
-            },
-            {
-              "from": "2027-06-18T13:30:00",
-              "to": "2027-06-18T18:00:00"
-            },
-            {
-              "from": "2027-07-05T13:30:00",
-              "to": "2027-07-05T18:00:00"
-            },
-            {
-              "from": "2027-09-06T13:30:00",
-              "to": "2027-09-06T18:00:00"
-            },
-            {
-              "from": "2027-11-25T14:30:00",
-              "to": "2027-11-25T18:00:00"
-            },
-            {
-              "from": "2027-11-26T15:00:00",
-              "to": "2027-11-26T18:00:00"
-            },
-            {
-              "from": "2027-12-24T08:00:00",
-              "to": "2027-12-24T18:00:00"
-            },
-            {
-              "from": "2027-12-31T15:00:00",
-              "to": "2027-12-31T18:00:00"
-            }
-          ]
-        }
-      },
-      "source": "yahoo",
-      "ticker": "BZ=F",
-      "instrument_note": "NYMEX Brent last-day future, front month",
-      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
-      "calibration": {
-        "active_hours": 8519,
-        "abs_hourly_p99_bps": 211.25659848612918,
-        "abs_hourly_max_bps": 977.8461374292709,
-        "abs_gap_max_bps": 1596.7176051172135,
-        "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 176.7641078552323,
-          "p975_bps": 258.70991947300763,
-          "replicates": 200,
-          "seed": 147,
-          "replicate_sha256": "8255c71b8601d96da6ca8ff876ea037d3b087ca7ddaae9808d2341b94de1c8dd",
-          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
-        },
-        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
-        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
-      },
-      "validation": {
-        "active_hours": 2640,
-        "abs_hourly_p99_bps": 360.67193163488014,
-        "abs_hourly_max_bps": 1519.7861645916237,
-        "abs_gap_max_bps": 818.0454767998452,
-        "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 217.31768605102522,
-          "p975_bps": 657.0122095811314,
-          "replicates": 200,
-          "seed": 147,
-          "replicate_sha256": "3cd07c22780bc3d91086b46eae56a678f5a8cdb6d5f70d2bca198ca885af3cde",
-          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
-        },
-        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
-        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
-      }
-    },
-    {
-      "market": {
         "id": 40,
         "symbol": "AAPL",
         "asset_class": "equity",
@@ -3285,6 +2164,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3421,6 +2301,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3557,6 +2438,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3693,6 +2575,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3829,6 +2712,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3965,6 +2849,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4101,6 +2986,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4237,6 +3123,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4373,6 +3260,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4509,6 +3397,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4645,6 +3534,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4781,6 +3671,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4917,6 +3808,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -5053,6 +3945,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -5189,6 +4082,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -5325,6 +4219,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -5461,6 +4356,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -5597,6 +4493,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -5733,6 +4630,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -5869,6 +4767,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
+        "markout_floor_bps": "1",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,

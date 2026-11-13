@@ -2,16 +2,18 @@
 //! `V21` harness, the latest without access screening: a round trip at a zero spread tier costs
 //! nothing and pulls a toxicity score back under its first tier, and a pair of opposite positions
 //! in two accounts, across a move the market has no price for, pays its owner the move less the
-//! profit fee and the losing leg's balance, the house taking the rest as bad debt.
+//! profit fee and the losing leg's balance, the house taking the rest as bad debt. From `V54` the
+//! same round trips leave the score where they found it.
 
 mod common;
 
 use common::events::{fills, rejection};
+use common::toxicity::{FLOOR_BPS, OFF_GRID_MS, another, mark, relisted_v54, standing};
 use common::{BTC, Harness, acct, f, market, params};
 use engine_core::Fixed;
 use engine_core::command::AdminCommand;
 use engine_core::event::{Event, Fill, Reject};
-use engine_core::market::Tier;
+use engine_core::market::{MarketSpec, Tier};
 use engine_core::params::{NotionalWeighting, ProtocolParams, StressLevel, ToxicityParams, ToxicityTier};
 use engine_core::session::Schedule;
 use engine_core::spread_tier::SpreadTier;
@@ -33,8 +35,13 @@ fn genesis_toxicity(h: &mut Harness) {
     h.operator_admin(AdminCommand::SetParams(ProtocolParams { toxicity, stress_levels, ..params() }));
 }
 
-/// BTC-USD as genesis lists it: 1% margin to $2M and no spread to $2M of an account's position.
+/// Lists BTC-USD as `genesis_btc_spec` does.
 fn genesis_btc(h: &mut Harness) {
+    h.operator_admin(AdminCommand::UpsertMarket(genesis_btc_spec()));
+}
+
+/// BTC-USD as genesis lists it: 1% margin to $2M and no spread to $2M of an account's position.
+fn genesis_btc_spec() -> MarketSpec {
     let mut spec = market(BTC, "BTC-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 100);
     spec.margin_tiers = vec![
         Tier { up_to: Some(f("2000000")), bps: 100 },
@@ -43,7 +50,7 @@ fn genesis_btc(h: &mut Harness) {
     ];
     spec.spread_tiers =
         vec![SpreadTier::bps(Some(f("2000000")), 0), SpreadTier::bps(Some(f("10000000")), 3), SpreadTier::bps(None, 8)];
-    h.operator_admin(AdminCommand::UpsertMarket(spec));
+    spec
 }
 
 fn fill(h: &mut Harness, account: AccountId, side: Side, qty: &str, mid: &str) -> Fill {
@@ -146,4 +153,37 @@ fn a_pair_across_an_unpriced_jump_pays_the_move_less_the_fee_and_the_losers_bala
     assert_eq!(owner, f("16999"));
     assert_eq!(h.engine.house_cash(), house_before - owner);
     h.assert_conserved(Fixed::ZERO);
+}
+
+#[test]
+fn from_v54_round_trips_leave_a_toxic_account_at_its_tier() {
+    let mut standings = Vec::new();
+    for wash in [false, true] {
+        // Genesis's BTC-USD, its first band raised to the crypto floor of 1 bp from `V52`.
+        let spec = MarketSpec { markout_floor_bps: Some(f(FLOOR_BPS)), ..genesis_btc_spec() };
+        let (mut h, _) = relisted_v54([spec]);
+        // Funds for the round trips' spreads too.
+        let client = another(&mut h, 3, "10000000");
+        h.advance(OFF_GRID_MS);
+        h.price(BTC, "100000");
+        let mut mid = f("100000");
+        for _ in 0..25 {
+            // The edge: a buy the index rises 10 bps from a horizon later. With `wash`, three round
+            // trips of 19 BTC at the buy's index first.
+            common::toxicity::fill(&mut h, &client, Side::Buy, "0.5", &mid.to_string());
+            if wash {
+                for _ in 0..3 {
+                    for side in [Side::Buy, Side::Sell] {
+                        common::toxicity::fill(&mut h, &client, side, "19", &mid.to_string());
+                    }
+                }
+            }
+            mid += mid.mul_bps(10);
+            mark(&mut h, &mid.to_string());
+        }
+        standings.push(standing(&h, client.account));
+    }
+    // The washing changes nothing: both accounts reach the top tier with the same score.
+    assert_eq!(standings[0].tier, 2, "{:?}", standings[0]);
+    assert_eq!(standings[0], standings[1]);
 }

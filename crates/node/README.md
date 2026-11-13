@@ -1059,6 +1059,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   FX, index, commodity, and share markets through the sequencer, across a market open and a futures
   roll, and the log replays
 - `src/feeds/tests/vendors.rs` — loopback Massive and TraderMade vendors
+- `src/feeds/tests/toxicity.rs` — the toxicity score's dev scenario (`V54`): loopback Coinbase and
+  Kraken stand-ins price BTC-USD; a toxic client pays its tier's add-on from its 21st fill, as the
+  test computes from the moves, an edgeless client stays at the best price, round trips leave the
+  score at its tier, and the log replays and a restart recovers the score
 - `src/feeds/tests/hours.rs` — quotes held back while a market is closed and for a contract the
   market does not take, without silence alerts
 - `src/feeds/tests/rwa_support.rs` — schedules open around the clock, signed relistings, a record
@@ -1184,6 +1188,8 @@ cargo run -p engine-node -- admin --pin $PIN set-params params.toml           # 
 # From protocol V49, new stress parameters and a listed market's markup apply only seven days after
 # a notice, by a set-params carrying that file or an upsert-market carrying that markup.
 cargo run -p engine-node -- admin --pin $PIN announce-params --stress-from params.toml --effective-at 2027-01-08T00:00:00Z
+# From protocol V54, new toxicity score tiers, each within 50% of its launch score and add-on, the same way.
+cargo run -p engine-node -- admin --pin $PIN announce-params --score-tiers-from params.toml --effective-at 2027-01-08T00:00:00Z
 cargo run -p engine-node -- admin --pin $PIN announce-markup 1 300 --effective-at 2027-01-08T00:00:00Z
 # From protocol V52, a listed market's spread and margin bands, and its markup, apply only seven days
 # after a listing notice, by an upsert-market carrying them, within the market's launch bands.
@@ -1699,7 +1705,8 @@ signature, as the account reads are public: it sends
 `{"op":"quotes","account":"0x…","markets":[1,2]}` (at most `api.quote_max_markets` distinct markets;
 sending it again replaces the subscription, and an empty `markets` ends it) and receives, in signed
 frames, one message per market,
-`{"type":"quote","market":1,"open":true,"reduce_only":false,"stress_level":0,"mark":"…","ask":[…],"bid":[…],"close":{…}|null}`,
+`{"type":"quote","market":1,"open":true,"reduce_only":false,"stress_level":0,"toxicity_bps":0,"mark":"…","ask":[…],"bid":[…],"close":{…}|null}`,
+where `toxicity_bps` is the spread the account's toxicity adds to every price the message quotes,
 and again for each market whose message changed. The node reads the engine only after the log head
 has moved: at once when the connection's last read began at least `api.quote_interval` ago, and
 otherwise when that interval ends, so a connection reads at most once per interval while the head keeps
@@ -2010,6 +2017,10 @@ every due scan is taken, and if the worker stops the record scans on the
 sequencer's thread again and raises the `stats_scan_inline` warning. A replay scans on its own thread, lightly for all but the last, so a replay of a log at 100k accounts spends about 5 ms per light interval of sequenced time on it. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d
 unbounded by default), the activity length, and the close-out and profit buckets.
 
+From `V54`, `GET /v1/accounts/{address}` adds `toxicity`: `{"score", "fills", "tier", "add_on_bps"}`, the
+account's score in standard errors, the decayed fills behind it, the tier that applies (0 for none)
+and the spread it adds to every fill but a close-out, as of the read; `toxicity_bps` stays 0.
+
 `GET /v1/accounts/{address}` adds `closeouts`, one entry per position in market order:
 `{"market", "reach": "due" | "at" | "beyond", "price"}`. `price`, in the market's quote currency, is set
 only for `at`: the price the market must reach for the account to fall below its close-out level, the
@@ -2125,7 +2136,8 @@ log; changing it needs a fresh log, except by a rotation: from `V35`, `engine ad
 key, and a restart accepts the log's rotated key under the config that names the original one, as
 long as the chain and vault match. `announce-params` gives the notice a profit fee or close-out level
 change needs, and from `V49` with `--stress-from <params.toml>` the notice for the stress levels, move
-window and cooldown that a `set-params` carrying that file applies; `announce-markup <market> <bps>
+window and cooldown that a `set-params` carrying that file applies, and from `V54` with
+`--score-tiers-from <params.toml>` the notice for the toxicity score's tiers; `announce-markup <market> <bps>
 --effective-at <time>` gives the notice a listed market's markup change needs before an
 `upsert-market` carries it. From `V52`, `announce-listing <market>` with `--spreads-from` and
 `--margins-from` (TOML market specs whose bands it names) and `--markup-bps` gives the notice a listed
@@ -2135,9 +2147,9 @@ market's spread band, margin band or markup change needs, and `adopt-close-sprea
 time, or seven days after the election is logged when that is later, and once the staking mirror
 has completed a finalised block stamped at or after the registry's effective time, signing with
 `--rotated`.
-`GET /v1/house/state` returns `{"seq", "params", "listing_notices", "checkpoint"}` from memory, signed
-like the other reads, with no log scan, so a client learns the protocol parameters, the pending
-listing notices and the latest checkpoint without replaying the log. `listing_notices` maps each
+`GET /v1/house/state` returns `{"seq", "params", "score_rules", "listing_notices", "checkpoint"}` from
+memory, signed like the other reads, with no log scan, so a client learns the protocol parameters,
+the pending listing notices and the latest checkpoint without replaying the log. `listing_notices` maps each
 market with a pending notice to it (`spread_tiers` in tenths of a bp, `margin_tiers`, `markup_bps`,
 each left out when not named, and `effective_at`); the bands in force are `GET /v1/markets`'s. `seq` is the log head the read was taken at (`null` on an empty log).
 `params` is `null` until the first `SetParams` applies, then the parameters in force, as the
@@ -2145,7 +2157,10 @@ each left out when not named, and `effective_at`); the bands in force are `GET /
 `house_total_cap_floor` left out when zero, `stress_levels`, and the rest), plus `seq`, the seq of the
 `SetParams` that set them (`null` only when a snapshot written before it carried the seq restored the
 node and no `SetParams` has applied since; an activation that converts the parameters in place, as
-`V13`'s divergence shares and `V52`'s 1x multipliers do, leaves it at that `SetParams`). `checkpoint` is `null` until the log holds one, then the
+`V13`'s divergence shares, `V52`'s 1x multipliers and `V54`'s score tiers do, leaves it at that `SetParams`).
+From `V54`, `score_rules` gives the toxicity score's protocol constants: `horizon_ms`, `half_life_ms`,
+`min_fills`, `weight_cap`, `grid_ms` and `window_ms`; the score's tiers are `params.toxicity.score_tiers`.
+`checkpoint` is `null` until the log holds one, then the
 latest checkpoint as the stream carries it (`offset`, `type: "checkpoint"`, `seq`, `root`,
 `signature`, `signer`, and the rest). The sequencer keeps the checkpoint as it logs it and the seq as
 it applies the command; recovery restores both from the replay it already runs, or from the snapshot
@@ -2839,6 +2854,9 @@ cargo test -p engine-node --features production --lib production_build
 # Dev scenario: loopback market-data vendors behind TLS price FX from two vendors, and index and
 # commodity futures and a share from one, across a market open and a futures roll, and the log replays
 ./scripts/dev-rwa-feeds.sh
+# Dev scenario: loopback crypto venues price BTC-USD; a toxic client's tier from its 21st fill, an
+# edgeless client at the best price, round trips that leave the score, a replay and a restart
+./scripts/dev-toxicity.sh
 # Dev scenario: a signed dividend and four-for-one split through the TLS API, restart and replay
 ./scripts/dev-corporate-actions.sh
 # Dev scenario: the Certificate Transparency watcher against a mock node and a loopback stand-in

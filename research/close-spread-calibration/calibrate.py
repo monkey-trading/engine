@@ -47,6 +47,7 @@ def effects(items, rows, params):
     """Trader exit cost at the ceiling and house outcome in a 5% gap, per margin band."""
     out = []
     ceilings = {row["symbol"]: row["proposed_ceiling_bps"] for row in rows}
+    toxicity = CEILINGS.top_toxicity_bps(params)
     for item in items:
         spec = item["market"]
         ceiling = ceilings[spec["symbol"]]
@@ -59,14 +60,14 @@ def effects(items, rows, params):
             low = high if high is not None else low
             margin = SWEEP.margin_cost(notional, spec["margin_tiers"])
             for label, cap in (("at_ceiling", ceiling), ("no_cap_operator_attack", 9_999)):
-                cost = SWEEP.charge(notional, min(cap, ATTACK_BPS + 3))
+                cost = SWEEP.charge(notional, min(cap, ATTACK_BPS + toxicity))
                 gap = SWEEP.paired_gap(
                     notional=notional, margin_bps=tier["bps"], move=GAP_SHOCK, cap_bps=cap,
-                    minimum_bps=ATTACK_BPS, toxicity_bps=3, closeout_level_bps=params["closeout_level_bps"],
+                    minimum_bps=ATTACK_BPS, toxicity_bps=toxicity, closeout_level_bps=params["closeout_level_bps"],
                     profit_fee_bps=params["profit_fee_bps"], capital=D(0), margin_tiers=spec["margin_tiers"],
                     self_quoted_jpy=spec["symbol"] == "USD-JPY")
                 out.append({"symbol": spec["symbol"], "margin_band": band, "notional_usd": str(notional),
-                            "case": label, "close_cost_bps": min(cap, ATTACK_BPS + 3),
+                            "case": label, "close_cost_bps": min(cap, ATTACK_BPS + toxicity),
                             "close_cost_usd": str(cost),
                             "close_cost_percent_initial_margin": str(round(cost / margin * 100, 4)),
                             "bad_debt_usd_in_5pct_gap": str(gap["bad_debt_usd"]),
@@ -179,7 +180,8 @@ def build():
         "reversal_summary": reversal_summary(reversals), "reversals": reversals,
         "reversal_summary_if_every_ceiling_were_its_floor": reversal_summary(at_floor),
         "gap_comparison": gap_comparison(effects_rows),
-        "rounding": PATHS.rounding_rows(), "pure_close_excess_atoms_seeded": PATHS.pure_close_excess_atoms(),
+        "rounding": PATHS.rounding_rows(charge_bps=CEILINGS.launch_close_charge_bps(params)),
+        "pure_close_excess_atoms_seeded": PATHS.pure_close_excess_atoms(top_toxicity_bps=toxicity),
         "effects": effects_rows,
     }
 

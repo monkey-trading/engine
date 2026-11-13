@@ -31,6 +31,8 @@ pub(super) struct MarketQuote {
     /// Whether the market takes no new risk: its own flag, or every market's.
     pub reduce_only: bool,
     pub stress_level: usize,
+    /// The spread the account's toxicity adds to every price here, in bps.
+    pub toxicity_bps: i64,
     pub mark: Option<Fixed>,
     /// Why the market has no price to fill at now; the sides are then empty.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -75,6 +77,7 @@ pub(super) fn market_quote(
         open: market.open,
         reduce_only: engine.is_reduce_only(market),
         stress_level: market.stress.level,
+        toxicity_bps: engine.toxicity_add_on_bps(account),
         mark: market.mark,
         unavailable: None,
         ask: Vec::new(),

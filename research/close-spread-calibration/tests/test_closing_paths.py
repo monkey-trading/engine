@@ -23,14 +23,14 @@ class ClosingPathTests(unittest.TestCase):
                          [(P.EXEC.raw("1"), 20), (None, 7)])
 
     def test_pure_close_pays_its_closing_slice_through_the_bands(self):
-        # Closing $100,000 at 100 bps and 4x is $4,000 over 1,000 units: 400 bps, on top of the 13.
-        self.assertAlmostEqual(P.reversal(STEEP, TOP, 100_000, 0.0), 13 + 400)
-        self.assertAlmostEqual(P.reversal(FLAT, TOP, 100_000, 2.0), 13)
+        # Closing $100,000 at 100 bps and 4x is $4,000 over 1,000 units: 400 bps, on top of the 15.
+        self.assertAlmostEqual(P.reversal(STEEP, TOP, 100_000, 0.0), 15 + 400)
+        self.assertAlmostEqual(P.reversal(FLAT, TOP, 100_000, 2.0), 15)
 
     def test_both_slices_pay_before_the_multiplier_and_blend_over_the_whole_fill(self):
         # Close 1,000 units and open 1,000: 100 bps on $200,000 at 4x is $8,000, or $4 a unit over 2,000 units,
         # which is 400 bps of the $100 index.
-        self.assertAlmostEqual(P.reversal(STEEP, TOP, 100_000, 1.0), 13 + 400, places=2)
+        self.assertAlmostEqual(P.reversal(STEEP, TOP, 100_000, 1.0), 15 + 400, places=2)
 
     def test_blended_spread_never_falls_with_the_opening_share_through_rising_bands(self):
         values = [P.reversal(BANDED, P.LEVELS[0], 100_000, fraction) for fraction in P.OPEN_FRACTIONS]
@@ -67,6 +67,10 @@ class ClosingPathTests(unittest.TestCase):
                   "toxicity": {"tiers": [{"extra_spread_bps": 1}, {"extra_spread_bps": 4}]}}
         levels, toxicity = P.levels_from(params)
         self.assertEqual((levels[2], toxicity), (("top", 7, 30_000), 4))
+        # From V54 the add-on is the score's top tier.
+        scored = params | {"toxicity": {"score_tiers": [{"min_score": "4", "extra_spread_bps": 2},
+                                                        {"min_score": "8", "extra_spread_bps": 5}]}}
+        self.assertEqual(P.levels_from(scored)[1], 5)
         with self.assertRaises(ValueError):
             P.levels_from(params | {"stress_levels": params["stress_levels"][:2]})
         item = {"market": {"symbol": "T", "asset_class": "equity", "spread_tiers": FLAT["spread_tiers"]}}

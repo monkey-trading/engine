@@ -169,7 +169,7 @@ struct HouseView {
 }
 
 #[derive(Serialize)]
-struct AccountView {
+pub(crate) struct AccountView {
     balance: Fixed,
     #[serde(skip_serializing_if = "Fixed::is_zero")]
     unfinalised_deposits: Fixed,
@@ -177,7 +177,11 @@ struct AccountView {
     margin: Fixed,
     positions: BTreeMap<MarketId, Position>,
     orders: BTreeMap<OrderId, RestingOrder>,
+    /// The `V11` score in whole bps, before `V54`; zero from it.
     toxicity_bps: i64,
+    /// From `V54`, the toxicity score, its decayed fills, its tier and the spread the tier adds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    toxicity: Option<engine_core::toxicity::ToxicityStanding>,
     /// Where each position's market must reach for the account to fall below its close-out level.
     closeouts: Vec<crate::stats::PositionCloseout>,
 }
@@ -396,24 +400,26 @@ async fn house(State(s): State<ApiState>) -> ApiResult<HouseView> {
 async fn account(State(s): State<ApiState>, Path(address): Path<String>) -> ApiResult<AccountView> {
     let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     Span::current().record("id", display(id));
-    let view = s
-        .read(move |e| {
-            let acct = e.accounts().get(&id)?;
-            let (equity, margin) = e.equity_and_margin(acct, None);
-            let closeouts = crate::stats::account_closeouts(e, acct, (equity, margin));
-            Some(AccountView {
-                balance: acct.balance,
-                unfinalised_deposits: acct.unfinalised_deposits,
-                equity,
-                margin,
-                positions: acct.positions.clone(),
-                orders: acct.orders.clone(),
-                toxicity_bps: acct.toxicity_bps,
-                closeouts,
-            })
-        })
-        .await?;
+    let view = s.read(move |e| account_view(e, id)).await?;
     view.map(Json).ok_or(ApiError::NotFound)
+}
+
+/// `account`'s read from `e`, or `None` for an account never credited.
+pub(crate) fn account_view(e: &Engine, id: AccountId) -> Option<AccountView> {
+    let acct = e.accounts().get(&id)?;
+    let (equity, margin) = e.equity_and_margin(acct, None);
+    let closeouts = crate::stats::account_closeouts(e, acct, (equity, margin));
+    Some(AccountView {
+        balance: acct.balance,
+        unfinalised_deposits: acct.unfinalised_deposits,
+        equity,
+        margin,
+        positions: acct.positions.clone(),
+        orders: acct.orders.clone(),
+        toxicity_bps: acct.toxicity_bps,
+        toxicity: e.toxicity_standing(id),
+        closeouts,
+    })
 }
 
 /// The nonce the account's next signed request must carry.

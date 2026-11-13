@@ -42,6 +42,9 @@ class CeilingTests(unittest.TestCase):
         self.assertEqual(C.launch_close_charge_bps(PARAMS), 13)
         self.assertEqual(C.launch_close_charge_bps(
             {"stress_levels": [{"min_spread_bps": 4}], "toxicity": {"tiers": []}}), 4)
+        # From V54 the top add-on is the score's top tier, and the earlier tiers are gone.
+        scored = {"stress_levels": [{"min_spread_bps": 10}], "toxicity": {"score_tiers": [{"extra_spread_bps": 5}]}}
+        self.assertEqual(C.launch_close_charge_bps(scored), 15)
 
     def test_floor_counts_the_first_band_at_the_widest_multiplier_in_tenths(self):
         # 13 bps of stress minimum and add-on, plus 0.7 bp at 4x, 2.8 bps: 15.8 bps, which a 16-bp ceiling covers.

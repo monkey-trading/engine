@@ -1,6 +1,8 @@
 //! Optimized dev-profile command latency; fixture construction is outside timed samples.
 
 mod common;
+#[path = "hot_path_benchmark/toxicity.rs"]
+mod toxicity;
 
 use std::time::Instant;
 
@@ -14,6 +16,7 @@ use engine_core::command::{AdminCommand, CloseEntry, Command, OrderKind, Sequenc
 use engine_core::market::{MarketSpec, PriceRules};
 use engine_core::params::DEFAULT_MAX_RESTING_ORDERS;
 use engine_core::price::SourceQuote;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::session::{Period, Schedule};
 use engine_core::types::{AccountId, AssetClass, MAX_STAMP_MS, MarketId, Side};
 use serde_json::json;

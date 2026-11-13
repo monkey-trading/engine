@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use engine_core::Engine;
 use engine_core::auth::ClientAuth;
+use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::{AdminCommand, Command};
+use engine_core::params::ToxicityTier;
 use engine_core::protocol::ProtocolVersion;
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -105,8 +107,9 @@ pub fn replay_trusted(entries: &[LogEntry]) -> anyhow::Result<crate::sequencer::
 
 /// Genesis shapes an older protocol applied and config load under the latest refuses, each named, with
 /// the version that applied it and the reason config load gives: a stress and toxicity spread that
-/// reaches the price before `V8`, a divergence trigger beside a zero-bound market before `V13`, and a
-/// market on a benchmark genesis gave no rate before `V14`.
+/// reaches the price before `V8`, a divergence trigger beside a zero-bound market before `V13`, a
+/// market on a benchmark genesis gave no rate before `V14`, and a close-spread ceiling at the close
+/// charge before `V54`, below the one `V54`'s score tiers make.
 pub(crate) fn geneses_no_config_can_name() -> Vec<(&'static str, ProtocolVersion, Vec<Command>, &'static str)> {
     let dev = dev_config().genesis;
     // The dev parameters without divergence triggers, a form every version takes.
@@ -124,7 +127,7 @@ pub(crate) fn geneses_no_config_can_name() -> Vec<(&'static str, ProtocolVersion
             Command::HouseCapital { amount: dev.house_capital, chain_ref: GENESIS_REF.into() },
         ]
     };
-    // With the 3 bps toxicity tier, 10_001 bps.
+    // With the 5 bps top score tier, 10_003 bps.
     let mut spread = params.clone();
     spread.stress_levels.last_mut().expect("stress levels").min_spread_bps = 9_998;
     let mut divergence = params.clone();
@@ -133,10 +136,19 @@ pub(crate) fn geneses_no_config_can_name() -> Vec<(&'static str, ProtocolVersion
     unbounded.price_rules.max_divergence_bps = 0;
     let mut rateless = eth.clone();
     rateless.financing.benchmark = "ESTR".into();
+    // Before `V54` a top tier of 3 bps over the 10 bps stress minimum makes a 13 bps close charge,
+    // which a ceiling may equal; `V54`'s score tiers raise it to 15.
+    let mut earlier = params.clone();
+    earlier.toxicity.score_tiers.clear();
+    earlier.toxicity.tiers = vec![ToxicityTier { min_score_bps: 15, extra_spread_bps: 3 }];
+    let ceilings = [btc.id, eth.id].map(|market| CloseSpreadCeiling { market, max_close_spread_bps: 13 }).to_vec();
+    let mut low_ceilings = genesis(earlier, eth.clone());
+    low_ceilings.insert(4, Command::Admin(AdminCommand::SetCloseSpreadCeilings { ceilings }));
     vec![
         ("closing-spread", ProtocolVersion::V7, genesis(spread, eth), "no closing trade could fill"),
         ("zero-bound", ProtocolVersion::V12, genesis(divergence, unbounded), "can never fire in ETH-USD"),
         ("rateless-benchmark", ProtocolVersion::V13, genesis(params, rateless), "benchmark ESTR has no rate"),
+        ("low-ceiling", ProtocolVersion::V51, low_ceilings, "would clamp a launch close"),
     ]
 }
 

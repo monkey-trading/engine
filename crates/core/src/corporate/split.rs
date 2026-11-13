@@ -187,8 +187,10 @@ impl Engine {
                 self.settle_bad_debt(account, events);
             }
         }
+        // From `V54` a markout is measured from its fill's index, and matches no fill after a split.
         for (offset, price) in markouts {
             self.markouts[offset].price = price;
+            (self.markouts[offset].open, self.markouts[offset].closed) = (Fixed::ZERO, Fixed::ZERO);
             self.record_markout_change(offset);
         }
         self.hot_indexes = None;

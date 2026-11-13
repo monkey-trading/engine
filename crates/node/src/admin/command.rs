@@ -36,12 +36,20 @@ impl AdminAction {
             AdminAction::DeliverSecrets(_) | AdminAction::SecretsStatus(_) => bail!("secrets take no admin command"),
             AdminAction::SetStressFloor { level, market } => AdminCommand::SetStressFloor { market, level },
             AdminAction::SetReduceOnly { reduce_only, market } => AdminCommand::SetReduceOnly { market, reduce_only },
-            AdminAction::AnnounceParams { profit_fee_bps, closeout_level_bps, stress_from, effective_at } => {
+            AdminAction::AnnounceParams {
+                profit_fee_bps,
+                closeout_level_bps,
+                stress_from,
+                score_tiers_from,
+                effective_at,
+            } => {
                 let stress = stress_from.map(|file| read_params(&file).map(|params| StressSettings::of(&params)));
+                let tiers = score_tiers_from.map(|file| read_params(&file).map(|params| params.toxicity.score_tiers));
                 AdminCommand::AnnounceParams(ParamsNotice {
                     profit_fee_bps,
                     closeout_level_bps,
                     stress: stress.transpose()?,
+                    score_tiers: tiers.transpose()?,
                     effective_at: effective_at.timestamp_millis(),
                 })
             }

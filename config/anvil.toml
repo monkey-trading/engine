@@ -166,17 +166,20 @@ tz = "Europe/London"
 hour = 22
 minute = 0
 
+# From protocol V54 a toxicity score is how many standard errors an account's
+# decayed, size-capped markout edge sits above zero, its markouts in units of
+# each market's markout spread over a horizon the protocol fixes at 5 s. From
+# 20 decayed fills, each tier adds its spread from its score up: 4 and 8,
+# adding 2 and 5 bps (#614, D1), each movable within ±50% after a seven-day
+# notice. ewma_weight_bps applies before V11, and `notional` before V54.
 [genesis.params.toxicity]
-horizon_ms = 2000
+horizon_ms = 5000
 ewma_weight_bps = 1000
-tiers = [
-  { min_score_bps = 5, extra_spread_bps = 1 },
-  { min_score_bps = 15, extra_spread_bps = 3 },
+score_tiers = [
+  { min_score = "4", extra_spread_bps = 2 },
+  { min_score = "8", extra_spread_bps = 5 },
 ]
 
-# From protocol V11 a toxicity score is the notional-weighted average of an
-# account's markouts, from `prior` USD of neutral history and over at most
-# `memory` USD of fill notional; ewma_weight_bps applies before V11 only.
 [genesis.params.toxicity.notional]
 prior = "10000"
 memory = "10000000"
@@ -201,6 +204,11 @@ trigger = { divergence_share_bps = 8000, move_bps = 300, utilisation_bps = 9500 
 
 # --- Crypto: 24/7 ---------------------------------------------------------
 
+# Each listing's markout_floor_bps (protocol V54) is the least its markout
+# spread may be, the toxicity score's unit. These floors are TEST FIXTURES,
+# not calibrated values: #699 calibrates production's. Each is its asset
+# class's default, the floor V54's activation gives a listing that names
+# none, so a log started before V54 resumes under this genesis.
 [[genesis.markets]]
 id = 1
 symbol = "BTC-USD"
@@ -211,6 +219,7 @@ margin_tiers = [{ up_to = "1000000", bps = 1000 }, { bps = 2000 }]
 spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
+markout_floor_bps = "1"
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
 
 [[genesis.markets]]
@@ -223,14 +232,15 @@ margin_tiers = [{ up_to = "1000000", bps = 1000 }, { bps = 2000 }]
 spread_tiers = [{ up_to = "1000000", tenth_bps = 30 }, { up_to = "5000000", tenth_bps = 60 }, { tenth_bps = 120 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
+markout_floor_bps = "1"
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
 
 # --- Close-spread ceilings (protocol V40, #344) -------------------------------
 # Unequal TEST FIXTURES, not calibrated values: production's come from #147's
 # calibration. A market's launch close charge is the widest stress minimum
-# 10bps, the 3bps top toxicity add-on and, from protocol V52, its first spread
-# band (in tenths of a bp) at the widest 4x multiplier: 21bps on BTC-USD and
-# 25bps on ETH-USD.
+# 10bps, the 5bps top toxicity add-on (from protocol V54 the score's top tier)
+# and, from protocol V52, its first spread band (in tenths of a bp) at the
+# widest 4x multiplier: 23bps on BTC-USD and 27bps on ETH-USD.
 [[genesis.close_spread_ceilings]]
 market = 1
 max_close_spread_bps = 30

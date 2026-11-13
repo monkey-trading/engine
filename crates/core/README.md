@@ -26,7 +26,9 @@ this crate and reproduce the signed state roots exactly.
   changes, skip a market outside its session, and value a market that can trade at its live index
 - Venue trading hours for RWA markets, with holidays, early closes, and special sessions, and
   resting orders filling at the gapped open
-- Markout-based toxicity scoring that widens spreads for flow that picks off stale prices
+- Markout-based toxicity scoring that widens spreads for flow that picks off stale prices; from
+  protocol `V54` a stick that only adds spread, measured over time so that round trips and size
+  cannot dilute it
 - Deposits credited at most once per chain reference, and all external numbers bounded
 - A keccak-256 state root: from protocol `V9`, the root of a sparse Merkle tree over accounts,
   markets, and the rest of the state, which each root rehashes only where commands changed it;
@@ -188,6 +190,18 @@ this crate and reproduce the signed state roots exactly.
   apply long-net/short-gross cash at the ex-date opening, and scale every split quantity/price
   atomically, rounding once and settling rounded-off fractions in cash, with chronological
   financing catch-up
+- From protocol `V54`, the toxicity score only worsens a price (`src/toxicity/`): a fill's markout
+  is the index's move from the fill's index 5 s later, in standard errors of its market's markout
+  spread (the root mean square of the index's 5 s changes over the trailing hour, sampled on a grid
+  of sequenced time and never below the floor the listing names); the score is the account's
+  decayed weighted markout sum over the root of its decayed squared weights, with a 7-day half-life
+  in whole hours and each weight capped at four times its decayed mean fill; from 20 decayed fills,
+  tiers at scores of 4 and 8 add 2 and 5 bps; a fill matches the account's opposite fills within
+  the horizon newest-first, what it closes against what they opened and what it opens against what
+  they closed, and quantity matched at the same index scores nothing. The tiers
+  move only after a seven-day notice, within ±50% of launch, and a floor is fixed at listing.
+  Activation drops queued markouts and clears the `V11` scores, so every account starts neutral,
+  and gives a market listed with no floor its asset class's
 
 ## Repository Structure
 
@@ -208,7 +222,13 @@ this crate and reproduce the signed state roots exactly.
   those same functions and changes nothing (`quote.rs`; `tests/quote.rs` checks it against fills),
   and unit tests (`tests.rs`)
 - `src/markouts.rs` — each fill's markout, queued and then marked against the index after its
-  horizon, and toxicity scores
+  horizon, and toxicity scores before `V54`
+- `src/toxicity/` — the `V54` toxicity score: its constants, tiers, sums, tier test and the reads
+  of an account's standing (`mod.rs`), the hourly decay steps (`decay.rs`), each market's markout
+  spread sampled on the 5 s grid (`spread.rs`), a fill's markout with its round trips and the score
+  of due markouts (`marking.rs`), the index of the markouts a fill may match (`legs.rs`), the activation, floors and tier notices (`bounds.rs`), and unit
+  tests (`tests.rs`)
+- `src/merkle/toxicity.rs` — the `V54` score and markout spread leaves
 - `src/closeout.rs` — account close-out and bad-debt write-off
 - `src/benchmark.rs` — dated publisher snapshots, effective-date lookup, staleness, and retention;
   from `V46`, the cap on a signed rate (`split_by_cap`), which `check_held_benchmark` in
@@ -331,7 +351,20 @@ this crate and reproduce the signed state roots exactly.
 - `tests/rogue_operator.rs` — the two engine mechanisms `research/rogue-operator` rests on: free
   round trips at a zero spread tier holding a toxic account's score under the first tier, and a pair
   of opposite positions across an unpriced jump paying the move less the fee and the losing leg's
-  balance, the rest bad debt
+  balance, the rest bad debt; and from `V54` the same round trips leaving the score at its tier
+- `tests/toxicity_score.rs` — `V54`: the add-on from 20 scored fills, an edgeless account at the
+  best price, markouts from the fill's index, decay, close-outs left unmarked, a venue gap at the due
+  time, and the markout spread's grid, window, floor, and closed and unpriced intervals, with the
+  shared harness in `tests/common/toxicity.rs`
+- `tests/toxicity_round_trips.rs` — `V54` round trips: a fill closed in parts, adds closed by one,
+  partial and flipping matches, a close and its reopening, another index or the horizon past,
+  newest-first matching, close-outs, matching after recovery,
+  and a toxic score through forty round trips
+- `tests/toxicity_bounds.rs` — `V54` bounds: activation, its default floors and closing-spread check,
+  floors at listing, tier notices within ±50%, the version's parameters, and the top add-on in the
+  closing-spread and ceiling checks
+- `tests/exit/toxicity.rs` — account leaves across the `V54` activation, with and without
+  unfinalised principal, as the vault's exit hashes them
 - `tests/access.rs`, `tests/access/` — signed declarations, source proofs, policy refusals, holds,
   resting orders covered by their placement screening, replay compatibility, and the `V24`
   reference session (`examples/reference_log/v24.rs`) with its assertions
@@ -400,7 +433,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V53` parts (`v15.rs` to `v53.rs`)
+  `V15` to `V54` parts (`v15.rs` to `v54.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -817,7 +850,8 @@ Licensed under the Apache License, Version 2.0; see `LICENSE`.
 
 ## Sequencer command latency
 
-Price updates use transient account-by-market and trigger-price indexes. Triggered orders retain
+Price updates use transient account-by-market and trigger-price indexes, and from `V54` a fill finds
+the markouts it may match through a transient index by account, market, side and quantity left. Triggered orders retain
 order-id priority, including limit orders whose spread prevents an immediate fill. Both indexes
 are excluded from serialization and state roots, and rebuilt from accounts after recovery. They
 apply to every historical protocol version without changing its events or roots.
@@ -839,6 +873,7 @@ command-processing regression guards, not an end-to-end service latency promise.
 | A signed empty cancel-all, the floor of a signed command (one sample per account) | 100,000 | 2 ms |
 | A signed cancel-all of 100 resting orders | 100,000 | 2 ms |
 | A signed close-all across the 37 launch markets | 100,000 | 2 ms |
+| From `V54`, a signed fill among scored accounts with 2,000 markouts within the horizon | 100,000 | 2 ms |
 | First command after a year-long gap with quotes held across it, or at the last stamp the engine accepts (one sample each) | 1 | 5 ms |
 
 A concentrated price update still visits every holder, and a rollover still finances and checks
@@ -859,6 +894,13 @@ compilation disabled, and two build jobs on a Mac17,9 with 15 logical CPUs and 2
 
 Finalising a MONKEY emission period in which 100,000 accounts lost measured 35 ms, as one sample on
 25 October 2026 on the same machine, with other workspace builds running.
+
+The toxicity score's cost from `V54` (`toxicity_fill_latency` and `toxicity_trigger_latency`, each
+against `V51` running the same commands), measured on 13 November 2026 on the same machine with
+other workspace builds running: a signed fill among 100,000 accounts scored an hour before, with
+2,000 markouts within the horizon and a full hour of spread history, 531 / 903 us p50 / p99 against
+562 / 752; scoring 2,200 due markouts 0.9 ms against 0.4 ms, and the state root after it 26 ms
+against 24 ms; one price triggering 20,001 stops 54 ms against 48 ms, about 0.3 us more a fill.
 
 The baseline is main commit `e4b4f5cf79816f1167fb4c0e17dcd2ff0024cdb0`, with the same benchmark
 source copied into its test directory. Measurements ran sequentially with competing workspace

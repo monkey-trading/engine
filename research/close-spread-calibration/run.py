@@ -16,7 +16,7 @@ REPO = ROOT.parents[1]
 PIN = "41a9ef4a52cb26ac592c5a0e372f610d8d1ba067"
 # The genesis file also carries calendars and contract rolls this study does not read, so the pin
 # is the canonical JSON of what it does read: the protocol parameters and the market inventory.
-INVENTORY_SHA256 = "0911509b7751402bce9d4506850f79037462bd94b02e1c28b5def5010b74cef3"
+INVENTORY_SHA256 = "2626ad9d79233d70c7d15dc9d8a57c1d00d9fa1ab4ea5b8f38cff93ca1488c23"
 BARS_SHA256 = "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522"
 SOURCE_HASHES = {
     "catalogue.py": "90bda1cc31a5b885318a7d475a4095c464ee589f79fec7b78028fa9294ae1f9c",
@@ -110,12 +110,16 @@ def build():
         symbols = data["symbols"].tolist()
         bars = data["bars"]
         unit = float(data["unit"])
-        if symbols != [m["symbol"] for m in markets] or bars.shape != (102 * 168, 37, 4):
+        # The pinned bars also hold markets the launch genesis has since deferred; each launch market
+        # reads its own column.
+        wanted = [m["symbol"] for m in markets]
+        if bars.shape != (102 * 168, len(symbols), 4) or not set(wanted) <= set(symbols):
             raise ValueError("market inventory or hourly grid does not match pinned source")
+        columns = [symbols.index(symbol) for symbol in wanted]
         if not np.isfinite(unit) or unit <= 0:
             raise ValueError("invalid log-return unit")
         results = []
-        for index, market in enumerate(markets):
+        for index, market in zip(columns, markets):
             source, ticker, proxy_note = market.pop("series")
             results.append({
                 "market": market,
@@ -148,14 +152,16 @@ if __name__ == "__main__":
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     sweep = runpy.run_path(str(ROOT / "sweep.py"))
+    ceilings = runpy.run_path(str(ROOT / "ceilings.py"))
     with (ROOT / "results/conditional_gap_sweep.csv.gz").open("wb") as raw_output, \
             gzip.GzipFile(filename="", mode="wb", fileobj=raw_output, mtime=0) as compressed, \
             io.TextIOWrapper(compressed, encoding="utf-8", newline="") as handle:
         writer = None
         count = 0
         for market in result["markets"]:
-            rows = sweep["frontier"](market, result["protocol_params"]["profit_fee_bps"],
-                                     result["protocol_params"]["closeout_level_bps"])
+            params = result["protocol_params"]
+            toxicity = ceilings["top_toxicity_bps"](params)
+            rows = sweep["frontier"](market, params["profit_fee_bps"], params["closeout_level_bps"], toxicity)
             if writer is None:
                 writer = csv.DictWriter(handle, fieldnames=list(rows[0]), lineterminator="\n")
                 writer.writeheader()

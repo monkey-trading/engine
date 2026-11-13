@@ -416,6 +416,12 @@ expired or been revoked could pose as that venue. A production build refuses a c
 venues quote a genesis market, or any futures contract its genesis listing names, than its
 `min_sources`; a market listed or relisted after genesis is watched only by the `market_unfed`,
 `market_no_price` and `futures_roll_overdue` alerts.
+Delaying or dropping quotes also bends the toxicity score from protocol `V54`. A host that holds a
+market's index still lowers its markout spread, the score's unit, which inflates every account's
+score there; the floor each listing names bounds that, and is fixed once listed. Each launch floor
+is the market's markout spread over a year (#699). A round trip at the same index within the 5 s horizon
+scores nothing on either fill; one across an index move scores both, so diluting a score takes
+trades that bear the index's moves over the horizon.
 A price's age under a hostile host is bounded on the monotonic clock, not the wall clock. The host
 carries every byte and sets the wall clock, so it can hold back a venue's TLS stream and set its clock
 back to match, and a quote's venue stamp then looks fresh: the drift bound alone would let prices run

@@ -95,6 +95,8 @@ fn the_parameters_carry_the_seq_that_set_them_and_a_later_set_params_replaces_th
     let mut seq = start(&dir, &clock, true);
     let state = read(&mut seq);
     let genesis_seq = last_set_params(&dir);
+    // The latest protocol scores toxicity, so the read states the score's constants.
+    assert_eq!(state.score_rules, Some(engine_core::toxicity::SCORE_RULES));
     let at = state.params.expect("genesis sets the parameters");
     assert_eq!((at.seq, &at.params), (Some(genesis_seq), seq.engine.params().unwrap()));
     assert_eq!(state.seq, seq.engine.last_seq());

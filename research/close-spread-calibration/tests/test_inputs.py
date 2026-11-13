@@ -50,7 +50,9 @@ class InputTests(unittest.TestCase):
 
     def test_pinned_inventory_has_every_launch_market_and_a_chronological_split(self):
         result = MODEL.build()
-        self.assertEqual(len(result["markets"]), 37)
+        genesis = tomllib.loads((MODEL.REPO / "config/production-genesis.toml").read_text())["genesis"]
+        launch = [market["symbol"] for market in genesis["markets"]]
+        self.assertEqual([market["market"]["symbol"] for market in result["markets"]], launch)
         self.assertEqual(result["calibration_weeks"] + result["validation_weeks"], 102)
         self.assertLess(result["week0_utc"], result["validation_start_utc"])
         self.assertLess(result["validation_start_utc"], result["end_exclusive_utc"])
@@ -66,7 +68,7 @@ class InputTests(unittest.TestCase):
 
     def test_future_holdout_moves_do_not_change_calibration_statistics(self):
         genesis = tomllib.loads((MODEL.REPO / "config/production-genesis.toml").read_text())["genesis"]
-        bars = np.zeros((102 * 168, 37, 4), dtype=np.int32)
+        bars = np.zeros((102 * 168, len(genesis["markets"]), 4), dtype=np.int32)
         bars[MODEL.CALIBRATION_WEEKS * 168:, :, 3] = 10_000
         archive = {"symbols": np.array([m["symbol"] for m in genesis["markets"]]), "bars": bars,
                    "unit": np.array(1e6), "week0": np.array("2024-10-28T00:00:00+00:00")}

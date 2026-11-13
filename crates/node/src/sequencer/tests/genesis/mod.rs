@@ -270,13 +270,15 @@ fn a_genesis_set_before_divergence_shares_resumes_under_the_shares_a_config_load
     fs::create_dir_all(&dir).unwrap();
     crate::sequencer::fixture_tests::copy_fixture(V1_DEV, dir.join("00000000000000000000.jsonl"));
     let logged = log_entries(&dir);
-    let ran = commands(&logged)
+    let mut ran = commands(&logged)
         .into_iter()
         .find_map(|cmd| match cmd {
             Command::Admin(AdminCommand::SetParams(params)) => Some(params),
             _ => None,
         })
         .expect("genesis sets parameters");
+    // In the toxicity form `V54`'s activation gives it, so the triggers are what is refused.
+    ran.convert_to_score();
     let err = ran.validate_for(ProtocolVersion::LATEST).unwrap_err();
     assert!(err.contains("divergence_share_bps"), "{err}");
 

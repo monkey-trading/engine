@@ -36,6 +36,7 @@ pub(crate) fn session(h: &mut Harness) {
             closeout_level_bps: Some(closeout_level_bps),
             stress: None,
             effective_at,
+            score_tiers: None,
         })
     };
     let fee = launch.profit_fee_bps;
