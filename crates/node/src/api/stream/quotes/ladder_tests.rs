@@ -191,11 +191,12 @@ fn an_account_that_can_open_under_a_dollar_gets_a_step_for_it() {
     let mut engine = engine();
     deposit(&mut engine, TINY, fixed("0.005"));
     let quote = read(&engine, TINY, BTC);
-    // Half a cent at 1% margin opens half a dollar: 0.000005 BTC at 100,000.
+    // Half a cent covers 1% margin and BTC's 2bp first band on just under half a dollar: 0.005 / 1,020,
+    // or 0.0000049019 BTC at 100,000.
     for (side, steps) in sides(&quote) {
         let fitting_steps: Vec<_> = steps.iter().filter(|step| step.declined.is_none()).collect();
         let step = fitting_steps.last().unwrap_or_else(|| panic!("{side:?}: {quote:?}"));
-        assert!(step.qty > fixed("0.0000049") && step.qty <= fixed("0.000005"), "{side:?}: {step:?}");
+        assert!(step.qty > fixed("0.0000048") && step.qty <= fixed("0.000004902"), "{side:?}: {step:?}");
         assert_eq!(fitting(&engine, TINY, BTC, side, step.qty), step.price);
         let beyond = engine.quote(TINY, BTC, side, step.qty + step.qty.div_int(100)).unwrap();
         assert_eq!(kind(&beyond.declined), "insufficient_margin", "{side:?}");

@@ -113,9 +113,10 @@ fn a_position_far_from_closing_out_is_beyond_the_range_and_profit_buckets_follow
     let snapshot = scan(&rig.engine, 0, T0, layout(), true);
     let book = &snapshot.markets[&BTC];
     assert_eq!(book.beyond.long.count, 1, "100000 of equity behind 1 BTC survives a 20% fall");
-    // At its entry the position sits in the first bucket at or above zero profit.
+    // At its entry the position has paid BTC's 2bp first band, so it sits in the last bucket below
+    // zero profit.
     let flat = book.profit.iter().position(|b| b.long.count == 1).unwrap();
-    assert_eq!(flat, 1 + 10, "the bucket from 0 to 500 bps");
+    assert_eq!(flat, 10, "the bucket from -500 to 0 bps");
     rig.price(T0 + 2_000, 110_000);
     let up = scan(&rig.engine, 1, T0, layout(), true);
     assert!(up.markets[&BTC].profit.iter().position(|b| b.long.count == 1).unwrap() > flat);

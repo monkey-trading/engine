@@ -1,7 +1,7 @@
 //! The `V52` dev scenario: every fill pays its size spread on the open and the close, in tenths of a
 //! bp, the signed quote stream steps through the tiers a close crosses, and the operator moves a
 //! market's bands, and lists a market, only within the bounds, through the signed admin API over TLS
-//! on deterministic time; the public log replays to the same state.
+//! on deterministic time; the public log replays to the same state, and a restart recovers it.
 
 use engine_core::command::AdminCommand;
 use engine_core::listing_bounds::ListingNotice;
@@ -187,7 +187,7 @@ fn with_first_band(rate: i64) -> impl FnOnce(&mut MarketSpec) + Send + 'static {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_notice() {
-    let node = Node::start("spreads-dev-scenario", true).await;
+    let mut node = Node::start("spreads-dev-scenario", true).await;
     let operator = Operator::serving(&node).await;
     let (a, b) = (key(0x61), key(0x62));
     let (a_account, b_account) = (eip712::address(a.verifying_key()), eip712::address(b.verifying_key()));
@@ -230,9 +230,12 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
             "B's close {n}"
         );
     }
-    // The staircase to $12m costs 5200 each way, and the round trip pays it twice.
-    assert_eq!(a_before - balance(&node, &a).await, Fixed::from_int(10_400));
-    assert_eq!(b_before - balance(&node, &b).await, Fixed::from_int(10_400));
+    // The staircase to $12m costs 5200 each way, and the round trip pays it twice, to within the
+    // rounding of the averaged entry price each partial close realises against.
+    for (account, before) in [(&a, a_before), (&b, b_before)] {
+        let paid = before - balance(&node, account).await;
+        assert!((paid - Fixed::from_int(10_400)).abs() < "0.000001".parse().unwrap(), "{paid}");
+    }
     // A million euros at 1 pays 0.4bp, 40, each way.
     price(&node, EUR_USD, "1").await;
     let before = balance(&node, &a).await;
@@ -274,6 +277,7 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
     node.move_time((NOTICE_MS - 1) as u64).await;
     operator.refuses(&node, AdminCommand::UpsertMarket(noticed.clone()), &format!("takes effect from {due}")).await;
     node.move_time(1).await;
+    node.source.lock().unwrap().observed_at = node.clock.now_ms();
     operator.applies(&node, AdminCommand::UpsertMarket(noticed)).await;
     price(&node, BTC, "100000").await;
     assert_eq!(fill(&node, &a, BTC, Side::Buy, "10", "100000").await, "100030".parse().unwrap());
@@ -313,8 +317,8 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
     operator.applies(&node, AdminCommand::SetParams(genesis)).await;
     operator.applies(&node, AdminCommand::UpsertMarket(proposal.clone())).await;
 
-    // 7. The public log replays to the same roots and the same state.
-    let replayed = replay(&node.entries()).unwrap().engine;
+    // 7. The public log replays to the same state, and a restart recovers the root it replays to.
+    let mut replayed = replay(&node.entries()).unwrap().engine;
     let live = node
         .state
         .query(move |engine| {
@@ -326,4 +330,22 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
     let balances = [a_account, b_account].map(|account| replayed.accounts()[&account].balance);
     assert_eq!((balances, replayed.markets()[&BTC].spec.clone(), replayed.markets()[&SOL].spec.clone()), live);
     assert_eq!(replayed.close_spread_ceilings().unwrap()[&SOL], 30);
+    let policy = node.state.query(|engine| engine.access_policy().cloned()).await.unwrap();
+    let (operator, clock, dir) = (node.state.operator, node.clock.clone(), node.dir.clone());
+    let sequencer = node.tasks.remove(1);
+    sequencer.abort();
+    let _ = sequencer.await;
+    drop(node);
+    let cfg = crate::sequencer::SequencerConfig {
+        access_policy: policy,
+        chain_id: 31_337,
+        vault: VAULT,
+        operator,
+        clock,
+        ..sequencer_config(&dir, watch::channel(Manifest::default()).0)
+    };
+    let enclave = Arc::new(EnclaveKey::test_key());
+    let mut recovered =
+        Sequencer::recover(cfg, enclave, broadcast::channel(16).0, mpsc::unbounded_channel().0).unwrap();
+    assert_eq!(recovered.state_root(), replayed.state_root());
 }

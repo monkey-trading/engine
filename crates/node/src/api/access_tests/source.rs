@@ -7,11 +7,11 @@ use axum::Json;
 use axum::extract::State;
 use engine_core::access::{Jurisdiction, SanctionsStatus, Screening};
 use engine_core::eip712::{self, Signature};
-use engine_core::types::AccountId;
+use engine_core::types::{AccountId, Millis};
 use serde_json::Value;
 use tokio::sync::Semaphore;
 
-use super::{NOW, VAULT, key};
+use super::{VAULT, key};
 
 pub(super) struct Source {
     pub(super) jurisdiction: Jurisdiction,
@@ -20,6 +20,8 @@ pub(super) struct Source {
     pub(super) requests: Vec<Value>,
     /// An account whose screening waits for a permit, so its request stays in flight.
     pub(super) hold: Option<(AccountId, Arc<Semaphore>)>,
+    /// The time each answer is observed at.
+    pub(super) observed_at: Millis,
 }
 
 pub(super) async fn answer(State(source): State<Arc<Mutex<Source>>>, Json(request): Json<Value>) -> Json<Screening> {
@@ -44,7 +46,7 @@ pub(super) async fn answer(State(source): State<Arc<Mutex<Source>>>, Json(reques
     let mut screening = Screening {
         source: eip712::address(key(0x77).verifying_key()),
         request_hash: serde_json::from_value(request["request_hash"].clone()).unwrap(),
-        observed_at: NOW,
+        observed_at: source.observed_at,
         account,
         payer,
         jurisdiction: source.jurisdiction,

@@ -170,7 +170,8 @@ async fn corporate_actions_dev_scenario_signed_dividend_split_restart_and_replay
         .iter()
         .find(|e| e["type"] == "fill")
         .expect("the fresh opening quote fills the post-split order");
-    assert_eq!(fill["price"], "20", "a market order before a new quote cannot fill at 80");
+    // 20 and AAPL's 2bp first band: a market order before a new quote cannot fill near 80.
+    assert_eq!(fill["price"], "20.004", "a market order before a new quote cannot fill at 80");
     assert_eq!(fill["position"], "9");
     let entries = node.entries();
     let logged = admin_entries(&entries);

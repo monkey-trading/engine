@@ -65,12 +65,12 @@ fn gated_live_and_recovered_accounting_matches_cash_through_trading_and_withdraw
         Command::HouseCapital { amount: Fixed::ONE, chain_ref: "0xmargin".into() },
         prices(1, "100000", clock.now_ms()),
         order(1, Side::Buy, "0.1", "100000"),
-        prices(1, "94740", clock.now_ms()),
+        prices(1, "94760", clock.now_ms()),
     ] {
         live.extend(apply(&mut seq, &mut queued, &mut unpaid, cmd).1);
     }
     move_to(&mut seq, &clock, rollover - 500);
-    live.extend(apply(&mut seq, &mut queued, &mut unpaid, prices(1, "94740", clock.now_ms())).1);
+    live.extend(apply(&mut seq, &mut queued, &mut unpaid, prices(1, "94760", clock.now_ms())).1);
     move_to(&mut seq, &clock, rollover + 100);
     let (events, work) = apply(&mut seq, &mut queued, &mut unpaid, Command::Tick);
     live.extend(work);
