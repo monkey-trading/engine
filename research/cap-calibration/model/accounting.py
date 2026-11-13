@@ -69,6 +69,21 @@ def daily_financing(side, notional, benchmark_bps, markup_bps, day_basis):
     return np.abs(notional) * annual_bps / 1e4 / day_basis
 
 
+def staircase_rate(notional, bands):
+    """The spread per unit of notional, in bps, that one fill pays to open a position of `notional`
+    from flat, each slice of the position's notional at its size band's rate; from V52 the fill that
+    closes it to flat pays the same (`execution/mod.rs`, `spread_staircase`). `bands` are
+    ((up_to, bps), ...) at rising bounds, the last with `up_to` None. A zero notional pays the first
+    band's rate."""
+    notional = np.asarray(notional, dtype=float)
+    cost, lo = np.zeros_like(notional), 0.0
+    for up_to, bps in bands:
+        hi = np.inf if up_to is None else float(up_to)
+        cost = cost + np.clip(np.minimum(notional, hi) - lo, 0.0, None) * bps
+        lo = hi
+    return np.divide(cost, notional, out=np.full_like(notional, float(bands[0][1])), where=notional > 0)
+
+
 def exposure_cap(nav, cap_bps, floor):
     """A house exposure cap: the larger of a share of house NAV and a fixed floor (#15 section 2,
     PR #99)."""

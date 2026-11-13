@@ -1,0 +1,26 @@
+{
+ "proposed": {
+  "utilisation_bps_l1": 5000,
+  "utilisation_bps_l2": 9500,
+  "fire_rate_by_family": {
+   "proposed": 0.00357
+  },
+  "worst_market_fire_rate": 0.00663
+ },
+ "uniform_10M": {
+  "utilisation_bps_l1": 9000,
+  "utilisation_bps_l2": 9500,
+  "fire_rate_by_family": {
+   "uniform_10M": 0.01562
+  },
+  "worst_market_fire_rate": 0.0308
+ },
+ "binding": {
+  "utilisation_bps_l1": 7000,
+  "utilisation_bps_l2": 9500,
+  "fire_rate_by_family": {
+   "binding": 0.01026
+  },
+  "worst_market_fire_rate": 0.02031
+ }
+}

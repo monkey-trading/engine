@@ -35,7 +35,7 @@ import numpy as np
 
 from model import accounting, holdfee
 from model import prices as pricing
-from model.flow import Flow, daily_margin_path, fit_share, schedule_key
+from model.flow import Flow, daily_margin_path, fit_share, fit_spread, schedule_key, spread_table
 
 KINDS = ("directional", "hedged")
 ROLLOVER_HOUR_UTC = 22  # 22:00 London, which is UTC through the winter launch window
@@ -66,6 +66,7 @@ class Scenario:
     sweep_epoch_h: int = 0  # distributions every this many hours sweep the NAV above each lane's capital; 0 = none
     utilisation_stats: bool = False  # record per-hour utilisation buckets and absolute exposure (stress calibration)
     spread_bps: tuple | None = None  # per market in `symbols` order: each fill pays this on its notional (open and close); None = none
+    spread_bands: tuple | None = None  # per market in `symbols` order: size bands ((up_to, bps), ...) each fill pays through by its notional (`spread_tables`); None = `spread_bps`
     fee_schedule: accounting.HoldFee | None = None  # the fee as a function of the hold (#614, D7); None = the standard 10%
     churn_holds: str = "bound"  # churn's holds with spreads or `fee_schedule`: "bound" (the least fee its hold moments allow) or "central" (`holdfee.py`)
 
@@ -257,8 +258,9 @@ def farm_decay(scenario: Scenario, hours: int) -> np.ndarray:
 
 CHUNK_H = 24
 # Ring channels: change in clients' long and short quantity and their cost, house cash, client
-# proceeds. Quantity and cost are divided by the FX index at entry (see `run_batch`).
-LONG, SHORT, COST, HOUSE, PROCEEDS = range(5)
+# proceeds, and the closing spread within house cash (size bands only). Quantity and cost are divided
+# by the FX index at entry (see `run_batch`).
+LONG, SHORT, COST, HOUSE, PROCEEDS, CLOSE_SPREAD = range(6)
 # Total channels: fee, financing, bad debt, mint basis.
 FEE, FINANCING, BAD_DEBT, MINT = range(4)
 
@@ -314,12 +316,41 @@ def pair_exit(markets: Markets, x, g, balance, units, fee_bps: float = accountin
     return tuple(a + b for a, b in zip(long_leg, short_leg))
 
 
-def round_trip_spread(scenario: Scenario, markets: Markets):
-    """Both fills' spread per unit of notional, (1, 1, markets): what a position's realised PnL
-    loses to the spread."""
-    if scenario.spread_bps is None:
-        return 0.0
-    return 2 * np.asarray(scenario.spread_bps, dtype=float)[None, None, :] / 1e4
+def spread_tables(scenario: Scenario, markets: Markets, flow: Flow) -> dict | None:
+    """Per kind, each market's size profile priced through its `scenario.spread_bands`
+    (`flow.spread_table`), None for a market whose kind has no profile; None without bands. A fill
+    pays the bands' staircase on its own notional (#614, decisions D1 and D2), so the orders that fit
+    under a cap's room pay their own mean (`order_fits`)."""
+    if scenario.spread_bands is None:
+        return None
+    if scenario.spread_bps is not None:
+        raise ValueError("a scenario prices fills by spread_bps or by spread_bands, not both")
+    if len(scenario.spread_bands) != len(markets.symbols):
+        raise ValueError("spread_bands needs one set of bands per market")
+    out = {}
+    for kind in KINDS:
+        out[kind] = []
+        for key, bands in zip(markets.schedule, scenario.spread_bands):
+            sizes = flow.sizes.get((kind, scenario.leverage_mapping, key))
+            out[kind].append(None if sizes is None else spread_table(sizes, bands))
+    return out
+
+
+def fill_rates(scenario: Scenario, markets: Markets, tables: dict | None) -> dict:
+    """Per kind, (markets,) the spread one fill pays per unit of notional: `spread_bps`, or with
+    bands the mean over every order of the kind's size profile. A position's realised PnL loses two
+    of these, which the profit fee is not charged on."""
+    n = len(markets.symbols)
+    if tables is None:
+        rate = np.zeros(n) if scenario.spread_bps is None else np.asarray(scenario.spread_bps, dtype=float) / 1e4
+        return {kind: rate for kind in KINDS}
+    return {kind: np.array([0.0 if t is None else t[1][-1] / t[2] / 1e4 for t in tables[kind]]) for kind in KINDS}
+
+
+def round_trip_spread(rate: np.ndarray | None):
+    """Both fills' spread per unit of notional, (1, 1, markets), from one fill's `rate` per market:
+    what a position's realised PnL loses to the spread; 0 with none."""
+    return 0.0 if rate is None else 2 * np.asarray(rate, dtype=float)[None, None, :]
 
 
 def churn_tables(scenario: Scenario, flow: Flow, churn: list) -> list[dict] | None:
@@ -327,7 +358,7 @@ def churn_tables(scenario: Scenario, flow: Flow, churn: list) -> list[dict] | No
     `central` the estimate, and the fee rate at the class's mean hold, as the model charged it on the
     gain before spreads (`gross_rate`). None with neither spreads nor a fee schedule: the standard
     fee on the gain, as before either existed."""
-    if scenario.spread_bps is None and scenario.fee_schedule is None:
+    if scenario.spread_bps is None and scenario.spread_bands is None and scenario.fee_schedule is None:
         return None
     if scenario.churn_holds not in ("bound", "central"):
         raise ValueError(f"unknown churn holds {scenario.churn_holds}")
@@ -358,11 +389,12 @@ def _central_table(fee, holding, m1, m2, min_hold_s):
     return _TABLES[key]
 
 
-def cohort_units(prep: Prepared, scenario: Scenario, markets: Markets, cls, side: int, t0: int, t1: int, hours: int):
+def cohort_units(prep: Prepared, scenario: Scenario, markets: Markets, cls, side: int, t0: int, t1: int, hours: int, rate=None):
     """Per unit of notional, the settlement of a directional cohort entering in each hour of
     [t0, t1): exit hour (paths, n, markets), ring channels (paths, n, markets, 5), and total
     channels (paths, n, markets, 4). A cohort settling past the horizon has zero channels; its
-    financing is charged at each rollover from the books, as for every open position."""
+    financing is charged at each rollover from the books, as for every open position. `rate` is one
+    fill's spread per market (`fill_rates`)."""
     s_i = 0 if side > 0 else 1
     k, j = KINDS.index(cls.kind), cls.bucket
     balance = 1.0 / prep.leverage[k, j][None, None, :]
@@ -372,10 +404,10 @@ def cohort_units(prep: Prepared, scenario: Scenario, markets: Markets, cls, side
     closed_out = (cross > 0) & (t + cross <= planned)
     exit_hour = np.where(closed_out, t + cross, planned)
     x, g = settle_at(prep, markets, side, closed_out, exit_hour, balance, t0, t1, hours)
-    rate = (markets.fin_long if side > 0 else markets.fin_short)[None, None, :]
+    fin = (markets.fin_long if side > 0 else markets.fin_short)[None, None, :]
     fee_bps = accounting.fee_bps_at(scenario.fee_schedule, cls.mean_hold_h * 3600)
-    house, proceeds, fee, bad, mint = account_exit(accounting.realised_pnl(side, x, g), balance, rate * rollover_units(prep, exit_hour, t0, t1, hours), fee_bps,
-                                                   round_trip_spread(scenario, markets))
+    house, proceeds, fee, bad, mint = account_exit(accounting.realised_pnl(side, x, g), balance, fin * rollover_units(prep, exit_hour, t0, t1, hours), fee_bps,
+                                                   round_trip_spread(rate))
     valid = exit_hour < hours
     entry_usd = prep.paths.close[:, t0:t1] * prep.paths.fx[:, t0:t1]
     quantity = -1.0 / entry_usd
@@ -384,7 +416,7 @@ def cohort_units(prep: Prepared, scenario: Scenario, markets: Markets, cls, side
     return np.where(valid, exit_hour, t), ring * valid[..., None], totals * valid[..., None]
 
 
-def pair_units(prep: Prepared, scenario: Scenario, markets: Markets, cls, t0: int, t1: int, hours: int):
+def pair_units(prep: Prepared, scenario: Scenario, markets: Markets, cls, t0: int, t1: int, hours: int, rate=None):
     """Per unit of each leg's notional, the settlement of hedged pairs entering in [t0, t1). A pair
     ends when either leg is closed out, the other closing with it, or at its planned exit."""
     k, j = KINDS.index(cls.kind), cls.bucket
@@ -400,7 +432,7 @@ def pair_units(prep: Prepared, scenario: Scenario, markets: Markets, cls, t0: in
     x, g = settle_at(prep, markets, loser, closed_out, exit_hour, balance, t0, t1, hours)
     fee_bps = accounting.fee_bps_at(scenario.fee_schedule, cls.mean_hold_h * 3600)
     house, proceeds, fee, bad, mint = pair_exit(markets, x, g, balance, rollover_units(prep, exit_hour, t0, t1, hours), fee_bps,
-                                                round_trip_spread(scenario, markets))
+                                                round_trip_spread(rate))
     valid = exit_hour < hours
     quantity = -1.0 / (prep.paths.close[:, t0:t1] * prep.paths.fx[:, t0:t1])
     ring = np.stack([quantity, quantity, np.zeros_like(quantity), house, proceeds], axis=-1)
@@ -430,12 +462,15 @@ def gap_pair_units(prep: Prepared, markets: Markets, t0: int, t1: int, hours: in
     return exit_hour, ring * starts[..., None], totals * starts[..., None], starts
 
 
-def order_fits(exposure, cap, total_cap, flow: Flow, mapping: str, schedules: list[str]) -> dict:
+def order_fits(exposure, cap, total_cap, flow: Flow, mapping: str, schedules: list[str], tables: dict | None = None) -> dict:
     """Each side's share of margin in orders the engine fills, (paths, markets, lanes): directional
     longs and shorts, and hedged pairs. An order that grows the house's net exposure fills up to
     the room under the market and total caps, one that shrinks it always
     fills (`accounting.order_room`); a pair's legs must both fill, the returning leg checked with
-    the first on the books (`accounting.pair_room`). A kind with no profile rows opens nothing."""
+    the first on the books (`accounting.pair_room`). A kind with no profile rows opens nothing.
+    With spread `tables` (`spread_tables`), `<side>_rate` is the mean spread one fill of the orders
+    that fit pays per unit of notional: under a small room only the small orders fill, at the lower
+    bands."""
     other_gross = np.abs(exposure).sum(axis=1, keepdims=True) - np.abs(exposure)
     total_room = total_cap[:, None, :] - other_gross
     room_long, room_short = accounting.order_room(exposure, cap, total_room)
@@ -447,6 +482,12 @@ def order_fits(exposure, cap, total_cap, flow: Flow, mapping: str, schedules: li
             cols = [i for i, s in enumerate(schedules) if s == key]
             sizes = flow.sizes.get((kind, mapping, key))
             fits[name][:, cols] = 0.0 if sizes is None else fit_share(room[:, cols], sizes)
+        if tables is not None:
+            paid = np.zeros(exposure.shape)
+            for m, table in enumerate(tables[kind]):
+                if table is not None:
+                    paid[:, m] = fit_spread(room[:, m], table)
+            fits[f"{name}_rate"] = np.divide(paid, fits[name] * 1e4, out=np.zeros(exposure.shape), where=fits[name] > 0)
     return fits
 
 
@@ -481,7 +522,7 @@ def run_batch(
     shorts = np.zeros(shape)
     cost = np.zeros(shape)
     house = np.zeros(shape)  # house cash by market
-    ring = np.zeros((n_paths, ring_len, n_markets, 5, n_lanes))
+    ring = np.zeros((n_paths, ring_len, n_markets, 6, n_lanes))
     totals = np.zeros((n_paths, n_markets, 4, n_lanes))
     vault, idle, in_positions, queue = (np.zeros(lanes_shape) for _ in range(4))
     # Capital the house holds outside the per-market cash, less what it has distributed.
@@ -492,8 +533,11 @@ def run_batch(
     # `desired` and `refused_hedged` cover hedged flow too; `refused` and the week-one figures are
     # directional (churn included), as `desired_directional` is.
     out = {k: np.zeros(lanes_shape) for k in ("desired", "refused", "refused_hedged", "desired_directional", "desired_week1", "refused_week1", "deposits", "withdrawn", "max_queue", "max_gross_exposure", "spread_income", "filled")}
-    # Each fill's spread on its notional, per market; a position's two fills are charged when it opens.
-    spread = np.zeros(n_markets) if scenario.spread_bps is None else np.asarray(scenario.spread_bps, dtype=float) / 1e4
+    # Each fill's spread on its notional, per kind and market; a position's two fills are charged when
+    # it opens. With size bands the orders that fit each hour pay their own mean (`order_fits`).
+    tables = spread_tables(scenario, markets, flow)
+    rates = fill_rates(scenario, markets, tables)
+    spread = rates["directional"]
     out["min_nav"] = np.full(lanes_shape, np.inf)
     out["min_cash"] = np.full(lanes_shape, np.inf)
     out["ever_negative"] = np.zeros(lanes_shape, dtype=bool)
@@ -520,9 +564,9 @@ def run_batch(
     hedged = [c for c in flow.classes if c.kind == "hedged" and c.hold_h > 0]
     cohorts = [(cls, side) for cls in directional for side in (1, -1)]
     churn = [c for c in flow.classes if c.hold_h == 0]
-    tables = churn_tables(scenario, flow, churn)
-    if tables is not None:
-        two_spread = 2 * spread[None, :]
+    fee_tables = churn_tables(scenario, flow, churn)
+    if fee_tables is not None:
+        two_spread = {kind: 2 * rates[kind][None, :] for kind in KINDS}
         for k in ("churn_fee", "churn_fee_central", "churn_fee_gross"):
             out[k] = np.zeros(lanes_shape)
     deviation = np.zeros((n_paths, 1 if scenario.common_direction else n_markets))
@@ -536,19 +580,28 @@ def run_batch(
     run_rate = 1 - (1 - scenario.idle_withdraw_per_day - scenario.run_withdraw_per_day) ** (1 / 24)
     calm_rate = 1 - (1 - scenario.idle_withdraw_per_day) ** (1 / 24)
 
-    def book(units, k, amount, need_rate):
+    def book(units, k, amount, need_rate, close_rate=None):
         """Adds `amount` (paths, markets, lanes) of a cohort's notional to the books and schedules
-        its settlement; returns the margin it posts, summed by lane."""
+        its settlement; returns the margin it posts, summed by lane. With size bands, `close_rate`
+        (paths, markets, lanes) is the closing fill's spread per unit of `amount`, which the house
+        takes at the exit from what the position leaves its client, never more."""
         exit_hour, ring_unit, total_unit = units
         nonlocal totals
-        ring[p_idx, exit_hour[:, k] % ring_len, m_idx] += amount[:, :, None, :] * ring_unit[:, k][..., None]
+        slot = exit_hour[:, k] % ring_len
+        ring[p_idx, slot, m_idx, :5] += amount[:, :, None, :] * ring_unit[:, k][..., None]
         totals += amount[:, :, None, :] * total_unit[:, k][..., None]
+        if close_rate is not None:
+            settles = (exit_hour[:, k] > t0 + k)[..., None]  # a cohort settling past the horizon has no exit
+            close = amount * np.minimum(close_rate, np.maximum(ring_unit[:, k][..., PROCEEDS], 0.0)[..., None]) * settles
+            ring[p_idx, slot, m_idx, HOUSE] += close
+            ring[p_idx, slot, m_idx, PROCEEDS] -= close
+            ring[p_idx, slot, m_idx, CLOSE_SPREAD] += close
         return (amount * need_rate[None, :, None]).sum(axis=1)
 
     for t0 in range(0, hours, CHUNK_H):
         t1 = min(t0 + CHUNK_H, hours)
-        units = [cohort_units(prep, scenario, markets, cls, side, t0, t1, hours) for cls, side in cohorts]
-        pairs = [pair_units(prep, scenario, markets, cls, t0, t1, hours) for cls in hedged]
+        units = [cohort_units(prep, scenario, markets, cls, side, t0, t1, hours, rates["directional"]) for cls, side in cohorts]
+        pairs = [pair_units(prep, scenario, markets, cls, t0, t1, hours, rates["hedged"]) for cls in hedged]
         gaps = gap_pair_units(prep, markets, t0, t1, hours) if scenario.gap_pair_share > 0 else None
         for t in range(t0, t1):
             k = t - t0
@@ -568,6 +621,7 @@ def run_batch(
             exit_cash = due[:, :, HOUSE].copy()  # the slot is zeroed below
             house += exit_cash
             proceeds = due[:, :, PROCEEDS].sum(axis=1)
+            out["spread_income"] += due[:, :, CLOSE_SPREAD].sum(axis=1)
             due[...] = 0.0
 
             entry = paths.close[:, t]
@@ -583,7 +637,7 @@ def run_batch(
                 prev_ret = prev_ret.mean(axis=1, keepdims=True)
             deviation = flow.long_share_ar1 * deviation + flow.long_share_slope * prev_ret + flow.long_share_resid_sd * rng.standard_normal(deviation.shape)
 
-            fits = order_fits(exposure, cap, total_cap, flow, scenario.leverage_mapping, markets.schedule)
+            fits = order_fits(exposure, cap, total_cap, flow, scenario.leverage_mapping, markets.schedule, tables)
 
             margin_hour = prep.margin_rate_hour[:, t][..., None]
             wants = []
@@ -604,10 +658,10 @@ def run_batch(
             churn_fees = {k: [zero.copy(), zero.copy(), zero.copy()] for k in ("fee", "central", "gross")}
             for c, cls in enumerate(churn):
                 gain = (GAIN_PER_SD * paths.parkinson[:, t] * cls.mean_sqrt_hold_h)[..., None]
-                unit = {} if tables is None else {
-                    "fee": holdfee.unit_fee(tables[c]["fee"], paths.parkinson[:, t], two_spread)[..., None],
-                    "central": holdfee.unit_fee(tables[c]["central"], paths.parkinson[:, t], two_spread)[..., None],
-                    "gross": tables[c]["gross_rate"] * gain}
+                unit = {} if fee_tables is None else {
+                    "fee": holdfee.unit_fee(fee_tables[c]["fee"], paths.parkinson[:, t], two_spread[cls.kind])[..., None],
+                    "central": holdfee.unit_fee(fee_tables[c]["central"], paths.parkinson[:, t], two_spread[cls.kind])[..., None],
+                    "gross": fee_tables[c]["gross_rate"] * gain}
                 if cls.kind == "hedged":
                     full = margin_hour * cls.margin_share * hedged_leverage[cls.bucket] * h_scale * decay[t]
                     hedged_full += full
@@ -663,6 +717,7 @@ def run_batch(
             entry_usd = (entry * fx)[..., None]
             need = np.zeros(lanes_shape)
             filled = zero.copy()  # opening notional accepted this hour, both legs of a pair
+            paid = zero.copy()  # with size bands, one fill's spread on it, each side at its own orders' mean
             for (cls, side), want, unit in zip(cohorts, wants, units):
                 amount = (long_ok if side > 0 else short_ok) * want
                 if side > 0:
@@ -671,14 +726,19 @@ def run_batch(
                     shorts += amount / entry_usd
                 cost += side * amount / fx[..., None]
                 filled += amount
-                need += book(unit, k, amount, 1.0 / prep.leverage[0, cls.bucket])
+                rate = None if tables is None else fits["long_rate" if side > 0 else "short_rate"]
+                if tables is not None:
+                    paid += rate * amount
+                need += book(unit, k, amount, 1.0 / prep.leverage[0, cls.bucket], rate)
             pair_margin = zero.copy()
             for cls, unit, leg in zip(hedged, pairs, pair_legs):
                 leg = leg * fits["pair"]
                 longs += leg / entry_usd
                 shorts += leg / entry_usd
                 filled += 2 * leg
-                need += book(unit, k, leg, 2.0 / prep.leverage[1, cls.bucket])
+                if tables is not None:
+                    paid += fits["pair_rate"] * 2 * leg
+                need += book(unit, k, leg, 2.0 / prep.leverage[1, cls.bucket], None if tables is None else 2 * fits["pair_rate"])
                 pair_margin += 2 * leg / hedged_leverage[cls.bucket]
             if gaps is not None:
                 # The stress: a share of the past week's margin accepted in hedged pairs, at the
@@ -702,16 +762,22 @@ def run_batch(
             # charges ex post (`execution.rs`, `profit_fee`).
             churn_gain = gain_long * long_ok + gain_short * short_ok + gain_hedged
             accepted = {est: v[0] * long_ok + v[1] * short_ok + v[2] for est, v in churn_fees.items()}
-            churn_fee = accounting.profit_fee(churn_gain) if tables is None else accepted["fee"]
-            if tables is not None:
+            churn_fee = accounting.profit_fee(churn_gain) if fee_tables is None else accepted["fee"]
+            if fee_tables is not None:
                 for est, name in (("fee", "churn_fee"), ("central", "churn_fee_central"), ("gross", "churn_fee_gross")):
                     out[name] += accepted[est].sum(axis=1)
             fx_ratio = paths.fx[:, t] / paths.fx[:, t - 1] if t >= 1 else 1.0
             hour_ret = accounting.realised_pnl(1, paths.close[:, t] / paths.open[:, t], fx_ratio)
             churn_pnl = (open_long * long_ok - open_short * short_ok) * hour_ret[..., None]
             filled += churn_long * long_ok + churn_short * short_ok + churn_hedged
-            # Every fill pays the market's spread: a position's open and close, on its notional.
-            spread_cash = 2 * spread[None, :, None] * filled
+            # Every fill pays the market's spread: a position's open and close, on its notional. With
+            # `spread_bps` both are charged at the open; with size bands a position held an hour or
+            # more pays its closing spread at its exit (`book`), and churn both within the hour.
+            if tables is None:
+                spread_cash = 2 * spread[None, :, None] * filled
+            else:
+                churn_paid = fits["long_rate"] * churn_long * long_ok + fits["short_rate"] * churn_short * short_ok + fits["pair_rate"] * churn_hedged
+                spread_cash = paid + 2 * churn_paid
             churn_cash = churn_fee - churn_pnl + spread_cash  # to the house
             house += churn_cash
             out["spread_income"] += spread_cash.sum(axis=1)

@@ -103,6 +103,9 @@ Decisions for the owner:
 
 ## BTC-USD and ETH-USD at 100:1
 
+These results are without spreads or the holding-time fee. The floors at the launch pricing, on
+which the owner decides the launch caps (#614, decision D8), are `research/launch-caps`'s (#500).
+
 #500 moves BTC-USD and ETH-USD from 10:1 (10% margin to $1M of notional, 20% above) to 100:1 (1% to
 $2M, 2% to $10M, 5% above, the genesis bands). The model caps each position's leverage at the
 market's maximum, so most of the flow on the two markets, 71% of the whole, moves with the margin:
@@ -415,9 +418,15 @@ withdrawn, and free balances leave at 5% a day, or 55% a day while NAV is below 
 public log), each compounded hourly. A withdrawal the vault cannot pay joins the #49 queue and is
 paid as deposits arrive.
 
-**Spreads and a holding-time fee.** The genesis prices every fill at the index, so by default the
-model charges no spread and the standard 10% profit fee. `Scenario.spread_bps` charges each fill a
-spread per market, which the house keeps as `spread_income`, and `Scenario.fee_schedule` replaces
+**Spreads and a holding-time fee.** By default the model charges no spread and the standard 10%
+profit fee. `Scenario.spread_bps` charges each fill a spread per market, which the house keeps as
+`spread_income`. `Scenario.spread_bands` instead prices each fill through its market's size bands on
+its own notional (`accounting.staircase_rate`, V52's staircase): in each hour the orders that fit
+under a side's room pay their own margin-weighted mean (`flow.spread_table`, `order_fits`), so a
+small cap fills only the small orders, at the first band. A position held an hour or more pays its
+closing spread at its exit, from what it leaves its client and never more, as the engine takes it
+from the closing fill's price; `spread_bps` charges both fills at the open. The fee is charged on
+PnL less the mean over every order, which can only lower it. `Scenario.fee_schedule` replaces
 the 10% with a fee that depends on the hold (`accounting.HoldFee`): the engine's table under #614's
 decision D7, `max(base x (1 - discount), C(hold))`, or #623's log-linear family. The engine charges
 the fee on realised PnL at the spread-adjusted fill prices, so with either field set the fee is on

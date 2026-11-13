@@ -186,6 +186,27 @@ def fit_share(room, sizes: tuple[np.ndarray, np.ndarray]):
     return np.where(room > 0, fitted, 0.0)
 
 
+def spread_table(sizes: tuple[np.ndarray, np.ndarray], bands) -> tuple[np.ndarray, np.ndarray, float]:
+    """A size profile priced through size bands (`accounting.staircase_rate`): per size bound, the
+    sum over the orders at or below it of their margin share times the spread, in bps, one fill of
+    each pays; and the profile's total share. Each cell of the profile pays the rate at its lower
+    bound, the least any order in it pays, since a band's rate never falls with size."""
+    from model.accounting import staircase_rate
+
+    bounds, shares = sizes
+    lower = np.concatenate([[0.0], bounds[:-1]])
+    return bounds, np.cumsum(np.diff(shares, prepend=0.0) * staircase_rate(lower, bands)), float(shares[-1])
+
+
+def fit_spread(room, table: tuple[np.ndarray, np.ndarray, float]):
+    """The spread table's sum over the orders whose notional is at most `room`, as `fit_share` sums
+    their margin share; their mean spread, in bps, is this over `fit_share`."""
+    bounds, paid, _ = table
+    room = np.maximum(np.asarray(room, dtype=float), 0.0)
+    fitted = np.interp(np.log(np.maximum(room, 1e-12)), np.log(bounds), paid, left=0.0, right=paid[-1])
+    return np.where(room > 0, fitted, 0.0)
+
+
 def mapped_leverage(papertrade_leverage: float, max_leverage: np.ndarray, mapping: str) -> np.ndarray:
     if mapping == "capped":
         return np.minimum(papertrade_leverage, max_leverage)

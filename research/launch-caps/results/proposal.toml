@@ -1,0 +1,175 @@
+# Proposed by research/launch-caps (#500) for the owner's decision D8; not applied.
+# Floor set: 10% risk level (NAV below zero, tier 3 alone).
+[genesis.params]
+house_total_cap_floor = "60960031"
+# Level-1 trigger utilisation_bps: 8000, the lowest that passes at both ends of the tier range (tier 0 5000, tier 3 8000); level 2 stays at 9500.
+
+[[genesis.markets]]
+id = 1
+symbol = "BTC-USD"
+house_cap_floor = "31622777"
+
+[[genesis.markets]]
+id = 2
+symbol = "ETH-USD"
+house_cap_floor = "17782794"
+
+[[genesis.markets]]
+id = 3
+symbol = "SOL-USD"
+house_cap_floor = "5623413"
+
+[[genesis.markets]]
+id = 10
+symbol = "EUR-USD"
+house_cap_floor = "10000000"
+
+[[genesis.markets]]
+id = 11
+symbol = "GBP-USD"
+house_cap_floor = "10000000"
+
+[[genesis.markets]]
+id = 12
+symbol = "USD-JPY"
+house_cap_floor = "10000000"
+
+[[genesis.markets]]
+id = 13
+symbol = "AUD-USD"
+house_cap_floor = "10000000"
+
+[[genesis.markets]]
+id = 20
+symbol = "US500"
+house_cap_floor = "17782794"
+
+[[genesis.markets]]
+id = 21
+symbol = "US100"
+house_cap_floor = "17782794"
+
+[[genesis.markets]]
+id = 22
+symbol = "US30"
+house_cap_floor = "10000000"
+
+[[genesis.markets]]
+id = 25
+symbol = "JP225"
+house_cap_floor = "10000000"
+
+[[genesis.markets]]
+id = 30
+symbol = "XAU-USD"
+house_cap_floor = "10000000"
+
+[[genesis.markets]]
+id = 31
+symbol = "XAG-USD"
+house_cap_floor = "10000000"
+
+[[genesis.markets]]
+id = 32
+symbol = "WTI"
+house_cap_floor = "10000000"
+
+[[genesis.markets]]
+id = 40
+symbol = "AAPL"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 41
+symbol = "MSFT"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 42
+symbol = "NVDA"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 43
+symbol = "AMZN"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 44
+symbol = "GOOGL"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 45
+symbol = "META"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 46
+symbol = "TSLA"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 47
+symbol = "AVGO"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 48
+symbol = "BRK.B"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 49
+symbol = "JPM"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 50
+symbol = "V"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 51
+symbol = "MA"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 52
+symbol = "LLY"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 53
+symbol = "JNJ"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 54
+symbol = "XOM"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 55
+symbol = "WMT"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 56
+symbol = "COST"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 57
+symbol = "NFLX"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 58
+symbol = "AMD"
+house_cap_floor = "3162278"
+
+[[genesis.markets]]
+id = 59
+symbol = "ORCL"
+house_cap_floor = "3162278"

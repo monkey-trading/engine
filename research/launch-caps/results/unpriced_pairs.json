@@ -1,0 +1,2631 @@
+{
+ "pair_notional": 50000000.0,
+ "margin": 0.01,
+ "fees": {
+  "2": 0.09000000000000001,
+  "3": 0.08000000000000002
+ },
+ "first_band": {
+  "BTC-USD": 0.0002,
+  "ETH-USD": 0.0003
+ },
+ "stress_terms": {
+  "move_bps": [
+   75,
+   200
+  ],
+  "min_spread": [
+   0.0,
+   0.0002,
+   0.001
+  ],
+  "multiplier": [
+   1.0,
+   2.0,
+   4.0
+  ],
+  "window_s": 60.0,
+  "cooldown_s": 300.0
+ },
+ "hours": 112,
+ "check_697_stress_hours": 30558329.411673564,
+ "check_734_stress_hours": {
+  "trigger": -582362.7719236909,
+  "standing": 18037637.228076313
+ },
+ "rules": [
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 10.0,
+   "per_day": -38561485.04308563,
+   "per_day_lo": -47807977.812138334,
+   "per_day_hi": -30503329.43899178,
+   "stress_hours": -296930573.56508756,
+   "stress_spells": 2866,
+   "stress_closing_levels": [
+    1082,
+    1109,
+    675
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 20.0,
+   "per_day": -5606178.71205904,
+   "per_day_lo": -6942027.5099541,
+   "per_day_hi": -4389646.886558896,
+   "stress_hours": -196150354.48900276,
+   "stress_spells": 1554,
+   "stress_closing_levels": [
+    249,
+    691,
+    614
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 40.0,
+   "per_day": -591630.4836700473,
+   "per_day_lo": -891042.1641727735,
+   "per_day_hi": -286818.0259679493,
+   "stress_hours": -107321163.48109026,
+   "stress_spells": 778,
+   "stress_closing_levels": [
+    33,
+    268,
+    477
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 10.0,
+   "per_day": -24809056.244809,
+   "per_day_lo": -31310191.860670038,
+   "per_day_hi": -19396336.198657587,
+   "stress_hours": -94359426.88250877,
+   "stress_spells": 1226,
+   "stress_closing_levels": [
+    536,
+    414,
+    276
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3910784.5370574626,
+   "per_day_lo": -4830615.916892867,
+   "per_day_hi": -3052369.6510856836,
+   "stress_hours": -63152791.626760244,
+   "stress_spells": 723,
+   "stress_closing_levels": [
+    160,
+    300,
+    263
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 40.0,
+   "per_day": -303593.9753854811,
+   "per_day_lo": -508721.091251454,
+   "per_day_hi": -61183.705467075284,
+   "stress_hours": -31599942.54299246,
+   "stress_spells": 398,
+   "stress_closing_levels": [
+    21,
+    140,
+    237
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 10.0,
+   "per_day": -18297221.66248657,
+   "per_day_lo": -22858575.658149086,
+   "per_day_hi": -14504282.132751985,
+   "stress_hours": -43721861.584450975,
+   "stress_spells": 710,
+   "stress_closing_levels": [
+    330,
+    216,
+    164
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3162798.6970661497,
+   "per_day_lo": -3867999.5353070037,
+   "per_day_hi": -2465776.311890715,
+   "stress_hours": -27717160.54326389,
+   "stress_spells": 449,
+   "stress_closing_levels": [
+    121,
+    171,
+    157
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 40.0,
+   "per_day": -193859.45516681124,
+   "per_day_lo": -375688.44642668095,
+   "per_day_hi": 38961.54303998101,
+   "stress_hours": -13463464.111079525,
+   "stress_spells": 249,
+   "stress_closing_levels": [
+    22,
+    86,
+    141
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 10.0,
+   "per_day": -13291011.14386268,
+   "per_day_lo": -16451469.817426294,
+   "per_day_hi": -10653994.289385675,
+   "stress_hours": -12810024.189355398,
+   "stress_spells": 442,
+   "stress_closing_levels": [
+    198,
+    118,
+    126
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2495906.102860377,
+   "per_day_lo": -3094649.91910902,
+   "per_day_hi": -1887261.6189031128,
+   "stress_hours": -4783663.720969443,
+   "stress_spells": 313,
+   "stress_closing_levels": [
+    83,
+    106,
+    124
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 40.0,
+   "per_day": -116559.74244134087,
+   "per_day_lo": -281559.1555948485,
+   "per_day_hi": 109801.04265510007,
+   "stress_hours": 3216286.196574576,
+   "stress_spells": 196,
+   "stress_closing_levels": [
+    15,
+    65,
+    116
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 10.0,
+   "per_day": -9618699.212608429,
+   "per_day_lo": -11778790.711117081,
+   "per_day_hi": -7844321.878865401,
+   "stress_hours": 3855686.5209938665,
+   "stress_spells": 281,
+   "stress_closing_levels": [
+    123,
+    65,
+    93
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1887677.432873113,
+   "per_day_lo": -2382547.0067759044,
+   "per_day_hi": -1378157.3193929147,
+   "stress_hours": 7035175.326035731,
+   "stress_spells": 228,
+   "stress_closing_levels": [
+    66,
+    59,
+    103
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 40.0,
+   "per_day": -65346.189234877085,
+   "per_day_lo": -231731.6675272304,
+   "per_day_hi": 169035.78726561775,
+   "stress_hours": 9174822.470958784,
+   "stress_spells": 147,
+   "stress_closing_levels": [
+    18,
+    43,
+    86
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 10.0,
+   "per_day": -5625936.538684339,
+   "per_day_lo": -6644783.839088292,
+   "per_day_hi": -4682343.187528747,
+   "stress_hours": 11237594.928716354,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    79,
+    30,
+    82
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1386924.2453387156,
+   "per_day_lo": -1758212.3161086743,
+   "per_day_hi": -1039205.3965570845,
+   "stress_hours": 13369055.48066373,
+   "stress_spells": 165,
+   "stress_closing_levels": [
+    50,
+    28,
+    87
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 40.0,
+   "per_day": 80279.06606643276,
+   "per_day_lo": -121084.12989941472,
+   "per_day_hi": 396577.5489718999,
+   "stress_hours": 12904766.094022974,
+   "stress_spells": 136,
+   "stress_closing_levels": [
+    24,
+    29,
+    83
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 10.0,
+   "per_day": -33911544.45889736,
+   "per_day_lo": -42844389.63539294,
+   "per_day_hi": -26279717.958362397,
+   "stress_hours": -143178149.76784754,
+   "stress_spells": 2866,
+   "stress_closing_levels": [
+    2712,
+    147,
+    7
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 20.0,
+   "per_day": -4057595.8646261524,
+   "per_day_lo": -5068020.64847999,
+   "per_day_hi": -3125290.333351901,
+   "stress_hours": -73162273.083087,
+   "stress_spells": 1554,
+   "stress_closing_levels": [
+    1394,
+    149,
+    11
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 40.0,
+   "per_day": -244493.18011573827,
+   "per_day_lo": -473047.7224301914,
+   "per_day_hi": 70477.5961569822,
+   "stress_hours": -27790845.010518406,
+   "stress_spells": 778,
+   "stress_closing_levels": [
+    624,
+    147,
+    7
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 10.0,
+   "per_day": -22754031.988477975,
+   "per_day_lo": -29121081.528569087,
+   "per_day_hi": -17482206.314460088,
+   "stress_hours": -43761921.75369987,
+   "stress_spells": 1226,
+   "stress_closing_levels": [
+    1067,
+    148,
+    11
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3115170.8036067407,
+   "per_day_lo": -3909958.203041043,
+   "per_day_hi": -2339512.8533206745,
+   "stress_hours": -19130026.77020804,
+   "stress_spells": 723,
+   "stress_closing_levels": [
+    572,
+    141,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 40.0,
+   "per_day": -116740.90244913548,
+   "per_day_lo": -323373.1107228217,
+   "per_day_hi": 196832.6807599673,
+   "stress_hours": -117444.26436741393,
+   "stress_spells": 398,
+   "stress_closing_levels": [
+    240,
+    148,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 10.0,
+   "per_day": -17129194.20847882,
+   "per_day_lo": -21616523.342482276,
+   "per_day_hi": -13390712.172895556,
+   "stress_hours": -18150122.139128104,
+   "stress_spells": 710,
+   "stress_closing_levels": [
+    585,
+    115,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2658048.8717726865,
+   "per_day_lo": -3316100.8526901747,
+   "per_day_hi": -1977906.2591931382,
+   "stress_hours": -4937591.3932975335,
+   "stress_spells": 449,
+   "stress_closing_levels": [
+    327,
+    114,
+    8
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 40.0,
+   "per_day": -55717.94714319799,
+   "per_day_lo": -261472.351703036,
+   "per_day_hi": 255365.00064163347,
+   "stress_hours": 3677266.485219728,
+   "stress_spells": 249,
+   "stress_closing_levels": [
+    135,
+    108,
+    6
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 10.0,
+   "per_day": -12727832.386321377,
+   "per_day_lo": -15886761.23607168,
+   "per_day_hi": -10101946.188027186,
+   "stress_hours": 369087.07744309946,
+   "stress_spells": 442,
+   "stress_closing_levels": [
+    298,
+    134,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2201481.550483351,
+   "per_day_lo": -2797220.9204477374,
+   "per_day_hi": -1566523.9771450975,
+   "stress_hours": 7814444.935672107,
+   "stress_spells": 313,
+   "stress_closing_levels": [
+    173,
+    132,
+    8
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 40.0,
+   "per_day": -13305.399546360166,
+   "per_day_lo": -209683.77060850058,
+   "per_day_hi": 294168.4454125794,
+   "stress_hours": 13387380.104786756,
+   "stress_spells": 196,
+   "stress_closing_levels": [
+    65,
+    123,
+    8
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 10.0,
+   "per_day": -9454515.13354651,
+   "per_day_lo": -11607538.183776101,
+   "per_day_hi": -7687011.884423048,
+   "stress_hours": 10272283.412802419,
+   "stress_spells": 281,
+   "stress_closing_levels": [
+    147,
+    120,
+    14
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1785740.14476876,
+   "per_day_lo": -2295460.3442133456,
+   "per_day_hi": -1233276.3875164348,
+   "stress_hours": 14066439.411866985,
+   "stress_spells": 228,
+   "stress_closing_levels": [
+    88,
+    130,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 40.0,
+   "per_day": 950.2627116675144,
+   "per_day_lo": -197849.53289953625,
+   "per_day_hi": 302914.8383214741,
+   "stress_hours": 14918121.576263752,
+   "stress_spells": 147,
+   "stress_closing_levels": [
+    32,
+    106,
+    9
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 10.0,
+   "per_day": -5757733.726407481,
+   "per_day_lo": -6777145.37494045,
+   "per_day_hi": -4805261.56051777,
+   "stress_hours": 15049694.928716354,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    56,
+    125,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1454627.8908186571,
+   "per_day_lo": -1838594.1732445364,
+   "per_day_hi": -1096118.591113466,
+   "stress_hours": 17573700.15718189,
+   "stress_spells": 165,
+   "stress_closing_levels": [
+    26,
+    130,
+    9
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 40.0,
+   "per_day": 66170.5119122513,
+   "per_day_lo": -135410.6268231681,
+   "per_day_hi": 379510.42295071384,
+   "stress_hours": 17170416.09402297,
+   "stress_spells": 136,
+   "stress_closing_levels": [
+    12,
+    116,
+    8
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 10.0,
+   "per_day": -43381154.676278085,
+   "per_day_lo": -53161467.02789366,
+   "per_day_hi": -34772575.340594895,
+   "stress_hours": -471131199.2989728,
+   "stress_spells": 2866,
+   "stress_closing_levels": [
+    1082,
+    1109,
+    675
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 20.0,
+   "per_day": -7207279.771544702,
+   "per_day_lo": -9038116.886021888,
+   "per_day_hi": -5581587.024729176,
+   "stress_hours": -339384250.9883276,
+   "stress_spells": 1554,
+   "stress_closing_levels": [
+    249,
+    691,
+    614
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 40.0,
+   "per_day": -970439.2820870406,
+   "per_day_lo": -1399265.0943588456,
+   "per_day_hi": -590757.3518323094,
+   "stress_hours": -205068721.80815393,
+   "stress_spells": 778,
+   "stress_closing_levels": [
+    33,
+    268,
+    477
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 10.0,
+   "per_day": -27013759.192174856,
+   "per_day_lo": -33604749.1822211,
+   "per_day_hi": -21445736.84114188,
+   "stress_hours": -163999628.82447135,
+   "stress_spells": 1226,
+   "stress_closing_levels": [
+    536,
+    414,
+    276
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 20.0,
+   "per_day": -4775531.86855188,
+   "per_day_lo": -5871900.725095397,
+   "per_day_hi": -3769885.3765207487,
+   "stress_hours": -124620276.15460055,
+   "stress_spells": 723,
+   "stress_closing_levels": [
+    160,
+    300,
+    263
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 40.0,
+   "per_day": -527681.2471208838,
+   "per_day_lo": -763970.2992598525,
+   "per_day_hi": -314939.25551650766,
+   "stress_hours": -80415222.8768579,
+   "stress_spells": 398,
+   "stress_closing_levels": [
+    21,
+    140,
+    237
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 10.0,
+   "per_day": -19649473.094804313,
+   "per_day_lo": -24321732.088852353,
+   "per_day_hi": -15757619.431584753,
+   "stress_hours": -84444850.41882005,
+   "stress_spells": 710,
+   "stress_closing_levels": [
+    330,
+    216,
+    164
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3752081.7134410185,
+   "per_day_lo": -4546879.717086583,
+   "per_day_hi": -2992924.756731327,
+   "stress_hours": -64833840.92986278,
+   "stress_spells": 449,
+   "stress_closing_levels": [
+    121,
+    171,
+    157
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 40.0,
+   "per_day": -372377.4364806625,
+   "per_day_lo": -548488.6204819668,
+   "per_day_hi": -206655.67748658897,
+   "stress_hours": -43150186.89638097,
+   "stress_spells": 249,
+   "stress_closing_levels": [
+    22,
+    86,
+    141
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 10.0,
+   "per_day": -14112328.007104646,
+   "per_day_lo": -17338071.832768302,
+   "per_day_hi": -11435682.16825414,
+   "stress_hours": -41827031.78396476,
+   "stress_spells": 442,
+   "stress_closing_levels": [
+    198,
+    118,
+    126
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2914645.9175290433,
+   "per_day_lo": -3546659.861913907,
+   "per_day_hi": -2294780.197546605,
+   "stress_hours": -32875357.17554947,
+   "stress_spells": 313,
+   "stress_closing_levels": [
+    83,
+    106,
+    124
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 40.0,
+   "per_day": -264646.3354930335,
+   "per_day_lo": -407627.8127656555,
+   "per_day_hi": -125312.11220300416,
+   "stress_hours": -20948990.357254736,
+   "stress_spells": 196,
+   "stress_closing_levels": [
+    15,
+    65,
+    116
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 10.0,
+   "per_day": -10072527.240931746,
+   "per_day_lo": -12245941.563544035,
+   "per_day_hi": -8283349.134987438,
+   "stress_hours": -17450793.958982747,
+   "stress_spells": 281,
+   "stress_closing_levels": [
+    123,
+    65,
+    93
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2168549.6438242137,
+   "per_day_lo": -2658384.60382264,
+   "per_day_hi": -1690859.6339056944,
+   "stress_hours": -15611627.841597484,
+   "stress_spells": 228,
+   "stress_closing_levels": [
+    66,
+    59,
+    103
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 40.0,
+   "per_day": -194401.55894843445,
+   "per_day_lo": -320355.7331293022,
+   "per_day_hi": -58499.17329419582,
+   "stress_hours": -9133126.199624434,
+   "stress_spells": 147,
+   "stress_closing_levels": [
+    18,
+    43,
+    86
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 10.0,
+   "per_day": -5822685.22622242,
+   "per_day_lo": -6853167.199353321,
+   "per_day_hi": -4876850.940028161,
+   "stress_hours": -6895055.07128364,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    79,
+    30,
+    82
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1493533.803303236,
+   "per_day_lo": -1868889.4490058874,
+   "per_day_hi": -1144242.6622220236,
+   "stress_hours": -5429028.413948066,
+   "stress_spells": 165,
+   "stress_closing_levels": [
+    50,
+    28,
+    87
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 40.0,
+   "per_day": -20578.866543504413,
+   "per_day_lo": -186885.48018291604,
+   "per_day_hi": 226936.69069417502,
+   "stress_hours": -4669483.905977022,
+   "stress_spells": 136,
+   "stress_closing_levels": [
+    24,
+    29,
+    83
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 10.0,
+   "per_day": -38684883.20999517,
+   "per_day_lo": -47930203.29547857,
+   "per_day_hi": -30619046.08851295,
+   "stress_hours": -315602346.719071,
+   "stress_spells": 2866,
+   "stress_closing_levels": [
+    2712,
+    147,
+    7
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 20.0,
+   "per_day": -5639210.357790901,
+   "per_day_lo": -6980681.000973993,
+   "per_day_hi": -4420962.979780931,
+   "stress_hours": -214929658.69564268,
+   "stress_spells": 1554,
+   "stress_closing_levels": [
+    1394,
+    149,
+    11
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 40.0,
+   "per_day": -619127.1858005612,
+   "per_day_lo": -918265.9515677362,
+   "per_day_hi": -324890.58440000867,
+   "stress_hours": -124663795.6837155,
+   "stress_spells": 778,
+   "stress_closing_levels": [
+    624,
+    147,
+    7
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 10.0,
+   "per_day": -24938944.96283699,
+   "per_day_lo": -31442564.638348896,
+   "per_day_hi": -19544881.77570261,
+   "stress_hours": -112860533.16788693,
+   "stress_spells": 1226,
+   "stress_closing_levels": [
+    1067,
+    148,
+    11
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3971160.2064022077,
+   "per_day_lo": -4892454.837794835,
+   "per_day_hi": -3117167.4576967554,
+   "stress_hours": -80130211.61827245,
+   "stress_spells": 723,
+   "stress_closing_levels": [
+    572,
+    141,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 40.0,
+   "per_day": -338591.3731911217,
+   "per_day_lo": -543209.2789710584,
+   "per_day_hi": -111117.66016736272,
+   "stress_hours": -48637331.50476825,
+   "stress_spells": 398,
+   "stress_closing_levels": [
+    240,
+    148,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 10.0,
+   "per_day": -18468000.0870613,
+   "per_day_lo": -23054728.57197938,
+   "per_day_hi": -14669996.772333818,
+   "stress_hours": -58664816.1473437,
+   "stress_spells": 710,
+   "stress_closing_levels": [
+    585,
+    115,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3242114.0076187304,
+   "per_day_lo": -3958613.374049359,
+   "per_day_hi": -2544986.05549355,
+   "stress_hours": -41857732.10450452,
+   "stress_spells": 449,
+   "stress_closing_levels": [
+    327,
+    114,
+    8
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 40.0,
+   "per_day": -232689.15750365617,
+   "per_day_lo": -410249.0023807533,
+   "per_day_hi": -19423.637977015565,
+   "stress_hours": -25881116.157126214,
+   "stress_spells": 249,
+   "stress_closing_levels": [
+    135,
+    108,
+    6
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 10.0,
+   "per_day": -13544970.395311208,
+   "per_day_lo": -16715699.491133288,
+   "per_day_hi": -10904916.048073897,
+   "stress_hours": -28561080.87225165,
+   "stress_spells": 442,
+   "stress_closing_levels": [
+    298,
+    134,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2617655.0848887153,
+   "per_day_lo": -3224412.558870901,
+   "per_day_hi": -2007186.6408526103,
+   "stress_hours": -20204920.644376818,
+   "stress_spells": 313,
+   "stress_closing_levels": [
+    173,
+    132,
+    8
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 40.0,
+   "per_day": -159677.00115064986,
+   "per_day_lo": -318399.0585984923,
+   "per_day_hi": 46163.79742512251,
+   "stress_hours": -10717329.44897348,
+   "stress_spells": 196,
+   "stress_closing_levels": [
+    65,
+    123,
+    8
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 10.0,
+   "per_day": -9906487.051225772,
+   "per_day_lo": -12072621.330819214,
+   "per_day_hi": -8121254.07127104,
+   "stress_hours": -11023326.882183524,
+   "stress_spells": 281,
+   "stress_closing_levels": [
+    147,
+    120,
+    14
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2065525.473516852,
+   "per_day_lo": -2562354.7223096685,
+   "per_day_hi": -1568347.4549464013,
+   "stress_hours": -8560699.847861353,
+   "stress_spells": 228,
+   "stress_closing_levels": [
+    88,
+    130,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 40.0,
+   "per_day": -126964.05331254698,
+   "per_day_lo": -279400.5837246016,
+   "per_day_hi": 69912.53670448619,
+   "stress_hours": -3373427.5290412097,
+   "stress_spells": 147,
+   "stress_closing_levels": [
+    32,
+    106,
+    9
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 10.0,
+   "per_day": -5954482.413945561,
+   "per_day_lo": -6989856.0323815085,
+   "per_day_hi": -4997474.233524145,
+   "stress_hours": -3082955.0712836403,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    56,
+    125,
+    10
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1561237.4487831772,
+   "per_day_lo": -1947816.5888931314,
+   "per_day_hi": -1205842.9099052572,
+   "stress_hours": -1224383.7374299075,
+   "stress_spells": 165,
+   "stress_closing_levels": [
+    26,
+    130,
+    9
+   ]
+  },
+  {
+   "tier": 2,
+   "fee": 0.09000000000000001,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 40.0,
+   "per_day": -34687.42069768585,
+   "per_day_lo": -200234.9048898151,
+   "per_day_hi": 209851.3573910222,
+   "stress_hours": -403833.9059770215,
+   "stress_spells": 136,
+   "stress_closing_levels": [
+    12,
+    116,
+    8
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 10.0,
+   "per_day": -38445723.21513221,
+   "per_day_lo": -47664779.60793985,
+   "per_day_hi": -30407209.868837334,
+   "stress_hours": -297424687.2435611,
+   "stress_spells": 2859,
+   "stress_closing_levels": [
+    1082,
+    1109,
+    668
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 20.0,
+   "per_day": -5566692.733146787,
+   "per_day_lo": -6898803.343308572,
+   "per_day_hi": -4353509.844486557,
+   "stress_hours": -196791711.33294028,
+   "stress_spells": 1551,
+   "stress_closing_levels": [
+    249,
+    691,
+    611
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 40.0,
+   "per_day": -579562.5197480877,
+   "per_day_lo": -880851.4950875519,
+   "per_day_hi": -269164.64967612404,
+   "stress_hours": -108257620.64584062,
+   "stress_spells": 774,
+   "stress_closing_levels": [
+    34,
+    267,
+    473
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 10.0,
+   "per_day": -24691440.004364308,
+   "per_day_lo": -31170740.84829599,
+   "per_day_hi": -19301904.916755687,
+   "stress_hours": -94603498.35837117,
+   "stress_spells": 1220,
+   "stress_closing_levels": [
+    537,
+    412,
+    271
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3870271.322053749,
+   "per_day_lo": -4785063.103676642,
+   "per_day_hi": -3011915.0853076857,
+   "stress_hours": -63531815.01641412,
+   "stress_spells": 716,
+   "stress_closing_levels": [
+    160,
+    298,
+    258
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 40.0,
+   "per_day": -292271.2106383244,
+   "per_day_lo": -500423.61022933776,
+   "per_day_hi": -40199.94757831954,
+   "stress_hours": -32456742.665730458,
+   "stress_spells": 391,
+   "stress_closing_levels": [
+    21,
+    140,
+    230
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 10.0,
+   "per_day": -18179224.782135874,
+   "per_day_lo": -22714326.023171462,
+   "per_day_hi": -14401837.782383038,
+   "stress_hours": -42428567.98681775,
+   "stress_spells": 713,
+   "stress_closing_levels": [
+    331,
+    216,
+    166
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3119508.2775077857,
+   "per_day_lo": -3823602.7957626362,
+   "per_day_hi": -2416765.728089671,
+   "stress_hours": -26292694.47211849,
+   "stress_spells": 454,
+   "stress_closing_levels": [
+    121,
+    173,
+    160
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 40.0,
+   "per_day": -182219.55287824382,
+   "per_day_lo": -367535.1667050349,
+   "per_day_hi": 60174.35087846209,
+   "stress_hours": -10243085.020534143,
+   "stress_spells": 276,
+   "stress_closing_levels": [
+    22,
+    88,
+    166
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 10.0,
+   "per_day": -13187799.06863167,
+   "per_day_lo": -16327928.852918392,
+   "per_day_hi": -10579386.308168754,
+   "stress_hours": -12017771.97348887,
+   "stress_spells": 444,
+   "stress_closing_levels": [
+    198,
+    120,
+    126
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2458356.243493606,
+   "per_day_lo": -3054926.41511372,
+   "per_day_hi": -1849148.8107073565,
+   "stress_hours": -3493533.742783188,
+   "stress_spells": 318,
+   "stress_closing_levels": [
+    84,
+    105,
+    129
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 40.0,
+   "per_day": -107288.3290561351,
+   "per_day_lo": -275855.88387706963,
+   "per_day_hi": 128760.67294208393,
+   "stress_hours": 2578937.6906486503,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    16,
+    65,
+    110
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 10.0,
+   "per_day": -9520927.811745923,
+   "per_day_lo": -11662698.138720643,
+   "per_day_hi": -7763682.489155649,
+   "stress_hours": 4180005.652856992,
+   "stress_spells": 280,
+   "stress_closing_levels": [
+    125,
+    64,
+    91
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1845395.835786706,
+   "per_day_lo": -2341782.6370566236,
+   "per_day_hi": -1331465.4188731972,
+   "stress_hours": 6952152.315305563,
+   "stress_spells": 226,
+   "stress_closing_levels": [
+    68,
+    57,
+    101
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 40.0,
+   "per_day": -54963.00148088595,
+   "per_day_lo": -224342.38580056356,
+   "per_day_hi": 189761.69217026632,
+   "stress_hours": 11078053.111730892,
+   "stress_spells": 151,
+   "stress_closing_levels": [
+    19,
+    45,
+    87
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 10.0,
+   "per_day": -5533200.1680716835,
+   "per_day_lo": -6539066.209585945,
+   "per_day_hi": -4603712.425754423,
+   "stress_hours": 11879606.072076939,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    79,
+    30,
+    82
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1357863.3845337399,
+   "per_day_lo": -1724315.697740185,
+   "per_day_hi": -1014117.140582808,
+   "stress_hours": 12503351.467332996,
+   "stress_spells": 163,
+   "stress_closing_levels": [
+    51,
+    26,
+    86
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 40.0,
+   "per_day": 90016.33436811245,
+   "per_day_lo": -115751.15084957397,
+   "per_day_hi": 416301.4161852097,
+   "stress_hours": 13885602.323553536,
+   "stress_spells": 137,
+   "stress_closing_levels": [
+    23,
+    30,
+    84
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 10.0,
+   "per_day": -33785171.00534712,
+   "per_day_lo": -42697772.987179,
+   "per_day_hi": -26165562.468220793,
+   "stress_hours": -143175046.24994168,
+   "stress_spells": 2859,
+   "stress_closing_levels": [
+    2717,
+    135,
+    7
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 20.0,
+   "per_day": -4012936.461842232,
+   "per_day_lo": -5017950.827282654,
+   "per_day_hi": -3078087.3392765913,
+   "stress_hours": -72966767.94987239,
+   "stress_spells": 1551,
+   "stress_closing_levels": [
+    1400,
+    140,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 40.0,
+   "per_day": -231029.24334995158,
+   "per_day_lo": -462077.18732407683,
+   "per_day_hi": 97180.27265311884,
+   "stress_hours": -28194248.56994045,
+   "stress_spells": 774,
+   "stress_closing_levels": [
+    629,
+    138,
+    7
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 10.0,
+   "per_day": -22630479.409555458,
+   "per_day_lo": -28964998.460959677,
+   "per_day_hi": -17374368.654053036,
+   "stress_hours": -44098494.67734584,
+   "stress_spells": 1220,
+   "stress_closing_levels": [
+    1067,
+    142,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3071495.9787583104,
+   "per_day_lo": -3860839.312961186,
+   "per_day_hi": -2293528.9572218587,
+   "stress_hours": -19587476.31960203,
+   "stress_spells": 716,
+   "stress_closing_levels": [
+    572,
+    134,
+    10
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 40.0,
+   "per_day": -104533.38703691233,
+   "per_day_lo": -314789.0678771204,
+   "per_day_hi": 218793.73891967768,
+   "stress_hours": -788349.6853367346,
+   "stress_spells": 391,
+   "stress_closing_levels": [
+    243,
+    140,
+    8
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 10.0,
+   "per_day": -17009963.02386106,
+   "per_day_lo": -21475702.013767194,
+   "per_day_hi": -13293052.062779816,
+   "stress_hours": -16529957.116095277,
+   "stress_spells": 713,
+   "stress_closing_levels": [
+    589,
+    113,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2612508.348846225,
+   "per_day_lo": -3270925.529320993,
+   "per_day_hi": -1929437.8284846502,
+   "stress_hours": -3121920.310004361,
+   "stress_spells": 454,
+   "stress_closing_levels": [
+    330,
+    115,
+    9
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 40.0,
+   "per_day": -43407.86206011077,
+   "per_day_lo": -252602.56070323772,
+   "per_day_hi": 277935.84657282685,
+   "stress_hours": 8417935.62433572,
+   "stress_spells": 276,
+   "stress_closing_levels": [
+    136,
+    130,
+    10
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 10.0,
+   "per_day": -12623997.797998684,
+   "per_day_lo": -15754356.828263646,
+   "per_day_hi": -10014428.09171392,
+   "stress_hours": 1412674.7650450668,
+   "stress_spells": 444,
+   "stress_closing_levels": [
+    304,
+    129,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2162588.5422643344,
+   "per_day_lo": -2757098.3913919996,
+   "per_day_hi": -1525079.9842245423,
+   "stress_hours": 9495661.145126032,
+   "stress_spells": 318,
+   "stress_closing_levels": [
+    175,
+    133,
+    10
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 40.0,
+   "per_day": -3492.2379274685854,
+   "per_day_lo": -203965.69580271578,
+   "per_day_hi": 314195.7460789908,
+   "stress_hours": 12521533.021942569,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    66,
+    118,
+    7
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 10.0,
+   "per_day": -9355965.162999775,
+   "per_day_lo": -11491432.58075179,
+   "per_day_hi": -7604138.477513687,
+   "stress_hours": 10741290.298263175,
+   "stress_spells": 280,
+   "stress_closing_levels": [
+    150,
+    117,
+    13
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1742573.5844374832,
+   "per_day_lo": -2252048.8723926265,
+   "per_day_hi": -1187633.2251477689,
+   "stress_hours": 14008538.029243717,
+   "stress_spells": 226,
+   "stress_closing_levels": [
+    90,
+    127,
+    9
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 40.0,
+   "per_day": 12539.932231363804,
+   "per_day_lo": -189542.44950336977,
+   "per_day_hi": 323749.16225194733,
+   "stress_hours": 16656074.538668642,
+   "stress_spells": 151,
+   "stress_closing_levels": [
+    31,
+    109,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 10.0,
+   "per_day": -5666437.14916894,
+   "per_day_lo": -6672720.967214476,
+   "per_day_hi": -4730232.251384305,
+   "stress_hours": 15715425.581201125,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    57,
+    123,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1425288.4006590268,
+   "per_day_lo": -1804759.7138698355,
+   "per_day_hi": -1070487.840798939,
+   "stress_hours": 16756915.652975343,
+   "stress_spells": 163,
+   "stress_closing_levels": [
+    27,
+    128,
+    8
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "standing",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 40.0,
+   "per_day": 75297.93441153238,
+   "per_day_lo": -130580.08146239839,
+   "per_day_hi": 398541.93260350695,
+   "stress_hours": 18180002.323553536,
+   "stress_spells": 137,
+   "stress_closing_levels": [
+    13,
+    114,
+    10
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 10.0,
+   "per_day": -43271093.925314315,
+   "per_day_lo": -53024563.43227568,
+   "per_day_hi": -34677076.92370277,
+   "stress_hours": -471080325.8260308,
+   "stress_spells": 2859,
+   "stress_closing_levels": [
+    1082,
+    1109,
+    668
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 20.0,
+   "per_day": -7170906.683351441,
+   "per_day_lo": -8993540.943110906,
+   "per_day_hi": -5550722.3636883395,
+   "stress_hours": -339987864.06308216,
+   "stress_spells": 1551,
+   "stress_closing_levels": [
+    249,
+    691,
+    611
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 5,
+   "trigger_bps_5s": 40.0,
+   "per_day": -959385.709558688,
+   "per_day_lo": -1388174.0512465308,
+   "per_day_hi": -578240.8620601464,
+   "stress_hours": -205698645.39203432,
+   "stress_spells": 774,
+   "stress_closing_levels": [
+    34,
+    267,
+    473
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 10.0,
+   "per_day": -26900316.876512643,
+   "per_day_lo": -33469583.140158102,
+   "per_day_hi": -21351351.6163015,
+   "stress_hours": -163691267.10924512,
+   "stress_spells": 1220,
+   "stress_closing_levels": [
+    537,
+    412,
+    271
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 20.0,
+   "per_day": -4737521.322834285,
+   "per_day_lo": -5828070.285227803,
+   "per_day_hi": -3734499.893382896,
+   "stress_hours": -124379344.29781938,
+   "stress_spells": 716,
+   "stress_closing_levels": [
+    160,
+    298,
+    258
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 15,
+   "trigger_bps_5s": 40.0,
+   "per_day": -517100.10222215083,
+   "per_day_lo": -754196.0970057502,
+   "per_day_hi": -299754.386914351,
+   "stress_hours": -80388529.98767494,
+   "stress_spells": 391,
+   "stress_closing_levels": [
+    21,
+    140,
+    230
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 10.0,
+   "per_day": -19531793.508829925,
+   "per_day_lo": -24183540.86218899,
+   "per_day_hi": -15652852.103976585,
+   "stress_hours": -83467957.37930652,
+   "stress_spells": 713,
+   "stress_closing_levels": [
+    331,
+    216,
+    166
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3714276.832246748,
+   "per_day_lo": -4508658.298764364,
+   "per_day_hi": -2957625.8824972874,
+   "stress_hours": -64059182.474094726,
+   "stress_spells": 454,
+   "stress_closing_levels": [
+    121,
+    173,
+    160
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 30,
+   "trigger_bps_5s": 40.0,
+   "per_day": -361360.3538329001,
+   "per_day_lo": -538533.061277923,
+   "per_day_hi": -190637.76385203,
+   "stress_hours": -44441699.74358997,
+   "stress_spells": 276,
+   "stress_closing_levels": [
+    22,
+    88,
+    166
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 10.0,
+   "per_day": -14011486.647740636,
+   "per_day_lo": -17206069.984179106,
+   "per_day_hi": -11352395.408975856,
+   "stress_hours": -41279086.47755684,
+   "stress_spells": 444,
+   "stress_closing_levels": [
+    198,
+    120,
+    126
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2878656.219626525,
+   "per_day_lo": -3505408.165570702,
+   "per_day_hi": -2260290.7512586517,
+   "stress_hours": -32638472.48406065,
+   "stress_spells": 318,
+   "stress_closing_levels": [
+    84,
+    105,
+    129
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 60,
+   "trigger_bps_5s": 40.0,
+   "per_day": -255864.06075050187,
+   "per_day_lo": -401343.8740393809,
+   "per_day_hi": -110742.3945737617,
+   "stress_hours": -20707167.85054104,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    16,
+    65,
+    110
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 10.0,
+   "per_day": -9976340.952222774,
+   "per_day_lo": -12127061.282388764,
+   "per_day_hi": -8198836.377172701,
+   "stress_hours": -16928958.709369797,
+   "stress_spells": 280,
+   "stress_closing_levels": [
+    125,
+    64,
+    91
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2127352.2031730604,
+   "per_day_lo": -2613877.165690991,
+   "per_day_hi": -1649055.3702919164,
+   "stress_hours": -15442428.278146183,
+   "stress_spells": 226,
+   "stress_closing_levels": [
+    68,
+    57,
+    101
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 120,
+   "trigger_bps_5s": 40.0,
+   "per_day": -184436.88255836908,
+   "per_day_lo": -313305.14725246426,
+   "per_day_hi": -41631.24294738898,
+   "stress_hours": -7633548.901718165,
+   "stress_spells": 151,
+   "stress_closing_levels": [
+    19,
+    45,
+    87
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 10.0,
+   "per_day": -5730777.962056961,
+   "per_day_lo": -6747298.719782041,
+   "per_day_hi": -4795724.577178652,
+   "stress_hours": -6327993.92792306,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    79,
+    30,
+    82
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1464968.092672648,
+   "per_day_lo": -1836140.584258848,
+   "per_day_hi": -1119922.2815737163,
+   "stress_hours": -6143083.571846153,
+   "stress_spells": 163,
+   "stress_closing_levels": [
+    51,
+    26,
+    86
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "engine",
+   "spell_s": 300,
+   "trigger_bps_5s": 40.0,
+   "per_day": -11344.53370727306,
+   "per_day_lo": -181080.61929837384,
+   "per_day_hi": 245348.24966772122,
+   "stress_hours": -3914837.210255572,
+   "stress_spells": 137,
+   "stress_closing_levels": [
+    23,
+    30,
+    84
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 10.0,
+   "per_day": -38569358.70922289,
+   "per_day_lo": -47790059.19510451,
+   "per_day_hi": -30521226.947087243,
+   "stress_hours": -315209891.65341353,
+   "stress_spells": 2859,
+   "stress_closing_levels": [
+    2717,
+    135,
+    7
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 20.0,
+   "per_day": -5599829.01976163,
+   "per_day_lo": -6934544.00507372,
+   "per_day_hi": -4385000.968432291,
+   "stress_hours": -214854470.65373325,
+   "stress_spells": 1551,
+   "stress_closing_levels": [
+    1400,
+    140,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 5,
+   "trigger_bps_5s": 40.0,
+   "per_day": -607141.506287511,
+   "per_day_lo": -908554.7147648374,
+   "per_day_hi": -307605.8471820349,
+   "stress_hours": -124872368.34381895,
+   "stress_spells": 774,
+   "stress_closing_levels": [
+    629,
+    138,
+    7
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 10.0,
+   "per_day": -24821633.45708381,
+   "per_day_lo": -31302025.28463106,
+   "per_day_hi": -19433329.949986618,
+   "stress_hours": -112701349.81336042,
+   "stress_spells": 1220,
+   "stress_closing_levels": [
+    1067,
+    142,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3930868.972677596,
+   "per_day_lo": -4847857.278687647,
+   "per_day_hi": -3075946.0317323743,
+   "stress_hours": -80003076.88895862,
+   "stress_spells": 716,
+   "stress_closing_levels": [
+    572,
+    134,
+    10
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 15,
+   "trigger_bps_5s": 40.0,
+   "per_day": -327374.0110710352,
+   "per_day_lo": -534755.8516195503,
+   "per_day_hi": -92879.55571701053,
+   "stress_hours": -48456712.31389668,
+   "stress_spells": 391,
+   "stress_closing_levels": [
+    243,
+    140,
+    8
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 10.0,
+   "per_day": -18350530.37484408,
+   "per_day_lo": -22908547.04477644,
+   "per_day_hi": -14564855.39083313,
+   "stress_hours": -57375058.50733176,
+   "stress_spells": 713,
+   "stress_closing_levels": [
+    589,
+    113,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 20.0,
+   "per_day": -3202438.7724770457,
+   "per_day_lo": -3915314.4670246523,
+   "per_day_hi": -2503434.875617138,
+   "stress_hours": -40712239.282313384,
+   "stress_spells": 454,
+   "stress_closing_levels": [
+    330,
+    115,
+    9
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 30,
+   "trigger_bps_5s": 40.0,
+   "per_day": -221173.75550063988,
+   "per_day_lo": -401082.46221170534,
+   "per_day_hi": 1449.2394380370563,
+   "stress_hours": -25667669.468444843,
+   "stress_spells": 276,
+   "stress_closing_levels": [
+    136,
+    130,
+    10
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 10.0,
+   "per_day": -13444109.13914596,
+   "per_day_lo": -16589987.48273169,
+   "per_day_hi": -10818393.803685222,
+   "stress_hours": -27780020.37458349,
+   "stress_spells": 444,
+   "stress_closing_levels": [
+    304,
+    129,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2580642.965163565,
+   "per_day_lo": -3183848.7116040983,
+   "per_day_hi": -1972260.851205061,
+   "stress_hours": -19588692.442296345,
+   "stress_spells": 318,
+   "stress_closing_levels": [
+    175,
+    133,
+    10
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 60,
+   "trigger_bps_5s": 40.0,
+   "per_day": -150557.22682883643,
+   "per_day_lo": -313368.0778670131,
+   "per_day_hi": 63869.08026457228,
+   "stress_hours": -10715092.196499554,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    66,
+    118,
+    7
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 10.0,
+   "per_day": -9809812.970607713,
+   "per_day_lo": -11961660.33299553,
+   "per_day_hi": -8036407.589264252,
+   "stress_hours": -10353977.895935666,
+   "stress_spells": 280,
+   "stress_closing_levels": [
+    150,
+    117,
+    13
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 20.0,
+   "per_day": -2023583.2395564287,
+   "per_day_lo": -2515927.0624191333,
+   "per_day_hi": -1524326.2116435354,
+   "stress_hours": -8367670.061491845,
+   "stress_spells": 226,
+   "stress_closing_levels": [
+    90,
+    127,
+    9
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 120,
+   "trigger_bps_5s": 40.0,
+   "per_day": -115938.99234325033,
+   "per_day_lo": -271196.931718905,
+   "per_day_hi": 89829.82296788337,
+   "stress_hours": -2044493.173804534,
+   "stress_spells": 151,
+   "stress_closing_levels": [
+    31,
+    109,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 10.0,
+   "per_day": -5864014.943154218,
+   "per_day_lo": -6883985.845974981,
+   "per_day_hi": -4920134.496755865,
+   "stress_hours": -2492174.418798868,
+   "stress_spells": 191,
+   "stress_closing_levels": [
+    57,
+    123,
+    11
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 20.0,
+   "per_day": -1532393.1087979353,
+   "per_day_lo": -1912784.516598253,
+   "per_day_hi": -1180779.7056516143,
+   "stress_hours": -1889519.3862038031,
+   "stress_spells": 163,
+   "stress_closing_levels": [
+    27,
+    128,
+    8
+   ]
+  },
+  {
+   "tier": 3,
+   "fee": 0.08000000000000002,
+   "opens": "trigger",
+   "closes": "move",
+   "spell_s": 300,
+   "trigger_bps_5s": 40.0,
+   "per_day": -26062.93366385312,
+   "per_day_lo": -195059.3143335747,
+   "per_day_hi": 227665.23672584502,
+   "stress_hours": 379562.7897444281,
+   "stress_spells": 137,
+   "stress_closing_levels": [
+    13,
+    114,
+    10
+   ]
+  }
+ ],
+ "seconds": 9
+}

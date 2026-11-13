@@ -412,6 +412,16 @@ an index: load only the rule whose hint matches the current action.
   2025-10-10's unpriced pairs and the latency classes under each candidate, and the launch criterion
   at the 10 s curve; per-bin series in gitignored `data/`. Its `README.md` gives the method, results
   and the proposal.
+  `launch-caps/` (#500) proposes every launch market's exposure-cap floor, the total floor and the
+  level-1 utilisation for the owner (#614, decision D8): the cap study's per-market, joint, total-floor,
+  utilisation and sensitivity stages at the launch pricing (each fill through its market's spread bands
+  at its tier's best-price size, the cap study's `Scenario.spread_bands`; the 10 s fee curve; D5's tier
+  leverage), run at tier 0 and tier 3, the ends of the tier range, on the current and the target
+  client's flow; the retained NAV and honest share at that pricing; and paired positions across
+  unpriced moves (#549's measure at V52's level spreads, each move from the last repricing, through
+  tier-2 accounts, reconciled with #697's and `loss-rate-trigger/`'s) and across session gaps (FX,
+  index and commodity markets, at each tier's leverage). Its `README.md` gives the method, results,
+  proposals and how to re-run.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
   `dev-operator-bounds.sh`, the operator's bounds on a dev node: benchmark rates inside and outside the
@@ -837,6 +847,11 @@ Run from the repo root:
   <stage>` (`honest --flow current`, `honest --flow target`, `grid`, `stress --flow current`,
   `stress --flow target`, `latency`, `recommend`, `share`, then `report`), and its tests with
   `python -I -m pytest tests`
+- Launch-cap research (#500), from a virtualenv outside the repo with
+  `research/launch-caps/requirements.txt`, in `research/launch-caps/`: `python -I run.py <stage>`
+  (`sweep` and `joint` at `--tier 0` and `--tier 3`, the joint also with `--flow target`, `propose`,
+  `total`, `stress`, `sensitivity` and `income` per tier, `gaps`, `unprice`, then `report`; hours of
+  compute, run under `nice`), and its tests with `python -I -m pytest tests`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
   `python -I research/close-spread-calibration/run.py`, then
   `python -I research/close-spread-calibration/calibrate.py`, then
