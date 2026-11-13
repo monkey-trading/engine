@@ -1,0 +1,87 @@
+{
+ "curve": [
+  10.0,
+  900.0
+ ],
+ "flows": {
+  "current": {
+   "classes": {
+    "latency arbitrage, crypto (3 s)": {
+     "operator_per_day": 159822.78946774258,
+     "trigger_sees": true
+    },
+    "latency arbitrage, FX and indices at D6's tenths (3 s)": {
+     "operator_per_day": 63393.31361103645,
+     "trigger_sees": true
+    },
+    "unpriced pairs at 1% margin, tier 3's fee": {
+     "operator_per_day": 17396.568787353997,
+     "trigger_sees": true
+    },
+    "held sync's kill option": {
+     "operator_per_day": 1749.1551283316467,
+     "trigger_sees": true
+    },
+    "skimming client fills": {
+     "operator_per_day": 159248.35120847393,
+     "trigger_sees": false
+    },
+    "censoring closes": {
+     "operator_per_day": 0.0,
+     "trigger_sees": false
+    }
+   },
+   "together": 401610.17820293864,
+   "seen": 242361.82699446467,
+   "share": 1148272.95764947,
+   "share_at_1s": 1139058.7252045136,
+   "holds": true,
+   "operator_budget": 989024.6064409962,
+   "house_loss_budget": 1236280.7580512452,
+   "seen_house_loss": 302952.2837430808,
+   "stress_day_pairs_house_loss_697": 30558329.411673564
+  },
+  "target": {
+   "classes": {
+    "latency arbitrage, crypto (3 s)": {
+     "operator_per_day": 159822.78946774258,
+     "trigger_sees": true
+    },
+    "latency arbitrage, FX and indices at D6's tenths (3 s)": {
+     "operator_per_day": 63393.31361103645,
+     "trigger_sees": true
+    },
+    "unpriced pairs at 1% margin, tier 3's fee": {
+     "operator_per_day": 17396.568787353997,
+     "trigger_sees": true
+    },
+    "held sync's kill option": {
+     "operator_per_day": 1749.1551283316467,
+     "trigger_sees": true
+    },
+    "skimming client fills": {
+     "operator_per_day": 46994.5843720141,
+     "trigger_sees": false
+    },
+    "censoring closes": {
+     "operator_per_day": 0.0,
+     "trigger_sees": false
+    }
+   },
+   "together": 289356.4113664788,
+   "seen": 242361.82699446467,
+   "share": 385882.91092277935,
+   "share_at_1s": 385067.8510347685,
+   "holds": true,
+   "operator_budget": 338888.32655076525,
+   "house_loss_budget": 423610.40818845655,
+   "seen_house_loss": 302952.2837430808,
+   "stress_day_pairs_house_loss_697": 30558329.411673564
+  }
+ },
+ "fastest": {
+  "crypto": 78584.99708830813,
+  "fx_indices": 22979.910069475045,
+  "total": 101564.90715778316
+ }
+}
