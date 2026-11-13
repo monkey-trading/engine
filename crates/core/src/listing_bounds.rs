@@ -4,18 +4,20 @@
 //! A notice may name a market's spread bands, margin bands and financing markup (`V49`'s markup
 //! notice is the notice naming only a markup), and a relisting applies each named value once, from
 //! the notice's time on. At every notional a noticed spread rate is at least the launch rate there
-//! and at most twice it, and a noticed margin requirement at least launch's. The launch bands are the
-//! listing in force when `V52` activates, each spread rate raised to its class's floor, or a market's
-//! first listing after it. A new listing needs no notice.
+//! and at most twice it, and a noticed margin requirement, unrounded, at least launch's. The launch
+//! bands are the listing in force when `V52` activates, each spread rate raised to its class's floor,
+//! or a market's first listing after it; with them is the market's launch close charge under the
+//! parameters in force then, below which no ceiling is adopted (see `close_spread`). A new listing
+//! needs no notice.
 
 use std::iter::once;
 
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::close_spread::launch_close_charge_tenth_bps;
 use crate::engine::Engine;
-use crate::fixed::Rounding;
-use crate::market::{MarketSpec, Tier, staircase, validate_tiers};
+use crate::market::{MarketSpec, Tier, validate_tiers};
 use crate::params::MAX_RATE_BPS;
 use crate::protocol::ProtocolVersion;
 use crate::spread_tier::{SpreadTier, check_spread_tiers, validate_spread_tiers};
@@ -37,12 +39,15 @@ pub struct ListingNotice {
     pub effective_at: Millis,
 }
 
-/// A market's launch bands, which bound the bands a listing notice may name.
+/// A market's launch bands, which bound the bands a listing notice may name, and its launch close
+/// charge, which bounds the ceilings it may adopt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchBands {
     pub spread_tiers: Vec<SpreadTier>,
     pub margin_tiers: Vec<Tier>,
+    /// The launch close charge, in tenths of a bp, under the parameters in force at launch.
+    pub close_charge_tenth_bps: i64,
 }
 
 /// What a listing changes that its market's notice names, so applying it spends those values, and
@@ -68,24 +73,38 @@ impl ListingNotice {
 }
 
 impl Engine {
-    /// On an activation carrying `version` to `V52` or later from before it: writes every listed
-    /// market's spread bands in tenths of a bp, each raised to its class's floor, takes the result
-    /// and the margin bands as the market's launch bands, and raises each stress level's size
-    /// multiplier to at least 1x.
+    /// On an activation carrying `version` to `V52` or later from before it: raises each stress
+    /// level's size multiplier to at least 1x, writes every listed market's spread bands in tenths of
+    /// a bp, each raised to its class's floor, takes the result, the margin bands and the launch close
+    /// charge as the market's launch bands, and raises the ceilings to them (see
+    /// `Engine::raise_ceilings_to_launch`).
     pub(crate) fn start_listing_bounds(&mut self, version: ProtocolVersion) {
         if self.protocol_version >= ProtocolVersion::V52 || version < ProtocolVersion::V52 {
             return;
+        }
+        if let Some(params) = self.params.as_mut() {
+            params.raise_size_multipliers();
         }
         let ids: Vec<MarketId> = self.markets.keys().copied().collect();
         for id in ids {
             let spec = &mut self.markets.get_mut(&id).expect("listed").spec;
             spec.convert_spread_tiers();
-            let launch =
-                LaunchBands { spread_tiers: spec.spread_tiers.clone(), margin_tiers: spec.margin_tiers.clone() };
+            let launch = self.launch_of(&self.markets[&id].spec);
             self.operator_bounds.launch_bands.insert(id, launch);
         }
-        if let Some(params) = self.params.as_mut() {
-            params.raise_size_multipliers();
+        self.raise_ceilings_to_launch();
+    }
+
+    /// `spec` as its market's launch bands, with its launch close charge under the parameters in
+    /// force, none before parameters are set.
+    fn launch_of(&self, spec: &MarketSpec) -> LaunchBands {
+        LaunchBands {
+            spread_tiers: spec.spread_tiers.clone(),
+            margin_tiers: spec.margin_tiers.clone(),
+            close_charge_tenth_bps: self
+                .params
+                .as_ref()
+                .map_or(0, |params| launch_close_charge_tenth_bps(params, spec)),
         }
     }
 
@@ -167,8 +186,7 @@ impl Engine {
     /// notice with them once it names nothing more.
     pub(crate) fn settle_listing_change(&mut self, spec: &MarketSpec, change: ListingChange) {
         if change.first && self.protocol_version >= ProtocolVersion::V52 {
-            let launch =
-                LaunchBands { spread_tiers: spec.spread_tiers.clone(), margin_tiers: spec.margin_tiers.clone() };
+            let launch = self.launch_of(spec);
             self.operator_bounds.launch_bands.insert(spec.id, launch);
             self.operator_bounds.proposed_listings.remove(&spec.id);
         }
@@ -225,16 +243,30 @@ fn check_spread_within_launch(tiers: &[SpreadTier], launch: &[SpreadTier]) -> Re
     Ok(())
 }
 
-/// Checks that at every notional the margin `tiers` require is at least what `launch` requires. Both
-/// requirements are linear between the bounds of either table, so they are compared at each bound,
-/// and past the last by the last band's rate.
+/// The margin `tiers` require on `notional` before rounding, in raw units times bps: each band's
+/// rate times the slice of the notional inside it.
+fn exact_requirement(tiers: &[Tier], notional: Fixed) -> i128 {
+    let mut low = Fixed::ZERO;
+    tiers
+        .iter()
+        .map(|tier| {
+            let high = tier.up_to.map_or(notional, |up_to| up_to.min(notional));
+            let slice = (high - low.min(high)).raw();
+            low = low.max(high);
+            slice * i128::from(tier.bps)
+        })
+        .sum()
+}
+
+/// Checks that at every notional the margin `tiers` require is at least what `launch` requires,
+/// before the rounding up the engine applies to each band's charge, which can differ by a raw unit
+/// per band between tables. The unrounded requirements are linear between the bounds of either table,
+/// so they are compared at each bound, and past the last by the last band's rate.
 /// Error cases:
-/// - a bound where the requirement, as the engine rounds it, is below launch's, or a last rate below
-///   launch's
+/// - a bound where the unrounded requirement is below launch's, or a last rate below launch's
 fn check_margin_at_or_above_launch(tiers: &[Tier], launch: &[Tier]) -> Result<(), String> {
-    let required = |table: &[Tier], notional| staircase(table, Fixed::ZERO, notional, Rounding::Up);
     for bound in tiers.iter().chain(launch).filter_map(|tier| tier.up_to) {
-        if required(tiers, bound) < required(launch, bound) {
+        if exact_requirement(tiers, bound) < exact_requirement(launch, bound) {
             return Err(format!("the margin requirement at {bound} USD is below its launch requirement"));
         }
     }

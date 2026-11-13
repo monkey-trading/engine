@@ -13,11 +13,13 @@
 //! be lowered, never raised.
 //!
 //! From `V52` closes pay the size spread, so a ceiling is at least its market's launch close charge,
-//! which counts the first band at the widest size multiplier: an install or adoption below it is
-//! refused, an adoption for a market not yet listed binds the listing that market's first listing
-//! must be, and that first listing is refused while its own launch close charge exceeds the
-//! ceiling. A pure close's charge clamps to the ceiling before the check that a spread stays under
-//! the price, so a pure close always prices.
+//! which counts the first band at the widest size multiplier: an install or adoption below it, under
+//! the parameters in force or those the market launched under, is refused, an adoption for a market
+//! not yet listed binds the listing that market's first listing must be, and that first listing is
+//! refused while its own launch close charge exceeds the ceiling. The activation raises a listed
+//! market's ceiling, and a pending adoption's value, to its launch close charge. A pure close's
+//! charge clamps to the ceiling before the check that a spread stays under the price, so a pure close
+//! always prices.
 
 use std::collections::BTreeMap;
 
@@ -79,23 +81,46 @@ pub(crate) fn launch_close_charge_tenth_bps(params: &ProtocolParams, spec: &Mark
     launch_close_charge_bps(params) * 10 + (first * multiplier + 9_999) / 10_000
 }
 
-/// Checks a ceiling covers `spec`'s launch close charge under `params`.
-/// Error cases:
-/// - a ceiling below the launch close charge, in tenths of a bp
-fn check_ceiling_floor(params: &ProtocolParams, spec: &MarketSpec, ceiling_bps: i64) -> Result<(), String> {
-    let floor = launch_close_charge_tenth_bps(params, spec);
-    if ceiling_bps * 10 < floor {
-        return Err(format!(
-            "market {}'s close-spread ceiling of {ceiling_bps}bps is below its launch close charge of {}.{}bps",
-            spec.id,
-            floor / 10,
-            floor % 10
-        ));
-    }
-    Ok(())
-}
-
 impl Engine {
+    /// Checks a ceiling covers `spec`'s launch close charge under `params`, and the one its market
+    /// launched under, once it has.
+    /// Error cases:
+    /// - a ceiling below either launch close charge, in tenths of a bp
+    fn check_ceiling_floor(&self, params: &ProtocolParams, spec: &MarketSpec, ceiling_bps: i64) -> Result<(), String> {
+        let launched =
+            self.operator_bounds.launch_bands.get(&spec.id).map_or(0, |launch| launch.close_charge_tenth_bps);
+        let floor = launch_close_charge_tenth_bps(params, spec).max(launched);
+        if ceiling_bps * 10 < floor {
+            return Err(format!(
+                "market {}'s close-spread ceiling of {ceiling_bps}bps is below its launch close charge of {}.{}bps",
+                spec.id,
+                floor / 10,
+                floor % 10
+            ));
+        }
+        Ok(())
+    }
+
+    /// On `V52`'s activation, once launch bands are recorded: raises each listed market's ceiling,
+    /// and a pending adoption's value for one, to its launch close charge rounded up to a whole bp,
+    /// so no ceiling set before closes paid the size spread waives it.
+    pub(crate) fn raise_ceilings_to_launch(&mut self) {
+        let floor = |launch: &crate::listing_bounds::LaunchBands| {
+            ((launch.close_charge_tenth_bps + 9) / 10).min(MAX_CLOSE_SPREAD_BPS)
+        };
+        let launch_bands = &self.operator_bounds.launch_bands;
+        for (market, ceiling) in self.close_spread_ceilings.iter_mut().flatten() {
+            if let Some(launch) = launch_bands.get(market) {
+                *ceiling = (*ceiling).max(floor(launch));
+            }
+        }
+        if let Some(pending) = self.pending_ceiling.as_mut()
+            && let Some(launch) = launch_bands.get(&pending.market)
+        {
+            pending.max_close_spread_bps = pending.max_close_spread_bps.max(floor(launch));
+        }
+    }
+
     /// The adopted close-spread ceilings by market, once genesis (or one signed install) records
     /// them; `None` until then.
     pub fn close_spread_ceilings(&self) -> Option<&BTreeMap<MarketId, i64>> {
@@ -128,7 +153,8 @@ impl Engine {
     /// - a listed market with no entry
     /// - a value outside 0..=9999 bps, or a nonzero value below the parameters' largest close
     ///   charge, which would clamp a launch close by more than the rounding unit
-    /// - from `V52`, a value below its listed market's launch close charge, zero included
+    /// - from `V52`, a value below its listed market's launch close charge under the parameters in
+    ///   force or those it launched under, zero included
     pub(crate) fn install_close_spread_ceilings(&mut self, ceilings: &[CloseSpreadCeiling]) -> Result<(), String> {
         if self.close_spread_ceilings.is_some() {
             return Err("the close-spread ceiling registry is already installed".into());
@@ -151,7 +177,7 @@ impl Engine {
             if let Some(market) = self.markets.get(&ceiling.market)
                 && self.protocol_version >= ProtocolVersion::V52
             {
-                check_ceiling_floor(params, &market.spec, ceiling.max_close_spread_bps)?;
+                self.check_ceiling_floor(params, &market.spec, ceiling.max_close_spread_bps)?;
             }
         }
 
@@ -174,7 +200,8 @@ impl Engine {
     /// - a listing before `V52`, or from `V52` one for a listed market, none for a market not yet
     ///   listed, or one that is for another market, fails `MarketSpec::validate` or
     ///   `check_spread_tiers`
-    /// - from `V52`, a value below the launch close charge of the listed market or of the listing
+    /// - from `V52`, a value below the launch close charge of the listed market under the parameters
+    ///   in force or those it launched under, or of the listing
     pub(crate) fn adopt_close_spread_ceiling(
         &mut self,
         market: MarketId,
@@ -233,7 +260,7 @@ impl Engine {
                 spec
             }
         };
-        check_ceiling_floor(params, spec, ceiling)
+        self.check_ceiling_floor(params, spec, ceiling)
     }
 
     /// Checks a listing against the ceiling registry, from `V40` once the registry is installed:
@@ -281,7 +308,7 @@ impl Engine {
             // The registry is installed only once parameters are set.
             let params = self.params.as_ref().expect("an installed registry has parameters");
             let ceiling = pending.map_or(ceilings[&spec.id], |pending| pending.max_close_spread_bps);
-            check_ceiling_floor(params, spec, ceiling.min(ceilings[&spec.id]))?;
+            self.check_ceiling_floor(params, spec, ceiling.min(ceilings[&spec.id]))?;
         }
         Ok(())
     }

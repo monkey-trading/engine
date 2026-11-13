@@ -11,7 +11,7 @@ use common::{BTC, DE40, EURUSD, Harness, f};
 use engine_core::auth::ClientAuth;
 use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::AdminCommand;
-use engine_core::listing_bounds::{LaunchBands, ListingNotice};
+use engine_core::listing_bounds::ListingNotice;
 use engine_core::market::{MarketSpec, Tier};
 use engine_core::operator_bounds::{ParamsNotice, StressSettings};
 use engine_core::protocol::ProtocolVersion;
@@ -181,8 +181,8 @@ fn activation_writes_the_bands_in_tenths_at_their_floor_and_takes_them_as_launch
     for (market, first) in [(BTC, 10), (EURUSD, 1), (DE40, 1)] {
         let spec = &h.engine.markets()[&market].spec;
         assert_eq!(spec.spread_tiers, tenths(&[(Some(1_000_000), first), (Some(5_000_000), 20), (None, 50)]));
-        let launch = LaunchBands { spread_tiers: spec.spread_tiers.clone(), margin_tiers: spec.margin_tiers.clone() };
-        assert_eq!(h.engine.operator_bounds().launch_bands[&market], launch);
+        let launch = &h.engine.operator_bounds().launch_bands[&market];
+        assert_eq!((&launch.spread_tiers, &launch.margin_tiers), (&spec.spread_tiers, &spec.margin_tiers));
     }
     let levels = &h.engine.params().unwrap().stress_levels;
     assert_eq!(levels.iter().map(|l| l.size_spread_multiplier_bps).collect::<Vec<_>>(), [10_000, 10_000]);

@@ -86,3 +86,20 @@ fn the_margin_requirement_stays_at_or_above_launch_at_every_notional() {
         assert_eq!(checked.is_ok(), admitted, "{bands:?}: {checked:?}");
     }
 }
+
+#[test]
+fn margin_bands_compare_before_each_bands_rounding() {
+    // Two 100bps bands split at a raw unit's fraction of a dollar, merged into one: the same
+    // requirement at every notional, though rounding each band up charges launch a raw unit more
+    // just past the split.
+    let split = Fixed::from_raw(1_000_000_000_000_099);
+    let launch = vec![Tier { up_to: Some(split), bps: 100 }, Tier { up_to: None, bps: 100 }];
+    let merged = margins(&[(None, 100)]);
+    assert!(check_margin_at_or_above_launch(&merged, &launch).is_ok());
+    // A first band a bp lower is refused.
+    let lower = vec![Tier { up_to: Some(split), bps: 99 }, Tier { up_to: None, bps: 100 }];
+    assert!(check_margin_at_or_above_launch(&lower, &launch).is_err());
+    let past = Fixed::from_raw(split.raw() + 1);
+    let rounded = |table: &[Tier]| crate::market::staircase(table, Fixed::ZERO, past, crate::fixed::Rounding::Up);
+    assert_eq!(rounded(&launch) - rounded(&merged), Fixed::from_raw(1));
+}

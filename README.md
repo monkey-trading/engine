@@ -113,8 +113,9 @@ From V49 a market's financing markup and the stress levels and triggers in the s
 change only seven days after a signed notice, as the profit fee and close-out level do. From V52 so do
 a listed market's spread and margin bands, and only within its launch bands: at every size a spread
 stays between its launch rate and twice it, and margin at or above launch's. A market's close-spread
-ceiling covers what a close in its first band can pay at the widest admitted stress, and a market
-not yet listed can only be listed as the ceiling adoption that preceded it named it.
+ceiling is set no lower than what a close in its first band could pay at the widest admitted stress
+when it was set or when the market launched, and a market not yet listed can only be listed as the
+ceiling adoption that preceded it named it.
 While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
 distribution, which it claims from the vault as a staker claims its own; from V50 the fifth is split
 among the operators by their time in office during the epoch.

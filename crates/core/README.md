@@ -101,8 +101,9 @@ this crate and reproduce the signed state roots exactly.
 - From protocol `V52`, a listed market's spread and margin bands move only as a listing notice of at
   least seven days names them (`src/listing_bounds.rs`): at every notional a spread rate stays from
   its launch rate to twice it and the margin requirement at or above launch's; a close-spread
-  ceiling covers its market's launch close charge, which counts the first band at the widest
-  multiplier, and an adoption for a market not yet listed binds the listing its first listing must be
+  ceiling is installed or adopted only at or above its market's launch close charge, which counts the
+  first band at the widest multiplier, and an adoption for a market not yet listed binds the listing
+  its first listing must be
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -672,14 +673,16 @@ ceiling before the check that a spread stays under the price, so a pure close al
 listed market's spread bands, margin bands and markup move only as a listing notice names them, once
 its seven days have run: `AnnounceListing` names any of the three, `AnnounceMarkup` the markup alone,
 and each market keeps one notice. At every notional a noticed spread rate stays from the launch rate
-to twice it, and the margin requirement at or above launch's; the launch bands are the listing in
-force at activation, or a market's first listing after it, and a new listing needs no notice. A
-close-spread ceiling is at least its market's launch close charge, the widest stress minimum and the
-top toxicity add-on plus the first band at the widest multiplier, in tenths of a bp: an install or
-adoption below it is refused, and an adoption for a market not yet listed names the listing it
+to twice it, and the margin requirement, before each band's rounding, at or above launch's; the
+launch bands are the listing in force at activation, or a market's first listing after it, and a new
+listing needs no notice. A close-spread ceiling is at least its market's launch close charge, the
+widest stress minimum and the top toxicity add-on plus the first band at the widest multiplier, in
+tenths of a bp, under the parameters in force and under those the market launched with: an install
+or adoption below it is refused, and an adoption for a market not yet listed names the listing it
 binds, which that market's first listing must be, refused while its launch close charge exceeds the
 ceiling. Activation writes every listed band in tenths of a bp, raises each to its floor and each
-multiplier to 1x, and records the launch bands. Bands listed earlier keep their whole-bps encoding,
+multiplier to 1x, records the launch bands with each market's launch close charge, and raises a
+lower ceiling, or a pending adoption's lower value, to that charge. Bands listed earlier keep their whole-bps encoding,
 a listing notice naming only a markup encodes as V49's did, and nothing else is recorded before V52,
 so earlier logs replay unchanged. Its session is in `examples/reference_log/v52.rs`.
 

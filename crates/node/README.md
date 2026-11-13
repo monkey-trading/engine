@@ -2144,7 +2144,8 @@ each left out when not named, and `effective_at`); the bands in force are `GET /
 `set_params` command encodes them (`profit_fee_bps`, `closeout_level_bps`, `house_total_cap_bps`,
 `house_total_cap_floor` left out when zero, `stress_levels`, and the rest), plus `seq`, the seq of the
 `SetParams` that set them (`null` only when a snapshot written before it carried the seq restored the
-node and no `SetParams` has applied since). `checkpoint` is `null` until the log holds one, then the
+node and no `SetParams` has applied since; an activation that converts the parameters in place, as
+`V13`'s divergence shares and `V52`'s 1x multipliers do, leaves it at that `SetParams`). `checkpoint` is `null` until the log holds one, then the
 latest checkpoint as the stream carries it (`offset`, `type: "checkpoint"`, `seq`, `root`,
 `signature`, `signer`, and the rest). The sequencer keeps the checkpoint as it logs it and the seq as
 it applies the command; recovery restores both from the replay it already runs, or from the snapshot

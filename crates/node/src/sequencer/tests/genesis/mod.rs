@@ -6,6 +6,7 @@ use super::*;
 
 use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::params::NotionalWeighting;
+use engine_core::spread_tier::SpreadTier;
 
 use crate::config::{CustodyProvider, Genesis, NodeConfig};
 use crate::sequencer::fixture_tests::{geneses_no_config_can_name, old_genesis_log};
@@ -301,6 +302,35 @@ fn a_genesis_set_before_divergence_shares_resumes_under_the_shares_a_config_load
     }
     let err = recover_with(&dir, &signed(31_337), other).err().unwrap();
     assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{err:#}");
+}
+
+#[test]
+fn a_genesis_set_before_v52_resumes_under_the_bands_and_multipliers_v52_converts_it_to() {
+    // A log from before `V52` listed BTC with a 0bp first band in whole bps and set a 0x size
+    // multiplier, which config load under the latest protocol refuses: its genesis compares as
+    // `V52`'s activation converts it, bands in tenths of a bp raised to the class floor and
+    // multipliers raised to 1x, and the genesis as written is refused.
+    let dir = scratch_dir("genesis-v52-conversions");
+    let mut genesis = dev_config().genesis;
+    genesis.close_spread_ceilings.clear();
+    genesis.params.stress_levels[0].size_spread_multiplier_bps = 0;
+    let first = genesis.markets[0].spread_tiers[0].up_to;
+    genesis.markets[0].spread_tiers = vec![SpreadTier::bps(first, 0), SpreadTier::bps(None, 8)];
+    let written = genesis_commands(&genesis);
+    old_genesis_log(&dir, &signed(31_337), ProtocolVersion::V23, written.clone(), Vec::new());
+
+    let mut converted = genesis;
+    converted.markets[0].convert_spread_tiers();
+    converted.params.raise_size_multipliers();
+    assert_eq!(converted.markets[0].spread_tiers, [SpreadTier::tenths(first, 10), SpreadTier::tenths(None, 80)]);
+    assert_eq!(converted.params.stress_levels[0].size_spread_multiplier_bps, 10_000);
+    let err = recover_with(&dir, &signed(31_337), written).err().unwrap();
+    assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{err:#}");
+    let mut seq = recover_with(&dir, &signed(31_337), genesis_commands(&converted)).unwrap();
+    // The activation converts the listing and parameters in force the same way.
+    seq.activate_protocol().unwrap();
+    assert_eq!(seq.engine.markets()[&1].spec.spread_tiers, converted.markets[0].spread_tiers);
+    assert_eq!(seq.engine.params().unwrap().stress_levels[0].size_spread_multiplier_bps, 10_000);
 }
 
 #[test]

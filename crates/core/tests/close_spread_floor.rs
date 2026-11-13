@@ -1,19 +1,21 @@
 //! `V52`'s floor under the close-spread ceilings, through `Engine::apply`: a ceiling covers its
 //! market's launch close charge, which counts the first spread band at the widest size multiplier,
-//! and an adoption for a market not yet listed binds the listing that market's first listing must be.
-//! The genesis harness's launch close charge is 10bps: a 5bp stress minimum and a 3bp add-on, plus
-//! the first band's 1bp at level 1's 2x.
+//! and an adoption for a market not yet listed binds the listing that market's first listing must be;
+//! no adoption goes below the charge a market launched with, and the activation raises lower
+//! ceilings to it. The genesis harness's launch close charge is 10bps: a 5bp stress minimum and a 3bp
+//! add-on, plus the first band's 1bp at level 1's 2x.
 
 mod common;
 
 use common::close_spread::{NOTICE_MS, ceilings, install, install_expect, into_v40, share_params, with};
 use common::spreads::{applied, genesis_v52, refused, tenths};
-use common::{BTC, Harness, market};
+use common::{AAPL, BTC, ETH, Harness, market};
 use engine_core::Engine;
 use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::market::MarketSpec;
 use engine_core::params::ToxicityTier;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::session::Schedule;
 use engine_core::types::{AssetClass, MarketId};
 
@@ -151,6 +153,50 @@ fn a_first_listing_while_an_adoption_waits_is_held_to_its_listing_and_value() {
     h.cmd(Command::Tick);
     assert_eq!(h.engine.close_spread_ceilings().unwrap()[&SOL], 15);
     assert!(h.engine.operator_bounds().proposed_listings.is_empty());
+}
+
+#[test]
+fn a_lower_add_on_admits_no_ceiling_below_the_charge_its_market_launched_with() {
+    let mut h = genesis_v52();
+    install_expect(&mut h, ceilings());
+    // Without the add-on BTC's charge under the parameters in force is 7bps, but it launched at 10.
+    h.admin(with_add_on(0));
+    let events = h.cmd(Command::Admin(adopt(BTC, 9, h.ts + NOTICE_MS, None)));
+    assert_eq!(refused(&events), "market 1's close-spread ceiling of 9bps is below its launch close charge of 10.0bps");
+    h.admin(adopt(BTC, 10, h.ts + NOTICE_MS, None));
+    // A wider add-on binds an adoption under the parameters in force.
+    h.admin(with_add_on(5));
+    let events = h.cmd(Command::Admin(adopt(BTC, 11, h.ts + NOTICE_MS, None)));
+    assert_eq!(
+        refused(&events),
+        "market 1's close-spread ceiling of 11bps is below its launch close charge of 12.0bps"
+    );
+}
+
+#[test]
+fn activation_raises_lower_ceilings_and_a_pending_adoption_to_the_launch_close_charge() {
+    // Before `V52` an adoption may lower an entry to zero, which waives a close's whole spread.
+    let mut h = common::close_spread::harness();
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V51 });
+    assert!(applied(&h.operate(adopt(ETH, 0, h.ts + NOTICE_MS, None))));
+    h.advance_to(h.ts + NOTICE_MS);
+    h.cmd(Command::Tick);
+    assert_eq!(h.engine.close_spread_ceilings().unwrap()[&ETH], 0);
+    let due = h.ts + NOTICE_MS;
+    assert!(applied(&h.operate(adopt(BTC, 0, due, None))));
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V52 });
+    // Each launch close charge, rounded up to a whole bp.
+    let launched =
+        |h: &Harness, market| (h.engine.operator_bounds().launch_bands[&market].close_charge_tenth_bps + 9) / 10;
+    let ceilings = h.engine.close_spread_ceilings().unwrap();
+    assert!(launched(&h, ETH) > 0);
+    assert_eq!(ceilings[&ETH], launched(&h, ETH));
+    // An entry already above it stays.
+    assert!(launched(&h, AAPL) < 15);
+    assert_eq!(ceilings[&AAPL], 15);
+    h.advance_to(due);
+    h.cmd(Command::Tick);
+    assert_eq!(h.engine.close_spread_ceilings().unwrap()[&BTC], launched(&h, BTC));
 }
 
 #[test]
