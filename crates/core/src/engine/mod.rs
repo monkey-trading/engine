@@ -33,6 +33,7 @@ use crate::election::OperatorElection;
 use crate::emissions::{EmissionLedger, Emissions, PeriodResult, TokenUnits};
 use crate::event::Event;
 use crate::fixed::Rounding;
+pub(crate) use crate::markouts::Markout;
 use crate::merkle::state::{Changed, StateTree, is_zero};
 use crate::operator_bounds::OperatorBounds;
 use crate::params::ProtocolParams;
@@ -40,9 +41,10 @@ use crate::protocol::ProtocolVersion;
 use crate::session_keys::AccountSessionKeys;
 use crate::staking::{Staking, UsdcUnits};
 pub use crate::stress::{MoveBucket, StressState};
+use crate::toxicity::{MarkoutSpread, ToxicityScore};
 use crate::tracked::{TrackedMap, TrackedSet};
 use crate::turns::DailyTurns;
-use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis, OrderId, Side};
+use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis, OrderId};
 use crate::withdrawal::{QueuedWithdrawal, WithdrawalApproval};
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -179,6 +181,12 @@ pub struct Engine {
     /// `V42` its `budget` does.
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) session_keys: TrackedMap<AccountId, AccountSessionKeys>,
+    /// From `V54`, each scored account's toxicity score (`toxicity`).
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) toxicity_scores: TrackedMap<AccountId, ToxicityScore>,
+    /// From `V54`, each market's index changes over the trailing hour, which set its markout spread.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) markout_spreads: TrackedMap<MarketId, MarkoutSpread>,
 
     /// The screening source and freshness bound, recorded once from `V24`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -206,20 +214,6 @@ pub struct Engine {
     /// catch-up; this does not.
     #[serde(skip)]
     pub(crate) command_ms: Millis,
-}
-
-/// A fill waiting to be marked against the index once its horizon has passed.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct Markout {
-    pub due: Millis,
-    pub account: AccountId,
-    pub market: MarketId,
-    pub side: Side,
-    pub price: Fixed,
-    /// From `V11`, the fill's notional, which weighs its markout. Left out of the encoding while
-    /// zero, as it is for fills booked before `V11`.
-    #[serde(default, skip_serializing_if = "Fixed::is_zero")]
-    pub notional: Fixed,
 }
 
 impl Engine {
@@ -261,6 +255,8 @@ impl Engine {
         self.settle_operator_candidate();
         // From `V40` a ceiling adoption whose notice has run applies before the command acts.
         self.apply_due_ceiling(sequenced.ts);
+        // From `V54` each market's index is sampled at the grid points since the last command.
+        self.sample_markout_spreads(last_now);
 
         let mut events = Vec::new();
         // From `V21`, a quote held across a closure could never count under the hours rules, so it
@@ -329,7 +325,7 @@ impl Engine {
         if v12 {
             let priced = match &sequenced.cmd {
                 Command::Prices { market, quotes } => {
-                    self.store_quotes(*market, quotes, &mut events).then_some(*market)
+                    self.store_sampled_quotes(*market, quotes, &mut events).then_some(*market)
                 }
                 _ => None,
             };

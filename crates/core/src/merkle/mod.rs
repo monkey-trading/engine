@@ -21,7 +21,8 @@
 //!   (`address`), kind 14 its staked MONKEY balance, and from `V27` kind 15 a credited staking
 //!   mirror reference (its UTF-8 bytes). From `V38`, kind 24 holds the exit terms (no id), and the
 //!   queued withdrawal (33) and receipt-backed pending deposit (34) leaves are ABI-encoded for the
-//!   vault's exit (`exit.rs`).
+//!   vault's exit (`exit.rs`). From `V54`, kind 25 is an account's toxicity score (`address`) and
+//!   kind 26 a market's markout spread history (`uint32`) (`toxicity.rs`).
 //! - **Paths.** The key's bits, most significant first, are the path from the root: bit `d`,
 //!   `(uint256(key) >> (255 - d)) & 1`, picks the child at depth `d + 1`, 0 left and 1 right.
 //! - **Leaves.** `keccak256(abi.encodePacked(bytes1(0x00), key, valueHash))`; each kind's
@@ -52,6 +53,8 @@ mod withdrawal;
 pub use withdrawal::*;
 mod exit;
 pub use exit::*;
+mod toxicity;
+pub use toxicity::{markout_spread_key, toxicity_score_key};
 pub(crate) mod state;
 pub use state::RootWork;
 

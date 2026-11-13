@@ -47,6 +47,7 @@ fn notice(fee: Option<i64>, level: Option<i64>, effective_at: Millis) -> AdminCo
         closeout_level_bps: level,
         stress: None,
         effective_at,
+        score_tiers: None,
     })
 }
 

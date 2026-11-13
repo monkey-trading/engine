@@ -347,3 +347,29 @@ async fn the_stream_quotes_partial_closes_and_a_reversal_through_the_tiers() {
     assert_eq!(quotes[0]["close"]["qty"], "120");
     assert!(step(&quotes[0]["close"], "price") < Fixed::from_int(100_000));
 }
+
+#[test]
+fn a_scored_accounts_quote_names_the_toxicity_add_on_its_prices_include() {
+    let mut engine = funded(100_000_000);
+    let events =
+        apply(&mut engine, T0, Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST }));
+    assert_eq!(events.last(), Some(&Event::AdminApplied), "{events:?}");
+    let neutral = read(&engine, TRADER, BTC);
+    // Scored an hour ago as 25 toxic fills leave an account: a score of about 5.6, the first tier.
+    let mut state = serde_json::to_value(&engine).unwrap();
+    let key = serde_json::to_value(TRADER).unwrap().as_str().unwrap().to_owned();
+    let step = T0 / 3_600_000 - 1;
+    state["toxicity_scores"][key] = serde_json::json!({
+        "edge": "40000", "weight_squares": "50000000", "fills": "25", "notional": "25000", "step": step
+    });
+    let mut scored: Engine = serde_json::from_value(state).unwrap();
+    scored.restore_indexes();
+    let tiered = read(&scored, TRADER, BTC);
+    assert_eq!((neutral.toxicity_bps, tiered.toxicity_bps), (0, 2));
+    assert_eq!(tiered.toxicity_bps, scored.toxicity_standing(TRADER).unwrap().add_on_bps);
+    // Every price is 2 bps of the index further from it, to within the rounding of a fill's cost.
+    let add_on = scored.markets()[&BTC].index(scored.now()).unwrap().mid.mul_bps(2);
+    assert_eq!((tiered.ask[0].qty, tiered.bid[0].qty), (neutral.ask[0].qty, neutral.bid[0].qty));
+    let wider = [tiered.ask[0].price - neutral.ask[0].price, neutral.bid[0].price - tiered.bid[0].price];
+    assert!(wider.iter().all(|wider| (*wider - add_on).abs() <= Fixed::from_raw(10)), "{wider:?} against {add_on}");
+}

@@ -38,7 +38,13 @@ fn wider(h: &Harness) -> ProtocolParams {
 
 fn stress_notice(params: &ProtocolParams, effective_at: Millis) -> AdminCommand {
     let stress = Some(StressSettings::of(params));
-    AdminCommand::AnnounceParams(ParamsNotice { profit_fee_bps: None, closeout_level_bps: None, stress, effective_at })
+    AdminCommand::AnnounceParams(ParamsNotice {
+        profit_fee_bps: None,
+        closeout_level_bps: None,
+        stress,
+        effective_at,
+        score_tiers: None,
+    })
 }
 
 fn markup_of(h: &Harness, market: MarketId) -> i64 {
@@ -144,7 +150,13 @@ fn a_rate_and_stress_notice_is_spent_part_by_part_and_a_new_notice_replaces_it()
     let fee = h.engine.params().unwrap().profit_fee_bps + 1;
     let due = h.ts + NOTICE_MS;
     let stress = Some(StressSettings::of(&params));
-    let notice = ParamsNotice { profit_fee_bps: Some(fee), closeout_level_bps: None, stress, effective_at: due };
+    let notice = ParamsNotice {
+        profit_fee_bps: Some(fee),
+        closeout_level_bps: None,
+        stress,
+        effective_at: due,
+        score_tiers: None,
+    };
     h.operator_admin(AdminCommand::AnnounceParams(notice));
     h.advance_to(due);
     assert!(applied(&h.operate(AdminCommand::SetParams(params.clone()))));
@@ -154,7 +166,13 @@ fn a_rate_and_stress_notice_is_spent_part_by_part_and_a_new_notice_replaces_it()
     // A notice naming only a rate replaces one naming the stress parameters.
     h.operator_admin(stress_notice(&wider(&h), h.ts + NOTICE_MS));
     let effective_at = h.ts + NOTICE_MS;
-    let rate_only = ParamsNotice { profit_fee_bps: Some(fee), closeout_level_bps: None, stress: None, effective_at };
+    let rate_only = ParamsNotice {
+        profit_fee_bps: Some(fee),
+        closeout_level_bps: None,
+        stress: None,
+        effective_at,
+        score_tiers: None,
+    };
     h.operator_admin(AdminCommand::AnnounceParams(rate_only));
     assert_eq!(h.engine.operator_bounds().notice.as_ref().unwrap().stress, None);
 }

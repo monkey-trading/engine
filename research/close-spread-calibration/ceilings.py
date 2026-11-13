@@ -42,11 +42,17 @@ PROXY_SYMBOLS = {"DE40": "cash index standing in for a longer-session future; ov
                  "UK100": "cash index standing in for a longer-session future; overnight move folded into the bar"}
 
 
+def top_toxicity_bps(params):
+    """The widest toxicity add-on: of the score's tiers from V54 (`score_tiers`), and of the tiers before it."""
+    toxicity = params["toxicity"]
+    tiers = toxicity.get("tiers", []) + toxicity.get("score_tiers", [])
+    return max((tier["extra_spread_bps"] for tier in tiers), default=0)
+
+
 def launch_close_charge_bps(params):
     """The widest stress minimum plus the top toxicity add-on: the most a close pays before its size spread."""
     stress = max(level["min_spread_bps"] for level in params["stress_levels"])
-    toxicity = max((tier["extra_spread_bps"] for tier in params["toxicity"]["tiers"]), default=0)
-    return stress + toxicity
+    return stress + top_toxicity_bps(params)
 
 
 def tenth_bps(tier):

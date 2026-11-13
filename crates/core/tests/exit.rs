@@ -16,6 +16,8 @@ mod id_zero;
 mod root;
 #[path = "exit/support.rs"]
 mod support;
+#[path = "exit/toxicity.rs"]
+mod toxicity;
 
 use alloy_primitives::B256;
 use common::{BTC, DE40, USDJPY, acct, f};

@@ -167,27 +167,28 @@ impl GenesisProgress {
     /// The genesis the log ran, in the form a config gives it under the latest protocol: parameters
     /// set before `V11` without a toxicity notional weighting take `weighting`, absolute
     /// divergence triggers set before `V13`, which a config can no longer give, become shares of the
-    /// widest divergence bound among the genesis markets, and spread bands and size multipliers set
-    /// before `V52` take the tenths of a bp, class floors and 1x floor `V52` converts them to.
+    /// widest divergence bound among the genesis markets, spread bands and size multipliers set
+    /// before `V52` take the tenths of a bp, class floors and 1x floor `V52` converts them to, and
+    /// parameters and listings set before `V54` take the form its activation gives them
+    /// (`ProtocolParams::convert_to_score` and `MarketSpec::convert_to_floored`).
     fn restated(&self, weighting: Option<NotionalWeighting>) -> Vec<Command> {
         let mut genesis = self.commands.clone();
+        let mut widest = None;
         for cmd in &mut genesis {
             match cmd {
-                Command::Admin(AdminCommand::UpsertMarket(spec)) => spec.convert_spread_tiers(),
+                Command::Admin(AdminCommand::UpsertMarket(spec)) => {
+                    widest = widest.max(Some(spec.price_rules.max_divergence_bps));
+                    spec.convert_spread_tiers();
+                    spec.convert_to_floored();
+                }
                 Command::Admin(AdminCommand::SetParams(params)) => params.raise_size_multipliers(),
                 _ => {}
             }
         }
-        let widest = genesis
-            .iter()
-            .filter_map(|cmd| match cmd {
-                Command::Admin(AdminCommand::UpsertMarket(spec)) => Some(spec.price_rules.max_divergence_bps),
-                _ => None,
-            })
-            .max();
         if let Some(Command::Admin(AdminCommand::SetParams(params))) = genesis.first_mut() {
             params.toxicity.notional = params.toxicity.notional.or(weighting);
             params.share_divergence_triggers(widest.unwrap_or(0));
+            params.convert_to_score();
         }
         genesis
     }

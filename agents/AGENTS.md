@@ -13,7 +13,11 @@ an index: load only the rule whose hint matches the current action.
   size and stress spreads, margin and close-out, the profit fee, overnight financing, trading
   sessions (from `V21` no quote stamped outside a market's hours prices it), markets priced from
   roll-adjusted front futures contracts (`futures.rs`), dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
-  `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring, signed client requests (EIP-712, per-account
+  `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring (from `V54` a stick in `toxicity/`: markouts from
+  the fill's index in units of each market's markout spread, a decayed size-capped score, tiers from 20 decayed fills, and
+  quantity a fill matches against the account's opposite fills at the same index within the horizon, a close and the
+  reopening after it as an open and the close after it, scoring nothing, found through a transient index in `toxicity/legs.rs`;
+  activation gives a listing with no floor its asset class's; `tests/toxicity_*.rs`), signed client requests (EIP-712, per-account
   nonces, and expiries, and from `V41` session keys: one account-signed registration authorises a
   short-lived in-browser key to place and cancel orders on its own nonce sequence, in
   `session_keys.rs`, where from `V42` the new addresses an account may introduce are a budget of
@@ -102,7 +106,7 @@ an index: load only the rule whose hint matches the current action.
   bounds the host clock (`trusted_time::TrustedClock`); `api/stream/signed.rs`: `signed=1` stream
   frames numbered per connection, chained and bound to the opening request, with heartbeats;
   `api/stream/quotes/`: a signed connection's executable quote subscription, read from
-  `Engine::quote` at most every `api.quote_interval`)
+  `Engine::quote` at most every `api.quote_interval`, naming the toxicity add-on its prices include)
   and their offline checks, `engine
   verify-response` and `engine verify-frames` (`verify/answers.rs`), the account history index (SQLite, derived from the log),
   the derived marks cache (SQLite beside the index, `history/marks/`: per-resolution OHLC buckets of each
@@ -173,8 +177,9 @@ an index: load only the rule whose hint matches the current action.
   it proves each from the beacon node's finalized Fulu state with its own SSZ code, `seed_relay/state.rs`, finds the
   EIP-4788 entry holding the block's root and reads the relay through a strict majority of its Ethereum providers,
   and sends through its signing endpoint with a relayer key apart from the checkpoint relayer's), the
-  `/v1/house/state` read of the protocol parameters (with the seq that set them) and the latest checkpoint
-  (`api/house_state.rs`, `sequencer/house.rs`), checkpoint posting
+  `/v1/house/state` read of the protocol parameters (with the seq that set them, and from `V54` the toxicity
+  score's constants) and the latest checkpoint (`api/house_state.rs`, `sequencer/house.rs`), the account read's
+  toxicity score, tier and add-on from `V54`, checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), at most one signed checkpoint on its way to
   finality at a time (`sequencer/checkpoints/hold_back.rs`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
@@ -331,9 +336,10 @@ an index: load only the rule whose hint matches the current action.
   their venue calendars, each calendar's sources and unpublished gaps, their quote currencies, the
   futures contracts the index and commodity markets roll through with the roll rules, the
   launch margins and fees, from `V52` each market's spread bands in tenths of a bp (#623's tiers,
-  with FX and index first bands pending the owner's confirmation), and, from `V40`, each market's
-  close-spread ceiling (#147's calibrated values, recomputed for `V52`'s floor); a deployment's node
-  sections complete it into a config. Every section
+  with FX and index first bands pending the owner's confirmation), from `V40` each market's
+  close-spread ceiling (#147's calibrated values, recomputed for `V52`'s floor and `V54`'s score
+  tiers), and from `V54` the toxicity score's tiers and each market's markout floor, its year's
+  markout spread (#699); a deployment's node sections complete it into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP, launched with Secure TSC:
@@ -462,7 +468,9 @@ an index: load only the rule whose hint matches the current action.
   rotation, and a log outage;
   `dev-deposit-finality.sh`, the sequencer confirmation and Ethereum finality scenario on the
   vault's Anvil fixture; `dev-rwa-feeds.sh`, the RWA price feeds dev scenario against local
-  stand-ins for the market-data vendors; `dev-signed-api.sh`, the signed API answers scenario:
+  stand-ins for the market-data vendors; `dev-toxicity.sh`, the toxicity score's dev scenario against
+  loopback crypto venue stand-ins: a toxic client's tier from its 21st fill, an edgeless client at the
+  best price, round trips that leave a score at its tier, and a replay and restart; `dev-signed-api.sh`, the signed API answers scenario:
   verified responses and stream frames, and refused tampering, replay and gaps; `dev-key-lifecycle.sh`,
   the enclave key lifecycle scenario on Anvil (keys only for the vault's current release,
   registration of new keys, a restart with a withdrawal outstanding, a refused start without the
@@ -515,8 +523,8 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the spreads scenario (its own job, compiling the node's tests), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
-  signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
+  the browser-origin scenario, the proxy protocol scenario, the spreads scenario (its own job, compiling the node's tests), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  score dev scenario (`dev-toxicity`), the signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
@@ -660,6 +668,8 @@ Run from the repo root:
 - RWA price feeds dev scenario: `./scripts/dev-rwa-feeds.sh` (loopback Massive and TraderMade
   stand-ins price FX, index, commodity, and share markets across a market open and a futures roll,
   then the log replays; no vendor account or key)
+- Toxicity score dev scenario: `./scripts/dev-toxicity.sh` (loopback Coinbase and Kraken stand-ins
+  price BTC-USD under the dev genesis's 1 bp fixture floor; needs only Cargo, about four minutes)
 - Attestation verifier dev scenario: `./scripts/dev-attestation-verifier.sh` (a loopback
   key-distribution stand-in issues a test certificate chain; a test-signed SEV-SNP report verifies
   against a release manifest and names the release, while a mock quote, an unlisted configuration,

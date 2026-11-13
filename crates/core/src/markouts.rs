@@ -1,17 +1,50 @@
 //! Markouts: each fill queued, marked against the index once its horizon has passed, and folded
-//! into its account's toxicity score.
+//! into its account's toxicity score; from `V54` as `toxicity` scores them.
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::Fixed;
-use crate::engine::{Engine, Markout};
+use crate::engine::Engine;
 use crate::fixed::Rounding;
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
-use crate::types::MarketId;
+use crate::types::{AccountId, MarketId, Millis, Side};
 
 /// Clamp on a single markout, so one wild print cannot dominate an account's toxicity score.
-const MAX_MARKOUT_BPS: i64 = 1_000;
+pub(crate) const MAX_MARKOUT_BPS: i64 = 1_000;
+
+/// A fill waiting to be marked against the index once its horizon has passed.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct Markout {
+    pub due: Millis,
+    pub account: AccountId,
+    pub market: MarketId,
+    pub side: Side,
+    /// What the markout measures the index's move from: the fill's price, and from `V54` the fill's
+    /// index, so the spread paid does not enter it.
+    pub price: Fixed,
+    /// From `V11`, the fill's notional, which weighs its markout. Left out of the encoding while
+    /// zero, as it is for fills booked before `V11`.
+    #[serde(default, skip_serializing_if = "Fixed::is_zero")]
+    pub notional: Fixed,
+    /// From `V54`, the fill's quantity. Left out of the encoding while zero, as before `V54`.
+    #[serde(default, skip_serializing_if = "Fixed::is_zero")]
+    pub qty: Fixed,
+    /// From `V54`, the quantity a round trip matched, as the closing fill or as the opening one,
+    /// which scores nothing. Left out of the encoding while zero.
+    #[serde(default, skip_serializing_if = "Fixed::is_zero")]
+    pub matched: Fixed,
+    /// From `V54`, the quantity the fill opened that is still open for a closing fill to match.
+    /// Left out of the encoding while zero.
+    #[serde(default, skip_serializing_if = "Fixed::is_zero")]
+    pub open: Fixed,
+    /// From `V54`, the quantity the fill closed that is still there for an opening fill to match.
+    /// Left out of the encoding while zero.
+    #[serde(default, skip_serializing_if = "Fixed::is_zero")]
+    pub closed: Fixed,
+}
 
 impl Engine {
     /// From `V16`, clamps every account's toxicity history to the memory `params` weighs markouts
@@ -49,9 +82,13 @@ impl Engine {
     }
 
     /// Marks every fill whose horizon has passed and folds the markout into its account's score:
-    /// from `V11` as `score_markouts` says, and before it at the market's last mark, in whole bps.
+    /// from `V54` as `Engine::score_toxicity` says, from `V11` as `score_markouts` says, and before
+    /// it at the market's last mark, in whole bps.
     pub(crate) fn process_markouts(&mut self) {
         let Some(params) = &self.params else { return };
+        if self.protocol_version >= ProtocolVersion::V54 {
+            return self.score_toxicity();
+        }
         if self.protocol_version >= ProtocolVersion::V11 {
             return self.score_markouts();
         }
@@ -115,7 +152,7 @@ impl Engine {
 
 /// A fill's markout against `index`, in bps of its price: positive when the index has moved in the
 /// trader's favour. Rounds up, in the house's favour, and clamps to `MAX_MARKOUT_BPS` either way.
-fn markout_bps(markout: &Markout, index: Fixed) -> Fixed {
+pub(crate) fn markout_bps(markout: &Markout, index: Fixed) -> Fixed {
     let max = Fixed::from_int(MAX_MARKOUT_BPS);
     (index - markout.price)
         .mul_int(markout.side.sign())

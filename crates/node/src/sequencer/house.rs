@@ -10,6 +10,8 @@ use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::listing_bounds::ListingNotice;
 use engine_core::params::ProtocolParams;
+use engine_core::protocol::ProtocolVersion;
+use engine_core::toxicity::{SCORE_RULES, ScoreRules};
 use engine_core::types::MarketId;
 use serde::Serialize;
 use tokio::sync::oneshot;
@@ -52,15 +54,18 @@ pub struct ParamsAt {
     pub params: ProtocolParams,
 }
 
-/// The answer: the seq it was read at, the parameters (`None` before the first `SetParams`), each
-/// listed market's pending listing notice (a markup, and from `V52` its spread and margin bands, in
-/// the market read's units), and the latest checkpoint in the stream's form (`None` before the
-/// first). The bands in force are the market read's.
+/// The answer: the seq it was read at, the parameters (`None` before the first `SetParams`), from
+/// `V54` the toxicity score's protocol constants, each listed market's pending listing notice (a
+/// markup, and from `V52` its spread and margin bands, in the market read's units), and the latest
+/// checkpoint in the stream's form (`None` before the first). The bands in force are the market
+/// read's.
 #[derive(Clone, Debug, Serialize)]
 pub struct HouseState {
     pub seq: Option<u64>,
     pub params: Option<ParamsAt>,
     pub listing_notices: BTreeMap<MarketId, ListingNotice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score_rules: Option<ScoreRules>,
     pub checkpoint: Option<StreamMsg>,
 }
 
@@ -102,7 +107,9 @@ impl Latest {
         }
         let params = engine.params().map(|params| ParamsAt { seq: params_seq, params: params.clone() });
         let listing_notices = engine.operator_bounds().markups.clone();
-        let state = HouseState { seq: engine.last_seq(), params, listing_notices, checkpoint: self.checkpoint.clone() };
+        let score_rules = (engine.protocol_version() >= ProtocolVersion::V54).then_some(SCORE_RULES);
+        let checkpoint = self.checkpoint.clone();
+        let state = HouseState { seq: engine.last_seq(), params, score_rules, listing_notices, checkpoint };
         Some((std::mem::take(&mut self.waiting), state))
     }
 }

@@ -8,6 +8,8 @@ use crate::account::RestingOrder;
 use crate::command::OrderKind;
 use crate::deposits::DepositStatus;
 use crate::engine::Engine;
+use crate::protocol::ProtocolVersion;
+use crate::toxicity::MarkoutLegs;
 use crate::types::{AccountId, MarketId, OrderId, Side};
 
 #[derive(Debug, Default)]
@@ -47,6 +49,8 @@ pub(crate) struct HotIndexes {
     pub(crate) pending: BTreeMap<Option<AccountId>, BTreeSet<String>>,
     /// Pending references a retry could settle: the house's and declared accounts'.
     pub(crate) retryable: BTreeSet<String>,
+    /// From `V54`, the markouts a new fill may match (`toxicity::legs`).
+    pub(crate) markout_legs: MarkoutLegs,
     /// Test-only: run insertions and extensions, bounding the rebuild's index work.
     #[cfg(test)]
     pub(crate) run_insertions: usize,
@@ -396,6 +400,9 @@ impl Engine {
             if deposit.account.is_none_or(|account| self.eligibility.contains_key(&account)) {
                 indexes.retryable.insert(reference.clone());
             }
+        }
+        if self.protocol_version >= ProtocolVersion::V54 {
+            indexes.markout_legs = MarkoutLegs::of_queue(&self.markouts, self.markout_base);
         }
         self.hot_indexes = Some(indexes);
     }

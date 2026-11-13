@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::AdminCommand;
-use engine_core::params::{ProtocolParams, StressTrigger};
+use engine_core::params::ProtocolParams;
 use engine_core::protocol::ProtocolVersion;
 
 use crate::clock::test_clock::TestClock;
@@ -235,14 +235,13 @@ fn an_existing_v1_log_activates_at_its_next_seq_and_still_verifies() {
     assert_eq!((replayed.commands, replayed.checkpoints), (68, 6));
     assert_eq!(replayed.activations, [(ProtocolVersion::LATEST, 67)]);
     // Activation also turns its absolute divergence triggers of 15 and 20 bps into 60% and 80% of its
-    // widest bound, 25 bps: the shares the dev config takes.
+    // widest bound, 25 bps: the shares the dev config takes; and its toxicity into `V54`'s form.
     let mut carried = before;
     carried.toxicity.notional = Some(weighting);
     carried.share_divergence_triggers(25);
+    carried.convert_to_score();
     assert_eq!(replayed.engine.params(), Some(&carried));
-    let triggers = |params: &ProtocolParams| -> Vec<Option<StressTrigger>> {
-        params.stress_levels.iter().map(|level| level.trigger.clone()).collect()
-    };
+    let triggers = |p: &ProtocolParams| p.stress_levels.iter().map(|level| level.trigger.clone()).collect::<Vec<_>>();
     assert_eq!(triggers(&carried), triggers(&dev_config().genesis.params));
 }
 

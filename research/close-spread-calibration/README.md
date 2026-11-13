@@ -1,6 +1,6 @@
 # Close-spread calibration
 
-Calibrates a close-spread ceiling for each of the 37 launch markets in `config/production-genesis.toml`
+Calibrates a close-spread ceiling for each of the 34 launch markets in `config/production-genesis.toml`
 (#147), and recommends how #344 should represent them. Nothing here is adopted: the proposed values,
 the objective behind them and the five representation choices in
 [the proposal](ceiling-representation-proposal.md) wait for the owner. The per-market results are in
@@ -54,21 +54,21 @@ and the need counts the exclusive bound.
 
 The tail move is the upper end of the weekly block-bootstrap interval of the calibration sample's hourly
 p99 of the in-bar move (close against the bar's own open); the open against the previous close, which carries
-session gaps, is left out and reported separately. DE40 and UK100 fold their overnight move into the bar, which
-overstates their tail. Different asset classes differ because their divergence limits differ (FX 5, indices and commodities
+session gaps, is left out and reported separately. Different asset classes differ because their divergence limits differ (FX 5, indices and commodities
 10, shares 10, crypto 25 bps), and a tail move over one second is small: one second is 1/60 of an hour's
 scale. The floor is the launch close charge the engine refuses a ceiling below from V52: the widest stress
-minimum (10 bps) and the top toxicity add-on (3 bps) in `production-genesis.toml`, plus the market's first
-spread band at the widest size multiplier (4x), in tenths of a bp. EUR-USD's 0.4-bp first band adds 1.6 bps,
-a 14.6-bp charge and a 15-bp floor; a 2-bp first band adds 8 bps, a 21-bp floor. The engine compares
+minimum (10 bps) and the top toxicity add-on (5 bps, from V54 the toxicity score's top tier, #690) in
+`production-genesis.toml`, plus the market's first spread band at the widest size multiplier (4x), in tenths
+of a bp. EUR-USD's 0.4-bp first band adds 1.6 bps, a 16.6-bp charge and a 17-bp floor; a 2-bp first band adds
+8 bps, a 23-bp floor. The engine compares
 `ceiling_bps * 10` with the charge in tenths, so the floor is the charge rounded up to a whole bp. A ceiling at
 its floor is at least the exact charge of a first-band close at the launch parameters, so on such a close the
 clamp removes at most what the engine's upward rounding adds. A close beyond the first band pays a higher
 band's rate and can exceed the ceiling, which clamps it; `reversal_summary` in `ceilings.json` counts how often
 in the grid.
 
-Volatility enters only through that one-second tail, and a doubled volatility input raises 7 of 37 ceilings,
-by at most 5 bps (the floor absorbs the other 30). A price jump over a gap, a closure or a contract roll is not a spread: it moves margin and
+Volatility enters only through that one-second tail, and a doubled volatility input raises 3 of 34 ceilings,
+by at most 5 bps (the floor absorbs the other 31). A price jump over a gap, a closure or a contract roll is not a spread: it moves margin and
 close-out risk. `results/ceiling_effects.csv` shows a close spread cannot repair it: in a 5% gap on EUR-USD
 with no house capital, an uncapped 103-bp close charge cuts the house shortfall by a fifth to a third and
 costs the trader seven times as much. A volatility-responsive charged spread is a different mechanism (the
@@ -124,8 +124,9 @@ checking it alone can miss a fractional-basis-point excess: a ceiling must bound
 ## Evidence and limitations
 
 - The inherited hourly grid covers 2024-10-28 to 2026-10-12 UTC (102 whole weeks), a transformed proxy:
-  it zeroes selected inter-bar and presumed roll gaps and folds cash-index overnight moves. DE40 and UK100
-  are cash-index proxies for longer-session futures and carry low confidence.
+  it zeroes selected inter-bar and presumed roll gaps and folds cash-index overnight moves. It also holds
+  DE40, UK100 and Brent, which the launch genesis defers (#685); the study reads only the launch markets'
+  columns.
 - Crypto uses Binance USDT spot, not a multi-venue USD reference. The data has no simultaneous independent
   feeds or quote ages, so reference staleness and divergence are not measured: the genesis limits stand in
   for them. That is the main missing evidence, and why no market has more than moderate confidence.

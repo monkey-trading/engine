@@ -10,6 +10,7 @@ use crate::fixed::Rounding;
 use crate::futures::{FuturesContract, validate_contracts};
 use crate::session::Schedule;
 use crate::spread_tier::{SpreadTier, spread_floor_tenth_bps, validate_spread_tiers};
+use crate::toxicity::MARKOUT_FLOOR_BPS;
 use crate::types::{AssetClass, MarketId};
 
 /// The most any per-trade rate may be: 100%.
@@ -66,6 +67,11 @@ pub struct MarketSpec {
     /// left out of the encoding then.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contracts: Vec<FuturesContract>,
+    /// From protocol `V54`, the least the market's markout spread may be, in bps of the index: the
+    /// toxicity score's unit (`toxicity`). Set at listing and fixed after; left out of the encoding
+    /// while unset, as it is before `V54`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub markout_floor_bps: Option<Fixed>,
 }
 
 /// The currency a market's prices are quoted in. Any other than USD names the FX market whose index
@@ -126,6 +132,7 @@ impl MarketSpec {
     /// - a financing markup outside ±10000 bps, or a day basis other than 360 or 365
     /// - a minimum order notional or a house cap floor below zero or above `Fixed::MAX_INPUT`
     /// - futures contracts that are unnamed, named twice, or out of roll order
+    /// - a markout floor outside `toxicity::MARKOUT_FLOOR_BPS`
     pub fn validate(&self) -> Result<(), String> {
         if self.symbol.is_empty() {
             return Err("symbol is empty".into());
@@ -156,6 +163,9 @@ impl MarketSpec {
         }
         if self.house_cap_floor.is_negative() || self.house_cap_floor > Fixed::MAX_INPUT {
             return Err("house_cap_floor out of range".into());
+        }
+        if self.markout_floor_bps.is_some_and(|floor| !MARKOUT_FLOOR_BPS.contains(&floor)) {
+            return Err(format!("markout_floor_bps must be in {MARKOUT_FLOOR_BPS:?}"));
         }
         validate_contracts(&self.contracts)
     }

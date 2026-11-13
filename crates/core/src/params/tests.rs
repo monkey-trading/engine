@@ -26,6 +26,7 @@ fn params() -> ProtocolParams {
             ewma_weight_bps: 5_000,
             notional: Some(NotionalWeighting { prior: Fixed::from_int(10_000), memory: Fixed::from_int(10_000_000) }),
             tiers: vec![],
+            score_tiers: vec![],
         },
         rollover: rollover(chrono_tz::Europe::London, 22, 0),
         house_total_cap_floor: Fixed::ZERO,

@@ -47,8 +47,8 @@ impl Engine {
     /// - `SetOperator` once the operator is recorded
     /// - `ActivateProtocol` for a version no newer than the one in force, for `V3` or later before
     ///   client auth is recorded, or for `V8` or later before the operator is recorded or while the
-    ///   parameters in force fail `ProtocolParams::check_closing_spread`, or for `V11` or later while
-    ///   they fail `ProtocolParams::check_notional_weighting`
+    ///   parameters as it leaves them fail `Engine::check_activation_closing_spread`, or for `V11` or
+    ///   later while they fail `ProtocolParams::check_notional_weighting`
     /// - `SetToxicityNotional` before parameters are set, over parameters that already weigh markouts
     ///   by notional, or with weighting that fails `NotionalWeighting::validate`
     /// - `InitEmissions` before `V19`, once emissions are initialised, or with a schedule that starts
@@ -73,7 +73,7 @@ impl Engine {
     ///   `UpsertMarket` of a market the ceiling registry has no entry for, or changing the
     ///   `asset_class` or `quote_currency` of a market with one; `ActivateProtocol` carrying a
     ///   version past `V40` while a listed market has no adopted ceiling, or to `V52` over a low one (see
-    ///   `Engine::check_close_spread_activation`)
+    ///   `Engine::check_close_spread_activation`); from `V54`, a markout floor `Engine::check_markout_floor` refuses
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {
             AdminCommand::ScheduleCorporateAction(action) => self.schedule_corporate_action(action, events)?,
@@ -125,6 +125,7 @@ impl Engine {
                 spec.validate()?;
                 self.check_corporate_listing(spec)?;
                 self.check_listing_ceilings(spec)?;
+                self.check_markout_floor(spec)?;
                 if spec.schedule.has_exceptions() && self.protocol_version < ProtocolVersion::V4 {
                     return Err(format!("dated closures and special sessions need protocol {:?}", ProtocolVersion::V4));
                 }
@@ -161,6 +162,7 @@ impl Engine {
                     Some(market) => market.relisted(spec)?,
                     None => FuturesState::listed(spec, self.now),
                 };
+                self.end_unpriced_interval(spec.id);
                 match self.markets.get_mut(&spec.id) {
                     Some(market) => {
                         // An FX mark belongs to the currency it was taken for.
@@ -181,6 +183,7 @@ impl Engine {
                         self.markets.insert(spec.id, MarketState { futures, ..MarketState::new(spec.clone()) });
                     }
                 }
+                self.end_unpriced_interval(spec.id);
                 self.settle_listing_change(spec, change);
                 self.refresh_session(spec.id, events);
                 // A new listing for a market others convert at can change what its index converts
@@ -270,11 +273,7 @@ impl Engine {
                 if *version >= ProtocolVersion::V8 && self.operator.is_none() {
                     return Err(format!("protocol {version:?} needs the operator recorded first"));
                 }
-                if *version >= ProtocolVersion::V8
-                    && let Some(params) = &self.params
-                {
-                    params.check_closing_spread()?;
-                }
+                self.check_activation_closing_spread(*version)?;
                 if *version >= ProtocolVersion::V11
                     && let Some(params) = &self.params
                 {
@@ -369,6 +368,7 @@ impl Engine {
                 }
                 self.start_listing_bounds(*version);
                 self.carry_kept_notices(*version);
+                self.start_toxicity_score(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
                 self.protocol_version = *version;
                 // Rules before `V47` record no candidate, so one an election already seated is seated before

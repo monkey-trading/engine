@@ -41,6 +41,8 @@
 //!   writtenOff))` of the open period, until it is finalised; from `V43`, `(realised, losses, writtenOff)`.
 //! - **Emission ledger:** `keccak256(abi.encode(int128 earned, int128 debt))`, from `V32`: the
 //!   loss weight the account earned, uncharged by any write-off, and the write-off debt later loss weight pays down.
+//! - **Toxicity score and markout spread:** from `V54`, the keccak-256 of the JSON encoding of an
+//!   account's score and of a market's markout spread history (`toxicity.rs`).
 //! - **Remaining state:** the keccak-256 of the JSON encoding of every engine field no other leaf
 //!   holds (`state.rs`).
 //!

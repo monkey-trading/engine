@@ -12,6 +12,9 @@
 //! `AnnounceMarkup` one market's new markup, each applying once from its time on. From `V52` that
 //! markup notice is a listing notice, which may also name the market's spread and margin bands
 //! (`listing_bounds`).
+//!
+//! From `V54` the toxicity score's tiers take the same notice, within ±50% of their launch values
+//! (`toxicity`).
 
 use std::collections::BTreeMap;
 
@@ -22,6 +25,7 @@ use crate::listing_bounds::{LaunchBands, ListingNotice};
 use crate::market::MarketSpec;
 use crate::params::{MAX_RATE_BPS, ProtocolParams, StressLevel};
 use crate::protocol::ProtocolVersion;
+use crate::toxicity::ScoreTier;
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis};
 
 /// How long before a rate change or an operator rotation takes effect it is logged: seven days.
@@ -48,6 +52,9 @@ pub struct ParamsNotice {
     /// From `V49`, new stress parameters, left out of the encoding when none are named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stress: Option<StressSettings>,
+    /// From `V54`, new toxicity score tiers, left out of the encoding when none are named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score_tiers: Option<Vec<ScoreTier>>,
     /// The sequenced time the new values may apply from.
     pub effective_at: Millis,
 }
@@ -108,6 +115,10 @@ pub struct OperatorBounds {
     /// market's first listing must be.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub proposed_listings: BTreeMap<MarketId, MarketSpec>,
+    /// From `V54`, the toxicity score tiers the bounds are measured from: those of the first
+    /// parameters set under `V54`, or of its activation over parameters already set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_score_tiers: Option<Vec<ScoreTier>>,
 }
 
 impl OperatorBounds {
@@ -117,12 +128,22 @@ impl OperatorBounds {
     }
 }
 
+impl ParamsNotice {
+    /// Whether the notice names no value left to apply.
+    fn names_nothing(&self) -> bool {
+        self.profit_fee_bps.is_none()
+            && self.closeout_level_bps.is_none()
+            && self.stress.is_none()
+            && self.score_tiers.is_none()
+    }
+}
+
 fn is_zero(count: &u64) -> bool {
     *count == 0
 }
 
 /// Whether `value` is within ±50% of `launch`.
-fn within_half(value: i64, launch: i64) -> bool {
+pub(crate) fn within_half(value: i128, launch: i128) -> bool {
     value.checked_mul(2).is_some_and(|twice| twice >= launch && twice <= launch * 3)
 }
 
@@ -149,6 +170,7 @@ impl Engine {
     /// - a notice naming no rate, a rate outside its valid range or outside ±50% of its launch value
     /// - stress parameters before `V49`, or ones that, with the other parameters in force, fail
     ///   `ProtocolParams::validate_for` or `ProtocolParams::check_closing_spread`
+    /// - score tiers `Engine::check_score_tier_notice` refuses
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_params(&mut self, notice: &ParamsNotice) -> Result<(), String> {
         self.require_bounds_protocol("a parameter notice")?;
@@ -167,14 +189,17 @@ impl Engine {
             params.validate_for(self.protocol_version)?;
             params.check_closing_spread()?;
         }
-        if notice.profit_fee_bps.is_none() && notice.closeout_level_bps.is_none() && notice.stress.is_none() {
+        if let Some(tiers) = &notice.score_tiers {
+            self.check_score_tier_notice(tiers)?;
+        }
+        if notice.names_nothing() {
             return Err("a parameter notice names no rate".into());
         }
         if let Some(fee) = notice.profit_fee_bps {
             if !(0..MAX_RATE_BPS).contains(&fee) {
                 return Err(format!("profit_fee_bps {fee} must be in 0..10000"));
             }
-            if !within_half(fee, launch.profit_fee_bps) {
+            if !within_half(fee.into(), launch.profit_fee_bps.into()) {
                 return Err(format!(
                     "profit_fee_bps {fee} is outside ±50% of its launch value {}",
                     launch.profit_fee_bps
@@ -185,7 +210,7 @@ impl Engine {
             if !(1..=MAX_RATE_BPS).contains(&level) {
                 return Err(format!("closeout_level_bps {level} must be in 1..=10000"));
             }
-            if !within_half(level, launch.closeout_level_bps) {
+            if !within_half(level.into(), launch.closeout_level_bps.into()) {
                 return Err(format!(
                     "closeout_level_bps {level} is outside ±50% of its launch value {}",
                     launch.closeout_level_bps
@@ -257,6 +282,7 @@ impl Engine {
     /// - a changed rate no notice names, or whose notice takes effect later than the sequenced time
     /// - from `V49`, changed stress parameters no notice names, or whose notice takes effect later than the
     ///   sequenced time
+    /// - from `V54`, changed score tiers `Engine::check_score_tier_change` refuses
     pub(crate) fn check_rate_changes(&self, params: &ProtocolParams) -> Result<(), String> {
         let Some(current) = &self.params else { return Ok(()) };
         // Recorded with the first parameters under `V35`, or at its activation over them.
@@ -270,7 +296,7 @@ impl Engine {
             if new == old {
                 continue;
             }
-            if !within_half(new, launched) {
+            if !within_half(new.into(), launched.into()) {
                 return Err(format!("{name} {new} is outside ±50% of its launch value {launched}"));
             }
             let notice = self.operator_bounds.notice.as_ref().filter(|notice| match name {
@@ -285,6 +311,7 @@ impl Engine {
                 Some(_) => {}
             }
         }
+        self.check_score_tier_change(params)?;
         let stress = StressSettings::of(params);
         if self.protocol_version < ProtocolVersion::V49 || stress == StressSettings::of(current) {
             return Ok(());
@@ -298,11 +325,15 @@ impl Engine {
         }
     }
 
-    /// After new parameters apply: records the launch rates if these are the first, and spends the
-    /// notice of each rate, and of the stress parameters, that changed.
+    /// After new parameters apply: records the launch rates and score tiers if these are the first,
+    /// and spends the notice of each rate, of the stress parameters, and of the score tiers, that
+    /// changed.
     pub(crate) fn settle_rate_changes(&mut self, before: Option<&ProtocolParams>, params: &ProtocolParams) {
         self.record_launch_rates();
+        self.record_launch_score_tiers();
         let Some(before) = before else { return };
+        let tiers = &params.toxicity.score_tiers;
+        let spends_tiers = *tiers != before.toxicity.score_tiers;
         let (fee, level, stress) = (before.profit_fee_bps, before.closeout_level_bps, StressSettings::of(before));
         let Some(notice) = self.operator_bounds.notice.as_mut() else { return };
         if params.profit_fee_bps != fee && notice.profit_fee_bps == Some(params.profit_fee_bps) {
@@ -315,7 +346,10 @@ impl Engine {
         if applied != stress && notice.stress.as_ref() == Some(&applied) {
             notice.stress = None;
         }
-        if notice.profit_fee_bps.is_none() && notice.closeout_level_bps.is_none() && notice.stress.is_none() {
+        if spends_tiers && notice.score_tiers.as_ref() == Some(tiers) {
+            notice.score_tiers = None;
+        }
+        if notice.names_nothing() {
             self.operator_bounds.notice = None;
         }
     }

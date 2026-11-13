@@ -147,6 +147,7 @@ fn each_action_builds_its_admin_command() {
                 profit_fee_bps: Some(1_200),
                 closeout_level_bps: None,
                 stress: None,
+                score_tiers: None,
                 effective_at: 1_798_761_600_000,
             }),
         ),
@@ -230,7 +231,15 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
         panic!("announce-params gives notice")
     };
     assert_eq!(notice.stress, Some(StressSettings::of(&dev_config().genesis.params)));
-    assert_eq!((notice.profit_fee_bps, notice.closeout_level_bps), (None, None));
+    assert_eq!((notice.profit_fee_bps, notice.closeout_level_bps, notice.score_tiers), (None, None, None));
+    // A score tier notice takes the tiers of the file a later `set-params` carries.
+    let AdminCommand::AnnounceParams(notice) =
+        action(&["announce-params", "--score-tiers-from", &params, "--effective-at", at]).command().unwrap()
+    else {
+        panic!("announce-params gives notice")
+    };
+    assert_eq!(notice.score_tiers, Some(dev_config().genesis.params.toxicity.score_tiers));
+    assert_eq!(notice.stress, None);
 
     let mut wide = dev_config().genesis.params;
     let top = wide.stress_levels.len() - 1;

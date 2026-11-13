@@ -13,6 +13,7 @@ mod redate;
 mod rwa;
 pub(super) mod rwa_support;
 mod scenario;
+mod toxicity;
 mod vendors;
 
 use std::collections::BTreeMap;

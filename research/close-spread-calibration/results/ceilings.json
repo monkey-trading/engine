@@ -1,7 +1,7 @@
 {
   "inputs": {
-    "genesis_inventory": "0911509b7751402bce9d4506850f79037462bd94b02e1c28b5def5010b74cef3",
-    "genesis_file_informational": "07ebcd942126f96ce754cb5ffbb1c29c71456c9b1f6cb10f574e49c8691e12fd",
+    "genesis_inventory": "2626ad9d79233d70c7d15dc9d8a57c1d00d9fa1ab4ea5b8f38cff93ca1488c23",
+    "genesis_file_informational": "c7f9d813931f2bfcfb47ab6cbb7cd31ab05ddb34adf757969e4daa7fba770c6a",
     "bars": "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522",
     "catalogue.py": "90bda1cc31a5b885318a7d475a4095c464ee589f79fec7b78028fa9294ae1f9c",
     "derive/markets.py": "32629c08a2adcb27109f4dddd529828ccc81421fd583245e673d9108d1edd428",
@@ -13,10 +13,10 @@
     "selection_statistic": "the larger of the calibration hourly p99 (upper end of its weekly block-bootstrap interval) and the validation hourly p99",
     "markets_set_by_method": 3,
     "floor": "the market's launch close charge in tenths of a bp, rounded up to a whole bp: the widest stress minimum and the top toxicity add-on, plus the first spread band at the widest size multiplier",
-    "stress_and_toxicity_bps": 13,
+    "stress_and_toxicity_bps": 15,
     "floor_range_bps": [
-      15,
-      25
+      17,
+      27
     ],
     "step_bps": 5,
     "burden_limit_percent_of_min_initial_margin": 30,
@@ -33,8 +33,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 25,
       "min_initial_margin_bps": 100,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 13104,
       "validation_active_hours": 4032,
       "evidence_flags": [
@@ -70,8 +70,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 25,
       "min_initial_margin_bps": 100,
-      "launch_close_charge_tenth_bps": 250,
-      "floor_bps": 25,
+      "launch_close_charge_tenth_bps": 270,
+      "floor_bps": 27,
       "calibration_active_hours": 13104,
       "validation_active_hours": 4032,
       "evidence_flags": [
@@ -107,8 +107,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 25,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 13104,
       "validation_active_hours": 4032,
       "evidence_flags": [
@@ -144,8 +144,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 5,
       "min_initial_margin_bps": 50,
-      "launch_close_charge_tenth_bps": 146,
-      "floor_bps": 15,
+      "launch_close_charge_tenth_bps": 166,
+      "floor_bps": 17,
       "calibration_active_hours": 9213,
       "validation_active_hours": 2851,
       "evidence_flags": [
@@ -159,14 +159,14 @@
       "calibration_need_bps": 6.642425344842451,
       "validation_need_bps": 6.356881548745757,
       "need_bps": 6.642425344842451,
-      "calibration_only_ceiling_bps": 15,
+      "calibration_only_ceiling_bps": 17,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 6.912492915063659,
-      "proposed_ceiling_bps": 15,
+      "proposed_ceiling_bps": 17,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 30.0,
-      "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 15,
+      "ceiling_percent_of_min_margin": 34.0,
+      "within_burden_limit": false,
+      "ceiling_if_volatility_doubled_bps": 17,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -181,8 +181,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 5,
       "min_initial_margin_bps": 50,
-      "launch_close_charge_tenth_bps": 146,
-      "floor_bps": 15,
+      "launch_close_charge_tenth_bps": 166,
+      "floor_bps": 17,
       "calibration_active_hours": 9214,
       "validation_active_hours": 2851,
       "evidence_flags": [
@@ -196,14 +196,14 @@
       "calibration_need_bps": 6.560272945485433,
       "validation_need_bps": 6.393964892548439,
       "need_bps": 6.560272945485433,
-      "calibration_only_ceiling_bps": 15,
+      "calibration_only_ceiling_bps": 17,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 6.8945588172392664,
-      "proposed_ceiling_bps": 15,
+      "proposed_ceiling_bps": 17,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 30.0,
-      "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 15,
+      "ceiling_percent_of_min_margin": 34.0,
+      "within_burden_limit": false,
+      "ceiling_if_volatility_doubled_bps": 17,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -218,8 +218,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 5,
       "min_initial_margin_bps": 50,
-      "launch_close_charge_tenth_bps": 150,
-      "floor_bps": 15,
+      "launch_close_charge_tenth_bps": 170,
+      "floor_bps": 17,
       "calibration_active_hours": 9144,
       "validation_active_hours": 2837,
       "evidence_flags": [
@@ -233,14 +233,14 @@
       "calibration_need_bps": 6.716621596615612,
       "validation_need_bps": 6.560555214541877,
       "need_bps": 6.716621596615612,
-      "calibration_only_ceiling_bps": 15,
+      "calibration_only_ceiling_bps": 17,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 9.279145484715727,
-      "proposed_ceiling_bps": 15,
+      "proposed_ceiling_bps": 17,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 30.0,
-      "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 15,
+      "ceiling_percent_of_min_margin": 34.0,
+      "within_burden_limit": false,
+      "ceiling_if_volatility_doubled_bps": 17,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -255,8 +255,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 5,
       "min_initial_margin_bps": 50,
-      "launch_close_charge_tenth_bps": 150,
-      "floor_bps": 15,
+      "launch_close_charge_tenth_bps": 170,
+      "floor_bps": 17,
       "calibration_active_hours": 9276,
       "validation_active_hours": 2851,
       "evidence_flags": [
@@ -270,14 +270,14 @@
       "calibration_need_bps": 6.817665863025136,
       "validation_need_bps": 6.530487287303715,
       "need_bps": 6.817665863025136,
-      "calibration_only_ceiling_bps": 15,
+      "calibration_only_ceiling_bps": 17,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 7.017929273954385,
-      "proposed_ceiling_bps": 15,
+      "proposed_ceiling_bps": 17,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 30.0,
-      "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 15,
+      "ceiling_percent_of_min_margin": 34.0,
+      "within_burden_limit": false,
+      "ceiling_if_volatility_doubled_bps": 17,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -292,8 +292,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 50,
-      "launch_close_charge_tenth_bps": 158,
-      "floor_bps": 16,
+      "launch_close_charge_tenth_bps": 178,
+      "floor_bps": 18,
       "calibration_active_hours": 8525,
       "validation_active_hours": 2664,
       "evidence_flags": [
@@ -307,14 +307,14 @@
       "calibration_need_bps": 12.818853059100567,
       "validation_need_bps": 11.905862615508488,
       "need_bps": 12.818853059100567,
-      "calibration_only_ceiling_bps": 16,
+      "calibration_only_ceiling_bps": 18,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 13.78693590892702,
-      "proposed_ceiling_bps": 16,
+      "proposed_ceiling_bps": 18,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 32.0,
+      "ceiling_percent_of_min_margin": 36.0,
       "within_burden_limit": false,
-      "ceiling_if_volatility_doubled_bps": 16,
+      "ceiling_if_volatility_doubled_bps": 18,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.00011730205278592375,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -329,8 +329,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 50,
-      "launch_close_charge_tenth_bps": 166,
-      "floor_bps": 17,
+      "launch_close_charge_tenth_bps": 186,
+      "floor_bps": 19,
       "calibration_active_hours": 8527,
       "validation_active_hours": 2664,
       "evidence_flags": [
@@ -344,14 +344,14 @@
       "calibration_need_bps": 13.154304253457454,
       "validation_need_bps": 12.572707205723892,
       "need_bps": 13.154304253457454,
-      "calibration_only_ceiling_bps": 17,
+      "calibration_only_ceiling_bps": 19,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 15.893392989096242,
-      "proposed_ceiling_bps": 17,
+      "proposed_ceiling_bps": 19,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 34.0,
+      "ceiling_percent_of_min_margin": 38.0,
       "within_burden_limit": false,
-      "ceiling_if_volatility_doubled_bps": 17,
+      "ceiling_if_volatility_doubled_bps": 19,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.00011727453969743169,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -366,8 +366,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 50,
-      "launch_close_charge_tenth_bps": 158,
-      "floor_bps": 16,
+      "launch_close_charge_tenth_bps": 178,
+      "floor_bps": 18,
       "calibration_active_hours": 8523,
       "validation_active_hours": 2664,
       "evidence_flags": [
@@ -381,92 +381,16 @@
       "calibration_need_bps": 12.660341129592272,
       "validation_need_bps": 11.932264334684788,
       "need_bps": 12.660341129592272,
-      "calibration_only_ceiling_bps": 16,
+      "calibration_only_ceiling_bps": 18,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 12.93320074474382,
-      "proposed_ceiling_bps": 16,
+      "proposed_ceiling_bps": 18,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 32.0,
+      "ceiling_percent_of_min_margin": 36.0,
       "within_burden_limit": false,
-      "ceiling_if_volatility_doubled_bps": 16,
+      "ceiling_if_volatility_doubled_bps": 18,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.00011732957878681215,
-      "validation_hours_over_proposed_ceiling": 0.0
-    },
-    {
-      "market_id": 23,
-      "symbol": "DE40",
-      "asset_class": "index",
-      "source": "yahoo",
-      "ticker": "^GDAXI",
-      "instrument_note": "DAX cash index; the venue's future trades longer hours, so gaps are overstated",
-      "max_age_ms": 1000,
-      "max_divergence_bps": 10,
-      "min_initial_margin_bps": 50,
-      "launch_close_charge_tenth_bps": 166,
-      "floor_bps": 17,
-      "calibration_active_hours": 3370,
-      "validation_active_hours": 1071,
-      "evidence_flags": [
-        "front-month continuation: roll gaps zeroed by the inherited transform",
-        "proxy: cash index standing in for a longer-session future; overnight move folded into the bar"
-      ],
-      "status": "proposed_low_confidence",
-      "confidence": "low",
-      "calibration_hourly_p99_bps": 126.84860265620195,
-      "calibration_hourly_p99_upper_bps": 151.9123133107431,
-      "validation_hourly_p99_bps": 115.56702320465429,
-      "calibration_need_bps": 13.531871888512384,
-      "validation_need_bps": 12.926117053410906,
-      "need_bps": 13.531871888512384,
-      "calibration_only_ceiling_bps": 17,
-      "validation_covered_by_calibration_ceiling": true,
-      "validation_max_need_bps": 14.005273639516709,
-      "proposed_ceiling_bps": 17,
-      "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 34.0,
-      "within_burden_limit": false,
-      "ceiling_if_volatility_doubled_bps": 17,
-      "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0005934718100890207,
-      "validation_hours_over_proposed_ceiling": 0.0
-    },
-    {
-      "market_id": 24,
-      "symbol": "UK100",
-      "asset_class": "index",
-      "source": "yahoo",
-      "ticker": "^FTSE",
-      "instrument_note": "FTSE 100 cash index; the venue's future trades longer hours, so gaps are overstated",
-      "max_age_ms": 1000,
-      "max_divergence_bps": 10,
-      "min_initial_margin_bps": 50,
-      "launch_close_charge_tenth_bps": 158,
-      "floor_bps": 16,
-      "calibration_active_hours": 3375,
-      "validation_active_hours": 1053,
-      "evidence_flags": [
-        "front-month continuation: roll gaps zeroed by the inherited transform",
-        "proxy: cash index standing in for a longer-session future; overnight move folded into the bar"
-      ],
-      "status": "proposed_low_confidence",
-      "confidence": "low",
-      "calibration_hourly_p99_bps": 86.82475927787047,
-      "calibration_hourly_p99_upper_bps": 103.15845213253778,
-      "validation_hourly_p99_bps": 88.55556524043884,
-      "calibration_need_bps": 12.719307535542296,
-      "validation_need_bps": 12.475926087340648,
-      "need_bps": 12.719307535542296,
-      "calibration_only_ceiling_bps": 16,
-      "validation_covered_by_calibration_ceiling": true,
-      "validation_max_need_bps": 14.038952837794138,
-      "proposed_ceiling_bps": 16,
-      "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 32.0,
-      "within_burden_limit": false,
-      "ceiling_if_volatility_doubled_bps": 16,
-      "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0002962962962962963,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -479,8 +403,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 50,
-      "launch_close_charge_tenth_bps": 170,
-      "floor_bps": 17,
+      "launch_close_charge_tenth_bps": 190,
+      "floor_bps": 19,
       "calibration_active_hours": 8531,
       "validation_active_hours": 2668,
       "evidence_flags": [
@@ -494,16 +418,16 @@
       "calibration_need_bps": 13.159537784675292,
       "validation_need_bps": 13.090116955317015,
       "need_bps": 13.159537784675292,
-      "calibration_only_ceiling_bps": 17,
+      "calibration_only_ceiling_bps": 19,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 15.352166910603785,
-      "proposed_ceiling_bps": 17,
+      "proposed_ceiling_bps": 19,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 34.0,
+      "ceiling_percent_of_min_margin": 38.0,
       "within_burden_limit": false,
-      "ceiling_if_volatility_doubled_bps": 17,
+      "ceiling_if_volatility_doubled_bps": 19,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.00023443910444262102,
+      "calibration_hours_over_proposed_ceiling": 0.0002967359050445104,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -516,8 +440,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 100,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 8543,
       "validation_active_hours": 2672,
       "evidence_flags": [
@@ -531,14 +455,14 @@
       "calibration_need_bps": 13.495836437711883,
       "validation_need_bps": 12.834990335259487,
       "need_bps": 13.495836437711883,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 14.893956792069854,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 21.0,
+      "ceiling_percent_of_min_margin": 23.0,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -553,8 +477,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 100,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 8541,
       "validation_active_hours": 2673,
       "evidence_flags": [
@@ -568,16 +492,16 @@
       "calibration_need_bps": 16.819115310574016,
       "validation_need_bps": 14.779210397153504,
       "need_bps": 16.819115310574016,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 17.19525443734718,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 21.0,
+      "ceiling_percent_of_min_margin": 23.0,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 25,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0004683292354525231,
+      "calibration_hours_over_proposed_ceiling": 0.00011721955222131051,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -590,8 +514,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 100,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 8372,
       "validation_active_hours": 2673,
       "evidence_flags": [
@@ -605,54 +529,17 @@
       "calibration_need_bps": 15.182791943477785,
       "validation_need_bps": 14.964096713786905,
       "need_bps": 15.182791943477785,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 19.577722918394187,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 21.0,
+      "ceiling_percent_of_min_margin": 23.0,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0009555661729574773,
+      "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
-    },
-    {
-      "market_id": 33,
-      "symbol": "BRENT",
-      "asset_class": "commodity",
-      "source": "yahoo",
-      "ticker": "BZ=F",
-      "instrument_note": "NYMEX Brent last-day future, front month",
-      "max_age_ms": 1000,
-      "max_divergence_bps": 10,
-      "min_initial_margin_bps": 100,
-      "launch_close_charge_tenth_bps": 250,
-      "floor_bps": 25,
-      "calibration_active_hours": 8519,
-      "validation_active_hours": 2640,
-      "evidence_flags": [
-        "front-month continuation: roll gaps zeroed by the inherited transform"
-      ],
-      "status": "proposed",
-      "confidence": "moderate",
-      "calibration_hourly_p99_bps": 211.25659848612918,
-      "calibration_hourly_p99_upper_bps": 258.70991947300763,
-      "validation_hourly_p99_bps": 360.67193163488014,
-      "calibration_need_bps": 15.311831991216794,
-      "validation_need_bps": 17.011198860581334,
-      "need_bps": 17.011198860581334,
-      "calibration_only_ceiling_bps": 25,
-      "validation_covered_by_calibration_ceiling": true,
-      "validation_max_need_bps": 36.32976940986039,
-      "proposed_ceiling_bps": 25,
-      "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 25.0,
-      "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 25,
-      "validation_hours_over_calibration_ceiling": 0.0015151515151515152,
-      "calibration_hours_over_proposed_ceiling": 0.00035215400868646553,
-      "validation_hours_over_proposed_ceiling": 0.0015151515151515152
     },
     {
       "market_id": 40,
@@ -664,8 +551,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -679,16 +566,16 @@
       "calibration_need_bps": 15.603598992115591,
       "validation_need_bps": 14.703208485669133,
       "need_bps": 15.603598992115591,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 17.214214600965946,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0,
+      "calibration_hours_over_proposed_ceiling": 0.0004683292354525231,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -701,8 +588,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -716,16 +603,16 @@
       "calibration_need_bps": 14.228160624882413,
       "validation_need_bps": 14.50586418348143,
       "need_bps": 14.50586418348143,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 16.036946257101484,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0,
+      "calibration_hours_over_proposed_ceiling": 0.00047778308647873863,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -738,8 +625,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 250,
-      "floor_bps": 25,
+      "launch_close_charge_tenth_bps": 270,
+      "floor_bps": 27,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -753,17 +640,17 @@
       "calibration_need_bps": 16.93395494015023,
       "validation_need_bps": 15.352016659915035,
       "need_bps": 16.93395494015023,
-      "calibration_only_ceiling_bps": 25,
+      "calibration_only_ceiling_bps": 27,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 18.402092187969796,
-      "proposed_ceiling_bps": 25,
+      "proposed_ceiling_bps": 27,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.5,
+      "ceiling_percent_of_min_margin": 2.7,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 25,
-      "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0,
-      "validation_hours_over_proposed_ceiling": 0.0
+      "ceiling_if_volatility_doubled_bps": 27,
+      "validation_hours_over_calibration_ceiling": 0.0015151515151515152,
+      "calibration_hours_over_proposed_ceiling": 0.00011738466956215518,
+      "validation_hours_over_proposed_ceiling": 0.0015151515151515152
     },
     {
       "market_id": 43,
@@ -775,8 +662,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -790,16 +677,16 @@
       "calibration_need_bps": 14.981830327412268,
       "validation_need_bps": 14.257083798073074,
       "need_bps": 14.981830327412268,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 19.53961889160005,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0003852080123266564,
+      "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -812,8 +699,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -827,14 +714,14 @@
       "calibration_need_bps": 15.009647056028202,
       "validation_need_bps": 15.083476582360834,
       "need_bps": 15.083476582360834,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 17.063774517053307,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -849,8 +736,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -864,16 +751,16 @@
       "calibration_need_bps": 15.392415915460397,
       "validation_need_bps": 15.613769159777306,
       "need_bps": 15.613769159777306,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 18.83264722015643,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0003852080123266564,
+      "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -886,8 +773,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 250,
-      "floor_bps": 25,
+      "launch_close_charge_tenth_bps": 270,
+      "floor_bps": 27,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -901,14 +788,14 @@
       "calibration_need_bps": 18.300289602415834,
       "validation_need_bps": 16.80048785202134,
       "need_bps": 18.300289602415834,
-      "calibration_only_ceiling_bps": 25,
+      "calibration_only_ceiling_bps": 27,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 21.399396784595243,
-      "proposed_ceiling_bps": 25,
+      "proposed_ceiling_bps": 27,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.5,
+      "ceiling_percent_of_min_margin": 2.7,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 30,
+      "ceiling_if_volatility_doubled_bps": 27,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -923,8 +810,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 250,
-      "floor_bps": 25,
+      "launch_close_charge_tenth_bps": 270,
+      "floor_bps": 27,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -938,14 +825,14 @@
       "calibration_need_bps": 17.066504743012864,
       "validation_need_bps": 15.921053853823771,
       "need_bps": 17.066504743012864,
-      "calibration_only_ceiling_bps": 25,
+      "calibration_only_ceiling_bps": 27,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 18.36874777069896,
-      "proposed_ceiling_bps": 25,
+      "proposed_ceiling_bps": 27,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.5,
+      "ceiling_percent_of_min_margin": 2.7,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 25,
+      "ceiling_if_volatility_doubled_bps": 27,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -960,8 +847,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -975,14 +862,14 @@
       "calibration_need_bps": 13.993736339848523,
       "validation_need_bps": 12.78553341419283,
       "need_bps": 13.993736339848523,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 14.51096943598534,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -997,8 +884,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -1012,16 +899,16 @@
       "calibration_need_bps": 14.55351916350533,
       "validation_need_bps": 13.573753720542667,
       "need_bps": 14.55351916350533,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 19.34870527877665,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0,
+      "calibration_hours_over_proposed_ceiling": 0.0007704160246533128,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -1034,8 +921,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -1049,14 +936,14 @@
       "calibration_need_bps": 14.290092081919816,
       "validation_need_bps": 14.004255610928961,
       "need_bps": 14.290092081919816,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 16.90796836599023,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -1071,8 +958,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -1086,14 +973,14 @@
       "calibration_need_bps": 14.543136048857905,
       "validation_need_bps": 13.97496189227245,
       "need_bps": 14.543136048857905,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 15.046891248896195,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -1108,8 +995,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 250,
-      "floor_bps": 25,
+      "launch_close_charge_tenth_bps": 270,
+      "floor_bps": 27,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -1123,14 +1010,14 @@
       "calibration_need_bps": 15.78367351884546,
       "validation_need_bps": 15.305575963692718,
       "need_bps": 15.78367351884546,
-      "calibration_only_ceiling_bps": 25,
+      "calibration_only_ceiling_bps": 27,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 20.375721827018744,
-      "proposed_ceiling_bps": 25,
+      "proposed_ceiling_bps": 27,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.5,
+      "ceiling_percent_of_min_margin": 2.7,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 25,
+      "ceiling_if_volatility_doubled_bps": 27,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -1145,8 +1032,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -1160,14 +1047,14 @@
       "calibration_need_bps": 13.657747787655023,
       "validation_need_bps": 13.676771718835647,
       "need_bps": 13.676771718835647,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 15.23456717298781,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -1182,8 +1069,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -1197,14 +1084,14 @@
       "calibration_need_bps": 14.52697958819455,
       "validation_need_bps": 13.622646123270785,
       "need_bps": 14.52697958819455,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 14.295490905517774,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -1219,8 +1106,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -1234,14 +1121,14 @@
       "calibration_need_bps": 14.543782110618872,
       "validation_need_bps": 14.148383169818196,
       "need_bps": 14.543782110618872,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 15.354581959404632,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -1256,8 +1143,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -1271,14 +1158,14 @@
       "calibration_need_bps": 13.807091876192825,
       "validation_need_bps": 13.556687170151033,
       "need_bps": 13.807091876192825,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 17.002219845030346,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 21,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -1293,8 +1180,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 210,
-      "floor_bps": 21,
+      "launch_close_charge_tenth_bps": 230,
+      "floor_bps": 23,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -1308,16 +1195,16 @@
       "calibration_need_bps": 16.099629514817277,
       "validation_need_bps": 15.017489686743104,
       "need_bps": 16.099629514817277,
-      "calibration_only_ceiling_bps": 21,
+      "calibration_only_ceiling_bps": 23,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 17.45953358065432,
-      "proposed_ceiling_bps": 21,
+      "proposed_ceiling_bps": 23,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.1,
+      "ceiling_percent_of_min_margin": 2.3,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 25,
+      "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0003852080123266564,
+      "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -1330,8 +1217,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 250,
-      "floor_bps": 25,
+      "launch_close_charge_tenth_bps": 270,
+      "floor_bps": 27,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -1345,14 +1232,14 @@
       "calibration_need_bps": 18.261877677092265,
       "validation_need_bps": 17.962675519620355,
       "need_bps": 18.261877677092265,
-      "calibration_only_ceiling_bps": 25,
+      "calibration_only_ceiling_bps": 27,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 24.789663389508227,
-      "proposed_ceiling_bps": 25,
+      "proposed_ceiling_bps": 27,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.5,
+      "ceiling_percent_of_min_margin": 2.7,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 30,
+      "ceiling_if_volatility_doubled_bps": 27,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -1367,8 +1254,8 @@
       "max_age_ms": 1000,
       "max_divergence_bps": 10,
       "min_initial_margin_bps": 1000,
-      "launch_close_charge_tenth_bps": 250,
-      "floor_bps": 25,
+      "launch_close_charge_tenth_bps": 270,
+      "floor_bps": 27,
       "calibration_active_hours": 2596,
       "validation_active_hours": 812,
       "evidence_flags": [
@@ -1382,14 +1269,14 @@
       "calibration_need_bps": 17.474231913835638,
       "validation_need_bps": 17.426296541064737,
       "need_bps": 17.474231913835638,
-      "calibration_only_ceiling_bps": 25,
+      "calibration_only_ceiling_bps": 27,
       "validation_covered_by_calibration_ceiling": true,
       "validation_max_need_bps": 22.074577774302412,
-      "proposed_ceiling_bps": 25,
+      "proposed_ceiling_bps": 27,
       "ceiling_binding_constraint": "launch charge",
-      "ceiling_percent_of_min_margin": 2.5,
+      "ceiling_percent_of_min_margin": 2.7,
       "within_burden_limit": true,
-      "ceiling_if_volatility_doubled_bps": 25,
+      "ceiling_if_volatility_doubled_bps": 27,
       "validation_hours_over_calibration_ceiling": 0.0,
       "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
@@ -1397,7 +1284,7 @@
   ],
   "registry_vs_global": {
     "global_value_bps": 35,
-    "strictest_ceiling_bps": 15,
+    "strictest_ceiling_bps": 17,
     "markets_whose_global_burden_exceeds_limit": [
       "BTC-USD",
       "ETH-USD",
@@ -1408,20 +1295,17 @@
       "US500",
       "US100",
       "US30",
-      "DE40",
-      "UK100",
       "JP225",
       "XAU-USD",
       "XAG-USD",
-      "WTI",
-      "BRENT"
+      "WTI"
     ],
-    "markets_above_strictest": 33,
-    "markets_total": 37,
+    "markets_above_strictest": 30,
+    "markets_total": 34,
     "stranded_headroom_bps_by_class": {
       "crypto": [
-        15,
-        20
+        13,
+        18
       ],
       "fx": [
         0
@@ -1431,8 +1315,7 @@
         2
       ],
       "commodity": [
-        6,
-        10
+        6
       ],
       "equity": [
         6,
@@ -1445,285 +1328,285 @@
         35
       ],
       "fx": [
-        15,
-        15
-      ],
-      "index": [
-        16,
+        17,
         17
       ],
+      "index": [
+        18,
+        19
+      ],
       "commodity": [
-        21,
-        25
+        23,
+        23
       ],
       "equity": [
-        21,
-        25
+        23,
+        27
       ]
     },
     "global_burden_percent_of_min_margin_worst": 70.0
   },
   "reversal_summary": {
     "calm": {
-      "cells": 888,
+      "cells": 816,
       "exceeding": 0,
       "share": 0.0,
-      "max_blended_bps": 13.2,
-      "pure_closes": 222,
+      "max_blended_bps": 15.2,
+      "pure_closes": 204,
       "pure_closes_clamped": 0,
       "pure_close_clamped_share": 0.0,
       "commodity": {
         "share": 0.0,
-        "max_blended_bps": 8.2
+        "max_blended_bps": 8.467
       },
       "crypto": {
         "share": 0.0,
-        "max_blended_bps": 10.6
+        "max_blended_bps": 12.6
       },
       "equity": {
         "share": 0.0,
-        "max_blended_bps": 13.2
+        "max_blended_bps": 15.2
       },
       "fx": {
         "share": 0.0,
-        "max_blended_bps": 3.5
+        "max_blended_bps": 5.5
       },
       "index": {
         "share": 0.0,
-        "max_blended_bps": 4.333
+        "max_blended_bps": 6.333
       }
     },
     "elevated": {
-      "cells": 888,
+      "cells": 816,
       "exceeding": 6,
-      "share": 0.006756756756756757,
-      "max_blended_bps": 25.4,
-      "pure_closes": 222,
+      "share": 0.007352941176470588,
+      "max_blended_bps": 27.4,
+      "pure_closes": 204,
       "pure_closes_clamped": 0,
       "pure_close_clamped_share": 0.0,
       "commodity": {
         "share": 0.0,
-        "max_blended_bps": 15.4
+        "max_blended_bps": 13.933
       },
       "crypto": {
         "share": 0.0,
-        "max_blended_bps": 20.2
+        "max_blended_bps": 22.2
       },
       "equity": {
         "share": 0.0125,
-        "max_blended_bps": 25.4
+        "max_blended_bps": 27.4
       },
       "fx": {
         "share": 0.0,
-        "max_blended_bps": 6.0
+        "max_blended_bps": 8.0
       },
       "index": {
         "share": 0.0,
-        "max_blended_bps": 7.667
+        "max_blended_bps": 9.667
       }
     },
     "top": {
-      "cells": 888,
-      "exceeding": 287,
-      "share": 0.32319819819819817,
-      "max_blended_bps": 53.8,
-      "pure_closes": 222,
+      "cells": 816,
+      "exceeding": 284,
+      "share": 0.3480392156862745,
+      "max_blended_bps": 55.8,
+      "pure_closes": 204,
       "pure_closes_clamped": 64,
-      "pure_close_clamped_share": 0.2882882882882883,
+      "pure_close_clamped_share": 0.3137254901960784,
       "commodity": {
         "share": 0.20833333333333334,
-        "max_blended_bps": 33.8
+        "max_blended_bps": 28.867
       },
       "crypto": {
-        "share": 0.013888888888888888,
-        "max_blended_bps": 43.4
+        "share": 0.06944444444444445,
+        "max_blended_bps": 45.4
       },
       "equity": {
         "share": 0.5416666666666666,
-        "max_blended_bps": 53.8
+        "max_blended_bps": 55.8
       },
       "fx": {
         "share": 0.0,
-        "max_blended_bps": 15.0
+        "max_blended_bps": 17.0
       },
       "index": {
         "share": 0.041666666666666664,
-        "max_blended_bps": 18.333
+        "max_blended_bps": 20.333
       }
     }
   },
   "reversal_summary_if_every_ceiling_were_its_floor": {
     "calm": {
-      "cells": 888,
+      "cells": 816,
       "exceeding": 0,
       "share": 0.0,
-      "max_blended_bps": 13.2,
-      "pure_closes": 222,
+      "max_blended_bps": 15.2,
+      "pure_closes": 204,
       "pure_closes_clamped": 0,
       "pure_close_clamped_share": 0.0,
       "commodity": {
         "share": 0.0,
-        "max_blended_bps": 8.2
+        "max_blended_bps": 8.467
       },
       "crypto": {
         "share": 0.0,
-        "max_blended_bps": 10.6
+        "max_blended_bps": 12.6
       },
       "equity": {
         "share": 0.0,
-        "max_blended_bps": 13.2
+        "max_blended_bps": 15.2
       },
       "fx": {
         "share": 0.0,
-        "max_blended_bps": 3.5
+        "max_blended_bps": 5.5
       },
       "index": {
         "share": 0.0,
-        "max_blended_bps": 4.333
+        "max_blended_bps": 6.333
       }
     },
     "elevated": {
-      "cells": 888,
+      "cells": 816,
       "exceeding": 6,
-      "share": 0.006756756756756757,
-      "max_blended_bps": 25.4,
-      "pure_closes": 222,
+      "share": 0.007352941176470588,
+      "max_blended_bps": 27.4,
+      "pure_closes": 204,
       "pure_closes_clamped": 0,
       "pure_close_clamped_share": 0.0,
       "commodity": {
         "share": 0.0,
-        "max_blended_bps": 15.4
+        "max_blended_bps": 13.933
       },
       "crypto": {
         "share": 0.0,
-        "max_blended_bps": 20.2
+        "max_blended_bps": 22.2
       },
       "equity": {
         "share": 0.0125,
-        "max_blended_bps": 25.4
+        "max_blended_bps": 27.4
       },
       "fx": {
         "share": 0.0,
-        "max_blended_bps": 6.0
+        "max_blended_bps": 8.0
       },
       "index": {
         "share": 0.0,
-        "max_blended_bps": 7.667
+        "max_blended_bps": 9.667
       }
     },
     "top": {
-      "cells": 888,
-      "exceeding": 309,
-      "share": 0.34797297297297297,
-      "max_blended_bps": 53.8,
-      "pure_closes": 222,
-      "pure_closes_clamped": 69,
-      "pure_close_clamped_share": 0.3108108108108108,
+      "cells": 816,
+      "exceeding": 302,
+      "share": 0.3700980392156863,
+      "max_blended_bps": 55.8,
+      "pure_closes": 204,
+      "pure_closes_clamped": 68,
+      "pure_close_clamped_share": 0.3333333333333333,
       "commodity": {
         "share": 0.20833333333333334,
-        "max_blended_bps": 33.8
+        "max_blended_bps": 28.867
       },
       "crypto": {
         "share": 0.3194444444444444,
-        "max_blended_bps": 43.4
+        "max_blended_bps": 45.4
       },
       "equity": {
         "share": 0.5416666666666666,
-        "max_blended_bps": 53.8
+        "max_blended_bps": 55.8
       },
       "fx": {
         "share": 0.0,
-        "max_blended_bps": 15.0
+        "max_blended_bps": 17.0
       },
       "index": {
         "share": 0.041666666666666664,
-        "max_blended_bps": 18.333
+        "max_blended_bps": 20.333
       }
     }
   },
   "gap_comparison": {
     "market": "EUR-USD",
-    "shortfall_reduction_min": 0.21553813257305773,
-    "shortfall_reduction_max": 0.34531298660853316,
-    "trader_cost_ratio": 6.866666666666666
+    "shortfall_reduction_min": 0.2165991639209762,
+    "shortfall_reduction_max": 0.34804444723460354,
+    "trader_cost_ratio": 6.176470588235294
   },
   "rounding": [
     {
       "index_raw": 1,
       "index_units": 1e-09,
-      "nominal_charge_bps": 13,
+      "nominal_charge_bps": 15,
       "rounded_up_raw": 1,
       "floor_bound_raw": 0,
       "excess_atoms": 1,
-      "excess_bps": 9987.0,
+      "excess_bps": 9985.0,
       "floor_makes_close_free": true
     },
     {
       "index_raw": 10,
       "index_units": 1e-08,
-      "nominal_charge_bps": 13,
+      "nominal_charge_bps": 15,
       "rounded_up_raw": 1,
       "floor_bound_raw": 0,
       "excess_atoms": 1,
-      "excess_bps": 987.0,
+      "excess_bps": 985.0,
       "floor_makes_close_free": true
     },
     {
       "index_raw": 777,
       "index_units": 7.77e-07,
-      "nominal_charge_bps": 13,
+      "nominal_charge_bps": 15,
       "rounded_up_raw": 2,
       "floor_bound_raw": 1,
       "excess_atoms": 1,
-      "excess_bps": 12.74002574,
+      "excess_bps": 10.74002574,
       "floor_makes_close_free": false
     },
     {
       "index_raw": 7777,
       "index_units": 7.777e-06,
-      "nominal_charge_bps": 13,
-      "rounded_up_raw": 11,
-      "floor_bound_raw": 10,
+      "nominal_charge_bps": 15,
+      "rounded_up_raw": 12,
+      "floor_bound_raw": 11,
       "excess_atoms": 1,
-      "excess_bps": 1.14427157,
+      "excess_bps": 0.43011444,
       "floor_makes_close_free": false
     },
     {
       "index_raw": 77777,
       "index_units": 7.7777e-05,
-      "nominal_charge_bps": 13,
-      "rounded_up_raw": 102,
-      "floor_bound_raw": 101,
+      "nominal_charge_bps": 15,
+      "rounded_up_raw": 117,
+      "floor_bound_raw": 116,
       "excess_atoms": 1,
-      "excess_bps": 0.11441686,
+      "excess_bps": 0.04300757,
       "floor_makes_close_free": false
     },
     {
       "index_raw": 777777,
       "index_units": 0.000777777,
-      "nominal_charge_bps": 13,
-      "rounded_up_raw": 1012,
-      "floor_bound_raw": 1011,
+      "nominal_charge_bps": 15,
+      "rounded_up_raw": 1167,
+      "floor_bound_raw": 1166,
       "excess_atoms": 1,
-      "excess_bps": 0.01144158,
+      "excess_bps": 0.00430072,
       "floor_makes_close_free": false
     },
     {
       "index_raw": 77777777,
       "index_units": 0.077777777,
-      "nominal_charge_bps": 13,
-      "rounded_up_raw": 101112,
-      "floor_bound_raw": 101111,
+      "nominal_charge_bps": 15,
+      "rounded_up_raw": 116667,
+      "floor_bound_raw": 116666,
       "excess_atoms": 1,
-      "excess_bps": 0.00011442,
+      "excess_bps": 4.301e-05,
       "floor_makes_close_free": false
     },
     {
       "index_raw": 650000001,
       "index_units": 0.650000001,
-      "nominal_charge_bps": 13,
-      "rounded_up_raw": 845001,
-      "floor_bound_raw": 845000,
+      "nominal_charge_bps": 15,
+      "rounded_up_raw": 975001,
+      "floor_bound_raw": 975000,
       "excess_atoms": 1,
       "excess_bps": 1.536e-05,
       "floor_makes_close_free": false
@@ -1731,11 +1614,11 @@
     {
       "index_raw": 150123456789,
       "index_units": 150.123456789,
-      "nominal_charge_bps": 13,
-      "rounded_up_raw": 195160494,
-      "floor_bound_raw": 195160493,
+      "nominal_charge_bps": 15,
+      "rounded_up_raw": 225185186,
+      "floor_bound_raw": 225185185,
       "excess_atoms": 1,
-      "excess_bps": 1e-08,
+      "excess_bps": 5e-08,
       "floor_makes_close_free": false
     }
   ],

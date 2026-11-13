@@ -153,7 +153,6 @@ mod tests {
         let mut params = config.genesis.params;
         params.profit_fee_bps = 0;
         params.stress_levels.truncate(1);
-        params.toxicity.tiers.iter_mut().for_each(|tier| tier.extra_spread_bps = 0);
         params.house_total_cap_floor = Fixed::from_int(1_000_000);
         apply(&mut engine, Command::Admin(AdminCommand::SetParams(params)));
         let mut market = config.genesis.markets.into_iter().find(|market| market.id == 1).unwrap();

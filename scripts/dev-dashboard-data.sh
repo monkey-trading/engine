@@ -2,8 +2,8 @@
 # Dev scenario for the House and MONKEY pages' data, on a node with config/dev.toml's mocks (static
 # mock mids), a synthetic signed access source, and `api.stats_interval = "1s"`:
 #   1. three accounts fund and declare, then trade both ways in two markets (BTC-USD and ETH-USD): a
-#      long and a short in each, and one account's round trip in BTC, which pays the spread twice (4 bps here, set by the config, the
-#      widest one band can be under BTC's 30 bps close-spread ceiling at the widest stress);
+#      long and a short in each, and one account's round trip in BTC, which pays the spread twice (3.5 bps here, set by the config, a
+#      band whose launch close charge, 29 bps, fits under BTC's 30 bps close-spread ceiling);
 #   2. GET /v1/house carries the open interest, open margin, positions, and each market's long,
 #      short and net those positions give, and GET /v1/house/positions holds the same notional in
 #      its close-out and profit buckets and names no account;
@@ -72,7 +72,7 @@ sed -e "s|127.0.0.1:8080|127.0.0.1:$api_port|" \
   -e "s|data/dev|$work|g" \
   -e 's|^stats_interval = .*|stats_interval = "1s"|' \
   -e 's|^per_account = .*|per_account = { per_second = 100, burst = 200 }|' \
-  -e '/^symbol = "BTC-USD"$/,/^spread_tiers = / s|^spread_tiers = .*|spread_tiers = [{ tenth_bps = 40 }]|' \
+  -e '/^symbol = "BTC-USD"$/,/^spread_tiers = / s|^spread_tiers = .*|spread_tiers = [{ tenth_bps = 35 }]|' \
   "$root/config/dev.toml" > "$work/node.toml"
 cat >> "$work/node.toml" <<CONFIG
 
@@ -84,11 +84,11 @@ max_age = "30s"
 max_response_bytes = 4096
 max_in_flight = 8
 CONFIG
-for edit in ":$api_port\"" 'stats_interval = "1s"' "$work/log\"" 'spread_tiers = [{ tenth_bps = 40 }]'; do
+for edit in ":$api_port\"" 'stats_interval = "1s"' "$work/log\"" 'spread_tiers = [{ tenth_bps = 35 }]'; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"
 done
-# Only BTC-USD's bands change: another market's would move its launch close charge past its ceiling.
-[[ "$(grep -cF 'spread_tiers = [{ tenth_bps = 40 }]' "$work/node.toml")" == 1 ]] \
+# Only BTC-USD's bands change.
+[[ "$(grep -cF 'spread_tiers = [{ tenth_bps = 35 }]' "$work/node.toml")" == 1 ]] \
   || fail "the spread band edit reached a market other than BTC-USD"
 
 max_drift="$(awk -F'"' '/^max_drift = / { print $2 }' "$root/config/dev.toml")"
@@ -177,7 +177,7 @@ trade 1 sell 1 1
 trade 2 buy 2 10
 trade 1 sell 2 5
 sleep 9
-# BTC's spread is 4 bps in this config, so the round trip loses far more than the mock index moves.
+# BTC's spread is 3.5 bps in this config, so the round trip loses far more than the mock index moves.
 trade 2 buy 1 1
 trade 2 sell 1 1
 

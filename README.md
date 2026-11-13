@@ -35,7 +35,10 @@ round trip pays it on the way in and again on the way out. No market quotes a ze
 is below a tenth of a basis point on FX and indices, or 1 basis point elsewhere. Spreads widen at
 times of stress, when venues diverge, prices move fast, or the house's exposure runs high. Accounts
 whose trades are consistently followed by a move in their favour, the mark of trading on prices
-that are about to change, pay a small additional spread on every trade.
+that are about to change, pay a small additional spread on every trade. From V54 that measure is
+how many standard errors an account's recent edge sits above zero, in each market's own units of
+price movement, weighted over time and by size: every account starts on the best price, none pays
+more before 20 fills, and round trips at an unchanged price cannot dilute it.
 
 Losing trades pay nothing. Winning trades pay a fixed share of the profit they realise, and
 positions held over the daily rollover pay or receive financing at a benchmark interest rate plus

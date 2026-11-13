@@ -257,7 +257,8 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
     params.stress_levels[0].size_spread_multiplier_bps = 0;
     let stress = Some(StressSettings::of(&params));
     let due = node.clock.now_ms() + NOTICE_MS;
-    let zero = ParamsNotice { profit_fee_bps: None, closeout_level_bps: None, stress, effective_at: due };
+    let zero =
+        ParamsNotice { profit_fee_bps: None, closeout_level_bps: None, stress, score_tiers: None, effective_at: due };
     let reason = "every stress level's size multiplier is at least 10000 bps";
     operator.refuses(&node, AdminCommand::AnnounceParams(zero), reason).await;
 
@@ -283,7 +284,7 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
     assert_eq!(fill(&node, &a, BTC, Side::Buy, "10", "100000").await, "100030".parse().unwrap());
     assert_eq!(fill(&node, &a, BTC, Side::Sell, "10", "100000").await, "99970".parse().unwrap());
 
-    // 5. A BTC ceiling below its launch close charge, 13bps and 3bp at 4x, is refused.
+    // 5. A BTC ceiling below its launch close charge, 15bps and 3bp at 4x, is refused.
     let adoption = |market, bps, effective_at, listing| AdminCommand::AdoptCloseSpreadCeiling {
         market,
         max_close_spread_bps: bps,
@@ -291,29 +292,39 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
         listing,
     };
     let due = node.clock.now_ms() + NOTICE_MS;
-    let reason = "market 1's close-spread ceiling of 24bps is below its launch close charge of 25.0bps";
-    operator.refuses(&node, adoption(BTC, 24, due, None), reason).await;
+    let reason = "market 1's close-spread ceiling of 26bps is below its launch close charge of 27.0bps";
+    operator.refuses(&node, adoption(BTC, 26, due, None), reason).await;
 
     // 6. An adoption for SOL-USD binds its proposed listing: another listing is refused, as is the
-    // proposal while a wider toxicity add-on lifts its charge over the ceiling, and then it lists.
+    // proposal while a wider toxicity add-on lifts its charge, 23bps at launch, over the ceiling, and
+    // then it lists. The top score tier moves only on a notice, to at most half again its 5bps.
     let proposal = relisting(&node, BTC, |spec| {
         spec.id = SOL;
         spec.symbol = "SOL-USD".into();
         spec.spread_tiers = spec.spread_tiers.iter().map(|tier| SpreadTier::tenths(tier.up_to, 20)).collect();
     })
     .await;
-    operator.applies(&node, adoption(SOL, 30, due, Some(proposal.clone()))).await;
+    operator.applies(&node, adoption(SOL, 24, due, Some(proposal.clone()))).await;
+    let genesis = dev_config().genesis.params;
+    let mut toxic = genesis.clone();
+    let top = toxic.toxicity.score_tiers.len() - 1;
+    toxic.toxicity.score_tiers[top].extra_spread_bps = 7;
+    let tiers_notice = |params: &engine_core::params::ProtocolParams, effective_at| {
+        let score_tiers = Some(params.toxicity.score_tiers.clone());
+        let notice =
+            ParamsNotice { profit_fee_bps: None, closeout_level_bps: None, stress: None, score_tiers, effective_at };
+        AdminCommand::AnnounceParams(notice)
+    };
+    operator.applies(&node, tiers_notice(&toxic, node.clock.now_ms() + NOTICE_MS)).await;
     node.move_time(NOTICE_MS as u64).await;
     let renamed = MarketSpec { symbol: "SOL-PERP".into(), ..proposal.clone() };
     let reason = "market 3's first listing must be the listing its ceiling adoption bound";
     operator.refuses(&node, AdminCommand::UpsertMarket(renamed), reason).await;
-    let genesis = dev_config().genesis.params;
-    let mut toxic = genesis.clone();
-    let top = toxic.toxicity.tiers.len() - 1;
-    toxic.toxicity.tiers[top].extra_spread_bps = 13;
     operator.applies(&node, AdminCommand::SetParams(toxic)).await;
-    let reason = "market 3's close-spread ceiling of 30bps is below its launch close charge of 31.0bps";
+    let reason = "market 3's close-spread ceiling of 24bps is below its launch close charge of 25.0bps";
     operator.refuses(&node, AdminCommand::UpsertMarket(proposal.clone()), reason).await;
+    operator.applies(&node, tiers_notice(&genesis, node.clock.now_ms() + NOTICE_MS)).await;
+    node.move_time(NOTICE_MS as u64).await;
     operator.applies(&node, AdminCommand::SetParams(genesis)).await;
     operator.applies(&node, AdminCommand::UpsertMarket(proposal.clone())).await;
 
@@ -329,7 +340,7 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
         .unwrap();
     let balances = [a_account, b_account].map(|account| replayed.accounts()[&account].balance);
     assert_eq!((balances, replayed.markets()[&BTC].spec.clone(), replayed.markets()[&SOL].spec.clone()), live);
-    assert_eq!(replayed.close_spread_ceilings().unwrap()[&SOL], 30);
+    assert_eq!(replayed.close_spread_ceilings().unwrap()[&SOL], 24);
     let policy = node.state.query(|engine| engine.access_policy().cloned()).await.unwrap();
     let (operator, clock, dir) = (node.state.operator, node.clock.clone(), node.dir.clone());
     let sequencer = node.tasks.remove(1);
