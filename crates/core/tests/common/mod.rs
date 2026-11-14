@@ -15,6 +15,7 @@ pub mod spreads;
 pub mod stress;
 pub mod toxicity;
 mod versions;
+pub mod weekend;
 
 use std::collections::BTreeMap;
 
@@ -384,6 +385,7 @@ pub fn market(id: MarketId, symbol: &str, class: AssetClass, schedule: Schedule,
         house_cap_floor: Fixed::ZERO,
         contracts: vec![],
         markout_floor_bps: None,
+        weekend_margin_bps: 0,
     }
 }
 

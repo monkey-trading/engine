@@ -36,9 +36,11 @@ impl Engine {
     }
 
     /// Advances past boundaries at recorded prices; target-time execution waits for the incoming
-    /// quote. Returns whether target-time adjustments require an account-wide margin check, or
-    /// `None` when, from `V33`, more than `MAX_CATCH_UP_BOUNDARIES` boundaries precede `target`:
-    /// the rest wait for later commands and this one does nothing else.
+    /// quote. From `V59` the start of a market's weekend gap, where its weekend close-outs run first,
+    /// and its reopening are boundaries too, though ones the `V33` bound does not count. Returns
+    /// whether target-time adjustments require an account-wide margin check, or `None` when, from
+    /// `V33`, more than `MAX_CATCH_UP_BOUNDARIES` boundaries precede `target`: the rest wait for later
+    /// commands and this one does nothing else.
     pub(crate) fn run_corporate_timeline(
         &mut self,
         previous: Millis,
@@ -55,9 +57,12 @@ impl Engine {
                 .filter(|p| p.failure.is_none())
                 .map(|p| if p.quantities.is_none() { p.instruction.previous_close } else { p.instruction.ex_open })
                 .min();
-            let at = corporate.into_iter().chain(self.next_rollover).filter(|at| *at <= target).min();
-            let Some(at) = at else { break };
-            if bounded && at < target {
+            let counted = corporate.into_iter().chain(self.next_rollover).filter(|at| *at <= target).min();
+            // From `V59` a weekend gap's start and reopening are boundaries, though not ones the bound
+            // counts.
+            let weekend = self.next_weekend_boundary().filter(|at| *at <= target);
+            let Some(at) = counted.into_iter().chain(weekend).min() else { break };
+            if bounded && at < target && counted == Some(at) {
                 if walked == MAX_CATCH_UP_BOUNDARIES {
                     events.push(Event::CatchUpDeferred { due: at });
                     self.now = target;
@@ -69,6 +74,9 @@ impl Engine {
             // A floor or restriction still in force at this boundary prices what the boundary does.
             self.lapse_stress_floors(events);
             self.lapse_restrictions(events);
+            // A weekend gap's close-outs run at its start, after the lapses above and before the
+            // captures, session refresh and rollover at it; a gap's reopening moves it on.
+            self.run_weekend_boundaries(at, events);
             let captures: Vec<_> = self
                 .corporate_actions
                 .iter()

@@ -17,7 +17,9 @@ upgrade, not as a hot fix.
 Each market needs at least `min_sources` quotes (2 for every launch market) no older than its
 `max_age_ms` (1 second), agreeing within `max_divergence_bps`. Otherwise the market has no price:
 no order fills, **closes included**, and positions in it that fall below the close-out level wait
-until it prices again. A market priced from two sources has no price when either fails or goes quiet
+until it prices again. The one exception, from `V59`, is the close-out when a market with a weekend
+margin starts its weekend gap: it fills at the market's last mark, the last price before the close,
+however old that price is. A market priced from two sources has no price when either fails or goes quiet
 for longer than `max_age_ms`. That holds for the crypto markets and for the vendor-priced ones.
 
 ### A crypto venue is down or quiet

@@ -74,6 +74,8 @@ impl Engine {
             });
         let available = self.accounts.get(&account).map_or(Fixed::ZERO, |acct| {
             let (equity, margin) = self.equity_and_margin(acct, None);
+            // From `V59` a withdrawal leaves the weekend margins that apply now.
+            let margin = margin + self.weekend_margin_extra_now(acct);
             let cash = if self.deposit_finality_enabled() {
                 if acct.balance > acct.unfinalised_deposits {
                     acct.balance - acct.unfinalised_deposits

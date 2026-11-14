@@ -38,7 +38,13 @@ pub fn with_spreads(h: &Harness, market: MarketId, spread_tiers: Vec<SpreadTier>
 /// A listing notice of `market`'s new spread bands, from seven days on.
 pub fn spread_notice(h: &Harness, market: MarketId, spread_tiers: Vec<SpreadTier>) -> (AdminCommand, Millis) {
     let effective_at = h.ts + NOTICE_MS;
-    let notice = ListingNotice { spread_tiers: Some(spread_tiers), margin_tiers: None, markup_bps: None, effective_at };
+    let notice = ListingNotice {
+        spread_tiers: Some(spread_tiers),
+        margin_tiers: None,
+        markup_bps: None,
+        weekend_margin_bps: None,
+        effective_at,
+    };
     (AdminCommand::AnnounceListing { market, notice }, effective_at)
 }
 

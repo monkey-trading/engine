@@ -65,6 +65,13 @@
 # - Benchmark rates are supplied by the separate signed publisher worker (#33).
 #   Complete the node config with config/benchmark-publishers.toml and run the worker
 #   before serving. With no rate, a market accrues no financing and raises a Critical alert.
+# - Weekend margins (#750, #614 owner decision of 2026-11-13, from #500's
+#   research/launch-caps): from protocol V59, WTI 7.5%, Japan 225 and silver
+#   1.5% and US Tech 100 1% over each weekend gap, any closure of at least 40
+#   hours by the market's calendar. From 2 hours before the gap starts until
+#   the market reopens, new risk and withdrawals meet it; when it starts, an
+#   account below it is closed out on the market at its last price. The other
+#   markets carry none.
 # - Toxicity (#690): from protocol V54, the score's tiers are #614's decision
 #   D1, and each listing's markout_floor_bps is the market's year's markout
 #   spread, rounded up to a hundredth of a bp (#699,
@@ -477,6 +484,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", tenth_bps = 9 }, { up_to = "25000000", tenth_bps = 18 }, { tenth_bps = 36 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "0.91" # the year's markout spread (#699)
+weekend_margin_bps = 100 # over each weekend gap (#750)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 contracts = [
   { contract = "NQZ6", from = "2026-09-10T14:30:00Z" },
@@ -574,6 +582,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", tenth_bps = 10 }, { up_to = "25000000", tenth_bps = 20 }, { tenth_bps = 40 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1.05" # the year's markout spread (#699)
+weekend_margin_bps = 150 # over each weekend gap (#750)
 financing = { benchmark = "TONA", markup_bps = 250, day_basis = 365 }
 contracts = [
   { contract = "NIYZ6", from = "2026-09-03T01:00:00Z" },
@@ -670,6 +679,7 @@ margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "2.24" # the year's markout spread (#699)
+weekend_margin_bps = 150 # over each weekend gap (#750)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 contracts = [
   { contract = "SIZ6", from = "2026-08-27T14:30:00Z" },
@@ -720,6 +730,7 @@ margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "2.04" # the year's markout spread (#699)
+weekend_margin_bps = 750 # over each weekend gap (#750)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 contracts = [
   { contract = "CLZ6", from = "2026-10-16T14:30:00Z" },

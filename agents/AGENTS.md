@@ -14,7 +14,14 @@ an index: load only the rule whose hint matches the current action.
   along a hold curve from each position's open time, `holding_fee/`, with the open time's own leaf in
   `merkle/open_time.rs`, the base, from launch to +50%, and the curve, at or above launch at every hold,
   moved only after notice, and from `V57` an add's averaged age clamped at the launch curve's last hold
-  whatever curve is in force, `tests/holding_fee_clamp.rs`), overnight financing, trading
+  whatever curve is in force, `tests/holding_fee_clamp.rs`), from `V59` a market's weekend margin
+  (`weekend/`: each margin band at least its rate over the market's weekend gap, any closure of at
+  least 40 hours found by `session/weekend.rs`; new risk in any market and withdrawals meet it from
+  two hours before the gap until the market reopens, and an account below it is closed out at its
+  marks when the gap starts, a boundary the corporate timeline walks to like the reopening; moved
+  only by a seven-day listing notice, or while rotation is on a passed vote, with no gap within
+  seven days narrowed or removed, nor a held market's added or brought forward, by the operator's
+  calendar change), overnight financing, trading
   sessions (from `V21` no quote stamped outside a market's hours prices it), markets priced from
   roll-adjusted front futures contracts (`futures.rs`), dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring (from `V54` a stick in `toxicity/`: markouts from
@@ -126,7 +133,7 @@ an index: load only the rule whose hint matches the current action.
   is refused at serve time),
   the dashboard record (`stats/`, held in memory and rebuilt from the log's replay through a sink in it,
   with no file to roll back: `series.rs` 1m/1h/1d buckets with `[stats]` retention, `snapshot.rs` and
-  `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, and, from the full scan's rule, each position's `closeouts` price in `GET /v1/accounts/{address}` (beside, from `V55`, what closing it pays, `close_fees`), `activity.rs`
+  `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, and, from the full scan's rule, each position's `closeouts` price in `GET /v1/accounts/{address}` (beside, from `V55`, what closing it pays, `close_fees`, and from `V59` the weekend margin each position needs, `weekend_margins`, served from `api/reads.rs`), `activity.rs`
   the bounded MONKEY feed, `view.rs` the answers) served signed from `api/stats.rs` and `/v1/house`:
   `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity`, `/v1/monkey/distributions` (`distributions.rs`: the
   closed epochs, their operator-share recipients and skipped ranges, in a ring of `[stats] distribution_limit`) and
@@ -387,8 +394,9 @@ an index: load only the rule whose hint matches the current action.
   launch margins and fees, from `V52` each market's spread bands in tenths of a bp (#623's tiers,
   with FX and index first bands pending the owner's confirmation), from `V40` each market's
   close-spread ceiling (#147's calibrated values, recomputed for `V52`'s floor and `V54`'s score
-  tiers), and from `V54` the toxicity score's tiers and each market's markout floor, its year's
-  markout spread (#699); a deployment's node sections complete it into a config. Every section
+  tiers), from `V54` the toxicity score's tiers and each market's markout floor, its year's
+  markout spread (#699), and from `V59` the weekend margins of WTI, Japan 225, silver and US Tech 100
+  (#750); a deployment's node sections complete it into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP, launched with Secure TSC:
@@ -478,6 +486,11 @@ an index: load only the rule whose hint matches the current action.
   close-out of a gaining and a losing position, the account and house reads, a refused cut and a noticed
   raise over TLS, from V57 an add to a position held a day after a noticed 30-minute curve extension
   closing at the launch curve's 15-minute clamp, restart and replay;
+  `dev-weekend-margin.sh`, the V59 weekend margin on a dev node: a 100x WTI long opened mid-week, an
+  add refused from two hours before Friday's close, the close-out at the last price when the weekend
+  gap starts beside a long that holds the margin and may withdraw only above it over the gap, the
+  normal margin at Sunday's open, the market and account reads, a calendar change narrowing the gap
+  and a weekend margin change without notice refused over TLS, restart and replay;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
@@ -637,7 +650,7 @@ an index: load only the rule whose hint matches the current action.
   before, and a job that times out is cancelled rather than failed, so the run continues too.
   `gh run rerun --failed` re-runs the failed, cancelled, and unstarted jobs with `ci-passed`, so a
   re-run after a flake repeats everything the first failure cut short. The test job also runs the
-  corporate-action, operator bounds, parameter notice and holding-time fee dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
+  corporate-action, operator bounds, parameter notice, holding-time fee and weekend margin dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
   their own job, `test-production`, which compiles a different feature set.
   `merge-approval.yaml` runs only on merge groups: its `merge-approved` job, the merge-group side of
   the required `merge-approved` check, runs `scripts/check-merge-approved.sh`, which follows the
@@ -792,6 +805,9 @@ Run from the repo root:
 - Holding-time fee dev scenario: `./scripts/dev-holding-fee.sh` (runs the isolated access-screened
   trading, account and house reads and signed admin over TLS scenario with deterministic time, restart
   and public replay)
+- Weekend margin dev scenario: `./scripts/dev-weekend-margin.sh` (runs the isolated access-screened
+  WTI trading and withdrawals across a weekend close, market and account reads and signed admin over
+  TLS scenario with deterministic time, restart and public replay)
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault

@@ -443,3 +443,5 @@ mod limits;
 mod listing;
 #[path = "parameter_votes/toxicity.rs"]
 mod toxicity;
+#[path = "parameter_votes/weekend.rs"]
+mod weekend;

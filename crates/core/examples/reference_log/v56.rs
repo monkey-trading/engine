@@ -18,7 +18,7 @@ use engine_core::types::{AccountId, Millis};
 use crate::common::{BTC, ETH, Harness};
 
 /// The seed of the turn's key `V55`'s part leaves in effect.
-const TURN_SEED: u8 = 0x5c;
+pub(crate) const TURN_SEED: u8 = 0x5c;
 /// A restriction's lifetime: a day.
 const TTL_MS: Millis = 24 * 60 * 60 * 1000;
 

@@ -11,11 +11,9 @@
 //! quoted in another currency than USD fills only while its FX market has a price, and its realised
 //! PnL converts to USD at that FX index.
 
-use std::cell::OnceCell;
-
 use crate::Fixed;
 use crate::access::AccessEvidence;
-use crate::account::{Account, RestingOrder};
+use crate::account::RestingOrder;
 use crate::auth::RequestScope;
 use crate::command::{OrderKind, OrderRequest};
 use crate::eip712::order_hash;
@@ -42,23 +40,6 @@ pub(crate) enum PriceGuard {
     },
     /// Triggered limit: never fill worse than the limit.
     Limit(Fixed),
-}
-
-/// The house totals a risk check reads. The NAV is taken at once, and the gross exposure on first
-/// use, so a run of checks over one state computes each once.
-struct HouseTotals {
-    nav: Fixed,
-    gross: OnceCell<Fixed>,
-}
-
-impl HouseTotals {
-    fn of(engine: &Engine) -> Self {
-        Self { nav: engine.house_nav(), gross: OnceCell::new() }
-    }
-
-    fn gross(&self, engine: &Engine) -> Fixed {
-        *self.gross.get_or_init(|| engine.house_gross_exposure())
-    }
 }
 
 /// One fill to price, risk-check, and book.
@@ -209,6 +190,18 @@ impl Engine {
         Ok(self.book(&exec, priced))
     }
 
+    /// Prices a close-out's fill at index `mid`, converting to USD at `fx`, and books it: from `V59`
+    /// a weekend close-out fills at its market's mark once the market has shut, where its own
+    /// index no longer prices.
+    /// Error cases:
+    /// - as `price_at`
+    pub(crate) fn execute_at(&mut self, exec: Exec, mid: Fixed, fx: Option<Fixed>) -> Result<Fill, Reject> {
+        // A close-out only reduces, so it passes no risk check.
+        assert!(exec.liquidation && exec.reduce_only, "only a close-out fills at a price it is given");
+        let priced = self.price_at(&exec, mid, fx)?;
+        Ok(self.book(&exec, priced))
+    }
+
     /// Records a fill and writes off any balance the account can no longer cover.
     pub(crate) fn after_fill(&mut self, fill: Fill, events: &mut Vec<Event>) {
         let account = fill.account;
@@ -284,13 +277,22 @@ impl Engine {
     /// - a spread at this size that reaches the price itself
     /// - a live price beyond the slippage bound or the limit
     fn price(&self, exec: &Exec) -> Result<Priced, Reject> {
-        let params = self.params.as_ref().expect("callers check params are set");
         let market = &self.markets[&exec.market];
         if !market.open {
             return Err(Reject::MarketClosed);
         }
         let mid = market.index(self.now).map_err(|error| Reject::NoPrice { error })?.mid;
         let fx = self.live_fx(exec.market)?;
+        self.price_at(exec, mid, fx)
+    }
+
+    /// The price for a fill at index `mid`, converting to USD at `fx`, and the slice of it that adds
+    /// risk, as `price` gives it at the live index.
+    /// Error cases:
+    /// - as `price`, but for the market's session and prices
+    fn price_at(&self, exec: &Exec, mid: Fixed, fx: Option<Fixed>) -> Result<Priced, Reject> {
+        let params = self.params.as_ref().expect("callers check params are set");
+        let market = &self.markets[&exec.market];
         let currency = market.spec.quote_currency;
         let usd = |amount, rounding| currency.to_usd(amount, fx, rounding);
         let acct = &self.accounts[&exec.account];
@@ -384,45 +386,6 @@ impl Engine {
         Ok(Priced { qty, delta, price, mid, fx, spread_bps: adjust.bps_of(mid), increases })
     }
 
-    /// Checks a fill that adds risk against the account's margin and the house's exposure caps, in
-    /// USD: realised PnL converts rounded down, and exposure rounded up.
-    /// Error cases:
-    /// - the account's equity after the fill would be below its margin requirement
-    /// - the fill would push the house's net exposure past the market cap or the total cap
-    fn check_risk(&self, exec: &Exec, priced: &Priced, house: &HouseTotals) -> Result<(), Reject> {
-        let params = self.params.as_ref().expect("callers check params are set");
-        let market = &self.markets[&exec.market];
-        let usd = |amount, rounding| market.spec.quote_currency.to_usd(amount, priced.fx, rounding);
-
-        // Margin reads only cash and positions, so the resting orders are not copied.
-        let acct = &self.accounts[&exec.account];
-        let mut sim = Account { balance: acct.balance, positions: acct.positions.clone(), ..Account::default() };
-        let version = self.protocol_version;
-        let realised = sim.positions.entry(exec.market).or_default().apply(priced.delta, priced.price, version);
-        let realised = usd(realised, Rounding::Down);
-        // From `V55` the fee is the closing slice's, at its hold.
-        let (_, fee_bps) = self.close_fee_terms(exec.account, exec.market);
-        sim.balance += realised - profit_fee(realised, fee_bps, version);
-        let (equity, required) = self.equity_and_margin(&sim, Some((exec.market, priced.mid, priced.fx)));
-        if equity < required {
-            return Err(Reject::InsufficientMargin { equity, required });
-        }
-
-        let nav = house.nav;
-        let before = usd(market.client_qty.abs().mul(priced.mid), Rounding::Up);
-        let after = usd((market.client_qty + priced.delta).abs().mul(priced.mid), Rounding::Up);
-        if after > before {
-            // `house_gross_exposure` values this market at its marks; swap that term for `after`.
-            let exposure = |mark: Fixed| market.usd_at_mark(market.client_qty.abs().mul(mark), Rounding::Up);
-            let at_mark = market.mark.map_or(Fixed::ZERO, exposure);
-            let total_after = house.gross(self) - at_mark + after;
-            if after > self.market_cap(&market.spec, nav) || total_after > self.total_cap(params, nav) {
-                return Err(Reject::HouseCapacity);
-            }
-        }
-        Ok(())
-    }
-
     /// Books a priced fill: the position, from `V55` its open time, the market aggregates, realised PnL
     /// in USD (rounded down) and the profit fee at the closed slice's hold against house cash, the PnL
     /// in the account's emission period result, and a markout to score the flow later
@@ -485,6 +448,8 @@ mod batch;
 mod cancel;
 mod quote;
 pub use quote::{Quote, Quoter};
+mod risk;
+use risk::HouseTotals;
 mod validation;
 
 #[cfg(test)]

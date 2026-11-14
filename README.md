@@ -76,7 +76,13 @@ close-out level. A market with no fresh price allows no dealing at all, while ac
 holding it trade other markets and withdraw against its last price. Markets in real-world assets
 keep their exchange's hours, holidays, and early closes, and orders resting while a market is
 closed fill at the first price after it opens, gap and all; no quote from outside a market's hours
-ever prices it. Indices and commodities price from their front futures contract, and when one
+ever prices it. From protocol V59 a market whose prices can jump across its weekend closure carries
+a weekend margin, a higher rate each of its margin bands charges over any closure of at least 40
+hours: WTI 7.5%, Japan 225 and silver 1.5%, and US Tech 100 1% at launch. From two hours before
+the market's weekend closure until it reopens, new risk in any market and withdrawals must leave the
+account meeting it; when the closure starts, an account below it is closed out on that market at the
+last price before the close; and once the market reopens, its normal margin applies again. Indices
+and commodities price from their front futures contract, and when one
 contract rolls to the next the price takes the gap between them, so it does not jump. The house limits its own risk by
 capping its net exposure in each market, and the sum of those exposures across markets, at the
 larger of a fraction of its net asset value and a fixed dollar floor, so trading can start from a
@@ -127,7 +133,11 @@ ceiling is set no lower than what a close in its first band could pay at the wid
 when it was set or when the market launched, and a market whose ceiling was adopted after genesis
 can only be listed as that adoption named it. From V55 the profit fee moves only up from its launch
 value, to at most half again, and the fee that short holds pay only to a curve at or above the launch
-curve at every hold, each after the same notice, so no hold pays less than at launch.
+curve at every hold, each after the same notice, so no hold pays less than at launch. From V59 a
+listed market's weekend margin also changes only after the same notice, or while rotation is on by a
+vote; the operator's calendar change may not shorten or remove a weekend closure starting within
+seven days, and while the market holds positions may not add or bring one forward within seven days
+either.
 While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
 distribution, which it claims from the vault as a staker claims its own; from V50 the fifth is split
 among the operators by their time in office during the epoch.

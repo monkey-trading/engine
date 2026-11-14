@@ -121,6 +121,15 @@ A market priced far from the venues, a page that the venues disagree, fills that
 - From `V52` a market's spread and margin bands change only seven days after a listing notice
   (`announce-listing`), within its launch bands, so an incident widens spreads through the stress
   floor and stops new risk through reduce-only, never through a relisting.
+- From `V59` the same holds for a market's weekend margin (`announce-listing --weekend-margin-bps`),
+  a relisting may not shorten or remove a weekend closure starting within seven days, and while the
+  market holds positions may not add or bring one forward within seven days, so a venue's unplanned
+  early close stays off the calendar until the planned close, whose close-out still runs at the last
+  price. When a
+  market with one starts its weekend gap, every account below it is closed out on that market at its
+  last price before the close, so a burst of close-outs at Friday's close in WTI, Japan 225, silver
+  or US Tech 100 is the rule working, not an incident; so are withdrawals refused over the weekend for
+  accounts holding them, which keep the weekend margin until the market reopens.
 
 ### The host misbehaves
 

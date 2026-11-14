@@ -1,5 +1,6 @@
 //! Listing bounds, from `V52`: a listed market's spread and margin bands move only as a listing
-//! notice of at least seven days names them, and only within bounds its launch bands set.
+//! notice of at least seven days names them, and only within bounds its launch bands set. From `V59`
+//! so does its weekend margin (`weekend`), to none or to a rate the listing's validation allows.
 //!
 //! A notice may name a market's spread bands, margin bands and financing markup (`V49`'s markup
 //! notice is the notice naming only a markup), and a relisting applies each named value once, from
@@ -25,8 +26,9 @@ use crate::spread_tier::{SpreadTier, check_spread_tiers, validate_spread_tiers};
 use crate::types::{MarketId, Millis};
 
 /// The operator's notice of one listed market's new listing values: from `V49` its financing markup,
-/// and from `V52` its spread and margin bands. A relisting may apply each named value from
-/// `effective_at` on, once. A notice naming only a markup encodes as `V49`'s did.
+/// from `V52` its spread and margin bands, and from `V59` its weekend margin. A relisting may apply
+/// each named value from `effective_at` on, once. A notice naming only a markup encodes as `V49`'s
+/// did.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListingNotice {
@@ -36,6 +38,9 @@ pub struct ListingNotice {
     pub margin_tiers: Option<Vec<Tier>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub markup_bps: Option<i64>,
+    /// From `V59`, a weekend margin rate, zero for none, left out of the encoding when none is named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weekend_margin_bps: Option<i64>,
     /// The sequenced time the named values may apply from.
     pub effective_at: Millis,
 }
@@ -59,17 +64,27 @@ pub(crate) struct ListingChange {
     spread: bool,
     margin: bool,
     markup: bool,
+    weekend: bool,
 }
 
 impl ListingNotice {
     /// A notice of `markup_bps` alone, as `AnnounceMarkup` gives.
     pub fn markup(markup_bps: i64, effective_at: Millis) -> Self {
-        ListingNotice { spread_tiers: None, margin_tiers: None, markup_bps: Some(markup_bps), effective_at }
+        ListingNotice {
+            spread_tiers: None,
+            margin_tiers: None,
+            markup_bps: Some(markup_bps),
+            weekend_margin_bps: None,
+            effective_at,
+        }
     }
 
     /// Whether the notice names no value left to apply.
     fn names_nothing(&self) -> bool {
-        self.spread_tiers.is_none() && self.margin_tiers.is_none() && self.markup_bps.is_none()
+        self.spread_tiers.is_none()
+            && self.margin_tiers.is_none()
+            && self.markup_bps.is_none()
+            && self.weekend_margin_bps.is_none()
     }
 }
 
@@ -118,6 +133,8 @@ impl Engine {
     /// - margin bands that fail the table checks, or whose requirement at some notional is below
     ///   launch's
     /// - a markup outside ±10000 bps a year
+    /// - a weekend margin before `V59`, or one the listing, with any margin bands the notice names,
+    ///   would fail `MarketSpec::validate` with
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_listing(&mut self, market: MarketId, notice: &ListingNotice) -> Result<(), String> {
         if self.protocol_version < ProtocolVersion::V52 {
@@ -144,21 +161,29 @@ impl Engine {
         if notice.markup_bps.is_some_and(|markup| !(-MAX_RATE_BPS..=MAX_RATE_BPS).contains(&markup)) {
             return Err("financing.markup_bps must be within ±10000".into());
         }
+        if let Some(weekend_margin_bps) = notice.weekend_margin_bps {
+            if self.protocol_version < ProtocolVersion::V59 {
+                return Err(format!("a weekend margin notice needs protocol {:?}", ProtocolVersion::V59));
+            }
+            let margin_tiers = notice.margin_tiers.clone().unwrap_or_else(|| listed.spec.margin_tiers.clone());
+            MarketSpec { weekend_margin_bps, margin_tiers, ..listed.spec.clone() }.validate()?;
+        }
         self.check_notice_time("a listing notice", notice.effective_at)?;
         self.operator_bounds.markups.insert(market, notice.clone());
         Ok(())
     }
 
     /// Checks a listing's spread bands are written as the version in force lists them, and that a
-    /// relisting changes a listed market's markup (from `V49`) and its spread and margin bands (from
-    /// `V52`) only to the values its notice names, once that notice's time has come. A `voted`
-    /// relisting's notice is its vote's, and it is held to the bounds a notice is: each
-    /// changed band table within its market's launch bands. Changes are measured from the baseline
+    /// relisting changes a listed market's markup (from `V49`), its spread and margin bands (from
+    /// `V52`) and its weekend margin (from `V59`) only to the values its notice names, once that
+    /// notice's time has come. A `voted` relisting's notice is its vote's, and it is held to the
+    /// bounds a notice is: each changed band table within its market's launch bands, and a weekend
+    /// margin `MarketSpec::validate` admits. Changes are measured from the baseline
     /// (`Engine::baseline_spec`). Returns what applying the listing spends.
     /// Error cases:
     /// - spread bands `check_spread_tiers` refuses
-    /// - unless `voted`, a changed markup, spread band table or margin band table no notice names, or
-    ///   whose notice takes effect later than the sequenced time
+    /// - unless `voted`, a changed markup, spread band table, margin band table or weekend margin no
+    ///   notice names, or whose notice takes effect later than the sequenced time
     /// - if `voted`, a changed spread band table whose rate at some notional is below the launch rate
     ///   there or above twice it, or a changed margin band table whose requirement at some notional is
     ///   below launch's
@@ -196,6 +221,11 @@ impl Engine {
                 change.margin = true;
             }
         }
+        if spec.weekend_margin_bps != listed.weekend_margin_bps && !voted {
+            let named = notice.filter(|notice| notice.weekend_margin_bps == Some(spec.weekend_margin_bps));
+            self.check_noticed(spec.id, "weekend margin", named)?;
+            change.weekend = true;
+        }
         Ok(change)
     }
 
@@ -217,6 +247,9 @@ impl Engine {
         }
         if change.margin {
             notice.margin_tiers = None;
+        }
+        if change.weekend {
+            notice.weekend_margin_bps = None;
         }
         if notice.names_nothing() {
             self.operator_bounds.markups.remove(&spec.id);

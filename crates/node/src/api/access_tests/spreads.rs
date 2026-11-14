@@ -80,6 +80,20 @@ pub(super) async fn fill_event(
     qty: &str,
     quoted: &str,
 ) -> Value {
+    let events = order_events(node, client, market, side, qty, quoted).await;
+    let fill = events.as_array().unwrap().iter().find(|event| event["type"] == "fill");
+    fill.unwrap_or_else(|| panic!("{side:?} {qty}: {events}")).clone()
+}
+
+/// `fill`'s order; the events it gives.
+pub(super) async fn order_events(
+    node: &Node,
+    client: &SigningKey,
+    market: MarketId,
+    side: Side,
+    qty: &str,
+    quoted: &str,
+) -> Value {
     let account = eip712::address(client.verifying_key());
     let nonce = node.state.query(move |engine| engine.next_request_nonce(account)).await.unwrap();
     let expires_at = node.clock.now_ms() + 60_000;
@@ -97,8 +111,7 @@ pub(super) async fn fill_event(
     request.auth = Some(RequestAuth { nonce, expires_at, signature: eip712::sign(client, &hash) });
     let (status, events) = node.post("/v1/orders", json!(request)).await;
     assert_eq!(status, StatusCode::OK, "{events}");
-    let fill = events.as_array().unwrap().iter().find(|event| event["type"] == "fill");
-    fill.unwrap_or_else(|| panic!("{side:?} {qty}: {events}")).clone()
+    events
 }
 
 /// Credits `amount` more to a declared `client`.
@@ -290,6 +303,7 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
         spread_tiers: Some(noticed.spread_tiers.clone()),
         margin_tiers: Some(noticed.margin_tiers.clone()),
         markup_bps: None,
+        weekend_margin_bps: None,
         effective_at: due,
     };
     operator.applies(&node, AdminCommand::AnnounceListing { market: BTC, notice }).await;
