@@ -99,12 +99,13 @@ async fn a_history_index_the_node_cannot_discard_stops_it_before_it_writes_to_th
 async fn a_genesis_cut_short_stops_the_node_before_it_writes_to_the_log() {
     let (dir, index) = (scratch_dir("node-genesis-cut"), scratch_dir("node-genesis-cut-index"));
     TestSequencer::start_legacy(&dir, 1024).stop().await;
-    // As if the boot that ran genesis died before its house capital credit reached disk.
+    // As if the boot that ran genesis died before its house capital credit reached disk. The credit
+    // may open its segment, as the genesis's length falls, which leaves that segment empty.
     let segment = files(&dir).into_keys().filter(|name| segment_seq(name).is_some()).max().expect("a segment");
     let text = fs::read_to_string(dir.join(&segment)).unwrap();
     let credit = text.find(r#""cmd":{"type":"house_capital""#).expect("the credit is in the last segment");
-    let line = text[..credit].rfind('\n').expect("a command before it");
-    fs::write(dir.join(&segment), &text[..line + 1]).unwrap();
+    let kept = text[..credit].rfind('\n').map_or(0, |line| line + 1);
+    fs::write(dir.join(&segment), &text[..kept]).unwrap();
     let before = files(&dir);
 
     let mut cfg = dev_config();
