@@ -198,7 +198,7 @@ impl Node {
             (None, true) => Some(Source::start(clock.clone(), operator).await),
             (None, false) => None,
         };
-        let poster = post_checkpoints.then(|| poster(chain, &dir, &key));
+        let poster = post_checkpoints.then(|| setup::poster(chain, &dir, &key));
         let checkpoint_parent = match &poster {
             Some(poster) => match poster.chain.state(View::Finalized).await.unwrap().checkpoint {
                 Some((seq, root)) => CheckpointParent { has_checkpoint: true, seq, root: root.parse().unwrap() },
@@ -222,10 +222,7 @@ impl Node {
             checkpoints: post_checkpoints.then_some(work_tx),
             access_policy: source.as_ref().map(|source| source.policy.clone()),
             turn_release: seat.map(|seat| seat.release),
-            governance: chain.vote.map(|(vote, ttl)| engine_core::governance::GovernanceConfig {
-                vote: AccountId(vote.into()),
-                restriction_ttl_ms: ttl,
-            }),
+            governance: setup::governance(chain),
             metrics: metrics.clone(),
             ..sequencer_config(&dir, manifest_tx)
         };
@@ -500,5 +497,4 @@ impl Node {
 mod setup;
 pub(super) use setup::custody_section;
 mod stamps;
-use setup::poster;
 pub(super) use stamps::Stamps;

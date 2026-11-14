@@ -31,6 +31,14 @@ pub(super) fn poster(chain: &Chain, dir: &std::path::Path, key: &EnclaveKey) -> 
     }
 }
 
+/// The governance the chain's vote contract runs, when it has one.
+pub(super) fn governance(chain: &Chain) -> Option<engine_core::governance::GovernanceConfig> {
+    chain.vote.map(|(vote, ttl)| engine_core::governance::GovernanceConfig {
+        vote: AccountId(vote.into()),
+        restriction_ttl_ms: ttl,
+    })
+}
+
 /// EVM custody over the chain's proxies, crediting at the latest block and releasing at the chain's
 /// release tag, with the staking contract, the registry, and any schedule mirrored.
 pub(crate) fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody: CustodySection) -> CustodySection {
