@@ -114,7 +114,8 @@ impl Engine {
     /// - before `V52`, or for a market that is not listed
     /// - a notice naming nothing
     /// - spread bands that fail `MarketSpec::validate`'s table checks or `check_spread_tiers`, or
-    ///   whose rate at some notional is below the launch rate there or above twice it
+    ///   whose rate at some notional is below the launch rate there or above twice it, or from `V59`
+    ///   that `Engine::check_tiered_listing` refuses
     /// - margin bands that fail the table checks, or whose requirement at some notional is below
     ///   launch's
     /// - a markup outside ±10000 bps a year
@@ -136,6 +137,7 @@ impl Engine {
             validate_spread_tiers("spread_tiers", tiers)?;
             check_spread_tiers(tiers, listed.spec.asset_class, self.protocol_version)?;
             check_spread_within_launch(tiers, &launch.spread_tiers)?;
+            self.check_tiered_listing(market, tiers)?;
         }
         if let Some(tiers) = &notice.margin_tiers {
             validate_tiers("margin_tiers", tiers, 1)?;
@@ -157,6 +159,8 @@ impl Engine {
     /// (`Engine::baseline_spec`). Returns what applying the listing spends.
     /// Error cases:
     /// - spread bands `check_spread_tiers` refuses
+    /// - from `V59`, changed spread bands `Engine::check_tiered_listing` refuses, or a first listing's
+    ///   bands `Engine::check_tiered_first_listing` refuses
     /// - unless `voted`, a changed markup, spread band table or margin band table no notice names, or
     ///   whose notice takes effect later than the sequenced time
     /// - if `voted`, a changed spread band table whose rate at some notional is below the launch rate
@@ -166,6 +170,7 @@ impl Engine {
         check_spread_tiers(&spec.spread_tiers, spec.asset_class, self.protocol_version)?;
         let markup = self.check_markup_change(spec, voted)?;
         let Some(listed) = self.baseline_spec(spec.id) else {
+            self.check_tiered_first_listing(spec.id, &spec.spread_tiers)?;
             return Ok(ListingChange { first: true, markup, ..ListingChange::default() });
         };
         let mut change = ListingChange { markup, ..ListingChange::default() };
@@ -179,6 +184,7 @@ impl Engine {
             .expect("V52's activation records every market listed then, and each first listing after it");
         let notice = self.operator_bounds.markups.get(&spec.id);
         if spec.spread_tiers != listed.spread_tiers {
+            self.check_tiered_listing(spec.id, &spec.spread_tiers)?;
             if voted {
                 check_spread_within_launch(&spec.spread_tiers, &launch.spread_tiers)?;
             } else {
@@ -247,7 +253,7 @@ fn rate_above(tiers: &[SpreadTier], notional: Fixed) -> i64 {
 /// it: both are constant between the bounds of either table, so each stretch is checked once.
 /// Error cases:
 /// - a stretch where the rate is below the launch rate or above twice it
-fn check_spread_within_launch(tiers: &[SpreadTier], launch: &[SpreadTier]) -> Result<(), String> {
+pub(crate) fn check_spread_within_launch(tiers: &[SpreadTier], launch: &[SpreadTier]) -> Result<(), String> {
     let starts = once(Fixed::ZERO).chain(tiers.iter().chain(launch).filter_map(|tier| tier.up_to));
     for start in starts {
         let (rate, launched) = (rate_above(tiers, start), rate_above(launch, start));

@@ -346,11 +346,24 @@ pub enum ProtocolVersion {
     /// log across `V54` it is refused while such a listing's ceiling is below its launch close charge
     /// under the parameters as it converts them.
     V58,
+    /// Volume tiers (`volume_tier`): an account's tier is the highest whose threshold its counted volume
+    /// over the last 30 UTC days reaches, each day counting at most the threshold over the tier's day
+    /// divisor, and its first spread band in every market ends at its tier's share of the first bound,
+    /// at most the second, with no rate changed. Opening notional counts on the day it has been held
+    /// 60 s; a close takes the position's pending notional newest first, counting nothing for it, and
+    /// counts what it closes past it once the toxicity horizon has passed, unless a reopening at the
+    /// same index within it takes it back as a round trip; a close-out counts at once. The table moves
+    /// only after a seven-day notice or by a vote, keeping its launch tiers, thresholds and day
+    /// divisors at or above launch and shares at or below, with every market's spread at each tier from
+    /// that tier's launch spread to twice it. Activation, refused over a listing outside that bound, gives
+    /// parameters that name no table the launch table, starts every account at tier 0 with no counted
+    /// volume, and holds every position held then pending, counting nothing, for its first 60 s.
+    V59,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V58;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V59;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

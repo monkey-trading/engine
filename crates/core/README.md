@@ -121,6 +121,14 @@ this crate and reproduce the signed state roots exactly.
   applies when the node sequences `apply_proposal`; a fast-path proposal applies at once as a
   restriction that only raises a margin or the close-out level, sets a stress floor, lowers a cap, or
   makes a market reduce-only, and lapses at the recorded lifetime unless renewed
+- From protocol `V59`, volume tiers (`src/volume_tier/`): an account's tier is the highest its volume
+  counted over the last 30 UTC days reaches, each day counting at most the tier's threshold over its
+  day divisor, and its first spread band in every market ends at the tier's share of the first bound.
+  Opening notional counts once held 60 s, on the day it matures; a close takes the pending notional
+  newest first and counts nothing for it, a close of matured notional counts once the round-trip
+  horizon has passed, and a round trip counts nothing. The table moves only after a seven-day notice
+  or by a vote, never more generously than at launch, with every market's spread at each tier from
+  that tier's launch spread to twice it
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -292,6 +300,22 @@ this crate and reproduce the signed state roots exactly.
   and launch bounds, each position's open time, what a close pays now and when it next falls, and
   activation; unit tests in `src/holding_fee/tests.rs`
 - `src/merkle/open_time.rs` — the V55 open-time leaves, kind 27, beside each position's leaf
+- `src/volume_tier/mod.rs` — the V59 volume tiers: the tier table, its launch values and shape, the
+  tier an account's window reaches, each account's spread bands with its best-price bound, and the
+  account read's standing; unit tests in `src/volume_tier/tests.rs`
+- `src/volume_tier/book.rs` — each account's volume book: counted volume by day, the opening and
+  closing lots waiting to count, how a fill counts, and a split's scaling; unit tests in
+  `src/volume_tier/book/tests.rs`
+- `src/volume_tier/bounds.rs` — the bounds on the table, its notice, activation, and the tiered
+  spread check on every table and listing change
+- `src/merkle/volume.rs` — the V59 volume leaves, kind 28, one per account's book
+- `tests/volume_tiers.rs` — the best-price bound at tier 0 and tier 1, counting after 60 s on the
+  day of maturity, pending notional a close takes, a close's horizon, round trips both ways, the
+  day cap, the 30-day window, close-outs, triggered orders, activation, splits, and the volume leaf
+  beside the exit's proofs
+- `tests/volume_tier_bounds.rs` — the table's notice, its launch bounds, a listing and a table held
+  together to each tier's launch spread, a raised threshold held at every tier below it, and the rules
+  before V59
 - `tests/holding_fee.rs` — the fee at each hold, losses, adds, flips, close-outs, the margin check on
   a flip, close-all pieces, splits, activation, and what a close pays now
 - `tests/holding_fee_bounds.rs` — the bounds on the base fee and the curve, their notices, the
@@ -312,6 +336,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/parameter_votes/listing.rs` — `V56`: a voted relisting held to the listing bounds without a notice, the operator's listing notice refused while rotation is on, the size multiplier and close charge floors on voted changes, and a relisting under a margin restriction measured from the baseline
 - `tests/parameter_votes/toxicity.rs` — `V56`: a voted score tier change held to ±50% of launch without a notice, and a voted relisting keeping its markout floor
 - `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch; from `V57` a voted extension lending an add no more than the launch curve's last hold
+- `tests/parameter_votes/volume_tiers.rs` — `V59` activated by a vote, a voted volume tier table held to its launch bounds without a notice, and a voted relisting held at every tier
 - `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, and the turn's time in office
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
 - `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
@@ -843,6 +868,42 @@ across V54 it is refused while the listing a market's first listing must be, the
 an adoption waits, has a ceiling below its launch close charge under the score tiers the activation
 converts to, as it is for a listed market. Before V58 none of this is checked or changed, so earlier
 logs replay unchanged. Its session is in `examples/reference_log/v58.rs`.
+
+Protocol V59 adds volume tiers (`src/volume_tier/`). The parameters' `volume_tiers` table names, for
+each tier, the counted volume over the last 30 UTC days of sequenced time that reaches it
+(`threshold`), the days that takes (`day_divisor`: a day counts at most the threshold over it), and
+where its accounts' first spread band ends (`best_price_share_bps` of each market's first bound, at
+most the second bound); tier 0 needs nothing, and no tier changes a rate. Each account's volume book
+(`Engine::account_volume`, its own state-tree leaf, kind 28) counts lazily: opening notional, at the
+fill's price in USD, counts on the day it has been held 60 s; a close takes the position's pending
+notional newest first and counts nothing for it; what it closes past that counts on its day once the
+toxicity score's horizon has passed, unless a reopening at the same index within the horizon, which
+the score matches as a round trip, takes it back, and the quantity reopened is matured again; a
+close-out counts at once. A closing lot keeps the close's leg as the score keeps it, the quantity
+closed less what the close itself matched as a round trip, and a later opening on the other side takes
+legs newest first whatever their index, as the score does: at the close's index it takes back the
+matured units first, and at another the pending ones, so the close's count stands. A market's first
+listing is held at every tier to twice what its own bands charge at the launch share. Merged lots
+count each unit at the lower notional of the two. Only counted volume reaches a tier. A position keeps
+at most 16 opening lots, past which a new one joins the newest, and an account at most 256 closing
+lots, past which the oldest counts nothing; a split scales the opening lots with the position. The
+table moves only as an `AnnounceParams` notice of seven days names it, or by a vote, keeping the
+launch table's tiers, each threshold and day divisor at or above launch and each share at or below
+it, and in every listed market each tier's spread bands charging at every notional from that tier's
+launch spread to twice it; a tier needing more than at launch can drop an account that reached it to
+any tier below, so each of those is held to its launch spread to twice it too. A listing's changed
+spread bands are checked the same way at every tier. The account read gives
+the tier, counted and pending volume, each tier's progress and each market's best-price bound
+(`Engine::volume_standing`). Activation gives parameters that name no table the launch table
+(`launch_volume_tiers`: tier 0 at a quarter of the first bound, $1M over two days at half, $25M over
+five at all of it, and $250M over ten at two and a half times it), records it as the launch table,
+and starts every account at tier 0 with no counted volume: every position held then is pending,
+counting nothing, for its first 60 s, since no record says which of its units were held that long. An
+activation over a listing whose bands at some tier of that table charge outside the tier's launch
+spread to twice it, as a listing notice moving a band bound before V59 can leave, is refused, as is
+one over a table more generous than the launch table. Before V59 a table in the parameters prices
+nothing and a notice names none, so earlier logs replay unchanged. Its log is `v59.jsonl`, and its
+session is in `examples/reference_log/v59.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

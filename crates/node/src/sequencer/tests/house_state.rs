@@ -215,6 +215,7 @@ fn a_pending_parameter_notice_and_the_profit_fee_curve_are_listed_and_kept_acros
         closeout_level_bps: None,
         stress: None,
         profit_fee_curve: Some(raised),
+        volume_tiers: None,
         effective_at: clock.now_ms() + NOTICE_MS + 60_000,
         score_tiers: None,
     };

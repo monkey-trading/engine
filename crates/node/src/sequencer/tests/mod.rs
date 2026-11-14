@@ -240,6 +240,7 @@ fn an_existing_v1_log_activates_at_its_next_seq_and_still_verifies() {
     carried.share_divergence_triggers(25);
     carried.convert_to_score();
     carried.profit_fee_curve = engine_core::holding_fee::DEFAULT_PROFIT_FEE_CURVE.to_vec();
+    carried.convert_to_tiered();
     assert_eq!(replayed.engine.params(), Some(&carried));
     let triggers = |p: &ProtocolParams| p.stress_levels.iter().map(|level| level.trigger.clone()).collect::<Vec<_>>();
     assert_eq!(triggers(&carried), triggers(&dev_config().genesis.params));

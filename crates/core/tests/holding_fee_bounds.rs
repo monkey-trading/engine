@@ -103,7 +103,10 @@ fn a_fresh_log_records_its_first_parameters_curve_as_the_launch_curve() {
     let curve =
         vec![CurvePoint { hold_ms: 60_000, fee_bps: 10_000 }, CurvePoint { hold_ms: 1_800_000, fee_bps: 1_000 }];
     for version in [V55, ProtocolVersion::LATEST] {
-        let mut h = fresh_at(version, ProtocolParams { profit_fee_curve: curve.clone(), ..v54_params() });
+        // From `V59` parameters name a volume tier table.
+        let mut params = ProtocolParams { profit_fee_curve: curve.clone(), ..v54_params() };
+        params.convert_to_tiered();
+        let mut h = fresh_at(version, params);
         assert_eq!(h.engine.operator_bounds().launch_curve.as_ref(), Some(&curve), "{version:?}");
         // A bp below it at 30 minutes is refused, though it is above the default curve at every hold.
         let mut lowered = curve.clone();
@@ -198,6 +201,7 @@ fn notice(
         closeout_level_bps: None,
         stress: None,
         profit_fee_curve,
+        volume_tiers: None,
         effective_at,
         score_tiers: None,
     })

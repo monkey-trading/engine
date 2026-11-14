@@ -41,6 +41,13 @@ how many standard errors an account's recent edge sits above zero, in each marke
 price movement, weighted over time and by size: every account starts on the best price, none pays
 more before 20 fills, and round trips at an unchanged price cannot dilute it.
 
+From V59 an account earns a volume tier from the volume it trades over the last 30 days, and a
+higher tier trades more size at the best price: a fresh wallet's first spread band ends at a
+quarter of each market's first bound, $1M of volume over two days or more takes it to half, $25M
+over five to all of it, and $250M over ten to two and a half times it. No tier changes a rate. Only
+volume that has stood counts: an opening counts once it has been held a minute, a close counts only
+what has matured, and a round trip at an unchanged price counts nothing, so churn earns no tier.
+
 Losing trades pay nothing. Winning trades pay a share of the profit they realise, which from protocol
 V55 falls with how long the position was held: the whole gain on a close within 10 seconds of the
 open, falling to the standard 10% at 15 minutes. Adding to a position moves its open time to the
@@ -127,7 +134,9 @@ ceiling is set no lower than what a close in its first band could pay at the wid
 when it was set or when the market launched, and a market whose ceiling was adopted after genesis
 can only be listed as that adoption named it. From V55 the profit fee moves only up from its launch
 value, to at most half again, and the fee that short holds pay only to a curve at or above the launch
-curve at every hold, each after the same notice, so no hold pays less than at launch.
+curve at every hold, each after the same notice, so no hold pays less than at launch. From V59 the
+volume tier table moves only after the same notice too, never more generously than at launch, and at
+every tier and size a spread stays between that tier's launch spread and twice it.
 While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
 distribution, which it claims from the vault as a staker claims its own; from V50 the fifth is split
 among the operators by their time in office during the epoch.

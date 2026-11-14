@@ -12,6 +12,7 @@ use crate::market::MarketSpec;
 use crate::protocol::ProtocolVersion;
 use crate::toxicity::{HORIZON_MS, ScoreTier, validate_score_tiers};
 use crate::types::Millis;
+use crate::volume_tier::{VolumeTier, validate_volume_tiers};
 
 /// The most any per-trade rate may be: 100%.
 pub(crate) const MAX_RATE_BPS: i64 = 10_000;
@@ -69,6 +70,13 @@ pub struct ProtocolParams {
     /// while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profit_fee_curve: Vec<CurvePoint>,
+    /// From `V59`, the volume tiers (`volume_tier`), tier 0 first: what counted volume reaches each and
+    /// how much size it trades at the best price. Parameters set before `V59` may name them for its
+    /// activation to take up, if no more generous than `volume_tier::launch_volume_tiers`, which
+    /// those that name none take then.
+    /// Left out of the encoding while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volume_tiers: Vec<VolumeTier>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,6 +182,7 @@ impl ProtocolParams {
     /// - a rollover time that does not exist (hour above 23 or minute above 59)
     /// - a resting-order cap outside 1..=1000
     /// - a profit fee curve that fails `holding_fee::validate_curve`
+    /// - volume tiers that fail `volume_tier::validate_volume_tiers`
     pub fn validate(&self) -> Result<(), String> {
         let rate = 0..=MAX_RATE_BPS;
         if !(0..MAX_RATE_BPS).contains(&self.profit_fee_bps) {
@@ -230,7 +239,8 @@ impl ProtocolParams {
         if !(1..=MAX_RESTING_ORDERS).contains(&self.max_resting_orders) {
             return Err("max_resting_orders must be in 1..=1000".into());
         }
-        validate_curve(&self.profit_fee_curve)
+        validate_curve(&self.profit_fee_curve)?;
+        validate_volume_tiers(&self.volume_tiers)
     }
 
     /// Checks a trade that only reduces a position can always fill: the widest stress spread plus
@@ -270,14 +280,15 @@ impl ProtocolParams {
 
     /// Checks the parameters as `validate` does, that each divergence trigger takes the form
     /// `version` evaluates: absolute bps before `V13`, and from `V13` a share of each market's bound,
-    /// from `V52` that every stress level's size multiplier is at least 1x, and from `V54` that the
-    /// toxicity parameters are the score's.
+    /// from `V52` that every stress level's size multiplier is at least 1x, from `V54` that the
+    /// toxicity parameters are the score's, and from `V59` that they name volume tiers.
     /// Error cases:
     /// - any case `validate` refuses
     /// - a divergence share before `V13`, or an absolute divergence from `V13`
     /// - from `V52`, a size multiplier below 10000 bps
     /// - from `V54`, no score tiers, tiers of the earlier score, or a horizon other than
     ///   `toxicity::HORIZON_MS`
+    /// - from `V59`, no volume tiers
     pub fn validate_for(&self, version: ProtocolVersion) -> Result<(), String> {
         self.validate()?;
         if version >= ProtocolVersion::V52
@@ -295,6 +306,9 @@ impl ProtocolParams {
                 "from protocol {:?} toxicity takes score_tiers, no tiers, and a horizon of {HORIZON_MS} ms",
                 ProtocolVersion::V54
             ));
+        }
+        if version >= ProtocolVersion::V59 && self.volume_tiers.is_empty() {
+            return Err(format!("from protocol {:?} the parameters name volume_tiers", ProtocolVersion::V59));
         }
         let mut triggers = self.stress_levels.iter().filter_map(|level| level.trigger.as_ref());
         if version >= ProtocolVersion::V13 {

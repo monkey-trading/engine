@@ -3,6 +3,8 @@
 mod common;
 #[path = "hot_path_benchmark/toxicity.rs"]
 mod toxicity;
+#[path = "hot_path_benchmark/volume.rs"]
+mod volume;
 
 use std::time::Instant;
 

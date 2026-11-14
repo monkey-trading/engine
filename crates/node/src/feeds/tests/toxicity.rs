@@ -92,7 +92,7 @@ async fn dev_scenario_toxicity() {
     assert_eq!(toxic.tier, 1, "{toxic:?}");
     model.assert_score(toxic.score);
     // `GET /v1/accounts/{address}` reads the same standing.
-    let view = query(&tx, |engine| crate::api::account_view(engine, account(TOXIC))).await.expect("credited");
+    let view = query(&tx, |engine| crate::api::account::account_view(engine, account(TOXIC))).await.expect("credited");
     assert_eq!(serde_json::to_value(view).unwrap()["toxicity"], serde_json::to_value(&toxic).unwrap());
     println!("toxic client after 25 fills: {toxic:?}");
 

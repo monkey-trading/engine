@@ -67,15 +67,17 @@ impl Engine {
     ///   `Engine::rotate_operator`
     /// - from `V49`, `SetParams` that changes the stress parameters without a notice whose time has
     ///   come, and from `V55` the profit fee below its launch value or the profit fee curve outside
-    ///   its bound or without such a notice (see `Engine::check_rate_changes`); `UpsertMarket` that changes a listed market's
-    ///   markup, or from `V52` its bands, without one (`Engine::check_listing_change`); a markup or
+    ///   its bound or without such a notice, and from `V59` the volume tier table likewise (see
+    ///   `Engine::check_rate_changes`); `UpsertMarket` that changes a listed market's markup, or from
+    ///   `V52` its bands, without one, or from `V59` bands outside a tier's bound (`Engine::check_listing_change`); a markup or
     ///   listing notice with any error case of `Engine::announce_markup` or `Engine::announce_listing`
     /// - from `V40`, `SetCloseSpreadCeilings` and `AdoptCloseSpreadCeiling` with any error case of
     ///   `Engine::install_close_spread_ceilings` and `Engine::adopt_close_spread_ceiling`;
     ///   `UpsertMarket` of a market the ceiling registry has no entry for, or changing the
     ///   `asset_class` or `quote_currency` of a market with one; `ActivateProtocol` carrying a
     ///   version past `V40` while a listed market has no adopted ceiling, or to `V52` over a low one (see
-    ///   `Engine::check_close_spread_activation`); from `V54`, a markout floor `Engine::check_markout_floor` refuses
+    ///   `Engine::check_close_spread_activation`), or to `V59` over a listing a volume tier's bound refuses
+    ///   (`Engine::check_volume_tier_activation`); from `V54`, a markout floor `Engine::check_markout_floor` refuses
     /// - from `V56`, `SetGovernance` with any error case of `Engine::set_governance`; `SetParams` that
     ///   removes a stress level a restriction holds a floor at (see `Engine::check_restricted_levels`)
     ///
@@ -291,6 +293,7 @@ impl Engine {
                     params.check_notional_weighting()?;
                 }
                 self.check_close_spread_activation(*version)?;
+                self.check_volume_tier_activation(*version)?;
                 if self.protocol_version < ProtocolVersion::V26 && *version >= ProtocolVersion::V26 {
                     self.check_terminal_receipt_holds()?;
                 }
@@ -382,6 +385,7 @@ impl Engine {
                 self.start_toxicity_score(*version);
                 self.floor_bound_listings(*version);
                 self.start_hold_clocks(*version);
+                self.start_volume_tiers(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
                 self.protocol_version = *version;
                 // Rules before `V47` record no candidate, so one an election already seated is seated before

@@ -499,6 +499,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log/tests/reader.rs` — reader tests: offsets, following the writer, flushed entries only,
   and the checks on what it reads
 - `src/api/mod.rs` — REST routes, read handlers and the request span
+- `src/api/account.rs` — `GET /v1/accounts/{address}`: an account's balance, equity, margin, positions,
+  orders, toxicity, close-outs, close fees and from `V59` its volume tier
 - `src/api/state.rs` — request authentication, nonce checks, the session-key admission a
   registered key's request falls back to, and durable sequencer round trips
 - `src/api/actions.rs` — signed client actions, session-key registration and revocation, and
@@ -521,6 +523,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   hold gives, an add and a flip moving the open time, a close-out of a gaining and a losing position,
   the account and house reads, a refused cut and a noticed raise over TLS, from `V57` an add after a
   noticed curve extension clamped at the launch curve's last hold, replay and a restart
+- `src/api/access_tests/volume_tiers.rs` — the `V59` dev scenario: a fresh wallet's first band to a
+  quarter of BTC's bound, churn and round trips counting nothing, an open crossing midnight counting on
+  its day of maturity, pending volume granting nothing, tier 1 on the third day, the account and house
+  reads, replay and a restart
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
 - `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof, at the
@@ -548,7 +554,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   sequencer read per interval while the log head moves, and only the quotes that changed
 - `src/api/stream/quotes/ladder.rs` — one account's quotes in one market from `Engine::quote`: a
   price at each spread tier a close crosses, then per spread tier up to the largest order the
-  account can open, and the closing price
+  account can open, and the closing price, each tier ending where the account's own bands do
 - `src/api/stream/quotes/tests.rs` — the subscription against a stand-in sequencer under paused
   time: pacing, spreading, replacement, refusals, a full queue, a stopped log, and the ladder search
 - `src/api/stream/quotes/api_tests.rs` — signed quotes through the API against a real sequencer
@@ -2224,6 +2230,13 @@ size-weighted average of the add's time and the open time, counted as no earlier
 less the curve's last hold, from `V57` the launch curve's), the profit fee rate in bps a gain closed
 now pays, and the sequenced time that rate next falls, `null` once it is the base. "Now" is the
 engine's last sequenced time.
+From `V59` the read gives `volume`: `{"tier", "matured", "pending", "progress", "best_price_bounds"}`,
+the volume tier the account trades at, its USD volume counted over the last 30 UTC days and the
+notional still waiting to count (opening notional held under 60 s, and closes within the round-trip
+horizon), for each tier from 0 `{"capped", "days"}`, the counted volume the tier's day cap admits,
+which reaches the tier at its threshold, and the days whose volume reaches that cap, and by market
+where the account's first spread band ends, in USD. The table itself is the parameters'
+`volume_tiers` in `/v1/house/state`. The signed quote ladder steps at the account's own bounds.
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns
 `{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the
@@ -2331,7 +2344,9 @@ change needs, and from `V49` with `--stress-from <params.toml>` the notice for t
 window and cooldown that a `set-params` carrying that file applies, and from `V54` with
 `--score-tiers-from <params.toml>` the notice for the toxicity score's tiers, and from `V55` with
 `--profit-fee-curve-from <params.toml>` the notice for its `profit_fee_curve`, which must stay at or
-above the launch curve at every hold, as the profit fee stays at or above its launch value; `announce-markup <market> <bps>
+above the launch curve at every hold, as the profit fee stays at or above its launch value, and from
+`V59` with `--volume-tiers-from <params.toml>` the notice for its `volume_tiers`, which keeps the
+launch tiers, no threshold or day divisor below launch and no share above it; `announce-markup <market> <bps>
 --effective-at <time>` gives the notice a listed market's markup change needs before an
 `upsert-market` carries it. From `V52`, `announce-listing <market>` with `--spreads-from` and
 `--margins-from` (TOML market specs whose bands it names) and `--markup-bps` gives the notice a listed

@@ -5,7 +5,7 @@
 //! - the account's toxicity add-on (zero for normal flow);
 //! - the size spread, charged through the market's size bands on the slice of the trade that grows
 //!   the account's absolute position, and from `V52` on the slice that closes it too, both at the
-//!   stress level's multiplier.
+//!   stress level's multiplier; from `V59` the first band ends at the account's volume tier's share.
 //!
 //! Before `V52` normal trades fill at the mid; from `V52` every fill pays its bands' charge. A market
 //! quoted in another currency than USD fills only while its FX market has a price, and its realised
@@ -24,9 +24,9 @@ use crate::event::{CancelReason, Event, Fill, Reject};
 use crate::fixed::Rounding;
 use crate::holding_fee;
 use crate::protocol::ProtocolVersion;
-use crate::spread_tier::spread_staircase;
 use crate::toxicity::FillMark;
 use crate::types::{AccountId, MarketId, OrderId, Side};
+use crate::volume_tier::AccountBands;
 
 use self::validation::{closing, growth, profit_fee};
 
@@ -202,7 +202,7 @@ impl Engine {
             let nav = self.house_nav();
             self.refresh_stress(exec.market, nav, events);
         }
-        let priced = self.price(&exec)?;
+        let priced = self.price(&exec, self.best_price_share(exec.account))?;
         if priced.increases && !exec.liquidation {
             self.check_risk(&exec, &priced, &HouseTotals::of(self))?;
         }
@@ -283,7 +283,9 @@ impl Engine {
     /// - new risk below the market's minimum order notional
     /// - a spread at this size that reaches the price itself
     /// - a live price beyond the slippage bound or the limit
-    fn price(&self, exec: &Exec) -> Result<Priced, Reject> {
+    ///
+    /// `share` is the account's best-price share (`Engine::best_price_share`).
+    fn price(&self, exec: &Exec, share: Option<i64>) -> Result<Priced, Reject> {
         let params = self.params.as_ref().expect("callers check params are set");
         let market = &self.markets[&exec.market];
         if !market.open {
@@ -315,6 +317,7 @@ impl Engine {
         }
 
         let stress = &params.stress_levels[market.stress.level];
+        let bands = AccountBands::at(&market.spec.spread_tiers, share);
         let toxicity_bps = if exec.liquidation { 0 } else { self.toxicity_add_on_bps(exec.account) };
         // From `V52` the slice that closes the position pays the size spread too.
         let finer = self.protocol_version >= ProtocolVersion::V52;
@@ -327,7 +330,7 @@ impl Engine {
         let parts = |charge: Rounding| {
             let slice_cost = |from: Fixed, to: Fixed| {
                 let (from, to) = (usd(from.mul(mid), Rounding::Down), usd(to.mul_rounded(mid, charge), Rounding::Up));
-                spread_staircase(&market.spec.spread_tiers, from, to, charge)
+                bands.staircase(from, to, charge)
             };
             let size_cost_usd = (slice_cost(grow_from, grow_to) + slice_cost(close_from, close_to))
                 .mul_bps_rounded(stress.size_spread_multiplier_bps, charge);
@@ -425,8 +428,8 @@ impl Engine {
 
     /// Books a priced fill: the position, from `V55` its open time, the market aggregates, realised PnL
     /// in USD (rounded down) and the profit fee at the closed slice's hold against house cash, the PnL
-    /// in the account's emission period result, and a markout to score the flow later
-    /// (`Engine::mark_fill`).
+    /// in the account's emission period result, a markout to score the flow later
+    /// (`Engine::mark_fill`), and from `V59` its notional in the account's volume (`Engine::count_volume`).
     fn book(&mut self, exec: &Exec, priced: Priced) -> Fill {
         let (hold, fee_bps) = self.close_fee_terms(exec.account, exec.market);
         let (version, now, clamp_hold) = (self.protocol_version, self.hold_clock_time(), self.add_clamp_hold());
@@ -454,7 +457,8 @@ impl Engine {
         self.record_position(exec.account, exec.market);
         self.record_period_result(exec.account, realised_pnl, Fixed::ZERO);
         let mark = FillMark { held, qty: priced.qty, index: priced.mid, price: priced.price, fx: priced.fx };
-        self.mark_fill(exec, mark);
+        let closed_matched = self.mark_fill(exec, mark);
+        self.count_volume(exec, &mark, closed_matched);
         Fill {
             account: exec.account,
             order_id: exec.order_id,

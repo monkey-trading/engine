@@ -106,6 +106,7 @@ pub(crate) fn session(h: &mut Harness) {
         score_tiers: Some(raised),
         effective_at,
         profit_fee_curve: None,
+        volume_tiers: None,
     };
     assert_eq!(operate(h, AdminCommand::AnnounceParams(notice)).last(), Some(&Event::AdminApplied));
     h.advance_to(effective_at);

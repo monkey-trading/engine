@@ -170,7 +170,8 @@ impl GenesisProgress {
     /// widest divergence bound among the genesis markets, spread bands and size multipliers set
     /// before `V52` take the tenths of a bp, class floors and 1x floor `V52` converts them to, and
     /// parameters and listings set before `V54` take the form its activation gives them
-    /// (`ProtocolParams::convert_to_score` and `MarketSpec::convert_to_floored`).
+    /// (`ProtocolParams::convert_to_score` and `MarketSpec::convert_to_floored`), and parameters set
+    /// before `V59` the launch volume tier table (`ProtocolParams::convert_to_tiered`).
     fn restated(&self, weighting: Option<NotionalWeighting>) -> Vec<Command> {
         let mut genesis = self.commands.clone();
         let mut widest = None;
@@ -189,6 +190,7 @@ impl GenesisProgress {
             params.toxicity.notional = params.toxicity.notional.or(weighting);
             params.share_divergence_triggers(widest.unwrap_or(0));
             params.convert_to_score();
+            params.convert_to_tiered();
         }
         genesis
     }

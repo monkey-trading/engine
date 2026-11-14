@@ -32,6 +32,7 @@ fn params() -> ProtocolParams {
         house_total_cap_floor: Fixed::ZERO,
         max_resting_orders: DEFAULT_MAX_RESTING_ORDERS,
         profit_fee_curve: vec![],
+        volume_tiers: vec![],
     }
 }
 

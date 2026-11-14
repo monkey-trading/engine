@@ -74,6 +74,9 @@
 //!   errors an account's decayed, size-capped edge sits above zero, its tiers add spread from 20
 //!   decayed fills, and quantity a closing fill matches at the same index within the horizon scores
 //!   nothing, so round trips cannot dilute it.
+//! - From `V59`, an account's volume tier, earned with the volume it counts over 30 days, sets how much
+//!   size it trades in each market's first spread band; volume counts only once an opening has been
+//!   held 60 s, and a round trip counts nothing.
 
 pub mod access;
 pub mod account;
@@ -119,4 +122,5 @@ pub mod toxicity;
 mod tracked;
 pub mod turns;
 pub mod types;
+pub mod volume_tier;
 pub mod withdrawal;

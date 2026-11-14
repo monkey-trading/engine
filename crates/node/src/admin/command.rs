@@ -42,17 +42,20 @@ impl AdminAction {
                 stress_from,
                 score_tiers_from,
                 profit_fee_curve_from,
+                volume_tiers_from,
                 effective_at,
             } => {
                 let stress = stress_from.map(|file| read_params(&file).map(|params| StressSettings::of(&params)));
                 let tiers = score_tiers_from.map(|file| read_params(&file).map(|params| params.toxicity.score_tiers));
                 let curve = profit_fee_curve_from.map(|file| read_params(&file).map(|params| params.profit_fee_curve));
+                let volume_tiers = volume_tiers_from.map(|file| read_params(&file).map(|params| params.volume_tiers));
                 AdminCommand::AnnounceParams(ParamsNotice {
                     profit_fee_bps,
                     closeout_level_bps,
                     stress: stress.transpose()?,
                     score_tiers: tiers.transpose()?,
                     profit_fee_curve: curve.transpose()?,
+                    volume_tiers: volume_tiers.transpose()?,
                     effective_at: effective_at.timestamp_millis(),
                 })
             }

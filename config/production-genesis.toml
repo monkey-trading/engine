@@ -211,6 +211,19 @@ profit_fee_curve = [
   { hold_ms = 573877, fee_bps = 1900 },
   { hold_ms = 900000, fee_bps = 1000 },
 ]
+# From protocol V59 an account's volume tier sets where its first spread band
+# ends in every market: best_price_share_bps of the first bound, at most the
+# second. A tier is reached by counted volume over the last 30 UTC days, each
+# day counting at most threshold / day_divisor, so it takes trading on that many
+# days (#614, D1): under $1M a quarter of the first bound, $1M over 2 days half,
+# $25M over 5 days all of it, and $250M over 10 days two and a half times it.
+# The table moves only after a seven-day notice, never more generously (D7).
+volume_tiers = [
+  { threshold = "0", day_divisor = 1, best_price_share_bps = 2500 },
+  { threshold = "1000000", day_divisor = 2, best_price_share_bps = 5000 },
+  { threshold = "25000000", day_divisor = 5, best_price_share_bps = 10000 },
+  { threshold = "250000000", day_divisor = 10, best_price_share_bps = 25000 },
+]
 
 [genesis.params.rollover]
 tz = "Europe/London"

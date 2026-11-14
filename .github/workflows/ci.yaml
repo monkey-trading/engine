@@ -99,10 +99,10 @@ jobs:
                   areas+=" rust" ;;
                 # The deposit and checkpoint scenarios deploy the vault.
                 contracts/*) areas+=" contracts scenarios" ;;
-                # The test job runs the corporate-action, operator bounds, parameter notice and
-                # holding-time fee scenarios, and the spreads job its node test.
+                # The test job runs the corporate-action, operator bounds, parameter notice,
+                # holding-time fee and volume tier scenarios, and the spreads job its node test.
                 scripts/dev-corporate-actions.sh | scripts/dev-operator-bounds.sh | scripts/dev-params-notice.sh \
-                  | scripts/dev-holding-fee.sh | scripts/dev-spreads.sh) areas+=" rust" ;;
+                  | scripts/dev-holding-fee.sh | scripts/dev-volume-tiers.sh | scripts/dev-spreads.sh) areas+=" rust" ;;
                 # The browser verifier's jobs build its package and run its scenario.
                 scripts/dev-* | scripts/build-wasm-verifier.sh) areas+=" scenarios" ;;
                 # The ACME scenario downloads its test CA under image/retry.
@@ -191,6 +191,9 @@ jobs:
       - name: Run the holding-time fee dev scenario
         if: needs.changes.outputs.cache != 'true'
         run: ./scripts/dev-holding-fee.sh
+      - name: Run the volume tier dev scenario
+        if: needs.changes.outputs.cache != 'true'
+        run: ./scripts/dev-volume-tiers.sh
       - name: Check sequencer command latency at 100k accounts
         if: needs.changes.outputs.cache != 'true'
         run: cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture

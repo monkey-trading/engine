@@ -210,28 +210,30 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
     let (a_before, b_before) = (balance(&node, &a).await, balance(&node, &b).await);
 
     // 1. A and B open opposite BTC positions of $1m, $5m and $12m in interleaved legs, the house's net
-    // exposure never past one leg. BTC's bands are 2bp to $2m, 4bp to $10m and 8bp above: (BTC, the
-    // price each leg's band charge gives a buy) at 100,000.
-    let opens = [("10", "100020"), ("20", "100030"), ("20", "100040"), ("20", "100040"), ("20", "100040")];
+    // exposure never past one leg. BTC's bands are 2bp to $2m, 4bp to $10m and 8bp above, and from V59 a
+    // fresh wallet's first band ends at a quarter of its bound, $500k: (BTC, the price each leg's band
+    // charge gives a buy) at 100,000.
+    let opens = [("10", "100030"), ("20", "100040"), ("20", "100040"), ("20", "100040"), ("20", "100040")];
     let more = [("20", "100060"), ("10", "100080")];
     let mirror = |price: &str| (Fixed::from_int(200_000) - price.parse::<Fixed>().unwrap()).to_string();
     for (n, (qty, buy)) in opens.iter().chain(&more).enumerate() {
         assert_eq!(fill(&node, &a, BTC, Side::Buy, qty, "100000").await, buy.parse().unwrap(), "A's leg {n}");
         assert_eq!(fill(&node, &b, BTC, Side::Sell, qty, "100000").await, mirror(buy).parse().unwrap(), "B's leg {n}");
         // 2. The signed quote stream at $1m, $5m and $12m: a sell first closes through the tiers the
-        // long holds, then reverses through the tiers it opens.
+        // long holds, then reverses through the tiers it opens, each at the wallet's own bounds.
         match n {
+            0 => check_bid(&node, a_account, &[5, 15]).await,
             // The house's cap, 30% of its NAV, declines a reversal past $3m net, and the largest size
-            // that fits takes a step before the first declined one.
-            0 => check_bid(&node, a_account, &[30, 110]).await,
-            2 => check_bid(&node, a_account, &[30, 50, 70]).await,
-            6 => check_bid(&node, a_account, &[20, 100, 120, 140]).await,
+            // that fits, the whole close, takes a step before the first declined one.
+            2 => check_bid(&node, a_account, &[45, 50, 55]).await,
+            6 => check_bid(&node, a_account, &[20, 115, 120, 125]).await,
             _ => {}
         }
     }
-    // Each close pays the band it closes through: $2m at 8bp, four at 4bp, and the last at 2bp.
+    // Each close pays the band it closes through: $2m at 8bp, four at 4bp, and the last $1.5m at 4bp and
+    // $500k at 2bp.
     for (n, (qty, sell)) in
-        [("20", "99920"), ("20", "99960"), ("20", "99960"), ("20", "99960"), ("20", "99960"), ("20", "99980")]
+        [("20", "99920"), ("20", "99960"), ("20", "99960"), ("20", "99960"), ("20", "99960"), ("20", "99965")]
             .into_iter()
             .enumerate()
     {
@@ -242,11 +244,11 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
             "B's close {n}"
         );
     }
-    // The staircase to $12m costs 5200 each way, and the round trip pays it twice, to within the
+    // The staircase to $12m costs 5500 each way, and the round trip pays it twice, to within the
     // rounding of the averaged entry price each partial close realises against.
     for (account, before) in [(&a, a_before), (&b, b_before)] {
         let paid = before - balance(&node, account).await;
-        assert!((paid - Fixed::from_int(10_400)).abs() < "0.000001".parse().unwrap(), "{paid}");
+        assert!((paid - Fixed::from_int(11_000)).abs() < "0.000001".parse().unwrap(), "{paid}");
     }
     // A million euros at 1 pays 0.4bp, 40, each way.
     price(&node, EUR_USD, "1").await;
@@ -274,13 +276,15 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
         closeout_level_bps: None,
         stress,
         profit_fee_curve: None,
+        volume_tiers: None,
         effective_at: due,
         score_tiers: None,
     };
     let reason = "every stress level's size multiplier is at least 10000 bps";
     operator.refuses(&node, AdminCommand::AnnounceParams(zero), reason).await;
 
-    // 4. A notice of a 3bp first band and a 1.5% first margin band applies from its time.
+    // 4. A notice of a 3bp first band and a 1.5% first margin band applies from its time; the wallet
+    // pays it to $500k and 4bp above.
     let noticed = relisting(&node, BTC, |spec| {
         spec.spread_tiers[0] = SpreadTier::tenths(spec.spread_tiers[0].up_to, 30);
         spec.margin_tiers[0] = Tier { bps: 150, ..spec.margin_tiers[0] };
@@ -299,8 +303,8 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
     node.source.lock().unwrap().observed_at = node.clock.now_ms();
     operator.applies(&node, AdminCommand::UpsertMarket(noticed)).await;
     price(&node, BTC, "100000").await;
-    assert_eq!(fill(&node, &a, BTC, Side::Buy, "10", "100000").await, "100030".parse().unwrap());
-    assert_eq!(fill(&node, &a, BTC, Side::Sell, "10", "100000").await, "99970".parse().unwrap());
+    assert_eq!(fill(&node, &a, BTC, Side::Buy, "10", "100000").await, "100035".parse().unwrap());
+    assert_eq!(fill(&node, &a, BTC, Side::Sell, "10", "100000").await, "99965".parse().unwrap());
 
     // 5. A BTC ceiling below its launch close charge, 15bps and 3bp at 4x, is refused.
     let adoption = |market, bps, effective_at, listing| AdminCommand::AdoptCloseSpreadCeiling {
@@ -336,6 +340,7 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
             score_tiers,
             effective_at,
             profit_fee_curve: None,
+            volume_tiers: None,
         };
         AdminCommand::AnnounceParams(notice)
     };

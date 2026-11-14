@@ -277,8 +277,10 @@ fn a_genesis_set_before_divergence_shares_resumes_under_the_shares_a_config_load
             _ => None,
         })
         .expect("genesis sets parameters");
-    // In the toxicity form `V54`'s activation gives it, so the triggers are what is refused.
+    // In the toxicity and volume tier forms `V54`'s and `V59`'s activations give it, so the triggers
+    // are what is refused.
     ran.convert_to_score();
+    ran.convert_to_tiered();
     let err = ran.validate_for(ProtocolVersion::LATEST).unwrap_err();
     assert!(err.contains("divergence_share_bps"), "{err}");
 

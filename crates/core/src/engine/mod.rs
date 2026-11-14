@@ -46,6 +46,7 @@ use crate::toxicity::{MarkoutSpread, ToxicityScore};
 use crate::tracked::{TrackedMap, TrackedSet};
 use crate::turns::DailyTurns;
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis, OrderId};
+use crate::volume_tier::AccountVolume;
 use crate::withdrawal::{QueuedWithdrawal, WithdrawalApproval};
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -192,6 +193,9 @@ pub struct Engine {
     /// From `V54`, each market's index changes over the trailing hour, which set its markout spread.
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) markout_spreads: TrackedMap<MarketId, MarkoutSpread>,
+    /// From `V59`, each account's counted volume and the notional waiting to count (`volume_tier`).
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) volumes: TrackedMap<AccountId, AccountVolume>,
 
     /// The screening source and freshness bound, recorded once from `V24`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
