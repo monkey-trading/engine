@@ -277,3 +277,22 @@ fn watch_promotion(
     });
     Ok(())
 }
+
+/// Deletes the sealed copy of the keys a confirmed handover gave away (#595): matching prefixes show a
+/// log complete, not that one enclave alone holds its keys, so a predecessor keeps no copy a host could
+/// reopen beside its successor. A failure is logged; the generation it held is the successor's either
+/// way.
+pub(super) fn forget(cfg: &NodeConfig, store: Option<&KeyStore>) {
+    let (Some(store), Some(sealing)) = (store, cfg.tee.sealing.as_ref()) else { return };
+    let path = crate::tee::sealing::file_for(&sealing.dir, &store.release(), store.generation());
+    let removed = std::fs::remove_file(&path)
+        .or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) })
+        .and_then(|()| std::fs::File::open(&sealing.dir)?.sync_all());
+    match removed {
+        Ok(()) => info!(generation = store.generation(), "deleted the sealed keys the handover gave away"),
+        Err(e) => warn!(path = %path.display(), "deleting the sealed keys the handover gave away failed: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests;

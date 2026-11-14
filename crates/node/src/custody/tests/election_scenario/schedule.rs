@@ -19,7 +19,7 @@ sol! {
 
 /// The heartbeat rule the scenarios deploy with, as the forge tests' defaults: 60 s slots, 30 s
 /// tolerance, 5 misses, 200 blocks; its bounds; the switch budget and the pinned block time.
-pub(super) const LIVENESS: (u64, u64, u16, u16) = (60, 30, 5, 200);
+const LIVENESS: (u64, u64, u16, u16) = (60, 30, 5, 200);
 const MINIMUMS: (u64, u64, u16, u16) = (30, 5, 2, 10);
 const MAXIMUMS: (u64, u64, u16, u16) = (120, 60, 9, 256);
 const SWITCH_BUDGET_SECS: u64 = 120;
@@ -29,10 +29,21 @@ impl Chain {
     /// Deploys the LogHeads companion of the vault and the schedule over the seed `receiver`, and
     /// returns both.
     pub(super) async fn deploy_schedule(&self, receiver: Address) -> (Address, Address) {
+        self.deploy_schedule_with(receiver, LIVENESS, SWITCH_BUDGET_SECS).await
+    }
+
+    /// `deploy_schedule` with the heartbeat rule `rule` and the switch budget `switch_budget`, in
+    /// seconds.
+    pub(super) async fn deploy_schedule_with(
+        &self,
+        receiver: Address,
+        rule: (u64, u64, u16, u16),
+        switch_budget: u64,
+    ) -> (Address, Address) {
         let from = self.accounts[0];
         let log_heads =
             deploy(&self.provider, from, "LogHeads.sol/LogHeads.json", &(self.vault,).abi_encode_params()).await;
-        let args = (self.registry, receiver, log_heads, LIVENESS, MINIMUMS, MAXIMUMS, SWITCH_BUDGET_SECS, BLOCK_MILLIS);
+        let args = (self.registry, receiver, log_heads, rule, MINIMUMS, MAXIMUMS, switch_budget, BLOCK_MILLIS);
         let schedule =
             deploy(&self.provider, from, "OperatorSchedule.sol/OperatorSchedule.json", &args.abi_encode_params()).await;
         (schedule, log_heads)

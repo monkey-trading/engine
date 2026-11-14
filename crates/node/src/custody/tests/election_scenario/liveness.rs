@@ -31,7 +31,6 @@ use serde_json::json;
 use tokio::task::JoinHandle;
 
 use super::chain::{Chain, Parameters, delegateCall, setParametersCall, setRotationCall};
-use super::schedule::LIVENESS;
 use super::{CONFIG_HASH, DIGEST_A, DIGEST_B, FINALITY_MARGIN_SECS, T0_SECS, address, monkey};
 use crate::checkpoints::scenario::deploy;
 use crate::clock::Clock;
@@ -62,6 +61,9 @@ sol! {
 }
 
 const DIGEST_C: [u8; 48] = [0xc1; 48];
+/// The heartbeat rule the scenario deploys, short enough to run in minutes: 30 s slots, 10 s tolerance,
+/// 3 misses, 10 blocks, under a 60 s switch budget.
+const RULE: (u64, u64, u16, u16) = (30, 10, 3, 10);
 const KEYS: [[u8; 32]; 3] = [[0x42; 32], [0x55; 32], [0x56; 32]];
 const STAKES: [u64; 3] = [50_000, 30_000, 20_000];
 const DAY_SECS: u64 = 86_400;
@@ -112,7 +114,7 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
         &(chain.accounts[9], 1_606_824_023u64).abi_encode_params(),
     )
     .await;
-    let (schedule, log_heads) = chain.deploy_schedule(receiver).await;
+    let (schedule, log_heads) = chain.deploy_schedule_with(receiver, RULE, 60).await;
     chain.schedule = Some(schedule);
     let members: Vec<Member> = [(chain.accounts[2], 0), (chain.accounts[3], 1), (chain.accounts[4], 2)]
         .into_iter()
@@ -234,7 +236,7 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
     // 2. The operator's relayer is silenced: the members relay its signed heads, nothing is promoted.
     rig.silence(&chain).await;
     let due_before = chain.view(schedule, promotionDueAtCall {}).await;
-    for seq in 7..=20 {
+    for seq in 7..=22 {
         log.extend(&rig, &members, operator, seq);
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
@@ -245,7 +247,7 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
 
     // 3. A trusted-time halt past the detection window: held heads on newer blocks, no promotion.
     rig.hold.send_replace(Hold::TimeHalt);
-    let window = Duration::from_secs(LIVENESS.0 * (u64::from(LIVENESS.2) + 2));
+    let window = Duration::from_secs(RULE.0 * (u64::from(RULE.2) + 2));
     let held_until = Instant::now() + window;
     while Instant::now() < held_until {
         chain.rpc("evm_mine", json!([])).await;
@@ -284,7 +286,7 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
     //    promotion; a promotion moves the vault's signer to the next member's standby key.
     rig.poster.abort();
     let mut fenced_at = None;
-    let promoted = crate::test_support::wait_for("a promotion", async {
+    let promoted = tokio::time::timeout(Duration::from_secs(300), async {
         loop {
             if fenced_at.is_none() && !rig.gate.signs() {
                 fenced_at = Some(chain.latest_timestamp().await);
@@ -297,7 +299,8 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     })
-    .await;
+    .await
+    .expect("a promotion within five minutes of the operator's failure");
     let signer = chain.view(chain.vault, checkpointSignerCall {}).await;
     let next =
         members.iter().position(|member| Address::from(member.standby.address().0) == signer).expect("a standby key");

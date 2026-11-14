@@ -482,7 +482,9 @@ async fn serve_node(
                 generation: store.as_ref().map(|store| store.generation()),
                 reached: handover_clock.reached_ms(),
             };
-            handed_over(supervised.handover).await.map(|()| Ended::HandedOver(gave))
+            handed_over(supervised.handover).await?;
+            liveness::forget(cfg, store.as_deref());
+            Ok(Ended::HandedOver(gave))
         }
         None => outcome.map(|()| Ended::Stopped),
     }

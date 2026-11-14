@@ -67,6 +67,7 @@ async fn the_operator_route_reports_the_key_its_pending_rotation_and_the_last_el
     let node = Node::staking("operator-route").await;
     let (status, body) = node.get("/v1/operator").await;
     let operator = format!("{}", node.state.operator.address);
+    let enclave = format!("{}", node.state.signing.enclave());
     assert_eq!(
         (status, body),
         (
@@ -74,6 +75,7 @@ async fn the_operator_route_reports_the_key_its_pending_rotation_and_the_last_el
             serde_json::json!({
                 "operator": operator, "pending_rotation": null, "rotation_enabled": false, "last_election": null,
                 "rotation_set": null, "next_rotation_set": null, "turn": null, "next_turn": null, "turns": no_turns(),
+                "enclave": enclave,
             })
         )
     );
@@ -95,6 +97,7 @@ async fn the_operator_route_reports_the_key_its_pending_rotation_and_the_last_el
                     "registry_effective_at": effective_at,
                 },
                 "rotation_set": null, "next_rotation_set": null, "turn": null, "next_turn": null, "turns": no_turns(),
+                "enclave": enclave,
             })
         )
     );
