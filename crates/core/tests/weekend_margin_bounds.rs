@@ -151,15 +151,14 @@ fn a_calendar_change_may_not_narrow_or_remove_a_weekend_gap_within_seven_days() 
         )
     };
     assert_eq!(refused(&h.operate(with_session("2026-10-24", vec![]))), reason(kept.close));
-    // Closing Friday at noon widens it, which applies.
+    // Flat, the gap still may not be split, as new positions could carry it at the normal margin,
+    // though closing Friday at noon widens it, which applies, and a Saturday more than seven days on
+    // may be split.
+    only_fill(&trade(&mut h, &a, OIL, Side::Sell, "10000", "70"));
+    assert_eq!(refused(&h.operate(with_session("2026-10-24", vec![]))), reason(kept.close));
     let noon = vec![period("2026-10-23 12:00", "2026-10-23 16:00")];
     let early = MarketSpec { schedule: globex(noon.clone()), ..spec.clone() };
     assert!(applied(&h.operate(AdminCommand::UpsertMarket(early))));
-    // Flat, the market's gap still may not be split, as new positions could carry it at the normal
-    // margin; a Saturday more than seven days on may be.
-    only_fill(&trade(&mut h, &a, OIL, Side::Sell, "10000", "70"));
-    let split = with_session("2026-10-24", noon.clone());
-    assert_eq!(refused(&h.operate(split)), reason(chicago(2026, 10, 23, 12, 0)));
     assert!(applied(&h.operate(with_session("2026-10-31", noon))));
 }
 
