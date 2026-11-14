@@ -82,7 +82,8 @@ fn the_production_genesis_applies_the_launch_decisions() {
     // bound, and utilisation levels under a 2% flow-weighted fire rate in the Monte Carlo.
     // The toxicity parameters: from `V54` the score's tiers are #614's decision D1, scores of 4 and
     // 8 adding 2 and 5 bps, over the protocol's 5 s horizon; the notional weighting #130
-    // calibrated applies before `V54`.
+    // calibrated applies before `V54`. From `V59` level 2 also rises once the house has lost money to
+    // its clients over the trailing day, a threshold of zero (#695; research/loss-rate-trigger).
     assert_eq!(production.params.profit_fee_bps, 1_000);
     let floor = dev.params.house_total_cap_floor;
     let level = |size_spread_multiplier_bps, min_spread_bps, trigger| StressLevel {
@@ -90,20 +91,21 @@ fn the_production_genesis_applies_the_launch_decisions() {
         min_spread_bps,
         trigger,
     };
-    let trigger = |divergence_share_bps, move_bps, utilisation_bps| {
+    let trigger = |divergence_share_bps, move_bps, utilisation_bps, house_loss| {
         Some(StressTrigger {
             divergence_share_bps: Some(divergence_share_bps),
             move_bps: Some(move_bps),
             utilisation_bps: Some(utilisation_bps),
             divergence_bps: None,
+            house_loss,
         })
     };
     assert_eq!(
         production.params.stress_levels,
         [
             level(10_000, 0, None),
-            level(20_000, 2, trigger(6_001, 75, 7_000)),
-            level(40_000, 10, trigger(9_500, 200, 9_500)),
+            level(20_000, 2, trigger(6_001, 75, 7_000, None)),
+            level(40_000, 10, trigger(9_500, 200, 9_500, Some(Fixed::ZERO))),
         ]
     );
     let toxicity = dev.params.toxicity.clone();

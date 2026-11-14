@@ -21,7 +21,7 @@ use crate::helpers::{accepted, reducing, small_buy};
 use crate::{stress, v10, v11, v12, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28};
 use crate::{
     v29, v30, v31, v32, v33, v34, v35, v37, v38, v39, v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51, v52,
-    v53, v54, v55, v56, v57, v58,
+    v53, v54, v55, v56, v57, v58, v59,
 };
 
 /// The scripted session: client auth and activation, genesis, funding, prices,
@@ -42,7 +42,7 @@ use crate::{
 /// one part per version in its `v<N>.rs`: toxicity memory, the move window, dated benchmarks, MONKEY emissions,
 /// custody finality, futures rolls, FIFO withdrawals, access, staking, emission debt, the operator's bounds, the
 /// exit's leaves, the elected key, session keys, gross-loss emission weight, the operator's share,
-/// and the timelock's installed operator.
+/// the timelock's installed operator, and the house loss trigger.
 pub(crate) fn session() -> Vec<Sequenced> {
     let mut h = Harness::signed();
     let (a, b, c, d, t, e) = (h.signer(1), h.signer(2), h.signer(3), h.signer(4), h.signer(5), h.signer(6));
@@ -463,5 +463,6 @@ pub(crate) fn session() -> Vec<Sequenced> {
     v56::session(&mut h);
     v57::session(&mut h);
     v58::session(&mut h);
+    v59::session(&mut h);
     h.log
 }

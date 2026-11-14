@@ -21,7 +21,11 @@ an index: load only the rule whose hint matches the current action.
   the fill's index in units of each market's markout spread, a decayed size-capped score, tiers from 20 decayed fills, and
   quantity a fill matches against the account's opposite fills at the same index within the horizon, a close and the
   reopening after it as an open and the close after it, scoring nothing, found through a transient index in `toxicity/legs.rs`;
-  activation gives a listing with no floor its asset class's; `tests/toxicity_*.rs`), signed client requests (EIP-712, per-account
+  activation gives a listing with no floor its asset class's; `tests/toxicity_*.rs`), from `V59` a stress trigger on the
+  house's marked loss to its clients over the trailing day (`house_loss/`: NAV less net capital moved in, one result per
+  15-minute slot, every market at the level whose threshold the loss is above, each launch threshold kept by notice and
+  by vote, `tests/house_loss.rs`, `tests/house_loss_accounting.rs` and `tests/house_loss_bounds.rs`), signed client
+  requests (EIP-712, per-account
   nonces, and expiries, and from `V41` session keys: one account-signed registration authorises a
   short-lived in-browser key to place and cancel orders on its own nonce sequence, in
   `session_keys.rs`, where from `V42` the new addresses an account may introduce are a budget of
@@ -213,7 +217,8 @@ an index: load only the rule whose hint matches the current action.
   and sends through its signing endpoint with a relayer key apart from the checkpoint relayer's), the
   `/v1/house/state` read of the protocol parameters (with the seq that set them, and from `V54` the toxicity
   score's constants), the pending parameter and listing notices, from V56 the recorded vote contract with the
-  passed changes waiting and the restrictions in force, and the latest checkpoint (`api/house_state.rs`,
+  passed changes waiting and the restrictions in force, from `V59` the house's loss over the trailing day, and the
+  latest checkpoint (`api/house_state.rs`,
   `sequencer/house.rs`), the account read's toxicity score, tier and add-on from `V54`, checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), at most one signed checkpoint on its way to
   finality at a time (`sequencer/checkpoints/hold_back.rs`), with strict signature replay and startup checks
@@ -387,8 +392,9 @@ an index: load only the rule whose hint matches the current action.
   launch margins and fees, from `V52` each market's spread bands in tenths of a bp (#623's tiers,
   with FX and index first bands pending the owner's confirmation), from `V40` each market's
   close-spread ceiling (#147's calibrated values, recomputed for `V52`'s floor and `V54`'s score
-  tiers), and from `V54` the toxicity score's tiers and each market's markout floor, its year's
-  markout spread (#699); a deployment's node sections complete it into a config. Every section
+  tiers), from `V54` the toxicity score's tiers and each market's markout floor, its year's
+  markout spread (#699), and from `V59` level 2's house loss threshold of zero (`dev.toml` and
+  `anvil.toml` carry a labelled $1M fixture); a deployment's node sections complete it into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP, launched with Secure TSC:
@@ -545,7 +551,10 @@ an index: load only the rule whose hint matches the current action.
   vault's Anvil fixture; `dev-rwa-feeds.sh`, the RWA price feeds dev scenario against local
   stand-ins for the market-data vendors; `dev-toxicity.sh`, the toxicity score's dev scenario against
   loopback crypto venue stand-ins: a toxic client's tier from its 21st fill, an edgeless client at the
-  best price, round trips that leave a score at its tier, and a replay and restart; `dev-cme-feeds.sh`, the CME Group feed dev scenario against
+  best price, round trips that leave a score at its tier, and a replay and restart; `dev-loss-trigger.sh`, the house loss
+  trigger's dev scenario from `V59` against the same stand-ins (`feeds/tests/loss_trigger.rs`, production's zero threshold
+  and a 30 s cooldown): BTC at level 2 on the move that puts the house behind on the day, and back down after the cooldown
+  once it is ahead, twice, then a replay and restart; `dev-cme-feeds.sh`, the CME Group feed dev scenario against
   a local stand-in for CME's token endpoint and stream beside a local Massive; `dev-signed-api.sh`, the signed API answers scenario:
   verified responses and stream frames, and refused tampering, replay and gaps; `dev-key-lifecycle.sh`,
   the enclave key lifecycle scenario on Anvil (keys only for the vault's current release,
@@ -600,7 +609,7 @@ an index: load only the rule whose hint matches the current action.
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the spreads scenario (its own job, compiling the node's tests), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
-  score dev scenario (`dev-toxicity`), the CME Group feed dev scenario, the signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
+  score dev scenario (`dev-toxicity`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
@@ -746,6 +755,8 @@ Run from the repo root:
   then the log replays; no vendor account or key)
 - Toxicity score dev scenario: `./scripts/dev-toxicity.sh` (loopback Coinbase and Kraken stand-ins
   price BTC-USD under the dev genesis's 1 bp fixture floor; needs only Cargo, about four minutes)
+- House loss trigger dev scenario: `./scripts/dev-loss-trigger.sh` (the same stand-ins, under the dev
+  genesis with production's zero threshold and a 30 s cooldown; needs only Cargo, about a minute and a half)
 - CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token
   endpoint and market data stream issues twelve-second tokens, answers later logins late, and prices
   US 500 beside a loopback Massive; US 500 fills throughout two rollovers, each switching to a

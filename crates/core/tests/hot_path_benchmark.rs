@@ -1,6 +1,8 @@
 //! Optimized dev-profile command latency; fixture construction is outside timed samples.
 
 mod common;
+#[path = "hot_path_benchmark/house_loss.rs"]
+mod house_loss;
 #[path = "hot_path_benchmark/toxicity.rs"]
 mod toxicity;
 

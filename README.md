@@ -34,7 +34,10 @@ Every fill pays its market's size spread: a number of tenths of a basis point on
 position it opens or closes, by size band, tight at small and medium sizes and wider above, so a
 round trip pays it on the way in and again on the way out. No market quotes a zero spread: no band
 is below a tenth of a basis point on FX and indices, or 1 basis point elsewhere. Spreads widen at
-times of stress, when venues diverge, prices move fast, or the house's exposure runs high. Accounts
+times of stress, when venues diverge, prices move fast, or the house's exposure runs high, and from
+protocol V59 in every market once the house has lost money to its clients over the trailing day: its
+loss counts open positions at current prices, net of the fees and spreads it has earned, and the
+wider spreads hold until the house is ahead again and a cooldown has passed. Accounts
 whose trades are consistently followed by a move in their favour, the mark of trading on prices
 that are about to change, pay a small additional spread on every trade. From V54 that measure is
 how many standard errors an account's recent edge sits above zero, in each market's own units of
@@ -127,7 +130,9 @@ ceiling is set no lower than what a close in its first band could pay at the wid
 when it was set or when the market launched, and a market whose ceiling was adopted after genesis
 can only be listed as that adoption named it. From V55 the profit fee moves only up from its launch
 value, to at most half again, and the fee that short holds pay only to a curve at or above the launch
-curve at every hold, each after the same notice, so no hold pays less than at launch.
+curve at every hold, each after the same notice, so no hold pays less than at launch. From V59 the
+stress levels keep the trigger on the house's loss at its launch level or above, with a threshold no
+higher than launch's.
 While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
 distribution, which it claims from the vault as a staker claims its own; from V50 the fifth is split
 among the operators by their time in office during the epoch.

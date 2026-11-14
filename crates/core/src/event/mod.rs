@@ -206,6 +206,13 @@ pub enum Event {
         market: MarketId,
         level: usize,
     },
+    /// From `V59`, the stress level the house's marked loss over the trailing day sets in every market
+    /// changed after a command (`house_loss`): `level` is the highest whose loss threshold `loss` is
+    /// above, 0 when none.
+    HouseLossChanged {
+        level: usize,
+        loss: Fixed,
+    },
     /// A price update the engine ignored: an unknown market, a malformed venue quote, a quote
     /// stamped more than `MAX_QUOTE_LEAD_MS` after the sequenced time, a quote for a futures contract
     /// the market does not take, or, from `V21`, a quote stamped while the market is closed.

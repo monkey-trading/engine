@@ -1,5 +1,6 @@
-//! The parameters, pending listing notices and latest checkpoint `GET /v1/house/state` answers from
-//! memory: before any exists, as the log sets and replaces them, and across a restart.
+//! The parameters, pending listing notices, from `V59` the house's loss over the trailing day, and
+//! latest checkpoint `GET /v1/house/state` answers from memory: before any exists, as the log sets and
+//! replaces them, and across a restart.
 
 use super::*;
 
@@ -227,4 +228,18 @@ fn a_pending_parameter_notice_and_the_profit_fee_curve_are_listed_and_kept_acros
 
     let mut recovered = start(&dir, &clock, false);
     assert_eq!(read(&mut recovered).params_notice, Some(notice));
+}
+
+#[test]
+fn from_v59_the_house_states_loss_over_the_trailing_day_starts_at_zero_with_the_level_it_sets() {
+    let dir = scratch_dir("house-state-loss");
+    let clock = Arc::new(TestClock::at(START));
+    let mut seq = start(&dir, &clock, true);
+    // An idle house has lost nothing since the activation that starts the window.
+    let state = read(&mut seq);
+    let reading = state.house_loss.expect("the latest protocol reads the loss");
+    assert_eq!((reading.loss, reading.level), (Fixed::ZERO, 0));
+    assert!(reading.since <= seq.engine.now(), "{reading:?}");
+    let expected = serde_json::json!({"loss": "0", "since": reading.since, "level": 0});
+    assert_eq!(serde_json::to_value(&state).unwrap()["house_loss"], expected);
 }

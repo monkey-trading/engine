@@ -321,10 +321,16 @@ size_spread_multiplier_bps = 20000
 min_spread_bps = 2
 trigger = { divergence_share_bps = 6000, move_bps = 150, utilisation_bps = 8000 }
 
+# From protocol V59 level 2 also rises in every market once the house's marked
+# loss to its clients over the trailing day, in USD, is above house_loss.
+# Production's threshold is zero (config/production-genesis.toml); this
+# million is a dev fixture, above what the dev scenarios' trades lose with no
+# other flow for the house to earn from. The loss trigger's own scenario sets
+# zero.
 [[genesis.params.stress_levels]]
 size_spread_multiplier_bps = 40000
 min_spread_bps = 10
-trigger = { divergence_share_bps = 8000, move_bps = 300, utilisation_bps = 9500 }
+trigger = { divergence_share_bps = 8000, move_bps = 300, utilisation_bps = 9500, house_loss = "1000000" }
 
 # Size spread bands are in tenths of a bp (protocol V52): #623's calibrated
 # tiers, each band doubling the one before, every fill paying them on the slice

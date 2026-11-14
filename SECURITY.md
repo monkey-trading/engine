@@ -191,7 +191,13 @@ fee than at launch: the base fee moves only from its launch value up to half aga
 only to one at or above its launch curve at every hold, each after a seven-day notice, so a change past
 those bounds is in scope too; from V57 an add's averaged age is clamped at the last hold of the curve
 a log launched with, whatever curve is in force, so a curve change that widens it is in scope as
-well. With `[checkpoints]` configured, startup verifies the replayed log
+well. From protocol V59 every market rises to the stress level the house loss
+trigger names once the house has lost money to its clients over the trailing day, its NAV less net
+capital moved in, and the stress levels keep that trigger at its launch level or above with a
+threshold no higher than launch's, so a fill below that level while the house is behind on the day,
+or a change past that bound, is in scope. The trigger caps how fast the house loses, not what a fast
+client takes from the house's income: `research/loss-rate-trigger` gives the bound and the classes it
+leaves open. With `[checkpoints]` configured, startup verifies the replayed log
 against the latest posted vault commitment at custody finality and refuses a shorter or conflicting log before serving or opening
 history for writes; checkpoint signatures verify
 against their chain, vault, and named signer. Those checks reach only as far as the vault's
@@ -380,7 +386,8 @@ close charge, the V52 listing bounds (each spread band from its launch rate to t
 requirement at or above launch's, no stress level's size multiplier below 1x), V54's toxicity bounds
 (each score tier within ±50% of launch, markout floors fixed), V55's holding-fee bounds (the base fee
 from its launch value up to +50%, the curve at or above its launch curve at every hold and reaching
-at most 30 minutes) and each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
+at most 30 minutes), V59's (each launch house loss threshold kept at its level or above, at most its
+launch value) and each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
 can set the other parameters to any valid value after seven days' notice, and a normal change applies only over the
 parameters or market it passed on; a fast-path proposal applies at once but only as a restriction that
 moves fields toward lower risk and lapses at the recorded lifetime, at most seven days, and its margin

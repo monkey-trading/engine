@@ -100,6 +100,7 @@ pub mod futures;
 pub mod governance;
 pub mod holding_fee;
 mod hot_indexes;
+pub mod house_loss;
 pub mod listing_bounds;
 pub mod market;
 mod markouts;

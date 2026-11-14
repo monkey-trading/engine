@@ -175,6 +175,7 @@ pub fn every_event() -> Vec<Event> {
         Event::MarketClosed { market },
         Event::MarketRolled { market, contract: "ESH7".into(), adjustment: -amount },
         Event::StressChanged { market, level: 2 },
+        Event::HouseLossChanged { level: 2, loss: amount },
         Event::PricesRejected { market, reason: "stale quote".into() },
         Event::EligibilityAttested { account, class: EligibilityClass::Professional },
         Event::EligibilityRejected { account, reason: Reject::InvalidSignature },
@@ -288,6 +289,7 @@ pub fn every_event() -> Vec<Event> {
             | Event::MarketClosed { .. }
             | Event::MarketRolled { .. }
             | Event::StressChanged { .. }
+            | Event::HouseLossChanged { .. }
             | Event::PricesRejected { .. }
             | Event::AdminApplied
             | Event::AdminRejected { .. }

@@ -118,6 +118,7 @@ Rebuilt from the log. None changes the books.
 | `corporate_action_failed` | Critical | A scheduled dividend or split failed; no partial change is committed. See [corporate-actions.md](corporate-actions.md), "When an action fails". |
 | `house_deficit` | Warning | House NAV is below zero; trading continues within the cap floors. See [reduce-only.md](reduce-only.md), "When". |
 | `bad_debt` | Warning | An account's loss beyond its balance was written off against the house. The house absorbed a loss. Informational: read it with `house_deficit` and the house NAV in `/v1/house`. |
+| `house_loss_stress` | Warning | From protocol V59, the house has lost money to its clients over the trailing day, counting open positions at current prices, and every priced market rises to the stress level the message names, which widens every fill's spread. The protocol has already responded; it pages at most once a minute while the loss crosses its threshold, resolves once the house has stayed ahead on the day for a minute, and markets step down after the cooldown. Read the loss in `/v1/house/state` (`house_loss`) and each market's positions by profit in `/v1/house/positions`. An honest day can fire it; if the same accounts keep winning through the raised spreads, or a market's price looks wrong, see [reduce-only.md](reduce-only.md), "When", and [incident-response.md](incident-response.md). |
 
 ## Trusted time
 

@@ -25,12 +25,15 @@ impl Engine {
         let currency = market.spec.quote_currency;
         let fx = valuation_fx(market).map_err(|reason| format!("dividend {reason}"))?;
         let mut house = self.house_cash.raw();
+        // What the entitled positions' dividend is worth before withholding, in the market's currency.
+        let mut gross_value: i128 = 0;
         let mut transfers = Vec::with_capacity(quantities.len());
         for (account, quantity) in quantities {
             // Every step rounds the signed account credit down: positive credits toward zero,
             // negative debits away from zero, including the final currency conversion.
             let amount =
                 quantity.checked_mul_div(gross, Fixed::ONE, Rounding::Down).ok_or("dividend gross amount overflows")?;
+            gross_value = gross_value.checked_add(amount.raw()).ok_or("dividend gross value overflows")?;
             let amount = if quantity.is_positive() {
                 amount
                     .checked_mul_div(Fixed::ONE - withholding_rate, Fixed::ONE, Rounding::Down)
@@ -62,6 +65,7 @@ impl Engine {
             });
         }
         self.house_cash = Fixed::from_raw(house);
+        self.note_unpriced_dividend(action.market, Fixed::from_raw(gross_value));
         Ok(())
     }
 }

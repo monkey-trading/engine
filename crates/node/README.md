@@ -379,9 +379,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   compares both with a full replay
 - `src/sequencer/prefixes.rs` — the cumulative command prefix after each of the latest commands the
   sequencer applied, which a handover checks a successor's tip against
-- `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, signed, unsigned or voted, and the pending parameter and listing notices, which `GET /v1/house/state` answers from, with the mirrored votes
+- `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, signed, unsigned or voted, and the pending parameter and listing notices, which `GET /v1/house/state` answers from, with the mirrored votes and the house's loss over the trailing day
 - `src/sequencer/governance.rs` — the `ApplyProposal` this node sequences for each passed change whose seven days have run
-- `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, with a pending parameter or listing notice, and after a restart
+- `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, with a pending parameter or listing notice, from `V59` the house's loss, and after a restart
 - `src/sequencer/replay/authorities.rs` — accepted historical signers for checkpoints a retired key signed
 - `src/sequencer/legacy.rs` — verified legacy activation inputs and pre-writer signature eligibility
 - `src/sequencer/legacy/approvals.rs` — authenticated approval prefixes, bounded receipt proofs and per-obligation release authorization
@@ -451,6 +451,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   before any is written, and how far a replayed log got through genesis and which genesis it ran
 - `src/sequencer/alerts.rs` — the alerts the sequencer raises: engine rejections an operator must
   look at, benchmarks with no rate, and house NAV below zero
+- `src/sequencer/alerts/loss.rs` — from `V59`, `house_loss_stress`: one page while the house loss trigger's level is above zero, resolved once it has stayed at zero for a minute
 - `src/sequencer/alerts/retirement_tests.rs` — benchmark retirement, catalogue changes, and resolution state
 - `src/sequencer/alerts/retirement_webhook_tests.rs` — retirement pages through the durable webhook router
 - `src/sequencer/alerts/undated_tests.rs` — scalar fallback, independent incidents, and durable webhook recovery
@@ -458,6 +459,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the end, at its next stamp, of a hold no snapshot can end while an installation supersedes the log's key
 - `src/sequencer/tests/benchmark_schedule.rs` — schedule changes, durable watches, and due-time synchronization
 - `src/sequencer/tests/mod.rs` — sequencer, activation, recovery, and replay tests
+- `src/sequencer/tests/old_logs.rs` — a V1 and a V3 log activating the latest version at their next seq, with the parameters activation converts, and still verifying
 - `src/sequencer/tests/replay.rs` — root, sequence, and pre-event log replay tests
 - `src/sequencer/tests/catch_up.rs` — a command after an outage of more than one catch-up batch
 - `src/sequencer/tests/benchmarks.rs` — publisher startup prerequisites and legacy-log refusal
@@ -1240,7 +1242,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/tests/toxicity.rs` — the toxicity score's dev scenario (`V54`): loopback Coinbase and
   Kraken stand-ins price BTC-USD; a toxic client pays its tier's add-on from its 21st fill, as the
   test computes from the moves, an edgeless client stays at the best price, round trips leave the
-  score at its tier, and the log replays and a restart recovers the score
+  score at its tier, and the log replays and a restart recovers the score; its stand-ins and
+  sequencer helpers also run `loss_trigger.rs`
+- `src/feeds/tests/loss_trigger.rs` — the house loss trigger's dev scenario (`V59`): loopback
+  Coinbase and Kraken stand-ins move BTC-USD a client's way until the house has lost money over the
+  day, BTC rises to level 2 on that move with the loss at most that move's, the client's next fill pays
+  level 2, and BTC steps down after the cooldown once the house is ahead; twice, then the log
+  replays and a restart recovers the loss
 - `src/feeds/tests/cme_support.rs` — a loopback CME token endpoint and market data stream behind TLS
 - `src/feeds/tests/cme.rs` — the CME feed against the loopback CME: rollovers with no gap in its
   quotes, a slow or failed replacement, connections ended at their token's expiry, a quiet closure,
@@ -2342,7 +2350,7 @@ time, or seven days after the election is logged when that is later, and once th
 has completed a finalised block stamped at or after the registry's effective time, signing with
 `--rotated`.
 `GET /v1/house/state` returns `{"seq", "params", "params_notice", "score_rules", "listing_notices",
-"checkpoint"}` from memory, signed like the other reads, with no log scan, so a client learns the
+"house_loss", "checkpoint"}` from memory, signed like the other reads, with no log scan, so a client learns the
 protocol parameters, the pending notices and the latest checkpoint without replaying the log.
 `params_notice` is the pending parameter notice (`null` while none waits): each of
 `profit_fee_bps`, `closeout_level_bps`, `stress`, from `V54` `score_tiers` and from `V55`
@@ -2355,10 +2363,17 @@ each left out when not named, and `effective_at`); the bands in force are `GET /
 rest), plus `seq`, the seq of the
 `SetParams` that set them (`null` only when a snapshot written before it carried the seq restored the
 node and no `SetParams` has applied since; an activation that converts the parameters in place, as
-`V13`'s divergence shares, `V52`'s 1x multipliers, `V54`'s score tiers and `V55`'s default curve and
-launch base do, leaves it at that `SetParams`).
+`V13`'s divergence shares, `V52`'s 1x multipliers, `V54`'s score tiers, `V55`'s default curve and
+launch base and `V59`'s level 2 house loss threshold do, leaves it at that `SetParams`).
 From `V54`, `score_rules` gives the toxicity score's protocol constants: `horizon_ms`, `half_life_ms`,
 `min_fills`, `weight_cap`, `grid_ms` and `window_ms`; the score's tiers are `params.toxicity.score_tiers`.
+From `V59`, `house_loss` gives the house's marked loss to its clients over the trailing day as the last
+command left it: `loss` in USD (positive when the house lost money), `since`, the start of the slot its window starts in,
+and `level`, the stress level it sets in every market; each level's threshold is its trigger's
+`house_loss` in `params.stress_levels`. The level rising above zero raises the `house_loss_stress`
+Warning, at most once a minute while the loss keeps crossing its threshold, and it resolves once the
+level has stayed at zero for a minute; a node starting with the level raised pages it again, and one
+starting at zero resolves an episode left open before the restart.
 `checkpoint` is `null` until the log holds one, then the
 latest checkpoint as the stream carries it (`offset`, `type: "checkpoint"`, `seq`, `root`,
 `signature`, `signer`, and the rest). The sequencer keeps the checkpoint as it logs it and the seq as
@@ -3097,6 +3112,9 @@ cargo test -p engine-node --features production --lib production_build
 # Dev scenario: loopback crypto venues price BTC-USD; a toxic client's tier from its 21st fill, an
 # edgeless client at the best price, round trips that leave the score, a replay and a restart
 ./scripts/dev-toxicity.sh
+# Dev scenario: loopback crypto venues move BTC-USD a client's way until the house has lost money
+# over the day; BTC at level 2 on that move, its cooldown once the house is ahead, a replay, a restart
+./scripts/dev-loss-trigger.sh
 # Dev scenario: a loopback CME token endpoint and stream behind TLS price US 500 beside a loopback
 # Massive across token rollovers; a refused token alerts and leaves it unpriced, and the log replays
 ./scripts/dev-cme-feeds.sh

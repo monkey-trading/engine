@@ -259,6 +259,11 @@ memory = "11259036"
 # flow-weighted under 1% on minute-scale simulations of the markets' own hours;
 # the utilisation levels keep the flow-weighted fire rate under 2% per
 # launch-relevant floor family in the Monte Carlo. See the research README.
+# From protocol V59 level 2 also rises in every market once the house has lost
+# money to its clients over the trailing day: house_loss is the marked loss in
+# USD, net of fees and spreads, met when the loss is above it (#614's decision
+# of 2026-11-13; research/loss-rate-trigger). A change keeps it at level 2 or
+# above, at zero or below.
 [[genesis.params.stress_levels]]
 size_spread_multiplier_bps = 10000
 min_spread_bps = 0
@@ -271,7 +276,7 @@ trigger = { divergence_share_bps = 6001, move_bps = 75, utilisation_bps = 7000 }
 [[genesis.params.stress_levels]]
 size_spread_multiplier_bps = 40000
 min_spread_bps = 10
-trigger = { divergence_share_bps = 9500, move_bps = 200, utilisation_bps = 9500 }
+trigger = { divergence_share_bps = 9500, move_bps = 200, utilisation_bps = 9500, house_loss = "0" }
 
 # --- Crypto: 24/7 ---------------------------------------------------------
 

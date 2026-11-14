@@ -30,6 +30,11 @@ fn governed() -> Harness {
 
 /// `governed`, with restrictions lasting `ttl`.
 fn governed_with(ttl: Millis) -> Harness {
+    governed_at(ProtocolVersion::V56, ttl)
+}
+
+/// `governed_with`, activating `version` in place of `V56`.
+fn governed_at(version: ProtocolVersion, ttl: Millis) -> Harness {
     let mut h = Harness::v21();
     let mut parameters = h.engine.params().expect("the fixture sets parameters").clone();
     let top = StressLevel { min_spread_bps: 8, trigger: None, ..parameters.stress_levels[1].clone() };
@@ -49,7 +54,7 @@ fn governed_with(ttl: Millis) -> Harness {
     h.operator_admin(AdminCommand::InitStaking(config));
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V37 });
     install_expect(&mut h, ceilings());
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V56 });
+    h.admin(AdminCommand::ActivateProtocol { version });
     h.admin(AdminCommand::SetGovernance(GovernanceConfig { vote: VOTE, restriction_ttl_ms: ttl }));
     switch_rotation(&mut h, true);
     h
@@ -437,6 +442,8 @@ fn canonical_bytes_decode_and_anything_else_does_not() {
 mod baseline;
 #[path = "parameter_votes/holding_fee.rs"]
 mod holding_fee;
+#[path = "parameter_votes/house_loss.rs"]
+mod house_loss;
 #[path = "parameter_votes/limits.rs"]
 mod limits;
 #[path = "parameter_votes/listing.rs"]
