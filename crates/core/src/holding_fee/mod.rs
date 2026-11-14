@@ -9,13 +9,16 @@
 //! A hold runs from the position's open time (`Account::opened_at`). Opening a position sets it to
 //! the fill's sequenced time; an add moves it to the size-weighted average of now and the open time
 //! raised to no earlier than now less the curve's last hold, rounded towards now, so an add does not
-//! restart the clock and the units it adds never look older than the curve's end; a reduction
-//! leaves it; a flip closes the whole position at its hold and opens the rest now. A close-out is a
-//! close, and a split keeps the open time. A hold runs to the command's stamp, also for a close-out a
-//! catch-up runs at an earlier boundary. Before `V55` a curve in the parameters charges nothing;
-//! activation raises a base cut below its launch value back to it, gives parameters that name no
-//! curve the default one, and gives each held position the open time `activation - the curve's last
-//! hold`, so its next close pays the base.
+//! restart the clock and the units it adds never look older than the curve's end. From `V57` that
+//! clamp is the launch curve's last hold, whatever curve is in force, so a later curve that reaches
+//! further cannot widen the age an add borrows; a log launched with no curve has no hold to pin, and
+//! clamps at the curve in force's. A reduction leaves the open time; a flip closes the
+//! whole position at its hold and opens the rest now. A close-out is a close, and a split keeps the
+//! open time. A hold runs to the command's stamp, also for a close-out a catch-up runs at an earlier
+//! boundary. Before `V55` a curve in the parameters charges nothing; activation raises a base cut
+//! below its launch value back to it, gives parameters that name no curve the default one, and gives
+//! each held position the open time `activation - the curve's last hold`, so its next close pays the
+//! base. `V57`'s activation keeps every open time.
 //!
 //! The operator moves the base only from its launch value up to +50%, and the curve only to one at or
 //! above the launch curve at every hold, reaching at most 30 minutes, each after a seven-day notice
@@ -96,6 +99,22 @@ impl Engine {
     /// sequenced time.
     pub(crate) fn hold_clock_time(&self) -> Millis {
         self.now.max(self.command_ms)
+    }
+
+    /// The most age the units a position holds lend an add (`opened_after`): from `V57` the launch
+    /// curve's last hold, so a later curve cannot widen it, and before it, or while the log launched
+    /// with no curve, the last hold of the curve in force.
+    pub(crate) fn add_clamp_hold(&self) -> Millis {
+        let params = self.params.as_ref().expect("callers check params are set");
+        if self.protocol_version < ProtocolVersion::V57 {
+            return last_hold(&params.profit_fee_curve);
+        }
+        // Recorded with the first parameters under `V55`, or at its activation over them.
+        let launch =
+            self.operator_bounds.launch_curve.as_deref().expect("the launch curve is recorded with parameters");
+        // A log launched with no curve has no hold to pin, and its bounds admit any curve later, so
+        // pinning a zero hold would only restart the clock of every position an add touches.
+        if launch.is_empty() { last_hold(&params.profit_fee_curve) } else { last_hold(launch) }
     }
 
     /// What closing `account`'s position in `market` would pay now, from `V55`; `None` with no
@@ -342,9 +361,10 @@ fn extended(curve: &[CurvePoint], hold_ms: Millis) -> (i128, i128) {
 }
 
 /// The open time after a fill takes a position of `before` units, opened at `opened_at`, to `after`
-/// units at `now`, under a curve whose last hold is `last_hold`: none once flat; now for an opening or
-/// a flip; for an add, the size-weighted average of now and the open time raised to no earlier than
-/// `now - last_hold`, rounded towards now; and the open time as it was for a reduction.
+/// units at `now`, the units held lending at most `last_hold` of age (`Engine::add_clamp_hold`): none
+/// once flat; now for an opening or a flip; for an add, the size-weighted average of now and the open
+/// time raised to no earlier than `now - last_hold`, rounded towards now; and the open time as it was
+/// for a reduction.
 pub(crate) fn opened_after(
     before: Fixed,
     opened_at: Option<Millis>,
@@ -361,8 +381,8 @@ pub(crate) fn opened_after(
     if after.abs() <= before.abs() {
         return Some(opened_at);
     }
-    // A held position lends an add at most the curve's length of age, so a small aged position cannot
-    // carry a large fresh lot past the curve (the owner's decision of 2026-11-13 on #689).
+    // A held position lends an add at most `last_hold` of age, so a small aged position cannot carry a
+    // large fresh lot past the curve (the owner's decision of 2026-11-13 on #689).
     let opened_at = opened_at.max(now - last_hold);
     // `opened_at + (now - opened_at) * added / after`, with the share of the wait rounded up.
     let elapsed = Fixed::from_raw(i128::from(now - opened_at));
@@ -388,7 +408,7 @@ fn ceil_div(num: i128, den: i128) -> i128 {
 }
 
 /// From `V55`, moves `market`'s entry in `opened_at` as a fill taking its position from `held` to
-/// `after` units at `now`, under a curve whose last hold is `last_hold`, moves it.
+/// `after` units at `now`, the units held lending at most `last_hold` of age, moves it.
 pub(crate) fn move_open_time(
     version: ProtocolVersion,
     opened_at: &mut BTreeMap<MarketId, Millis>,

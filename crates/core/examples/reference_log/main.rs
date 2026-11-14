@@ -52,6 +52,7 @@ mod v53;
 mod v54;
 mod v55;
 mod v56;
+mod v57;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -83,4 +84,21 @@ fn main() -> anyhow::Result<()> {
     println!("wrote {} commands to {}", entries.len(), path.display());
     tally.iter().for_each(|(kind, count)| println!("{count:>5} {kind}"));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use engine_core::protocol::ProtocolVersion;
+
+    use super::*;
+
+    #[test]
+    fn the_session_runs_every_part_to_the_latest_version_without_writing_a_log() {
+        // Each part asserts its own rules as it goes; the log the session builds then replays.
+        let mut engine = Engine::new();
+        for sequenced in session::session() {
+            engine.apply(&sequenced).expect("the session's log replays");
+        }
+        assert_eq!(engine.protocol_version(), ProtocolVersion::LATEST);
+    }
 }

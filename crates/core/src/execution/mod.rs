@@ -428,9 +428,8 @@ impl Engine {
     /// in the account's emission period result, and a markout to score the flow later
     /// (`Engine::mark_fill`).
     fn book(&mut self, exec: &Exec, priced: Priced) -> Fill {
-        let params = self.params.as_ref().expect("callers check params are set");
         let (hold, fee_bps) = self.close_fee_terms(exec.account, exec.market);
-        let (version, now) = (self.protocol_version, self.hold_clock_time());
+        let (version, now, clamp_hold) = (self.protocol_version, self.hold_clock_time(), self.add_clamp_hold());
         let market = self.markets.get_mut(&exec.market).expect("priced against this market");
         let acct = self.accounts.get_mut(&exec.account).expect("priced for this account");
 
@@ -446,8 +445,7 @@ impl Engine {
         if position.is_zero() {
             acct.positions.remove(&exec.market);
         }
-        let clock = (now, holding_fee::last_hold(&params.profit_fee_curve));
-        holding_fee::move_open_time(version, &mut acct.opened_at, exec.market, (held, position), clock);
+        holding_fee::move_open_time(version, &mut acct.opened_at, exec.market, (held, position), (now, clamp_hold));
         let (hold_ms, profit_fee_bps) = holding_fee::closed_terms(held, priced.delta, hold, fee_bps);
         let fee = profit_fee(realised_pnl, fee_bps, version);
         acct.balance += realised_pnl - fee;

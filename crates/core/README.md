@@ -111,8 +111,9 @@ this crate and reproduce the signed state roots exactly.
 - From protocol `V55`, the profit fee falls with holding time (`src/holding_fee/`): a realised gain
   pays the larger of the base fee and a hold curve's fee at the hold since the position's open time,
   which an add moves to the size-weighted average with the open time counted as no older than the
-  curve's last hold; the base moves only up from launch, to +50%, and
-  the curve only to one at or above its launch curve at every hold, each after a seven-day notice
+  curve's last hold, from `V57` the launch curve's, whatever curve is in force; the base moves only up
+  from launch, to +50%, and the curve only to one at or above its launch curve at every hold, each
+  after a seven-day notice
 - From protocol `V56`, parameter changes by stake-weighted operator vote (`src/governance/`): while
   rotation is on, the parameters, listings, toxicity weighting, close-spread adoptions, the access
   policy and protocol activation change only by a proposal the rotation set passes on the vote
@@ -294,6 +295,9 @@ this crate and reproduce the signed state roots exactly.
   a flip, close-all pieces, splits, activation, and what a close pays now
 - `tests/holding_fee_bounds.rs` — the bounds on the base fee and the curve, their notices, and the
   launch fee held from below at every hold
+- `tests/holding_fee_clamp.rs` — `V57`'s add clamp at the launch curve's last hold: an add after a
+  noticed curve extension, against `V55`'s clamp at the curve in force, activation over held open
+  times, a launch curve longer than 15 minutes, and a fresh log launched with no curve
 - `tests/params_notice.rs` — the V49 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
@@ -306,7 +310,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/parameter_votes/limits.rs` — `V56`: a refused drawn turn keeping votes governing until an installation, a restriction lapsing at a walked boundary, and the caps on waiting changes and restrictions
 - `tests/parameter_votes/listing.rs` — `V56`: a voted relisting held to the listing bounds without a notice, the operator's listing notice refused while rotation is on, the size multiplier and close charge floors on voted changes, and a relisting under a margin restriction measured from the baseline
 - `tests/parameter_votes/toxicity.rs` — `V56`: a voted score tier change held to ±50% of launch without a notice, and a voted relisting keeping its markout floor
-- `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch
+- `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch; from `V57` a voted extension lending an add no more than the launch curve's last hold
 - `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, and the turn's time in office
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
 - `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
@@ -464,7 +468,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V56` parts (`v15.rs` to `v56.rs`)
+  `V15` to `V57` parts (`v15.rs` to `v57.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -814,6 +818,15 @@ at its lifetime unless a vote on the same command, or the same bounds, renews it
 a stress level a restriction holds a floor at are refused. Before V56 nothing records a vote, and the state
 encodes as before, so earlier logs replay unchanged. Its session is in
 `examples/reference_log/v56.rs`.
+
+Protocol V57 clamps an add's averaged age at the launch curve's last hold, 15 minutes at launch: the
+open time is raised to no earlier than now less the last hold of the curve `V55` recorded as the
+launch curve (`OperatorBounds::launch_curve`), whatever curve is in force, so a curve that reaches
+further, such as one extended to 30 minutes with a flat 10% tail, noticed or voted, cannot widen the
+age an add borrows. Under V55 and V56 the clamp is the last hold of the curve in force, and so it
+stays from V57 in a log launched with no curve, which has no hold to pin and whose bounds admit any
+curve later. Activation keeps every held position's open time and records nothing, so earlier logs
+replay unchanged. Its session is in `examples/reference_log/v57.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

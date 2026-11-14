@@ -64,18 +64,32 @@ pub fn btc_bands(h: &Harness) -> Vec<SpreadTier> {
 /// `V52`, the harness parameters with divergence shares, and BTC, ETH and AAPL at 1bp to 1m, 2bp to 5m and 5bp above. No
 /// ceiling registry yet.
 pub fn genesis_v52() -> Harness {
+    genesis_at(ProtocolVersion::V52)
+}
+
+/// `genesis_v52` activating `version` before the genesis instead, from `V54` with the parameters and
+/// listings in the form it takes.
+pub fn genesis_at(version: ProtocolVersion) -> Harness {
     let mut h = Harness::empty();
     h.admin(AdminCommand::SetClientAuth(ClientAuth::Eip712 { chain_id: CHAIN_ID, vault: VAULT }));
     h.admin(AdminCommand::SetOperator(operator()));
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V52 });
-    h.admin(AdminCommand::SetParams(share_params()));
+    h.admin(AdminCommand::ActivateProtocol { version });
+    let mut params = share_params();
+    if version >= ProtocolVersion::V54 {
+        params.convert_to_score();
+    }
+    h.admin(AdminCommand::SetParams(params));
     for (id, symbol, class, schedule, margin) in [
         (BTC, "BTC-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000),
         (ETH, "ETH-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000),
         (AAPL, "AAPL", AssetClass::Equity, us_equities(), 2_000),
     ] {
         let spread_tiers = tenths(&[(Some(1_000_000), 10), (Some(5_000_000), 20), (None, 50)]);
-        h.admin(AdminCommand::UpsertMarket(MarketSpec { spread_tiers, ..market(id, symbol, class, schedule, margin) }));
+        let mut spec = MarketSpec { spread_tiers, ..market(id, symbol, class, schedule, margin) };
+        if version >= ProtocolVersion::V54 {
+            spec.convert_to_floored();
+        }
+        h.admin(AdminCommand::UpsertMarket(spec));
     }
     h
 }

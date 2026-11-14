@@ -13,7 +13,8 @@ an index: load only the rule whose hint matches the current action.
   size and stress spreads, margin and close-out, the profit fee (from `V55` falling with holding time
   along a hold curve from each position's open time, `holding_fee/`, with the open time's own leaf in
   `merkle/open_time.rs`, the base, from launch to +50%, and the curve, at or above launch at every hold,
-  moved only after notice), overnight financing, trading
+  moved only after notice, and from `V57` an add's averaged age clamped at the launch curve's last hold
+  whatever curve is in force, `tests/holding_fee_clamp.rs`), overnight financing, trading
   sessions (from `V21` no quote stamped outside a market's hours prices it), markets priced from
   roll-adjusted front futures contracts (`futures.rs`), dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring (from `V54` a stick in `toxicity/`: markouts from
@@ -447,7 +448,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-holding-fee.sh`, the V55 holding-time profit fee on a dev node: a BTC long's closes at 5 s, 60 s,
   20 and 45 minutes each paying the curve's rate at its hold, an add moving the open time, a flip, a
   close-out of a gaining and a losing position, the account and house reads, a refused cut and a noticed
-  raise over TLS, restart and replay;
+  raise over TLS, from V57 an add to a position held a day after a noticed 30-minute curve extension
+  closing at the launch curve's 15-minute clamp, restart and replay;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;

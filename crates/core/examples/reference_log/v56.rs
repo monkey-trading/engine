@@ -111,7 +111,7 @@ fn spreads(h: &Harness, market: u32, factor: i64) -> AdminCommand {
 }
 
 /// Mirrors proposal `proposal` passing on `fast` with `command`, or with bytes that are no command.
-fn pass(h: &mut Harness, proposal: u64, fast: bool, command: Option<AdminCommand>) -> Vec<Event> {
+pub(crate) fn pass(h: &mut Harness, proposal: u64, fast: bool, command: Option<AdminCommand>) -> Vec<Event> {
     let command_hash = command.as_ref().map(command_hash).unwrap_or_default();
     let (block, chain_ref) = (52_000_000 + proposal, format!("0xvote:52:{proposal}"));
     h.cmd(Command::PassProposal(Box::new(PassedProposal { proposal, fast, command_hash, command, block, chain_ref })))

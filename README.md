@@ -46,7 +46,8 @@ V55 falls with how long the position was held: the whole gain on a close within 
 open, falling to the standard 10% at 15 minutes. Adding to a position moves its open time to the
 size-weighted average of the times its units were added, so an add does not restart the clock, with
 the units already held counted as no older than the curve's end (15 minutes at launch): a small
-position held for days cannot lend its age to a large one added to it.
+position held for days cannot lend its age to a large one added to it. From V57 that end is the
+launch curve's, so a later curve that reaches further cannot widen the age an add borrows.
 Positions held over the daily rollover pay or receive financing at a
 benchmark interest rate plus or minus a markup. Under V18, a separate operator worker fetches dated rates from the official
 publishers. After downtime, each missed rollover uses the rate effective on its local date. The

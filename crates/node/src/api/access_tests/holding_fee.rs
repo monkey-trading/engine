@@ -1,13 +1,15 @@
 //! The `V55` dev scenario: a realised gain pays the profit fee its hold gives, the hold runs from the
 //! position's open time, which an add moves and a flip restarts, a close-out pays at the hold of what
 //! it closes, and the operator moves the fee only up and only after notice, through the signed order
-//! and admin routes, the admin route over TLS, and the account and house reads, on deterministic time;
-//! the public log replays to the same state, and a restart recovers it.
+//! and admin routes, the admin route over TLS, and the account and house reads, on deterministic time.
+//! From `V57`, after the curve is extended to 30 minutes, an add to an aged position still borrows at
+//! most the launch curve's 15 minutes of age. The public log replays to the same state, and a restart
+//! recovers it.
 
 use engine_core::command::AdminCommand;
 use engine_core::event::Fill;
 use engine_core::fixed::Rounding;
-use engine_core::holding_fee::DEFAULT_PROFIT_FEE_CURVE;
+use engine_core::holding_fee::{CurvePoint, DEFAULT_PROFIT_FEE_CURVE};
 use engine_core::operator_bounds::{NOTICE_MS, ParamsNotice};
 use engine_core::types::MarketId;
 
@@ -117,7 +119,40 @@ async fn dev_scenario_a_gain_pays_the_fee_its_hold_gives_and_the_fee_moves_only_
         pays(&fill_event(&node, &d, BTC, Side::Sell, "1", "101000").await, hold, rate);
     }
 
-    // 6. The public log replays to the same state, and a restart recovers the root it replays to.
+    // 6. The curve is extended to 30 minutes with a flat 10% tail after its notice. D holds a BTC long a
+    // day and adds nine times it: the units held lend the add the launch curve's 15 minutes, not the
+    // extended curve's 30, so the open time moves 90 s back and the close straight after pays the
+    // curve's 56.28% there, not the 42.68% at 180 s.
+    let mut extended = DEFAULT_PROFIT_FEE_CURVE.to_vec();
+    extended.push(CurvePoint { hold_ms: 30 * 60_000, fee_bps: 1_000 });
+    let due = node.clock.now_ms() + NOTICE_MS;
+    let notice = ParamsNotice {
+        profit_fee_bps: None,
+        closeout_level_bps: None,
+        stress: None,
+        profit_fee_curve: Some(extended.clone()),
+        effective_at: due,
+        score_tiers: None,
+    };
+    operator.applies(&node, AdminCommand::AnnounceParams(notice)).await;
+    wait(&node, NOTICE_MS as u64).await;
+    let mut params = node.state.query(|engine| engine.params().cloned()).await.unwrap().unwrap();
+    params.profit_fee_curve = extended.clone();
+    operator.applies(&node, AdminCommand::SetParams(params)).await;
+    let house = node.get("/v1/house/state").await;
+    assert_eq!(house["params"]["profit_fee_curve"], serde_json::to_value(&extended).unwrap(), "{house}");
+    price(&node, BTC, "100000").await;
+    fill_event(&node, &d, BTC, Side::Buy, "1", "100000").await;
+    wait(&node, 24 * 60 * 60 * 1_000).await;
+    price(&node, BTC, "100000").await;
+    fill_event(&node, &d, BTC, Side::Buy, "9", "100000").await;
+    let account = node.get(&format!("/v1/accounts/{}", eip712::address(d.verifying_key()))).await;
+    let added_at = node.clock.now_ms();
+    assert_eq!(account["close_fees"][BTC.to_string()]["opened_at"].as_i64(), Some(added_at - 90_000), "{account}");
+    price(&node, BTC, "101000").await;
+    pays(&fill_event(&node, &d, BTC, Side::Sell, "9", "101000").await, 90_000, 5_628);
+
+    // 7. The public log replays to the same state, and a restart recovers the root it replays to.
     let accounts = [&a, &b, &c, &d].map(|client| eip712::address(client.verifying_key()));
     let mut replayed = replay(&node.entries()).unwrap().engine;
     let live =

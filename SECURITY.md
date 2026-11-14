@@ -189,7 +189,9 @@ band pays at the widest admitted stress, under the parameters in force then and 
 launched with, so a change past those bounds is in scope. From protocol V55 no hold pays a lower profit
 fee than at launch: the base fee moves only from its launch value up to half again, and the hold curve
 only to one at or above its launch curve at every hold, each after a seven-day notice, so a change past
-those bounds is in scope too. With `[checkpoints]` configured, startup verifies the replayed log
+those bounds is in scope too; from V57 an add's averaged age is clamped at the last hold of the curve
+a log launched with, whatever curve is in force, so a curve change that widens it is in scope as
+well. With `[checkpoints]` configured, startup verifies the replayed log
 against the latest posted vault commitment at custody finality and refuses a shorter or conflicting log before serving or opening
 history for writes; checkpoint signatures verify
 against their chain, vault, and named signer. Those checks reach only as far as the vault's
