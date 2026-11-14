@@ -110,7 +110,7 @@ async fn run_member(
     };
     let keys = crate::node::KeyStart { mock_launch_digest: Some(DIGEST), ..Default::default() };
     let mut chain_read = false;
-    let running = crate::node::serve_node(
+    let mut running = Box::pin(crate::node::serve_node(
         &cfg,
         metrics.clone(),
         &mut routing,
@@ -120,8 +120,7 @@ async fn run_member(
         &mut chain_read,
         Some(Box::new(start)),
         None,
-    );
-    tokio::pin!(running);
+    ));
     tokio::select! {
         outcome = &mut running => match outcome {
             Err(e) => return Err(e),

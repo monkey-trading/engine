@@ -147,3 +147,28 @@ async fn submit(
     let events = done.await.unwrap();
     assert!(events.contains(&Event::AdminApplied), "{events:?}");
 }
+
+// Tests pin the node's future on a libtest thread's stack, 2 MiB on CI, and an overflow aborts the
+// whole test binary. One start on a 512 KiB stack fails here, on every platform, when the future's frames
+// outgrow the box `run_with_cpu` keeps them behind: boxed it needs under 256 KiB, unboxed over 768 KiB.
+#[test]
+fn a_start_runs_on_a_small_stack() {
+    let outcome = std::thread::Builder::new()
+        .stack_size(512 << 10)
+        .spawn(|| {
+            let mut cfg = startable("startup-small-stack");
+            cfg.checkpoints = Some(
+                toml::from_str(
+                    "rpc_url = 'https://rpc.example/v2'\nrelayer = '0x0000000000000000000000000000000000000001'\n\
+                     retry_interval = '1s'\nrpc_timeout = '1s'",
+                )
+                .unwrap(),
+            );
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            runtime.block_on(crate::node::run_with_cpu(cfg, telemetry(), None, start()))
+        })
+        .unwrap()
+        .join()
+        .expect("the start overflowed or panicked on a 512 KiB stack");
+    assert!(outcome.is_err(), "the start has no chain to read, so it fails");
+}
