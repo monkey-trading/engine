@@ -66,8 +66,19 @@ pub(crate) async fn run_with_cpu(
             },
             async |replica, handed| {
                 let chain_read = &mut chain_read;
-                serve_node(&cfg, metrics.clone(), &mut routing, cpu, &start, &delivered, chain_read, replica, handed)
-                    .await
+                // On the heap: the serving future is large, and a test awaits `run` on its own stack.
+                Box::pin(serve_node(
+                    &cfg,
+                    metrics.clone(),
+                    &mut routing,
+                    cpu,
+                    &start,
+                    &delivered,
+                    chain_read,
+                    replica,
+                    handed,
+                ))
+                .await
             },
         )
         .await

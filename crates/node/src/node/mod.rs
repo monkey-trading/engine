@@ -69,7 +69,7 @@ const CHANNEL_CAPACITY: usize = 65_536;
 /// Error cases:
 /// - see `serve_node`
 pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
-    run_with_cpu(cfg, telemetry, None, KeyStart::default()).await
+    Box::pin(run_with_cpu(cfg, telemetry, None, KeyStart::default())).await
 }
 
 /// Runs every task but alert routing, which it supervises, from a member's `replica` when given, until
