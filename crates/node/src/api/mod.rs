@@ -12,6 +12,7 @@ use actions::{
 };
 mod admin;
 mod archive;
+mod attestation;
 mod benchmark_schedule;
 mod distributions;
 mod exit;
@@ -38,7 +39,7 @@ use std::time::Duration;
 
 use axum::extract::{DefaultBodyLimit, Path, Request, State};
 use axum::http::StatusCode;
-use axum::http::header::{CONTENT_TYPE, RETRY_AFTER};
+use axum::http::header::RETRY_AFTER;
 use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -137,6 +138,8 @@ pub struct ApiState {
     /// The operator list the custody quorum last read, when `custody.evm.staking.registry.lens` is
     /// configured; `None` answers `/v1/operators` 404.
     pub operators: Option<crate::custody::OperatorsFeed>,
+    /// The turn in effect's registered API hostname, read at a finalized block; `None` omits it.
+    pub operator_hostname: Option<crate::handover::hostname::HostnameFeed>,
     /// The archive manifest listing proven so far, extended as segments complete.
     pub listing: Arc<tokio::sync::Mutex<Option<crate::log::catalog::CatalogListing>>>,
     /// The emission period budget the configured vault's MONKEY cap was derived from, which an
@@ -267,8 +270,8 @@ pub fn router(state: ApiState) -> Router {
     let limits = state.limits.clone();
     Router::new()
         .route("/v1/health", get(health))
-        .route("/v1/attestation", get(attestation))
-        .route("/v1/attestation/collateral", get(attestation_collateral))
+        .route("/v1/attestation", get(attestation::attestation))
+        .route("/v1/attestation/collateral", get(attestation::attestation_collateral))
         .route("/v1/markets", get(markets))
         .route("/v1/markets/{id}/marks", get(marks::marks))
         .route("/v1/benchmarks", get(benchmarks))
@@ -324,26 +327,6 @@ async fn trace_request(req: Request, next: Next) -> Response {
 /// Liveness.
 async fn health() -> &'static str {
     "ok"
-}
-
-/// The attestation produced at boot.
-async fn attestation(State(s): State<ApiState>) -> Json<Attestation> {
-    Json((*s.attestation).clone())
-}
-
-/// The vendor certificate chain and revocation list a verifier needs for the attestation's quote,
-/// as the node last fetched them. It carries no per-account data, and its integrity rests on the
-/// vendor roots the verifier pins, not on the node.
-/// Error cases:
-/// - the attestation has no collateral (404)
-/// - no fetch has succeeded yet (503)
-async fn attestation_collateral(State(s): State<ApiState>) -> Result<Response, ApiError> {
-    let served = s.collateral.as_ref().ok_or(ApiError::NotFound)?;
-    let Some(body) = served.borrow().clone() else {
-        let pending = Json(json!({ "error": "attestation collateral not fetched yet" }));
-        return Ok((StatusCode::SERVICE_UNAVAILABLE, [(RETRY_AFTER, "60")], pending).into_response());
-    };
-    Ok(([(CONTENT_TYPE, "application/json")], body).into_response())
 }
 
 /// Every market with its live state.

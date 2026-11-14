@@ -249,6 +249,21 @@ pub(crate) trait CheckpointChain: Send + Sync {
         anyhow::bail!("this checkpoint chain reads no registry")
     }
 
+    /// `operator_hostname` at the already pinned finalized block.
+    /// Error cases: the observation is not finalized and pinned, the chain cannot be read, or it
+    /// reads no registry
+    async fn operator_hostname_at(&self, at: &Observation) -> anyhow::Result<String> {
+        let _ = at;
+        anyhow::bail!("this checkpoint chain reads no registry")
+    }
+
+    /// The API hostname `candidate` registered, at the already pinned finalized block.
+    /// Error cases: as `operator_hostname_at`
+    async fn candidate_hostname_at(&self, at: &Observation, candidate: AccountId) -> anyhow::Result<String> {
+        let _ = (at, candidate);
+        anyhow::bail!("this checkpoint chain reads no registry")
+    }
+
     /// The drawn turn whose boundary is the latest at or before `now_ms`, in the schedule the vault's
     /// registry names, at the already pinned finalized observation; `None` when the registry names no
     /// schedule, no such turn is drawn, or the registry installed an operator after that turn ended,

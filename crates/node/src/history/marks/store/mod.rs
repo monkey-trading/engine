@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,6 +22,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use tracing::{debug, warn};
 
 mod auth;
+mod catch_up;
 mod chain;
 mod import;
 mod merge;
@@ -32,7 +34,11 @@ pub(crate) use auth::{ChainAnchor, ChainAnchors, ChainHead, Coverage};
 use auth::{Epoch, Row, run_mac, tag};
 pub use reader::Reader;
 
+use crate::history::marks::fold::Folded;
 use crate::history::marks::{MarkSample, Resolution, Retentions};
+
+/// The key rows are authenticated under.
+type Mac = hmac::Hmac<sha2::Sha256>;
 use crate::history::store::{self, SchemaRow, read_only};
 
 /// The SQLite file of the cache, in `history.dir`; SQLite keeps its `-wal` and `-shm` files beside it.
@@ -195,6 +201,9 @@ pub struct Store {
     schema: Vec<SchemaRow>,
     /// The committed chain anchors this store advances with every write and every read checks.
     anchors: Arc<Mutex<ChainAnchors>>,
+    /// Whether the cache holds the history it serves, shared with its readers: false from `defer`
+    /// until `catch_up` has taken a member's earlier history.
+    ready: Arc<AtomicBool>,
 }
 
 impl Store {
@@ -245,27 +254,59 @@ impl Store {
     ///   row it builds on is not the version last written for it
     pub fn observe(&mut self, samples: &[MarkSample]) -> anyhow::Result<()> {
         let Some(&newest) = samples.iter().map(|(_, ts, _)| ts).max() else { return Ok(()) };
+        let touched = samples
+            .iter()
+            .map(|&(market, _, _)| market)
+            .flat_map(|market| Resolution::ALL.map(move |resolution| (market, resolution)))
+            .collect();
+        self.merged(touched, newest, |mac, tx, stmts| {
+            for &(market, ts, mark) in samples {
+                for resolution in Resolution::ALL {
+                    merge::merge(mac, tx, stmts, market, resolution, resolution.bucket(ts), mark)?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Takes `buckets`, a member's folded log-derived marks up to `newest` (`fold::MarkFold`), as
+    /// `observe` takes samples: each bucket merged at its own resolution from its open, high, low
+    /// and close in that order, so it ends as the samples it folded would have left it.
+    /// Error cases:
+    /// - as for `observe`
+    pub(crate) fn observe_buckets(&mut self, buckets: &[Folded], newest: Millis) -> anyhow::Result<()> {
+        let touched = buckets.iter().map(|&(market, resolution, ..)| (market, resolution)).collect();
+        self.merged(touched, newest, |mac, tx, stmts| {
+            for &(market, resolution, bucket, marks) in buckets {
+                for mark in marks {
+                    merge::merge(mac, tx, stmts, market, resolution, bucket, mark)?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// One write that merges with `apply` into the pairs in `touched`, then prunes back from `newest`.
+    /// Error cases:
+    /// - as for `observe`
+    fn merged(
+        &mut self,
+        mut touched: BTreeSet<(MarketId, Resolution)>,
+        newest: Millis,
+        apply: impl FnOnce(&Mac, &rusqlite::Transaction<'_>, &mut merge::MergeStmts<'_>) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
         let newest = newest.max(self.newest_seen);
         let prior = self.prior_anchors();
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks write")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        let mut touched: BTreeSet<(MarketId, Resolution)> = samples
-            .iter()
-            .map(|&(market, _, _)| market)
-            .flat_map(|market| Resolution::ALL.map(move |resolution| (market, resolution)))
-            .collect();
-        // Validate the pre-merge state of every pair the write can touch: the pairs the samples
-        // merge, and any pair whose committed floor a prune would cut. A merge writes only the
-        // samples' pairs, so every pair with rows to prune after it is among these.
+        // Validate the pre-merge state of every pair the write can touch: the pairs it merges, and
+        // any pair whose committed floor a prune would cut. A merge writes only its own pairs, so
+        // every pair with rows to prune after it is among these.
         touched.extend(chain::expiring_pairs(&prior, &self.retentions, newest));
         chain::check_anchors(&tx, &prior, &touched)?;
         let mut stmts = merge::MergeStmts::prepare(&tx, &prior, &touched)?;
-        for &(market, ts, mark) in samples {
-            for resolution in Resolution::ALL {
-                merge::merge(&self.mac, &tx, &mut stmts, market, resolution, resolution.bucket(ts), mark)?;
-            }
-        }
+        apply(&self.mac, &tx, &mut stmts)?;
         let mut rewrites = stmts.into_rewrites();
         let plan = chain::plan_prune(&tx, &self.retentions, newest, &touched)?;
         chain::apply_prune(&self.mac, &tx, &plan, &mut rewrites, &prior)?;

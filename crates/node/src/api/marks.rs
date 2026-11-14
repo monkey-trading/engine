@@ -38,6 +38,7 @@ pub struct MarksParams {
 /// Error cases:
 /// - the market id is not a number, the resolution unknown, the limit outside 1 to `MAX_LIMIT`,
 ///   or `from_ms` after `to_ms`
+/// - the cache is still taking a member's earlier history after its start (`NotReady`)
 /// - the cache cannot be read
 pub async fn marks(
     State(s): State<ApiState>,
@@ -51,6 +52,9 @@ pub async fn marks(
     let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
     if !(1..=MAX_LIMIT).contains(&limit) {
         return Err(ApiError::BadRequest(format!("limit must be from 1 to {MAX_LIMIT}")));
+    }
+    if !s.marks.ready() {
+        return Err(ApiError::NotReady("the marks cache is still taking this node's earlier history"));
     }
     let (from, to) = (params.from_ms.unwrap_or(i64::MIN), params.to_ms.unwrap_or(i64::MAX));
     if from > to {

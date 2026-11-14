@@ -3,8 +3,10 @@
 //! its effective time, B reads A's handover endpoint from the registry, fetches the published log,
 //! takes the keys and the final log segment, and continues at the seq after A's final checkpoint;
 //! A exits; A's stale sealed copy refuses to open; a re-election of A hands the keys back, and
-//! A's old sealed copy cannot reopen under the new release generation. Then A, the operator in
-//! effect, upgrades with rotation on: its candidacy cannot move to a release the timelock has not
+//! A's old sealed copy cannot reopen under the new release generation. A third member, C, follows
+//! from before B's election; with A back, an election names C, whose start sets its copy aside and
+//! takes the whole log from A, and a re-election hands it back to A the same way. Then A, the
+//! operator in effect, upgrades with rotation on: its candidacy cannot move to a release the timelock has not
 //! approved; once the timelock approves one, the move makes the vault name it at once, the
 //! upgrade takes the keys and the whole log from the running release, which exits, and continues
 //! past its final checkpoint under the same signer and signer epoch; the old release's sealed copy
@@ -30,6 +32,7 @@ use tokio::time::{sleep, timeout};
 use crate::clock::now_ms;
 use crate::sequencer::withdrawal_scenario::client::{Client, User};
 use crate::sequencer::withdrawal_scenario::flows::last_seq;
+mod third;
 mod upgrade;
 use crate::sequencer::withdrawal_scenario::handover::upgrade::upgrade_with_rotation_on;
 use crate::sequencer::withdrawal_scenario::node::{ChildProcess, Node, free_port, write_config};
@@ -219,6 +222,9 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     wait_latest_seq(&mut node.chain, approved).await?;
     pay_b(&node.chain, &issued).await?;
 
+    // C registers and follows the operator in effect from here, through B's election.
+    let mut third = third::follows(&node, &staking, staking_start).await?;
+
     // 4. A close elects B; the engine mirrors it; time passes its notice; the fold lands.
     let open_start = node.chain.open_epoch_start().await?;
     let close1 = open_start + 2 * 3_600;
@@ -274,16 +280,10 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
         "PASS: A's pre-handover authorization paid, and the elected operator's enclave took the keys and the log from the incumbent's and continued at the seq after its final checkpoint"
     );
 
-    // 6. A restart refuses: its sealed copy is under a superseded release generation.
-    if node.restart_keys(None, Some(A_DIGEST)).await.is_ok() {
-        anyhow::bail!("A opened its stale sealed keys")
-    }
-    let log = std::fs::read_to_string(node.dir.join("node.log"))?;
-    ensure!(
-        log.contains("refusing this release's keys"),
-        "A's restart refusal names the superseded release: {}",
-        log.lines().rev().take(20).collect::<Vec<_>>().join("\n")
-    );
+    // 6. A restart does not open its sealed copy, which is under a superseded release generation: as
+    //    a rotation-set member it follows the operator in effect.
+    node.follows_without_its_keys(A_DIGEST).await?;
+    println!("PASS: A's restart follows B and leaves its stale sealed keys unopened");
 
     // 7. A re-election: fresh stake delegates to A; a close elects it; past the notice A takes the
     //    keys back from B, and B exits.
@@ -310,12 +310,22 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     node.chain.sync_release().await?;
     node.chain.wait_finalized_release(a_release).await?;
     node.restart_keys(None, Some(A_DIGEST)).await?;
-    let status = b_child.exited(LOADED_WAIT).await?;
-    ensure!(status.success(), "B exited with {status} after handing the keys back");
-    println!("PASS: the re-elected operator's enclave took the keys back; the stale sealed copy never opened");
+    // B, a rotation-set member, follows A once it has handed the keys back.
+    let b_name = b_dir.file_name().context("B's directory has a name")?.to_string_lossy();
+    wait_log(&b_dir.join(format!("node-{b_name}.log")), "handed the keys over: following the successor", &mut node)
+        .await?;
+    b_child.stop().await.context("B, following A, did not drain")?;
+    println!(
+        "PASS: the re-elected operator's enclave took the keys back, B follows it, and the stale sealed copy never opened"
+    );
+
+    // 7b. An election names C, which takes the whole log from A onto its own writer's copy, and a
+    //     re-election hands it back to A.
+    third::elect_third_then_back(&mut node, &mut third, (operator, a_release, extra)).await?;
 
     // 8. A, the operator in effect again, upgrades with rotation on.
-    upgrade_with_rotation_on(&mut node, operator, a_enclave, a_handover, &staking, staking_start).await
+    upgrade_with_rotation_on(&mut node, operator, a_enclave, a_handover, &staking, staking_start).await?;
+    third.stop().await
 }
 
 /// `amount` whole MONKEY in base units.

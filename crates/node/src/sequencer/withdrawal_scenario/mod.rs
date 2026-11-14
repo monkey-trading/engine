@@ -116,9 +116,9 @@ async fn dev_scenario_a_standby_takes_over_from_a_failed_operator() -> anyhow::R
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "local Anvil end-to-end; scripts/dev-operator-handover.sh runs the parent only"]
 async fn dev_scenario_an_elected_operator_takes_over() -> anyhow::Result<()> {
-    timeout(Duration::from_secs(900), handover::elected_operator_takes_over())
+    timeout(Duration::from_secs(1_500), handover::elected_operator_takes_over())
         .await
-        .context("the operator handover scenario exceeded fifteen minutes")?
+        .context("the operator handover scenario exceeded twenty-five minutes")?
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -12,6 +12,7 @@ use super::{Head, Poster, check_rollback};
 use crate::log::CheckpointDomain;
 
 mod fake_chain;
+mod stall;
 
 use fake_chain::FakeChain;
 
@@ -41,6 +42,7 @@ fn spawn_with(
         anchored: None,
         trusted: None,
         prefix_ring: Default::default(),
+        stall_intervals: 3,
     };
     (tx, tokio::spawn(poster.run(rx, sequencer)))
 }
@@ -206,6 +208,7 @@ async fn a_conflicting_post_at_the_verified_base_freezes() {
         anchored: None,
         trusted: None,
         prefix_ring: Default::default(),
+        stall_intervals: 3,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
     let error = task.await.unwrap().unwrap_err();
@@ -230,6 +233,7 @@ async fn a_matching_post_at_the_verified_base_is_confirmed_not_reposted() {
         anchored: None,
         trusted: None,
         prefix_ring: Default::default(),
+        stall_intervals: 3,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
     tokio::time::sleep(Duration::from_secs(5)).await;
@@ -385,6 +389,7 @@ async fn a_restart_posts_past_the_authenticated_head_naming_it_as_parent() {
         anchored: None,
         trusted: None,
         prefix_ring: Default::default(),
+        stall_intervals: 3,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
     tokio::time::sleep(Duration::from_secs(5)).await;

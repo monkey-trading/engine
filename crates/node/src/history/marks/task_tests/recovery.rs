@@ -45,9 +45,13 @@ async fn recovery_seeds_the_cache_and_reseeding_matches() {
     assert_eq!(again.entries, seconds.entries);
 }
 
-/// Opens a fresh cache and seeds it through the replay's marks sink, as recovery does.
-fn seed_from_log(dir: &std::path::Path) -> Store {
-    let store = Store::open_in(&scratch_dir("marks-recovery-cache"), Retentions::defaults(), [0x42; 32]).unwrap();
+/// Opens a fresh cache and seeds it through the replay's marks sink, as recovery does. Each cache
+/// has its own directory: tests seeding at once must not remove each other's.
+pub(super) fn seed_from_log(dir: &std::path::Path) -> Store {
+    static CACHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let cache =
+        scratch_dir(&format!("marks-recovery-cache-{}", CACHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    let store = Store::open_in(&cache, Retentions::defaults(), [0x42; 32]).unwrap();
     let shared = Rc::new(RefCell::new(store));
     let failed = Rc::new(std::cell::Cell::new(false));
     let reset_done = Rc::new(std::cell::Cell::new(false));

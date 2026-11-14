@@ -139,6 +139,23 @@ async fn the_handler_answers_without_ever_reaching_the_sequencer() {
     assert!(rx.try_recv().is_err(), "nothing may reach the sequencer");
 }
 
+/// A cache whose store is still taking a member's earlier history answers 503, retry later, and
+/// serves its pages once the store is ready.
+#[tokio::test]
+async fn a_cache_still_taking_earlier_history_answers_not_ready() {
+    let mut store = Store::open_in(&scratch_dir("marks-api-deferred"), Retentions::defaults(), [0x42; 32]).unwrap();
+    store.defer();
+    let mut state = crate::api::tests::api_state(true).0;
+    state.marks = store.reader();
+    let addr = serve_state(state).await;
+    let (status, head, _) = get(addr, "/v1/markets/1/marks?resolution=1m").await;
+    assert_eq!(status, 503, "{head}");
+    assert!(head.contains("retry-after"), "{head}");
+    store.catch_up(None, None).unwrap();
+    let (status, _) = page(addr, "/v1/markets/1/marks?resolution=1m").await;
+    assert_eq!(status, 200);
+}
+
 /// A plain HTTP/1.1 GET with its response head, failing the test after ten seconds.
 async fn get(addr: SocketAddr, path: &str) -> (u16, String, Vec<u8>) {
     let mut conn = TcpStream::connect(addr).await.unwrap();

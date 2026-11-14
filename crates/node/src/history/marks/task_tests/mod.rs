@@ -1,7 +1,9 @@
-//! The marks task end to end: recovery seeding from a short log, and live maintenance through the
-//! sequencer's mark reports.
+//! The marks task end to end: recovery seeding from a short log, live maintenance through the
+//! sequencer's mark reports, and a member's catch-up beside them.
 
 mod backfill_fault;
+mod catch_up;
+mod fold;
 mod live;
 mod recovery;
 

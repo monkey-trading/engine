@@ -2,9 +2,8 @@
 
 use super::*;
 use std::fs;
-use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::time::Duration;
+use std::{net::SocketAddr, path::PathBuf};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
@@ -395,6 +394,7 @@ impl Node {
             collateral: None,
             listing: Default::default(),
             operators: None,
+            operator_hostname: None,
             signing: crate::test_support::signing(),
         };
         Node { state, dir, tls, stamps, key, task }

@@ -47,6 +47,16 @@ with the operator.
    full, read its webhook URLs with `url_env` and any vendor key with `api_key_env`, and keep this file
    private, which a production build allows for `run --standby` on a config with `[standby]`.
 
+   With `operator.rotation_enabled = true` the standby does not keep to `operator` and `enclave`: it
+   reads the operator in effect from the registry before each stint, at `https://` its registered
+   API hostname and against the vault's signer at finality, so it moves with each daily turn and
+   election, and with a `setSigner` replacement at an unchanged hostname, archive recovery and the
+   copy's first signer included, and a promotion replays the copy against every signer the vault
+   recorded rather than `enclave`; a failed stint within five minutes of a move logs a warning rather
+   than paging, while the new operator comes up. `[standby]`'s mirrors and certificate setting still
+   apply. A `--standby` config with rotation on also needs `[log_heads]`, as every rotation-set
+   member's does.
+
    ```toml
    [standby]
    # The operator in effect's API origin: its /v1/stream and, last, its archive.

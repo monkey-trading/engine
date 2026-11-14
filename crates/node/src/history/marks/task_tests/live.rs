@@ -23,6 +23,7 @@ async fn live_marks_reach_the_cache_and_flush_when_the_sequencer_stops() {
         None,
         BTreeMap::new(),
         run::Live { samples: node.take_marks(), buffered: Vec::new(), flushed_at: tokio::time::Instant::now() },
+        Default::default(),
     ));
 
     // Two price moves two seconds apart; then the shutdown drops every sender, and the marks

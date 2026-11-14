@@ -1,5 +1,5 @@
-//! What a test cannot reach through a mock enclave's connection: a real enclave's refusal, and the
-//! bound on connections.
+//! What a test cannot reach through a mock enclave's connection: a real enclave's refusal, the
+//! bound on connections, and the authority a following member's listener answers under.
 
 use k256::ecdsa::SigningKey;
 
@@ -11,6 +11,19 @@ use crate::tee::sealing::{MockSealer, Sealer};
 /// `signing`, as the key in effect, sealing a delivery on an enclave of `provider`, its connection
 /// past the quote a real one would need hardware for.
 async fn sealing(name: &str, provider: TeeProvider, signing: &SigningKey) -> anyhow::Result<Receipt> {
+    let signer = engine_core::eip712::address(signing.verifying_key());
+    let (_authority, taking) = watch::channel(Authority::Configured(signer));
+    deliver(name, provider, signing, taking).await
+}
+
+/// A delivery `signing` signs, sealed on an enclave of `provider` whose listener takes deliveries
+/// from whom `taking` says.
+async fn deliver(
+    name: &str,
+    provider: TeeProvider,
+    signing: &SigningKey,
+    taking: watch::Receiver<Authority>,
+) -> anyhow::Result<Receipt> {
     let mut cfg = config(name);
     cfg.tee.provider = provider;
     let sealer: Box<dyn Sealer> = Box::new(MockSealer { launch_digest: RELEASE });
@@ -18,8 +31,6 @@ async fn sealing(name: &str, provider: TeeProvider, signing: &SigningKey) -> any
     let dir = &cfg.tee.sealing.as_ref().unwrap().dir;
     let store = Arc::new(SecretStore::open(dir, sealer, CONFIG).unwrap());
     let release = store.release();
-    let signer = engine_core::eip712::address(signing.verifying_key());
-    let (_authority, taking) = watch::channel(Authority::Configured(signer));
     let listen = "127.0.0.1:0".parse().unwrap();
     let named = cfg.named_secrets().unwrap();
     let listener =
@@ -41,6 +52,26 @@ async fn a_real_enclave_refuses_a_published_signer_and_the_mock_takes_it() {
     sealing("listener-published-mock", TeeProvider::Mock, &published).await.unwrap();
     let own = SigningKey::from_slice(&[0x55; 32]).unwrap();
     sealing("listener-own", TeeProvider::ConfigfsTsm, &own).await.unwrap();
+}
+
+/// After a confirmed handover the stopped sequencer's authority answers no delivery; once the run
+/// hands the listener back to the member's own operator key, a delivery that key signs is taken.
+#[tokio::test]
+async fn a_delivery_after_a_confirmed_handover_is_taken_from_the_members_own_key() {
+    let signing = SigningKey::from_slice(&[0x55; 32]).unwrap();
+    let signer = engine_core::eip712::address(signing.verifying_key());
+    let (stopped, _) = mpsc::channel(1);
+    let clock = Arc::new(crate::clock::SystemClock);
+    let trusted = Arc::new(TrustedClock::new(clock, watch::channel(None).1, Duration::from_secs(1)));
+    let log = Authority::Log { tx: stopped.downgrade(), configured: signer, installed: None, trusted };
+    let (authority, taking) = watch::channel(log);
+    drop(stopped);
+    let err = deliver("listener-handed-over", TeeProvider::Mock, &signing, taking.clone()).await.unwrap_err();
+    assert!(format!("{err:#}").contains("the node is stopping"), "{err:#}");
+
+    let delivered = crate::node::secrets::Delivered { authority: Some(authority), ..Default::default() };
+    delivered.following(signer);
+    deliver("listener-following", TeeProvider::Mock, &signing, taking).await.expect("the member's own key was refused");
 }
 
 // The cap bounds the quotes strangers can cause: past it a hello goes unanswered until one ends.

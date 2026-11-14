@@ -3,10 +3,12 @@
 //! `[api.tls.acme].domain`, answers the CA's TLS-ALPN-01 challenge on the API's own listener, and
 //! finalizes the order with a request signed by the API's key, so the issued certificate is for the
 //! key the attestation names. It installs the certificate without a restart, and renews it the
-//! same way. Neither key is logged. With `[tee.sealing]` the account and the certificate are sealed
-//! with the API's key, so a restart serves the certificate it had and orders nothing until renewal,
-//! and a CAA `accounturi` can bind issuance to the enclave's account; without it, a restart makes
-//! both keys again and orders a new certificate.
+//! same way. Neither key is logged. With `[tee.sealing]` the account is sealed with the API's key,
+//! so a CAA `accounturi` can bind issuance to the enclave's account, and each certificate is sealed
+//! in this member's own store (`tee::certificates`) for the domain and the API's key: a restart, or
+//! the member's next daily turn under the same key, serves the certificate it holds and orders
+//! nothing until renewal, and a certificate for another domain or key is never served. Without it, a
+//! restart makes both keys again and orders a new certificate.
 //!
 //! The sequencer never waits for it. Until the first certificate the API serves its self-signed
 //! one, under `certificate_pending`; a failed renewal keeps serving the current one and retries
@@ -42,6 +44,7 @@ use x509_parser::prelude::FromDer;
 
 use crate::config::ApiSection;
 use crate::metrics::{FloatGauge, Metrics};
+use crate::tee::certificates::CertificateStore;
 use crate::tee::keys::AcmeAccount;
 use crate::tee::sealing::KeyStore;
 use crate::tls::TlsKey;
@@ -76,16 +79,17 @@ pub struct CertificateTask<H = AcmeHttp> {
     not_after: FloatGauge,
     /// 1 until the first CA certificate.
     pending: Gauge,
-    /// Where the account and the certificate are kept across restarts.
+    /// Where the account and the certificate are kept across restarts and turns.
     sealed: Option<Sealed>,
     /// The sealed certificate, served from the start.
     restored: Option<Restored>,
 }
 
-/// The sealed keys the task keeps its account and certificate in, and the trusted time a restored
-/// certificate's age is read at.
+/// The sealed keys the task keeps its account in, the member's own store it keeps its certificate
+/// in, and the trusted time a restored certificate's age is read at.
 pub struct Sealed {
     pub store: Arc<KeyStore>,
+    pub certificates: Arc<CertificateStore>,
     pub trusted: TrustedClock,
 }
 
@@ -157,26 +161,7 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
     /// Error cases:
     /// - none; it runs until the node stops
     pub async fn run(self) -> anyhow::Result<()> {
-        let (mut schedule, mut wait) = match (&self.restored, &self.sealed) {
-            (Some(restored), Some(sealed)) => {
-                self.not_after.set(restored.not_after_seconds as f64);
-                let age = age_at(&sealed.trusted, restored).await;
-                let (schedule, wait) = Schedule::restored(
-                    self.domain.clone(),
-                    self.renew_before,
-                    self.pending.clone(),
-                    restored.lifetime,
-                    age,
-                    Instant::now(),
-                );
-                info!(
-                    not_after = restored.not_after_seconds,
-                    "serving the sealed CA certificate; renewing in {wait:?}"
-                );
-                (schedule, wait)
-            }
-            _ => (Schedule::start(self.domain.clone(), self.renew_before, self.pending.clone()), Duration::ZERO),
-        };
+        let (mut schedule, mut wait) = self.begin().await;
         let mut progress = Progress::default();
         let mut attempt = 0_u64;
         loop {
@@ -202,10 +187,33 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
         }
     }
 
-    /// The sealed certificate, installed, when the configured directory's CA issued it, it names the
-    /// domain, and it is for the key; `None` without one, or with one it drops for a new order.
+    /// The schedule a start begins with, and the wait before its first attempt: with a restored
+    /// certificate, until its renewal point by its age at trusted time, which this waits for, so none
+    /// once inside its renewal window or past its expiry; without one, none.
+    async fn begin(&self) -> (Schedule, Duration) {
+        let (Some(restored), Some(sealed)) = (&self.restored, &self.sealed) else {
+            return (Schedule::start(self.domain.clone(), self.renew_before, self.pending.clone()), Duration::ZERO);
+        };
+        self.not_after.set(restored.not_after_seconds as f64);
+        let age = age_at(&sealed.trusted, restored).await;
+        let (schedule, wait) = Schedule::restored(
+            self.domain.clone(),
+            self.renew_before,
+            self.pending.clone(),
+            restored.lifetime,
+            age,
+            Instant::now(),
+        );
+        info!(not_after = restored.not_after_seconds, "serving the sealed CA certificate; renewing in {wait:?}");
+        (schedule, wait)
+    }
+
+    /// The member's sealed certificate, installed, when the configured directory's CA issued it for
+    /// the domain and the key, it names the domain, and it is for the key; `None` without one, or
+    /// with one it drops for a new order.
     fn restore(&self) -> Option<Restored> {
-        let chain = self.sealed.as_ref()?.store.keys().certificate_chain(&self.directory_url);
+        let certificates = &self.sealed.as_ref()?.certificates;
+        let chain = certificates.chain_for(&self.domain, &self.key.public_key_sha256(), &self.directory_url);
         let restored = chain.and_then(|chain| {
             let Some(chain) = chain else { return Ok(None) };
             let (lifetime, not_after_seconds) = check(&chain, &self.domain)?;
@@ -264,7 +272,7 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
         let (lifetime, not_after_seconds) = check(&chain, &self.domain)?;
         ensure!(finalized.elapsed() < lifetime, "the certificate's life ran out before it arrived");
         self.key.install(chain.clone())?;
-        self.seal("the certificate", |keys| keys.set_certificate(&self.directory_url, &chain));
+        self.store_certificate(&chain);
         Ok(Issued { lifetime, not_after_seconds, finalized })
     }
 
@@ -386,8 +394,21 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
         Ok(account)
     }
 
-    /// Seals `change` into the keys, if they are sealed. A failure keeps what this process holds
-    /// and serves, with a Warning: the next start registers or orders again.
+    /// Seals `chain` in the member's certificate store, if it is sealed. A failure keeps serving it,
+    /// with a Warning: the next start orders again.
+    fn store_certificate(&self, chain: &[CertificateDer<'_>]) {
+        let Some(sealed) = &self.sealed else { return };
+        let key = self.key.public_key_sha256();
+        if let Err(e) = sealed.certificates.replace(&self.domain, &key, &self.directory_url, chain) {
+            warn!(
+                alert = "sealed_certificate_write_failed",
+                "the certificate is not sealed, so the next start orders again: {e:#}"
+            );
+        }
+    }
+
+    /// Seals `change` into the keys, if they are sealed. A failure keeps what this process holds,
+    /// with a Warning: the next start registers again.
     fn seal(&self, what: &str, change: impl FnOnce(&mut crate::tee::keys::KeySet)) {
         let Some(sealed) = &self.sealed else { return };
         if let Err(e) = sealed.store.update(change) {

@@ -9,7 +9,10 @@ use engine_core::types::Millis;
 use serde::Deserialize;
 
 /// The derived marks cache a node keeps and serves: per-resolution retention for the buckets it
-/// prunes, and the optional provider backfill that seeds history a fresh log cannot have.
+/// prunes, and the optional provider backfill that seeds history a fresh log cannot have. A
+/// rotation-set member following another holder folds its marks in memory to the same retentions
+/// until its turn (`history::marks::fold`): about 100 bytes per market and second kept at 1s, some
+/// 17 MB per market at the default 48 h, and as much per bucket at each coarser resolution.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MarksSection {

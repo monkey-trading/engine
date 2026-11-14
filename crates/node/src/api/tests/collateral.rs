@@ -7,6 +7,8 @@ use axum::body::to_bytes;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
 
+use crate::api::attestation::attestation_collateral;
+
 /// The route's response, error or not.
 async fn respond(state: ApiState) -> Response {
     match attestation_collateral(State(state)).await {

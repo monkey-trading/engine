@@ -90,10 +90,19 @@ impl NodeConfig {
 
     /// Validates log-head transport and its checkpoint-endpoint dependency.
     /// Error cases:
+    /// - `operator.rotation_enabled` is set without `[log_heads]`
     /// - `[log_heads]` is set without `[checkpoints]`, names the zero contract or relayer, reuses
     ///   the checkpoint relayer, or sets a zero interval
     pub(super) fn validate_log_heads(&self) -> anyhow::Result<()> {
-        let Some(cfg) = &self.log_heads else { return Ok(()) };
+        let Some(cfg) = &self.log_heads else {
+            // A successor checks the tail's head against the latest posted one at each handover.
+            ensure!(
+                !self.operator.rotation_enabled,
+                "operator.rotation_enabled = true requires [log_heads]: a rotating node's handovers check the log \
+                 against the head posted on chain"
+            );
+            return Ok(());
+        };
         let checkpoints = self.checkpoints.as_ref().context("[log_heads] requires [checkpoints]")?;
         ensure!(!cfg.contract.is_zero(), "log_heads.contract must be non-zero");
         ensure!(!cfg.relayer.is_zero(), "log_heads.relayer must be non-zero");

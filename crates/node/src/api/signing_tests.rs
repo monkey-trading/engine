@@ -332,6 +332,7 @@ pub(super) fn state(node: &TestSequencer, dir: &Path, api: &crate::config::ApiSe
         collateral: None,
         listing: Default::default(),
         operators: None,
+        operator_hostname: None,
         signing: signing_with(trusted(Arc::new(TestClock::at(NOW)))),
     }
 }

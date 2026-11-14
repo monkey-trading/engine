@@ -112,6 +112,24 @@ impl Origin {
         Ok(())
     }
 
+    /// Pins `signer`, one of the attested signers a live replica accepted, as this replay's recovery
+    /// authority, as if recovery had replayed under it: sound only once no command follows the last
+    /// checkpoint, which the caller requires `signer` to have signed.
+    /// Error cases:
+    /// - the replay accepted no attested set naming `signer`, ran in another deployment, or a
+    ///   command lacks authenticated coverage
+    pub(crate) fn pin(&mut self, domain: CheckpointDomain, signer: AccountId) -> anyhow::Result<()> {
+        ensure!(
+            self.attested.as_ref().is_some_and(|attested| attested.contains(&signer)) && self.domain == Some(domain),
+            "command origin attested authority does not name {signer} in this deployment"
+        );
+        if let Some(seq) = self.first_untrusted {
+            bail!("unauthenticated command tail starts at seq {seq}");
+        }
+        (self.signer, self.attested) = (Some(signer), None);
+        Ok(())
+    }
+
     /// Refuses writable recovery of legacy staking references without genuine command provenance.
     /// Error cases:
     /// - ordinary origin coverage is missing, or a legacy staking seal lacks independent authority

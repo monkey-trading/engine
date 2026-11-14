@@ -14,7 +14,7 @@ use tokio::time::{sleep, timeout};
 use crate::sequencer::withdrawal_scenario::client::Client;
 use crate::sequencer::withdrawal_scenario::flows::last_seq;
 use crate::sequencer::withdrawal_scenario::handover::{
-    A_DIGEST, child_checker, spawn_release, wait_latest_seq, wait_serving,
+    A_DIGEST, child_checker, spawn_release, wait_latest_seq, wait_log, wait_serving,
 };
 use crate::sequencer::withdrawal_scenario::node::{Node, free_port, write_config};
 use crate::sequencer::withdrawal_scenario::rpc::{setReleaseApprovalCall, setReleaseCall, signerEpochCall};
@@ -73,8 +73,9 @@ pub(super) async fn upgrade_with_rotation_on(
     let mut child = spawn_release(&dir, &config, node, A_UPGRADE_DIGEST, Some(keys.as_str()))?;
     let client = Client::new(port, node.chain.vault)?;
     wait_serving(&client, &mut child_checker(&mut child)).await?;
-    let status = node.exited(LOADED_WAIT).await?;
-    ensure!(status.success(), "A's old release exited with {status} after handing its keys to the upgrade");
+    // A's old release, a rotation-set member, follows the upgrade once it has handed its keys over.
+    wait_log(&node.dir.join("node.log"), "handed the keys over: following the successor", node).await?;
+    node.stop().await.context("A's old release, following the upgrade, did not drain")?;
     let tip = last_seq(&node.dir.join("log"))?;
     timeout(LOADED_WAIT, async {
         while last_seq(&dir.join("log"))? <= tip {
@@ -102,17 +103,9 @@ pub(super) async fn upgrade_with_rotation_on(
         "the upgrade's log has no checkpoint past A's final one"
     );
 
-    // The old release's sealed copy no longer opens: the vault names the upgrade. Only this start's
-    // part of the log counts, since an earlier refusal wrote the same words.
-    let earlier = std::fs::read_to_string(node.dir.join("node.log"))?.len();
-    if node.restart_keys(None, Some(A_DIGEST)).await.is_ok() {
-        anyhow::bail!("A's superseded release opened its sealed keys")
-    }
-    let log = std::fs::read_to_string(node.dir.join("node.log"))?;
-    ensure!(
-        log.get(earlier..).is_some_and(|start| start.contains("refusing this release's keys")),
-        "the superseded release's refusal does not say why"
-    );
+    // The old release's sealed copy no longer opens: the vault names the upgrade, which the old
+    // release, a rotation-set member, follows instead.
+    node.follows_without_its_keys(A_DIGEST).await?;
     println!(
         "PASS: the operator in effect upgraded with rotation on: the release the timelock approved took the keys and the log, and continued under the same signer"
     );

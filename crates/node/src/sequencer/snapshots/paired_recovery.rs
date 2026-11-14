@@ -94,7 +94,10 @@ impl Sequencer {
         let replayed = replay.finish();
         let plan =
             plan(cfg, snapshots, domain, signer, Source::Rebuild { prefix: fingerprint.finish() }, Catalog::Rebuild);
-        Ok((ReplayedLog { log, replayed, snapshot_seq: None, legacy_authorizations: Default::default() }, plan))
+        Ok((
+            ReplayedLog { log: log.into(), replayed, snapshot_seq: None, legacy_authorizations: Default::default() },
+            plan,
+        ))
     }
 }
 
@@ -238,7 +241,15 @@ fn candidate(
         Source::Complete { id: history_id, store: history_store, head: history_head },
         Catalog::Complete { id: catalog_id, store: catalog_store, resume },
     );
-    Ok((ReplayedLog { log, replayed, snapshot_seq: Some(at.seq), legacy_authorizations: Default::default() }, plan))
+    Ok((
+        ReplayedLog {
+            log: log.into(),
+            replayed,
+            snapshot_seq: Some(at.seq),
+            legacy_authorizations: Default::default(),
+        },
+        plan,
+    ))
 }
 
 /// Reads only a bounded set of signed latest-head metadata files and fixed proof keys. The store

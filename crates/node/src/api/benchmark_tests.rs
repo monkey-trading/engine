@@ -393,6 +393,7 @@ impl Node {
             collateral: None,
             listing: Default::default(),
             operators: None,
+            operator_hostname: None,
             signing: crate::test_support::signing(),
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

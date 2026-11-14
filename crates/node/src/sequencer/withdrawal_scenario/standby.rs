@@ -349,6 +349,10 @@ pub(super) fn rotation_and_staking(
         "start_ms": staking_start,
         "cooldown_ms": 60 * 60 * 1000,
     });
+    if rotation {
+        let (contract, relayer) = chain.log_heads;
+        cfg["log_heads"] = json!({ "contract": format!("{contract:#x}"), "relayer": format!("{relayer:#x}") });
+    }
     cfg["custody"]["evm"]["staking"] = json!({
         "contract": format!("{staking:#x}"),
         "cursor_path": dir.join("staking-cursor.json").to_string_lossy(),

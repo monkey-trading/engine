@@ -10,6 +10,7 @@
 //! over the broken span fails before anything is signed.
 
 mod backfill;
+pub(crate) mod fold;
 pub(crate) mod run;
 pub(crate) mod store;
 

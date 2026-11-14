@@ -170,6 +170,7 @@ pub(crate) async fn take_keys(
     turn: &ScheduledTurn,
     sealer: &dyn Sealer,
     attestor: &dyn Attestor,
+    metrics: &crate::metrics::Metrics,
 ) -> anyhow::Result<KeyStore> {
     let sources = sources(vault, at, turn).await?;
     ensure!(
@@ -188,8 +189,8 @@ pub(crate) async fn take_keys(
             candidate: source.candidate,
         };
         let taken = async {
-            crate::handover::sync_predecessor_log(cfg, &source, signers.clone()).await?;
-            crate::handover::take(cfg, &source.endpoint, sealer, attestor, vault, Some(turn.boundary)).await
+            crate::handover::sync_predecessor_log(cfg, &source, signers.clone(), metrics).await?;
+            crate::handover::take(cfg, &source.endpoint, sealer, attestor, vault, Some(turn.boundary), metrics).await
         };
         match taken.await {
             Ok(store) => return Ok(store),

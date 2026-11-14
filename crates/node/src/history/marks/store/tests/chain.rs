@@ -112,6 +112,7 @@ async fn rows_no_committed_head_names_are_refused() {
         store.path().to_owned(),
         hmac::Hmac::new_from_slice(&mac_key()).unwrap(),
         Default::default(),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
     );
     let err = reader.page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.expect_err("served");
     assert!(format!("{err:#}").contains("no committed chain anchor"), "{err:#}");
@@ -448,6 +449,7 @@ async fn a_raced_commit_re_synchronizes_before_a_mismatch_is_a_rollback() {
         store.path().to_owned(),
         hmac::Hmac::new_from_slice(&mac_key()).unwrap(),
         Arc::new(Mutex::new(anchors.clone())),
+        Arc::new(std::sync::atomic::AtomicBool::new(true)),
     );
     let err = reader
         .page(market, Resolution::M1, i64::MIN, i64::MAX, 10, 10)

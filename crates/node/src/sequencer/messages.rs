@@ -55,6 +55,11 @@ pub enum Request {
         not_after: Instant,
     },
     Query(Query),
+    /// The cumulative command prefix after the command at `seq`, while the sequencer retains it.
+    PrefixAt {
+        seq: u64,
+        reply: oneshot::Sender<Option<engine_core::eip712::B256>>,
+    },
     /// The parameters and latest checkpoint, answered once every prior request is flushed.
     HouseState(oneshot::Sender<HouseState>),
     /// A trusted time sample from the trusted time task.

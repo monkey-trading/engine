@@ -75,3 +75,18 @@ pub(super) fn turn_taken(commands: &[Sequenced], turn: u64) -> (u64, Millis) {
     assert_eq!(taken.len(), 1, "turn {turn} is taken once: {taken:?}");
     taken[0]
 }
+
+/// The seq of the last command in the log at `dir`.
+pub(super) fn last_seq(dir: &Path) -> u64 {
+    logged_commands(dir).last().expect("the log holds commands").seq
+}
+
+/// Asserts that the copy at `copy` holds the commands of the log at `log` through seq `through`, as
+/// the log holds them.
+pub(super) fn is_prefix(copy: &Path, log: &Path, through: u64) {
+    let (copied, logged) = (logged_commands(copy), logged_commands(log));
+    let through = usize::try_from(through).unwrap() + 1;
+    assert!(copied.len() >= through, "the copy ends at seq {}, before {}", copied.len(), through - 1);
+    let as_json = |commands: &[Sequenced]| serde_json::to_value(commands).unwrap();
+    assert_eq!(as_json(&copied[..through]), as_json(&logged[..through]), "the copy differs from the log");
+}

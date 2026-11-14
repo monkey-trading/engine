@@ -43,7 +43,7 @@ pub enum Venue {
     Tradermade,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeedsSection {
     pub provider: FeedProvider,
@@ -62,7 +62,7 @@ pub struct FeedsSection {
 /// This file comes from host storage, so the host chooses the venues and the symbol each market
 /// reads; the attestation binds the file's SHA-256, so a verifier checks that choice against a
 /// published copy of the config.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VenuesSection {
     /// Deadline to connect and subscribe, and the longest a connection, or one of its symbols, may
@@ -155,7 +155,7 @@ pub struct VenueSymbol {
 #[derive(Clone)]
 pub struct ApiKey(String);
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MockMid {
     pub market: u32,

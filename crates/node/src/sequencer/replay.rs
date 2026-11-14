@@ -471,6 +471,8 @@ pub(super) mod accounting_tests;
 #[cfg(test)]
 mod auth_tests;
 mod authorities;
+mod live;
+pub(crate) use live::LiveReplay;
 mod marks;
 mod paths;
 mod replayed_log;

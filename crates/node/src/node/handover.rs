@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::bail;
+use anyhow::{bail, ensure};
 use engine_core::types::Millis;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{error, info, warn};
@@ -67,31 +67,59 @@ pub(super) fn episode(
 /// Checks `operator.rotation_enabled` against the vault's registry before the keys, setting
 /// `chain_read` once the chain answers.
 /// Error cases:
-/// - `operator.rotation_enabled = true` while the vault's registry has rotation off, or without
-///   `[checkpoints]` EVM custody to read it
-/// - the chain cannot be read, or, while rotation is on, the registry names another API hostname
+/// - see `check_rotation_switch`, or, while rotation is on, the registry names another API hostname
 pub(super) async fn check_rotation(cfg: &NodeConfig, chain_read: &mut bool) -> anyhow::Result<()> {
-    if let Some(vault) = crate::handover::vault_reader(cfg)? {
-        let on = vault.rotation_enabled().await?;
-        *chain_read = true;
-        info!(alert_resolved = "secrets_start_failed", "the node read the chain");
-        if cfg.operator.rotation_enabled && !on {
-            bail!("operator.rotation_enabled = true, but the vault's registry has rotation off");
-        }
-        if on && !cfg.operator.rotation_enabled {
-            warn!(
-                "the vault's registry has rotation on, but operator.rotation_enabled is false: an election naming another operator moves the admin key this node does not expect"
-            );
-        }
-        // While rotation is on, the certificate the enclave orders names the API hostname the
-        // registry records for the operator in effect.
-        if on {
-            crate::handover::check_operator_hostname(cfg, &vault).await?;
-        }
-    } else if cfg.operator.rotation_enabled {
-        bail!("operator.rotation_enabled = true needs [checkpoints] with EVM custody to read the registry");
+    check_rotation_for(cfg, chain_read, None).await
+}
+
+/// `check_rotation` for a member taking a turn of `candidate`'s, whose registered hostname its
+/// certificate names, read at the finalized block rather than taken from the operator the latest
+/// block names, which may not yet have passed the boundary.
+/// Error cases:
+/// - see `check_rotation`
+pub(super) async fn check_rotation_for(
+    cfg: &NodeConfig,
+    chain_read: &mut bool,
+    candidate: Option<engine_core::types::AccountId>,
+) -> anyhow::Result<()> {
+    // While rotation is on, the certificate the enclave orders names the API hostname the
+    // registry records for the operator in effect.
+    if let Some((vault, true)) = check_rotation_switch(cfg, chain_read).await? {
+        crate::handover::check_operator_hostname(cfg, &vault, candidate).await?;
     }
     Ok(())
+}
+
+/// Checks `operator.rotation_enabled` against the vault's registry's rotation switch, setting
+/// `chain_read` once the chain answers: a rotation-set member checks it before it follows, as any
+/// node does before the keys. Returns the vault's reader and the switch, with `[checkpoints]`.
+/// Error cases:
+/// - `operator.rotation_enabled = true` while the vault's registry has rotation off, or without
+///   `[checkpoints]` EVM custody to read it
+/// - the chain cannot be read
+pub(super) async fn check_rotation_switch(
+    cfg: &NodeConfig,
+    chain_read: &mut bool,
+) -> anyhow::Result<Option<(crate::checkpoints::CheckpointRpc, bool)>> {
+    let Some(vault) = crate::handover::vault_reader(cfg)? else {
+        ensure!(
+            !cfg.operator.rotation_enabled,
+            "operator.rotation_enabled = true needs [checkpoints] with EVM custody to read the registry"
+        );
+        return Ok(None);
+    };
+    let on = vault.rotation_enabled().await?;
+    *chain_read = true;
+    info!(alert_resolved = "secrets_start_failed", "the node read the chain");
+    if cfg.operator.rotation_enabled && !on {
+        bail!("operator.rotation_enabled = true, but the vault's registry has rotation off");
+    }
+    if on && !cfg.operator.rotation_enabled {
+        warn!(
+            "the vault's registry has rotation on, but operator.rotation_enabled is false: an election naming another operator moves the admin key this node does not expect"
+        );
+    }
+    Ok(Some((vault, on)))
 }
 
 /// Watches the mirrored election an incumbent with sealed keys runs under: raises `operator_elected`
@@ -136,7 +164,8 @@ pub(super) async fn watch_handover(
                         epoch = last.epoch,
                         elected = %last.candidate,
                         effective_at = last.registry_effective_at,
-                        "an election names another operator: a successor enclave is expected to connect at                          this node's handover endpoint by the effective time"
+                        "an election names another operator: a successor enclave is expected to connect at \
+                         this node's handover endpoint by the effective time"
                     );
                     fired = Some(last);
                 }
@@ -147,7 +176,9 @@ pub(super) async fn watch_handover(
                         alert = "handover_overdue",
                         epoch = last.epoch,
                         effective_at = last.registry_effective_at,
-                        "the election's effective time passed with no successor confirmed: this node still                          holds the keys the elected operator's enclave should have taken; check its                          handover endpoint and archive reachability"
+                        "the election's effective time passed with no successor confirmed: this node still \
+                         holds the keys the elected operator's enclave should have taken; check its \
+                         handover endpoint and archive reachability"
                     );
                     fired = Some(last);
                 }

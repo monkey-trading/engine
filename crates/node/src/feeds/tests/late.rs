@@ -113,7 +113,9 @@ fn late_sequencer(delay: Duration) -> (mpsc::Sender<Request>, mpsc::UnboundedRec
                 | Request::DistributionClaim { .. } => {
                     unreachable!("only the API asks for payouts and claims")
                 }
-                Request::FinalCheckpoint(_) => unreachable!("only a handover asks for the final checkpoint"),
+                Request::FinalCheckpoint(_) | Request::PrefixAt { .. } => {
+                    unreachable!("only a handover asks for the final checkpoint or a tip")
+                }
                 Request::Freeze => unreachable!("only the log-head poster freezes sequencing"),
                 Request::TimeSample(_) => unreachable!("a feed sends no time samples"),
                 Request::Sync(_) => unreachable!("only custody asks for a log sync"),

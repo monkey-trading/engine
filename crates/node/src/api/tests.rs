@@ -334,6 +334,7 @@ async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<
         collateral: None,
         listing: Default::default(),
         operators: None,
+        operator_hostname: None,
         signing: crate::test_support::signing(),
     })
     .await
@@ -367,6 +368,7 @@ async fn serve_history(history: Reader) -> SocketAddr {
         collateral: None,
         listing: Default::default(),
         operators: None,
+        operator_hostname: None,
         signing: crate::test_support::signing(),
     })
     .await
@@ -480,6 +482,7 @@ pub(crate) fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequenc
         collateral: None,
         listing: Default::default(),
         operators: None,
+        operator_hostname: None,
         signing: crate::test_support::signing(),
     };
     (state, rx)

@@ -152,6 +152,11 @@ the first certificate"); a Critical alert receiver; and the companion processes 
 
 Use this for a new image, a new config, or both. The running release is `A`, the new one `B`.
 
+A release whose keys requests name the protocol version its build reads cannot take the keys from a
+release whose requests do not: the older one cannot parse the request. That one upgrade, rotation on
+or off, goes through the timelock's new-key path ([key-recovery.md](key-recovery.md), "Boot with new
+keys") instead of the `predecessor` file below.
+
 1. Prepare `B` (section 1). Check that the protocol-version note in "Know before you start" is
    settled, so you know whether this can be undone.
 2. **Name `B`.** Section 2, step 1, with `B`'s digest and config hash. With rotation on, follow
@@ -178,12 +183,15 @@ Use this for a new image, a new config, or both. The running release is `A`, the
    while rotation is on, and a bundle signed before an operator rotation does not move.
    `B` then connects to `A` for the keys. `A` checks `B`'s quote in the same way, stops sequencing, signs a final checkpoint, and sends the keys and the
    log tail encrypted to `B`. `B` writes the log, checks it reaches that checkpoint, seals the keys
-   and confirms; `A` acknowledges and powers off.
+   and confirms; `A` acknowledges and powers off. With rotation on, `A` is a rotation-set member, so
+   it follows `B` instead of powering off and opens none of its keys again; power its VM off once `B`
+   serves if `A` is not standing for a later turn.
    Check: `B` serves `/v1/markets`; `secrets-status` on `B` shows the version `A` held;
    `curl -sf $API/v1/attestation | jq -r .enclave_address` still
    equals `$SIGNER`; `A`'s VM has powered off; `release_superseded` resolves; and the chain of
    posted checkpoints continues: `cast call $VAULT 'latestSeq()(uint64)' --rpc-url $RPC` rises.
-   The TLS key and certificate carry over, so `$PIN` is unchanged.
+   The TLS key carries over, so `$PIN` is unchanged. The certificate does not: `B` orders its own
+   for the same key, under the same ACME account, and serves it once the CA issues it.
 5. **If a page says the handover did not finish**, do not stop anything.
    - `handover_unconfirmed` on `A`: sequencing has stopped and no successor holds the keys yet. `A`
      keeps serving successors; start `B` again. Stopping `A` loses its keys.
@@ -212,7 +220,8 @@ Choose by where you are.
 2. To make `A` restart-safe again, start a fresh copy of `A`'s image and config with the
    `predecessor` file pointing at the running `A`, as in section 3, step 4.
    **Changes the live system.** Needs the owner's approval.
-   Check: the fresh copy serves, the old VM powers off, and `release_superseded` resolves.
+   Check: the fresh copy serves and `release_superseded` resolves. The old VM powers off, or with
+   rotation on follows the fresh copy: power it off.
 
 **`B` has the keys and is running.** This is another upgrade, to `A`'s release.
 1. Check the protocol version rule in "Know before you start". If the new release activated a newer

@@ -4,6 +4,7 @@
 //! disk. Samples a slow disk drops are re-derived at the next full recovery without `[snapshots]`, never roots.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -15,6 +16,7 @@ use tracing::{info, warn};
 use crate::config::BackfillSection;
 use crate::history::marks::MarkSample;
 use crate::history::marks::backfill::{self, Candles, Source};
+use crate::history::marks::fold::MarkFold;
 use crate::history::marks::store::{Coverage, Store};
 use crate::sequencer::{Query, Request};
 
@@ -40,12 +42,22 @@ pub(crate) struct Live {
     pub flushed_at: Instant,
 }
 
-/// Runs until the sequencer's samples end: flushing live mark reports, then backfilling each
-/// listed mapped market once per process (a restart, or the markers on disk, skip completed ones).
+/// What a member's start leaves its marks cache to take once the node sequences: the cache its earlier
+/// holding left, moved aside at activation, and the marks its replica folded while it followed.
+#[derive(Default)]
+pub(crate) struct CatchUp {
+    pub prior: Option<PathBuf>,
+    pub folded: Option<MarkFold>,
+}
+
+/// Runs until the sequencer's samples end: first taking a member's earlier history (`catch_up`)
+/// beside the sequencer, after its first command; then flushing live mark reports, and backfilling
+/// each listed mapped market once per process (a restart, or the markers on disk, skip completed
+/// ones).
 /// Error cases:
 /// - a cache write fails, or the listed markets cannot be queried
 pub async fn run(
-    mut store: Store,
+    store: Store,
     // A weak sender: the task must never keep the sequencer's request channel open, or a shutdown
     // deadlocks — the sequencer would wait for this task's sender to drop while this task waits for
     // the sequencer's marks sender to drop.
@@ -53,7 +65,9 @@ pub async fn run(
     backfill: Option<BackfillSection>,
     sources: BTreeMap<MarketId, Source>,
     mut live: Live,
+    catch_up: CatchUp,
 ) -> anyhow::Result<()> {
+    let mut store = caught_up(store, catch_up, &mut live).await?;
     let candles = backfill.as_ref().map(|cfg| Candles::new(&cfg.base_url)).transpose()?;
     let mut flush = interval(FLUSH_EVERY);
     let mut backfill_tick = interval(BACKFILL_EVERY);
@@ -92,6 +106,43 @@ pub async fn run(
             }
         }
     }
+}
+
+/// Takes `work`, a member's earlier history, into `store` on a blocking thread, receiving the live
+/// samples into the buffer meanwhile, so the sequencer's queue never fills and drops one, and writing
+/// none of them before it: they extend the chains the catch-up writes below them. The backlog then
+/// goes out a batch a write, the queue drained between writes.
+/// Error cases:
+/// - the catch-up fails or panics (see `Store::catch_up`), or a backlog write fails
+async fn caught_up(mut store: Store, work: CatchUp, live: &mut Live) -> anyhow::Result<Store> {
+    if work.prior.is_none() && work.folded.is_none() {
+        return Ok(store);
+    }
+    let mut job = tokio::task::spawn_blocking(move || {
+        store.catch_up(work.prior.as_deref(), work.folded)?;
+        anyhow::Ok(store)
+    });
+    let mut open = true;
+    let mut store = loop {
+        tokio::select! {
+            done = &mut job => break done.context("the marks catch-up stopped")??,
+            sample = live.samples.recv(), if open => match sample {
+                Some(sample) => live.buffered.push(sample),
+                None => open = false,
+            },
+        }
+    };
+    while live.buffered.len() >= BATCH {
+        let rest = live.buffered.split_off(BATCH);
+        write(&mut store, &mut live.buffered)?;
+        live.buffered = rest;
+        while let Ok(sample) = live.samples.try_recv() {
+            live.buffered.push(sample);
+        }
+        tokio::task::yield_now().await;
+    }
+    live.flushed_at = Instant::now();
+    Ok(store)
 }
 
 /// Flushes buffered samples into the cache, one transaction.

@@ -17,8 +17,7 @@ use engine_core::eip712::{Eip712Domain, cancel_hash, order_hash, withdrawal_hash
 use engine_core::event::{Event, Reject};
 use engine_core::price::SourceQuote;
 use engine_core::types::{Millis, Side};
-use governor::Quota;
-use governor::clock::DefaultClock;
+use governor::{Quota, clock::DefaultClock};
 use k256::ecdsa::SigningKey;
 use serde_json::Value;
 use tower::ServiceExt;
@@ -415,6 +414,7 @@ impl Node {
             collateral: None,
             listing: Default::default(),
             operators: None,
+            operator_hostname: None,
             signing: crate::test_support::signing(),
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));

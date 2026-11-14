@@ -44,7 +44,7 @@ async fn a_cache_write_failure_during_a_backfill_stops_the_task() {
     let (_samples, rx) = tokio::sync::mpsc::channel(run::QUEUE);
     let live = run::Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() };
     let sources = BTreeMap::from([(1, Source { venue: Venue::Coinbase, symbol: "BTC-USD".to_owned() })]);
-    let task = tokio::spawn(run::run(store, node.tx.downgrade(), Some(cfg), sources, live));
+    let task = tokio::spawn(run::run(store, node.tx.downgrade(), Some(cfg), sources, live, Default::default()));
 
     let outcome = tokio::time::timeout(Duration::from_secs(60), task).await.expect("the task stops").expect("joined");
     let err = outcome.expect_err("a cache fault ends the task with an error");

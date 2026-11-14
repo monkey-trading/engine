@@ -1,87 +1,31 @@
 use super::*;
 use crate::node::handover::{Episode, episode};
 use std::path::PathBuf;
-use std::sync::Mutex;
 
-use engine_core::Fixed;
 use engine_core::types::AccountId;
 
-use crate::checkpoints::{CurrentRelease, Observation, VaultState, View};
+use crate::checkpoints::CurrentRelease;
 use crate::log::Checkpoint;
+use crate::tee::MockAttestor;
 use crate::tee::keys::Head;
+use crate::tee::sealing::MockSealer;
 use crate::test_support::{capture_alerts, dev_config, scratch_dir};
 
 const DIGEST: [u8; 48] = [0x11; 48];
 
-/// A vault whose current release is the one `current` holds; with `synced` set it reads the fold
-/// too, and that is the release its generation has folded.
-struct Vault {
-    current: Arc<Mutex<CurrentRelease>>,
-    synced: Arc<Mutex<Option<[u8; 32]>>>,
-    /// The turn the finalised schedule names, at any time at or after its boundary.
-    scheduled: Arc<Mutex<Option<crate::checkpoints::ScheduledTurn>>>,
-}
-
-impl Vault {
-    fn naming(current: CurrentRelease) -> Self {
-        Self { current: Arc::new(Mutex::new(current)), synced: Arc::new(Mutex::new(None)), scheduled: Arc::default() }
-    }
-}
-
-impl CheckpointChain for Vault {
-    async fn state(&self, _view: View) -> anyhow::Result<VaultState> {
-        let zero = Fixed::ZERO;
-        Ok(VaultState {
-            height: 1,
-            signer: AccountId([0; 20]),
-            checkpoint: None,
-            balance: zero,
-            deposits: 0,
-            deposited: zero,
-            distributions_paid: zero,
-        })
-    }
-
-    async fn post(&self, _checkpoint: &Checkpoint) -> anyhow::Result<()> {
-        bail!("this vault takes no checkpoints")
-    }
-
-    async fn current_release(&self, at: &Observation) -> anyhow::Result<CurrentRelease> {
-        ensure!(at.view == View::Finalized, "the current release is read at finality");
-        Ok(*self.current.lock().unwrap())
-    }
-
-    async fn scheduled_turn(
-        &self,
-        _at: &Observation,
-        now_ms: engine_core::types::Millis,
-    ) -> anyhow::Result<Option<crate::checkpoints::ScheduledTurn>> {
-        Ok(self.scheduled.lock().unwrap().clone().filter(|turn| turn.boundary <= now_ms))
-    }
-
-    fn reads_release_fold(&self) -> bool {
-        self.synced.lock().unwrap().is_some()
-    }
-
-    async fn synced_release(&self, at: &Observation) -> anyhow::Result<[u8; 32]> {
-        ensure!(at.view == View::Finalized, "the folded release is read at finality");
-        let synced = *self.synced.lock().unwrap();
-        synced.context("this vault reads no fold")
-    }
-}
-
 #[tokio::test]
 async fn a_release_without_sealed_keys_starts_only_when_the_operator_asks_for_new_ones() {
     let (cfg, dir) = sealed_config("keys-refuse");
-    let err = obtain(&cfg, &start(false), &MockAttestor).await.err().expect("started with no keys");
+    let err =
+        obtain(&cfg, &start(false), &MockAttestor, &Metrics::new(), None).await.err().expect("started with no keys");
     assert!(format!("{err:#}").contains("no keys are sealed for this release"), "{err:#}");
     assert!(!file_for(&dir, &release(&cfg), 0).exists(), "a refused start sealed keys");
 
-    let (key, tls, store) = obtain(&cfg, &start(true), &MockAttestor).await.unwrap();
+    let (key, tls, store) = obtain(&cfg, &start(true), &MockAttestor, &Metrics::new(), None).await.unwrap();
     assert!(store.is_some() && file_for(&dir, &release(&cfg), 0).exists(), "the new keys are not sealed");
 
     // A restart, without the flag, opens the same keys.
-    let (again, tls_again, _) = obtain(&cfg, &start(false), &MockAttestor).await.unwrap();
+    let (again, tls_again, _) = obtain(&cfg, &start(false), &MockAttestor, &Metrics::new(), None).await.unwrap();
     assert_eq!(again.address(), key.address());
     assert_eq!(tls_again.public_key_sha256, tls.public_key_sha256);
 }
@@ -97,28 +41,36 @@ async fn keys_are_opened_or_sealed_only_for_the_vaults_current_release() {
         ("a config change", named(Release { config_sha256: [0xc2; 32], ..this }, 2)),
     ];
     for (what, vault) in &superseded {
-        let err = obtain_with(&cfg, &start(true), &MockAttestor, Some(vault), trusted_at(0)).await.err();
+        let err =
+            obtain_with(&cfg, &start(true), &MockAttestor, Some(vault), trusted_at(0), &Metrics::new()).await.err();
         let err = err.unwrap_or_else(|| panic!("new keys were sealed while the vault names {what}"));
         assert!(format!("{err:#}").contains("the vault's current release is"), "{what}: {err:#}");
         assert!(std::fs::read_dir(&dir).is_err(), "{what}: a refused start sealed keys");
     }
     let (key, _, store) =
-        obtain_with(&cfg, &start(true), &MockAttestor, Some(&named(this, 1)), trusted_at(0)).await.unwrap();
+        obtain_with(&cfg, &start(true), &MockAttestor, Some(&named(this, 1)), trusted_at(0), &Metrics::new())
+            .await
+            .unwrap();
     assert!(file_for(&dir, &this, 1).exists() && store.unwrap().generation() == 1, "sealed outside generation 1");
     let (again, _, _) =
-        obtain_with(&cfg, &start(false), &MockAttestor, Some(&named(this, 1)), trusted_at(0)).await.unwrap();
+        obtain_with(&cfg, &start(false), &MockAttestor, Some(&named(this, 1)), trusted_at(0), &Metrics::new())
+            .await
+            .unwrap();
     assert_eq!(again.address(), key.address());
 
     // Once governance names another release, this one's sealed keys stay sealed.
     for (what, vault) in &superseded {
-        let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(vault), trusted_at(0)).await.err();
+        let err =
+            obtain_with(&cfg, &start(false), &MockAttestor, Some(vault), trusted_at(0), &Metrics::new()).await.err();
         let err = err.unwrap_or_else(|| panic!("the keys opened while the vault names {what}"));
         assert!(format!("{err:#}").contains("refusing this release's keys"), "{what}: {err:#}");
     }
 
     // Named again, in a later generation, it finds no keys there: its copy from generation 1 stays
     // sealed, and it takes the keys afresh from the release running then.
-    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&named(this, 3)), trusted_at(0)).await.err();
+    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&named(this, 3)), trusted_at(0), &Metrics::new())
+        .await
+        .err();
     let err = format!("{:#}", err.expect("a release named again reopened its older copy"));
     assert!(err.contains("no keys are sealed for this release") && err.contains("generation 3"), "{err}");
     assert!(file_for(&dir, &this, 1).exists() && !file_for(&dir, &this, 3).exists());
@@ -262,27 +214,41 @@ async fn a_superseded_release_alerts_before_the_vault_folds_the_change() {
 #[tokio::test]
 async fn a_flag_beside_sealed_keys_refuses_rather_than_replacing_them() {
     let (cfg, _dir) = sealed_config("keys-flag-beside-sealed");
-    let (key, _, _) = obtain(&cfg, &start(true), &MockAttestor).await.unwrap();
+    let (key, _, _) = obtain(&cfg, &start(true), &MockAttestor, &Metrics::new(), None).await.unwrap();
     let predecessor = KeyStart { predecessor: Some("127.0.0.1:9".into()), ..start(false) };
     for (what, flags) in [("--new-key", start(true)), ("--predecessor", predecessor)] {
-        let err = obtain(&cfg, &flags, &MockAttestor).await.err().unwrap_or_else(|| panic!("{what} replaced keys"));
+        let err = obtain(&cfg, &flags, &MockAttestor, &Metrics::new(), None)
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{what} replaced keys"));
         assert!(format!("{err:#}").contains("already sealed"), "{what}: {err:#}");
     }
-    assert_eq!(obtain(&cfg, &start(false), &MockAttestor).await.unwrap().0.address(), key.address());
+    assert_eq!(
+        obtain(&cfg, &start(false), &MockAttestor, &Metrics::new(), None).await.unwrap().0.address(),
+        key.address()
+    );
 }
 
 #[tokio::test]
 async fn the_stand_in_measurement_comes_only_with_the_mock_tees_sealing() {
     let (mut cfg, _dir) = sealed_config("keys-stand-in");
-    let err = obtain(&cfg, &KeyStart { new_key: true, ..Default::default() }, &MockAttestor).await.err();
+    let err = obtain(&cfg, &KeyStart { new_key: true, ..Default::default() }, &MockAttestor, &Metrics::new(), None)
+        .await
+        .err();
     assert!(format!("{:#}", err.expect("mock sealing without a stand-in")).contains("--mock-launch-digest"));
 
     cfg.tee.provider = TeeProvider::ConfigfsTsm;
-    let err = obtain(&cfg, &start(true), &MockAttestor).await.err().expect("a stand-in under real attestation");
+    let err = obtain(&cfg, &start(true), &MockAttestor, &Metrics::new(), None)
+        .await
+        .err()
+        .expect("a stand-in under real attestation");
     assert!(format!("{err:#}").contains("is for the mock TEE"), "{err:#}");
 
     let unsealed = dev_config();
-    let err = obtain(&unsealed, &start(false), &MockAttestor).await.err().expect("a stand-in without sealing");
+    let err = obtain(&unsealed, &start(false), &MockAttestor, &Metrics::new(), None)
+        .await
+        .err()
+        .expect("a stand-in without sealing");
     assert!(format!("{err:#}").contains("need [tee.sealing]"), "{err:#}");
 
     assert_eq!(parse_launch_digest(&hex::encode(DIGEST)), Ok(DIGEST));
@@ -294,25 +260,29 @@ async fn the_stand_in_measurement_comes_only_with_the_mock_tees_sealing() {
 #[tokio::test]
 async fn without_sealing_only_the_mock_tee_starts_and_takes_no_flag() {
     let mut cfg = dev_config();
-    let (key, _, store) = obtain(&cfg, &KeyStart::default(), &MockAttestor).await.unwrap();
+    let (key, _, store) = obtain(&cfg, &KeyStart::default(), &MockAttestor, &Metrics::new(), None).await.unwrap();
     assert!(store.is_none());
     assert_eq!(key.address(), EnclaveKey::test_key().address(), "the configured published key");
     let new_key = KeyStart { new_key: true, ..Default::default() };
-    let err = obtain(&cfg, &new_key, &MockAttestor).await.err().expect("--new-key without sealing");
+    let err =
+        obtain(&cfg, &new_key, &MockAttestor, &Metrics::new(), None).await.err().expect("--new-key without sealing");
     assert!(format!("{err:#}").contains("need [tee.sealing]"), "{err:#}");
 
     (cfg.tee.provider, cfg.tee.use_published_mock_key) = (TeeProvider::ConfigfsTsm, false);
-    let err = obtain(&cfg, &KeyStart::default(), &MockAttestor).await.err().expect("real attestation without sealing");
+    let err = obtain(&cfg, &KeyStart::default(), &MockAttestor, &Metrics::new(), None)
+        .await
+        .err()
+        .expect("real attestation without sealing");
     assert!(format!("{err:#}").contains("real attestation needs [tee.sealing]"), "{err:#}");
 }
 
 #[tokio::test]
 async fn a_restart_attests_the_same_signing_key_and_tls_key() {
     let (cfg, _dir) = sealed_config("keys-attested");
-    let first = attested(&cfg, &start(true)).await.unwrap();
+    let first = attested(&cfg, &start(true), &Metrics::new(), None).await.unwrap();
     assert_eq!(first.attestation.enclave_address, first.enclave.address_hex());
     assert_eq!(first.attestation.tls_public_key_sha256, format!("0x{}", hex::encode(first.tls.public_key_sha256)));
-    let restarted = attested(&cfg, &start(false)).await.unwrap();
+    let restarted = attested(&cfg, &start(false), &Metrics::new(), None).await.unwrap();
     assert_eq!(restarted.attestation.bundle, first.attestation.bundle, "a restart attests other keys");
 }
 
@@ -326,11 +296,36 @@ async fn real_attestation_refuses_an_unprotected_clock_before_any_key_is_obtaine
     cfg.tee.use_published_mock_key = false;
     // The host running these tests has no Secure TSC guest, so the check refuses before `obtain`
     // touches a key; the message names what the clock failed on.
-    let err = attested(&cfg, &start(true)).await.err().expect("started on a clock Secure TSC does not protect");
+    let err = attested(&cfg, &start(true), &Metrics::new(), None)
+        .await
+        .err()
+        .expect("started on a clock Secure TSC does not protect");
     let msg = format!("{err:#}");
     assert!(msg.contains("clocksource") || msg.contains("msr"), "{msg}");
     let alert = alerts.try_recv().expect("the refusal raised an alert");
     assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("clocksource_unprotected", "ERROR"));
+}
+
+#[test]
+fn a_certificate_store_that_does_not_open_refuses_the_start_with_a_critical_alert() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (mut cfg, dir) = sealed_config("keys-certificates");
+    assert!(certificates(&cfg, &start(false)).unwrap().is_none(), "a store opened without [api.tls.acme]");
+    let acme =
+        "[acme]\ndomain = 'api.engine.test'\ndirectory_url = 'https://ca.test/dir'\ncontact = 'mailto:ops@engine.test'";
+    cfg.api.tls = Some(toml::from_str(acme).unwrap());
+    let store = certificates(&cfg, &start(false)).unwrap().expect("no store with [api.tls.acme]");
+    store.replace("api.engine.test", &[0x7e; 32], "https://ca.test/dir", &[vec![0x5a; 48].into()]).unwrap();
+    assert!(alerts.try_recv().is_err(), "a store that opens raised an alert");
+
+    // The host alters the file: the start refuses, with the alert that names the store.
+    let path = crate::tee::certificates::file_for(&dir, &store.release());
+    let file = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, file.replace("\"format\":1", "\"format\":2")).unwrap();
+    let err = certificates(&cfg, &start(false)).err().expect("an altered store opened");
+    assert!(format!("{err:#}").contains("has format 2"), "{err:#}");
+    let alert = alerts.try_recv().expect("the refusal raised no alert");
+    assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("sealed_certificates_unreadable", "ERROR"));
 }
 
 #[test]
@@ -441,3 +436,5 @@ fn trusted_at(ms: Millis) -> std::future::Ready<anyhow::Result<Millis>> {
 }
 
 mod turns;
+mod vault;
+use vault::Vault;

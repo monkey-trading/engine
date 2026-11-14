@@ -13,8 +13,7 @@ use engine_core::Fixed;
 use engine_core::auth::ClientAuth;
 use engine_core::command::{OrderKind, OrderRequest};
 use engine_core::types::{AccountId, Side};
-use governor::Quota;
-use governor::clock::DefaultClock;
+use governor::{Quota, clock::DefaultClock};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -360,6 +359,7 @@ impl TestNode {
             collateral: None,
             listing: Default::default(),
             operators: None,
+            operator_hostname: None,
             signing: crate::test_support::signing(),
         };
         let server = tokio::spawn(serve(listener, tls.acceptors, router(state), limits, api));

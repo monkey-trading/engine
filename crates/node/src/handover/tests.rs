@@ -21,12 +21,14 @@ use crate::tee::sealing::Platform;
 const DOMAIN: CheckpointDomain = CheckpointDomain { chain_id: 31337, vault: AccountId([0x0a; 20]) };
 const CONFIG: [u8; 32] = [0xc1; 32];
 const CHALLENGE: [u8; 32] = [0x5c; 32];
+/// The newest protocol version the successor's build reads.
+const READS: &str = "v51";
 
 #[test]
 fn the_keys_open_only_for_the_requested_key_deployment_and_request() {
     let keys = KeySet::generate().unwrap();
     let (secret, public) = Kx::gen_keypair();
-    let request = request_report_data(DOMAIN, &CHALLENGE, &public.to_bytes(), &CONFIG);
+    let request = request_report_data(DOMAIN, &CHALLENGE, &public.to_bytes(), &CONFIG, READS);
     let (encapped, ciphertext) = seal_keys(DOMAIN, &public.to_bytes(), &request, &keys).unwrap();
     assert_eq!(open_keys(DOMAIN, &secret, &request, &encapped, &ciphertext).unwrap(), keys);
 
@@ -49,17 +51,19 @@ fn the_keys_open_only_for_the_requested_key_deployment_and_request() {
 
 #[test]
 fn each_step_binds_its_deployment_and_what_it_answers() {
+    // The request binds the versions the successor reads: a host cannot claim it reads newer ones.
     let (key, other_key) = ([1u8; 32], [2u8; 32]);
     let other_chain = CheckpointDomain { chain_id: 1, ..DOMAIN };
     let other_vault = CheckpointDomain { vault: AccountId([0x0b; 20]), ..DOMAIN };
-    let request = request_report_data(DOMAIN, &CHALLENGE, &key, &CONFIG);
+    let request = request_report_data(DOMAIN, &CHALLENGE, &key, &CONFIG, READS);
     assert_eq!(request[32..], [0u8; 32], "the second half of report data is zero");
     for other in [
-        request_report_data(DOMAIN, &CHALLENGE, &other_key, &CONFIG),
-        request_report_data(DOMAIN, &CHALLENGE, &key, &[0xc2; 32]),
-        request_report_data(DOMAIN, &[0x5d; 32], &key, &CONFIG),
-        request_report_data(other_chain, &CHALLENGE, &key, &CONFIG),
-        request_report_data(other_vault, &CHALLENGE, &key, &CONFIG),
+        request_report_data(DOMAIN, &CHALLENGE, &other_key, &CONFIG, READS),
+        request_report_data(DOMAIN, &CHALLENGE, &key, &[0xc2; 32], READS),
+        request_report_data(DOMAIN, &CHALLENGE, &key, &CONFIG, "v52"),
+        request_report_data(DOMAIN, &[0x5d; 32], &key, &CONFIG, READS),
+        request_report_data(other_chain, &CHALLENGE, &key, &CONFIG, READS),
+        request_report_data(other_vault, &CHALLENGE, &key, &CONFIG, READS),
     ] {
         assert_ne!(other, request);
     }
@@ -68,7 +72,12 @@ fn each_step_binds_its_deployment_and_what_it_answers() {
     assert_eq!(keys[32..], [0u8; 32]);
     assert_ne!(keys, request, "the two steps share a tag");
     for other in [
-        keys_report_data(DOMAIN, &request_report_data(DOMAIN, &CHALLENGE, &other_key, &CONFIG), b"enc", b"cipher"),
+        keys_report_data(
+            DOMAIN,
+            &request_report_data(DOMAIN, &CHALLENGE, &other_key, &CONFIG, READS),
+            b"enc",
+            b"cipher",
+        ),
         keys_report_data(DOMAIN, &request, b"enX", b"cipher"),
         keys_report_data(DOMAIN, &request, b"enc", b"cipheX"),
         keys_report_data(other_vault, &request, b"enc", b"cipher"),
@@ -78,7 +87,7 @@ fn each_step_binds_its_deployment_and_what_it_answers() {
 
     let confirm = confirm_digest(DOMAIN, &request);
     assert_ne!(confirm, confirm_digest(other_chain, &request));
-    assert_ne!(confirm, confirm_digest(DOMAIN, &request_report_data(DOMAIN, &CHALLENGE, &other_key, &CONFIG)));
+    assert_ne!(confirm, confirm_digest(DOMAIN, &request_report_data(DOMAIN, &CHALLENGE, &other_key, &CONFIG, READS)));
 }
 
 #[tokio::test]
@@ -103,7 +112,7 @@ async fn a_message_over_the_limit_or_cut_short_is_refused() {
 async fn mock_evidence_binds_its_data_and_never_passes_for_a_real_enclave() {
     let platform = Platform { launch_digest: [0x22; 48], policy: 0, tcb: 0 };
     let quoting = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "https://kds.test" };
-    let report_data = request_report_data(DOMAIN, &CHALLENGE, &[7u8; 32], &CONFIG);
+    let report_data = request_report_data(DOMAIN, &CHALLENGE, &[7u8; 32], &CONFIG, READS);
     let evidence = evidence::produce(&quoting, &MockAttestor, &platform, report_data).await.unwrap();
 
     let peer = verify(TeeProvider::Mock, &evidence, &report_data, None, None).unwrap();
@@ -117,7 +126,7 @@ async fn mock_evidence_binds_its_data_and_never_passes_for_a_real_enclave() {
 fn hardware_evidence_verifies_against_the_vendor_chain_and_binds_its_data() {
     let chip = [0x5a; 64];
     let chain = test_chain(chip, REPORTED_TCB);
-    let report_data = request_report_data(DOMAIN, &CHALLENGE, &[7u8; 32], &CONFIG);
+    let report_data = request_report_data(DOMAIN, &CHALLENGE, &[7u8; 32], &CONFIG, READS);
     let collateral = collateral_of(&chain, &crl_revoking(&chain, &[]));
     let evidence: Evidence = serde_json::from_value(serde_json::json!({
         "provider": "sev_guest",
@@ -204,7 +213,7 @@ fn resolve_source_maps_the_registry_snapshot_and_refuses_the_unregistered() {
 async fn check_operator_hostname_refuses_a_mismatch_and_skips_without_acme() {
     // The dev config has no [api.tls.acme]: no certificate to check.
     let cfg = crate::test_support::dev_config();
-    check_operator_hostname(&cfg, &registry(source(AccountId([0x42; 20]), ""), "other.example")).await.unwrap();
+    check_operator_hostname(&cfg, &registry(source(AccountId([0x42; 20]), ""), "other.example"), None).await.unwrap();
     let mut value: toml::Value =
         toml::from_str(&std::fs::read_to_string(crate::test_support::DEV_CONFIG).unwrap()).unwrap();
     let tls = toml::Value::try_from(
@@ -213,8 +222,11 @@ async fn check_operator_hostname_refuses_a_mismatch_and_skips_without_acme() {
     .unwrap();
     value.get_mut("api").expect("the dev config's api table").as_table_mut().unwrap().insert("tls".into(), tls);
     let cfg: NodeConfig = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
-    check_operator_hostname(&cfg, &registry(source(AccountId([0x42; 20]), ""), "api.operator.example")).await.unwrap();
-    let err =
-        check_operator_hostname(&cfg, &registry(source(AccountId([0x42; 20]), ""), "other.example")).await.unwrap_err();
+    check_operator_hostname(&cfg, &registry(source(AccountId([0x42; 20]), ""), "api.operator.example"), None)
+        .await
+        .unwrap();
+    let err = check_operator_hostname(&cfg, &registry(source(AccountId([0x42; 20]), ""), "other.example"), None)
+        .await
+        .unwrap_err();
     assert!(format!("{err:#}").contains("other.example"), "{err:#}");
 }

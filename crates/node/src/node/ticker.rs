@@ -9,8 +9,9 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio::time::interval;
 
-use crate::config::{ApiSection, CustodySection};
+use crate::config::{ApiSection, CustodySection, NodeConfig};
 use crate::custody::{OperatorsFeed, OperatorsReader};
+use crate::handover::hostname::{HostnameFeed, watch_hostname};
 use crate::node::shutdown::TaskResult;
 use crate::sequencer::Request;
 
@@ -38,4 +39,25 @@ pub(super) fn start_operators(
     tracing::info!(every = ?api.operators_interval, "reading the operator list through the registry lens");
     tasks.spawn(async move { ("operators", reader.run().await) });
     Ok(Some(feed))
+}
+
+/// Spawns the reader of the operator in effect's registered API hostname, every
+/// `api.operators_interval`, for a rotating node with `[checkpoints]`; `None` otherwise, so
+/// `/v1/operator` omits the field.
+/// Error cases:
+/// - `[checkpoints]` needs EVM custody the config lacks, or the vault address or RPC settings are malformed
+pub(super) fn start_operator_hostname(
+    cfg: &NodeConfig,
+    tasks: &mut JoinSet<TaskResult>,
+    trusted: crate::trusted_time::TrustedClock,
+) -> anyhow::Result<Option<HostnameFeed>> {
+    if !cfg.operator.rotation_enabled {
+        return Ok(None);
+    }
+    let Some(vault) = crate::handover::vault_reader(cfg)? else { return Ok(None) };
+    let (feed, rx) = tokio::sync::watch::channel(None);
+    let every = cfg.api.operators_interval;
+    let reached = move || trusted.reached_ms();
+    tasks.spawn(async move { ("operator_hostname", watch_hostname(vault, every, feed, reached).await) });
+    Ok(Some(rx))
 }

@@ -7,7 +7,10 @@
 //! RPC quorum at a strict-majority latest block; the single posting endpoint is the operator's.
 
 pub(crate) mod prefix;
+mod read;
+pub(crate) use read::PostedHeads;
 mod rpc;
+pub(crate) use rpc::StartupHeads;
 #[cfg(test)]
 pub(crate) use rpc::{posted, startup_heads};
 pub(crate) mod setup;
@@ -118,6 +121,9 @@ pub(crate) struct Poster<R> {
     /// evidence that this log holds an on-chain head. `setup` seeds it from the replayed log; the
     /// poster records every released head into it.
     pub prefix_ring: crate::log::PrefixRing,
+    /// Posting intervals without the on-chain head advancing, past which the stall alert fires:
+    /// 3, or 2 under rotation, where a successor checks the tail's head against the posted one.
+    pub stall_intervals: u32,
 }
 
 impl<R: HeadsChain> Poster<R> {
@@ -146,8 +152,8 @@ impl<R: HeadsChain> Poster<R> {
         // which neither a restart nor a log cut back to it resets, or, with no head posted, the
         // newest finalized checkpoint's. That carried time counts once this process's
         // first post has had a posting interval to be included, so a restart after a long stop
-        // does not page before its first post lands. Past three intervals with a newer released
-        // head, the stall alert fires once per episode. Acceptance proves no inclusion, so it
+        // does not page before its first post lands. Past `stall_intervals` intervals with a newer
+        // released head, the stall alert fires once per episode. Acceptance proves no inclusion, so it
         // never moves this clock.
         let mut progressed_at = tokio::time::Instant::now();
         let (mut on_chain_seq, mut anchor_ts) = self.anchored.unwrap_or_default();
@@ -284,14 +290,15 @@ impl<R: HeadsChain> Poster<R> {
                 anchor_ts.filter(|_| carried).zip(self.trusted.as_ref().and_then(|clock| clock.now_ms()));
             let since_anchor = since_anchor.map_or(0, |(at, now)| u64::try_from(now.saturating_sub(at)).unwrap_or(0));
             let unanchored = progressed_at.elapsed().max(Duration::from_millis(since_anchor));
-            if !stalled && head.seq > on_chain_seq && unanchored > self.interval.saturating_mul(3) {
+            let stall_after = self.interval.saturating_mul(self.stall_intervals);
+            if !stalled && head.seq > on_chain_seq && unanchored > stall_after {
                 stalled = true;
                 warn!(
                     alert = "log_head_stalled",
                     "the on-chain log head has not advanced past seq {on_chain_seq} for over {:?} while \
                      this node released seq {}: the pending send may be dropped and is reconciled on \
                      the next attempt",
-                    self.interval.saturating_mul(3),
+                    stall_after,
                     head.seq
                 );
             }

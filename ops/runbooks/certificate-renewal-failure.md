@@ -14,8 +14,11 @@ days of expiry). Read [reference.md](reference.md) first.
 ## What the node does
 
 - It orders a certificate at boot. Until one arrives it serves its self-signed certificate and
-  logs `certificate_pending`. With `[tee.sealing]` the ACME account and the certificate are sealed
-  with the keys, so a restart serves the certificate it had and keeps the same account.
+  logs `certificate_pending`. With `[tee.sealing]` the ACME account is sealed with the keys, and
+  moves with them, and the certificate is sealed in the member's own file
+  (`<release id>.certificates.json`, beside the keys), which no handover moves. A restart, or the
+  member's next daily turn under the same TLS key, serves the certificate it holds and orders nothing
+  until renewal. A new release (an upgrade or a config change) orders its own, under the same account.
 - It renews once `renew_before` of the certificate's life remains (one third when unset, and never
   less than 14 days). A failed attempt keeps the current certificate and retries after a minute,
   doubling to an hour. Once fewer than 14 days remain, each failure logs `certificate_expiring`.
@@ -58,11 +61,25 @@ days of expiry). Read [reference.md](reference.md) first.
 | The CA is down or slow | The CA's status page; the error is a timeout or a 5xx. | Wait; the node retries by itself. |
 | The host clock is wrong | The connection to the CA fails certificate verification, or an issued certificate is refused as expired or not yet valid. The node checks them against the host's clock, which is untrusted. | Fix the host clock (and see `clock_drift` in [alerts.md](alerts.md)). |
 | The account is unknown to the CA | The error says the CA does not know the account. | None: the node registers a new account by itself. |
-| The sealed certificate could not be written | `sealed_keys_write_failed` (Warning): the certificate is held in memory only. | Fix the data disk. Until then a restart orders again, under the rate limits above. |
+| The sealed certificate could not be written | `sealed_certificate_write_failed` (Warning): the certificate is held in memory only. | Fix the data disk. Until then a restart or a next turn orders again, under the rate limits above. |
+| The sealed account could not be written | `sealed_keys_write_failed` (Warning): the account is held in memory only. | Fix the data disk. Until then a restart registers a new account. |
 
 4. After a fix, the next retry is at most an hour away. To retry now, restart the node
    ([restart-and-recovery.md](restart-and-recovery.md)); that is **a change to the live system** and needs
    the owner's approval. With sealing a restart is safe: it keeps the account and certificate.
+
+## The sealed certificate does not open
+
+`sealed_certificates_unreadable` (Critical): the node refused to start because
+`<release id>.certificates.json` in `[tee.sealing].dir` does not open for this release: the disk
+damaged it, or the host altered it or put another release's file under its name. Check the disk; a
+file the host altered is an incident ([incident-response.md](incident-response.md)). The node opens
+it before the keys, so a daily turn's member that refuses leaves the keys with the operator in effect.
+
+The file holds only the certificate, which is public, and nothing the node needs to sign: removing
+it costs one new order. With the owner's approval, move the file aside (keep it for the incident) and
+start the node again; it orders a new certificate under the CA's rate limits. Do not touch the keys'
+file, `<release id>-<generation>.sealed.json`.
 
 ## If the certificate will expire first
 

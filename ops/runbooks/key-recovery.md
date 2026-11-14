@@ -6,7 +6,8 @@ section. Read [reference.md](reference.md) first.
 | Key | Held by | Used for | If it is lost or exposed |
 | --- | --- | --- | --- |
 | Enclave signing key | The enclave only; sealed to the release on the data disk | Signs checkpoints and withdrawal authorizations; it is the vault's signer | "New keys" |
-| API TLS key, ACME account, certificate | The enclave, sealed in the same file | The API's identity; the certificate names it | "New keys" |
+| API TLS key, ACME account | The enclave, sealed in the same file | The API's identity, and the account its certificates are ordered under | "New keys" |
+| API certificate | The enclave, sealed apart from the keys in the member's own file, which no handover moves | Names the member's API hostname and the TLS key; public | The node orders another ([certificate-renewal-failure.md](certificate-renewal-failure.md)) |
 | Operator admin key | The operator, offline. The node holds only the public key. | Signs `engine admin` commands | "Operator key" |
 | Checkpoint relayer | The checkpoint RPC endpoint (`checkpoints.relayer`) | Pays gas for checkpoint posts; no authority over funds | "Relayer" |
 | Governance multisig and guardian | The owner | Timelock proposals; the guardian's pause and signer retirement | Outside these runbooks |
@@ -80,7 +81,8 @@ remain, the owner decides whether to start the install anyway or let the exit ru
 3. **Boot with new keys.** Put an empty file `new-key` on the data disk, beside `config.toml`, and
    start the VM with the same image and the same config, except after the rotation-on move to another
    approved release: then the vault names that release, so boot its image and its config (the
-   candidacy's release `B`) with the preserved log, since the old release's start refuses. The image removes the marker before it
+   candidacy's release `B`) with the preserved log, since the old release's start opens none of its
+   keys: with rotation on, it only follows the operator in effect. The image removes the marker before it
    starts the engine, so it applies once. `--new-key` refuses to run beside an existing file for the
    same release and generation.
    **Changes the live system.** Needs the owner's approval to deploy.
