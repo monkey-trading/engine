@@ -344,7 +344,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
 - `src/sequencer/claims.rs` — MONKEY and USDC claim proofs retained for recently asking accounts at each new checkpoint, so one is served at the checkpoint the vault accepted
 - `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, reissue requests, the account payouts read, and the boundary's log check's hold on each release
-- `src/sequencer/log_check.rs` — the sequencer's side of the boundary's log check: the verified head, restored from the sealed keys only when the log holds its checkpoint, the log's `TurnTaken` records attributing each range, the check due once this node holds a turn on that its verified head does not reach (with the checkpoint it writes after its `TurnTaken`), `log_check_unattributable` while the records cannot say who sequenced that range, a member's verification taken only for the check due and from a member and release outside its range, and the boundary an unpaid approval waits for, the turn in effect's while its member's handover is still to come; `src/sequencer/log_check/tests.rs` covers a held turn's check, its target whether the checkpoint or the `TurnTaken` is noted first, a one-member set, rotation off, a reissue on a signer change and on request, the unattributable alert, a restart, and a handover's check
+- `src/sequencer/log_check.rs` — the sequencer's side of the boundary's log check: the verified head, restored from the sealed keys only when the log holds its checkpoint, the log's `TurnTaken` records attributing each range, the check due once this node holds on through a turn of its operator key, under this release or its member's earlier one, that its verified head does not reach (with the checkpoint it writes after its `TurnTaken`), `log_check_unattributable` while the records cannot say who sequenced that range, `log_check_unavailable` while the gate holds payouts on a node set up to take no turns, the check republished after each sequenced batch, a member's verification taken only for the check due and from a member and release outside its range, and the boundary an unpaid approval waits for, the turn in effect's while its member's handover is still to come; `src/sequencer/log_check/tests.rs` covers a held turn's check, its target whether the checkpoint or the `TurnTaken` is noted first, a one-member set, rotation off, a reissue on a signer change and on request, a restart, and a handover's check; `src/sequencer/log_check/tests/pages.rs` the unattributable and unavailable alerts, the run loop withdrawing a check rotation ends, and an upgrade that keeps asking for its member's check
 - `src/sequencer/payout_schedule.rs` — complete unpaid approval order, bounded epoch and requested reissue scheduling, and the hold behind unloaded recovered approvals
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
 - `src/sequencer/payout_tests/` — the account payouts read across signing, reissue, payment and an unfinished restart load, paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
@@ -1000,17 +1000,19 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log_check/mod.rs` — the boundary's log check: the verified head, the statement a member's
   quote binds and its report data, the digest the operator's enclave signs over its question, the
   gate's condition (rotation on and a turn in effect whose set names two or more members), the log's
-  `TurnTaken` records that attribute a range to the members and releases that sequenced it (none
-  from a snapshot's base until a `TurnTaken` it saw), and the node's own check at a handover, which a
+  `TurnTaken` records that attribute a range to the members and releases that sequenced it (with no
+  verified head, the latest holding; none from a snapshot's base until a `TurnTaken` it saw), and the
+  node's own check at a handover, which a
   member's other release never makes for a range it sequenced; `src/log_check/tests.rs` covers the
   attribution, the own check, an upgrade, and what the quote and the question bind
 - `src/log_check/ask.rs` — the operator's asking: the members of the turn's order, first to last,
   but its own candidate, those with no handover endpoint and members and releases in the range, each
   asked with a fresh challenge its enclave key signs, and a member's answer admitted only from the
   release it registered, under a policy and TCB no weaker than its own, binding what was asked,
-  `log_check_pending` paging once a check stays due for 30 minutes; `src/log_check/ask/tests.rs`
-  covers the admission, the order (the first qualifying member, then the next when the first has not
-  verified the checkpoint), and the page and its end
+  `log_check_pending` paging once a check stays due for 30 minutes, during a round that outlasts it
+  too; `src/log_check/ask/tests.rs` covers the admission, the order (the first qualifying member, then
+  the next when the first has not verified the checkpoint), the page during a long round, and its
+  end
 - `src/log_check/answer.rs` — a following member's answers on its handover endpoint, up to eight
   connections at once, each with five seconds to send its question, from the checkpoints its replica
   verified, with the turn assignment taken at each and the enclave that signed it, quoting only for a

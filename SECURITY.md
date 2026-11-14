@@ -380,7 +380,8 @@ questions the holder's enclave signs, which a member answers only from the check
 under that signer; an approval made during a turn therefore waits for the next boundary, a day at most
 plus the switch, payouts stay anchored to the roots the vault accepted as before, a member of the set
 can no longer be paid on a branch no other member holds, and the verified head is sealed with the keys,
-so a host that restores an older copy only delays payouts; a check binds a release, not a host, so a
+so a host that restores an older copy only delays payouts, the next check then covering the holding of
+the latest `TurnTaken`; a check binds a release, not a host, so a
 host that also runs another member's release can feed that enclave the branch it withholds and have it
 verified; the rule bounds neither delay nor censorship: a host that keeps its node from asking, or
 members that do not answer, hold payouts until one answers or the next handover (`log_check_pending`

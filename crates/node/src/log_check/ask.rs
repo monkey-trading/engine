@@ -89,25 +89,36 @@ impl<C: CheckpointChain> Asker<C> {
                 pending = Some((due.turn, Instant::now(), false));
             }
             let span = info_span!("log_check", turn = due.turn, seq = due.head.seq);
-            match self.check(&due).instrument(span.clone()).await {
-                Ok(true) => continue,
-                Ok(false) => span.in_scope(|| info!("the sequencer no longer waits for this check")),
-                Err(e) => {
-                    let (turn, since, alerted) = pending.as_mut().expect("set above");
-                    if !*alerted && since.elapsed() >= PENDING_ALERT_AFTER {
-                        *alerted = true;
-                        span.in_scope(|| {
-                            warn!(
-                                alert = "log_check_pending",
-                                turn = *turn,
-                                "no member has verified the log at the boundary: withdrawals approved since the last \
-                                 verified head wait: {e:#}"
-                            )
-                        });
-                    } else {
-                        span.in_scope(|| warn!("no member verified the log this round: {e:#}"));
+            let (turn, since, alerted) = pending.as_mut().expect("set above");
+            // The page is due once the check has waited `PENDING_ALERT_AFTER`, however long a round runs.
+            let outcome = {
+                let round = self.check(&due).instrument(span.clone());
+                tokio::pin!(round);
+                loop {
+                    if *alerted {
+                        break round.as_mut().await;
+                    }
+                    tokio::select! {
+                        biased;
+                        () = tokio::time::sleep_until(*since + PENDING_ALERT_AFTER) => {
+                            *alerted = true;
+                            span.in_scope(|| {
+                                warn!(
+                                    alert = "log_check_pending",
+                                    turn = *turn,
+                                    "no member has verified the log at the boundary for {PENDING_ALERT_AFTER:?}: \
+                                     withdrawals approved since the last verified head wait"
+                                )
+                            });
+                        }
+                        outcome = round.as_mut() => break outcome,
                     }
                 }
+            };
+            match outcome {
+                Ok(true) => continue,
+                Ok(false) => span.in_scope(|| info!("the sequencer no longer waits for this check")),
+                Err(e) => span.in_scope(|| warn!("no member verified the log this round: {e:#}")),
             }
             tokio::select! {
                 changed = self.due.changed() => if changed.is_err() { return Ok(()) },

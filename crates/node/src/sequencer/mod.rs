@@ -257,6 +257,10 @@ impl Sequencer {
                     next = self.next_queued(&mut rx);
                 }
             }
+            // A command can change rotation or the turn in effect, and so the check due.
+            if sequenced {
+                self.refresh_log_check();
+            }
             batch.timing = sequenced.then_some(started);
             let release = self.stage(std::mem::take(&mut batch))?;
             self.submit(release)?;

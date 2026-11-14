@@ -232,12 +232,13 @@ an index: load only the rule whose hint matches the current action.
   `TurnTaken` and asks the turn's order (`turn_order`), first to last, in questions its enclave signs,
   for a quote-bound verification of it from a member that sequenced none of the range since the last
   verified head under any release, nor runs a release that did, as the log's `TurnTaken` commands
-  record (Warning `log_check_pending` after 30 minutes, and `log_check_unattributable` while those
-  records cannot say who sequenced the range, as after a snapshot start), which a following member
-  answers on its handover endpoint from the checkpoints its replica verified under the question's
-  signer; the verified head is sealed with the keys, restored only when the log holds its checkpoint,
-  carried by an upgrade, and `/v1/accounts/{a}/payouts` names the boundary each waiting approval's
-  check is at.
+  record (Warning `log_check_pending` after 30 minutes, `log_check_unavailable` on a node set up to
+  take no turns, and `log_check_unattributable` while those records cannot say who sequenced the
+  range, as after a snapshot start), which a following member answers on its handover endpoint from
+  the checkpoints its replica verified under the question's signer; the verified head is sealed with
+  the keys, restored only when the log holds its checkpoint, carried by an upgrade, and with none the
+  next check covers the latest holding, and `/v1/accounts/{a}/payouts` names the boundary each waiting
+  approval's check is at.
   With `[log_heads]` (#541), `log_heads/` posts the enclave's newest released `(seq, prefix)` — the
   cumulative command-prefix digest, which checkpoints do not reset, and every post names the
   previously accepted head it extends — the

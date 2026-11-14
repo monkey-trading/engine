@@ -17,8 +17,6 @@ use crate::tee::sealing::KeyStore;
 
 /// What a node that takes turns gives its sequencer for the log check.
 pub(crate) struct LogCheckSetup {
-    /// This enclave's release, which takes the node's turns.
-    pub release: B256,
     /// The sealed keys the verified head is kept with.
     pub store: Arc<KeyStore>,
     /// Where the check due is published, for the node's asking (`log_check::ask`).
@@ -28,7 +26,8 @@ pub(crate) struct LogCheckSetup {
 /// The verified head and what decides the next check.
 #[derive(Default)]
 pub(super) struct LogCheck {
-    release: Option<B256>,
+    /// With a setup, this node's operator key, whose turns it takes under any release.
+    operator: Option<AccountId>,
     store: Option<Arc<KeyStore>>,
     due: Option<watch::Sender<Option<Due>>>,
     verified: Option<VerifiedHead>,
@@ -42,19 +41,22 @@ pub(super) struct LogCheck {
     latest: Option<VerifiedHead>,
     /// The turn `log_check_unattributable` was raised for, until it resolves.
     unattributable: Option<u64>,
+    /// Whether `log_check_unavailable` is raised.
+    unavailable: bool,
 }
 
 impl LogCheck {
-    /// The log check of the log `replayed` recovered, under `setup`: the verified head the sealed keys
-    /// hold, kept only when the log holds that checkpoint, since a host can hand a start another log.
-    pub(super) fn recovered(setup: Option<LogCheckSetup>, replayed: &Replayed) -> Self {
+    /// The log check of the log `replayed` recovered, under `setup` for the turns of the `operator`
+    /// key: the verified head the sealed keys hold, kept only when the log holds that checkpoint, since
+    /// a host can hand a start another log.
+    pub(super) fn recovered(setup: Option<LogCheckSetup>, operator: AccountId, replayed: &Replayed) -> Self {
         let next = replayed.engine.last_seq().map_or(0, |seq| seq.saturating_add(1));
         let takings = replayed.takings.clone().complete_from(next);
         let target = replayed.last_signed_checkpoint.as_ref().and_then(|checkpoint| {
             let link = replayed.prefix_ring.prefix_at(checkpoint.seq)?;
             Some(VerifiedHead { seq: checkpoint.seq, link, root: checkpoint.root.parse().ok()? })
         });
-        let Some(LogCheckSetup { release, store, due }) = setup else {
+        let Some(LogCheckSetup { store, due }) = setup else {
             return Self { takings, target, latest: target, ..Self::default() };
         };
         let sealed = store.keys().log_check;
@@ -70,8 +72,8 @@ impl LogCheck {
             (_, Some(verified)) => info!(seq = verified.seq, "restored the head the last log check verified"),
             (None, None) => {}
         }
-        let (store, due) = (Some(store), Some(due));
-        Self { release: Some(release), store, due, verified, takings, target, latest: target, unattributable: None }
+        let (operator, store, due) = (Some(operator), Some(store), Some(due));
+        Self { operator, store, due, verified, takings, target, latest: target, ..Self::default() }
     }
 
     /// Notes the checkpoint `head` just written (see `retarget`).
@@ -116,16 +118,16 @@ impl LogCheck {
         sequenced.is_none().then_some(in_effect.turn)
     }
 
-    /// The seq of this release's `TurnTaken` of the turn in effect, and the turn, while the gate
-    /// applies and the verified head does not reach the command before it.
+    /// The seq of the `TurnTaken` of the turn in effect, and the turn, while the turn is this node's
+    /// operator key's and taken, under this release or an earlier one of the same member before an
+    /// upgrade, the gate applies, and the verified head does not reach the command before it.
     fn outstanding(&self, engine: &Engine) -> Option<(u64, engine_core::turns::TurnAssignment)> {
-        let release = self.release?;
+        let operator = self.operator?;
         let turns = engine.daily_turns();
         let (in_effect, taken) = (turns.in_effect?, turns.taken?);
-        let (taken_seq, taken_release) = self.takings.last()?;
-        let ours = (taken.turn, taken.position) == (in_effect.turn, in_effect.position)
-            && taken.release == release
-            && taken_release == release;
+        let (taken_seq, _) = self.takings.last()?;
+        let ours =
+            (taken.turn, taken.position) == (in_effect.turn, in_effect.position) && in_effect.admin_key == operator;
         let covered = self.verified.is_some_and(|verified| verified.seq.saturating_add(1) >= taken_seq);
         (applies(engine) && ours && !covered).then_some((taken_seq, in_effect))
     }
@@ -198,6 +200,23 @@ impl Sequencer {
                     "the log's records do not reach back to the last verified head, as after a start from a snapshot: \
                      no member can be asked to check the log, and withdrawals approved since that head wait for a \
                      handover to another member; restart without [snapshots] to replay the whole log"
+                );
+            }
+        }
+        // Without a setup this node takes no turn and asks for no check, so nothing it holds is signed.
+        let unavailable = self.log_check.store.is_none() && applies(&self.engine);
+        if std::mem::replace(&mut self.log_check.unavailable, unavailable) != unavailable {
+            if unavailable {
+                warn!(
+                    alert = "log_check_unavailable",
+                    "rotation is on and the turn's set names two or more members, so withdrawals wait for the \
+                     boundary's log check, but this node runs without operator.rotation_enabled and sealed keys: it \
+                     takes no turn and asks for no check, and signs no withdrawal until it restarts with them"
+                );
+            } else {
+                info!(
+                    alert_resolved = "log_check_unavailable",
+                    "withdrawals no longer wait for the boundary's log check"
                 );
             }
         }

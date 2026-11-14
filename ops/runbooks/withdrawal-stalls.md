@@ -195,7 +195,12 @@ a stall.
 - **After a restart** the node restores the verified head sealed with its keys, if its log holds that
   checkpoint; otherwise it asks for the check again as at a boundary it holds on through. A start from
   a snapshot past the verified head cannot say who sequenced the range, so it asks no one and pages
-  `log_check_unattributable`: restart without `[snapshots]` so the node replays the whole log.
+  `log_check_unattributable`: restart without `[snapshots]` so the node replays the whole log. With
+  no verified head at all, as after a host kept the sealed one, the next check covers the latest
+  holding, so it needs a member other than that holding's.
+- **`log_check_unavailable`** means this node runs without `operator.rotation_enabled` or
+  `[tee.sealing]` while the gate applies: it can neither take a turn nor ask for a check. Restart it
+  with both set.
 
 ## The node has stopped
 

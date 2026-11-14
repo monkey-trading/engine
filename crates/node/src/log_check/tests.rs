@@ -33,7 +33,8 @@ fn records_that_start_past_a_range_attribute_none_of_it() {
     // A replay from a snapshot sees the commands from its base on, so it cannot say who sequenced
     // them until a `TurnTaken` it saw.
     let takings = takings(50, &[(60, B)]);
-    assert_eq!(takings.sequenced(None, 70), None, "a range from genesis");
+    assert_eq!(takings.sequenced(None, 55), None, "no verified head and no TurnTaken since the base");
+    assert_eq!(takings.sequenced(None, 70), Some(sequencers(&[B])), "no verified head: the holding it saw");
     assert_eq!(takings.sequenced(Some(10), 70), None, "a range starting before the records");
     assert_eq!(takings.sequenced(Some(49), 70), None, "a range whose member took its turn before the base");
     assert_eq!(takings.sequenced(Some(59), 70), Some(sequencers(&[B])), "a range from a recorded TurnTaken");
@@ -74,9 +75,26 @@ fn the_nodes_own_check_counts_only_when_neither_its_member_nor_its_release_seque
     // Nor does a head at or below the one verified, or one the records cannot attribute.
     assert_eq!(own_check(Some(head(39)), &recorded, head(30), (C, &member(C))), Some(head(39)));
     assert_eq!(own_check(previous, &takings(25, &[(30, B)]), head(39), (C, &member(C))), previous);
-    // With nothing verified yet, the range runs from genesis.
+    // With nothing verified, the range is the holding of the latest `TurnTaken`: B's.
     assert_eq!(own_check(None, &recorded, head(39), (C, &member(C))), Some(head(39)));
-    assert_eq!(own_check(None, &recorded, head(39), (A2, &member(A))), None);
+    assert_eq!(own_check(None, &recorded, head(39), (A2, &member(A))), Some(head(39)));
+    assert_eq!(own_check(None, &recorded, head(39), (B2, &member(B2))), None);
+}
+
+#[test]
+fn a_missing_head_leaves_the_latest_holding_to_check_not_every_turn_since_genesis() {
+    // Every member has taken turns; the head was lost, as when a host keeps the sealed one from a start
+    // or a release that sealed none takes the keys.
+    let recorded = takings(0, &[(10, A), (20, B), (30, C), (40, A), (50, B)]);
+    assert_eq!(recorded.sequenced(None, 55), Some(sequencers(&[B])));
+    assert_eq!(recorded.sequenced(None, 45), Some(sequencers(&[A])));
+    // B's holding hands over to C, whose start checks it and so sets the head again.
+    assert_eq!(own_check(None, &recorded, head(55), (C, &member(C))), Some(head(55)));
+    // At a boundary B holds on through, any member but B can be asked.
+    let held = takings(0, &[(10, A), (20, B), (30, C), (40, A), (50, B), (60, B)]);
+    let excluded = held.sequenced(None, 61).unwrap();
+    assert!(!excluded.include(candidate(A), A) && !excluded.include(candidate(C), C), "{excluded:?}");
+    assert!(excluded.include(candidate(B), B2));
 }
 
 #[test]

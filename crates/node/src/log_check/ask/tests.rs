@@ -115,11 +115,31 @@ async fn a_check_no_member_verifies_pages_once_and_the_episode_ends_once_it_is_n
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn the_page_comes_due_during_a_round_that_outlasts_it() {
+    let (_guard, mut alerts, _resolved) = capture_alerts_and_resolutions();
+    // One round, reading the order, takes four times the alert's threshold.
+    let order = vec![member(0xa, "127.0.0.1:1"), member(0xb, "")];
+    let (sequencer, _requests) = mpsc::channel(4);
+    let (_due_tx, due_rx) = watch::channel(Some(due(AccountId([0xa; 20]), sequencers(&[0xa]))));
+    let asker = slow_asker(order, PENDING_ALERT_AFTER * 4, &sequencer, due_rx);
+    let drive = async {
+        tokio::time::sleep(PENDING_ALERT_AFTER * 2).await;
+        let paged = named(&mut alerts, "log_check_pending");
+        assert_eq!(paged.len(), 1, "the page waited for the round to end: {paged:?}");
+    };
+    tokio::select! {
+        () = drive => {}
+        ran = asker.run() => panic!("the asker stopped: {ran:?}"),
+    }
+}
+
 // ── Helpers ──
 
-/// The schedule's order of one turn, read at an observation whose signer epoch is 1.
+/// The schedule's order of one turn, read after `delay` at an observation whose signer epoch is 1.
 struct Order {
     order: Vec<HandoverSource>,
+    delay: Duration,
 }
 
 impl CheckpointChain for Order {
@@ -158,6 +178,7 @@ impl CheckpointChain for Order {
 
     async fn turn_order(&self, _at: &Observation, turn: u64) -> anyhow::Result<Vec<HandoverSource>> {
         assert_eq!(turn, TURN);
+        tokio::time::sleep(self.delay).await;
         Ok(self.order.clone())
     }
 }
@@ -207,9 +228,19 @@ fn asker(
     sequencer: &mpsc::Sender<Request>,
     due: watch::Receiver<Option<Due>>,
 ) -> Asker<Order> {
+    slow_asker(order, Duration::ZERO, sequencer, due)
+}
+
+/// `asker`, over a schedule that takes `delay` to read the order.
+fn slow_asker(
+    order: Vec<HandoverSource>,
+    delay: Duration,
+    sequencer: &mpsc::Sender<Request>,
+    due: watch::Receiver<Option<Due>>,
+) -> Asker<Order> {
     let own = Platform { launch_digest: [0; 48], policy: 0, tcb: 0 };
     let trusted = crate::test_support::trusted(Arc::new(crate::clock::test_clock::TestClock::default()));
-    Asker::new(Order { order }, sequencer, due, (domain(), TeeProvider::Mock, own), key(), trusted)
+    Asker::new(Order { order, delay }, sequencer, due, (domain(), TeeProvider::Mock, own), key(), trusted)
 }
 
 /// The operator enclave's key, which signs its checkpoints and its questions.

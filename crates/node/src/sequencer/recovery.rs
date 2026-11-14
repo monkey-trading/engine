@@ -281,7 +281,7 @@ impl Sequencer {
         withdrawals: mpsc::UnboundedSender<SignedWithdrawal>,
     ) -> anyhow::Result<Self> {
         log.validate_recovery(&cfg, AccountId(key.address()))?;
-        let log_check = log_check::LogCheck::recovered(cfg.log_check, &log.replayed);
+        let log_check = log_check::LogCheck::recovered(cfg.log_check, cfg.operator.address, &log.replayed);
         let ReplayedLog { log, replayed, snapshot_seq, legacy_authorizations } = log;
         let Replayed {
             origin,

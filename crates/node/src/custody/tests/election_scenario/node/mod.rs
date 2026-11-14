@@ -198,6 +198,9 @@ impl Node {
         let relayer = seat.map_or(chain.accounts[9], |seat| seat.relayer);
         let poster = post_checkpoints.then(|| setup::poster(chain, &dir, &key, relayer));
         let (due, asked) = watch::channel(None);
+        // A posting node's poster reports each approval's claim to its sequencer, which releases payouts
+        // on it, as a node's does (`checkpoints::setup`).
+        let approvals = crate::checkpoints::ApprovalRegistry::default();
         let checkpoint_parent = match &poster {
             Some(poster) => match poster.chain.state(View::Finalized).await.unwrap().checkpoint {
                 Some((seq, root)) => CheckpointParent { has_checkpoint: true, seq, root: root.parse().unwrap() },
@@ -221,7 +224,8 @@ impl Node {
             checkpoints: post_checkpoints.then_some(work_tx),
             access_policy: source.as_ref().map(|source| source.policy.clone()),
             turn_release: seat.map(|seat| seat.release),
-            log_check: seat.zip(store.clone()).map(|(seat, store)| LogCheckSetup { release: seat.release, store, due }),
+            log_check: seat.and(store.clone()).map(|store| LogCheckSetup { store, due }),
+            approval_registry: post_checkpoints.then(|| approvals.clone()),
             governance: setup::governance(chain),
             metrics: metrics.clone(),
             ..sequencer_config(&dir, manifest_tx)
@@ -298,7 +302,7 @@ impl Node {
                 }
             });
             let poster = poster.expect("a posting node builds its poster");
-            (tokio::spawn(poster.run_with_recovery(work_rx, status_tx, recovery)), status)
+            (tokio::spawn(poster.run_with_approvals(work_rx, status_tx, recovery, approvals)), status)
         });
         let api_cfg = {
             let mut api = dev_config().api;

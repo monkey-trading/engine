@@ -50,8 +50,7 @@ pub(crate) fn after_handover(store: Option<&KeyStore>, operator: AccountId, log:
 pub(super) fn setup(store: Option<&Arc<KeyStore>>) -> (Option<LogCheckSetup>, Option<watch::Receiver<Option<Due>>>) {
     let Some(store) = store else { return (None, None) };
     let (due, asking) = watch::channel(None);
-    let release = B256::from(store.release().id());
-    (Some(LogCheckSetup { release, store: store.clone(), due }), Some(asking))
+    (Some(LogCheckSetup { store: store.clone(), due }), Some(asking))
 }
 
 /// Spawns the asking for the checks `due` publishes, reading the vault `[checkpoints]` names, signing

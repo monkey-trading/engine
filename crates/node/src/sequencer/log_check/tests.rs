@@ -30,9 +30,7 @@ use crate::sequencer::{Reissue, ReissueScreening, SequencerConfig, SignedWithdra
 use crate::tee::EnclaveKey;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::MockSealer;
-use crate::test_support::{
-    access, capture_alerts_and_resolutions, dev_config, log_entries, sample_around, scratch_dir, sequencer_config,
-};
+use crate::test_support::{access, dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 
 const DIGEST: [u8; 48] = [0x44; 48];
 const CONFIG: [u8; 32] = [0xc1; 32];
@@ -226,40 +224,6 @@ fn the_target_is_the_first_checkpoint_at_or_after_the_turn_taken_whichever_is_no
     assert_eq!(check.target, Some(head_at(24)));
 }
 
-#[test]
-fn a_check_no_member_can_be_asked_for_pages_until_it_can() {
-    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
-    let mut node = Node::start("log-check-unattributable", &[other()]);
-    node.approve(1);
-    let (turn, taken_seq) = node.take_turn();
-    let complete = node.seq.log_check.takings.clone();
-    // Records that start at the `TurnTaken`, as a start from a snapshot past the verified head gives,
-    // cannot say who sequenced the commands before it.
-    let mut partial = crate::log_check::Takings::default();
-    let taken = Event::TurnTaken { turn, candidate: CANDIDATE, release: node.release };
-    partial.command(taken_seq, &[taken]);
-    node.seq.log_check.takings = partial;
-    node.seq.refresh_log_check();
-    assert!(node.due.borrow().is_none(), "a check came due over a range no record attributes");
-    let mut unattributable = || {
-        let named = |alert: &crate::test_support::Alert| alert["alert"] == "log_check_unattributable";
-        std::iter::from_fn(|| alerts.try_recv().ok()).filter(named).collect::<Vec<_>>()
-    };
-    let paged = unattributable();
-    assert_eq!(paged.len(), 1, "{paged:?}");
-    assert_eq!(paged[0]["turn"], turn.to_string());
-    node.seq.refresh_log_check();
-    assert!(unattributable().is_empty(), "the alert paged again in the same episode");
-    // Once the records reach back again, the check comes due and the episode ends.
-    node.seq.log_check.takings = complete;
-    node.seq.refresh_log_check();
-    assert!(node.due.borrow().is_some(), "the check did not come due");
-    let named = |alert: &crate::test_support::Alert| alert["alert_resolved"] == "log_check_unattributable";
-    let ended: Vec<_> = std::iter::from_fn(|| resolved.try_recv().ok()).filter(named).collect();
-    assert_eq!(ended.len(), 1, "{ended:?}");
-    assert_eq!(ended[0]["turn"], turn.to_string());
-}
-
 // ── Helpers ──
 
 /// A node whose key the log assigns a turn an hour away, in a set naming it and `others`, with the
@@ -294,7 +258,7 @@ impl Node {
         let (work, queued) = mpsc::channel(64);
         let (withdrawals, signed) = mpsc::unbounded_channel();
         let operator = Operator { address: member, ..dev_config().operator().unwrap() };
-        let setup = LogCheckSetup { release, store: store.clone(), due: due_tx };
+        let setup = LogCheckSetup { store: store.clone(), due: due_tx };
         let cfg = SequencerConfig {
             clock: clock.clone(),
             genesis: finished_genesis(&log_entries(&dir)),
@@ -463,3 +427,5 @@ fn other() -> SetMember {
 fn head_at(seq: u64) -> VerifiedHead {
     VerifiedHead { seq, link: B256::repeat_byte(seq as u8), root: B256::repeat_byte(!(seq as u8)) }
 }
+
+mod pages;
