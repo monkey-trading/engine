@@ -3,6 +3,7 @@
 
 use super::*;
 
+use engine_core::access::AccessPolicy;
 use engine_core::benchmark::BenchmarkBatch;
 use engine_core::eip712::{self, B256};
 use engine_core::election::{RegistryElection, RegistryInstallation};
@@ -388,48 +389,6 @@ fn a_node_under_another_key_takes_no_turn() {
     assert!(!commands(&log_entries(&dir)).iter().any(|cmd| matches!(cmd, Command::TurnTaken { .. })));
 }
 
-/// A staked log with rotation on, a set naming the member key mirrored, and a turn for it mirrored
-/// an hour before its boundary, which the returned clock is a second past: the log's directory, the
-/// clock, the turn and the member's key.
-pub(crate) fn turn_log(name: &str) -> (PathBuf, Arc<TestClock>, u64, AccountId) {
-    let (dir, clock) = staked_log(name, Some(FRONTIER));
-    let member = address(INSTALLED_SEED);
-    let candidate = AccountId([0xc1; 20]);
-    let mut seq = recover_installed(&dir, clock.clone(), dev_config().operator().unwrap(), None).unwrap();
-    seq.trust(sample_around(clock.as_ref())).unwrap();
-    let members = vec![SetMember { candidate, admin_key: member, weight: TokenUnits(1) }];
-    let effective_at = clock.now_ms() + NOTICE_MS;
-    let (block, chain_ref) = (12, "0x02:0".to_owned());
-    let adoption = RegistryRotationSet { set: 1, epoch: 1, effective_at, quorum: true, members, block, chain_ref };
-    let switch =
-        Command::SwitchRotation { enabled: true, election_cancelled: false, block: 11, chain_ref: "0x01:0".into() };
-    for cmd in [switch, Command::AdoptRotationSet(adoption)] {
-        let events = seq.sequence(cmd).unwrap().expect("admitted");
-        assert!(!events.iter().any(|event| matches!(event, Event::ElectionRejected { .. })), "{events:?}");
-    }
-    let turn = (0..).find(|turn| boundary(*turn).unwrap() > clock.now_ms() + NOTICE_MS + 86_400_000).unwrap();
-    let begins = boundary(turn).unwrap();
-    clock.advance(Duration::from_millis((begins - 3_600_000 - clock.now_ms()) as u64));
-    seq.trust(sample_around(clock.as_ref())).unwrap();
-    let (reason, block, chain_ref) = (TurnReason::Draw, 13, "0x03:0".to_owned());
-    let assignment = RegistryTurn { turn, set: 1, position: 0, reason, candidate, admin_key: member, block, chain_ref };
-    let events = seq.sequence(Command::AssignTurn(assignment)).unwrap().expect("admitted");
-    assert!(matches!(events.last(), Some(Event::TurnAssigned { .. })), "{events:?}");
-    seq.flush().unwrap();
-    clock.advance(Duration::from_millis((begins + 1_000 - clock.now_ms()) as u64));
-    (dir, clock, turn, member)
-}
-
-/// Recovers the log in `dir` under a config naming `operator`, whose enclave runs `release`.
-pub(crate) fn recover_turns(dir: &Path, clock: Arc<TestClock>, operator: Operator, release: B256) -> Sequencer {
-    let genesis = finished_genesis(&log_entries(dir));
-    let (manifest, _) = watch::channel(Manifest::default());
-    let base = sequencer_config(dir, manifest);
-    let cfg = SequencerConfig { clock, genesis, operator, turn_release: Some(release), ..base };
-    Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(16).0, mpsc::unbounded_channel().0)
-        .unwrap()
-}
-
 /// The address of `seed`'s signing key.
 fn address(seed: u8) -> AccountId {
     eip712::address(SigningKey::from_slice(&[seed; 32]).unwrap().verifying_key())
@@ -456,9 +415,15 @@ fn signed_by(seq: &Sequencer, clock: &TestClock, seed: u8, command: AdminCommand
 /// A log in a fresh scratch directory whose operator is the config's, with staking initialised and
 /// its staking scan's frontier at `frontier`, or none completed, and the clock its stamps run on.
 fn staked_log(name: &str, frontier: Option<Millis>) -> (PathBuf, Arc<TestClock>) {
+    staked_log_under(name, frontier, None)
+}
+
+/// `staked_log`, recording the access policy `policy`, if any.
+fn staked_log_under(name: &str, frontier: Option<Millis>, policy: Option<AccessPolicy>) -> (PathBuf, Arc<TestClock>) {
     let dir = scratch_dir(name);
     let clock = Arc::new(TestClock::at(START));
-    let mut seq = recover_installed(&dir, clock.clone(), dev_config().operator().unwrap(), None).unwrap();
+    let recorded = dev_config().operator().unwrap();
+    let mut seq = recover_installed_under(&dir, clock.clone(), recorded, None, policy).unwrap();
     seq.activate_protocol().unwrap();
     let mut genesis = dev_config().genesis;
     genesis.benchmarks.clear();
@@ -489,12 +454,28 @@ fn recover_installed(
     operator: Operator,
     registry: Option<RegistryOperator>,
 ) -> anyhow::Result<Sequencer> {
+    recover_installed_under(dir, clock, operator, registry, None)
+}
+
+/// `recover_installed`, under the access policy `access_policy`, if any.
+/// Error cases:
+/// - recovery fails (see `Sequencer::recover`)
+fn recover_installed_under(
+    dir: &Path,
+    clock: Arc<TestClock>,
+    operator: Operator,
+    registry: Option<RegistryOperator>,
+    access_policy: Option<AccessPolicy>,
+) -> anyhow::Result<Sequencer> {
     let genesis = finished_genesis(&log_entries(dir));
     let (manifest, _) = watch::channel(Manifest::default());
-    let cfg =
-        SequencerConfig { clock, genesis, operator, registry_operator: registry, ..sequencer_config(dir, manifest) };
+    let registry_operator = registry;
+    let base = sequencer_config(dir, manifest);
+    let cfg = SequencerConfig { clock, genesis, operator, registry_operator, access_policy, ..base };
     Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(16).0, mpsc::unbounded_channel().0)
 }
 
 mod governance;
 mod hold;
+mod turn_log;
+pub(crate) use turn_log::{recover_turns, turn_log, turn_log_under};

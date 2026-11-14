@@ -344,6 +344,7 @@ impl Sequencer {
         self.progress.checkpoints += 1;
         self.store_snapshot(cp)?;
         (self.last_checkpoint, self.dedup_checkpoint_seq) = (Some(seq), Some(seq));
+        self.log_check_checkpointed(seq, root);
         self.metrics.last_checkpoint_seconds.set(self.last_ts as f64 / 1000.0);
         Ok(())
     }

@@ -368,6 +368,25 @@ before it logs `TurnTaken`, so no copy is sealed after it has stopped for a hand
 its enclave's `TurnTaken` to the end of its turn, an incumbent past its turn earns nothing, and from
 V53 the operator in office before the first turn earns nothing past the moment that turn applies, its
 boundary or its mirror when later;
+while rotation is on and a turn is in effect whose set names two or more members, the enclave signs a
+withdrawal only for an approval at or below the head of the log the last boundary's check verified, a
+check being another member's verification of the log through a checkpoint: at a handover the
+successor's own replay of the log through the checkpoint it was handed, and at a boundary its holder
+holds on through an attested verification, bound to the boundary, the turn assignment and the vault's
+signer epoch, from a member of the turn's order whose release sequenced none of the commands since the
+last verified head, as the log's `TurnTaken` commands record, asked first to last; an approval made
+during a turn therefore waits for the next boundary, a day at most plus the switch, payouts stay
+anchored to the roots the vault accepted as before, a member of the set can no longer be paid on a
+branch no other member holds, and the verified head is sealed with the keys, so a host that restores an
+older copy only delays payouts; a check binds a release, not a host, so a host that also runs another
+member's release can feed that enclave the branch it withholds and have it verified; the rule bounds
+neither delay nor censorship: a host that keeps its node from asking, or members that do not answer,
+hold payouts until one answers or the next handover (`log_check_pending` pages), and a boundary whose
+turn nobody drew logs no `TurnTaken`, so approvals wait for the next drawn turn; commands other than
+withdrawals stay exposed to a branch the host withholds for one heartbeat interval once members confirm
+the operator's log heads, which is not built yet, and until then for as long as the log-head rollback
+bound above allows; with a one-member set, rotation off, or no turn in effect, only the posted roots
+gate payouts;
 promotion over turns, which is the liveness rule's, is not built yet, so a failed member holds its
 turn until the next boundary and the governance fallback (rotation off and `installOperator` once the
 drawn turns end) applies; from V56, while rotation is on, the governed parameters, listings,

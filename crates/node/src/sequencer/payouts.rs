@@ -226,6 +226,11 @@ impl Sequencer {
             if proof.seq > posted || payout.approval.approved_seq > posted {
                 break;
             }
+            // With rotation on and two or more members in the turn's set, a signature waits for the
+            // boundary's log check to verify the log through its approval (`log_check`).
+            if !self.log_check.covers(&self.engine, payout.approval.approved_seq) {
+                break;
+            }
             ensure!(
                 proof.seq != posted
                     || evidence.checkpoint_root.as_ref().is_some_and(|root| *root == proof.root.to_string()),
@@ -329,6 +334,7 @@ impl Sequencer {
                 nonce,
                 amount: payout.approval.amount,
                 withdrawal: payout.latest.clone(),
+                check: self.log_check_wait(payout.approval.approved_seq),
             })
             .collect::<Vec<_>>();
         let next = held.next().and(payouts.last().map(|last| last.nonce));

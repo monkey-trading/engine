@@ -57,6 +57,7 @@ async fn the_cursor_moves_only_after_the_log_is_synced_past_the_credits() {
                 Request::CheckpointStatus { .. } => unreachable!("no checkpoint worker in this test"),
                 Request::WatchBenchmarkSchedule(_) => unreachable!("only the API watches benchmark schedules"),
                 Request::HouseState(_) => unreachable!("only the API reads the house state"),
+                Request::LogChecked { .. } => unreachable!("only the operator's log check gives one"),
                 Request::ReissueWithdrawal { .. } => unreachable!("only the API asks for a reissue"),
                 Request::AccountPayouts { .. }
                 | Request::EntitlementClaim { .. }

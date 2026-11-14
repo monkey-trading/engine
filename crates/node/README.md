@@ -26,6 +26,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   or is not the config's, and one whose genesis no current config can give (rules newer than the
   log refuse it at load), which needs a fresh log
 - Signed checkpoints and withdrawals, bound to the chain id and vault, from an attested key
+- While rotation is on and a daily turn is in effect whose rotation set names two or more members,
+  withdrawals signed only through the head of the log the last boundary's check verified: the
+  successor's own at a handover, and at a boundary the operator holds on through, an attested
+  verification it asks the turn's order for, from a release that sequenced none of the range
 - Strict checkpoint signature verification in replay and recovery, with explicit domains for early logs
 - Command-origin seals for new entries, checked against the configured deployment and recovery signer;
   historical unsigned commands require an authorized covering checkpoint before writable recovery. A
@@ -261,7 +265,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/node/handover.rs` — the registry's rotation switch checked against the config at start, and the
   incumbent's election watcher
 - `src/node/keys.rs` — this start's enclave keys and their attestation, and the check that the log
-  reaches the final checkpoint of the release that handed the keys over; a member sets its copy
+  reaches the final checkpoint of the release that handed the keys over, sealing the boundary's log
+  check that start makes in the same write; a member sets its copy
   aside (`<log_dir>.aside`, `node::member::before_whole_log_take`) before any whole-log take, a
   turn's or an election's, since its copy's segment files are its own writer's
 - `src/node/keys/platform.rs` — the platform a start runs on: the attestor its quotes come from and
@@ -280,9 +285,15 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   that falls back to the whole log included (as are a member's replica builds and the replays of a
   cold handover in `handover::take` and `sync_predecessor_log`); `src/node/recovery/tests.rs`
   counts both
+- `src/node/log_check.rs` — a node's part in the boundary's log check: the check the first start after
+  a handover makes and seals (none for an upgrade's `--predecessor`, which carries the predecessor's
+  verified head), the sequencer's setup with the sealed keys of a node that takes turns, and its
+  supervised asking task
 - `src/node/member.rs` — a rotation-set member's life: following the operator in effect between its
-  turns, taking a turn with the tail past its copy's tip, starting from the replica, and following
-  its successor once it hands over, a shutdown signal ending a replica's build at its next entry;
+  turns, answering the operator's log checks on its handover endpoint meanwhile
+  (`Member::until_turn_answering`), taking a turn with the tail past its copy's tip, starting from the
+  replica, and following its successor once it hands over, a shutdown signal ending a replica's build
+  at its next entry;
   `src/node/member/tests.rs` covers the loop between holdings, the metrics listener answering
   through it and through a held future, and the process's own tasks running through it
 - `src/node/member/turn.rs` — `Member::until_turn`: what the member holds at trusted time, following
@@ -330,7 +341,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
 - `src/sequencer/claims.rs` — MONKEY and USDC claim proofs retained for recently asking accounts at each new checkpoint, so one is served at the checkpoint the vault accepted
-- `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, reissue requests, and the account payouts read
+- `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, reissue requests, the account payouts read, and the boundary's log check's hold on each release
+- `src/sequencer/log_check.rs` — the sequencer's side of the boundary's log check: the verified head, restored from the sealed keys only when the log holds its checkpoint, the log's `TurnTaken` records attributing each range, the check due once this node holds a turn on that its verified head does not reach (with the checkpoint it writes after its `TurnTaken`), a member's verification taken only for the check due and from a release outside its range, and the boundary an unpaid approval waits for; `src/sequencer/log_check/tests.rs` covers a held turn's check, its target whether the checkpoint or the `TurnTaken` is noted first, a one-member set, rotation off, a reissue on a signer change and on request, a restart, and a handover's check
 - `src/sequencer/payout_schedule.rs` — complete unpaid approval order, bounded epoch and requested reissue scheduling, and the hold behind unloaded recovered approvals
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
 - `src/sequencer/payout_tests/` — the account payouts read across signing, reissue, payment and an unfinished restart load, paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
@@ -692,8 +704,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   found only for the domain, TLS key, and ACME directory it was issued for, and what the host can do
   with its file; `src/tee/certificates/tests.rs` covers it
 - `src/tee/keys.rs` — the key set a restart keeps and an upgrade hands over: the signing key, the
-  TLS key, the ACME account, and the predecessor's final checkpoint, and an earlier release's
-  certificate, read but never handed over
+  TLS key, the ACME account, the predecessor's final checkpoint, and the head the last boundary's log
+  check verified, and an earlier release's certificate, read but never handed over
 - `src/tee/sealing.rs` — the sealed key file, AES-256-GCM under the platform's derived key, the
   reseal into a daily turn's new generation, and the mock TEE's public stand-in for sealing;
   `src/tee/sealing/tests.rs` covers it
@@ -903,7 +915,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/history.rs` — accepted history from the finalized anchor, the signed-parent chain, and signer epochs
 - `src/checkpoints/lifecycle_tests/` — paid cash reconciliation, bounded claim polling, rotated authorities, and the vault's pause and retired signer observed, alerted and finalized
 - `src/checkpoints/reconciliation.rs` — finalized collateral health: shortfalls, deposit totals, payouts, surpluses, the credit deadline, and the vault's halt
-- `src/checkpoints/rpc/schedule.rs` — the daily turn the vault's registry's schedule names at a time, read at a finalized block
+- `src/checkpoints/rpc/schedule.rs` — the daily turn the vault's registry's schedule names at a time, and a drawn turn's order (each distinct member its positions pick, with its registration), read at a finalized block
 - `src/checkpoints/rpc/takeover.rs` — the standby's takeover signal, read at one finalized block
 - `src/checkpoints/rpc/observation.rs` — same-block balance, epoch, paid total, and bounded claim reads, and whether a claim can prove against a checkpoint
 - `src/checkpoints/rpc/authority.rs` — accepted historical signer identities for rotated nonce journals
@@ -980,6 +992,21 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   pending one is awaited rather than replaced, and the lock is held inside each blocking write
 - `src/log_heads/read.rs` — the latest posted log head, read for a member that follows the operator
   in effect
+- `src/log_check/mod.rs` — the boundary's log check: the verified head, the statement a member's
+  quote binds and its report data, the gate's condition (rotation on and a turn in effect whose set
+  names two or more members), the log's `TurnTaken` records that attribute a range to the releases
+  that sequenced it, and the node's own check at a handover; `src/log_check/tests.rs` covers the attribution, the
+  own check, a snapshot start's release in office, and the report data
+- `src/log_check/ask.rs` — the operator's asking: the members of the turn's order, first to last,
+  but its own candidate, those with no handover endpoint and releases in the range, each asked with a
+  fresh challenge, and a member's answer admitted only from the release it registered, under a
+  policy and TCB no weaker than its own, binding what was asked, `log_check_pending` paging a check
+  due for 30 minutes; `src/log_check/ask/tests.rs` covers the admission, and the order: the first
+  qualifying member, then the next when the first has not verified the checkpoint
+- `src/log_check/answer.rs` — a following member's answers on its handover endpoint, from the
+  checkpoints its replica verified, with the turn assignment taken at each;
+  `src/log_check/answer/tests.rs` covers what it attests and refuses, and the endpoint freed once it
+  stops
 - `src/log_heads/setup.rs` — reading the posted head before the log replays (for a member, before it
   connects for its turn), so the startup gate
   binds to the link the replay captures at the posted seq (seq-only at or under an attested
@@ -1015,23 +1042,30 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   its head
 - `src/custody/tests/election_scenario/node/mod.rs` — the scenario's sequencer on a test clock,
   custody watcher, and API, and a daily turn member's seat: its own operator key and turn release,
-  its API over TLS at its registered hostname, and a start from a member's replica; `node/setup.rs`
-  holds the custody and checkpoint sections, and `node/stamps.rs` the wall time of a seat's last
-  command and its `TurnTaken`
+  its API over TLS at its registered hostname, its checkpoints posted, its log check with its sealed
+  keys and its asking, and a start from a member's replica anchored at the vault's checkpoint;
+  `node/setup.rs` holds the custody and checkpoint sections and a seat's asking, `node/http.rs` the
+  admin route, GETs and POSTs, and `node/stamps.rs` the wall time of a seat's last command and its
+  `TurnTaken`
 - `src/custody/tests/election_scenario/parameter_votes.rs` — the parameter votes dev scenario
 - `src/custody/tests/election_scenario/daily_turns.rs` — the daily rotation dev scenario
   `scripts/dev-daily-rotation.sh` runs: a rotation set of three following the operator in effect
   under load, five turns drawn from relayed seeds, and at each boundary the turn's key, the tail
   handover while finality trails, the switch's window, `TurnTaken`, the time in office and
-  `/v1/operator` checked, a stream client following each holder, then the log replayed, and an
-  installation of the last turn's own candidate ending the turns
+  `/v1/operator` checked, a stream client following each holder, the boundary's log check leg, then
+  the log replayed, and an installation of the last turn's own candidate ending the turns
+  (`daily_turns/install.rs`)
+- `src/custody/tests/election_scenario/daily_turns/payouts.rs` — the boundary's log check leg: a
+  withdrawal approved during A's turn pays only after B's handover, a second approved during B's
+  turn waits for the boundary B holds on through, where a verification from B's own release is
+  refused and C's, with A first in the order down, releases it
 - `src/custody/tests/election_scenario/daily_turns/seat.rs` — a member's wait for its turns between
   its holdings, and its node while it holds a turn: sealed keys, the handover listener, the stop a
   handover asks for, and a start from the replica
 - `src/custody/tests/election_scenario/daily_turns/switch.rs` — one switch: the window on the wall
   clock, the tail's bytes against the incumbent's log, no whole-log replay, counted in the member's
   own metrics, which its successor node's start shares, and the incumbent
-  following its successor
+  following its successor; a member's wait stopped and started again from boot
 - `src/custody/tests/election_scenario/daily_turns/load.rs` — the load of signed BTC-USD orders on
   the node holding the turn, and the stream client following the operator in effect
 - `src/custody/tests/election_scenario/daily_turns/seeds.rs` — the scenario's seed source over the

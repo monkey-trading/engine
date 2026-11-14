@@ -137,7 +137,7 @@ impl Member {
         let sealer = Box::new(MockSealer { launch_digest: self.digest });
         let mut waiting = Waiting::on_clock(cfg, metrics, sealer, OnClock(clock));
         loop {
-            match waiting.until_turn().await.expect("a member's wait for its turn") {
+            match waiting.until_turn_answering().await.expect("a member's wait for its turn") {
                 Turn::Replica(start) => {
                     taken.send((index, start)).await.unwrap();
                     resume.notified().await;
@@ -191,11 +191,13 @@ impl Holder {
         (store, source): (KeyStore, Option<Source>),
         clock: Arc<TestClock>,
     ) -> Self {
-        let holding = &members[member];
+        let (holding, store) = (&members[member], Arc::new(store));
         let key = Arc::new(store.keys().enclave_key().unwrap());
-        let seat = Seat { operator: holding.operator(), release: B256::from(store.release().id()), api: holding.api };
-        let node =
-            Node::start_seated(chain, key, (seat, Arc::new(Metrics::new())), holding.dir.clone(), clock, source).await;
+        let release = B256::from(store.release().id());
+        let seat =
+            Seat { operator: holding.operator(), release, api: holding.api, relayer: chain.accounts[5 + member] };
+        let seated = (seat, Arc::new(Metrics::new()), store.clone());
+        let node = Node::start_seated(chain, key, seated, holding.dir.clone(), clock, source).await;
         Self::listen(chain, holding, member, store, node).await
     }
 
@@ -210,16 +212,18 @@ impl Holder {
     ) -> (Self, Moved) {
         let holding = &members[member];
         let Start { replica, store, moved, .. } = *start;
+        let store = Arc::new(store);
         let key = Arc::new(store.keys().enclave_key().unwrap());
-        let seat = Seat { operator: holding.operator(), release: B256::from(store.release().id()), api: holding.api };
-        let node =
-            Node::start_from_replica(chain, key, (seat, metrics), (holding.dir.clone(), clock), replica, source).await;
+        let release = B256::from(store.release().id());
+        let seat =
+            Seat { operator: holding.operator(), release, api: holding.api, relayer: chain.accounts[5 + member] };
+        let seated = (seat, metrics, store.clone());
+        let node = Node::start_from_replica(chain, key, seated, (holding.dir.clone(), clock), replica, source).await;
         (Self::listen(chain, holding, member, store, node).await, moved)
     }
 
     /// Binds `holding`'s handover listener over `node` with the keys in `store`.
-    async fn listen(chain: &Chain, holding: &Member, member: usize, store: KeyStore, node: Node) -> Self {
-        let store = Arc::new(store);
+    async fn listen(chain: &Chain, holding: &Member, member: usize, store: Arc<KeyStore>, node: Node) -> Self {
         let key = Arc::new(store.keys().enclave_key().unwrap());
         let signing = node.handover.as_ref().expect("a seated node follows its stream").1.clone();
         let (drain, drains) = mpsc::channel(1);

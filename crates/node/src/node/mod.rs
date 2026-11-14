@@ -27,6 +27,7 @@ mod shutdown;
 use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
 mod handover;
 mod keys;
+pub(crate) mod log_check;
 mod marks;
 pub(crate) mod member;
 use member::{Ended, Handed};
@@ -165,7 +166,7 @@ async fn serve_node(
     let replica = replica.zip(ready.as_ref());
     let Recovered { mut log, history: history_plan, pending: log_heads_pending, anchor, stats } =
         recovery::recover(cfg, &key, checkpoint_setup.as_ref(), &marks, replica, &metrics).await?;
-    keys::check_predecessor_head(store.as_deref(), log.last_seq(), log.last_checkpoint())
+    log_check::after_handover(store.as_deref(), start, &log)
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // Refuses a log the on-chain posted head does not hold (Critical `log_rollback` names the range).
     let log_heads_setup = crate::log_heads::setup::startup(log_heads_pending, &log)?;
@@ -193,6 +194,7 @@ async fn serve_node(
     let turn_store = store.clone().filter(|_| cfg.operator.rotation_enabled);
     let turn_vault = if turn_store.is_some() { crate::handover::vault_reader(cfg)? } else { None };
     let (turn_generations, generations) = watch::channel(Default::default());
+    let (log_check_setup, log_check_due) = log_check::setup(turn_store.as_ref());
     let mut seq_cfg = SequencerConfig {
         access_policy: cfg.access.as_ref().map(crate::config::AccessSection::policy),
         log_dir: &cfg.node.log_dir,
@@ -222,6 +224,7 @@ async fn serve_node(
             .clone()
             .filter(|_| turn_vault.is_some())
             .map(|store| TurnSealing::new(store, generations)),
+        log_check: log_check_setup,
         governance: cfg
             .custody
             .evm
@@ -309,6 +312,7 @@ async fn serve_node(
     if let Some(setup) = log_heads_setup {
         tasks.spawn(setup.spawn(tx.clone(), trusted()));
     }
+    log_check::spawn(cfg, &mut tasks, (log_check_due, turn_store.as_ref()), &tx, trusted())?;
 
     // A successor's request stops sequencing through `drain_rx`, once the vault approves it; the
     // stop itself goes to the sequencer as a final-checkpoint request, which refuses while the

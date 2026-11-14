@@ -107,6 +107,7 @@ fn late_sequencer(delay: Duration) -> (mpsc::Sender<Request>, mpsc::UnboundedRec
                 Request::CheckpointStatus { .. } => unreachable!("no checkpoint worker in this test"),
                 Request::WatchBenchmarkSchedule(_) => unreachable!("only the API watches benchmark schedules"),
                 Request::HouseState(_) => unreachable!("only the API reads the house state"),
+                Request::LogChecked { .. } => unreachable!("only the operator's log check gives one"),
                 Request::ReissueWithdrawal { .. } => unreachable!("only the API asks for a reissue"),
                 Request::AccountPayouts { .. }
                 | Request::EntitlementClaim { .. }

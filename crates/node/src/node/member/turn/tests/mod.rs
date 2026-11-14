@@ -270,6 +270,8 @@ impl Fixture {
             handed: None,
             episodes: Default::default(),
             stopping: Default::default(),
+            checked: Default::default(),
+            answering: None,
         }
     }
 

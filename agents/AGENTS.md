@@ -223,6 +223,17 @@ an index: load only the rule whose hint matches the current action.
   (`log/command_seal.rs`, `sequencer/origin.rs`), bounded FIFO reissue scheduling
   (`sequencer/payout_schedule.rs`), public queue/account-position reads, and an account's unpaid
   payouts with their latest authorizations (`api/payouts.rs`, answered from the sequencer's memory).
+  From #594, the boundary's log check (`log_check/`, `sequencer/log_check.rs`, `node/log_check.rs`):
+  while rotation is on and a daily turn is in effect whose set names two or more members, a withdrawal is signed only for
+  an approval at or below the head the last check verified, #14's posted root still applying; at a
+  handover the check is the successor's own, sealed with the keys as its first start passes the
+  predecessor's head, and at a boundary the operator holds on through, its node writes a checkpoint
+  after `TurnTaken` and asks the turn's order (`turn_order`), first to last, for a quote-bound
+  verification of it from a release that sequenced none of the range since the last verified head,
+  as the log's `TurnTaken` commands record (Warning `log_check_pending` after 30 minutes), which a
+  following member answers on its handover endpoint from the checkpoints its replica verified; the
+  verified head is sealed with the keys, restored only when the log holds its checkpoint, carried by
+  an upgrade, and `/v1/accounts/{a}/payouts` names the boundary each waiting approval's check is at.
   With `[log_heads]` (#541), `log_heads/` posts the enclave's newest released `(seq, prefix)` — the
   cumulative command-prefix digest, which checkpoints do not reset, and every post names the
   previously accepted head it extends — the
@@ -512,8 +523,11 @@ an index: load only the rule whose hint matches the current action.
   replica with no whole-log replay within a wall-clock window budget it prints, and the incumbent
   follows it, a stream client resumes on each successor's hostname against the same enclave, the
   member's first command is `TurnTaken` and its time in office starts there, `/v1/operator` shows the
-  sets and turns, and the last member's log replays; then an installation of the last turn's own
-  candidate ends the turns;
+  sets and turns, and the last member's log replays; in between, a withdrawal approved during A's turn
+  pays only once B's handover has verified A's log, and one approved during B's turn, with B drawn
+  again, waits for that boundary's check, where a verification from B's own release is refused and
+  C's, with A first in the turn's order down, releases it with no handover; then an installation of
+  the last turn's own candidate ends the turns;
   `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
   contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
   relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped
@@ -833,10 +847,11 @@ Run from the repo root:
   operator-share harness's in-process nodes on a test clock, against a custody Anvil finalising two
   blocks behind its head and the seed relay fixture's stand-in Ethereum; three members following the
   operator in effect under a load generator, five daily turns, each switch a tail handover through
-  the real listener and the member's own wait (`Member::until_turn`), its window printed against its
-  budget, the admin keys, `TurnTaken`, the time in office and `/v1/operator` checked at each
-  boundary, a stream client following each holder, then the log replayed and the turns ended by an
-  installation)
+  the real listener and the member's own wait (`Member::until_turn_answering`), its window printed
+  against its budget, the admin keys, `TurnTaken`, the time in office and `/v1/operator` checked at
+  each boundary, a stream client following each holder, the holders posting checkpoints and two
+  withdrawals claimed through the vault after the boundary's log check, then the log replayed and the
+  turns ended by an installation)
 - Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens
   read through the custody quorum into `/v1/operators`, the closed epochs in `/v1/monkey/distributions`
   across a delegation and a restart, and each saved answer verified with `engine verify-response`)

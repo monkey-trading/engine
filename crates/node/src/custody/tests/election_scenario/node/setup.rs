@@ -5,19 +5,30 @@ use std::time::Duration;
 use engine_core::Fixed;
 use engine_core::staking::StakingConfig;
 use engine_core::types::{AccountId, Millis};
+use tokio::sync::{mpsc, watch};
 
 use super::super::chain::Chain;
 use super::super::{COOLDOWN_SECS, DISTRIBUTION_EPOCH_SECS, T0_SECS};
 use crate::checkpoints::{CheckpointRpc, Poster};
-use crate::config::{CheckpointSection, CustodySection, FinalityTag, Genesis, RpcProviderSection};
+use crate::config::{CheckpointSection, CustodySection, FinalityTag, Genesis, RpcProviderSection, TeeProvider};
 use crate::log::CheckpointDomain;
+use crate::log_check::Due;
+use crate::log_check::ask::Asker;
+use crate::sequencer::Request;
 use crate::tee::EnclaveKey;
+use crate::tee::sealing::KeyStore;
+use crate::trusted_time::TrustedClock;
 
-/// The checkpoint worker posting to the chain's vault at the latest block.
-pub(super) fn poster(chain: &Chain, dir: &std::path::Path, key: &EnclaveKey) -> Poster<CheckpointRpc> {
+/// The checkpoint worker posting to the chain's vault at the latest block from `relayer`.
+pub(super) fn poster(
+    chain: &Chain,
+    dir: &std::path::Path,
+    key: &EnclaveKey,
+    relayer: alloy::primitives::Address,
+) -> Poster<CheckpointRpc> {
     let section: CheckpointSection = toml::from_str(&format!(
-        "rpc_url = {:?}\nrelayer = '{:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'",
-        chain.url, chain.accounts[9]
+        "rpc_url = {:?}\nrelayer = '{relayer:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'",
+        chain.url
     ))
     .unwrap();
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(chain.vault.into()) };
@@ -32,6 +43,25 @@ pub(super) fn poster(chain: &Chain, dir: &std::path::Path, key: &EnclaveKey) -> 
         post_withheld: Default::default(),
         relayer_gas: None,
     }
+}
+
+/// A seat's asking for the boundary's log check: the vault read at the chain's release tag, quotes
+/// verified against the mock TEE's platform `store` seals under, at `trusted` time.
+pub(super) fn asker(
+    chain: &Chain,
+    sequencer: &mpsc::Sender<Request>,
+    due: watch::Receiver<Option<Due>>,
+    store: &KeyStore,
+    trusted: TrustedClock,
+) -> Asker<CheckpointRpc> {
+    let section: CheckpointSection = toml::from_str(&format!(
+        "rpc_url = {:?}\nrelayer = '{:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'",
+        chain.url, chain.accounts[9]
+    ))
+    .unwrap();
+    let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(chain.vault.into()) };
+    let vault = CheckpointRpc::read_only(&section, domain, chain.usdc, chain.release_tag, 0).unwrap();
+    Asker::new(vault, sequencer, due, (domain, TeeProvider::Mock, store.platform()), trusted)
 }
 
 /// The governance the chain's vote contract runs, when it has one.

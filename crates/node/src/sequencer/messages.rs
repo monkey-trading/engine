@@ -62,6 +62,13 @@ pub enum Request {
     },
     /// The parameters and latest checkpoint, answered once every prior request is flushed.
     HouseState(oneshot::Sender<HouseState>),
+    /// A member's verification of `head` its node admitted for the boundary's log check, from
+    /// `release`: answered whether it was taken as the verified head (`Sequencer::log_checked`).
+    LogChecked {
+        head: crate::log_check::VerifiedHead,
+        release: B256,
+        reply: oneshot::Sender<bool>,
+    },
     /// A trusted time sample from the trusted time task.
     TimeSample(Sample),
     /// Answered with the last seq once every command before it is synced, so it survives power loss.
@@ -164,6 +171,17 @@ pub struct PayoutView {
     pub nonce: u64,
     pub amount: Fixed,
     pub withdrawal: Option<SignedWithdrawal>,
+    /// The boundary whose log check the approval waits for, while the last check has not verified
+    /// the log through it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check: Option<CheckWait>,
+}
+
+/// The daily turn at whose boundary a log check will cover an approval, and when that boundary is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct CheckWait {
+    pub turn: u64,
+    pub boundary_ms: engine_core::types::Millis,
 }
 
 /// What `/v1/stream` publishes: each log entry at its offset, in offset order. A standby follower

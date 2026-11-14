@@ -16,6 +16,7 @@ use tracing::info;
 use crate::checkpoints::CheckpointRpc;
 use crate::config::{NodeConfig, TimeSection};
 use crate::history::HistoryPlan;
+use crate::log_check::answer::{Answering, CheckedHeads};
 use crate::log_heads::{Head, PostedHeads};
 use crate::metrics::Metrics;
 use crate::node::keys::{KeyStart, attestor_for, sealer};
@@ -177,6 +178,11 @@ pub(crate) struct Member<'a, C = CheckpointRpc, H = PostedHeads, T = Roughtime> 
     /// Set by a shutdown signal while it waits, which a replica's build, holding its future while it
     /// replays, checks at every entry.
     stopping: Arc<AtomicBool>,
+    /// The checkpoints its replica verified, kept across rebuilds, which its log check answers read.
+    checked: CheckedHeads,
+    /// Its answers to the operator's log checks while it follows, without `[tee.sealing.handover]`
+    /// none.
+    answering: Option<Arc<Answering>>,
 }
 
 impl<'a> Member<'a> {
@@ -189,6 +195,9 @@ impl<'a> Member<'a> {
         let release = Release { launch_digest: sealer.platform()?.launch_digest, config_sha256: cfg.file_sha256 };
         let attestor = attestor_for(cfg.tee.provider, &GuestClock::default())?;
         let (heads, time) = (PostedHeads::new(cfg)?, Roughtime(cfg.time.clone()));
+        let checked = CheckedHeads::default();
+        let quoting = attestor_for(cfg.tee.provider, &GuestClock::default())?;
+        let answering = Answering::new(cfg, quoting, sealer.platform()?, checked.clone())?.map(Arc::new);
         Ok(Self {
             cfg,
             metrics,
@@ -203,6 +212,8 @@ impl<'a> Member<'a> {
             handed: None,
             episodes: Default::default(),
             stopping: Arc::default(),
+            checked,
+            answering,
         })
     }
 }
@@ -218,6 +229,9 @@ impl<'a, T: Sampling> Member<'a, CheckpointRpc, PostedHeads, T> {
         let attestor: Box<dyn Attestor> = Box::new(crate::tee::MockAttestor);
         let start = KeyStart { mock_launch_digest: Some(release.launch_digest), ..Default::default() };
         let episodes = Default::default();
+        let checked = CheckedHeads::default();
+        let platform = sealer.platform().unwrap();
+        let answering = Answering::new(cfg, Box::new(crate::tee::MockAttestor), platform, checked.clone()).unwrap();
         Self {
             cfg,
             metrics,
@@ -232,6 +246,8 @@ impl<'a, T: Sampling> Member<'a, CheckpointRpc, PostedHeads, T> {
             handed: None,
             episodes,
             stopping: Arc::default(),
+            checked,
+            answering: answering.map(Arc::new),
         }
     }
 }
@@ -255,11 +271,23 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
             }
         });
         tokio::select! {
-            turn = self.until_turn() => turn,
+            turn = self.until_turn_answering() => turn,
             signal = crate::node::shutdown::shutdown_signal() => signal.map(|()| {
                 info!("shutting down while following");
                 Turn::Stop
             }),
+        }
+    }
+
+    /// `until_turn`, answering the operator's log checks on the handover endpoint meanwhile
+    /// (`log_check::answer`); the endpoint is free again once it returns.
+    /// Error cases:
+    /// - see `until_turn`
+    pub(crate) async fn until_turn_answering(&mut self) -> anyhow::Result<Turn> {
+        let Some(answering) = self.answering.clone() else { return self.until_turn().await };
+        tokio::select! {
+            turn = self.until_turn() => turn,
+            never = answering.run() => match never {},
         }
     }
 }

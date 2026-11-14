@@ -40,6 +40,8 @@ pub(crate) struct LiveReplay {
     links: VecDeque<Link>,
     /// The newest posted log head the replica held when it passed, kept past `links`.
     pinned: Option<Link>,
+    /// Where a member's replica records each checkpoint it verifies, for its log check answers.
+    checked: Option<crate::log_check::answer::CheckedHeads>,
 }
 
 impl LiveReplay {
@@ -53,7 +55,14 @@ impl LiveReplay {
             complete: true,
             links: VecDeque::new(),
             pinned: None,
+            checked: None,
         }
+    }
+
+    /// Has the replica record each checkpoint it verifies, with the turn assignment taken there, into
+    /// `checked`.
+    pub(crate) fn record_checked_with(&mut self, checked: crate::log_check::answer::CheckedHeads) {
+        self.checked = Some(checked);
     }
 
     /// Has the replica record every command it applies into `stats`, which starts over.
@@ -90,6 +99,13 @@ impl LiveReplay {
                 // A second checkpoint at one seq extends no outstanding chain in recovery's replay
                 // either: the first stays.
                 self.checkpoints.entry(checkpoint.seq).or_insert((work, engine.now()));
+                if let Some(checked) = &self.checked {
+                    let link = B256::from(self.replay.command_prefix);
+                    let head =
+                        crate::log_check::VerifiedHead { seq: checkpoint.seq, link, root: checkpoint.root.parse()? };
+                    let taken = engine.daily_turns().taken.map(|taken| (taken.turn, taken.position));
+                    checked.record(crate::log_check::answer::Checked { head, taken });
+                }
                 if self.checkpoints.len() > RETAINED_CHECKPOINTS {
                     self.checkpoints.pop_first();
                     self.complete = false;

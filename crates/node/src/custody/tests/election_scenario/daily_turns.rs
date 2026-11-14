@@ -18,7 +18,9 @@
 //! `tls::acme::tests::sealed` checks that a member's next turn serves the certificate it holds.
 
 mod checks;
+mod install;
 mod load;
+mod payouts;
 mod seat;
 mod seeds;
 mod switch;
@@ -44,12 +46,13 @@ use super::node::Node;
 use super::{DIGEST_A, DIGEST_B, FINALITY_MARGIN_SECS, T0_SECS, address, monkey};
 use crate::checkpoints::scenario::deploy;
 use crate::checkpoints::staking_scenario::access::Source;
-use crate::checkpoints::{CheckpointChain, View};
 use crate::clock::test_clock::TestClock;
 use crate::sequencer::replay_path;
 use crate::tee::keys::KeySet;
 use checks::{credited, logged_commands, office, operator_view, turn_taken};
+use install::installation_ends_the_turns;
 use load::Client;
+use payouts::Leg;
 use seat::{Holder, Member};
 use seeds::Seeds;
 use switch::{Members, Switched, switch};
@@ -158,6 +161,7 @@ async fn scenario() {
     // copies from its archive; the load runs on A's node, and a stream client follows the operator
     // in effect.
     load::fund(&chain, &holder.node).await;
+    let mut leg = Leg::start(&chain, &holder.node).await;
     let mut shared = Members::start(&chain, &members, &holder, &clock);
     shared.loaded().await;
     shared.following(1, 1).await;
@@ -245,12 +249,16 @@ async fn scenario() {
         holder.node.submit(Command::Tick).await;
         let (before, before_at) = office(&holder.node).await;
         let incumbent = holder.member;
+        leg.before_boundary(&chain, turn, (&holder, member), &shared).await;
 
         // A minute past the boundary one block past it is mined, and the incumbent's next command
         // hands the operator key to the turn's. The incumbent held the office until its turn ended,
         // or, before any turn, until this one applied (`V53`).
         holder.node.advance_to(start + 60_000).await;
         chain.mine_at(start_secs + 30).await;
+        // The holders post checkpoints: their posts wait for a block until the switch's checks of
+        // the finalised view are done.
+        chain.automine(false).await;
         holder.node.submit(Command::Tick).await;
         let (at_boundary, _) = office(&holder.node).await;
         let incumbent_account = AccountId(members[incumbent].candidate.into());
@@ -307,6 +315,9 @@ async fn scenario() {
             Some(head)
         };
 
+        chain.automine(true).await;
+        leg.after_boundary(&chain, turn, (&holder, &members), &mut shared).await;
+
         // The turn is taken under its member's release, and its key alone signs admin commands.
         let taken = holder.node.query(|e| e.daily_turns().taken).await.expect("the turn is taken");
         assert_eq!((taken.turn, taken.release), (turn, B256::from(members[member].release().id())));
@@ -332,7 +343,9 @@ async fn scenario() {
 
         // The next turn is drawn at its deadline, this boundary, once the handover is done.
         if k + 1 < TURNS {
-            (next, next_generation) = draw(&chain, &holder.node, &members, turn + 1, start_secs + 180, next_seed).await;
+            // The holders' posts mine blocks of their own: the draw lands in the next block after them.
+            let at = (start_secs + 180).max(chain.latest_timestamp().await + 1);
+            (next, next_generation) = draw(&chain, &holder.node, &members, turn + 1, at, next_seed).await;
             if next == member {
                 assert_eq!(
                     next_generation,
@@ -424,36 +437,6 @@ async fn scenario() {
 
     // 7. The governance fallback ends the turns, even when it installs the last turn's own candidate.
     installation_ends_the_turns(&mut chain, &members[last]).await;
-}
-
-/// Turns rotation off, waits out the last drawn turn, and has the timelock install `member`, the last
-/// turn's candidate, under another release: once finalised the schedule names no turn at any time,
-/// so neither side of a handover, nor a start, takes the old turn's release and generation.
-async fn installation_ends_the_turns(chain: &mut Chain, member: &Member) {
-    let vault = crate::handover::vault_reader(&member.config(chain)).unwrap().expect("[checkpoints] reads the vault");
-    chain.govern_each(vec![(chain.registry, setRotationCall { enabled: false }.abi_encode())]).await;
-    let ended = boundary_secs(FIRST_TURN + TURNS);
-    chain.mine_at((ended + 60).max(chain.latest_timestamp().await + 1)).await;
-    chain.finalize().await;
-    let reached = (chain.timestamp_at("finalized").await as Millis) * 1000;
-    let at = vault.observe(View::Finalized, &[]).await.unwrap();
-    let over = vault.scheduled_turn(&at, reached).await.unwrap().expect("a turn over still names its member");
-    assert_eq!((over.turn, over.candidate), (FIRST_TURN + TURNS - 1, AccountId(member.candidate.into())));
-    let install = installOperatorCall {
-        candidate: member.candidate,
-        adminKey: Address::from(member.operator().0),
-        launchDigest: [0xd1u8; 48].to_vec().into(),
-        configHash: super::CONFIG_HASH.into(),
-    };
-    chain.govern_each(vec![(chain.registry, install.abi_encode())]).await;
-    chain.finalize().await;
-    let at = vault.observe(View::Finalized, &[]).await.unwrap();
-    assert_eq!(vault.scheduled_turn(&at, reached).await.unwrap(), None, "the installation ended the last turn");
-    assert!(!crate::handover::turns::drawn(&vault, &at).await.unwrap(), "a start finds a turn drawn");
-    println!(
-        "PASS: installing {}, the last turn's own candidate, under another release ends the turns: the schedule names no one",
-        member.name
-    );
 }
 
 /// Draws `turn` in a block stamped `at`, finalises it, and waits for `node` to mirror its key from

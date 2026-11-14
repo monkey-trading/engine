@@ -2,6 +2,7 @@ use super::*;
 use crate::node::handover::{Episode, episode};
 use std::path::PathBuf;
 
+use engine_core::eip712::B256;
 use engine_core::types::AccountId;
 
 use crate::checkpoints::CurrentRelease;
@@ -345,18 +346,27 @@ fn the_first_start_after_a_handover_needs_the_log_to_end_at_the_predecessors_che
         ("a log with no checkpoint", Some(5), None),
     ] {
         let refused = store(&format!("head-refused-{last_seq:?}-{}", last.is_some()));
-        let err = check_predecessor_head(Some(&refused), last_seq, last.as_ref()).err();
+        let err = check_predecessor_head(Some(&refused), last_seq, last.as_ref(), |_, _| panic!("checked")).err();
         assert!(err.is_some(), "{what} passed");
         assert_eq!(refused.keys().predecessor_head, Some(head.clone()), "{what}: the head was forgotten");
+        assert_eq!(refused.keys().log_check, None, "{what}: a refused start recorded a log check");
     }
 
-    // A log that ends there passes once, and the head is forgotten: later starts extend the log.
+    // A log that ends there passes once, and the head is forgotten: later starts extend the log. The
+    // log check the keys carried becomes what the check makes of it and the head, in the same seal.
     let passed = store("head-passed");
-    check_predecessor_head(Some(&passed), Some(5), Some(&checkpoint(5, &root))).unwrap();
-    assert_eq!(passed.keys().predecessor_head, None);
-    check_predecessor_head(Some(&passed), Some(9), Some(&checkpoint(9, &other_root))).unwrap();
+    let verified = VerifiedHead { seq: 5, link: B256::repeat_byte(7), root: root.parse().unwrap() };
+    let check = |previous: Option<VerifiedHead>, at: &Head| {
+        assert_eq!((previous, at), (None, &head));
+        Some(verified)
+    };
+    check_predecessor_head(Some(&passed), Some(5), Some(&checkpoint(5, &root)), check).unwrap();
+    assert_eq!((passed.keys().predecessor_head, passed.keys().log_check), (None, Some(verified)));
+    check_predecessor_head(Some(&passed), Some(9), Some(&checkpoint(9, &other_root)), |_, _| panic!("checked"))
+        .unwrap();
+    assert_eq!(passed.keys().log_check, Some(verified), "a start with no handover changed the log check");
     // Keys nobody handed over, or no sealing, carry no head.
-    check_predecessor_head(None, Some(1), None).unwrap();
+    check_predecessor_head(None, Some(1), None, |_, _| panic!("checked")).unwrap();
 }
 
 // ── Helpers ──

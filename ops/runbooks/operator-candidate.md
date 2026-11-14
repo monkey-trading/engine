@@ -353,6 +353,19 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
   from yours at the boundary; `release_superseded` pages only if it has not 15 minutes on. Hand over
   as section 4 describes. Once a successor confirms, your node follows it and never takes back the
   generation it handed over, even when a later trusted time sample falls just before the boundary.
+- **Withdrawals and the boundary's log check.** While rotation is on and a turn is in effect whose
+  set names two or more members, the operator's node signs a withdrawal only once a check has verified the log
+  through its approval, so an approval waits for the next boundary. At a handover the successor's
+  start is the check: its replica verified the log through the checkpoint it was handed. At a
+  boundary you hold on through, your node writes a checkpoint after its `TurnTaken` and asks the
+  members of the turn's order, first to last, for an attested verification of it, skipping your own
+  candidate, members with no handover endpoint and members whose release sequenced part of the range
+  since the last check; it asks again every minute, and `log_check_pending` pages after 30 minutes
+  without one. Between your turns your node answers those questions on your registered handover
+  endpoint, from the checkpoints its replica verified, so keep that endpoint reachable from every
+  member's node, not only from the next turn's. A one-member set, or rotation off, needs no check. The verified head is
+  sealed with the keys, and an upgrade (section 5) carries it to the new release; a start that finds
+  its log does not hold the sealed head asks for the check again.
 - **A turn the engine refused.** `turn_refused` ([alerts.md](alerts.md)) means no set mirrored at
   least seven days earlier names your candidate with your key: the key in effect stays for that turn.
   From V53 the seven days run from the first of the unbroken run of mirrored sets that named your

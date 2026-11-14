@@ -10,23 +10,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::body::{Body, to_bytes};
-use axum::extract::ConnectInfo;
-use axum::http::{Request as HttpRequest, StatusCode};
-use axum::{Extension, Router};
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
-use engine_core::command::{AdminCommand, Command};
+use engine_core::command::Command;
 use engine_core::eip712::B256;
 use engine_core::event::Event;
 use engine_core::types::{AccountId, Millis};
 use governor::Quota;
 use governor::clock::DefaultClock;
-use k256::ecdsa::SigningKey;
-use serde_json::Value;
 use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
-use tower::ServiceExt;
 
 use super::T0_SECS;
 use super::chain::Chain;
@@ -41,9 +34,11 @@ use crate::custody::{Custody, OperatorsReader};
 use crate::handover::Published;
 use crate::limits::ApiLimits;
 use crate::log::{CheckpointParent, Manifest};
+use crate::log_check::Due;
 use crate::metrics::Metrics;
 use crate::node::member::Replica;
-use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
+use crate::sequencer::{LogCheckSetup, Request, Sequencer, SequencerConfig, genesis_commands};
+use crate::tee::sealing::KeyStore;
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{
     CHECKPOINT_EVERY, SEGMENT_COMMANDS, dev_config, sample_around, scratch_dir, sequencer_config,
@@ -83,6 +78,8 @@ pub(super) struct Node {
     pub(super) handover: Option<(Published, watch::Receiver<bool>)>,
     /// A seat's API served over TLS.
     api: Option<JoinHandle<anyhow::Result<()>>>,
+    /// A seat's asking for the boundary's log check, and the checks its sequencer publishes as due.
+    pub(super) asking: Option<Asking>,
     /// When a seat published its commands, and the task recording it.
     pub(super) stamps: Arc<std::sync::Mutex<Stamps>>,
     tracking: JoinHandle<()>,
@@ -90,6 +87,10 @@ pub(super) struct Node {
 
 /// What a restart keeps of the node it replaces: its log directory, clock and screening source.
 type Resume = (PathBuf, Arc<TestClock>, Option<Source>);
+/// A seat's asking task for the boundary's log check, and the checks its sequencer publishes as due.
+type Asking = (JoinHandle<anyhow::Result<()>>, watch::Receiver<Option<Due>>);
+/// A seat, the replica it starts from, if any, its metrics and its sealed keys.
+type Seated = (Seat, Option<Replica>, Arc<Metrics>, Arc<KeyStore>);
 
 /// A daily turn's member: the operator key its config names, the release its sealed keys run, which
 /// takes each turn the log assigns that key, and where it serves its API over TLS, as its registered
@@ -99,6 +100,9 @@ pub(super) struct Seat {
     pub(super) operator: AccountId,
     pub(super) release: B256,
     pub(super) api: SocketAddr,
+    /// The account its checkpoint posts are sent from, its own, so no member's pending post holds
+    /// another's.
+    pub(super) relayer: alloy::primitives::Address,
 }
 
 impl Node {
@@ -111,16 +115,16 @@ impl Node {
 
     /// Starts `seat`'s node over the log in `dir` (a fresh log when it holds none) on `clock`, with
     /// the screening `source` deposits and orders pass through, if any, its replay counted in
-    /// `metrics`.
+    /// `metrics`, posting checkpoints, and keeping its log check with its sealed keys in `store`.
     pub(super) async fn start_seated(
         chain: &Chain,
         key: Arc<EnclaveKey>,
-        (seat, metrics): (Seat, Arc<Metrics>),
+        (seat, metrics, store): (Seat, Arc<Metrics>, Arc<KeyStore>),
         dir: PathBuf,
         clock: Arc<TestClock>,
         source: Option<Source>,
     ) -> Self {
-        Self::launch(chain, key, false, Some((dir, clock, source)), Some((seat, None, metrics))).await
+        Self::launch(chain, key, true, Some((dir, clock, source)), Some((seat, None, metrics, store))).await
     }
 
     /// Starts `seat`'s node from the replica a member's tail handover left, over its copy in `dir`,
@@ -129,12 +133,13 @@ impl Node {
     pub(super) async fn start_from_replica(
         chain: &Chain,
         key: Arc<EnclaveKey>,
-        (seat, metrics): (Seat, Arc<Metrics>),
+        (seat, metrics, store): (Seat, Arc<Metrics>, Arc<KeyStore>),
         (dir, clock): (PathBuf, Arc<TestClock>),
         replica: Replica,
         source: Option<Source>,
     ) -> Self {
-        Self::launch(chain, key, false, Some((dir, clock, source)), Some((seat, Some(replica), metrics))).await
+        let seated = Some((seat, Some(replica), metrics, store));
+        Self::launch(chain, key, true, Some((dir, clock, source)), seated).await
     }
 
     /// `start`, with the checkpoint worker posting roots to the vault and a signed screening source,
@@ -156,11 +161,11 @@ impl Node {
         key: Arc<EnclaveKey>,
         post_checkpoints: bool,
         resume: Option<Resume>,
-        seated: Option<(Seat, Option<Replica>, Arc<Metrics>)>,
+        seated: Option<Seated>,
     ) -> Self {
-        let (seat, replica, metrics) = match seated {
-            Some((seat, replica, metrics)) => (Some(seat), replica, metrics),
-            None => (None, None, Arc::new(Metrics::new())),
+        let (seat, replica, metrics, store) = match seated {
+            Some((seat, replica, metrics, store)) => (Some(seat), replica, metrics, Some(store)),
+            None => (None, None, Arc::new(Metrics::new()), None),
         };
         let (dir, clock, resumed_source) = match resume {
             Some((dir, clock, source)) => (dir, clock, Some(source)),
@@ -190,7 +195,9 @@ impl Node {
             (None, true) => Some(Source::start(clock.clone(), operator).await),
             (None, false) => None,
         };
-        let poster = post_checkpoints.then(|| setup::poster(chain, &dir, &key));
+        let relayer = seat.map_or(chain.accounts[9], |seat| seat.relayer);
+        let poster = post_checkpoints.then(|| setup::poster(chain, &dir, &key, relayer));
+        let (due, asked) = watch::channel(None);
         let checkpoint_parent = match &poster {
             Some(poster) => match poster.chain.state(View::Finalized).await.unwrap().checkpoint {
                 Some((seq, root)) => CheckpointParent { has_checkpoint: true, seq, root: root.parse().unwrap() },
@@ -205,8 +212,8 @@ impl Node {
             clock: clock.clone(),
             genesis: genesis_commands(&genesis),
             checkpoint_every: match (post_checkpoints, seat) {
-                (true, _) => POSTED_CHECKPOINT_EVERY,
-                (false, Some(_)) => SEAT_CHECKPOINT_EVERY,
+                (_, Some(_)) => SEAT_CHECKPOINT_EVERY,
+                (true, None) => POSTED_CHECKPOINT_EVERY,
                 (false, None) => CHECKPOINT_EVERY,
             },
             segment_commands: if seat.is_some() { SEAT_SEGMENT_COMMANDS } else { SEGMENT_COMMANDS },
@@ -214,6 +221,7 @@ impl Node {
             checkpoints: post_checkpoints.then_some(work_tx),
             access_policy: source.as_ref().map(|source| source.policy.clone()),
             turn_release: seat.map(|seat| seat.release),
+            log_check: seat.zip(store.clone()).map(|(seat, store)| LogCheckSetup { release: seat.release, store, due }),
             governance: setup::governance(chain),
             metrics: metrics.clone(),
             ..sequencer_config(&dir, manifest_tx)
@@ -232,7 +240,9 @@ impl Node {
         history_cfg.custody.vault = format!("{:#x}", chain.vault);
         let (replayed, plan, stats) = match replica {
             Some(replica) => {
-                let replayed = replica.follower.into_log(None, AccountId(key.address()), None).unwrap();
+                // A posting seat anchors at the vault's checkpoint, as a member's start does (`ready`).
+                let parent = seq_cfg.checkpoints.as_ref().map(|_| seq_cfg.checkpoint_parent);
+                let replayed = replica.follower.into_log(parent, AccountId(key.address()), None).unwrap();
                 (replayed, replica.history, replica.stats)
             }
             None => {
@@ -247,6 +257,8 @@ impl Node {
                 (replayed, plan, stats)
             }
         };
+        // A start after a handover records its check as a node's does (`node::log_check`).
+        crate::node::log_check::after_handover(store.as_deref(), &crate::node::KeyStart::default(), &replayed).unwrap();
         let (replayed, mut history) = plan.finish_with_log(replayed, key.clone()).unwrap();
         seq_cfg.history_sealing = history.sealing();
         let handover = signing.map(|signing| {
@@ -303,6 +315,9 @@ impl Node {
             tls_public_key_sha256: [0; 32],
         };
         let (samples, samples_rx) = watch::channel(Some(sample_around(clock.as_ref())));
+        let trusted = TrustedClock::new(clock.clone(), samples_rx.clone(), dev_config().time.max_drift);
+        let asking =
+            store.map(|store| (tokio::spawn(setup::asker(chain, &tx, asked.clone(), &store, trusted).run()), asked));
         let unlimited = |_: RateLimit| Quota::per_second(NonZeroU32::MAX);
         let state = ApiState {
             tx,
@@ -322,7 +337,7 @@ impl Node {
             marks: crate::test_support::marks_reader(),
             stats,
             emission_budget: None,
-            payouts_enabled: false,
+            payouts_enabled: post_checkpoints,
             collateral: None,
             listing: Default::default(),
             operators: feed,
@@ -347,6 +362,7 @@ impl Node {
         };
         Node {
             api,
+            asking,
             stamps,
             tracking,
             state,
@@ -413,48 +429,16 @@ impl Node {
         .await;
     }
 
-    /// Posts `command` signed by `key` with its next nonce through the admin route, returning the
-    /// status and the last event.
-    pub(super) async fn admin(&self, key: &SigningKey, command: AdminCommand) -> (StatusCode, Value) {
-        let address = engine_core::eip712::address(key.verifying_key());
-        let nonce = self.query(move |engine| engine.next_request_nonce(address)).await;
-        let expires_at = self.state.clock.now_ms() + 60_000;
-        let request = crate::admin::sign(key, &self.state.operator, command, nonce, expires_at);
-        let body = serde_json::to_string(&request).unwrap();
-        let request = HttpRequest::post("/v1/admin").header("content-type", "application/json").body(Body::from(body));
-        let (status, events) = self.send(request.unwrap()).await;
-        (status, events.as_array().and_then(|events| events.last()).cloned().unwrap_or(events))
-    }
-
-    /// The status and JSON body of a GET of `path`.
-    pub(super) async fn get(&self, path: &str) -> (StatusCode, Value) {
-        self.send(HttpRequest::get(path).body(Body::empty()).unwrap()).await
-    }
-
-    /// The status, headers and body bytes of a GET of `path` under `challenge`, as a client saves them.
-    pub(super) async fn get_signed(&self, path: &str, challenge: &str) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
-        let request =
-            HttpRequest::get(path).header(engine_wire::CHALLENGE_HEADER, challenge).body(Body::empty()).unwrap();
-        let app: Router =
-            router(self.state.clone()).layer(Extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9)))));
-        let response = app.oneshot(request).await.unwrap();
-        let (status, headers) = (response.status(), response.headers().clone());
-        (status, headers, to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec())
-    }
-
-    /// The status and JSON body of a POST of `body` to `path`.
-    pub(super) async fn post(&self, path: &str, body: Value) -> (StatusCode, Value) {
-        let request =
-            HttpRequest::post(path).header("content-type", "application/json").body(Body::from(body.to_string()));
-        self.send(request.unwrap()).await
-    }
-
     /// Stops the checkpoint worker, the operator list's reader and the custody watcher, and drains the
     /// sequencer. Returns the screening source, for a node that resumes.
     pub(super) async fn stop(self) -> Option<Source> {
         if let Some(api) = self.api {
             api.abort();
             let _ = api.await;
+        }
+        if let Some((asking, _)) = self.asking {
+            asking.abort();
+            let _ = asking.await;
         }
         if let Some(operators) = self.operators {
             operators.abort();
@@ -475,17 +459,9 @@ impl Node {
         self.tracking.abort();
         self.access
     }
-
-    async fn send(&self, request: HttpRequest<Body>) -> (StatusCode, Value) {
-        let app: Router =
-            router(self.state.clone()).layer(Extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9)))));
-        let response = app.oneshot(request).await.unwrap();
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
-    }
 }
 
+mod http;
 mod setup;
 pub(super) use setup::custody_section;
 mod stamps;

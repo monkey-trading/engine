@@ -15,7 +15,10 @@ Trading is not affected in any of these cases. Read [reference.md](reference.md)
    previous is final at the `finalized` tag, so the cadence follows the chain's finality. An approval
    made while one is on its way waits for that one, then for its own.
 3. When the covering checkpoint is `finalized` and collateral reconciles, the node signs a 24-hour
-   authorization and streams it. Anyone may submit it to the vault, which pays the account.
+   authorization and streams it. Anyone may submit it to the vault, which pays the account. While a
+   daily turn is in effect while rotation is on, and its rotation set names two or more members, the
+   node also waits until
+   the boundary's log check has verified the log through the approval ("The boundary's log check").
 4. An authorization that expires unclaimed is not signed again by itself. Its account asks for a
    new one (`POST /v1/accounts/{address}/withdrawals/{nonce}/reissue`, signed by the account).
 
@@ -51,6 +54,8 @@ cast call $VAULT 'withdrawalsPaused()(bool)' --rpc-url $RPC
 | `checkpoint_conflict`, `vault_exit_started` | The node has stopped itself. | "The node has stopped" |
 | `custody_deposits_stalled`, `custody_finality_stalled`, `custody_head_stale`, `custody_rpc_quorum_lost` | The chain reads fail or lag. | [feed-and-custody-failures.md](feed-and-custody-failures.md) |
 | Clients receive `payout_unavailable` | A new withdrawal is refused while the gate is paused. | The row for the alert that is open. |
+| The account's payouts read names a `check` | The approval waits for that boundary's log check. | "The boundary's log check" |
+| `log_check_pending` | No member has verified the log at a boundary the node holds on through. | "The boundary's log check" |
 
 ## The vault is paused or has no signer
 
@@ -166,6 +171,28 @@ the node's reason:
   mining. If the next retry's fresh read shows it again, the node stops with `checkpoint_conflict`.
 - Pending work at the relayer that is not the node's, or a nonce used by another transaction: posting
   pauses until you act ("`checkpoint_backlog`", step 4).
+
+## The boundary's log check
+
+While rotation is on and a daily turn is in effect whose rotation set names two or more members, the node signs an
+authorization only for an approval at or below the head of the log the last boundary's check
+verified. `GET /v1/accounts/{address}/payouts` names, for each approval still waiting, the turn and
+`boundary_ms` of the check that will cover it: the turn in effect's, while its check is still
+outstanding and will reach the approval, otherwise the next turn's. An approval made during a turn
+therefore waits until the next boundary, a day at most plus the switch. That wait is the rule, not
+a stall.
+
+- **At a handover** the successor's node is the check: it verified the log through the checkpoint it
+  was handed before it started. Nothing to do.
+- **At a boundary the operator holds on through** the operator's node asks the members of the
+  turn's order, first to last, for an attested verification of the checkpoint it wrote after its
+  `TurnTaken`. It skips its own candidate, each member with no handover endpoint, and each member
+  whose release sequenced part of the range since the last verified head. `log_check_pending` pages
+  when no member has verified it for 30 minutes. Check the members' nodes follow the operator and that
+  their registered handover endpoints are reachable from the operator's node; a member answers only
+  once its replica has verified that checkpoint, so one that lags answers once it catches up.
+- **After a restart** the node restores the verified head sealed with its keys, if its log holds that
+  checkpoint; otherwise it asks for the check again as at a boundary it holds on through.
 
 ## The node has stopped
 
