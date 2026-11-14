@@ -1,16 +1,24 @@
 //! A member's start from its replica reads nothing from the chain and samples no trusted time: run with
 //! every chain endpoint and every time server unreachable, the node sequences its first command under
-//! what the member read before connecting.
+//! what the member read before connecting, as a rotating member does in production: with `[log_heads]`
+//! heads, and the generation its turn's keys are sealed in, its first command is `TurnTaken`.
 
 use std::time::Duration;
 
 use engine_core::Fixed;
+use engine_core::command::Command;
+use engine_core::eip712::B256;
+use engine_core::operator_bounds::NOTICE_MS;
+use engine_core::staking::StakingConfig;
+use engine_core::turns::{RegistryRotationSet, RegistryTurn, SetMember, TurnReason, boundary};
 
 use super::*;
 use crate::checkpoints::{CheckpointRpc, Observation, VaultState, View};
+use crate::clock::Clock;
 use crate::config::{CustodyProvider, FinalityTag, RpcProviderSection};
 use crate::custody::ContractTerms;
 use crate::log::{CheckpointDomain, CheckpointParent, LogEntry};
+use crate::log_heads::{Head, StartupHeads};
 use crate::node::member::Replica;
 use crate::node::secrets::Delivered;
 use crate::standby::Follower;
@@ -24,6 +32,8 @@ use crate::test_support::{dev_config, log_entries, sample_around, scratch_dir};
 const DIGEST: [u8; 48] = [0x6d; 48];
 /// A loopback address nothing answers on.
 const DEAD: &str = "http://127.0.0.1:9";
+/// The generation the schedule holds for the member's turn, which its keys are sealed in.
+const GENERATION: u64 = 7;
 
 #[tokio::test]
 async fn a_member_starts_from_its_replica_without_reading_the_chain_or_sampling_time() {
@@ -40,6 +50,12 @@ async fn a_member_starts_from_its_replica_without_reading_the_chain_or_sampling_
         }
     })
     .await;
+    let next = log_entries(&log).into_iter().find_map(|entry| match entry {
+        LogEntry::Command(command) if command.sequenced.seq == last + 1 => Some(command),
+        _ => None,
+    });
+    let next = next.expect("the first command does not follow the replica's last");
+    assert!(matches!(next.sequenced.cmd, Command::TurnTaken { .. }), "the first command is {:?}", next.sequenced.cmd);
 }
 
 /// The staking terms a member read before it connected are kept, and the replica it serves from is
@@ -66,28 +82,53 @@ async fn run_member(
 ) -> anyhow::Result<(std::path::PathBuf, u64, Arc<Metrics>)> {
     let data = scratch_dir(name);
     let log = data.join("log");
-    let cfg = unreachable(&data, &log);
-    write_log(&cfg).await;
+    let mut cfg = unreachable(&data, &log);
+    // A rotating member: rotation on, `[log_heads]`, and a log that assigns its key a turn.
+    cfg.operator.rotation_enabled = true;
+    cfg.log_heads = Some(
+        toml::from_str(
+            "contract = '0x0000000000000000000000000000000000000003'\n\
+             relayer = '0x0000000000000000000000000000000000000002'",
+        )
+        .unwrap(),
+    );
+    let turn = write_member_log(&mut cfg).await;
     let key = EnclaveKey::test_key();
     let signer = AccountId(key.address());
     let domain = CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };
     let mut history = crate::history::HistoryPlan::open(&cfg.history).unwrap();
     let stats = Stats::new(&cfg).unwrap();
-    let follower =
-        Follower::open(&log, 4, domain, signer, [signer].into(), Some(stats.clone()), |entry| history.observe(entry))
-            .unwrap();
+    // The head the vault's log heads hold, which the replica pins as it replays.
+    let replayed = crate::sequencer::replay_path(&log).unwrap();
+    let seq = replayed.engine.last_seq().unwrap();
+    let head = Head { seq, link: replayed.prefix_ring.prefix_at(seq).unwrap() };
+    let follower = Follower::open_pinned(
+        &log,
+        4,
+        domain,
+        signer,
+        [signer].into(),
+        (Some(stats.clone()), None, None),
+        Some((head.seq, head.link)),
+        |entry| {
+            history.observe(entry);
+            Ok(())
+        },
+    )
+    .unwrap();
     let last = follower.replica().last_seq().unwrap();
     let anchor = follower.replica().last_checkpoint().cloned().unwrap();
     let sealer = MockSealer { launch_digest: DIGEST };
     let sealing = cfg.tee.sealing.as_ref().unwrap();
-    let store = KeyStore::create(&sealing.dir, &sealer, cfg.file_sha256, 0, KeySet::for_key(&key).unwrap()).unwrap();
+    let keys = KeySet::for_key(&key).unwrap();
+    let store = KeyStore::create(&sealing.dir, &sealer, cfg.file_sha256, GENERATION, keys).unwrap();
     let ready = Ready {
         setup: Some(setup(&cfg, &data, &anchor, signer)),
         anchor: Some(anchor),
         emission_budget: None,
         staking_terms,
-        heads: None,
-        generations: BTreeMap::new(),
+        heads: Some(StartupHeads { epoch: 1, current: Some(head), newest: Some((1, head)) }),
+        generations: BTreeMap::from([(turn, GENERATION)]),
         sample: sample_around(&crate::clock::SystemClock),
         certificates: None,
         promoted: None,
@@ -267,6 +308,72 @@ async fn a_start_that_is_not_a_members_checks_its_genesis_staking_config_against
 }
 
 // ── Helpers ──
+
+/// The start of the clock the member's log is written on, before any time the tests run at.
+const START: engine_core::types::Millis = 1_792_530_000_000;
+
+/// Writes the log `cfg` names under its genesis, staked and with rotation on, and a turn assigned to
+/// the configured operator's key a day past a rotation set's notice, ending at a checkpoint the test
+/// key signed: the turn, which the member takes with its first command.
+async fn write_member_log(cfg: &mut NodeConfig) -> u64 {
+    cfg.genesis.benchmarks.clear();
+    cfg.genesis.staking = Some(StakingConfig {
+        liquidity_floor: Fixed::from_int(1),
+        epoch_ms: 86_400_000,
+        start_ms: START + 3_600_000,
+        cooldown_ms: 86_400_000,
+    });
+    let clock = Arc::new(crate::clock::test_clock::TestClock::at(START));
+    let (manifest, _) = tokio::sync::watch::channel(crate::log::Manifest::default());
+    let seq_cfg = crate::sequencer::SequencerConfig {
+        genesis: crate::sequencer::genesis_commands(&cfg.genesis),
+        clock: clock.clone(),
+        ..crate::test_support::sequencer_config(&cfg.node.log_dir, manifest)
+    };
+    let (stream, withdrawals) = (tokio::sync::broadcast::channel(16).0, tokio::sync::mpsc::unbounded_channel().0);
+    let mut seq =
+        crate::sequencer::Sequencer::recover(seq_cfg, Arc::new(EnclaveKey::test_key()), stream, withdrawals).unwrap();
+    seq.activate_protocol().unwrap();
+    seq.genesis(&cfg.genesis).unwrap();
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    let (tx, rx) = tokio::sync::mpsc::channel(64);
+    let task = tokio::spawn(seq.run(rx));
+    let submit = async |cmd: Command| {
+        let (reply, applied) = tokio::sync::oneshot::channel();
+        tx.send(crate::sequencer::Request::Submit { cmd, reply: Some(reply) }).await.unwrap();
+        applied.await.unwrap();
+    };
+    let (member, candidate) = (cfg.operator().unwrap().address, AccountId([0xc1; 20]));
+    let progress = Command::StakingProgress { block: 10, block_hash: B256::repeat_byte(1), block_time: Some(START) };
+    let switch =
+        Command::SwitchRotation { enabled: true, election_cancelled: false, block: 11, chain_ref: "0x01:0".into() };
+    let members = vec![SetMember { candidate, admin_key: member, weight: engine_core::emissions::TokenUnits(1) }];
+    let (block, chain_ref) = (12, "0x02:0".to_owned());
+    let effective_at = START + NOTICE_MS;
+    let set = RegistryRotationSet { set: 1, epoch: 1, effective_at, quorum: true, members, block, chain_ref };
+    for cmd in [progress, switch, Command::AdoptRotationSet(set)] {
+        submit(cmd).await;
+    }
+    let turn = (0..).find(|turn| boundary(*turn).unwrap() > START + NOTICE_MS + 86_400_000).unwrap();
+    let begins = boundary(turn).unwrap();
+    clock.advance(Duration::from_millis((begins - 3_600_000 - clock.now_ms()) as u64));
+    tx.send(crate::sequencer::Request::TimeSample(sample_around(clock.as_ref()))).await.unwrap();
+    let (reason, block, chain_ref) = (TurnReason::Draw, 13, "0x03:0".to_owned());
+    submit(Command::AssignTurn(RegistryTurn {
+        turn,
+        set: 1,
+        position: 0,
+        reason,
+        candidate,
+        admin_key: member,
+        block,
+        chain_ref,
+    }))
+    .await;
+    drop(tx);
+    task.await.unwrap().unwrap();
+    turn
+}
 
 /// Writes the log `cfg` names under its genesis, which credits no house capital: a start with
 /// `[checkpoints]` proves every credit against custody, and this log needs none. It ends at a
