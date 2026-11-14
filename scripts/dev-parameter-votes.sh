@@ -3,6 +3,8 @@
 # node's test clock together. A, B and C register and delegate 40, 30 and 30 thousand MONKEY, and a
 # close adopts them as the rotation set; once it is in effect its members vote on the ParameterVote
 # contract and the custody watcher mirrors each passed proposal into the real sequencer. It checks:
+# that with rotation on the operator's signed house cap change applies while the set is adopted but not
+# yet in effect, and is refused once it is;
 # that a BTC margin raise passing with 70% of the weight applies seven warped days after it is logged,
 # while an ETH raise holding 60% never passes and is listed open by /v1/operators; that a fast-path
 # stress floor at level 2 applies at once, survives the operator's key setting its own floor to 0, and

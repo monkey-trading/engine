@@ -143,7 +143,8 @@ the first turn earns only until that turn applies: its boundary, or its mirror w
 
 From protocol V56, while rotation is on, the parameters, listings and protocol upgrades change only by
 a vote of the rotation set's members, weighted by the stake the set snapshotted: a proposal passes with
-more than two thirds of the weight. A normal change takes effect seven days after the engine logs it,
+more than two thirds of the weight. From V59 this holds only while a rotation set with members is in
+effect; until the first takes effect the operator keeps its bounded commands. A normal change takes effect seven days after the engine logs it,
 so anyone holding a position can act first. A fast-path change takes effect at once, but only as a
 restriction that reduces risk (a higher margin or close-out level, a stress floor, a lower house cap,
 or reduce-only), which lapses after a recorded lifetime unless another vote renews it. The operator of

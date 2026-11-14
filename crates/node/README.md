@@ -469,11 +469,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   records; recovery under the key the registry installed, and benchmark holds while it supersedes the
   log's
 - `src/sequencer/tests/operator/hold.rs` — which keys end a benchmark hold: a recorded key the
-  registry seats again over a due rotation, an installation's own due key, and a rotation back to a
-  formerly installed key
+  registry seats again over a due rotation, an installation's own due key, a rotation back to a
+  formerly installed key, and no hold waiting on a key an installation supersedes until the installed
+  key is due
 - `src/sequencer/tests/operator/governance.rs` — parameter votes: the config's vote contract recorded
   once and another refused at recovery, a passed change applied at the first stamp past its notice and
-  behind a benchmark snapshot, the access policy a V56 start leaves to a vote, a voted relisting ending
+  behind a benchmark snapshot, the access policy a start leaves to a vote, decided at its stamp, a
+  change's outcome found before the withdrawals its command pays, a voted relisting ending
   a retired benchmark's alerts, and a waiting ceiling adoption in `/v1/house/state`
 - `src/sequencer/tests/rotation.rs` — an operator rotation through the sequencer, and recovery after it
 - `src/sequencer/batch_tests.rs` — batching: a batch ends after `MAX_BATCH` requests of any kind
@@ -1078,10 +1080,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/fakes/epochs.rs` — the fake chain's signer history and earlier epochs' log heads,
   answered as contract calls
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
-- `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, its schedule's rotation set and turn events, and the vote contract's passed proposals, decoded for the staking mirror
+- `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, its schedule's rotation set and turn events, the vote contract's passed proposals, and the registry's `rotationState()` read, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
 - `src/custody/tests/rpc/vote.rs` — passed proposals decoded only from the configured vote contract, with their canonical command or none, and a command not hashing to its event refused
-- `src/custody/tests/staking/vote.rs` — passed proposals mirrored only once the vote contract is read to name the configured schedule
+- `src/custody/tests/staking/vote.rs` — passed proposals mirrored only once the vote contract is read to name the configured schedule, and the registry's named turn reaching the engine with the frontier
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, the staking contract's deployer checked against the configured registry, and the schedule checked against the one the registry and the config name and against the registry it records
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, the pending listing notices, and the latest checkpoint
 - `src/api/operator.rs` — `GET /v1/operator`: the registry's `api_hostname` for the operator in effect, the key in effect, its pending rotation, whether rotation is on, the last election, and from `V51` the rotation set in effect and the next with its time, today's and tomorrow's turns, and the turn history (`?before=&limit=`)
@@ -1096,7 +1098,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/admin_tests/notice.rs` — the V49 dev scenario: stress parameters and a market's markup refused with no notice and before its time, applied at it through `engine admin` and TLS, and replayed
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
   commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
-  empty ones, are authenticated by `StakingProgress` and the host cursor cannot advance them
+  empty ones, are authenticated by `StakingProgress` and the host cursor cannot advance them; from V59
+  each `StakingProgress` carries the registry's turn state at its block
 - `src/custody/tests/staking/anchor.rs` — canonical endpoint binding for empty and partial log votes
 
 - `src/custody/evm/lifecycle/tests.rs` — reversal, reinclusion, inconsistent receipt and amount boundaries
@@ -2391,9 +2394,13 @@ records both in the log once protocol `V56` applies (`SetGovernance`), and refus
 another; the watcher mirrors the vote contract's `ProposalPassed` events from `V56`, once a read at a window's end
 shows the vote contract names the configured schedule, each carrying the admin command its bytes are the canonical
 JSON of, and the sequencer sequences `ApplyProposal` for a passed normal change at its first stamp past its seven
-days. While rotation is on, the node skips its own protocol activation and access policy, which wait for a vote.
+days. While votes govern at the stamp they would take, the node skips its own protocol activation and access
+policy, which wait for a vote; from `V59` votes govern only while a rotation set with members is in effect, and
+each staking frontier the watcher sequences carries the turn the registry's `rotationState()` names the operator by
+at that block, or none, read through the custody quorum once the registry is bound.
 `GET /v1/house/state` adds a `governance` section, the recorded contract, each change waiting with its
-`applies_at`, each restriction in force with its `expires_at`, and the baseline of each field one holds, and
+`applies_at`, each restriction in force with its `expires_at`, the baseline of each field one holds, and from `V59`
+when drawn turns name the operator (`turns_from`), and
 `GET /v1/operators` adds the vote contract's open `proposals`, read at the same block, newest first, with each one's
 weights, window and decoded command, or marked `unavailable` when the read fails. A credited proposal the engine refuses raises the `proposal_refused` Warning,
 and a passed change the engine refuses at its time `proposal_rejected`. Building the answer from the lens's return data at 100 candidates takes about 80 µs for the quorum's votes, the decode and the checks and about 100 µs for its 46 KB of JSON (`operators::tests::build_cost_at_the_registry_limit`); a read makes six lens calls to each provider, none on the sequencer's thread. A 200-epoch page of `/v1/monkey/distributions` from a full history of 100,000 epochs takes about 4 µs under the record's lock and 130 µs with its 63 KB of JSON (`stats::tests::distributions::page_cost_from_a_full_history`). A refused registry mirror raises a Critical `election_rejected` alert and

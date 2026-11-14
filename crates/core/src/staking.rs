@@ -208,13 +208,16 @@ impl Engine {
         self.distributions.get(&account).copied().unwrap_or_default()
     }
 
-    /// Records a fully verified finalized staking range after all its events have applied, and from
-    /// `V37` the block's time, which never moves back.
+    /// Records a fully verified finalized staking range after all its events have applied, from
+    /// `V37` the block's time, which never moves back, and from `V59` the registry's turn state at that
+    /// block: the boundary of the drawn turn naming the operator, which a turn refused before `V59` left
+    /// no other record of, or none, either of which resolves what `V59`'s activation could not see.
     pub(crate) fn staking_progress(
         &mut self,
         block: u64,
         block_hash: alloy_primitives::B256,
         block_time: Option<Millis>,
+        named_turn: Option<Option<Millis>>,
         events: &mut Vec<Event>,
     ) {
         let reached = self.staking.as_ref().and_then(|staking| staking.completed_through).and_then(|c| c.time);
@@ -222,6 +225,10 @@ impl Engine {
             && block != u64::MAX
             && block_hash != alloy_primitives::B256::ZERO
             && block_time.is_none_or(|time| self.protocol_version >= ProtocolVersion::V37 && Some(time) >= reached)
+            && named_turn.is_none_or(|turn| {
+                self.protocol_version >= ProtocolVersion::V59
+                    && turn.is_none_or(|since| block_time.is_some_and(|time| (0..=time).contains(&since)))
+            })
             && self.staking.as_ref().is_some_and(|staking| {
                 staking.mirrored_through.is_none_or(|through| block >= through)
                     && staking.completed_through.is_none_or(|through| {
@@ -235,6 +242,12 @@ impl Engine {
         let time = block_time.or(reached);
         self.staking.as_mut().expect("checked above").completed_through =
             Some(StakingCheckpoint { block, block_hash, time });
+        if let Some(turn) = named_turn {
+            self.governance.turns_drawn = false;
+            if let Some(since) = turn {
+                self.governance.turns_from = Some(self.governance.turns_from.map_or(since, |from| from.min(since)));
+            }
+        }
     }
 
     /// Whether a staking mirror's chain reference already credited.

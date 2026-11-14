@@ -373,14 +373,30 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
 
 From protocol V56, with `[custody.evm.staking.registry.vote]` naming the `ParameterVote` contract over
 the schedule, the members of the rotation set in effect vote on parameter changes while rotation is
-on. Your key, as the turn's operator, keeps benchmark rates, its own stress floor (level 1 at most,
-lapsing after 72 hours), reduce-only and corporate actions; `SetParams`, `UpsertMarket`, the parameter,
-markup and listing notices and close-spread adoptions it signs are refused, and so are the node's own protocol
-activation and access policy, which wait for a vote.
+on. Votes govern while the registry's `rotationEnabled()` holds and, from V59, a rotation set with
+members is in effect (`cast call $SCHEDULE 'currentSetId()(uint32)'` prints a nonzero id, and
+`setOf` that id lists candidates), which is when members can propose: from rotation's start until the
+first set takes effect, seven days plus the finality margin after the close that adopts it, and while
+a set with no members is in effect, the operator signs the governed commands within its own bounds,
+as with rotation off. A drawn turn keeps `rotationEnabled()` true from its boundary after the switch
+turns off, until an installation; the node mirrors the registry's named turn with each finalised
+staking frontier. While votes govern, your key, as the turn's operator,
+keeps benchmark rates, its own stress floor (level 1 at most, lapsing after 72 hours), reduce-only
+and corporate actions; `SetParams`, `UpsertMarket`, the parameter, markup and listing notices and
+close-spread adoptions it signs are refused, and so are the node's own protocol activation and access
+policy, which wait for a vote. A relisting a runbook asks for (a futures contract, a price rule, a
+calendar) is then a normal vote: propose it at least seven days, plus the window it takes to pass,
+before it must apply.
 
 - **Before proposing a command a release added** (a protocol activation, a new field), every member
   moves to a release that knows it: a node whose release cannot decode a proposal's bytes mirrors it as
   no command, and the engine refuses it.
+- **Before proposing an access policy**, every member moves to a release whose config's `[access]`
+  section names exactly that policy: its `source`, and a `max_age` equal to its `max_age_ms`, as for a
+  command a release added. Once the vote applies the log records
+  it, and a node whose config names no policy or another refuses to start on that log ("the configured
+  access policy differs from the public log"), so a member on an older release cannot take its turn
+  and the incumbent holds on until that member's release is approved and deployed.
 - **Propose.** A member proposes one admin command as the compact JSON the engine writes for it (the
   `command` of the request `engine admin` prints: no spaces, fields in the engine's order, defaults
   left out), since the engine refuses any other encoding of the same command:
@@ -403,7 +419,7 @@ activation and access policy, which wait for a vote.
   seven days after the engine logs it: `GET /v1/house/state` lists it
   under `governance.pending` with `applies_at`, and the node applies it at its first command from then.
   It applies only over the baseline it passed on: a `SetParams` or `UpsertMarket` whose parameters or
-  market changed in the meantime, by another vote or, with rotation off, the operator, is refused rather
+  market changed in the meantime, by another vote or, while votes do not govern, the operator, is refused rather
   than undo that change, and so is a ceiling adoption while another waits. A change that applied while
   a proposal was still open is not caught that way: the proposal carries every field, so check it
   against the values in force before voting for it. `proposal_rejected`

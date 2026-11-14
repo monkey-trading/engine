@@ -32,6 +32,14 @@
 //!   are the node's unsigned ones (`refused_outside_vote`): a protocol activation then waits for a
 //!   vote. Rotation is on as the registry's `rotationEnabled()` has it: its switch, or a drawn turn
 //!   naming the operator until an installation ends the turns, the engine's own or one it refused.
+//! - From `V59`, votes govern only while a rotation set with members is in effect, since only its
+//!   members can propose: until the first takes effect, and while an empty one is, the operator keeps
+//!   its bounded commands. A drawn turn names the operator from its boundary. A turn the engine refused
+//!   before `V59` left no boundary, so each mirrored frontier carries the registry's own state at that
+//!   block, the boundary of the turn naming the operator or none (`staking_progress`), and from the
+//!   activation until the first one, a log holding rotation sets counts rotation as on. A proposal
+//!   passes only while rotation is on and a set is in effect, so one mirrored while the engine sees no
+//!   rotation shows a drawn turn it has not yet seen, which names the operator from then.
 //!
 //! A mirror that contradicts the log (before `V56`, staking or the recorded contract, a reference
 //! already credited, or a command that does not hash to the proposal's) is refused as
@@ -39,6 +47,7 @@
 //! refuse is `ProposalRefused` and changes nothing else.
 
 mod restriction;
+mod rotation;
 
 use std::collections::BTreeMap;
 
@@ -85,10 +94,19 @@ pub struct Governance {
     /// By proposal.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub restrictions: BTreeMap<u64, Restriction>,
-    /// Whether the schedule has drawn a turn no installation has ended since `V56`, accepted or refused:
-    /// the registry's `rotationEnabled()` holds while one names the operator, whatever its switch.
+    /// Under `V56`, whether the schedule has drawn a turn no installation has ended since `V56`, accepted
+    /// or refused: the registry's `rotationEnabled()` holds while one names the operator, whatever its
+    /// switch. From `V59`, whether a turn the log holds no boundary for may name the operator: set at
+    /// `V59`'s activation while the log holds rotation sets, until a mirrored frontier carries the
+    /// registry's turn state or an installation ends the turns.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub turns_drawn: bool,
+    /// From `V59`, when a drawn turn first names the operator: the boundary of the earliest turn the
+    /// schedule drew since the last installation, accepted or refused, or the turn a mirrored staking
+    /// frontier names, or when a passed proposal showed one the engine had not seen. The registry's
+    /// `rotationEnabled()` holds from then until an installation, whatever its switch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turns_from: Option<Millis>,
     /// The parameters' restricted fields as the baseline sets them, while a restriction holds one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params_baseline: Option<ParamsBaseline>,
@@ -257,47 +275,6 @@ impl Engine {
         &self.governance
     }
 
-    /// From `V56`, whether only a vote may apply `command`: while rotation is on, a governed command,
-    /// a notice the vote's own notice replaces, or the legacy custody activation.
-    pub fn refused_outside_vote(&self, command: &AdminCommand) -> bool {
-        self.governed_at(self.protocol_version, command)
-    }
-
-    /// Whether only a vote may apply `command` once `version` is in force, as `refused_outside_vote`
-    /// says for the version in force: how the node decides what a start's activation leaves to a vote.
-    pub fn governed_at(&self, version: ProtocolVersion, command: &AdminCommand) -> bool {
-        version >= ProtocolVersion::V56
-            && self.votes_govern()
-            && (is_governed(command)
-                || matches!(
-                    command,
-                    AdminCommand::AnnounceParams(_)
-                        | AdminCommand::AnnounceMarkup { .. }
-                        | AdminCommand::AnnounceListing { .. }
-                        | AdminCommand::ActivateCustodyFinality { .. }
-                ))
-    }
-
-    /// Whether rotation is on as the registry's `rotationEnabled()` has it: its switch, or a drawn turn
-    /// naming the operator, the engine's own or one it refused (`Governance::turns_drawn`).
-    fn votes_govern(&self) -> bool {
-        self.rotation_by_election() || self.governance.turns_drawn
-    }
-
-    /// From `V56`, records a mirrored turn assignment the engine credited, accepted or refused, as a drawn
-    /// turn, and an installation, which ends the drawn turns, as none.
-    pub(crate) fn note_turns_drawn(&mut self, events: &[Event]) {
-        if self.protocol_version < ProtocolVersion::V56 {
-            return;
-        }
-        if events.iter().any(|event| matches!(event, Event::TurnAssigned { .. } | Event::TurnRefused { .. })) {
-            self.governance.turns_drawn = true;
-        }
-        if events.iter().any(|event| matches!(event, Event::OperatorInstalled { .. })) {
-            self.governance.turns_drawn = false;
-        }
-    }
-
     /// The first passed normal change whose notice has run by `ts`, which the node sequences as
     /// `ApplyProposal`.
     pub fn due_change(&self, ts: Millis) -> Option<&PendingChange> {
@@ -327,6 +304,8 @@ impl Engine {
 
     /// Mirrors the vote contract's `ProposalPassed` event: a normal change waits out its notice, and a
     /// fast-path restriction applies at once, unless the rules refuse it, which credits it as refused.
+    /// From `V59`, one passed while any set is in effect applies, and if the engine sees no rotation then
+    /// it records a drawn turn naming the operator from now.
     pub(crate) fn pass_proposal(&mut self, passed: &PassedProposal, events: &mut Vec<Event>) {
         let PassedProposal { proposal, fast, command_hash: hash, ref command, block, ref chain_ref } = *passed;
         let refusal = if self.protocol_version < ProtocolVersion::V56 {
@@ -347,8 +326,21 @@ impl Engine {
             return;
         }
         self.credit_registry_mirror(chain_ref, block);
+        // From `V59` the registry passes a proposal only while `rotationEnabled()` holds and a set is in
+        // effect, which may be one with no members if the proposal opened under an earlier set: with a
+        // set in effect, a pass the engine sees no rotation for shows a drawn turn it has not yet seen.
+        let v59 = self.protocol_version >= ProtocolVersion::V59;
+        let set = self.daily_turns.set_at(self.now).is_some();
+        if v59 && set && !self.rotation_on(self.now) {
+            self.governance.turns_from = Some(self.now);
+        }
+        let passes = if v59 { set && self.rotation_on(self.now) } else { self.votes_govern(self.now) };
         let outcome = match command {
-            _ if !self.votes_govern() => Err("rotation is off, so the timelock governs".into()),
+            _ if !passes => Err(if v59 {
+                "no rotation set is in effect, so votes do not govern".into()
+            } else {
+                "rotation is off, so the timelock governs".into()
+            }),
             None => Err("the proposal's bytes are not an admin command's canonical JSON".into()),
             Some(command) if fast => self.restrict_by_vote(proposal, command, events),
             Some(command) => self.schedule_change(proposal, command, events),

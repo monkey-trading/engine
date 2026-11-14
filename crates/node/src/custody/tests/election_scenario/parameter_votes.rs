@@ -1,7 +1,9 @@
 //! The parameter votes dev scenario, from `V56`, which `scripts/dev-parameter-votes.sh` runs: A, B
 //! and C register and delegate 40, 30 and 30 thousand MONKEY, and a close adopts them as the rotation
-//! set. Once the set is in effect its members vote on the real `ParameterVote` contract, and the
-//! custody watcher mirrors each passed proposal into the real sequencer: a margin raise passes with
+//! set. With rotation on, the operator's signed house cap change applies until the set takes effect
+//! and is refused once it has. Once the set is in effect its members vote on the real `ParameterVote`
+//! contract, and the custody watcher mirrors each passed proposal into the real sequencer: a margin
+//! raise passes with
 //! 70% of the weight and applies seven warped days after it is logged, while a proposal with 60%
 //! never passes; a fast-path stress floor at level 2 applies at once, survives the operator's attempt
 //! to clear it, and lapses at its lifetime; a fast-path margin cut passes on chain and the engine
@@ -98,7 +100,7 @@ async fn dev_scenario_members_vote_parameter_changes_by_stake() {
     let mut node = Node::start(&chain, enclave).await;
     let recorded = node.query(|e| e.governance().config).await.expect("the node records the vote contract");
     assert_eq!((recorded.vote.0, recorded.restriction_ttl_ms), (vote.0.0, TTL_MS));
-    println!("PASS: the node recorded the vote contract and a one-day restriction lifetime at V56's activation");
+    println!("PASS: the node recorded the vote contract and a one-day restriction lifetime at activation");
 
     // 1. A, B and C stake and register; the timelock lengthens the election epoch to a day, names the
     //    vault, the registry and the schedule to each other, approves the releases, and turns rotation
@@ -129,10 +131,18 @@ async fn dev_scenario_members_vote_parameter_changes_by_stake() {
     node.advance_to((SET_CLOSE_SECS as Millis + 60) * 1000).await;
     chain.close_epoch_at(SET_CLOSE_SECS).await;
     node.wait("the rotation set to mirror", |e| e.daily_turns().sets.contains_key(&1)).await;
+    // Rotation is on, but until the set takes effect no member can propose: the operator keeps its
+    // bounded commands.
+    assert!(node.query(|e| e.operator_election().rotation_enabled).await, "the switch is mirrored");
+    let early = house_cap(&node, ETH, -100).await;
+    assert_eq!(node.admin(&operator, early).await, (StatusCode::OK, json!({ "type": "admin_applied" })));
+    println!("PASS: with rotation on and the set not yet in effect, the operator's house cap change applied");
     node.advance_to((SET_EFFECTIVE_SECS as Millis + 60) * 1000).await;
     chain.mine_at(SET_EFFECTIVE_SECS + 30).await;
     assert_eq!(chain.view(schedule, currentSetIdCall {}).await, 1);
-    println!("PASS: a close adopted A, B and C at 40:30:30, and the set is in effect");
+    let late = house_cap(&node, ETH, -100).await;
+    assert_eq!(node.admin(&operator, late).await, (StatusCode::OK, vote_only()));
+    println!("PASS: a close adopted A, B and C at 40:30:30; once the set is in effect the house cap change is refused");
 
     // 2. A margin raise in BTC passes with A's and B's 70%; ETH's raise, with B's and C's 60%, does not.
     let raise = margin(&node, BTC, 200).await;
@@ -175,9 +185,7 @@ async fn dev_scenario_members_vote_parameter_changes_by_stake() {
     // 5. The operator's key signs a profit-fee SetParams, which is refused while rotation is on.
     let mut params = node.query(|e| e.baseline_params()).await.expect("genesis sets parameters");
     params.profit_fee_bps += 100;
-    let refused =
-        json!({ "type": "admin_rejected", "reason": "while rotation is on, only a passed vote changes this" });
-    assert_eq!(node.admin(&operator, AdminCommand::SetParams(params)).await, (StatusCode::OK, refused));
+    assert_eq!(node.admin(&operator, AdminCommand::SetParams(params)).await, (StatusCode::OK, vote_only()));
     println!("PASS: the operator's signed profit-fee SetParams was refused");
 
     // 6. At the restriction's lifetime the floor lapses.
@@ -213,6 +221,18 @@ async fn margin(node: &Node, market: MarketId, bps: i64) -> AdminCommand {
     let mut tiers = spec.margin_tiers.clone();
     tiers[0] = Tier { bps, ..tiers[0] };
     AdminCommand::UpsertMarket(MarketSpec { margin_tiers: tiers, ..spec })
+}
+
+/// `market`'s baseline listing with its house cap moved by `delta` bps: a change the operator signs with
+/// no notice.
+async fn house_cap(node: &Node, market: MarketId, delta: i64) -> AdminCommand {
+    let spec = node.query(move |e| e.baseline_spec(market)).await.expect("listed");
+    AdminCommand::UpsertMarket(MarketSpec { house_cap_bps: spec.house_cap_bps + delta, ..spec })
+}
+
+/// The admin route's answer to a governed command the operator signs while votes govern.
+fn vote_only() -> Value {
+    json!({ "type": "admin_rejected", "reason": "while rotation is on, only a passed vote changes this" })
 }
 
 /// `market`'s first margin band in force.

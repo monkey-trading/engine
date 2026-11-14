@@ -346,11 +346,20 @@ pub enum ProtocolVersion {
     /// log across `V54` it is refused while such a listing's ceiling is below its launch close charge
     /// under the parameters as it converts them.
     V58,
+    /// Votes govern only while a rotation set with members is in effect, as only its members can
+    /// propose, so until the first takes effect, and while an empty one is, the operator keeps its
+    /// bounded commands. A drawn turn names the operator from its boundary, not its mirror. Each
+    /// mirrored staking frontier carries the registry's turn state at that block, the boundary of the
+    /// turn naming the operator or none, which a turn the engine refused before `V59` gives no other
+    /// record of, and a passed proposal mirrored while a set is in effect and the engine sees no
+    /// rotation shows such a turn from then. Activation takes the earliest boundary of the accepted
+    /// turns held, and a log holding rotation sets counts rotation as on until the first frontier.
+    V59,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V58;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V59;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

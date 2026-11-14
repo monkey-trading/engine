@@ -138,8 +138,8 @@ contract = "0x4444444444444444444444444444444444444444" # REPLACE
 
 # The ParameterVote over the schedule, whose passed proposals the watcher mirrors from protocol V56,
 # and how long a fast-path restriction lasts (at most 7d). The node records both in the log once, so
-# every member's release names the same. Without it, while rotation is on nothing changes the governed
-# parameters. It needs the schedule above.
+# every member's release names the same. Without it, while rotation is on and, from V59, a rotation set with
+# members is in effect, nothing changes the governed parameters. It needs the schedule above.
 # [custody.evm.staking.registry.vote]
 # contract = "0x7777777777777777777777777777777777777777" # REPLACE
 # restriction_ttl = "24h" # OWNER: the restriction lifetime

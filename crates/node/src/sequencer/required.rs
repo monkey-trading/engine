@@ -105,9 +105,9 @@ impl Sequencer {
 
     /// Records the config's client auth and operator and activates the latest protocol version,
     /// whichever the log lacks, and from `V56` the config's vote contract, then checkpoints. While
-    /// rotation is on under `V56`, activation and the access policy wait for a passed vote instead.
-    /// All run at the log's next seq, so earlier commands keep the rules they ran under, once trusted
-    /// time admits a stamp (see `sequence_required`).
+    /// votes govern at the stamp, activation and the access policy wait for a passed vote instead (see
+    /// `sequence_queued`). All run at the log's next seq, so earlier commands keep the rules they ran
+    /// under, once trusted time admits a stamp (see `sequence_required`).
     /// `recover` has already refused a log that records another client auth, operator or vote contract.
     /// Error cases:
     /// - the engine rejects any of them
@@ -159,22 +159,6 @@ impl Sequencer {
         if let (Some(config), None) = (self.governance, self.engine.governance().config) {
             cmds.push(Command::Admin(AdminCommand::SetGovernance(config)));
         }
-        // While rotation is on, only a passed vote activates a version or records the access policy: an
-        // activation under the rules in force, and what follows it under the version it activates.
-        let activated = cmds.iter().find_map(|cmd| match cmd {
-            Command::Admin(AdminCommand::ActivateProtocol { version }) => Some(*version),
-            _ => None,
-        });
-        let version = |admin: &AdminCommand| match admin {
-            AdminCommand::ActivateProtocol { .. } => self.engine.protocol_version(),
-            _ => activated.unwrap_or(self.engine.protocol_version()).max(self.engine.protocol_version()),
-        };
-        let governed =
-            |cmd: &Command| matches!(cmd, Command::Admin(admin) if self.engine.governed_at(version(admin), admin));
-        for cmd in cmds.iter().filter(|cmd| governed(cmd)) {
-            info!(seq = self.next_seq, ?cmd, "rotation is on, so this waits for a passed vote");
-        }
-        cmds.retain(|cmd| !governed(cmd));
         if cmds.is_empty() {
             return Ok(());
         }
@@ -275,8 +259,10 @@ impl Sequencer {
         }
     }
 
-    /// Sequences the queued required commands at `ts`, checkpointing after each group, once any
-    /// benchmark hold no snapshot can end has ended (see `lift_unsigned_hold`).
+    /// Sequences the queued required commands at `ts`, checkpointing after each group that stamped one,
+    /// once any benchmark hold no snapshot can end has ended (see `lift_unsigned_hold`). A command only
+    /// a passed vote may apply at `ts`, under the rules the commands before it leave in force, waits for
+    /// the vote instead: an activation, then the access policy under the version it activates.
     /// Error cases:
     /// - the engine rejects any of them
     /// - the log cannot be written
@@ -285,6 +271,7 @@ impl Sequencer {
         let mut queued = std::mem::take(&mut self.required).into_iter();
         while let Some((what, cmds)) = queued.next() {
             info!(what, commands = cmds.len(), "sequencing required commands");
+            let mut stamped = false;
             let mut cmds = cmds.into_iter();
             while let Some(cmd) = cmds.next() {
                 let activation = cmd.is_dated_rate_activation();
@@ -293,16 +280,23 @@ impl Sequencer {
                     self.required.extend(queued);
                     return Ok(());
                 }
+                if matches!(&cmd, Command::Admin(admin) if self.engine.governed_at(admin, ts)) {
+                    info!(seq = self.next_seq, ?cmd, "votes govern, so this waits for a passed vote");
+                    continue;
+                }
                 let Some(events) = self.stamp(ts, cmd)? else {
                     // Frozen mid-request: the remaining required commands wait for a restart, like
                     // stamps the clock refuses.
                     return Ok(());
                 };
+                stamped = true;
                 if let Some(reason) = rejection(&events) {
                     bail!("{what}: rejected: {reason}");
                 }
             }
-            self.checkpoint()?;
+            if stamped {
+                self.checkpoint()?;
+            }
         }
         Ok(())
     }

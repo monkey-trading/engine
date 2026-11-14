@@ -120,7 +120,9 @@ this crate and reproduce the signed state roots exactly.
   contract, mirrored as `pass_proposal` and credited once. A normal change waits seven days and
   applies when the node sequences `apply_proposal`; a fast-path proposal applies at once as a
   restriction that only raises a margin or the close-out level, sets a stress floor, lowers a cap, or
-  makes a market reduce-only, and lapses at the recorded lifetime unless renewed
+  makes a market reduce-only, and lapses at the recorded lifetime unless renewed. From `V59` votes
+  govern only while a rotation set with members is in effect, and a drawn turn names the operator from
+  its boundary, or from the registry's state each mirrored staking frontier carries
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -304,15 +306,16 @@ this crate and reproduce the signed state roots exactly.
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
 - `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record; from `V47`, the candidate seated and the account the operator's share goes to; from `V48`, the timelock-only installation the failed-key fallback mirrors
 - `tests/operator_election.rs` — the V37 elections: refusals, the effective time and its seven-day floor, cancellation, and the refused signed rotation
-- `src/governance/mod.rs` — the V56 parameter votes: the recorded vote contract, passed proposals mirrored once, the normal changes waiting out their notice and `ApplyProposal`, the governed commands, and the canonical command bytes a proposal carries
+- `src/governance/mod.rs` — the V56 parameter votes: the recorded vote contract, when votes govern (from V59 only with a set with members in effect, a drawn turn from its boundary), passed proposals mirrored once, the normal changes waiting out their notice and `ApplyProposal`, the governed commands, and the canonical command bytes a proposal carries
 - `src/governance/restriction.rs` — the V56 fast-path restrictions: what one may carry, the values in force as the stricter of the baseline and every restriction, the baselines, renewal and lapse
-- `tests/parameter_votes.rs` — `V56`: mirror refusals and crediting, a normal change no sooner than seven days after it is logged, the notices a vote replaces and the launch range it keeps, the operator's and the node's governed commands refused while rotation is on, fast-path refusals, the operator's levers beside a restriction, renewal and lapse, a normal vote under a restriction, and canonical bytes
-- `tests/parameter_votes/baseline.rs` — `V56`: voted commands meeting their own checks, a voted change applying only over the baseline it passed on, parameters under a restriction moving only the baseline, renewal after the baseline moves, restricted stress levels, and the one waiting ceiling adoption
-- `tests/parameter_votes/limits.rs` — `V56`: a refused drawn turn keeping votes governing until an installation, a restriction lapsing at a walked boundary, and the caps on waiting changes and restrictions
+- `tests/parameter_votes.rs` — `V56`, under `V59`'s rules: mirror refusals and crediting, a normal change no sooner than seven days after it is logged, the notices a vote replaces and the launch range it keeps, the operator's and the node's governed commands refused while votes govern, fast-path refusals, the operator's levers beside a restriction, renewal and lapse, a normal vote under a restriction, and canonical bytes
+- `tests/parameter_votes/baseline.rs` — `V56`: voted commands meeting their own checks, a voted change applying only over the baseline it passed on, also when mirrored under a restriction that lapses or is renewed through its application, parameters under a restriction moving only the baseline, renewal after the baseline moves, restrictions lowering a market's house cap and the cap floors, restricted stress levels, and the one waiting ceiling adoption
+- `tests/parameter_votes/limits.rs` — `V56`: under `V56`, a refused drawn turn keeping votes governing from its mirror until an installation, a restriction lapsing at a walked boundary, the caps on waiting changes and restrictions, and a refused change whose command pays queued withdrawals after its outcome
 - `tests/parameter_votes/listing.rs` — `V56`: a voted relisting held to the listing bounds without a notice, the operator's listing notice refused while rotation is on, the size multiplier and close charge floors on voted changes, and a relisting under a margin restriction measured from the baseline
 - `tests/parameter_votes/toxicity.rs` — `V56`: a voted score tier change held to ±50% of launch without a notice, and a voted relisting keeping its markout floor
 - `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch; from `V57` a voted extension lending an add no more than the launch curve's last hold
-- `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, and the turn's time in office
+- `tests/parameter_votes/rotation.rs` — `V59`: votes governing only while a rotation set with members is in effect, a drawn turn naming the operator from its boundary, an activation taking the turns the log holds and counting rotation as on until a frontier carries the registry's turn state, a frontier naming a turn refused before `V56` or none, and a proposal the registry passes showing a turn the engine has not seen
+- `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, the turn's time in office, and the set in effect, which V59's votes need
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
 - `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
 - `tests/operator_share/daily_turns.rs` — `V51`: a member earns from its `TurnTaken` to its turn's end, and no one before or after; from `V53`, the account before the first turn only until that turn applies
@@ -327,7 +330,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
 - `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
-  mirroring, epoch finalisation, the operator's share from `V47`, claimable distributions, and
+  mirroring, the mirrored frontier with, from `V59`, the turn the registry names the operator by,
+  epoch finalisation, the operator's share from `V47`, claimable distributions, and
   `distributable_excess`, the read-only figure an epoch close would distribute
 - `src/staking/office.rs` — from `V50`, each account's time in office in the open epoch, and the
   split of the operator's share by it
@@ -470,7 +474,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V57` parts (`v15.rs` to `v57.rs`)
+  `V15` to `V59` parts (`v15.rs` to `v59.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -843,6 +847,21 @@ across V54 it is refused while the listing a market's first listing must be, the
 an adoption waits, has a ceiling below its launch close charge under the score tiers the activation
 converts to, as it is for a listed market. Before V58 none of this is checked or changed, so earlier
 logs replay unchanged. Its session is in `examples/reference_log/v58.rs`.
+
+Protocol V59 has votes govern only while a rotation set with members is in effect, since only its
+members can propose: with rotation on and no such set in effect, before the first takes effect or
+while an empty one does, the operator's bounded commands and the node's activation and access policy
+apply as with rotation off. A mirrored proposal still applies while any set is in effect, since one
+opened under an earlier set can pass. A drawn turn names the operator, as the registry's
+`rotationEnabled()` has it, from its boundary rather than from its mirror (`Governance::turns_from`),
+until an installation. A turn the engine refused before V59 left no boundary, so each mirrored
+staking frontier (`StakingProgress::named_turn`) carries the registry's turn state at that block, the
+boundary of the turn its `rotationState()` names the operator by or `null` for none, and a proposal
+the registry passes while a set is in effect and the engine sees no rotation shows such a turn from
+then. Activation takes the earliest boundary of an accepted turn in effect or waiting, and while the
+log holds rotation sets counts rotation as on until the first frontier carries the registry's state.
+Earlier logs keep V56's rule and encoding, and a frontier carries no turn before V59, so they replay
+unchanged. Its session is in `examples/reference_log/v59.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

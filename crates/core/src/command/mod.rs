@@ -131,12 +131,16 @@ pub enum Command {
     /// rare, and inline this one would grow every command.
     SignedAdmin(Box<AdminRequest>),
     /// From `V27`, the last fully verified finalized staking block, including empty ranges; from
-    /// `V37` with its block time in milliseconds, which an elected key waits for.
+    /// `V37` with its block time in milliseconds, which an elected key waits for; from `V59`, once the
+    /// node reads it, the registry's turn state at that block: the boundary in milliseconds of the
+    /// drawn turn naming the operator, or `null` when none does (`Governance::turns_from`).
     StakingProgress {
         block: u64,
         block_hash: B256,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         block_time: Option<Millis>,
+        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        named_turn: Option<Option<Millis>>,
     },
     /// From `V25`, a staking contract's `Staked` event, finalised: `amount` of MONKEY base units
     /// staked for `account`, credited once under `chain_ref`, in the finalised Ethereum `block`
@@ -428,4 +432,12 @@ pub struct WithdrawalRequest {
     /// The account's signature, nonce, and expiry, where the log's rules require them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<RequestAuth>,
+}
+
+/// A field present in the encoding, `null` included, as `Some`: a frontier's `named_turn`, whose `null`
+/// says the registry names no turn and whose absence says the node did not read it.
+/// Error cases:
+/// - a value that is neither `null` nor milliseconds
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Option<Millis>>, D::Error> {
+    Option::<Millis>::deserialize(deserializer).map(Some)
 }

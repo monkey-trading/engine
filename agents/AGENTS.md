@@ -32,7 +32,7 @@ an index: load only the rule whose hint matches the current action.
   by the operator key the log records and, from `V35`, bounded (`operator_bounds/`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
   seven-day key rotation, and from `V46` signed benchmark rates capped at 300 bps per day from the applied rates next to their
-  date in `benchmark.rs`, a market holding positions kept on its benchmark, and a stress floor of at most level 1 lapsing after 72 hours in `stress.rs`, and from `V49` stress parameters and a listed market's markup moved only after a seven-day notice, and from `V52` a listed market's spread and margin bands moved only by a seven-day listing notice and within its launch bands, in `listing_bounds.rs`, and from `V56`, while rotation is on, the governed parameters, listings, close-spread adoptions, access policy and protocol activation changed only by a stake-weighted vote of the rotation set, in `governance/`: passed proposals mirrored once, a normal change applying seven days after it is logged, a fast-path restriction in force at once as the stricter of the baseline and every restriction and lapsing at its recorded lifetime, `tests/parameter_votes.rs`); from `V52`, every fill's size spread, in tenths of a bp, on the slice that closes a position as on the slice that grows it, with each class's floor and no stress multiplier below 1x (`spread_tier.rs`, `execution/`); the spread a close can pay, from `V40`, capped per market
+  date in `benchmark.rs`, a market holding positions kept on its benchmark, and a stress floor of at most level 1 lapsing after 72 hours in `stress.rs`, and from `V49` stress parameters and a listed market's markup moved only after a seven-day notice, and from `V52` a listed market's spread and margin bands moved only by a seven-day listing notice and within its launch bands, in `listing_bounds.rs`, and from `V56`, while rotation is on, the governed parameters, listings, close-spread adoptions, access policy and protocol activation changed only by a stake-weighted vote of the rotation set, in `governance/`: passed proposals mirrored once, a normal change applying seven days after it is logged, a fast-path restriction in force at once as the stricter of the baseline and every restriction and lapsing at its recorded lifetime, and from `V59` only while a rotation set with members is in effect, with a drawn turn governing from its boundary or from the registry's turn each mirrored staking frontier carries, `tests/parameter_votes.rs`); from `V52`, every fill's size spread, in tenths of a bp, on the slice that closes a position as on the slice that grows it, with each class's floor and no stress multiplier below 1x (`spread_tier.rs`, `execution/`); the spread a close can pay, from `V40`, capped per market
   (`close_spread.rs`: a ceiling registry adopted at genesis, kept apart from `MarketSpec`, clamps every close at
   the pricing site, refuses a reversal over its ceiling while the pure close stays open, and admits a post-genesis
   entry only by a signed seven-day adoption that can only lower it, and from `V52` at least the market's launch close
@@ -169,7 +169,8 @@ an index: load only the rule whose hint matches the current action.
   admits a later turn's member the set gave notice; from V56 the vote contract's passed proposals,
   decoded as the admin command their bytes are the canonical JSON of, once it is read to name the
   schedule, with `ApplyProposal` sequenced for a passed change once its seven days have run,
-  `sequencer/governance.rs`, and a start refused on a log recording another vote contract), the
+  `sequencer/governance.rs`, from V59 each staking frontier carrying the turn the registry's `rotationState()`
+  names the operator by, and a start refused on a log recording another vote contract), the
   standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
   segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up,
   taking only entries whose command seals continue the copy and raising `operator_log_rollback`, with
@@ -494,7 +495,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
   `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
-  `dev-parameter-votes.sh`, the parameter votes scenario on Anvil: a three-member set of 40:30:30 votes on
+  `dev-parameter-votes.sh`, the parameter votes scenario on Anvil: the operator's house cap change applies with
+  rotation on until the three-member set takes effect and is refused after; the set of 40:30:30 votes on
   `ParameterVote`, a margin raise passing with 70% applies seven warped days after it is logged while one with
   60% never passes, a fast-path level-2 stress floor applies at once, survives the operator's own floor and
   lapses at its lifetime, a fast-path margin cut is refused, the operator's SetParams is refused, and the log

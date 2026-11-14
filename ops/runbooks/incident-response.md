@@ -120,7 +120,11 @@ A market priced far from the venues, a page that the venues disagree, fills that
   they are protocol parameters and a change is an owner decision with a notice period.
 - From `V52` a market's spread and margin bands change only seven days after a listing notice
   (`announce-listing`), within its launch bands, so an incident widens spreads through the stress
-  floor and stops new risk through reduce-only, never through a relisting.
+  floor and stops new risk through reduce-only, never through a relisting. While votes govern
+  ([operator-candidate.md](operator-candidate.md) §7), the engine refuses the operator's listing
+  notice too: the members' fast-path vote is the lever for a higher margin or close-out level, a stress
+  floor above level 1, or reduce-only, and applies at once; the operator keeps its own level-1 floor
+  and reduce-only.
 
 ### The host misbehaves
 

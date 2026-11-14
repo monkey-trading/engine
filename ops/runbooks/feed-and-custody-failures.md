@@ -71,6 +71,14 @@ one being changed, "which the price rules cannot price under"). A venue's quote 
 own timestamp, and the feed's repeat rule only delays a repeat of an unchanged price, so a quiet mid
 leaves quotes older than a tighter limit even though the venues are healthy.
 
+While votes govern ([operator-candidate.md](operator-candidate.md) §7: rotation on and a rotation set
+with members in effect), the engine refuses the operator's `upsert-market`: each change below is
+instead proposed as a normal vote, which applies seven days after the engine logs it, and is checked
+against the quotes the market holds then. A voted change the engine refuses then is spent
+(`proposal_rejected`): there is no signing it again, only a new proposal with its own seven days. Each
+step of a stepwise cut is its own vote, and the reduce-only commands of step 4, which stay the
+operator's, must be in force before the change's `applies_at` in `GET /v1/house/state`.
+
 1. Check that the market is open and priced: `engine_market_priced` reads 1 for it, as under
    [Find what is down](#find-what-is-down). A closed market holds old quotes and refuses every
    tightening until it opens. `market_no_price` only fires after `alerts.no_price_after`, so its
@@ -151,6 +159,10 @@ time its listing names.
   ```
 
   The vendors' symbols for the new contract must be in the config first; that is a new release.
+  While votes govern ([operator-candidate.md](operator-candidate.md) §7), the engine refuses that
+  command: the members propose the relisting as a normal vote instead, which applies seven days after
+  the engine logs it, so propose it at least seven days, plus the window it takes to pass, before the
+  current contract's roll time, or the market goes unpriced when that contract expires.
 - `contract_not_taken` in `prices_rejected`: a quote for a contract the market is not taking now.
   Expected around a roll; persistent means the feed's symbols and the listing's contracts disagree.
 
