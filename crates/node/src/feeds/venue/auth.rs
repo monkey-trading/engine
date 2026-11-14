@@ -431,7 +431,8 @@ fn escape(text: &str) -> Option<(char, usize)> {
         't' => '\t',
         '0' => '\0',
         'u' if text[1..].starts_with('{') => {
-            let end = text.find('}')?;
+            // The brace closes within six digits, so a missing one costs seven bytes, not the rest.
+            let end = 2 + text.as_bytes()[2..].iter().take(7).position(|&byte| byte == b'}')?;
             return char::from_u32(hex(&text[2..end])?).map(|character| (character, end + 1));
         }
         'u' => {

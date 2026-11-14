@@ -181,6 +181,8 @@ impl Node {
         let custody_cfg = custody_section(chain, &dir, cfg.custody);
         let mut genesis: Genesis = cfg.genesis;
         genesis.house_capital = engine_core::Fixed::ZERO;
+        // The shares are computed from the flat 10% profit fee; the holding-time fee has a scenario of its own.
+        genesis.params.profit_fee_curve.clear();
         genesis.staking = Some(StakingConfig {
             liquidity_floor: engine_core::Fixed::from_int(1_000_000),
             epoch_ms: DISTRIBUTION_EPOCH_SECS as Millis * 1000,

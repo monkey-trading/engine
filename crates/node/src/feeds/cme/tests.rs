@@ -56,9 +56,48 @@ fn a_top_of_book_restates_each_instrument_quoting_both_sides_at_its_sent_time() 
     // An instrument a symbol names with neither side gives no book.
     let neither = top_of_book(&[top("ES", "202706", &[], &[])]);
     assert_eq!(session.read(&neither), Ok(Frame::Books(Vec::new())));
-    // CME's message example of an empty book, of a product no symbol names, is passed over (#723).
+    // CME's message example of an empty book, of a product no symbol names, is passed over.
     let empty = r#"{"header":{"messageType":"TOB","sentTime":"2023-11-28T16:06:36.948000000Z","sequenceNumber":"728","version":"1.0"},"payload":[{"instrument":{"definitionSource":"E","exchangeMic":"XNYM","id":"735995","marketSeqmentId":"80","periodCode":"","productCode":"CL","productGroup":"CL","productType":"FUT","symbol":"CLG34"},"askLevel":[],"bidLevel":[]}]}"#;
     assert_eq!(session.read(empty), Ok(Frame::Books(Vec::new())));
+}
+
+/// CME's message example of an empty book (Example 7), which sends no `periodCode`.
+const EXAMPLE_7: &str = r#"{"header":{"messageType":"TOB","sentTime":"2023-11-28T16:06:36.948000000Z","sequenceNumber":"728","version":"1.0"},"payload":[{"instrument":{"definitionSource":"E","exchangeMic":"XNYM","id":"735995","marketSeqmentId":"80","periodCode":"","productCode":"CL","productGroup":"CL","productType":"FUT","symbol":"CLG34"},"askLevel":[],"bidLevel":[]}]}"#;
+
+#[test]
+fn a_future_of_a_subscribed_product_with_no_yyyymm_period_is_refused_not_passed_over() {
+    // Under a session naming a CL contract, Example 7's instrument is a CL future CME sent without
+    // its period, and the refusal reaches the alert (#723).
+    let mut session = Session::new(&["CL:203402", "ES:202612"]);
+    assert_eq!(
+        session.read(EXAMPLE_7),
+        Err(Refusal::Message("a future of CL with a periodCode that is not YYYYMM".into()))
+    );
+    // One malformed future refuses the message, though another instrument in it is quoted.
+    let mixed = top_of_book(&[top("ES", "202612", &[("6000", "1")], &[("6001", "1")]), top_with_period("")]);
+    assert!(matches!(session.read(&mixed), Err(Refusal::Message(_))));
+    for period in ["26", "2026-12", "202613", "202600", "abcdef", "2026123"] {
+        let message = top_of_book(&[top_with_period(period)]);
+        assert!(matches!(session.read(&message), Err(Refusal::Message(_))), "{period:?}");
+    }
+    // The refusal names no text of CME's: a hostile period never reaches it.
+    let hostile = top_of_book(&[top_with_period("token-123")]);
+    assert_eq!(
+        session.read(&hostile),
+        Err(Refusal::Message("a future of ES with a periodCode that is not YYYYMM".into()))
+    );
+    // A product no symbol names, and an instrument that is no future, are still passed over.
+    let other = top_of_book(&[top_with_period("").replace(r#""productCode":"ES""#, r#""productCode":"NQ""#)]);
+    assert_eq!(session.read(&other), Ok(Frame::Books(Vec::new())));
+    let option = top_of_book(&[top_with_period("").replace(r#""productType":"FUT""#, r#""productType":"OOF""#)]);
+    assert_eq!(session.read(&option), Ok(Frame::Books(Vec::new())));
+}
+
+#[test]
+fn an_empty_book_of_a_named_contract_is_example_7s_shape_and_quotes_nothing() {
+    let mut session = Session::new(&["CL:203402"]);
+    let named = EXAMPLE_7.replace(r#""periodCode":"""#, r#""periodCode":"203402""#);
+    assert_eq!(session.read(&named), Ok(Frame::Books(Vec::new())));
 }
 
 #[test]
@@ -229,4 +268,9 @@ fn top(product: &str, period: &str, bids: &[(&str, &str)], asks: &[(&str, &str)]
         levels(asks),
         levels(bids)
     )
+}
+
+/// An ES future's top of book with `period` as its `periodCode`, whatever it is.
+fn top_with_period(period: &str) -> String {
+    top("ES", "202612", &[], &[]).replace(r#""periodCode":"202612""#, &format!(r#""periodCode":"{period}""#))
 }

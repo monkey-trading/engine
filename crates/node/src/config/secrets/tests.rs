@@ -209,6 +209,70 @@ fn a_config_that_names_a_secret_needs_a_listener_to_receive_it() {
     assert!(err.contains("needs [tee.sealing.secrets]") && err.contains("checkpoints.rpc_url"), "{err}");
 }
 
+const STANDBY: &str = "[standby]\noperator = 'https://api.operator.example'\nmirrors = []\n\
+                       enclave = '0x0000000000000000000000000000000000000001'\n";
+
+#[test]
+fn a_standby_needs_no_listener_for_the_vendor_keys_it_never_reads_and_a_node_still_does() {
+    let mut cfg = naming_each_kind();
+    cfg.tee.sealing = Some(toml::from_str("dir = 'keys'").unwrap());
+    cfg.checkpoints = None;
+    cfg.alerts.critical = None;
+    // Only the vendor connection names a secret, and CME's two OAuth secrets with it.
+    cfg.feeds.venues.as_mut().unwrap().connections.push(
+        toml::from_str(
+            "venue = 'cme'\nurl = 'wss://markets.api.cmegroup.com/marketdatastream/v1'\n\
+             oauth = { token_url = 'https://auth.cmegroup.com/as/token.oauth2', client_id_secret = 'cme_id', \
+             client_secret_secret = 'cme_pw' }\n\
+             symbols = [{ market = 20, symbol = 'ES:202612', contract = 'ESZ6' }]",
+        )
+        .unwrap(),
+    );
+    cfg.validate_secrets().unwrap_err();
+    cfg.standby = Some(toml::from_str(STANDBY.trim_start_matches("[standby]\n")).unwrap());
+    cfg.validate_secrets().unwrap();
+    // Only `--standby` runs as one: a node on the same file is refused as it is without the section.
+    let err = cfg.validate_secrets_on_a_node().unwrap_err().to_string();
+    assert!(err.contains("needs [tee.sealing.secrets]") && err.contains("api_key_secret"), "{err}");
+
+    // A standby reads the rest, so a named URL or webhook still needs a listener.
+    cfg.alerts.critical = Some(WebhookRoute { url_env: None, url_secret: Some(name_of("critical_url")) });
+    let err = cfg.validate_secrets().unwrap_err().to_string();
+    assert!(err.contains("alerts.critical.url_secret"), "{err}");
+}
+
+// Runs in the production lane too, which filters on `production_build`: the release config a
+// candidate registers, with `[standby]` and the changes `standby.md` makes, loads with the CME
+// connection as written and no `[tee.sealing.secrets]`.
+#[test]
+fn a_production_build_loads_the_release_config_with_cme_as_a_standby_without_a_listener() {
+    let [template, publishers, genesis] =
+        ["ops/runbooks/production-node.toml", "config/benchmark-publishers.toml", "config/production-genesis.toml"]
+            .map(|path| std::fs::read_to_string(format!("{}/../../{path}", env!("CARGO_MANIFEST_DIR"))).unwrap());
+    let release = format!("{template}{publishers}{genesis}");
+    let listener = "[tee.sealing.secrets]\n# Where the operator delivers secrets. Forward it from the operator's addresses, not the public.\nlisten = \"0.0.0.0:9472\"\n";
+    assert!(release.contains(listener) && release.contains("venue = \"cme\""));
+    // `standby.md`: no listener, RPC and screening URLs written out, webhooks from the environment.
+    let mut standby = release.replace(listener, "");
+    for (secret, env) in [("alerts_critical_url", "ALERTS_CRITICAL_URL"), ("alerts_warning_url", "ALERTS_WARNING_URL")]
+    {
+        standby = standby.replace(&format!("url_secret = \"{secret}\""), &format!("url_env = \"{env}\""));
+    }
+    while let Some(at) = standby.find("/{") {
+        let end = at + standby[at..].find('}').unwrap();
+        standby.replace_range(at + 1..=end, "written-out");
+    }
+    let cfg = |text: &str| toml::from_str::<NodeConfig>(text).unwrap();
+    // The release config is not a standby's: its listener-less form is refused without the section.
+    let err = format!("{:#}", cfg(&standby).validate().unwrap_err());
+    assert!(err.contains("needs [tee.sealing.secrets]"), "{err}");
+    let with_section = cfg(&format!("{standby}\n{STANDBY}"));
+    with_section.validate().unwrap();
+    with_section.refuse_environment_secrets_at_load(true).unwrap();
+    assert!(with_section.named_secrets().unwrap().iter().any(|named| named.name.to_string() == "cme_api_id"));
+    with_section.validate_secrets_on_a_node().unwrap_err();
+}
+
 #[test]
 fn a_delivery_listener_under_real_attestation_needs_its_quotes_collateral() {
     let mut cfg = naming_each_kind();
