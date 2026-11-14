@@ -148,6 +148,12 @@ impl Follower {
         Some(self.copied.operator_head()?.seq.saturating_sub(self.replica.last_seq()?))
     }
 
+    /// Whether the last stint repeated the copy's whole tail, or extended an empty copy: the operator's
+    /// log holds the copy's history. A stint that only heard a heartbeat has not.
+    pub(crate) fn confirmed(&self) -> bool {
+        self.copied.confirmed()
+    }
+
     /// Keeps the posted head `(seq, link)` as one the replica holds (see `LiveReplay::pin`).
     pub(crate) fn pin(&mut self, seq: u64, link: B256) -> Option<bool> {
         self.replica.pin(seq, link)

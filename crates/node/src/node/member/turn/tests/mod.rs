@@ -203,6 +203,7 @@ async fn a_member_pages_no_follow_failure_while_the_turns_member_comes_up() {
 mod episodes;
 mod moved;
 mod moving;
+mod rollback;
 mod stop;
 mod take;
 

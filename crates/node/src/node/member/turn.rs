@@ -249,7 +249,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             let boundary = turn.as_ref().map(|turn| turn.boundary);
             match replica.stint(self.cfg, operator, STINT).await {
                 Ok(_) => {
-                    self.episodes.followed();
+                    self.episodes.followed(replica.confirmed());
                     if let Some(resolved) = self.moved_on(operator.enclave).await {
                         followed = Some((resolved, number));
                     }

@@ -86,7 +86,7 @@ async fn a_contradicting_posted_head_pages_once_and_resolves_on_a_held_one() {
 }
 
 /// The next line on `lines` naming `alert`, as a page's `alert` or a resolution's `alert_resolved`.
-async fn next(lines: &mut tokio::sync::mpsc::UnboundedReceiver<Alert>, alert: &str) -> Alert {
+pub(super) async fn next(lines: &mut tokio::sync::mpsc::UnboundedReceiver<Alert>, alert: &str) -> Alert {
     crate::test_support::wait_for(alert, async {
         loop {
             match lines.recv().await {
