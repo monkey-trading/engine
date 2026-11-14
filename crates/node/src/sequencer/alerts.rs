@@ -1,5 +1,5 @@
-//! The alerts the sequencer raises: for engine events an operator must look at, and for a house in
-//! deficit.
+//! The alerts the sequencer raises: for engine events an operator must look at, for a house in
+//! deficit, and from `V59` for a house that has lost money to its clients over the trailing day.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,6 +11,9 @@ use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
 use crate::throttle::{REALERT_AFTER, Throttle};
+
+mod loss;
+pub(super) use loss::LossAlert;
 
 /// Whether house NAV was below zero after the last command, the throttle on the alert for it, and
 /// the alerted deficit not yet resolved, with since when NAV has been back at or above zero.

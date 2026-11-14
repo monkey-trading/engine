@@ -143,6 +143,7 @@ impl Engine {
         }
         self.credited_refs.insert(chain_ref.to_owned());
         self.house_cash += amount;
+        self.note_house_capital(amount);
         if let Some(cash) = &mut self.withdrawal_cash {
             *cash += amount;
         }

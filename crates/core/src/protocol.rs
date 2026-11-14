@@ -346,11 +346,24 @@ pub enum ProtocolVersion {
     /// log across `V54` it is refused while such a listing's ceiling is below its launch close charge
     /// under the parameters as it converts them.
     V58,
+    /// A stress trigger on the house's marked loss to its clients over the trailing day (`house_loss`):
+    /// the fall in house NAV, which counts clients' unrealised PnL at the marks, less the house capital
+    /// credited in net, so net of fees, spreads and financing, from activation and never below the loss
+    /// over the day, with a dividend paid ahead of its market's next mark counted without it. A stress
+    /// level's trigger may name a loss threshold, met when the loss is above it; every market's
+    /// automatic level then rises to that level, re-read before every fill and after every command, and
+    /// steps down after the cooldown once the loss is back at or below it. Each change of the level the
+    /// loss sets is an event. A change to the stress parameters, by notice or by vote, keeps each
+    /// launch threshold at its level or above, at most its launch value. Before it a threshold the
+    /// parameters name reads nothing; activation keeps it, gives level 2's trigger a threshold of zero
+    /// where the parameters have a level 2 and name none, and takes the thresholds in force as
+    /// launch's.
+    V59,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V58;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V59;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

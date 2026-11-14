@@ -9,6 +9,7 @@ mod client;
 pub use client::*;
 pub mod close_spread;
 pub mod emissions;
+pub mod house_loss;
 pub mod reference;
 pub mod session_keys;
 pub mod spreads;
@@ -342,6 +343,7 @@ pub fn params() -> ProtocolParams {
                     move_bps: Some(200),
                     utilisation_bps: Some(8_000),
                     divergence_share_bps: None,
+                    house_loss: None,
                 }),
             },
         ],

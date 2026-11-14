@@ -1,7 +1,7 @@
 //! What `GET /v1/house/state` answers from memory: the protocol parameters with the seq that set
 //! them, the pending parameter and listing notices, from `V56` the vote contract with the passed
 //! changes waiting and the restrictions in force, any close-spread ceiling adoption waiting to take
-//! effect, and the latest checkpoint the log holds. The sequencer keeps the seq and the checkpoint
+//! effect, from `V59` the house's loss over the trailing day, and the latest checkpoint the log holds. The sequencer keeps the seq and the checkpoint
 //! as it logs them, recovery restores both from the replay it already runs, and the parameters
 //! themselves are the engine's.
 
@@ -12,6 +12,7 @@ use engine_core::close_spread::PendingCeiling;
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::governance::Governance;
+use engine_core::house_loss::HouseLossReading;
 use engine_core::listing_bounds::ListingNotice;
 use engine_core::operator_bounds::ParamsNotice;
 use engine_core::params::ProtocolParams;
@@ -80,6 +81,10 @@ pub struct HouseState {
     /// A close-spread ceiling adoption waiting to take effect, signed or voted, with its time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_ceiling: Option<PendingCeiling>,
+    /// From `V59`, the house's marked loss to its clients over the trailing day, the time the window
+    /// starts, and the stress level the loss sets in every market.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub house_loss: Option<HouseLossReading>,
     pub checkpoint: Option<StreamMsg>,
 }
 
@@ -126,6 +131,7 @@ impl Latest {
         let governance = Some(engine.governance()).filter(|governance| !governance.is_default()).cloned();
         let (seq, pending_ceiling, checkpoint) =
             (engine.last_seq(), engine.pending_ceiling().cloned(), self.checkpoint.clone());
+        let house_loss = engine.house_loss();
         let state = HouseState {
             seq,
             params,
@@ -134,6 +140,7 @@ impl Latest {
             listing_notices,
             governance,
             pending_ceiling,
+            house_loss,
             checkpoint,
         };
         Some((std::mem::take(&mut self.waiting), state))

@@ -6,7 +6,8 @@
 //! `STRESS_FLOOR_LAPSE_MS` of sequenced time after it is set, so no floor reaches or holds the higher
 //! levels. A signed `SetParams` still rewrites the levels and their triggers at once, which `V46`
 //! does not bound. From `V56` a fast-path vote's stress floor (`governance`) sits beside the
-//! operator's, at any level, and the operator's own floor neither lowers nor clears it.
+//! operator's, at any level, and the operator's own floor neither lowers nor clears it. From `V59`
+//! every market's readings include the house's marked loss over the trailing day (`house_loss`).
 
 use std::collections::VecDeque;
 
@@ -67,6 +68,8 @@ struct Readings {
     move_bps: i64,
     /// House net exposure in the market as a share of its cap, in bps.
     utilisation_bps: i64,
+    /// From `V59`, the house's marked loss to its clients over the trailing day, in USD.
+    house_loss: Option<Fixed>,
 }
 
 impl Engine {
@@ -97,6 +100,7 @@ impl Engine {
             divergence_share_bps: divergence_share_bps(market, divergence_bps),
             move_bps,
             utilisation_bps: utilisation_bps(market, mid, market.fx_mark, cap),
+            house_loss: None,
         };
         let target = auto_stress_target(&params.stress_levels, &readings);
         step_auto(&mut market.stress, target, now, params.stress_cooldown_ms);
@@ -108,7 +112,7 @@ impl Engine {
     /// exposure at that index in USD at the live FX index, and its cap at house NAV `nav`, then its
     /// effective level. The index mid joins the move window. A raised automatic level steps down
     /// only after the cooldown. A market that is closed, or has no index or no live FX index, keeps
-    /// its level, since nothing fills there.
+    /// its level, since nothing fills there. From `V59` the readings include the house's loss at `nav`.
     pub(crate) fn refresh_stress(&mut self, market_id: MarketId, nav: Fixed, events: &mut Vec<Event>) {
         let now = self.now;
         let global_floor = self.global_stress_floor.max(self.governance.stress_floor(market_id));
@@ -121,6 +125,7 @@ impl Engine {
         // A fill converts at the live FX index, so the reading does too.
         let Ok(fx) = self.live_fx(market_id) else { return };
         let Some(params) = self.params.as_ref() else { return };
+        let house_loss = (self.protocol_version >= ProtocolVersion::V59).then(|| self.house_loss_at(nav));
         // Only a market with a reading is handed out for change, so the state root rehashes no other.
         let market = self.markets.get_mut(&market_id).expect("listed");
 
@@ -134,6 +139,7 @@ impl Engine {
             divergence_share_bps: divergence_share_bps(market, index.divergence_bps),
             move_bps,
             utilisation_bps: utilisation_bps(market, index.mid, fx, cap),
+            house_loss,
         };
         let target = auto_stress_target(&params.stress_levels, &readings);
         step_auto(&mut market.stress, target, now, params.stress_cooldown_ms);
@@ -142,8 +148,9 @@ impl Engine {
     }
 
     /// From `V13`: re-evaluates every market's stress level after `cmd`, at one house NAV, since any
-    /// command can move a stress input: time, prices, exposure, house NAV, or the rules. An admin
-    /// command's outcome stays its last event.
+    /// command can move a stress input: time, prices, exposure, house NAV, or the rules; from `V59`
+    /// after recording the house's trading result at that NAV. An admin command's outcome stays its
+    /// last event.
     pub(crate) fn refresh_all_stress(&mut self, cmd: &Command, events: &mut Vec<Event>) {
         if self.protocol_version < ProtocolVersion::V13 {
             return;
@@ -151,6 +158,7 @@ impl Engine {
         let admin = matches!(cmd, Command::Admin(_) | Command::SignedAdmin(_) | Command::ApplyProposal(_));
         let outcome = if admin { events.pop() } else { None };
         let nav = self.house_nav();
+        self.record_house_loss(nav, events);
         let ids: Vec<MarketId> = self.markets.keys().copied().collect();
         for market_id in ids {
             self.refresh_stress(market_id, nav, events);
@@ -254,12 +262,13 @@ fn auto_stress_target(levels: &[StressLevel], readings: &Readings) -> usize {
         .map_or(0, |(i, _)| i)
 }
 
-/// Whether any of the trigger's thresholds is met.
+/// Whether any of the trigger's thresholds is met: a reading at or above it, or a house loss above it.
 fn is_met(trigger: &StressTrigger, readings: &Readings) -> bool {
     trigger.divergence_bps.is_some_and(|x| readings.divergence_bps >= x)
         || trigger.divergence_share_bps.is_some_and(|x| readings.divergence_share_bps >= x)
         || trigger.move_bps.is_some_and(|x| readings.move_bps >= x)
         || trigger.utilisation_bps.is_some_and(|x| readings.utilisation_bps >= x)
+        || trigger.house_loss.is_some_and(|x| readings.house_loss.is_some_and(|loss| loss > x))
 }
 
 /// `divergence_bps` as a share of the market's divergence bound. A market with a zero bound

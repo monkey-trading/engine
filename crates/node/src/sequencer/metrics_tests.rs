@@ -201,6 +201,46 @@ async fn a_house_deficit_resolves_once_nav_stays_at_or_above_zero() {
     assert_eq!(note(-1), [fired]);
 }
 
+/// The house loss alert pages once when the loss trigger's level rises, pages no more while the loss
+/// keeps crossing its threshold, and resolves only once the level has stayed at zero for
+/// `REALERT_AFTER`; a new process holds an episode open from before a restart, which a raised level
+/// pages again and a level at zero resolves.
+#[tokio::test(start_paused = true)]
+async fn the_house_loss_alert_pages_once_while_the_loss_crosses_its_threshold() {
+    let (fired, resolved) = (("house_loss_stress{}".to_owned(), false), ("house_loss_stress{}".to_owned(), true));
+    let almost = REALERT_AFTER - Duration::from_millis(1);
+    let mut alert = LossAlert::default();
+    let mut note = |level: usize| -> Vec<(String, bool)> {
+        let lines = capture(|| alert.note(level, || Fixed::from_int(10)));
+        lines.iter().map(|line| (line.key(), line.severity.is_none())).collect()
+    };
+    assert_eq!(note(2), std::slice::from_ref(&fired));
+    // The loss crossing back and forth, and commands that leave it raised, page nothing.
+    for level in [2, 0, 2, 0] {
+        assert!(note(level).is_empty());
+    }
+    advance(almost).await;
+    assert!(note(0).is_empty());
+    advance(Duration::from_millis(1)).await;
+    assert_eq!(note(0), std::slice::from_ref(&resolved));
+    assert!(note(0).is_empty(), "resolved once");
+    assert_eq!(note(1), std::slice::from_ref(&fired));
+
+    // After a restart at zero, a minute at zero resolves an episode left open before it.
+    let mut restarted = LossAlert::default();
+    let mut note = |level: usize| -> Vec<(String, bool)> {
+        let lines = capture(|| restarted.note(level, || Fixed::ZERO));
+        lines.iter().map(|line| (line.key(), line.severity.is_none())).collect()
+    };
+    assert!(note(0).is_empty());
+    advance(REALERT_AFTER).await;
+    assert_eq!(note(0), [resolved]);
+    // After a restart with the level raised, the first command pages it again.
+    let mut raised = LossAlert::default();
+    let lines = capture(|| raised.note(2, || Fixed::from_int(10)));
+    assert_eq!(lines.iter().map(|line| (line.key(), line.severity.is_none())).collect::<Vec<_>>(), [fired]);
+}
+
 // ── Helpers ──
 
 fn checkpoint(seq: u64, root: String) -> LogEntry {

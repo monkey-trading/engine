@@ -101,6 +101,12 @@ pub struct StressTrigger {
     /// up to 10_000, the bound itself, is reachable in every market.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub divergence_share_bps: Option<i64>,
+    /// From `V59`, the house's marked loss to its clients over the trailing day, in USD
+    /// (`house_loss`). Unlike the other thresholds it is met only when the loss is above it, so at
+    /// zero it fires once the house has lost money over the day, and it applies in every market.
+    /// Parameters set before `V59` may name it for its activation to keep; it reads nothing before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub house_loss: Option<Fixed>,
 }
 
 /// Markout-based flow scoring. Each fill is marked against the index `horizon_ms` later; the
@@ -164,8 +170,8 @@ impl ProtocolParams {
     /// - a total house cap outside 1..=100000 bps, or a total cap floor below zero or above
     ///   `Fixed::MAX_INPUT`
     /// - no stress levels, a trigger on level 0, a multiplier outside 0..=100000 bps, a minimum
-    ///   spread outside 0..=10000 bps, a negative trigger threshold, or a divergence share above
-    ///   10000 bps
+    ///   spread outside 0..=10000 bps, a negative trigger threshold in bps, a divergence share above
+    ///   10000 bps, or a house loss threshold beyond ±`Fixed::MAX_INPUT`
     /// - a non-positive move window, or a negative cooldown
     /// - a toxicity horizon outside 1..=3600000 ms, an EWMA weight outside 1..=10000 bps, tiers
     ///   not strictly ascending, or an extra spread outside 0..=10000 bps
@@ -203,6 +209,7 @@ impl ProtocolParams {
                         .flatten()
                         .any(|x| *x < 0)
                         || t.divergence_share_bps.is_some_and(|x| x > MAX_RATE_BPS)
+                        || t.house_loss.is_some_and(|x| x.abs() > Fixed::MAX_INPUT)
                 })
         };
         if self.stress_levels.iter().any(bad_level) {

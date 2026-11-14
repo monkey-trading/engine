@@ -231,6 +231,7 @@ impl Engine {
             return false;
         }
         self.markets.get_mut(&market_id).expect("market exists").mark = Some(index.mid);
+        self.note_fresh_mark(market_id);
         true
     }
 

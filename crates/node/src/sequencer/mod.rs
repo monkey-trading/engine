@@ -49,7 +49,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use engine_core::Engine;
-#[cfg(test)]
 use engine_core::Fixed;
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{Command, Sequenced};
@@ -65,7 +64,9 @@ use crate::checkpoints::accounting::Accounting;
 use crate::clock::Clock;
 use crate::log::{CommandEntry, LogEntry, LogWriter, Offset, SegmentedLog};
 use crate::metrics::Metrics;
-use crate::sequencer::alerts::{BenchmarkAlerts, DeficitAlert, alert_on, reinstated_receipt, resolve_reversal};
+use crate::sequencer::alerts::{
+    BenchmarkAlerts, DeficitAlert, LossAlert, alert_on, reinstated_receipt, resolve_reversal,
+};
 use crate::snapshot::{Progress, RecoveryBase};
 use crate::tee::EnclaveKey;
 use crate::trusted_time::TimeGate;
@@ -110,6 +111,8 @@ pub struct Sequencer {
     close_spread_ceilings: Vec<engine_core::close_spread::CloseSpreadCeiling>,
     /// The alert for house NAV below zero.
     deficit: DeficitAlert,
+    /// From `V59`, the alert for a house that has lost money to its clients over the trailing day.
+    loss: LossAlert,
     /// Benchmark clears already emitted during this process, limited to listed names.
     benchmark_alerts: BenchmarkAlerts,
     access_alerts: AccessAlerts,
@@ -421,6 +424,7 @@ impl Sequencer {
             self.benchmark_alerts.retain_listed(&self.engine, &previous);
         }
         self.deficit.note(self.engine.house_nav());
+        self.loss.note(self.engine.house_loss_level(), || self.engine.house_loss().map_or(Fixed::ZERO, |r| r.loss));
         if self.last_checkpoint != self.engine.last_seq()
             && (self.next_seq.is_multiple_of(self.checkpoint_every)
                 || (self.gate.is_some()

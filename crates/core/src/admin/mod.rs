@@ -382,6 +382,7 @@ impl Engine {
                 self.start_toxicity_score(*version);
                 self.floor_bound_listings(*version);
                 self.start_hold_clocks(*version);
+                self.start_house_loss(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
                 self.protocol_version = *version;
                 // Rules before `V47` record no candidate, so one an election already seated is seated before
