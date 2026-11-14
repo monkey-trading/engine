@@ -6,9 +6,9 @@
 //! connections at once, each with a short deadline for its question, so an idle connection holds up
 //! no other.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -37,6 +37,8 @@ const REBIND: Duration = if cfg!(test) { Duration::from_millis(100) } else { Dur
 /// How many connections a member serves at once; one past them is closed unanswered, and the operator
 /// asks again.
 const CONNECTIONS: usize = 8;
+/// How many of them one address may hold, so no single peer keeps the operator's question out.
+const PER_PEER: usize = 2;
 /// How long a connection has to send its question, which the operator sends as soon as it connects.
 const QUESTION_TIMEOUT: Duration = if cfg!(test) { Duration::from_millis(500) } else { Duration::from_secs(5) };
 
@@ -121,9 +123,9 @@ impl Answering {
         }))
     }
 
-    /// Answers each operator that connects, up to `CONNECTIONS` at once, for as long as it runs: a
-    /// member runs it beside its following, and drops it, freeing the endpoint and every connection,
-    /// before it takes a turn. A bind that fails is tried again.
+    /// Answers each operator that connects, up to `CONNECTIONS` at once and `PER_PEER` from one
+    /// address, for as long as it runs: a member runs it beside its following, and drops it, freeing
+    /// the endpoint and every connection, before it takes a turn. A bind that fails is tried again.
     pub(crate) async fn run(&self) -> Infallible {
         let mut failed = false;
         let listener = loop {
@@ -139,6 +141,7 @@ impl Answering {
         };
         info!(listen = %self.listen, "answering log checks while following");
         let (mut connection, mut serving) = (0_u64, FuturesUnordered::new());
+        let mut by_peer: BTreeMap<IpAddr, usize> = BTreeMap::new();
         loop {
             tokio::select! {
                 accepted = listener.accept() => {
@@ -149,19 +152,29 @@ impl Answering {
                             continue;
                         }
                     };
-                    if serving.len() >= CONNECTIONS {
-                        debug!(%peer, "closed a log check connection: {CONNECTIONS} are being served");
+                    let held = by_peer.get(&peer.ip()).copied().unwrap_or_default();
+                    if serving.len() >= CONNECTIONS || held >= PER_PEER {
+                        debug!(%peer, "closed a log check connection: {} are being served, {held} from this address", serving.len());
                         continue;
                     }
+                    *by_peer.entry(peer.ip()).or_default() += 1;
                     connection += 1;
                     let span = info_span!("log_check", id = connection, peer = %peer);
                     serving.push(async move {
                         if let Err(e) = self.serve(stream).await {
                             warn!("a log check connection failed: {e:#}");
                         }
+                        peer.ip()
                     }.instrument(span));
                 }
-                Some(()) = serving.next(), if !serving.is_empty() => {}
+                Some(ip) = serving.next(), if !serving.is_empty() => {
+                    if let Some(held) = by_peer.get_mut(&ip) {
+                        *held -= 1;
+                        if *held == 0 {
+                            by_peer.remove(&ip);
+                        }
+                    }
+                }
             }
         }
     }

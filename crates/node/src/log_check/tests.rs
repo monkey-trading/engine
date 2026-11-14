@@ -15,8 +15,9 @@ const B2: B256 = B256::repeat_byte(0xb2);
 fn a_range_names_the_member_in_office_at_its_start_and_each_that_took_a_turn_in_it() {
     let takings = takings(0, &[(10, A), (20, B), (30, B), (40, C)]);
     let names = |after, through| takings.sequenced(after, through).unwrap();
-    // Before the first `TurnTaken` no one is recorded.
-    assert_eq!(names(None, 9), Sequencers::default());
+    // No record names who sequenced before the first `TurnTaken`: the operator before the turns.
+    assert_eq!(takings.sequenced(None, 9), None);
+    assert_eq!(takings.sequenced(Some(5), 15), None);
     assert_eq!(names(None, 15), sequencers(&[A]));
     // From a head inside B's holding, B alone, until C takes its turn.
     assert_eq!(names(Some(19), 39), sequencers(&[B]));
@@ -40,8 +41,8 @@ fn records_that_start_past_a_range_attribute_none_of_it() {
     assert_eq!(takings.sequenced(Some(59), 70), Some(sequencers(&[B])), "a range from a recorded TurnTaken");
     // A first command that is itself a `TurnTaken` names who sequenced from it.
     assert_eq!(takings_after_base(50).sequenced(Some(49), 55), Some(sequencers(&[B])));
-    // No command seen: complete from the next, which only a log with none yet can attribute.
-    assert_eq!(Takings::default().complete_from(0).sequenced(None, 5), Some(Sequencers::default()));
+    // No command seen: complete from the next, with no `TurnTaken` to attribute anything by.
+    assert_eq!(Takings::default().complete_from(0).sequenced(None, 5), None);
     assert_eq!(Takings::default().complete_from(8).sequenced(Some(7), 9), None);
     assert_eq!(Takings::default().complete_from(8).sequenced(Some(3), 9), None);
     // The node's own check of a range it cannot attribute keeps the head it had.
@@ -75,6 +76,9 @@ fn the_nodes_own_check_counts_only_when_neither_its_member_nor_its_release_seque
     // Nor does a head at or below the one verified, or one the records cannot attribute.
     assert_eq!(own_check(Some(head(39)), &recorded, head(30), (C, &member(C))), Some(head(39)));
     assert_eq!(own_check(previous, &takings(25, &[(30, B)]), head(39), (C, &member(C))), previous);
+    // A member's upgrade before any turn checks nothing: no record names the operator before them.
+    let before_turns = takings(0, &[]);
+    assert_eq!(own_check(None, &before_turns, head(9), (A2, &member(A))), None);
     // With nothing verified, the range is the holding of the latest `TurnTaken`: B's.
     assert_eq!(own_check(None, &recorded, head(39), (C, &member(C))), Some(head(39)));
     assert_eq!(own_check(None, &recorded, head(39), (A2, &member(A))), Some(head(39)));

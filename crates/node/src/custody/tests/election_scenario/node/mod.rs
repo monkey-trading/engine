@@ -80,6 +80,8 @@ pub(super) struct Node {
     api: Option<JoinHandle<anyhow::Result<()>>>,
     /// A seat's asking for the boundary's log check, and the checks its sequencer publishes as due.
     pub(super) asking: Option<Asking>,
+    /// The vault's latest checkpoint seq as the poster last reported it to the sequencer.
+    pub(super) posted: watch::Receiver<Option<u64>>,
     /// When a seat published its commands, and the task recording it.
     pub(super) stamps: Arc<std::sync::Mutex<Stamps>>,
     tracking: JoinHandle<()>,
@@ -291,13 +293,21 @@ impl Node {
         let recovery = seq.take_recovery_checkpoints();
         let sequencer = tokio::spawn(seq.run(rx));
         let custody = tokio::spawn(custody.run(signed, tx.clone()));
+        let (posted_tx, posted) = watch::channel(None);
         let checkpoints = post_checkpoints.then(|| {
             let (status_tx, mut status_rx) = mpsc::channel(64);
             let sequencer_tx = tx.clone();
             let status = tokio::spawn(async move {
                 while let Some(message) = status_rx.recv().await {
+                    let reported = match &message {
+                        Request::CheckpointStatus { posted, .. } => *posted,
+                        _ => None,
+                    };
                     if sequencer_tx.send(message).await.is_err() {
                         break;
+                    }
+                    if reported.is_some() {
+                        posted_tx.send_replace(reported);
                     }
                 }
             });
@@ -368,6 +378,7 @@ impl Node {
         Node {
             api,
             asking,
+            posted,
             stamps,
             tracking,
             state,

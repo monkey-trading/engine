@@ -236,9 +236,9 @@ an index: load only the rule whose hint matches the current action.
   take no turns, and `log_check_unattributable` while those records cannot say who sequenced the
   range, as after a snapshot start), which a following member answers on its handover endpoint from
   the checkpoints its replica verified under the question's signer; the verified head is sealed with
-  the keys, restored only when the log holds its checkpoint, carried by an upgrade, and with none the
-  next check covers the latest holding, and `/v1/accounts/{a}/payouts` names the boundary each waiting
-  approval's check is at.
+  the keys while the gate applies, restored only when the log holds its checkpoint, carried by an
+  upgrade, and with none the next check covers the latest holding, and `/v1/accounts/{a}/payouts`
+  names the boundary each waiting approval's check is at.
   With `[log_heads]` (#541), `log_heads/` posts the enclave's newest released `(seq, prefix)` — the
   cumulative command-prefix digest, which checkpoints do not reset, and every post names the
   previously accepted head it extends — the

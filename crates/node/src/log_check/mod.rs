@@ -196,12 +196,12 @@ impl Takings {
 
     /// Who sequenced the commands after `after`, the last verified head, through `through`, as
     /// `TurnTaken` records them: the latest one at or before the first of them, whose member sequenced
-    /// on from there, and each one after it. Commands before the log's first `TurnTaken` name no one.
-    /// With no verified head, as before the first check or once a host kept the sealed one from a
-    /// start, the range is the holding of the latest `TurnTaken` at or before `through`: from genesis
-    /// it would name every member that ever took a turn, and no check could count again. `None` when
-    /// these records do not reach back to the first of them, or, from a snapshot's base, to a
-    /// `TurnTaken` at or before it, since a `TurnTaken` before the base would name who sequenced them.
+    /// on from there, and each one after it. With no verified head, as before the first check or once
+    /// a host kept the sealed one from a start, the range is the holding of the latest `TurnTaken` at
+    /// or before `through`: from genesis it would name every member that ever took a turn, and no
+    /// check could count again. `None` when no `TurnTaken` these records hold names who sequenced the
+    /// first of them: the operator before the log's first `TurnTaken`, which no record names, or the
+    /// holder before a snapshot's base.
     pub(crate) fn sequenced(&self, after: Option<u64>, through: u64) -> Option<Sequencers> {
         let first = match after {
             Some(after) => after.saturating_add(1),
@@ -209,7 +209,7 @@ impl Takings {
         };
         let from = self.from?;
         let in_office = self.by_seq.range(..=first).next_back().map(|(_, taking)| *taking);
-        if from > first || (from > 0 && in_office.is_none()) {
+        if from > first || in_office.is_none() {
             return None;
         }
         let takings = in_office.into_iter().chain(self.by_seq.range(first..=through).map(|(_, taking)| *taking));

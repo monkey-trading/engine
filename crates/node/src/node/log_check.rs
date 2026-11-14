@@ -12,7 +12,7 @@ use tracing::info;
 use crate::config::NodeConfig;
 use crate::log::CheckpointDomain;
 use crate::log_check::ask::Asker;
-use crate::log_check::{Due, VerifiedHead, own_candidates, own_check};
+use crate::log_check::{Due, VerifiedHead, applies, own_candidates, own_check};
 use crate::node::shutdown::TaskResult;
 use crate::sequencer::{LogCheckSetup, ReplayedLog, Request};
 use crate::tee::EnclaveKey;
@@ -24,13 +24,18 @@ use crate::trusted_time::TrustedClock;
 /// (`keys::check_predecessor_head`), and seals, in the same write, the verified head after it: the
 /// handed-over checkpoint, which `log`'s replay or replica verified, unless this release, or the
 /// member its node runs for under the `operator` key, sequenced part of the range (`own_check`), as
-/// the same member's upgrade did; then the head the keys carried stays.
+/// the same member's upgrade did; then the head the keys carried stays. While the gate does not
+/// apply the keys carry none, so a release built before the log check can still take them.
 /// Error cases:
 /// - see `keys::check_predecessor_head`
 pub(crate) fn after_handover(store: Option<&KeyStore>, operator: AccountId, log: &ReplayedLog) -> anyhow::Result<()> {
     let release = store.map(|store| B256::from(store.release().id()));
     let candidates = own_candidates(&log.replayed.engine, operator);
+    let gated = applies(&log.replayed.engine);
     let check = |previous: Option<VerifiedHead>, head: &Head| {
+        if !gated {
+            return None;
+        }
         let (Some(release), Ok(root)) = (release, head.root.parse()) else { return previous };
         let handed = VerifiedHead { seq: head.seq, link: log.head_link(), root };
         let checked = own_check(previous, &log.replayed.takings, handed, (release, &candidates));

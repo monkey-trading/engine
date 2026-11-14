@@ -368,7 +368,10 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
   question, so keep that endpoint reachable from every member's node, not only from the next turn's. A
   one-member set, or rotation off, needs no check. The verified head is sealed with the keys, and an
   upgrade (section 5) carries it to the new release; a start that finds its log does not hold the
-  sealed head asks for the check again. Leave `[snapshots]` unset here too: a start from a snapshot
+  sealed head asks for the check again. Every member must run a release that has the log check before
+  rotation is turned on, since keys carrying a verified head do not open on an older release; with
+  rotation off the keys carry none ([deploy-and-rollback.md](deploy-and-rollback.md), "Know before you
+  start"). Leave `[snapshots]` unset here too: a start from a snapshot
   past the verified head cannot say who sequenced the range and pages `log_check_unattributable`.
 - **A turn the engine refused.** `turn_refused` ([alerts.md](alerts.md)) means no set mirrored at
   least seven days earlier names your candidate with your key: the key in effect stays for that turn.

@@ -15,10 +15,9 @@ fn a_check_no_member_can_be_asked_for_pages_until_it_can() {
     let mut node = Node::start("log-check-unattributable", &[other()]);
     node.approve(1);
     let (turn, taken_seq) = node.take_turn();
-    let complete = node.seq.log_check.takings.clone();
     // A verified head before records that start at the `TurnTaken`, as a start from a snapshot past
     // that head gives: they cannot say who sequenced the commands between the two.
-    node.seq.log_check.verified = Some(head_at(1));
+    node.seq.log_check.verified = Some(head_at(taken_seq - 3));
     let mut partial = crate::log_check::Takings::default();
     let taken = Event::TurnTaken { turn, candidate: CANDIDATE, release: node.release };
     partial.command(taken_seq, &[taken]);
@@ -30,8 +29,9 @@ fn a_check_no_member_can_be_asked_for_pages_until_it_can() {
     assert_eq!(paged[0]["turn"], turn.to_string());
     node.seq.refresh_log_check();
     assert!(named(&mut alerts, "alert", "log_check_unattributable").is_empty(), "the alert paged again");
-    // Once the records reach back again, the check comes due and the episode ends.
-    node.seq.log_check.takings = complete;
+    // With no verified head, the range is the holding the records start at: the check comes due and
+    // the episode ends.
+    node.seq.log_check.verified = None;
     node.seq.refresh_log_check();
     assert!(node.due.borrow().is_some(), "the check did not come due");
     let ended = named(&mut resolved, "alert_resolved", "log_check_unattributable");

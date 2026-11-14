@@ -181,8 +181,15 @@ impl Leg {
             }
         })
         .await;
-        // The poster observes the posted checkpoint within a few of its 40 ms rounds.
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // The node's sequencer has had the poster's report of it, and released what it would.
+        let mut posted = node.posted.clone();
+        wait_for("the node to see the vault hold a checkpoint past the approval", async {
+            while posted.borrow_and_update().is_none_or(|posted| posted < approved) {
+                posted.changed().await.unwrap();
+            }
+        })
+        .await;
+        node.query(|_| ()).await;
         let payout = self.payout(node, nonce).await;
         assert_eq!(payout["withdrawal"], Value::Null, "signed before the boundary's check: {payout}");
         let boundary = engine_core::turns::boundary(turn).unwrap();

@@ -15,7 +15,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{Instant, timeout};
-use tracing::{Instrument, error, info, info_span, warn};
+use tracing::{Instrument, info, info_span, warn};
 
 use crate::checkpoints::{CheckpointChain, HandoverSource, View};
 use crate::config::TeeProvider;
@@ -191,7 +191,7 @@ impl<C: CheckpointChain> Asker<C> {
             .context("the sequencer has stopped")?;
         let taken = taken.await.context("the sequencer has stopped")?;
         if !taken {
-            error!(release = %release, "the sequencer refused a verification its node admitted");
+            info!(release = %release, "the sequencer refused a verification its node admitted: the check due changed during the round");
         }
         Ok(taken)
     }

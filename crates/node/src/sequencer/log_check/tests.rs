@@ -130,19 +130,24 @@ fn a_verified_head_at_the_command_before_the_turn_leaves_no_check_due() {
     node.seq.checkpoint().unwrap();
     let last = node.seq.engine.last_seq().unwrap();
     let handed = node.checkpoint_head(last);
-    node.store.update(|keys| keys.log_check = Some(handed)).unwrap();
-    let mut successor = node.restart();
-    successor.take_turn();
-    assert!(successor.due.borrow().is_none(), "a check came due over the handover's");
-    assert!(successor.seq.log_check.covers(&successor.seq.engine, last));
+    let (_, taken_seq) = node.take_turn();
+    assert_eq!(taken_seq, last + 1, "the TurnTaken follows the handed-over checkpoint");
+    node.seq.log_check.verified = Some(handed);
+    node.seq.refresh_log_check();
+    assert!(node.due.borrow().is_none(), "a check came due over the handover's");
+    assert!(node.seq.log_check.covers(&node.seq.engine, last));
 }
 
 #[test]
-fn rotation_off_leaves_payouts_to_the_posted_root_alone() {
+fn rotation_off_leaves_payouts_to_the_posted_root_alone_and_drops_the_sealed_head() {
     let mut node = Node::start("log-check-rotation-off", &[other()]);
     node.approve(1);
     node.take_turn();
-    assert!(node.due.borrow().is_some(), "no check came due with rotation on");
+    let head = node.due.borrow().clone().expect("no check came due with rotation on").head;
+    assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
+    assert_eq!(node.store.keys().log_check, Some(head));
+    node.approve(2);
+    assert!(node.check_of(2).is_some(), "an approval past the verified head waits with rotation on");
     let off =
         Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
     let events = node.seq.sequence(off).unwrap().expect("admitted");
@@ -150,9 +155,13 @@ fn rotation_off_leaves_payouts_to_the_posted_root_alone() {
     assert!(node.seq.engine.daily_turns().in_effect.is_some(), "the drawn turn stands");
     node.seq.refresh_log_check();
     assert!(node.due.borrow().is_none(), "a check stayed due with rotation off");
-    assert_eq!(node.check_of(1), None);
+    // Keys handed over now carry no verified head, which a release built before the check refuses.
+    assert_eq!(node.store.keys().log_check, None, "the sealed head outlived the gate");
+    assert_eq!(node.check_of(2), None);
     node.release();
-    assert_eq!(node.signed.try_recv().expect("#14's gate alone signs it").nonce, 1);
+    let signed: Vec<u64> =
+        std::iter::from_fn(|| node.signed.try_recv().ok()).map(|withdrawal| withdrawal.nonce).collect();
+    assert_eq!(signed, [1, 2], "#14's gate alone signs both");
 }
 
 #[test]
@@ -428,4 +437,5 @@ fn head_at(seq: u64) -> VerifiedHead {
     VerifiedHead { seq, link: B256::repeat_byte(seq as u8), root: B256::repeat_byte(!(seq as u8)) }
 }
 
+mod handover;
 mod pages;

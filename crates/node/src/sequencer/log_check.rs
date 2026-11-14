@@ -43,6 +43,8 @@ pub(super) struct LogCheck {
     unattributable: Option<u64>,
     /// Whether `log_check_unavailable` is raised.
     unavailable: bool,
+    /// Whether the sealed keys hold a verified head, restored or not.
+    sealed: bool,
 }
 
 impl LogCheck {
@@ -73,7 +75,8 @@ impl LogCheck {
             (None, None) => {}
         }
         let (operator, store, due) = (Some(operator), Some(store), Some(due));
-        Self { operator, store, due, verified, takings, target, latest: target, ..Self::default() }
+        let sealed = sealed.is_some();
+        Self { operator, store, due, verified, takings, target, latest: target, sealed, ..Self::default() }
     }
 
     /// Notes the checkpoint `head` just written (see `retarget`).
@@ -159,15 +162,35 @@ impl LogCheck {
         Some(CheckWait { turn, boundary_ms: engine_core::turns::boundary(turn)? })
     }
 
+    /// Drops the verified head and its seal once the gate no longer applies, so keys handed over with
+    /// rotation off carry none and a release built before the log check can take them; a failed seal
+    /// is tried again at the next refresh.
+    fn forget(&mut self) {
+        let Some(store) = &self.store else { return };
+        match store.update(|keys| keys.log_check = None) {
+            Ok(()) => {
+                info!(
+                    seq = self.verified.map(|head| head.seq),
+                    "the gate no longer applies: dropped the verified head"
+                );
+                (self.verified, self.sealed) = (None, false);
+            }
+            Err(e) => warn!("dropping the verified head from the sealed keys failed: {e:#}"),
+        }
+    }
+
     /// Takes `head` as the verified head and seals it with the keys; a failed seal leaves the next
     /// start to ask again.
     fn verify(&mut self, head: VerifiedHead) {
         self.verified = Some(head);
         self.takings.prune(head.seq);
-        if let Some(store) = &self.store
-            && let Err(e) = store.update(|keys| keys.log_check = Some(head))
-        {
-            warn!(seq = head.seq, "sealing the verified head failed: a restart asks for the check again: {e:#}");
+        if let Some(store) = &self.store {
+            match store.update(|keys| keys.log_check = Some(head)) {
+                Ok(()) => self.sealed = true,
+                Err(e) => {
+                    warn!(seq = head.seq, "sealing the verified head failed: a restart asks for the check again: {e:#}")
+                }
+            }
         }
     }
 }
@@ -176,6 +199,9 @@ impl Sequencer {
     /// Publishes the check due, when it changed, and raises `log_check_unattributable` while one is
     /// outstanding that no member can be asked for (`LogCheck::unattributable`).
     pub(super) fn refresh_log_check(&mut self) {
+        if (self.log_check.sealed || self.log_check.verified.is_some()) && !applies(&self.engine) {
+            self.log_check.forget();
+        }
         let due = self.log_check.due(&self.engine);
         if let Some(sender) = &self.log_check.due {
             sender.send_if_modified(|current| {

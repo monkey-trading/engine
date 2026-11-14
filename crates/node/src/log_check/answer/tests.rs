@@ -93,18 +93,10 @@ async fn a_member_answers_over_its_endpoint_while_it_runs_past_an_idle_connectio
     let answering = answering(checked);
     let listen = answering.listen;
     let nonce = [0x7a; 32];
-    let connect = || async move {
-        loop {
-            match TcpStream::connect(listen).await {
-                Ok(stream) => break stream,
-                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
-            }
-        }
-    };
     let asking = async {
         // A connection that sends nothing holds up no other, and is closed once its deadline passes.
-        let mut idle = connect().await;
-        let mut stream = connect().await;
+        let mut idle = connect(listen).await;
+        let mut stream = connect(listen).await;
         send(&mut stream, &ask(&nonce, statement(head(40)))).await.unwrap();
         let answer = receive::<Answer>(&mut stream).await.unwrap();
         let closed = timeout(QUESTION_TIMEOUT * 4, receive::<Answer>(&mut idle)).await;
@@ -120,7 +112,34 @@ async fn a_member_answers_over_its_endpoint_while_it_runs_past_an_idle_connectio
     TcpListener::bind(listen).await.expect("the endpoint is still bound");
 }
 
+#[tokio::test]
+async fn one_address_holds_at_most_two_connections_so_it_cannot_fill_the_endpoint() {
+    let answering = answering(CheckedHeads::default());
+    let listen = answering.listen;
+    let probing = async {
+        let (_first, _second) = (connect(listen).await, connect(listen).await);
+        let mut third = connect(listen).await;
+        // Closed at once, not held until the question's deadline.
+        let read = timeout(QUESTION_TIMEOUT / 2, receive::<Answer>(&mut third)).await;
+        assert!(read.is_ok_and(|read| read.is_err()), "a third connection from one address was served");
+    };
+    tokio::select! {
+        () = probing => {}
+        never = answering.run() => match never {},
+    }
+}
+
 // ── Helpers ──
+
+/// A connection to `listen`, once the member's endpoint accepts them.
+async fn connect(listen: SocketAddr) -> TcpStream {
+    loop {
+        match TcpStream::connect(listen).await {
+            Ok(stream) => break stream,
+            Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+        }
+    }
+}
 
 /// A member's answers from `checked`, quoting under the mock TEE as `DIGEST`, on a free endpoint.
 fn answering(checked: CheckedHeads) -> Answering {
