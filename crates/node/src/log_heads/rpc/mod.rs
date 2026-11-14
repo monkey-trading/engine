@@ -19,11 +19,13 @@ use tokio::time::timeout;
 use tracing::warn;
 
 use super::submission::{Reserve, SubmissionStore};
-use super::{Head, HeadsChain, PostOutcome};
+use super::{Head, HeadV2, HeadsChain, PostOutcome, TurnHeads};
 use crate::config::{CheckpointSection, LogHeadsSection, redact};
 use crate::custody::VaultReader;
-use crate::custody::{Quorum, VaultRpc};
+use crate::custody::{Quorum, QuorumBlock, VaultRpc};
+use crate::liveness::chain::LivenessDomain;
 use crate::log::CheckpointDomain;
+use crate::standby_key::chain::StandbyDomain;
 
 // The LogHeads contract's ABI, as `contracts/src/LogHeads.sol` declares it, and the vault's signer
 // history, as `contracts/src/Vault.sol` declares it.
@@ -125,6 +127,8 @@ pub(crate) struct HeadsRpc {
     /// after its caller's bound elapses, so a stalled file holds one worker, never one per attempt.
     store_slot: Arc<tokio::sync::Semaphore>,
     quorum: Arc<Quorum<VaultRpc>>,
+    /// The registry and schedule the vault names, which it names once, read at the first turn read.
+    liveness: std::sync::OnceLock<LivenessDomain>,
 }
 
 impl HeadsRpc {
@@ -161,6 +165,7 @@ impl HeadsRpc {
             submissions: SubmissionStore::pending(log_dir, cfg.relayer, cfg.contract, domain.chain_id)?,
             store_slot: Arc::new(tokio::sync::Semaphore::new(1)),
             quorum,
+            liveness: std::sync::OnceLock::new(),
         })
     }
 
@@ -298,10 +303,19 @@ fn rebroadcast_call(
     chain_id: u64,
     pending: &super::submission::Reservation,
 ) -> anyhow::Result<TransactionRequest> {
+    if let Some(calldata) = &pending.calldata {
+        return Ok(raw_call(contract, relayer, chain_id, calldata.to_vec(), pending.nonce));
+    }
     let (_, head) = pending.head.context("a pending reservation carries its head")?;
     let signature = pending.signature.as_deref().context("a pending reservation carries its call")?;
     let parent = (pending.parent_seq != 0).then_some(Head { seq: pending.parent_seq, link: pending.parent_link });
     signed_call(contract, relayer, chain_id, head, parent, signature, pending.nonce)
+}
+
+/// `calldata` to `contract` from `relayer` at `nonce`.
+fn raw_call(contract: Address, relayer: Address, chain_id: u64, calldata: Vec<u8>, nonce: u64) -> TransactionRequest {
+    let tx = TransactionRequest::default().to(contract).from(relayer).nonce(nonce).input(calldata.into());
+    TransactionRequest { chain_id: Some(chain_id), ..tx }
 }
 
 /// The exact signed `post` call at `nonce`.
@@ -337,16 +351,70 @@ impl HeadsChain for HeadsRpc {
         posted(&self.quorum, self.contract, self.domain.chain_id).await
     }
 
-    /// Reserves the relayer nonce durably, then relays the exact signed call. A send pending at the
-    /// outstanding nonce waits out an in-memory bound — twice the posting interval from when this
-    /// process stored it, never from the host-written file — then its stored hash is reconciled
-    /// against the chain: unknown (dropped, or planted by the host) it is cleared so this or a
-    /// newer head re-sends at the nonce; present it is rebroadcast — the reserved head's own call
-    /// at the same nonce.
+    /// Relays the v1 call of `head`, `parent` and `signature` (see `send`).
+    /// Error cases:
+    /// - as `send`
+    async fn post(&self, epoch: u64, head: Head, parent: Option<Head>, signature: &str) -> anyhow::Result<PostOutcome> {
+        self.send(epoch, head, parent, signature, None).await
+    }
+
+    /// The turn naming the operator, read at the block the posted head is agreed at.
+    /// Error cases:
+    /// - the quorum is lost, a read fails, or the vault names no registry or the registry no schedule
+    async fn turn(&self) -> anyhow::Result<Option<TurnHeads>> {
+        let (_, at) = self.quorum.posted_head(self.contract).await?;
+        let block = QuorumBlock::at(&self.quorum, at).await?;
+        let domain = match self.liveness.get() {
+            Some(domain) => *domain,
+            None => {
+                let vault = Address::from(self.domain.vault.0);
+                let standby = StandbyDomain::at(&block, self.domain.chain_id, vault).await?;
+                *self.liveness.get_or_init(|| LivenessDomain { standby, log_heads: self.contract })
+            }
+        };
+        let view = crate::liveness::chain::view(&block, &domain).await?;
+        let Some(named) = view.named.filter(|_| view.turn_names_operator()) else { return Ok(None) };
+        Ok(Some(TurnHeads {
+            interval: view.rule.interval(),
+            turn: named.turn,
+            position: named.position,
+            release: view.release,
+            generation: named.generation,
+            signed_at: view.head.signed_at,
+            bound_block: view.head.bound_block,
+            block_number: view.number,
+            block_hash: view.hash,
+            marked_block: view.marked_block,
+        }))
+    }
+
+    /// Relays a v2 head's `postV2` call as `post` relays a v1 head's.
+    /// Error cases:
+    /// - as `post`, or the signature is not hex
+    async fn post_v2(&self, epoch: u64, head: &HeadV2, signature: &str) -> anyhow::Result<PostOutcome> {
+        let calldata = head.calldata(signature)?;
+        self.send(epoch, head.head, head.parent, signature, Some(calldata)).await
+    }
+}
+
+impl HeadsRpc {
+    /// Reserves the relayer nonce durably, then relays the exact signed call: `calldata` when given,
+    /// otherwise the v1 call of `head`, `parent` and `signature`. A send pending at the outstanding
+    /// nonce waits out an in-memory bound — twice the posting interval from when this process stored
+    /// it, never from the host-written file — then its stored hash is reconciled against the chain:
+    /// unknown (dropped, or planted by the host) it is cleared so this or a newer head re-sends at the
+    /// nonce; present it is rebroadcast — the reserved head's own call at the same nonce.
     /// Error cases:
     /// - nonce reservation, the transaction lookup, gas estimation, the submission, or a bounded
     ///   reservation-store operation fails or outruns its bound
-    async fn post(&self, epoch: u64, head: Head, parent: Option<Head>, signature: &str) -> anyhow::Result<PostOutcome> {
+    async fn send(
+        &self,
+        epoch: u64,
+        head: Head,
+        parent: Option<Head>,
+        signature: &str,
+        calldata: Option<Vec<u8>>,
+    ) -> anyhow::Result<PostOutcome> {
         let latest = self.relayer_nonce(BlockNumberOrTag::Latest).await?;
         let now =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
@@ -372,6 +440,7 @@ impl HeadsChain for HeadsRpc {
                 // signature against the older head.
                 pending.tx_hash = None;
                 pending.signature = None;
+                pending.calldata = None;
                 pending.record_send(epoch, head, parent);
                 pending
             }
@@ -384,9 +453,13 @@ impl HeadsChain for HeadsRpc {
         // broadcast: the record never names a nonce in flight without the call that may land at
         // it, whatever a crash in the broadcast window leaves unanswered.
         reservation.signature = Some(signature.to_string());
+        reservation.calldata = calldata.clone().map(Into::into);
         reservation.stored_at = now;
         self.persist_update(reservation.clone()).await?;
-        let tx = self.post_request(head, parent, signature, reservation.nonce)?;
+        let tx = match calldata {
+            Some(calldata) => raw_call(self.contract, self.relayer, self.domain.chain_id, calldata, reservation.nonce),
+            None => self.post_request(head, parent, signature, reservation.nonce)?,
+        };
         let tx = self.with_gas(tx).await?;
         let hash: B256 = self.deadline(self.client.request("eth_sendTransaction", (tx,))).await?;
         reservation.tx_hash = Some(hash);

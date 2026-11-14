@@ -398,6 +398,7 @@ impl Sequencer {
             after_sync: Vec::new(),
             house: house::Latest::recovered(last_checkpoint_offset.zip(last_signed_checkpoint.clone())),
             log_heads: cfg.log_heads,
+            checkpoint_waits: None,
         };
         sequencer.marks.take_recovered(replayed_last_marks);
         {

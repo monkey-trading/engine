@@ -4,7 +4,7 @@
 //! its alerts are Warnings under `quorum=standby_keys`: a lost read refuses a vouch or a standby
 //! seal's opening, whose callers carry the impact.
 
-use alloy::primitives::{Address, Bytes};
+use alloy::primitives::{Address, B256, Bytes};
 use anyhow::{Context, ensure};
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -65,11 +65,64 @@ impl<R: VaultReader + Send + Sync> AgreedBlock for ReaderBlock<'_, R> {
         self.time
     }
 
+    /// The agreed block's number.
+    fn number(&self) -> u64 {
+        self.at.number
+    }
+
+    /// The agreed block's hash.
+    fn hash(&self) -> B256 {
+        self.at.hash
+    }
+
     /// The call's return data, voted at the block under `operation`.
     /// Error cases:
     /// - no quorum
     async fn call(&self, operation: &'static str, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
         self.reader.quorum.call_as(operation, self.at, to, data).await
+    }
+}
+
+/// A block `quorum` agreed on for an earlier read, with its agreed header's time: more calls at the
+/// same block.
+pub(crate) struct QuorumBlock<'a, R> {
+    quorum: &'a Quorum<R>,
+    at: BlockRef,
+    time: u64,
+}
+
+impl<'a, R: VaultReader + Send + Sync> QuorumBlock<'a, R> {
+    /// The block `at`, which `quorum` agreed on, with its header's time.
+    /// Error cases:
+    /// - the providers have no header quorum, or it names another hash
+    pub(crate) async fn at(quorum: &'a Quorum<R>, at: BlockRef) -> anyhow::Result<Self> {
+        let headers = quorum.headers(at.number, at.number).await?;
+        let header = headers.first().filter(|header| header.hash == at.hash).context("the agreed block's header")?;
+        Ok(Self { quorum, at, time: header.timestamp })
+    }
+}
+
+impl<R: VaultReader + Send + Sync> AgreedBlock for QuorumBlock<'_, R> {
+    /// The agreed header's time.
+    fn time(&self) -> u64 {
+        self.time
+    }
+
+    /// The agreed block's number.
+    fn number(&self) -> u64 {
+        self.at.number
+    }
+
+    /// The agreed block's hash.
+    fn hash(&self) -> B256 {
+        self.at.hash
+    }
+
+    /// The call's return data, voted at the block under `operation`.
+    /// Error cases:
+    /// - no quorum
+    async fn call(&self, operation: &'static str, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
+        self.quorum.call_as(operation, self.at, to, data).await
     }
 }
 
@@ -79,8 +132,15 @@ impl StandbyReader<VaultRpc> {
     /// - EVM custody without its `[custody.evm]` section, fewer than three providers, or
     ///   `custody.vault` or a client does not parse
     pub(crate) fn connect(cfg: &CustodySection, log_heads: Address) -> anyhow::Result<Self> {
-        let evm = cfg.evm.as_ref().context("standby keys need [custody.evm]")?;
-        let quorum = Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)?.named("standby_keys", false);
+        Self::connect_named(cfg, log_heads, "standby_keys")
+    }
+
+    /// `connect`, its alerts under `quorum=<name>`.
+    /// Error cases:
+    /// - as `connect`
+    pub(crate) fn connect_named(cfg: &CustodySection, log_heads: Address, name: &'static str) -> anyhow::Result<Self> {
+        let evm = cfg.evm.as_ref().context("the liveness rule needs [custody.evm]")?;
+        let quorum = Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)?.named(name, false);
         Ok(Self { quorum, log_heads, chain_id: cfg.chain_id, session: Mutex::new(()) })
     }
 }

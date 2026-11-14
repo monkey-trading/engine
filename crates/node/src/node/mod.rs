@@ -27,6 +27,7 @@ mod shutdown;
 use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
 mod handover;
 mod keys;
+mod liveness;
 mod marks;
 pub(crate) mod member;
 use member::{Ended, Handed};
@@ -168,7 +169,8 @@ async fn serve_node(
     keys::check_predecessor_head(store.as_deref(), log.last_seq(), log.last_checkpoint())
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // Refuses a log the on-chain posted head does not hold (Critical `log_rollback` names the range).
-    let log_heads_setup = crate::log_heads::setup::startup(log_heads_pending, &log)?;
+    let mut log_heads_setup = crate::log_heads::setup::startup(log_heads_pending, &log)?;
+    let liveness = liveness::prepare(cfg, log_heads_setup.as_mut(), store.as_deref());
     log.prove_legacy_withdrawals(&cfg.custody)
         .await
         .inspect_err(|e| error!(alert = "legacy_withdrawal_unproven", "refusing writable recovery: {e:#}"))?; // The API also refuses an emission schedule with another budget than the vault's.
@@ -294,21 +296,25 @@ async fn serve_node(
     let marks_live = marks::live(marks_rx);
     let catch_up = crate::history::marks::run::CatchUp { prior, folded };
     let marks_task = marks::task(marks_store, tx.downgrade(), marks_backfill, marks_sources, marks_live, catch_up);
-    let recovery = seq.take_recovery_checkpoints();
+    let promoted = ready.as_ref().and_then(|ready| ready.promoted);
+    let recovery = liveness::retire(seq.take_recovery_checkpoints(), promoted, &key);
+    let seq_from = seq.last_seq().unwrap_or(0);
     let sequencer = crate::sequencer_thread::Worker::start(seq.run(rx), cpu)?;
     let mut tasks: JoinSet<TaskResult> = JoinSet::new();
     tasks.spawn(marks_task);
     let (samples, samples_rx) = watch::channel(sample);
     let trusted = || trusted_time::TrustedClock::new(clock.clone(), samples_rx.clone(), cfg.time.max_drift);
     if let Some(setup) = checkpoint_setup {
-        let checkpoint_tx = tx.clone();
-        tasks.spawn(async move {
-            ("checkpoints", setup.poster.run_with_approvals(setup.rx, checkpoint_tx, recovery, setup.approvals).await)
-        });
+        let final_signer = promoted.map(|_| AccountId(key.address()));
+        tasks.spawn(liveness::checkpoints(setup, tx.clone(), recovery, final_signer));
     }
+    let released = log_heads_setup.as_ref().map(|setup| setup.released.subscribe());
     if let Some(setup) = log_heads_setup {
         tasks.spawn(setup.spawn(tx.clone(), trusted()));
     }
+    let vouching = liveness::vouching(cfg, store.as_deref(), &key, trusted())?;
+    let started = liveness::Started { promoted, from_seq: seq_from.saturating_add(1), key: AccountId(key.address()) };
+    let liveness = liveness::start(cfg, liveness, released, started, &tx, trusted(), &mut tasks)?;
 
     // A successor's request stops sequencing through `drain_rx`, once the vault approves it; the
     // stop itself goes to the sequencer as a final-checkpoint request, which refuses while the
@@ -428,7 +434,11 @@ async fn serve_node(
         listing: Default::default(),
         operators: ticker::start_operators(&cfg.custody, &cfg.api, &mut tasks)?,
         operator_hostname,
-        signing: Arc::new(Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval, trusted_clock)),
+        signing: Arc::new(liveness::signing(
+            Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval, trusted_clock),
+            liveness.as_ref(),
+            vouching,
+        )),
     });
     info!(listen = %listener.local_addr()?, "api up over TLS");
     // After the bind, so the CA's validation connections find the listener.

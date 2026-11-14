@@ -212,7 +212,15 @@ impl<R: CheckpointChain> Poster<R> {
     /// Error cases:
     /// - reading fails, the authorized signer differs, or the log does not contain the posted root
     pub async fn startup(&self, anchor: Option<&Checkpoint>) -> anyhow::Result<()> {
-        let at = self.chain.observe(View::Finalized, &[]).await?;
+        self.startup_at(View::Finalized, anchor).await
+    }
+
+    /// `startup` at `view`: a promoted member checks its anchor at the latest block, which names its key
+    /// before the promotion is final.
+    /// Error cases:
+    /// - as `startup`
+    pub(crate) async fn startup_at(&self, view: View, anchor: Option<&Checkpoint>) -> anyhow::Result<()> {
+        let at = self.chain.observe(view, &[]).await?;
         at.validate(&[])?;
         let state = &at.state;
         ensure!(state.signer == self.signer, "vault signer differs from this enclave; signer recovery is required");

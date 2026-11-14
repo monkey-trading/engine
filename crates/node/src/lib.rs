@@ -21,6 +21,7 @@ mod feeds;
 mod handover;
 mod history;
 mod limits;
+mod liveness;
 pub mod log;
 mod log_heads;
 mod metrics;

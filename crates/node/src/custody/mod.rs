@@ -47,8 +47,8 @@ pub(crate) use crate::custody::evm::VaultReader;
 pub(crate) use crate::custody::rpc::VaultRpc;
 mod sizing;
 mod stall;
-#[expect(dead_code, reason = "the member transport (#595) wires the standby keys in")]
 pub(crate) mod standby_keys;
+pub(crate) use standby_keys::{QuorumBlock, StandbyReader};
 mod watchdog;
 use crate::sequencer::{Request, SignedWithdrawal};
 

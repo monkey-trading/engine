@@ -45,6 +45,12 @@ pub(super) struct OperatorView {
     /// when it cannot be read, or the node reads no registry.
     #[serde(skip_serializing_if = "Option::is_none")]
     api_hostname: Option<RegisteredHostname>,
+    /// This node's enclave address, which signs every answer.
+    enclave: AccountId,
+    /// The vault's signer epoch and the key it names, at the latest block the liveness rule read: a
+    /// client takes an answer only from that key. Left out where the rule does not run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signer: Option<crate::liveness::VaultSigner>,
 }
 
 /// A mirrored rotation set.
@@ -89,6 +95,7 @@ pub(super) async fn operator(
     let stats = s.stats.clone();
     let limit = params.limit.unwrap_or(DEFAULT_TURNS_LIMIT);
     let api_hostname = s.operator_hostname.as_ref().and_then(|feed| feed.borrow().clone());
+    let (enclave, signer) = (s.signing.enclave(), s.signing.vault_signer());
     let view = s
         .query_durable(move |e| {
             stats.turns(params.before, limit).map(|turns| {
@@ -111,6 +118,8 @@ pub(super) async fn operator(
                     next_turn: daily.assigned.values().next().copied().map(view),
                     turns,
                     api_hostname,
+                    enclave,
+                    signer,
                 }
             })
         })

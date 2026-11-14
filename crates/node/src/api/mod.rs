@@ -24,6 +24,7 @@ mod operator_list;
 mod origin;
 pub(crate) mod reissue;
 mod signing;
+mod standby;
 pub(crate) use signing::Signing;
 mod payouts;
 mod state;
@@ -284,6 +285,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/stats/series", get(stats::series))
         .route("/v1/house/state", get(house_state::house_state))
         .route("/v1/operator", get(operator::operator))
+        .route("/v1/standby/vouch", axum::routing::post(standby::vouch))
         .route("/v1/operators", get(operator_list::operators))
         .route("/v1/accounts/{address}", get(account))
         .route("/v1/accounts/{address}/nonce", get(nonce))

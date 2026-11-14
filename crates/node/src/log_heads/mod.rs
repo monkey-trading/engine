@@ -12,17 +12,19 @@ pub(crate) use read::PostedHeads;
 mod rpc;
 pub(crate) use rpc::StartupHeads;
 #[cfg(test)]
-pub(crate) use rpc::{posted, startup_heads};
+pub(crate) use rpc::{HeadsRpc, posted, startup_heads};
 pub(crate) mod setup;
 mod submission;
 #[cfg(test)]
 mod tests;
+pub(crate) mod v2;
+pub(crate) use v2::{HeadV2, Heartbeat, Hold, SignedHead, TurnHeads};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use alloy::primitives::B256;
+use alloy::primitives::{Address, B256};
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
@@ -57,6 +59,26 @@ impl FreezeLatch {
 pub(crate) struct Publisher {
     pub tx: watch::Sender<Head>,
     pub freeze: FreezeLatch,
+    /// The released head with the stamp at it, which the liveness rule matches confirmations against.
+    pub released: watch::Sender<crate::liveness::Released>,
+    /// What the sequencer is held by, which a v2 head is signed under.
+    pub hold: watch::Sender<Hold>,
+    /// The liveness gate the sequencer admits commands through: open unless the rule runs.
+    pub gate: crate::liveness::Gate,
+}
+
+impl Publisher {
+    /// A publish end over `tx` and `freeze`, with no liveness rule.
+    #[cfg(test)]
+    pub(crate) fn for_test(tx: watch::Sender<Head>, freeze: FreezeLatch) -> Self {
+        Self {
+            tx,
+            freeze,
+            released: watch::channel(Default::default()).0,
+            hold: watch::channel(Hold::Live).0,
+            gate: Default::default(),
+        }
+    }
 }
 
 /// The newest released log head: the seq of the last durable entry and the cumulative
@@ -86,6 +108,17 @@ pub(crate) trait HeadsChain: Send + Sync {
     /// Error cases:
     /// - nonce allocation or the submission fails
     async fn post(&self, epoch: u64, head: Head, parent: Option<Head>, signature: &str) -> anyhow::Result<PostOutcome>;
+
+    /// While a turn of the schedule names the operator, what a v2 head binds and is checked against,
+    /// read through the custody RPC quorum at one agreed block; `None` otherwise.
+    /// Error cases:
+    /// - the quorum is lost or a read fails
+    async fn turn(&self) -> anyhow::Result<Option<TurnHeads>>;
+
+    /// Relays one signed v2 head under the poster's relayer, as `post` relays a v1 head.
+    /// Error cases:
+    /// - as `post`
+    async fn post_v2(&self, epoch: u64, head: &HeadV2, signature: &str) -> anyhow::Result<PostOutcome>;
 }
 
 /// What a post attempt did, so the poster paces and alarms on accepted sends only.
@@ -124,6 +157,8 @@ pub(crate) struct Poster<R> {
     /// Posting intervals without the on-chain head advancing, past which the stall alert fires:
     /// 3, or 2 under rotation, where a successor checks the tail's head against the posted one.
     pub stall_intervals: u32,
+    /// The v2 heartbeat's inputs, with rotation on.
+    pub heartbeat: Option<Heartbeat>,
 }
 
 impl<R: HeadsChain> Poster<R> {
@@ -180,6 +215,10 @@ impl<R: HeadsChain> Poster<R> {
         // changing seqs in the message so the episode key stays stable.
         let mut read_failed = false;
         let mut post_failed = false;
+        // The v2 heartbeat's state: the assignment whose keys this enclave holds, once a read shows
+        // it, and the newest signing time of a head it signed.
+        let mut bound: Option<v2::Assignment> = None;
+        let mut last_signed = 0_u64;
         loop {
             // A release only extends the evidence; reads run on the retry cadence, whatever the
             // release rate, so the poster never adds more than one quorum read per tick to the
@@ -249,10 +288,6 @@ impl<R: HeadsChain> Poster<R> {
                         // whether the read advanced past the confirmed head or a same-epoch reorg
                         // (reads are at `latest`) restored an ancestor.
                         confirmed = Some(posted);
-                        if posted.seq == head.seq {
-                            // Confirmed, not reposted: the interval paces only the next send.
-                            continue;
-                        }
                     }
                     Some(expected) => {
                         error!(
@@ -285,12 +320,26 @@ impl<R: HeadsChain> Poster<R> {
                 // goes parentless under the first-post rule.
                 confirmed = None;
             }
-            let carried = first_post.is_some_and(|at| at.elapsed() >= self.interval);
+            // While a turn names the operator, the head is the heartbeat: it goes out at least twice per
+            // heartbeat interval, as v2.
+            let turn = match &self.heartbeat {
+                Some(_) => match self.chain.turn().await {
+                    Ok(turn) => turn,
+                    Err(cause) => {
+                        warn!(alert = "log_head_read_failed", "reading the turn naming the operator failed: {cause:#}");
+                        read_failed = true;
+                        continue;
+                    }
+                },
+                None => None,
+            };
+            let pace = turn.map_or(self.interval, |turn| turn.interval / 3);
+            let carried = first_post.is_some_and(|at| at.elapsed() >= pace);
             let since_anchor =
                 anchor_ts.filter(|_| carried).zip(self.trusted.as_ref().and_then(|clock| clock.now_ms()));
             let since_anchor = since_anchor.map_or(0, |(at, now)| u64::try_from(now.saturating_sub(at)).unwrap_or(0));
             let unanchored = progressed_at.elapsed().max(Duration::from_millis(since_anchor));
-            let stall_after = self.interval.saturating_mul(self.stall_intervals);
+            let stall_after = pace.saturating_mul(self.stall_intervals);
             if !stalled && head.seq > on_chain_seq && unanchored > stall_after {
                 stalled = true;
                 warn!(
@@ -304,7 +353,42 @@ impl<R: HeadsChain> Poster<R> {
             }
             // The contract holds no head at or past ours: post ours if the interval since the last
             // send allows. A failed send still paced the gate; the read-back confirms inclusion.
-            if posted_at.is_some_and(|at| at.elapsed() < self.interval) {
+            if posted_at.is_some_and(|at| at.elapsed() < pace) {
+                continue;
+            }
+            if let (Some(turn), Some(heartbeat)) = (turn, &self.heartbeat) {
+                bound = v2::Assignment::held(&turn, heartbeat.keys).or(bound);
+                let inputs = v2::Inputs {
+                    signing: *heartbeat.signing.borrow(),
+                    tip: *heartbeat.released.borrow(),
+                    hold: *heartbeat.hold.borrow(),
+                    parent: confirmed,
+                    reached: heartbeat.trusted.reached_ms(),
+                    last_signed,
+                };
+                if !heartbeat.gate.signs() {
+                    continue;
+                }
+                let Some(next) = v2::next(&turn, bound, heartbeat.keys, inputs) else { continue };
+                anchors.record(next.head.seq, next.head.link);
+                let digest = next.digest(self.domain.chain_id, Address::from(self.domain.vault.0), epoch);
+                let signature = self.key.sign_digest(digest);
+                last_signed = last_signed.max(next.signed_at);
+                posted_at = Some(tokio::time::Instant::now());
+                first_post = first_post.or(posted_at);
+                heartbeat.signed.send_replace(Some(SignedHead { epoch, head: next, signature: signature.clone() }));
+                match self.chain.post_v2(epoch, &next, &signature).await {
+                    Ok(PostOutcome::Accepted) => {
+                        if std::mem::take(&mut post_failed) {
+                            info!(alert_resolved = "log_head_post_failed", "posting the log head recovered");
+                        }
+                    }
+                    Ok(PostOutcome::Waiting) => {}
+                    Err(cause) => {
+                        post_failed = true;
+                        warn!(alert = "log_head_post_failed", "posting the log head failed: {cause:#}")
+                    }
+                }
                 continue;
             }
             if confirmed == Some(head) {
