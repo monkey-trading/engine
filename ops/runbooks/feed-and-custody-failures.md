@@ -191,7 +191,9 @@ expires.
 - **A refused top of book.** A `TOB` naming a configured contract under an instrument that is not
   its outright, such as a calendar spread sharing its period (`ESZ6-ESH7`), or naming it twice, is
   refused whole: `venue_message_refused` names the contract and the message's length and hash. The
-  node takes no price from it; take the time and the contract to CME.
+  node takes no price from it; take the time and the contract to CME. A future of a subscribed
+  product whose `periodCode` is not `YYYYMM` is refused the same way, naming the product: CME's own
+  message examples send none, so CME sent a shape its field table does not promise.
 
 ### Benchmark rates
 

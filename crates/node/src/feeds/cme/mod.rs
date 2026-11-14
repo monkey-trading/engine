@@ -4,8 +4,9 @@
 //! names no period: CME refuses a whole subscription for one entry it cannot take, and the config
 //! keeps a contract after it expires, so a period CME no longer lists would otherwise cost every
 //! contract of its product. A `TOB` message restates the one-deep book of each instrument it carries
-//! whole, at most every 500 ms per instrument, so the adapter keeps no state, and passes over the
-//! instruments of a product that no symbol names. Prices and sizes are decimal strings, and a book
+//! whole, at most every 500 ms per instrument, so the adapter keeps no state. It passes over the
+//! instruments of a product that no symbol names, and the contracts of one that no symbol does,
+//! but refuses a future of a named product with no `YYYYMM` period. Prices and sizes are decimal strings, and a book
 //! is stamped with the message's `sentTime`, when CME's gateway sent it. CME sends a `HEARTBEAT`
 //! every 10 seconds while nothing else is sent.
 //!
@@ -44,6 +45,8 @@ const ERROR_CODES: [&str; 3] = ["ERROR_400", "ERROR_401", "ERROR_403"];
 /// One connection's subscription, sent once CME accepts the login, and the symbols it quotes.
 pub(super) struct Session {
     symbols: BTreeSet<String>,
+    /// The product codes of `symbols`, which the subscription names whole.
+    products: BTreeSet<String>,
 }
 
 /// One message: its header, and the payload or errors its type carries.
@@ -110,18 +113,18 @@ enum OneOrMany<T> {
 impl Session {
     /// A session subscribing to `symbols`, each `<product>:<YYYYMM>`.
     pub(super) fn new(symbols: &[&str]) -> Self {
-        Session { symbols: symbols.iter().map(|s| (*s).to_owned()).collect() }
+        let products = symbols
+            .iter()
+            .map(|symbol| parse_symbol(symbol).expect("the config load refused any other symbol").0.to_owned())
+            .collect();
+        Session { symbols: symbols.iter().map(|s| (*s).to_owned()).collect(), products }
     }
 
     /// The subscription to the top of book of every product a symbol names, outrights only.
     fn subscription(&self) -> String {
-        let products: BTreeSet<&str> = self
-            .symbols
+        let subscriptions: Vec<_> = self
+            .products
             .iter()
-            .map(|symbol| parse_symbol(symbol).expect("the config load refused any other symbol").0)
-            .collect();
-        let subscriptions: Vec<_> = products
-            .into_iter()
             .map(|product| json!({ "productType": "FUT", "productCode": product, "spreadReportTypes": ["OUTRIGHT"] }))
             .collect();
         let payload = json!({ "subscriptionMessageTypes": ["TOB"], "subscriptions": subscriptions });
@@ -147,7 +150,7 @@ impl Session {
         })?;
         match header.message_type.as_str() {
             "TOB" => {
-                let books = books(header.sent_time.as_deref(), payload, &self.symbols);
+                let books = books(header.sent_time.as_deref(), payload, &self.symbols, &self.products);
                 books.map(Frame::Books).map_err(Refusal::Message)
             }
             "HEARTBEAT" => Ok(Frame::Control),
@@ -193,6 +196,8 @@ fn status(payload: Option<serde_json::Value>) -> Option<String> {
 /// both sides, as `<product>:<period>`, stamped `sent`.
 /// Error cases:
 /// - no `sentTime`, or one that is not RFC 3339, or a payload that does not parse
+/// - a future of a product of `products` whose period is not `YYYYMM`, which CME's field table
+///   promises (its own message example sends none)
 /// - an instrument of `symbols` that is not a future, or not its outright contract (a futures
 ///   spread's period is its first leg's), or named twice, or a side deeper than one level, or a size
 ///   out of range
@@ -200,6 +205,7 @@ fn books(
     sent: Option<&str>,
     payload: Option<serde_json::Value>,
     symbols: &BTreeSet<String>,
+    products: &BTreeSet<String>,
 ) -> Result<Vec<Book>, String> {
     let sent = sent.ok_or("top of book without a sentTime")?;
     let ts: Millis =
@@ -212,9 +218,17 @@ fn books(
         };
     let (mut books, mut read) = (Vec::new(), BTreeSet::new());
     for Top { instrument, bid_level, ask_level } in tops {
+        // An instrument of a product no symbol names is not this session's.
+        if !products.contains(&instrument.product_code) {
+            continue;
+        }
         let symbol = format!("{}:{}", instrument.product_code, instrument.period_code);
-        // Another contract of a product the session subscribed to whole.
         if !symbols.contains(&symbol) {
+            // A future the session never named is another contract of a product it subscribed to
+            // whole, if CME gives it a period.
+            if instrument.product_type == "FUT" && parse_symbol(&symbol).is_err() {
+                return Err(format!("a future of {} with a periodCode that is not YYYYMM", instrument.product_code));
+            }
             continue;
         }
         if instrument.product_type != "FUT" {

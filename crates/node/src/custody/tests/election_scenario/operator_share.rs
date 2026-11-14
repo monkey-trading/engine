@@ -145,6 +145,7 @@ async fn dev_scenario_the_elected_operator_and_a_staker_each_claim_their_share()
     //    below it, and pays neither the operator nor a staker.
     round_trip(&node, &trader_key, Side::Sell, "1", "100900", "100000").await;
     let events = next_epoch(&mut node).await;
+    assert!(nav_below_floor(&events), "the closed epoch's NAV is not below the floor: {events:?}");
     assert!(!events.iter().any(|e| matches!(e, Event::OperatorShareAllocated { .. })), "{events:?}");
     assert_eq!(allocated_of(&events), UsdcUnits(0), "{events:?}");
     assert_eq!(node.query(move |e| e.distribution(operator)).await, operator_leaf);
@@ -268,6 +269,11 @@ pub(super) fn closed_epoch(events: &[Event]) -> u64 {
             _ => None,
         })
         .unwrap_or_else(|| panic!("no epoch closed: {events:?}"))
+}
+
+/// Whether the epoch a close's events closed measured NAV below its floor.
+fn nav_below_floor(events: &[Event]) -> bool {
+    events.iter().any(|e| matches!(e, Event::DistributionEpochClosed { nav, floor, .. } if nav < floor))
 }
 
 /// The operator's share among a close's events.

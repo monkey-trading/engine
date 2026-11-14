@@ -19,7 +19,6 @@ use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{AdminCommand, Command};
 use engine_core::eip712::B256;
 use engine_core::event::Event;
-use engine_core::staking::StakingConfig;
 use engine_core::types::{AccountId, Millis};
 use governor::Quota;
 use governor::clock::DefaultClock;
@@ -29,15 +28,15 @@ use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tower::ServiceExt;
 
+use super::T0_SECS;
 use super::chain::Chain;
-use super::{COOLDOWN_SECS, DISTRIBUTION_EPOCH_SECS, T0_SECS};
 use crate::api::Signing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, router};
 use crate::checkpoints::staking_scenario::access::Source;
 use crate::checkpoints::{CheckpointChain, View};
 use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
-use crate::config::{CustodyProvider, Genesis, RateLimit};
+use crate::config::{CustodyProvider, RateLimit};
 use crate::custody::{Custody, OperatorsReader};
 use crate::handover::Published;
 use crate::limits::ApiLimits;
@@ -179,14 +178,7 @@ impl Node {
             operator.address = seat.operator;
         }
         let custody_cfg = custody_section(chain, &dir, cfg.custody);
-        let mut genesis: Genesis = cfg.genesis;
-        genesis.house_capital = engine_core::Fixed::ZERO;
-        genesis.staking = Some(StakingConfig {
-            liquidity_floor: engine_core::Fixed::from_int(1_000_000),
-            epoch_ms: DISTRIBUTION_EPOCH_SECS as Millis * 1000,
-            start_ms: T0_SECS as Millis * 1000,
-            cooldown_ms: COOLDOWN_SECS as Millis * 1000,
-        });
+        let genesis = setup::scenario_genesis(cfg.genesis);
         let (stream, _) = broadcast::channel(1024);
         let (stamps, tracking) = stamps::track(&stream);
         let (withdrawals, signed) = mpsc::unbounded_channel();

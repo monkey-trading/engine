@@ -44,8 +44,12 @@ with the operator.
    registered for it. It needs EVM custody and `[checkpoints]`, because it reads the vault and the
    registry. Its `operator.public_key` is the candidate's own admin key. No enclave runs it, so no
    secret is delivered to it: drop `[tee.sealing.secrets]`, write its RPC and screening URLs out in
-   full, read its webhook URLs with `url_env` and any vendor key with `api_key_env`, and keep this file
-   private, which a production build allows for `run --standby` on a config with `[standby]`.
+   full, read its webhook URLs with `url_env`, and keep this file private, which a production build
+   allows for `run --standby` on a config with `[standby]`. A standby runs no feeds, so the vendor
+   connections stay as written, the CME connection and its OAuth secret names included: a config with
+   `[standby]` loads without a listener for the secrets they name, and nothing reads them. The same
+   file started without `--standby` is refused, since a node that runs feeds must be able to receive
+   their keys.
 
    With `operator.rotation_enabled = true` the standby does not keep to `operator` and `enclave`: it
    reads the operator in effect from the registry before each stint, at `https://` its registered

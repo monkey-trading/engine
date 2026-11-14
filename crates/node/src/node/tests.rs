@@ -166,6 +166,42 @@ async fn a_production_build_refuses_environment_secrets_at_a_nodes_start() {
     assert!(format!("{err:#}").contains("not the environment: alerts.critical.url_env"), "{err:#}");
 }
 
+// A config with `[standby]` loads without a listener for its vendor keys, but only `--standby` runs on
+// it as one: a node that runs feeds is refused at its start, before it binds or writes anything.
+#[tokio::test]
+async fn a_node_is_refused_a_standby_config_that_names_vendor_secrets_with_no_listener() {
+    let mut cfg: crate::config::NodeConfig =
+        toml::from_str(&fs::read_to_string(crate::test_support::DEV_CONFIG).unwrap()).unwrap();
+    cfg.feeds.venues = Some(
+        toml::from_str(
+            "timeout = '10s'\nreconnect_min = '1s'\nreconnect_max = '10s'\nstale_after = '10s'\n\
+             min_quote_spacing = '100ms'\nping_interval = '500ms'\nmax_delay = '2s'\n\
+             [[connections]]\nvenue = 'massive'\nurl = 'wss://socket.massive.com/forex'\n\
+             api_key_secret = 'massive_key'\nsymbols = [{ market = 1, symbol = 'C.EURUSD' }]\n",
+        )
+        .unwrap(),
+    );
+    cfg.standby = Some(
+        toml::from_str(
+            "operator = 'https://api.operator.example'\nenclave = '0x0000000000000000000000000000000000000001'",
+        )
+        .unwrap(),
+    );
+    // Without the refusal the start must still stop at once, on the held API port.
+    let held = net::TcpListener::bind("127.0.0.1:0").unwrap();
+    cfg.node.listen = held.local_addr().unwrap();
+    cfg.metrics.listen = "127.0.0.1:0".parse().unwrap();
+    let root = scratch_dir("node-standby-vendor-secrets");
+    (cfg.node.log_dir, cfg.history.dir, cfg.alerts.outbox.dir) =
+        (root.join("log"), root.join("history"), root.join("alerts"));
+    for server in &mut cfg.time.servers {
+        server.address = "127.0.0.1:1".into();
+    }
+    let (telemetry, _layer) = telemetry();
+    let err = run(cfg, telemetry).await.expect_err("a node ran on a standby config");
+    assert!(format!("{err:#}").contains("needs [tee.sealing.secrets] to receive it"), "{err:#}");
+}
+
 // ── Helpers ──
 
 /// Telemetry with no webhooks, and the layer that feeds it, kept so the router stays open; the

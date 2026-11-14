@@ -160,6 +160,24 @@ fn a_secret_escaped_in_a_message_that_does_not_parse_or_escaped_again_is_redacte
     assert_eq!(redact(&deep, &[]), deep);
 }
 
+#[test]
+fn a_long_run_of_unclosed_rust_escapes_redacts_in_linear_time() {
+    // Each `\u{` with no `}` once scanned the rest of the text for one: a megabyte took minutes (#736).
+    let secrets = ["tb/4K+v"];
+    let run = r"\u{".repeat(250_000);
+    let echoes = [run.clone(), format!("{run}tb\\u{{2f}}4K+v{run}"), format!("{run}\\u{{2f}}")];
+    let started = Instant::now();
+    for echo in &echoes {
+        let redacted = redact(echo, &secrets);
+        assert!(!redacted.contains("4K"));
+    }
+    assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+    // A secret after the run is still found, and a brace past six digits closes no escape.
+    assert_eq!(redact(&format!("{run}tb\\u{{2f}}4K+v"), &secrets), "<redacted>");
+    let plain = r"\u{1234567} \u{41} \u{}";
+    assert_eq!(redact(plain, &secrets), plain);
+}
+
 #[tokio::test]
 async fn a_refused_message_is_excerpted_only_from_a_venue_that_holds_no_credential() {
     let (_guard, mut alerts) = capture_alerts();

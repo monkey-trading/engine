@@ -2,11 +2,14 @@
 
 use std::time::Duration;
 
-use engine_core::types::AccountId;
+use engine_core::Fixed;
+use engine_core::staking::StakingConfig;
+use engine_core::types::{AccountId, Millis};
 
 use super::super::chain::Chain;
+use super::super::{COOLDOWN_SECS, DISTRIBUTION_EPOCH_SECS, T0_SECS};
 use crate::checkpoints::{CheckpointRpc, Poster};
-use crate::config::{CheckpointSection, CustodySection, FinalityTag, RpcProviderSection};
+use crate::config::{CheckpointSection, CustodySection, FinalityTag, Genesis, RpcProviderSection};
 use crate::log::CheckpointDomain;
 use crate::tee::EnclaveKey;
 
@@ -78,4 +81,18 @@ pub(crate) fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody:
     custody.chain_id = 31337;
     custody.evm = Some(evm);
     custody
+}
+
+/// `genesis` for the scenarios: no house capital, the flat 10% profit fee (the holding-time fee has a
+/// scenario of its own), and staking from the scenarios' start.
+pub(super) fn scenario_genesis(mut genesis: Genesis) -> Genesis {
+    genesis.house_capital = Fixed::ZERO;
+    genesis.params.profit_fee_curve.clear();
+    genesis.staking = Some(StakingConfig {
+        liquidity_floor: Fixed::from_int(1_000_000),
+        epoch_ms: DISTRIBUTION_EPOCH_SECS as Millis * 1000,
+        start_ms: T0_SECS as Millis * 1000,
+        cooldown_ms: COOLDOWN_SECS as Millis * 1000,
+    });
+    genesis
 }

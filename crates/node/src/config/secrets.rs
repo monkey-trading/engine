@@ -376,7 +376,24 @@ impl NodeConfig {
         Ok(())
     }
 
-    /// Checks the fields that name secrets.
+    /// Checks the fields that name secrets, for the node a config with `[standby]` may be started as.
+    /// Error cases:
+    /// - see `check_secrets`, with a standby's vendor keys exempt when the config has `[standby]`
+    pub(super) fn validate_secrets(&self) -> anyhow::Result<()> {
+        self.check_secrets(self.standby.is_some())
+    }
+
+    /// `validate_secrets` for a node about to run, whatever its config's `[standby]` says: only
+    /// `--standby` runs as one, and a node that runs feeds must be able to receive their keys.
+    /// Error cases:
+    /// - see `check_secrets`
+    pub(crate) fn validate_secrets_on_a_node(&self) -> anyhow::Result<()> {
+        self.check_secrets(false)
+    }
+
+    /// Checks the fields that name secrets. A standby runs no feeds, so it never reads a vendor's
+    /// key, and `as_standby` leaves those fields out of the check that something can deliver them;
+    /// the standby's other secrets it reads, so they keep their listener or their written value.
     /// Error cases:
     /// - a URL's `{name}` is malformed
     /// - an alert route names neither or both of a variable and a secret
@@ -384,7 +401,7 @@ impl NodeConfig {
     /// - `[tee.sealing.secrets]` is set with real attestation and no `tee.processor`, so no offer's
     ///   quote could carry the collateral that verifies it, and a node holding for its secrets would
     ///   never reach a later check
-    pub(super) fn validate_secrets(&self) -> anyhow::Result<()> {
+    fn check_secrets(&self, as_standby: bool) -> anyhow::Result<()> {
         for (key, route) in [("critical", &self.alerts.critical), ("warning", &self.alerts.warning)] {
             if let Some(route) = route {
                 ensure!(
@@ -399,7 +416,7 @@ impl NodeConfig {
             !listens || self.tee.provider == TeeProvider::Mock || self.tee.processor.is_some(),
             "[tee.sealing.secrets] with real attestation needs tee.processor, to fetch its quotes' collateral"
         );
-        if let Some(first) = named.first()
+        if let Some(first) = named.iter().find(|field| !(as_standby && field.usage == SecretUse::VendorKey))
             && !listens
         {
             bail!("{} names a delivered secret, which needs [tee.sealing.secrets] to receive it", first.field);

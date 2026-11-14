@@ -2731,7 +2731,9 @@ command line, and a host that could set one would choose the secret.
   but its vendor accounts and provider keys are its own, delivered under its own key before or after
   it takes over. A standby runs outside any enclave on its operator's own host, so a config with
   `[standby]` writes its keys out and, run with `--standby`, may read `url_env` and `api_key_env` in a production build; its registered release
-  takes its own delivery after a promotion.
+  takes its own delivery after a promotion. It runs no feeds, so a config with `[standby]` loads
+  with vendor connections that name delivered secrets (CME's OAuth pair included) and no
+  `[tee.sealing.secrets]`; a node started on that file without `--standby` is refused.
 - **What the host can do.** It carries the connection and holds the file. It can delay or drop a
   delivery and forge a refusal, which is the denial it has anyway; the tool reports no receipt, and a
   retry is safe. It cannot read a bundle, substitute an enclave, or replay an offer, since the quote

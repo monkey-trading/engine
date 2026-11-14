@@ -21,6 +21,7 @@ pub(crate) async fn run_with_cpu(
     start: KeyStart,
 ) -> anyhow::Result<()> {
     cfg.refuse_environment_secrets_on_a_node()?;
+    cfg.validate_secrets_on_a_node()?;
     // Alert lines queue until routing starts, once this has set any delivered webhook.
     let mut delivered =
         secrets::startup(&mut cfg, &mut telemetry, &start).await.inspect_err(|e| error!("refusing to serve: {e:#}"))?;
