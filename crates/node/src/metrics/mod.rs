@@ -29,7 +29,7 @@ use prometheus_client::registry::Registry;
 
 const CONTENT_TYPE_OPENMETRICS: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 /// Every `kind` a typed rejection reason can have; see `reject_kind`.
-const REJECT_KINDS: [&str; 33] = [
+const REJECT_KINDS: [&str; 34] = [
     "access",
     "payout_unavailable",
     "unknown_market",
@@ -41,6 +41,7 @@ const REJECT_KINDS: [&str; 33] = [
     "no_fx_price",
     "slippage",
     "insufficient_margin",
+    "weekend_margin",
     "insufficient_funds",
     "below_minimum_withdrawal",
     "house_capacity",
@@ -443,6 +444,7 @@ fn reject_kind(reason: &Reject) -> &'static str {
         Reject::NoFxPrice { .. } => "no_fx_price",
         Reject::Slippage { .. } => "slippage",
         Reject::InsufficientMargin { .. } => "insufficient_margin",
+        Reject::WeekendMargin { .. } => "weekend_margin",
         Reject::InsufficientFunds { .. } => "insufficient_funds",
         Reject::BelowMinimumWithdrawal { .. } => "below_minimum_withdrawal",
         Reject::HouseCapacity => "house_capacity",

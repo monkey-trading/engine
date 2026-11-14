@@ -119,4 +119,5 @@ pub mod toxicity;
 mod tracked;
 pub mod turns;
 pub mod types;
+pub mod weekend;
 pub mod withdrawal;

@@ -191,7 +191,13 @@ fee than at launch: the base fee moves only from its launch value up to half aga
 only to one at or above its launch curve at every hold, each after a seven-day notice, so a change past
 those bounds is in scope too; from V57 an add's averaged age is clamped at the last hold of the curve
 a log launched with, whatever curve is in force, so a curve change that widens it is in scope as
-well. With `[checkpoints]` configured, startup verifies the replayed log
+well. From protocol V59 a listed market's weekend margin changes only after a seven-day notice, or
+while rotation is on by a vote, the operator's calendar change does not shorten or remove a weekend
+closure starting within seven days, nor add or bring forward a held market's closure within seven
+days, the weekend margin holds against withdrawals and new risk from two hours before the
+closure until the market reopens, and an account below it when the closure starts is closed out on
+that market at its last price, so a weekend margin change past those bounds, or a position held across
+the closure below it, is in scope. With `[checkpoints]` configured, startup verifies the replayed log
 against the latest posted vault commitment at custody finality and refuses a shorter or conflicting log before serving or opening
 history for writes; checkpoint signatures verify
 against their chain, vault, and named signer. Those checks reach only as far as the vault's

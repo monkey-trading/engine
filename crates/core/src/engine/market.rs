@@ -12,6 +12,7 @@ use crate::price::{Index, SourceQuote};
 use crate::protocol::ProtocolVersion;
 use crate::stress::StressState;
 use crate::types::{AccountId, MarketId, Millis, OrderId};
+use crate::weekend::WeekendGap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MarketState {
@@ -48,6 +49,11 @@ pub struct MarketState {
     /// Quotes stamped before the most recent split are in the previous share units.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_split_at: Option<Millis>,
+    /// From `V59`, the next or current weekend gap of a market with a weekend margin (`weekend`), or,
+    /// when none starts within a search, its frontier. `None` for any other market, and left out of
+    /// the encoding then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weekend: Option<WeekendGap>,
 }
 
 impl MarketState {
@@ -68,6 +74,7 @@ impl MarketState {
             futures: None,
             corporate_action_blocked: false,
             last_split_at: None,
+            weekend: None,
         }
     }
 

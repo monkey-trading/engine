@@ -59,7 +59,14 @@ impl AdminAction {
             AdminAction::AnnounceMarkup { market, markup_bps, effective_at } => {
                 AdminCommand::AnnounceMarkup { market, markup_bps, effective_at: effective_at.timestamp_millis() }
             }
-            AdminAction::AnnounceListing { market, spreads_from, margins_from, markup_bps, effective_at } => {
+            AdminAction::AnnounceListing {
+                market,
+                spreads_from,
+                margins_from,
+                markup_bps,
+                weekend_margin_bps,
+                effective_at,
+            } => {
                 let notice = ListingNotice {
                     spread_tiers: spreads_from
                         .map(|file| read_spec(&file).map(|spec| spec.spread_tiers))
@@ -68,6 +75,7 @@ impl AdminAction {
                         .map(|file| read_spec(&file).map(|spec| spec.margin_tiers))
                         .transpose()?,
                     markup_bps,
+                    weekend_margin_bps,
                     effective_at: effective_at.timestamp_millis(),
                 };
                 AdminCommand::AnnounceListing { market, notice }

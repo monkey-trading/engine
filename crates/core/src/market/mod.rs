@@ -72,6 +72,10 @@ pub struct MarketSpec {
     /// while unset, as it is before `V54`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub markout_floor_bps: Option<Fixed>,
+    /// From protocol `V59`, the least rate each margin band charges over the market's weekend gap
+    /// (`weekend`), in bps; zero for none, and left out of the encoding then.
+    #[serde(default, skip_serializing_if = "is_zero_bps")]
+    pub weekend_margin_bps: i64,
 }
 
 /// The currency a market's prices are quoted in. Any other than USD names the FX market whose index
@@ -133,6 +137,7 @@ impl MarketSpec {
     /// - a minimum order notional or a house cap floor below zero or above `Fixed::MAX_INPUT`
     /// - futures contracts that are unnamed, named twice, or out of roll order
     /// - a markout floor outside `toxicity::MARKOUT_FLOOR_BPS`
+    /// - a weekend margin outside 0..=10000 bps, or other than zero on a market that is always open
     pub fn validate(&self) -> Result<(), String> {
         if self.symbol.is_empty() {
             return Err("symbol is empty".into());
@@ -167,6 +172,12 @@ impl MarketSpec {
         if self.markout_floor_bps.is_some_and(|floor| !MARKOUT_FLOOR_BPS.contains(&floor)) {
             return Err(format!("markout_floor_bps must be in {MARKOUT_FLOOR_BPS:?}"));
         }
+        if !(0..=MAX_RATE_BPS).contains(&self.weekend_margin_bps) {
+            return Err("weekend_margin_bps must be in 0..=10000".into());
+        }
+        if self.weekend_margin_bps != 0 && self.schedule == Schedule::AlwaysOpen {
+            return Err("weekend_margin_bps needs a weekly schedule".into());
+        }
         validate_contracts(&self.contracts)
     }
 
@@ -181,6 +192,14 @@ impl MarketSpec {
     /// `rounding` says.
     pub fn margin_for(&self, notional: Fixed, rounding: Rounding) -> Fixed {
         staircase(&self.margin_tiers, Fixed::ZERO, notional.abs(), rounding)
+    }
+
+    /// Margin required for a position of `notional` (either sign) over the market's weekend gap:
+    /// each band charges at least the weekend margin rate, each band's charge rounded as `rounding`
+    /// says. With no weekend margin, the margin `margin_for` gives.
+    pub fn weekend_margin_for(&self, notional: Fixed, rounding: Rounding) -> Fixed {
+        let bands = self.margin_tiers.iter().map(|tier| (tier.up_to, tier.bps.max(self.weekend_margin_bps)));
+        banded(bands, Fixed::ZERO, notional.abs(), |slice, bps| slice.mul_bps_rounded(bps, rounding))
     }
 
     /// Checks this listing's quote currency against the FX pairs, given the symbol of each market
@@ -276,6 +295,11 @@ impl QuoteCurrency {
     }
 }
 
+/// Whether a rate in bps is zero, so the encoding leaves it out.
+fn is_zero_bps(bps: &i64) -> bool {
+    *bps == 0
+}
+
 /// Checks a tier table: non-empty, strictly increasing bounds, unbounded last band, and every rate
 /// in `min_bps..=10000`.
 /// Error cases:
@@ -343,151 +367,4 @@ pub(crate) fn banded(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn f(n: i64) -> Fixed {
-        Fixed::from_int(n)
-    }
-
-    fn tiers() -> Vec<Tier> {
-        vec![
-            Tier { up_to: Some(f(1_000_000)), bps: 0 },
-            Tier { up_to: Some(f(5_000_000)), bps: 2 },
-            Tier { up_to: None, bps: 5 },
-        ]
-    }
-
-    #[test]
-    fn staircase_charges_each_slice_at_its_band_rate() {
-        let t = tiers();
-        let cost = |from, to| staircase(&t, from, to, Rounding::TowardZero);
-        assert_eq!(cost(f(0), f(500_000)), f(0));
-        // 1m..2m at 2bps.
-        assert_eq!(cost(f(0), f(2_000_000)), f(200));
-        // 1m..5m at 2bps = 800, 5m..6m at 5bps = 500.
-        assert_eq!(cost(f(0), f(6_000_000)), f(1_300));
-        assert_eq!(cost(f(4_000_000), f(6_000_000)), f(700));
-        // A shrinking move costs nothing.
-        assert_eq!(cost(f(6_000_000), f(4_000_000)), f(0));
-    }
-
-    #[test]
-    fn staircase_rounds_each_band_charge_as_asked() {
-        let t = tiers();
-        // One unit of precision either side of 5m charges a fraction of a unit in each band, which
-        // truncates to nothing and rounds up to one unit per band. An exact charge does not move.
-        let (from, to) = (f(4_999_999) + "0.999999999".parse().unwrap(), f(5_000_000) + Fixed::from_raw(1));
-        assert_eq!(staircase(&t, from, to, Rounding::TowardZero), Fixed::ZERO);
-        assert_eq!(staircase(&t, from, to, Rounding::Up), Fixed::from_raw(2));
-        let half = f(1_000_000) + "0.5".parse().unwrap();
-        assert_eq!(staircase(&t, f(0), half, Rounding::Up), "0.0001".parse().unwrap());
-    }
-
-    #[test]
-    fn splitting_does_not_avoid_size_spread() {
-        let t = tiers();
-        let cost = |from, to| staircase(&t, from, to, Rounding::TowardZero);
-        assert_eq!(cost(f(0), f(6_000_000)), cost(f(0), f(3_000_000)) + cost(f(3_000_000), f(6_000_000)));
-    }
-
-    #[test]
-    fn tier_validation() {
-        assert!(validate_tiers("t", &tiers(), 0).is_ok());
-        // A zero rate is fine for spreads but not for margin.
-        assert!(validate_tiers("t", &tiers(), 1).is_err());
-        assert!(validate_tiers("t", &[], 0).is_err());
-        assert!(validate_tiers("t", &[Tier { up_to: Some(f(1)), bps: 1 }], 0).is_err());
-        let backwards =
-            vec![Tier { up_to: Some(f(5)), bps: 1 }, Tier { up_to: Some(f(2)), bps: 1 }, Tier { up_to: None, bps: 1 }];
-        assert!(validate_tiers("t", &backwards, 0).is_err());
-        let huge = vec![Tier { up_to: None, bps: i64::MAX }];
-        assert!(validate_tiers("t", &huge, 0).is_err());
-    }
-
-    #[test]
-    fn unknown_tier_fields_are_rejected() {
-        assert!(serde_json::from_str::<Tier>(r#"{"up_to":"1","bps":1,"bsp":2}"#).is_err());
-    }
-
-    const EUR: QuoteCurrency = QuoteCurrency::Eur { fx_market: 10 };
-    const JPY: QuoteCurrency = QuoteCurrency::Jpy { fx_market: 12 };
-
-    fn d(s: &str) -> Fixed {
-        s.parse().unwrap()
-    }
-
-    #[test]
-    fn euros_multiply_and_yen_divide_by_the_fx_index_rounding_the_way_asked() {
-        use Rounding::{Down, Up};
-        // (currency, amount, index, rounded down, rounded up): a gain and a loss through a USD-quote
-        // pair (EUR-USD, times the index) and a USD-base pair (USD-JPY, over the index).
-        let cases = [
-            (EUR, "0.000000003", "1.5", "0.000000004", "0.000000005"),
-            (EUR, "-0.000000003", "1.5", "-0.000000005", "-0.000000004"),
-            (EUR, "200", "1.08", "216", "216"),
-            (JPY, "100", "150", "0.666666666", "0.666666667"),
-            (JPY, "-100", "150", "-0.666666667", "-0.666666666"),
-            (JPY, "-300", "150", "-2", "-2"),
-        ];
-        for (currency, amount, fx, down, up) in cases {
-            let convert = |rounding| currency.to_usd(d(amount), Some(d(fx)), rounding);
-            assert_eq!((convert(Down), convert(Up)), (d(down), d(up)), "{currency:?} {amount} at {fx}");
-        }
-        assert_eq!(EUR.from_usd(d("1"), Some(d("3")), Down), d("0.333333333"));
-        assert_eq!(EUR.from_usd(d("1"), Some(d("3")), Up), d("0.333333334"));
-        assert_eq!(JPY.from_usd(d("0.000000003"), Some(d("1.5")), Up), d("0.000000005"));
-        assert_eq!(JPY.from_usd(d("2"), Some(d("150")), Down), d("300"));
-        let usd = QuoteCurrency::Usd;
-        assert_eq!((usd.to_usd(d("7"), None, Up), usd.from_usd(d("7"), None, Down)), (d("7"), d("7")));
-    }
-
-    #[test]
-    fn a_market_with_no_fx_index_converts_only_zero() {
-        assert_eq!(EUR.to_usd(Fixed::ZERO, None, Rounding::Down), Fixed::ZERO);
-        assert_eq!(JPY.from_usd(Fixed::ZERO, None, Rounding::Up), Fixed::ZERO);
-        let converted = std::panic::catch_unwind(|| EUR.to_usd(d("1"), None, Rounding::Down));
-        assert!(converted.is_err(), "a non-zero amount without an index must not convert");
-    }
-
-    #[test]
-    fn an_fx_index_converts_while_a_unit_is_worth_at_most_ten_dollars() {
-        assert!(EUR.converts_at(d("10")));
-        assert!(!EUR.converts_at(d("10.000000001")));
-        // A yen is worth 1 / index USD, so a USD-JPY index converts from 0.1 up.
-        assert!(JPY.converts_at(d("0.1")));
-        assert!(!JPY.converts_at(d("0.099999999")));
-        assert!(JPY.converts_at(Fixed::MAX_INPUT));
-        assert!(EUR.converts_at(Fixed::from_raw(1)));
-    }
-
-    #[test]
-    fn a_usd_listing_leaves_the_currency_out_and_others_name_their_fx_market() {
-        let spec = |extra: serde_json::Value| {
-            let mut json = serde_json::json!({
-                "id": 23, "symbol": "DE40", "asset_class": "index", "schedule": { "kind": "always_open" },
-                "margin_tiers": [{ "bps": 50 }], "spread_tiers": [{ "bps": 0 }],
-                "price_rules": { "max_age_ms": 1000, "max_divergence_bps": 10, "min_sources": 2 },
-                "max_slippage_bps": 10, "financing": { "benchmark": "ESTR", "markup_bps": 250, "day_basis": 360 },
-                "house_cap_bps": 5000,
-            });
-            json.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
-            serde_json::from_value::<MarketSpec>(json)
-        };
-        let usd = spec(serde_json::json!({})).unwrap();
-        assert_eq!(usd.quote_currency, QuoteCurrency::Usd);
-        assert!(!serde_json::to_string(&usd).unwrap().contains("quote_currency"));
-        let de40 = spec(serde_json::json!({ "quote_currency": { "currency": "eur", "fx_market": 10 } })).unwrap();
-        assert_eq!(de40.quote_currency, EUR);
-        assert_eq!(de40.quote_currency.fx_market(), Some(10));
-        let encoded = serde_json::to_string(&de40).unwrap();
-        assert!(encoded.contains(r#""quote_currency":{"currency":"eur","fx_market":10}"#), "{encoded}");
-        for bad in [
-            serde_json::json!({ "quote_currency": { "currency": "eur" } }),
-            serde_json::json!({ "quote_currency": { "currency": "chf", "fx_market": 10 } }),
-            serde_json::json!({ "quote_currency": { "currency": "eur", "fx_market": 10, "fx": 1 } }),
-        ] {
-            assert!(spec(bad.clone()).is_err(), "{bad}");
-        }
-    }
-}
+mod tests;

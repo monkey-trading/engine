@@ -121,6 +121,13 @@ this crate and reproduce the signed state roots exactly.
   applies when the node sequences `apply_proposal`; a fast-path proposal applies at once as a
   restriction that only raises a margin or the close-out level, sets a stress floor, lowers a cap, or
   makes a market reduce-only, and lapses at the recorded lifetime unless renewed
+- From protocol `V59`, a market's weekend margin (`src/weekend/`): a rate each margin band charges
+  at least over the market's weekend gap, any closure of at least 40 hours; from two hours before
+  the gap starts until the market reopens, risk added in any market and withdrawals meet it, and when
+  the gap starts an account below it is closed out on the markets whose gaps start then, largest
+  loser first, at their marks; it moves only as a listing notice of seven days, or while rotation is
+  on a passed vote, names it, and a calendar change that is not a vote may not narrow or remove a gap
+  starting within seven days, nor add or bring forward a held market's gap within seven days
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -231,8 +238,9 @@ this crate and reproduce the signed state roots exactly.
   boundary validation (`calendar.rs`), checked dividend cash transfers and recorded-FX
   conversion (`cash.rs`), atomic split scaling with rounding and cash in lieu (`split.rs`), and
   chronological financing/action catch-up (`timeline.rs`)
-- `src/execution/` — order placement, triggers, pricing, risk checks, and booking fills (`mod.rs`),
-  the checks an order passes first (`validation.rs`), `Engine::quote`, which prices an order with
+- `src/execution/` — order placement, triggers, pricing, and booking fills (`mod.rs`), the margin
+  and house exposure checks a fill that adds risk passes (`risk.rs`), the checks an order passes
+  first (`validation.rs`), `Engine::quote`, which prices an order with
   those same functions and changes nothing (`quote.rs`; `tests/quote.rs` checks it against fills),
   and unit tests (`tests.rs`)
 - `src/markouts.rs` — each fill's markout, queued and then marked against the index after its
@@ -299,6 +307,23 @@ this crate and reproduce the signed state roots exactly.
 - `tests/holding_fee_clamp.rs` — `V57`'s add clamp at the launch curve's last hold: an add after a
   noticed curve extension, against `V55`'s clamp at the curve in force, activation over held open
   times, a launch curve longer than 15 minutes, and a fresh log launched with no curve
+- `src/weekend/mod.rs` — the V59 weekend margin: each market's gap, when the margin applies, what it
+  adds to a requirement, and the boundaries where a gap closes out and reopens; `src/weekend/schedule.rs`
+  sets the gap at a listing, an activation and a reopening, and checks a listing's weekend margin and
+  calendar
+- `tests/weekend_margin.rs` — the lead-time refusal, the close-out at the gap's start at the last
+  mark, the reopen, a market with none, a holiday that starts the gap early, and markets closing
+  together
+- `tests/weekend_margin_gap.rs` — what the margin holds over the gap: withdrawals and other markets'
+  risk, a closure longer than a weekend or the search, a search that finds no gap run again at its
+  end, a noticed weekend margin applied inside the gap, a market quoted in yen, and a catch-up
+  deferred past a weekend close
+- `tests/weekend_margin_bounds.rs` — the weekend margin's notice, its range, the calendar it needs,
+  a calendar change that may not narrow or remove a gap within seven days, before or once it starts,
+  held or not, nor add one to a held market within seven days, and before `V59` a weekend margin
+  that does nothing until activation starts it, holding a gap it is in or that starts within the
+  lead with no close-out, through a relisting and to a gap within the lead after it, with
+  `tests/weekend_margin.rs` on the shared harness in `tests/common/weekend.rs`
 - `tests/params_notice.rs` — the V49 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
@@ -312,6 +337,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/parameter_votes/listing.rs` — `V56`: a voted relisting held to the listing bounds without a notice, the operator's listing notice refused while rotation is on, the size multiplier and close charge floors on voted changes, and a relisting under a margin restriction measured from the baseline
 - `tests/parameter_votes/toxicity.rs` — `V56`: a voted score tier change held to ±50% of launch without a notice, and a voted relisting keeping its markout floor
 - `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch; from `V57` a voted extension lending an add no more than the launch curve's last hold
+- `tests/parameter_votes/weekend.rs` — `V59`: a voted weekend margin with no listing notice, held to its listing's range, the operator's weekend margin notice refused while rotation is on, the fast path refusing to move it, and a fast-path margin raise past it
 - `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, and the turn's time in office
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
 - `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
@@ -345,7 +371,8 @@ this crate and reproduce the signed state roots exactly.
   recovery
 - `src/protocol.rs` — protocol versions, and how to add one
 - `src/merkle/mod.rs` — the state tree's layout and the sparse Merkle tree
-- `src/merkle/leaf.rs` — each leaf's key and value hash, and the account and market leaves
+- `src/merkle/leaf/mod.rs` — each leaf's key and value hash, and the account leaf;
+  `src/merkle/leaf/market.rs` the market leaf
 - `src/merkle/proof.rs` — account, market, and entitlement proofs, and how to check them
 - `src/merkle/state.rs` — the engine's state tree: what each root rehashes, the remaining-state
   leaf, and distribution proofs
@@ -355,13 +382,15 @@ this crate and reproduce the signed state roots exactly.
 - `src/tracked.rs` — maps and sets that record what changed since the last root
 - `src/fixed/` — `Fixed`, the 9-decimal fixed-point type used for all money (`mod.rs`), and its
   unit tests (`tests.rs`)
-- `src/market.rs` — market listings, tier tables, and quote currencies with their USD conversion
+- `src/market/mod.rs` — market listings, tier tables, the weekend margin's requirement, and quote
+  currencies with their USD conversion; unit tests in `src/market/tests.rs`
 - `src/params.rs` — protocol parameters, stress levels, toxicity, and the rollover clock
 - `src/price.rs` — venue quotes and the reference index
 - `src/futures.rs` — markets priced from futures: the contracts a listing names, which quotes the
   market takes, the roll-adjusted index, and the roll
-- `src/session.rs` — weekly trading windows, holidays, dated closures such as early closes, and
-  special sessions
+- `src/session/mod.rs` — weekly trading windows, holidays, dated closures such as early closes, and
+  special sessions; `src/session/weekend.rs` finds the next weekend gap, a closure of at least 40
+  hours, and the one a time is in; unit tests in `src/session/tests.rs`
 - `src/execution/batch.rs` and `src/execution/cancel.rs` — from `V44`, close-all and cancel-all: one
   signed request closes whole positions through the single reduce-only market order's path (from
   `V45` at most `Fixed::MAX_INPUT` units per entry), or cancels every resting order
@@ -843,6 +872,35 @@ across V54 it is refused while the listing a market's first listing must be, the
 an adoption waits, has a ceiling below its launch close charge under the score tiers the activation
 converts to, as it is for a listed market. Before V58 none of this is checked or changed, so earlier
 logs replay unchanged. Its session is in `examples/reference_log/v58.rs`.
+
+Protocol V59 adds a market's weekend margin (`src/weekend/`, `MarketSpec::weekend_margin_bps`): each
+of the market's margin bands charges at least that rate over its weekend gap, any closure of at
+least 40 hours by its calendar (`Schedule::next_weekend_gap`, `Schedule::weekend_gap_at`), so a
+holiday beside a weekend starts or ends the gap with it. The market keeps its next or current gap
+(`MarketState::weekend`, in its leaf's state hash while set): its close, its reopening, and whether
+its close-out has run. A listing sets it, the start of the gap closes out and the reopening moves it
+on; both are boundaries the corporate timeline walks to, though not ones the `V33` catch-up bound
+counts. From two hours before the gap starts until the market reopens, the account's margin
+requirement counts each position in the market at its weekend margin for a fill that adds risk in
+any market (`Reject::WeekendMargin`) and for a withdrawal; close-outs on price moves keep the normal
+margin. At the gap's start, after any stress floor or restriction lapsing then and before captures,
+the session refresh and any rollover at that time, each account holding a market whose gap starts
+then and whose equity at its marks is below that requirement is closed out on those markets, largest
+loser first, at their marks, until it meets it, as a close-out with its events. A relisting that
+puts the market in a gap it has not closed out closes it out then. A listed market's weekend margin
+moves only as a listing notice of seven days names it, or, while rotation is on, as a passed vote
+does, whose own seven days replace the notice, to a rate from none to 10000 bps, on a calendar with
+a gap within 366 days. A calendar change that is not a vote may not narrow or remove a weekend gap
+the calendar in force gives within seven days, held or not, as new positions could otherwise carry
+it at the normal margin; and while the market holds positions, it may not start a gap within seven
+days that the calendar in force does not, which would close holders out at the weekend margin, a
+margin raise with less notice than a rate change takes. A search that finds no gap within 366 days
+keeps a frontier two hours before its end, applying no margin, and runs again there, in time for the
+lead of a gap just past it. Before V59 a listing's weekend margin does nothing, as a field a later
+version reads, no notice names one, and no market keeps a gap, so earlier logs replay unchanged;
+activation starts each listed market that names one, holding a gap it is in, or one starting within
+two hours, to its reopening with no close-out, through a relisting, and a gap starting within two
+hours after one it entered the same way. Its session is in `examples/reference_log/v59.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

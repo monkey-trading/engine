@@ -124,6 +124,7 @@ mock_mids = [
   { market = 20, mid = "6500" },
   { market = 23, mid = "23500" },
   { market = 30, mid = "2600" },
+  { market = 32, mid = "70" },
   { market = 40, mid = "230" },
 ]
 
@@ -468,6 +469,38 @@ windows = [
   { open = "Thu 18:00", close = "Fri 17:00" },
 ]
 
+# --- Commodity with a weekend margin: CME Globex hours in Chicago -------------
+
+# From protocol V59 each margin band charges at least weekend_margin_bps over
+# the market's weekend gap, any closure of at least 40 hours: from 2 hours
+# before the gap starts until the market reopens, new risk and withdrawals
+# meet it, and when it starts an account below it is closed out at the last
+# price. 7.5% is WTI's launch value (#750).
+[[genesis.markets]]
+id = 32
+symbol = "WTI"
+asset_class = "commodity"
+max_slippage_bps = 10
+house_cap_bps = 3000
+house_cap_floor = "300000"
+margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
+spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
+price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
+markout_floor_bps = "1"
+weekend_margin_bps = 750
+financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
+
+[genesis.markets.schedule]
+kind = "weekly"
+tz = "America/Chicago"
+windows = [
+  { open = "Sun 17:00", close = "Mon 16:00" },
+  { open = "Mon 17:00", close = "Tue 16:00" },
+  { open = "Tue 17:00", close = "Wed 16:00" },
+  { open = "Wed 17:00", close = "Thu 16:00" },
+  { open = "Thu 17:00", close = "Fri 16:00" },
+]
+
 # --- Equity: exchange hours only --------------------------------------------
 
 [[genesis.markets]]
@@ -502,7 +535,7 @@ closed_dates = ["2026-11-26", "2026-12-25", "2027-01-01"]
 # calibration. A market's launch close charge here is the widest stress minimum
 # 10bps, the 5bps top toxicity add-on (from protocol V54 the score's top tier)
 # and, from protocol V52, its first spread band at the widest 4x multiplier
-# (EUR-USD 16.6bps, US500 17.8, DE40 18.6, BTC-USD, XAU-USD and AAPL 23,
+# (EUR-USD 16.6bps, US500 17.8, DE40 18.6, BTC-USD, XAU-USD, WTI and AAPL 23,
 # ETH-USD 27), and the engine refuses a ceiling below it.
 [[genesis.close_spread_ceilings]]
 market = 1
@@ -526,6 +559,10 @@ max_close_spread_bps = 19
 
 [[genesis.close_spread_ceilings]]
 market = 30
+max_close_spread_bps = 25
+
+[[genesis.close_spread_ceilings]]
+market = 32
 max_close_spread_bps = 25
 
 [[genesis.close_spread_ceilings]]

@@ -129,7 +129,13 @@ fn a_close_out_takes_open_quantity_but_matches_none() {
     // A listing notice raises BTC's margin to the whole notional from a week on.
     let full = vec![Tier { up_to: None, bps: 10_000 }];
     let effective_at = h.ts + NOTICE_MS;
-    let notice = ListingNotice { spread_tiers: None, margin_tiers: Some(full.clone()), markup_bps: None, effective_at };
+    let notice = ListingNotice {
+        spread_tiers: None,
+        margin_tiers: Some(full.clone()),
+        markup_bps: None,
+        weekend_margin_bps: None,
+        effective_at,
+    };
     h.operator_admin(AdminCommand::AnnounceListing { market: BTC, notice });
     h.advance_to(effective_at - 1_000);
     h.price(BTC, "100000");

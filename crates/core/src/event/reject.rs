@@ -42,6 +42,13 @@ pub enum Reject {
         equity: Fixed,
         required: Fixed,
     },
+    /// From `V59`, a fill that adds risk and would leave the account's equity below its margin
+    /// requirement with the weekend margins that apply now: from two hours before each market's weekend
+    /// gap starts until it reopens.
+    WeekendMargin {
+        equity: Fixed,
+        required: Fixed,
+    },
     InsufficientFunds {
         available: Fixed,
     },

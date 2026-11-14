@@ -13,8 +13,9 @@
 //!   `fxMarket` the market whose index converts it to USD (0 for USD); `fxMarked` false and
 //!   `fxMark` 0 until that index has priced it; and `stateHash` the keccak-256 of the JSON encoding
 //!   of its spec, venue quotes, open and reduce-only flags, stress state, from `V12` the index it
-//!   was last processed at, and from `V21`, for a market priced from futures, its roll state. A
-//!   market's index of resting orders is left out: the order leaves hold those orders. An amount in
+//!   was last processed at, from `V21`, for a market priced from futures, its roll state, and from
+//!   `V59`, for a market with a weekend margin, its next or current weekend gap. A market's index
+//!   of resting orders is left out: the order leaves hold those orders. An amount in
 //!   a EUR or GBP market is `fxMark` times as many USD, and one in a JPY market `1 / fxMark` times
 //!   as many.
 //! - **Resting order:** the keccak-256 of the JSON encoding of `{ "account", "order" }`.
@@ -60,8 +61,6 @@
 //! remaining state are set by operator commands. JSON encodings are the ones the node's log uses
 //! for the same types.
 
-use std::collections::BTreeMap;
-
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolValue;
 use serde::{Deserialize, Serialize};
@@ -69,15 +68,15 @@ use serde::{Deserialize, Serialize};
 use crate::Fixed;
 use crate::account::{Account, Position, RestingOrder};
 use crate::emissions::{EmissionLedger, PeriodResult, TokenUnits};
-use crate::engine::{MarketState, Markout, StressState};
-use crate::futures::FuturesState;
-use crate::market::{MarketSpec, QuoteCurrency};
+use crate::engine::Markout;
 use crate::merkle::keccak;
-use crate::price::{Index, SourceQuote};
 use crate::protocol::ProtocolVersion;
 use crate::session_keys::AccountSessionKeys;
 use crate::staking::UsdcUnits;
-use crate::types::{AccountId, MarketId, Millis, OrderId};
+use crate::types::{AccountId, MarketId, OrderId};
+
+mod market;
+pub use market::*;
 
 /// The kind byte that starts each key.
 const GLOBALS: u8 = 0;
@@ -157,44 +156,6 @@ pub struct AccountLeaf {
     pub toxicity_history: Fixed,
 }
 
-/// A market as its leaf holds it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MarketLeaf {
-    /// The mark positions are valued at, once the market has been priced.
-    pub mark: Option<Fixed>,
-    /// The currency the market is quoted in, and the market whose index converts it to USD.
-    pub quote_currency: QuoteCurrency,
-    /// The index amounts convert to USD at, once that market has priced it.
-    pub fx_mark: Option<Fixed>,
-    pub client_qty: Fixed,
-    pub client_cost: Fixed,
-    /// keccak-256 of the JSON encoding of the market's spec, venue quotes, open and reduce-only
-    /// flags, stress state, from `V12` the index it was last processed at, and from `V21` any roll
-    /// state.
-    pub state_hash: B256,
-}
-
-/// What a market's `state_hash` covers.
-#[derive(Serialize)]
-struct MarketRest<'a> {
-    spec: &'a MarketSpec,
-    quotes: &'a BTreeMap<String, SourceQuote>,
-    open: bool,
-    reduce_only: bool,
-    stress: &'a StressState,
-    /// Left out while `None`, as it is before `V12`, so earlier roots stand.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    processed_index: &'a Option<Index>,
-    /// Left out while `None`, as it is for every market before `V21`, so earlier roots stand.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    futures: &'a Option<FuturesState>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    corporate_action_blocked: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_split_at: &'a Option<Millis>,
-}
-
 /// What a resting order's leaf covers.
 #[derive(Serialize)]
 struct OrderRest<'a> {
@@ -251,70 +212,6 @@ impl AccountLeaf {
         }
         let scored = (self.toxicity_fraction.raw(), self.toxicity_history.raw());
         keccak(&[&leaf.abi_encode(), &scored.abi_encode()])
-    }
-}
-
-impl MarketLeaf {
-    /// The leaf of `market`.
-    pub(crate) fn of(market: &MarketState) -> Self {
-        // `resting` indexes orders the order leaves hold.
-        let MarketState {
-            spec,
-            quotes,
-            open,
-            reduce_only,
-            mark,
-            fx_mark,
-            client_qty,
-            client_cost,
-            stress,
-            resting: _,
-            processed_index,
-            futures,
-            corporate_action_blocked,
-            last_split_at,
-        } = market;
-        let rest = MarketRest {
-            spec,
-            quotes,
-            open: *open,
-            reduce_only: *reduce_only,
-            stress,
-            processed_index,
-            futures,
-            corporate_action_blocked: *corporate_action_blocked,
-            last_split_at,
-        };
-        MarketLeaf {
-            mark: *mark,
-            quote_currency: spec.quote_currency,
-            fx_mark: *fx_mark,
-            client_qty: *client_qty,
-            client_cost: *client_cost,
-            state_hash: json_hash(&rest),
-        }
-    }
-
-    /// The leaf's value hash.
-    pub fn value_hash(&self) -> B256 {
-        let (quote_currency, fx_market) = match self.quote_currency {
-            QuoteCurrency::Usd => (0, 0),
-            QuoteCurrency::Eur { fx_market } => (1, fx_market),
-            QuoteCurrency::Gbp { fx_market } => (2, fx_market),
-            QuoteCurrency::Jpy { fx_market } => (3, fx_market),
-        };
-        let leaf = typed::MarketLeaf {
-            marked: self.mark.is_some(),
-            mark: self.mark.unwrap_or(Fixed::ZERO).raw(),
-            quoteCurrency: quote_currency,
-            fxMarket: fx_market,
-            fxMarked: self.fx_mark.is_some(),
-            fxMark: self.fx_mark.unwrap_or(Fixed::ZERO).raw(),
-            clientQty: self.client_qty.raw(),
-            clientCost: self.client_cost.raw(),
-            stateHash: self.state_hash,
-        };
-        keccak(&[&leaf.abi_encode()])
     }
 }
 

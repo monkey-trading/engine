@@ -11,6 +11,7 @@ mod reissue;
 mod session_keys;
 mod source;
 mod spreads;
+mod weekend_margin;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;

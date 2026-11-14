@@ -28,6 +28,7 @@ pub fn every_event() -> Vec<Event> {
         Reject::NoFxPrice { fx_market: 10 },
         Reject::Slippage { quoted: amount, live: amount, slippage_bps: 5 },
         Reject::InsufficientMargin { equity: amount, required: amount },
+        Reject::WeekendMargin { equity: amount, required: amount },
         Reject::InsufficientFunds { available: amount },
         Reject::BelowMinimumWithdrawal { minimum: amount },
         Reject::HouseCapacity,
@@ -64,6 +65,7 @@ pub fn every_event() -> Vec<Event> {
             | Reject::NoFxPrice { .. }
             | Reject::Slippage { .. }
             | Reject::InsufficientMargin { .. }
+            | Reject::WeekendMargin { .. }
             | Reject::InsufficientFunds { .. }
             | Reject::BelowMinimumWithdrawal { .. }
             | Reject::HouseCapacity
