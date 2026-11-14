@@ -7,8 +7,9 @@ use std::sync::Arc;
 use engine_core::Engine;
 use engine_core::eip712::B256;
 use engine_core::event::Event;
+use engine_core::types::AccountId;
 use tokio::sync::watch;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::log_check::{Due, Takings, VerifiedHead, applies};
 use crate::sequencer::{CheckWait, Replayed, Sequencer};
@@ -39,6 +40,8 @@ pub(super) struct LogCheck {
     /// The latest checkpoint written, which may be at the `TurnTaken` itself when the schedule wrote
     /// one there before the `TurnTaken` was recorded.
     latest: Option<VerifiedHead>,
+    /// The turn `log_check_unattributable` was raised for, until it resolves.
+    unattributable: Option<u64>,
 }
 
 impl LogCheck {
@@ -46,8 +49,7 @@ impl LogCheck {
     /// hold, kept only when the log holds that checkpoint, since a host can hand a start another log.
     pub(super) fn recovered(setup: Option<LogCheckSetup>, replayed: &Replayed) -> Self {
         let next = replayed.engine.last_seq().map_or(0, |seq| seq.saturating_add(1));
-        let taken = replayed.engine.daily_turns().taken.map(|taken| taken.release);
-        let takings = replayed.takings.clone().complete_from(next, taken);
+        let takings = replayed.takings.clone().complete_from(next);
         let target = replayed.last_signed_checkpoint.as_ref().and_then(|checkpoint| {
             let link = replayed.prefix_ring.prefix_at(checkpoint.seq)?;
             Some(VerifiedHead { seq: checkpoint.seq, link, root: checkpoint.root.parse().ok()? })
@@ -69,7 +71,7 @@ impl LogCheck {
             (None, None) => {}
         }
         let (store, due) = (Some(store), Some(due));
-        Self { release: Some(release), store, due, verified, takings, target, latest: target }
+        Self { release: Some(release), store, due, verified, takings, target, latest: target, unattributable: None }
     }
 
     /// Notes the checkpoint `head` just written (see `retarget`).
@@ -78,10 +80,9 @@ impl LogCheck {
         self.retarget();
     }
 
-    /// Notes the command at `seq` with the `events` it gave, after which the engine records `taken` as
-    /// the last release to take a turn (see `Takings::command` and `retarget`).
-    fn command(&mut self, seq: u64, events: &[Event], taken: Option<B256>) {
-        self.takings.command(seq, events, taken);
+    /// Notes the command at `seq` with the `events` it gave (see `Takings::command` and `retarget`).
+    fn command(&mut self, seq: u64, events: &[Event]) {
+        self.takings.command(seq, events);
         self.retarget();
     }
 
@@ -95,17 +96,24 @@ impl LogCheck {
 
     /// The check this node waits for: with the gate applying, once this release has taken the turn in
     /// effect at a `TurnTaken` its verified head does not reach, the target checkpoint at or after it,
-    /// with the releases that sequenced the range since the verified head; `None` while no checkpoint
-    /// has followed, or while the records cannot attribute the range, as after a snapshot start.
+    /// with who sequenced the range since the verified head; `None` while no checkpoint has followed,
+    /// or while the records cannot attribute the range (`unattributable`).
     fn due(&self, engine: &Engine) -> Option<Due> {
         let (taken_seq, in_effect) = self.outstanding(engine)?;
         let head = self.target.filter(|head| head.seq >= taken_seq)?;
-        let Some(excluded) = self.takings.sequenced(self.verified.map(|verified| verified.seq), head.seq) else {
-            debug!(seq = head.seq, "the log's records do not attribute the range a check would cover");
-            return None;
-        };
+        let excluded = self.takings.sequenced(self.verified.map(|verified| verified.seq), head.seq)?;
         let (turn, position, set, candidate) = (in_effect.turn, in_effect.position, in_effect.set, in_effect.candidate);
         Some(Due { turn, position, set, candidate, head, excluded })
+    }
+
+    /// The turn whose check is outstanding, its checkpoint written, while the log's records cannot say
+    /// who sequenced its range, as after a start from a snapshot past the verified head: no member can
+    /// be asked.
+    fn unattributable(&self, engine: &Engine) -> Option<u64> {
+        let (taken_seq, in_effect) = self.outstanding(engine)?;
+        let head = self.target.filter(|head| head.seq >= taken_seq)?;
+        let sequenced = self.takings.sequenced(self.verified.map(|verified| verified.seq), head.seq);
+        sequenced.is_none().then_some(in_effect.turn)
     }
 
     /// The seq of this release's `TurnTaken` of the turn in effect, and the turn, while the gate
@@ -129,17 +137,22 @@ impl LogCheck {
     }
 
     /// The boundary whose check will cover an approval at `approved_seq`, while it waits for one:
-    /// the turn in effect's when its check is outstanding and will reach it, its target not yet
-    /// written or at or past the approval, else the next turn's.
+    /// the turn in effect's when nobody has taken it yet, so its member's handover will check this
+    /// log, or when its check is outstanding and will reach the approval, its target not yet written
+    /// or at or past it; else the next turn's.
     fn wait(&self, engine: &Engine, approved_seq: u64) -> Option<CheckWait> {
         if self.covers(engine, approved_seq) {
             return None;
         }
-        let in_effect = engine.daily_turns().in_effect?;
-        let this_turn = self.outstanding(engine).is_some_and(|(taken_seq, _)| {
-            let target = self.target.filter(|target| target.seq >= taken_seq);
-            approved_seq < taken_seq || target.is_none_or(|target| target.seq >= approved_seq)
-        });
+        let turns = engine.daily_turns();
+        let in_effect = turns.in_effect?;
+        let untaken =
+            turns.taken.is_none_or(|taken| (taken.turn, taken.position) != (in_effect.turn, in_effect.position));
+        let this_turn = untaken
+            || self.outstanding(engine).is_some_and(|(taken_seq, _)| {
+                let target = self.target.filter(|target| target.seq >= taken_seq);
+                approved_seq < taken_seq || target.is_none_or(|target| target.seq >= approved_seq)
+            });
         let turn = if this_turn { in_effect.turn } else { in_effect.turn.saturating_add(1) };
         Some(CheckWait { turn, boundary_ms: engine_core::turns::boundary(turn)? })
     }
@@ -158,7 +171,8 @@ impl LogCheck {
 }
 
 impl Sequencer {
-    /// Publishes the check due, when it changed.
+    /// Publishes the check due, when it changed, and raises `log_check_unattributable` while one is
+    /// outstanding that no member can be asked for (`LogCheck::unattributable`).
     pub(super) fn refresh_log_check(&mut self) {
         let due = self.log_check.due(&self.engine);
         if let Some(sender) = &self.log_check.due {
@@ -167,6 +181,25 @@ impl Sequencer {
                 *current = due;
                 changed
             });
+        }
+        let unattributable = self.log_check.unattributable(&self.engine);
+        let raised = std::mem::replace(&mut self.log_check.unattributable, unattributable);
+        if raised != unattributable {
+            if let Some(turn) = raised {
+                info!(
+                    alert_resolved = "log_check_unattributable",
+                    turn, "the boundary's log check can be asked for, or is no longer outstanding"
+                );
+            }
+            if let Some(turn) = unattributable {
+                warn!(
+                    alert = "log_check_unattributable",
+                    turn,
+                    "the log's records do not reach back to the last verified head, as after a start from a snapshot: \
+                     no member can be asked to check the log, and withdrawals approved since that head wait for a \
+                     handover to another member; restart without [snapshots] to replay the whole log"
+                );
+            }
         }
     }
 
@@ -184,8 +217,7 @@ impl Sequencer {
     /// Error cases:
     /// - the checkpoint cannot be written
     pub(super) fn log_check_taken(&mut self, seq: u64, events: &[Event]) -> anyhow::Result<()> {
-        let taken = self.engine.daily_turns().taken.map(|taken| taken.release);
-        self.log_check.command(seq, events, taken);
+        self.log_check.command(seq, events);
         if self.log_check.outstanding(&self.engine).is_some() {
             info!(seq, "the log check at this boundary is outstanding: checkpointing for a member to verify");
             self.paced_checkpoint()?;
@@ -194,16 +226,21 @@ impl Sequencer {
         Ok(())
     }
 
-    /// Takes a member's verification of `head` from `release`, which this node admitted: only while it
-    /// is the check due and `release` sequenced none of its range. Whether it was taken.
-    pub(super) fn log_checked(&mut self, head: VerifiedHead, release: B256) -> bool {
+    /// Takes a verification of `head` by `candidate`'s member on `release`, which this node admitted:
+    /// only while it is the check due and neither sequenced any of its range. Whether it was taken.
+    pub(super) fn log_checked(&mut self, head: VerifiedHead, (candidate, release): (AccountId, B256)) -> bool {
         let due = self.log_check.due(&self.engine);
-        let Some(due) = due.filter(|due| due.head == head && !due.excluded.contains(&release)) else {
-            warn!(seq = head.seq, %release, "a verification that is not the check due, or from a release in its range");
+        let Some(due) = due.filter(|due| due.head == head && !due.excluded.include(candidate, release)) else {
+            warn!(
+                seq = head.seq,
+                verifier = %candidate,
+                %release,
+                "a verification that is not the check due, or from a member or release in its range"
+            );
             return false;
         };
         self.log_check.verify(head);
-        info!(seq = head.seq, turn = due.turn, %release, "a member's check verified the log through seq");
+        info!(seq = head.seq, turn = due.turn, verifier = %candidate, %release, "a member's check verified the log through seq");
         self.refresh_log_check();
         true
     }

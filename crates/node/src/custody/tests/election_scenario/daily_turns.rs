@@ -106,9 +106,9 @@ async fn scenario() {
     let a = address(&k256::ecdsa::SigningKey::from_slice(&KEYS[0]).unwrap());
     let mut chain = Chain::start_with_trailing_finality(enclave, a, DIGEST_A).await;
     let members = [
-        Member::new("A", a, KEYS[0], DIGEST_A),
-        Member::new("B", chain.accounts[3], KEYS[1], DIGEST_B),
-        Member::new("C", chain.accounts[4], KEYS[2], DIGEST_C),
+        Member::new("A", a, (KEYS[0], DIGEST_A), chain.accounts[5]),
+        Member::new("B", chain.accounts[3], (KEYS[1], DIGEST_B), chain.accounts[6]),
+        Member::new("C", chain.accounts[4], (KEYS[2], DIGEST_C), chain.accounts[7]),
     ];
     let seeds = Seeds::start(&chain).await;
     let schedule_args = (chain.registry, seeds.receiver).abi_encode_params();
@@ -166,7 +166,7 @@ async fn scenario() {
     shared.loaded().await;
     shared.following(1, 1).await;
     shared.following(2, 1).await;
-    let watcher = Member::new("watcher", Address::ZERO, [0x57; 32], [0x57; 48]);
+    let watcher = Member::new("watcher", Address::ZERO, ([0x57; 32], [0x57; 48]), chain.accounts[9]);
     let client = Client::start(Box::leak(Box::new(watcher.config(&chain))));
     println!(
         "PASS: B and C follow A's signed stream from boot into replicas, under a load of BTC-USD orders a funded account places and cancels"
@@ -249,7 +249,7 @@ async fn scenario() {
         holder.node.submit(Command::Tick).await;
         let (before, before_at) = office(&holder.node).await;
         let incumbent = holder.member;
-        leg.before_boundary(&chain, turn, (&holder, member), &shared).await;
+        leg.before_boundary(&chain, turn, (&holder, member, &members), &shared).await;
 
         // A minute past the boundary one block past it is mined, and the incumbent's next command
         // hands the operator key to the turn's. The incumbent held the office until its turn ended,

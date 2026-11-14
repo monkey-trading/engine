@@ -209,7 +209,9 @@ impl Sequencer {
                     Request::Quote { cmd, not_after } => sequenced |= self.sequence_quote(cmd, not_after)?.is_some(),
                     Request::Query(q) => queries.push(q),
                     Request::PrefixAt { seq, reply } => _ = reply.send(self.prefixes.prefix_at(seq)),
-                    Request::LogChecked { head, release, reply } => _ = reply.send(self.log_checked(head, release)),
+                    Request::LogChecked { head, candidate, release, reply } => {
+                        _ = reply.send(self.log_checked(head, (candidate, release)))
+                    }
                     Request::HouseState(reply) => self.house.wait(reply),
                     Request::TimeSample(sample) => self.take_sample(sample)?,
                     Request::Sync(reply) => batch.syncs.push(reply),

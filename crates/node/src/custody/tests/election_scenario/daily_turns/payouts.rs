@@ -26,7 +26,7 @@ use super::super::node::Node;
 use super::FIRST_TURN;
 use super::seat::{Holder, Member};
 use super::switch::Members;
-use crate::checkpoints::HandoverSource;
+use crate::checkpoints::{CheckpointChain, HandoverSource, View};
 use crate::clock::Clock;
 use crate::config::TeeProvider;
 use crate::handover::evidence::{Quoting, produce};
@@ -86,12 +86,12 @@ impl Leg {
 
     /// Before `turn`'s boundary, whose member is `member`, with `holder` the incumbent: before `LEG`'s,
     /// during A's turn, a withdrawal is approved that waits for `LEG`'s check; before the boundary B holds
-    /// on through, A and C stop following.
+    /// on through, whose drawn order puts A before C, A and C stop following.
     pub(super) async fn before_boundary(
         &mut self,
         chain: &Chain,
         turn: u64,
-        (holder, member): (&Holder, usize),
+        (holder, member, members): (&Holder, usize, &[Member]),
         shared: &Members,
     ) {
         if turn == LEG {
@@ -105,6 +105,12 @@ impl Leg {
             );
         } else if turn == LEG + 1 {
             assert_eq!((holder.member, member), (B, B), "the fixture draws B again for turn {}", LEG + 1);
+            let order = turn_order(chain, &members[A], turn).await;
+            let at = |index: usize| {
+                order.iter().position(|source| source.candidate == AccountId(members[index].candidate.into()))
+            };
+            let a_before_c = matches!((at(A), at(C)), (Some(a), Some(c)) if a < c);
+            assert!(a_before_c, "turn {turn}'s order does not put A before C: {order:?}");
             shared.pause(A);
             shared.pause(C);
         }
@@ -278,7 +284,14 @@ async fn refuse_own(node: &Node, b: &Member) {
     let refused = admit(&checks, (&nonce, &statement), &source, &due.excluded, answer).unwrap_err();
     assert!(format!("{refused:#}").contains("sequenced part of the range"), "{refused:#}");
     let (reply, taken) = oneshot::channel();
-    let release = B256::from(release.id());
-    node.state.tx.send(Request::LogChecked { head: due.head, release, reply }).await.unwrap();
+    let (candidate, release) = (AccountId(b.candidate.into()), B256::from(release.id()));
+    node.state.tx.send(Request::LogChecked { head: due.head, candidate, release, reply }).await.unwrap();
     assert!(!taken.await.unwrap(), "B's sequencer took a verification from its own release");
+}
+
+/// `turn`'s drawn order, read through `member`'s vault reader at the finalized block.
+async fn turn_order(chain: &Chain, member: &Member, turn: u64) -> Vec<HandoverSource> {
+    let vault = crate::handover::vault_reader(&member.config(chain)).unwrap().expect("[checkpoints] reads the vault");
+    let at = vault.observe(View::Finalized, &[]).await.unwrap();
+    vault.turn_order(&at, turn).await.unwrap()
 }

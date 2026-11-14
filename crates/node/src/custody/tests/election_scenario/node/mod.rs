@@ -258,7 +258,7 @@ impl Node {
             }
         };
         // A start after a handover records its check as a node's does (`node::log_check`).
-        crate::node::log_check::after_handover(store.as_deref(), &crate::node::KeyStart::default(), &replayed).unwrap();
+        crate::node::log_check::after_handover(store.as_deref(), operator.address, &replayed).unwrap();
         let (replayed, mut history) = plan.finish_with_log(replayed, key.clone()).unwrap();
         seq_cfg.history_sealing = history.sealing();
         let handover = signing.map(|signing| {
@@ -316,8 +316,9 @@ impl Node {
         };
         let (samples, samples_rx) = watch::channel(Some(sample_around(clock.as_ref())));
         let trusted = TrustedClock::new(clock.clone(), samples_rx.clone(), dev_config().time.max_drift);
-        let asking =
-            store.map(|store| (tokio::spawn(setup::asker(chain, &tx, asked.clone(), &store, trusted).run()), asked));
+        let asking = store.map(|store| {
+            (tokio::spawn(setup::asker(chain, &tx, asked.clone(), (&store, key.clone()), trusted).run()), asked)
+        });
         let unlimited = |_: RateLimit| Quota::per_second(NonZeroU32::MAX);
         let state = ApiState {
             tx,

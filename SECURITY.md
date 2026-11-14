@@ -371,18 +371,22 @@ boundary or its mirror when later;
 while rotation is on and a turn is in effect whose set names two or more members, the enclave signs a
 withdrawal only for an approval at or below the head of the log the last boundary's check verified, a
 check being another member's verification of the log through a checkpoint: at a handover the
-successor's own replay of the log through the checkpoint it was handed, and at a boundary its holder
-holds on through an attested verification, bound to the boundary, the turn assignment and the vault's
-signer epoch, from a member of the turn's order whose release sequenced none of the commands since the
-last verified head, as the log's `TurnTaken` commands record, asked first to last; an approval made
-during a turn therefore waits for the next boundary, a day at most plus the switch, payouts stay
-anchored to the roots the vault accepted as before, a member of the set can no longer be paid on a
-branch no other member holds, and the verified head is sealed with the keys, so a host that restores an
-older copy only delays payouts; a check binds a release, not a host, so a host that also runs another
-member's release can feed that enclave the branch it withholds and have it verified; the rule bounds
-neither delay nor censorship: a host that keeps its node from asking, or members that do not answer,
-hold payouts until one answers or the next handover (`log_check_pending` pages), and a boundary whose
-turn nobody drew logs no `TurnTaken`, so approvals wait for the next drawn turn; commands other than
+successor's own replay of the log through the checkpoint it was handed, unless the successor's member
+sequenced part of the range, as after its own upgrade, and at a boundary its holder holds on through an
+attested verification, bound to the boundary, the turn assignment and the vault's signer epoch, from a
+member of the turn's order that sequenced none of the commands since the last verified head under any
+release, nor runs a release that did, as the log's `TurnTaken` commands record, asked first to last in
+questions the holder's enclave signs, which a member answers only from the checkpoints it verified
+under that signer; an approval made during a turn therefore waits for the next boundary, a day at most
+plus the switch, payouts stay anchored to the roots the vault accepted as before, a member of the set
+can no longer be paid on a branch no other member holds, and the verified head is sealed with the keys,
+so a host that restores an older copy only delays payouts; a check binds a release, not a host, so a
+host that also runs another member's release can feed that enclave the branch it withholds and have it
+verified; the rule bounds neither delay nor censorship: a host that keeps its node from asking, or
+members that do not answer, hold payouts until one answers or the next handover (`log_check_pending`
+pages), a boundary whose turn nobody drew logs no `TurnTaken`, so approvals wait for the next drawn
+turn, and a start from a snapshot past the verified head cannot say who sequenced the range, so it asks
+no one and pages `log_check_unattributable` until a full replay or a handover; commands other than
 withdrawals stay exposed to a branch the host withholds for one heartbeat interval once members confirm
 the operator's log heads, which is not built yet, and until then for as long as the log-head rollback
 bound above allows; with a one-member set, rotation off, or no turn in effect, only the posted roots

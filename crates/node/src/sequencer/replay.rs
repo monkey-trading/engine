@@ -234,7 +234,7 @@ impl Replay {
                 }
                 self.legacy_approvals.observe(engine, &c.sequenced, &events, c.events.is_some());
                 self.access_alerts.observe(engine, &c.sequenced.cmd, &events);
-                self.takings.command(seq, &events, engine.daily_turns().taken.map(|taken| taken.release));
+                self.takings.command(seq, &events);
                 for (index, event) in events.iter().enumerate() {
                     if let Event::WithdrawalApproved { account, nonce, .. } = event
                         && engine.withdrawal_approval(*account, *nonce).is_some()

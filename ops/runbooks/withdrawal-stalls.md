@@ -186,13 +186,16 @@ a stall.
   was handed before it started. Nothing to do.
 - **At a boundary the operator holds on through** the operator's node asks the members of the
   turn's order, first to last, for an attested verification of the checkpoint it wrote after its
-  `TurnTaken`. It skips its own candidate, each member with no handover endpoint, and each member
-  whose release sequenced part of the range since the last verified head. `log_check_pending` pages
+  `TurnTaken`, in questions its enclave signs. It skips its own candidate, each member with no
+  handover endpoint, and each member that sequenced part of the range since the last verified head
+  under any release, or runs a release that did. `log_check_pending` pages
   when no member has verified it for 30 minutes. Check the members' nodes follow the operator and that
   their registered handover endpoints are reachable from the operator's node; a member answers only
   once its replica has verified that checkpoint, so one that lags answers once it catches up.
 - **After a restart** the node restores the verified head sealed with its keys, if its log holds that
-  checkpoint; otherwise it asks for the check again as at a boundary it holds on through.
+  checkpoint; otherwise it asks for the check again as at a boundary it holds on through. A start from
+  a snapshot past the verified head cannot say who sequenced the range, so it asks no one and pages
+  `log_check_unattributable`: restart without `[snapshots]` so the node replays the whole log.
 
 ## The node has stopped
 

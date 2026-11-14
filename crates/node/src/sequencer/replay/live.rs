@@ -104,7 +104,9 @@ impl LiveReplay {
                     let head =
                         crate::log_check::VerifiedHead { seq: checkpoint.seq, link, root: checkpoint.root.parse()? };
                     let taken = engine.daily_turns().taken.map(|taken| (taken.turn, taken.position));
-                    checked.record(crate::log_check::answer::Checked { head, taken });
+                    // The replay checked the checkpoint's signature against its signer above.
+                    let signer = checkpoint.signer.parse()?;
+                    checked.record(crate::log_check::answer::Checked { head, taken, signer });
                 }
                 if self.checkpoints.len() > RETAINED_CHECKPOINTS {
                     self.checkpoints.pop_first();

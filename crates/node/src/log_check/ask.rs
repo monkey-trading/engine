@@ -1,18 +1,20 @@
 //! The operator's side of the boundary's log check: once its sequencer publishes a check due, its node
 //! asks the members of the turn's order, first position first, for an attested verification of the
-//! checkpoint, skipping its own candidate, each release that sequenced the covered range and each
-//! member with no handover endpoint, and gives the first it admits to the sequencer. A round that no
-//! member answers is tried again; a check that stays due pages `log_check_pending`.
+//! checkpoint, signing each question with its enclave key, skipping its own candidate, each member that
+//! sequenced the covered range under any release, each release that did, and each member with no
+//! handover endpoint, and gives the first it admits to the sequencer. A round that no member answers is
+//! tried again; a check that stays due pages `log_check_pending`.
 
-use std::collections::BTreeSet;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
 use engine_core::eip712::B256;
+use engine_core::types::AccountId;
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch};
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout};
 use tracing::{Instrument, error, info, info_span, warn};
 
 use crate::checkpoints::{CheckpointChain, HandoverSource, View};
@@ -20,8 +22,9 @@ use crate::config::TeeProvider;
 use crate::handover::evidence;
 use crate::handover::{MESSAGE_TIMEOUT, no_weaker, receive, send};
 use crate::log::CheckpointDomain;
-use crate::log_check::{Answer, Ask, Due, Statement, report_data};
+use crate::log_check::{Answer, Ask, Due, Sequencers, Statement, ask_digest, report_data};
 use crate::sequencer::Request;
+use crate::tee::EnclaveKey;
 use crate::tee::sealing::{Platform, Release};
 use crate::trusted_time::TrustedClock;
 
@@ -31,7 +34,8 @@ const ASK_TIMEOUT: Duration = if cfg!(test) { Duration::from_secs(5) } else { Du
 const RETRY: Duration = if cfg!(test) { Duration::from_millis(200) } else { Duration::from_secs(60) };
 /// How long a check may stay due before it pages: withdrawals approved since the last verified head
 /// wait for it.
-const PENDING_ALERT_AFTER: Duration = Duration::from_secs(30 * 60);
+const PENDING_ALERT_AFTER: Duration =
+    if cfg!(test) { Duration::from_millis(600) } else { Duration::from_secs(30 * 60) };
 
 /// The operator node's asking for the checks its sequencer publishes as due.
 pub(crate) struct Asker<C> {
@@ -42,20 +46,24 @@ pub(crate) struct Asker<C> {
     provider: TeeProvider,
     /// This enclave's platform, which no verifier's policy or TCB may be weaker than.
     platform: Platform,
+    /// The enclave key that signs this node's checkpoints, and so its questions.
+    key: Arc<EnclaveKey>,
     trusted: TrustedClock,
 }
 
 impl<C: CheckpointChain> Asker<C> {
-    /// Asks for each check `due` publishes, through `vault`'s finalized schedule, and gives what it
-    /// admits to `sequencer`, verifying quotes as `provider` does at `trusted` time.
+    /// Asks for each check `due` publishes, through `vault`'s finalized schedule, signing each question
+    /// with `key`, and gives what it admits to `sequencer`, verifying quotes as `provider` does at
+    /// `trusted` time.
     pub(crate) fn new(
         vault: C,
         sequencer: &mpsc::Sender<Request>,
         due: watch::Receiver<Option<Due>>,
         (domain, provider, platform): (CheckpointDomain, TeeProvider, Platform),
+        key: Arc<EnclaveKey>,
         trusted: TrustedClock,
     ) -> Self {
-        Self { vault, sequencer: sequencer.downgrade(), due, domain, provider, platform, trusted }
+        Self { vault, sequencer: sequencer.downgrade(), due, domain, provider, platform, key, trusted }
     }
 
     /// Asks for each check due until the sequencer stops.
@@ -125,7 +133,7 @@ impl<C: CheckpointChain> Asker<C> {
             match asked.unwrap_or_else(|_| Err(anyhow!("no answer in {ASK_TIMEOUT:?}"))) {
                 Ok(release) => {
                     info!(verifier = %member.candidate, release = %release, "a member verified the log at the boundary");
-                    return self.give(due, release).await;
+                    return self.give(due, member.candidate, release).await;
                 }
                 Err(e) => {
                     warn!(member = %member.candidate, endpoint = %member.handover_endpoint, "this member's check was not admitted: {e:#}");
@@ -144,33 +152,29 @@ impl<C: CheckpointChain> Asker<C> {
     /// Asks `member` to verify `statement`: the release it proves, once admitted (see `admit`).
     /// Error cases:
     /// - the connection or the exchange fails, or the answer is not admitted
-    async fn ask(
-        &self,
-        member: &HandoverSource,
-        statement: &Statement,
-        excluded: &BTreeSet<B256>,
-    ) -> anyhow::Result<B256> {
+    async fn ask(&self, member: &HandoverSource, statement: &Statement, excluded: &Sequencers) -> anyhow::Result<B256> {
         let mut nonce = [0u8; 32];
         SystemRandom::new().fill(&mut nonce).map_err(|_| anyhow!("the RNG failed"))?;
+        let signature = self.key.sign_digest(ask_digest(self.domain, &nonce, statement).0);
         let mut stream = timeout(MESSAGE_TIMEOUT, TcpStream::connect(&member.handover_endpoint))
             .await
             .context("connecting timed out")?
             .context("connecting")?;
-        send(&mut stream, &Ask { nonce: hex::encode(nonce), statement: *statement }).await?;
+        send(&mut stream, &Ask { nonce: hex::encode(nonce), statement: *statement, signature }).await?;
         let answer: Answer = receive(&mut stream).await?;
         let now = self.trusted.since_sample_ms().map(|ms| ms / 1000);
         let checks = Checks { domain: self.domain, provider: self.provider, own: &self.platform, now_seconds: now };
         admit(&checks, (&nonce, statement), member, excluded, answer)
     }
 
-    /// Gives the admitted verification to the sequencer: whether it took it.
+    /// Gives the verification by `candidate`'s member on `release` to the sequencer: whether it took it.
     /// Error cases:
     /// - the sequencer has stopped
-    async fn give(&self, due: &Due, release: B256) -> anyhow::Result<bool> {
+    async fn give(&self, due: &Due, candidate: AccountId, release: B256) -> anyhow::Result<bool> {
         let sequencer = self.sequencer.upgrade().context("the sequencer has stopped")?;
         let (reply, taken) = oneshot::channel();
         sequencer
-            .send(Request::LogChecked { head: due.head, release, reply })
+            .send(Request::LogChecked { head: due.head, candidate, release, reply })
             .await
             .ok()
             .context("the sequencer has stopped")?;
@@ -192,26 +196,26 @@ pub(crate) struct Checks<'a> {
 }
 
 /// The members of `order` the node asks for `due`'s check, in order: not its own candidate, with a
-/// handover endpoint, and on a release that sequenced none of the covered range.
+/// handover endpoint, and neither the member nor its release having sequenced any of the covered range.
 pub(crate) fn qualifying<'a>(order: &'a [HandoverSource], due: &'a Due) -> impl Iterator<Item = &'a HandoverSource> {
     order.iter().filter(|member| {
         member.candidate != due.candidate
             && !member.handover_endpoint.is_empty()
-            && !due.excluded.contains(&B256::from(member.release))
+            && !due.excluded.include(member.candidate, B256::from(member.release))
     })
 }
 
 /// The release `member`'s `answer` to `nonce` and `statement` proves, when it counts as the check:
 /// its quote binds them and the config hash it names, under a guest policy and TCB no weaker than
 /// this enclave's, and the measurement with that config is the release `member`'s candidacy
-/// registered, which sequenced none of the covered range (`excluded`).
+/// registered, neither of which sequenced any of the covered range (`excluded`).
 /// Error cases:
 /// - the member refused, or any of those checks fails
 pub(crate) fn admit(
     checks: &Checks<'_>,
     (nonce, statement): (&[u8; 32], &Statement),
     member: &HandoverSource,
-    excluded: &BTreeSet<B256>,
+    excluded: &Sequencers,
     answer: Answer,
 ) -> anyhow::Result<B256> {
     let (config_sha256, evidence) = match answer {
@@ -232,7 +236,11 @@ pub(crate) fn admit(
         B256::from(member.release),
         member.candidate
     );
-    anyhow::ensure!(!excluded.contains(&release), "release {release} sequenced part of the range it would verify");
+    anyhow::ensure!(
+        !excluded.include(member.candidate, release),
+        "candidate {} or its release {release} sequenced part of the range it would verify",
+        member.candidate
+    );
     Ok(release)
 }
 

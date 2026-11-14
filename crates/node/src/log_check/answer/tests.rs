@@ -1,6 +1,6 @@
-//! A member attests a statement only when its replica verified that checkpoint, with that link and
-//! root, in that turn assignment, at that turn's boundary, and its quote binds exactly what it was
-//! asked.
+//! A member attests a statement only when the question is signed by the checkpoint's signer and its
+//! replica verified that checkpoint, with that link and root, in that turn assignment, at that turn's
+//! boundary, and its quote binds exactly what it was asked; an idle connection holds up no other.
 
 use super::*;
 
@@ -8,7 +8,7 @@ use engine_core::eip712::B256;
 
 use crate::handover::evidence::verify;
 use crate::log_check::Statement;
-use crate::tee::MockAttestor;
+use crate::tee::{EnclaveKey, MockAttestor};
 use crate::test_support::dev_config;
 
 const DIGEST: [u8; 48] = [0x33; 48];
@@ -17,7 +17,7 @@ const TURN: u64 = 20_755;
 #[tokio::test]
 async fn a_member_attests_only_the_checkpoint_its_replica_verified_in_that_turn() {
     let checked = CheckedHeads::default();
-    checked.record(Checked { head: head(40), taken: Some((TURN, 1)) });
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
     let answering = answering(checked);
     let nonce = [0x5c; 32];
     let asked = statement(head(40));
@@ -46,44 +46,70 @@ async fn a_member_attests_only_the_checkpoint_its_replica_verified_in_that_turn(
             Answer::Verified { .. } => panic!("{what} was attested"),
         }
     }
-    let malformed = Ask { nonce: "00".into(), statement: asked };
+    let malformed = Ask { nonce: "00".into(), ..ask(&nonce, asked) };
     assert!(matches!(answering.answer(&malformed).await, Answer::Refused { .. }), "a short challenge was attested");
+
+    // Only the enclave that signed the checkpoint makes the member quote.
+    let other = EnclaveKey::generate();
+    let unsigned = [
+        ("no signature", Ask { signature: "0x00".into(), ..ask(&nonce, asked) }, "65 bytes"),
+        ("another key", Ask { signature: signed_by(&other, &nonce, &asked), ..ask(&nonce, asked) }, "not signed by"),
+        (
+            "another question",
+            Ask { signature: ask(&[0x11; 32], asked).signature, ..ask(&nonce, asked) },
+            "not signed by",
+        ),
+    ];
+    for (what, question, says) in unsigned {
+        match answering.answer(&question).await {
+            Answer::Refused { reason } => assert!(reason.contains(says), "{what}: {reason}"),
+            Answer::Verified { .. } => panic!("{what} was attested"),
+        }
+    }
 }
 
 #[test]
 fn the_checked_heads_keep_the_latest_and_a_rebuild_replaces_what_it_replays_again() {
     let checked = CheckedHeads::default();
     for seq in [10, 20, 30] {
-        checked.record(Checked { head: head(seq), taken: None });
+        checked.record(Checked { head: head(seq), taken: None, signer: operator() });
     }
     // A rebuilt replica replays from the start: a checkpoint at or before the last drops the later ones.
-    checked.record(Checked { head: head(20), taken: Some((TURN, 0)) });
+    checked.record(Checked { head: head(20), taken: Some((TURN, 0)), signer: operator() });
     assert_eq!(checked.at(30), None);
     assert_eq!(checked.at(20).and_then(|checked| checked.taken), Some((TURN, 0)));
     assert_eq!(checked.latest(), Some(20));
     for seq in 21..(21 + RETAINED as u64) {
-        checked.record(Checked { head: head(seq), taken: None });
+        checked.record(Checked { head: head(seq), taken: None, signer: operator() });
     }
     assert_eq!((checked.at(10), checked.at(20)), (None, None), "more than the retained checkpoints are kept");
     assert!(checked.at(21).is_some());
 }
 
 #[tokio::test]
-async fn a_member_answers_over_its_endpoint_while_it_runs_and_frees_it_once_dropped() {
+async fn a_member_answers_over_its_endpoint_while_it_runs_past_an_idle_connection_and_frees_it_once_dropped() {
     let checked = CheckedHeads::default();
-    checked.record(Checked { head: head(40), taken: Some((TURN, 1)) });
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
     let answering = answering(checked);
     let listen = answering.listen;
     let nonce = [0x7a; 32];
-    let asking = async {
-        let mut stream = loop {
+    let connect = || async move {
+        loop {
             match TcpStream::connect(listen).await {
                 Ok(stream) => break stream,
                 Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
             }
-        };
+        }
+    };
+    let asking = async {
+        // A connection that sends nothing holds up no other, and is closed once its deadline passes.
+        let mut idle = connect().await;
+        let mut stream = connect().await;
         send(&mut stream, &ask(&nonce, statement(head(40)))).await.unwrap();
-        receive::<Answer>(&mut stream).await.unwrap()
+        let answer = receive::<Answer>(&mut stream).await.unwrap();
+        let closed = timeout(QUESTION_TIMEOUT * 4, receive::<Answer>(&mut idle)).await;
+        assert!(closed.is_ok_and(|read| read.is_err()), "the idle connection stayed open past its deadline");
+        answer
     };
     let answer = tokio::select! {
         answer = asking => answer,
@@ -110,9 +136,25 @@ fn statement(head: VerifiedHead) -> Statement {
     Statement { signer_epoch: 1, boundary: boundary(TURN), turn: TURN, position: 1, set: 1, head }
 }
 
-/// The question of `statement` under `nonce`.
+/// The operator's question of `statement` under `nonce`, signed by the operator enclave's key.
 fn ask(nonce: &[u8; 32], statement: Statement) -> Ask {
-    Ask { nonce: hex::encode(nonce), statement }
+    Ask { nonce: hex::encode(nonce), statement, signature: signed_by(&EnclaveKey::test_key(), nonce, &statement) }
+}
+
+/// `key`'s signature over the question of `statement` under `nonce`.
+fn signed_by(key: &EnclaveKey, nonce: &[u8; 32], statement: &Statement) -> String {
+    key.sign_digest(ask_digest(domain(), nonce, statement).0)
+}
+
+/// The deployment `dev_config` names, which the member answers in.
+fn domain() -> CheckpointDomain {
+    let cfg = dev_config();
+    CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().unwrap() }
+}
+
+/// The operator enclave whose key signed the checkpoints, and signs the questions.
+fn operator() -> AccountId {
+    AccountId(EnclaveKey::test_key().address())
 }
 
 /// A checkpoint at `seq`.

@@ -62,10 +62,12 @@ pub enum Request {
     },
     /// The parameters and latest checkpoint, answered once every prior request is flushed.
     HouseState(oneshot::Sender<HouseState>),
-    /// A member's verification of `head` its node admitted for the boundary's log check, from
-    /// `release`: answered whether it was taken as the verified head (`Sequencer::log_checked`).
+    /// A verification of `head` its node admitted for the boundary's log check, by `candidate`'s
+    /// member on `release`: answered whether it was taken as the verified head
+    /// (`Sequencer::log_checked`).
     LogChecked {
         head: crate::log_check::VerifiedHead,
+        candidate: AccountId,
         release: B256,
         reply: oneshot::Sender<bool>,
     },

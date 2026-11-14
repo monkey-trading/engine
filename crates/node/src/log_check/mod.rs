@@ -43,8 +43,8 @@ pub struct VerifiedHead {
 }
 
 /// A check the operator's node waits for: the turn in effect it holds on through, the checkpoint to
-/// verify, at or after its `TurnTaken`, and the releases that sequenced the covered range, which no
-/// check may come from.
+/// verify, at or after its `TurnTaken`, and the members and releases that sequenced the covered range,
+/// which no check may come from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Due {
     pub turn: u64,
@@ -53,7 +53,31 @@ pub(crate) struct Due {
     /// The turn's member, whose node asks and is never asked.
     pub candidate: AccountId,
     pub head: VerifiedHead,
-    pub excluded: BTreeSet<B256>,
+    pub excluded: Sequencers,
+}
+
+/// The candidates that sequenced a range of the log, by the turns they took, and the releases they
+/// took them under. A check counts only from a member in neither: a candidate's other release, as
+/// after an upgrade, is the same member.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Sequencers {
+    pub candidates: BTreeSet<AccountId>,
+    pub releases: BTreeSet<B256>,
+}
+
+impl Sequencers {
+    /// Whether `candidate`, or `release`, sequenced part of the range.
+    pub(crate) fn include(&self, candidate: AccountId, release: B256) -> bool {
+        self.candidates.contains(&candidate) || self.releases.contains(&release)
+    }
+}
+
+/// A `TurnTaken` the engine accepted: the candidate whose turn it took, and the release it took it
+/// under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Taking {
+    candidate: AccountId,
+    release: B256,
 }
 
 /// What a member's verification states, inside its quote: the boundary, the turn assignment and the
@@ -69,12 +93,15 @@ pub(crate) struct Statement {
     pub head: VerifiedHead,
 }
 
-/// The operator's question to a member: a fresh challenge, hex, and the statement to verify.
+/// The operator's question to a member: a fresh challenge, hex, the statement to verify, and the
+/// operator enclave's signature over both (`ask_digest`), which the member checks against the signer
+/// of the checkpoint it verified before it quotes anything.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Ask {
     pub nonce: String,
     pub statement: Statement,
+    pub signature: String,
 }
 
 /// A member's answer.
@@ -95,8 +122,21 @@ pub(crate) fn report_data(
     statement: &Statement,
     config_sha256: &[u8; 32],
 ) -> [u8; 64] {
+    let mut hash = statement_hash(b"engine.log-check.v1", domain, nonce, statement);
+    hash.update(config_sha256);
+    crate::handover::padded(hash.finalize().into())
+}
+
+/// The digest the operator's enclave key signs over its question: the challenge and the statement,
+/// for this deployment.
+pub(crate) fn ask_digest(domain: CheckpointDomain, nonce: &[u8; 32], statement: &Statement) -> B256 {
+    B256::from(<[u8; 32]>::from(statement_hash(b"engine.log-check-ask.v1", domain, nonce, statement).finalize()))
+}
+
+/// A hash under `tag` of the deployment, the challenge and every field of the statement.
+fn statement_hash(tag: &[u8], domain: CheckpointDomain, nonce: &[u8; 32], statement: &Statement) -> Sha256 {
     let mut hash = Sha256::new();
-    hash.update(b"engine.log-check.v1");
+    hash.update(tag);
     hash.update(domain.chain_id.to_be_bytes());
     hash.update(domain.vault.0);
     hash.update(nonce);
@@ -108,8 +148,7 @@ pub(crate) fn report_data(
     hash.update(statement.head.seq.to_be_bytes());
     hash.update(statement.head.link);
     hash.update(statement.head.root);
-    hash.update(config_sha256);
-    crate::handover::padded(hash.finalize().into())
+    hash
 }
 
 /// Whether the gate applies to `engine`'s log: rotation is on and a turn is in effect whose set names
@@ -120,64 +159,59 @@ pub(crate) fn applies(engine: &Engine) -> bool {
         && turns.in_effect.is_some_and(|turn| turns.sets.get(&turn.set).is_none_or(|set| set.members.len() >= 2))
 }
 
-/// The log's `TurnTaken` commands: the release each names, by the seq it was sequenced at, from the
-/// first command the replay that collected them applied.
+/// The log's `TurnTaken` commands: the candidate and release each names, by the seq it was sequenced
+/// at, from the first command the replay that collected them applied.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Takings {
-    by_seq: BTreeMap<u64, B256>,
+    by_seq: BTreeMap<u64, Taking>,
     /// The first command seen: zero for a replay from genesis, past a snapshot's base for one from it.
     from: Option<u64>,
-    /// The release the engine recorded as the last to take a turn before `from`, which a replay from
-    /// a snapshot does not see logged.
-    before: Option<B256>,
 }
 
 impl Takings {
-    /// Notes the command at `seq` with the `events` it gave, after which the engine records `taken`
-    /// as the last release to take a turn: a `TurnTaken` the engine accepted records its release, and
-    /// the first command seen, when it is none, keeps `taken` as the release in office before it.
-    pub(crate) fn command(&mut self, seq: u64, events: &[Event], taken: Option<B256>) {
-        let turn_taken = events.iter().find_map(|event| match event {
-            Event::TurnTaken { release, .. } => Some(*release),
+    /// Notes the command at `seq` with the `events` it gave: a `TurnTaken` the engine accepted
+    /// records its candidate and release.
+    pub(crate) fn command(&mut self, seq: u64, events: &[Event]) {
+        self.from.get_or_insert(seq);
+        let taken = events.iter().find_map(|event| match event {
+            Event::TurnTaken { candidate, release, .. } => Some(Taking { candidate: *candidate, release: *release }),
             _ => None,
         });
-        if self.from.is_none() {
-            self.from = Some(seq);
-            self.before = turn_taken.is_none().then_some(taken).flatten();
-        }
-        if let Some(release) = turn_taken {
-            self.by_seq.insert(seq, release);
+        if let Some(taking) = taken {
+            self.by_seq.insert(seq, taking);
         }
     }
 
     /// Takes the records as complete from `next`, the next command's seq, when no command was seen:
-    /// a log with none yet, or a start whose snapshot covers every command, in which the engine records
-    /// `taken` as the last release to take a turn.
-    pub(crate) fn complete_from(mut self, next: u64, taken: Option<B256>) -> Self {
-        if self.from.is_none() {
-            (self.from, self.before) = (Some(next), taken);
-        }
+    /// a log with none yet, or a start whose snapshot covers every command.
+    pub(crate) fn complete_from(mut self, next: u64) -> Self {
+        self.from.get_or_insert(next);
         self
     }
 
     /// The latest `TurnTaken`'s seq and release.
     pub(crate) fn last(&self) -> Option<(u64, B256)> {
-        self.by_seq.last_key_value().map(|(seq, release)| (*seq, *release))
+        self.by_seq.last_key_value().map(|(seq, taking)| (*seq, taking.release))
     }
 
-    /// The releases that sequenced the commands after `after` through `through`, as `TurnTaken`
-    /// records them: the latest one at or before the first of them, whose release sequenced on from
-    /// there, or with none recorded the one in office before the records start, and each one after
-    /// it. Commands before the log's first `TurnTaken` name no release. `None` when these records do
-    /// not reach back to the first of them, as after a snapshot start.
-    pub(crate) fn sequenced(&self, after: Option<u64>, through: u64) -> Option<BTreeSet<B256>> {
+    /// Who sequenced the commands after `after` through `through`, as `TurnTaken` records them: the
+    /// latest one at or before the first of them, whose member sequenced on from there, and each one
+    /// after it. Commands before the log's first `TurnTaken` name no one. `None` when these records do
+    /// not reach back to the first of them, or, from a snapshot's base, to a `TurnTaken` at or before
+    /// it, since a `TurnTaken` before the base would name who sequenced them.
+    pub(crate) fn sequenced(&self, after: Option<u64>, through: u64) -> Option<Sequencers> {
         let first = after.map_or(0, |after| after.saturating_add(1));
-        if self.from.is_none_or(|from| from > first) {
+        let from = self.from?;
+        let in_office = self.by_seq.range(..=first).next_back().map(|(_, taking)| *taking);
+        if from > first || (from > 0 && in_office.is_none()) {
             return None;
         }
-        let in_office = self.by_seq.range(..=first).next_back().map(|(_, release)| *release).or(self.before);
-        let later = self.by_seq.range(first..=through).map(|(_, release)| *release);
-        Some(in_office.into_iter().chain(later).collect())
+        let takings = in_office.into_iter().chain(self.by_seq.range(first..=through).map(|(_, taking)| *taking));
+        Some(takings.fold(Sequencers::default(), |mut sequencers, taking| {
+            sequencers.candidates.insert(taking.candidate);
+            sequencers.releases.insert(taking.release);
+            sequencers
+        }))
     }
 
     /// Drops the records no range after `verified` needs: those before the latest at or before the
@@ -192,23 +226,38 @@ impl Takings {
 }
 
 /// The verified head after this node's own verification of the log through `head`, at a handover or
-/// a promoted member's resume: `head` when `release` sequenced none of the commands after `previous`
+/// a promoted member's resume: `head` when neither `release` nor any of `candidates`, the candidates
+/// this node's operator key sits for (`own_candidates`), sequenced the commands after `previous`
 /// through it, as `takings` records; otherwise `previous`, and a following member's check is asked
-/// for as at a boundary without a handover.
+/// for as at a boundary without a handover. So the same member's other release, as after an upgrade,
+/// never counts as the check, however its start was made.
 pub(crate) fn own_check(
     previous: Option<VerifiedHead>,
     takings: &Takings,
     head: VerifiedHead,
-    release: B256,
+    (release, candidates): (B256, &BTreeSet<AccountId>),
 ) -> Option<VerifiedHead> {
     if previous.is_some_and(|previous| previous.seq >= head.seq) {
         return previous;
     }
     let sequenced = takings.sequenced(previous.map(|previous| previous.seq), head.seq);
+    let independent = |sequencers: &Sequencers| {
+        !sequencers.releases.contains(&release) && sequencers.candidates.is_disjoint(candidates)
+    };
     match sequenced {
-        Some(releases) if !releases.contains(&release) => Some(head),
+        Some(sequencers) if independent(&sequencers) => Some(head),
         _ => previous,
     }
+}
+
+/// The candidates whose admin key in `engine`'s rotation sets and turns is `operator`: the member a
+/// node running under that operator key is.
+pub(crate) fn own_candidates(engine: &Engine, operator: AccountId) -> BTreeSet<AccountId> {
+    let turns = engine.daily_turns();
+    let members =
+        turns.sets.values().flat_map(|set| set.members.iter().map(|member| (member.admin_key, member.candidate)));
+    let assigned = turns.assigned.values().chain(turns.in_effect.iter()).map(|turn| (turn.admin_key, turn.candidate));
+    members.chain(assigned).filter(|(admin_key, _)| *admin_key == operator).map(|(_, candidate)| candidate).collect()
 }
 
 #[cfg(test)]

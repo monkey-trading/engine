@@ -1,7 +1,10 @@
 //! A following member's side of the boundary's log check: the checkpoints its replica verified, and
 //! the answers it gives on its registered handover endpoint while it follows, which the handover
-//! listener takes over while it holds a turn. It attests a statement only when its replica verified a
-//! checkpoint at the statement's seq with the same link and root, in the turn assignment taken there.
+//! listener takes over while it holds a turn. It attests a statement only when the question is signed
+//! by the enclave that signed the checkpoint, and its replica verified that checkpoint at the
+//! statement's seq with the same link and root, in the turn assignment taken there. It serves a few
+//! connections at once, each with a short deadline for its question, so an idle connection holds up
+//! no other.
 
 use std::collections::VecDeque;
 use std::convert::Infallible;
@@ -10,15 +13,19 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::Context;
+use engine_core::eip712::{self, Signature};
+use engine_core::types::AccountId;
+use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::evidence::{self, Quoting};
-use crate::handover::{MESSAGE_TIMEOUT, receive, send};
+use crate::handover::{receive, send};
 use crate::log::CheckpointDomain;
-use crate::log_check::{Answer, Ask, Statement, VerifiedHead, report_data};
+use crate::log_check::{Answer, Ask, Statement, VerifiedHead, ask_digest, report_data};
 use crate::tee::Attestor;
 use crate::tee::sealing::Platform;
 
@@ -27,12 +34,19 @@ use crate::tee::sealing::Platform;
 const RETAINED: usize = 1024;
 /// How long a member waits before binding its endpoint again once the bind failed.
 const REBIND: Duration = if cfg!(test) { Duration::from_millis(100) } else { Duration::from_secs(5) };
+/// How many connections a member serves at once; one past them is closed unanswered, and the operator
+/// asks again.
+const CONNECTIONS: usize = 8;
+/// How long a connection has to send its question, which the operator sends as soon as it connects.
+const QUESTION_TIMEOUT: Duration = if cfg!(test) { Duration::from_millis(500) } else { Duration::from_secs(5) };
 
-/// A checkpoint a replica verified, and the turn assignment taken when it applied.
+/// A checkpoint a replica verified: its head, the turn assignment taken when it applied, and the
+/// enclave whose signature on it the replica checked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Checked {
     pub head: VerifiedHead,
     pub taken: Option<(u64, u16)>,
+    pub signer: AccountId,
 }
 
 /// The latest checkpoints a member's replica verified, oldest first, shared between the replica that
@@ -107,9 +121,9 @@ impl Answering {
         }))
     }
 
-    /// Answers each operator that connects, one at a time, for as long as it runs: a member runs it
-    /// beside its following, and drops it, freeing the endpoint, before it takes a turn. A bind that
-    /// fails is tried again.
+    /// Answers each operator that connects, up to `CONNECTIONS` at once, for as long as it runs: a
+    /// member runs it beside its following, and drops it, freeing the endpoint and every connection,
+    /// before it takes a turn. A bind that fails is tried again.
     pub(crate) async fn run(&self) -> Infallible {
         let mut failed = false;
         let listener = loop {
@@ -124,19 +138,30 @@ impl Answering {
             tokio::time::sleep(REBIND).await;
         };
         info!(listen = %self.listen, "answering log checks while following");
-        let mut connection = 0_u64;
+        let (mut connection, mut serving) = (0_u64, FuturesUnordered::new());
         loop {
-            let (stream, peer) = match listener.accept().await {
-                Ok(accepted) => accepted,
-                Err(e) => {
-                    warn!("accepting a log check connection failed: {e}");
-                    continue;
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (stream, peer) = match accepted {
+                        Ok(accepted) => accepted,
+                        Err(e) => {
+                            warn!("accepting a log check connection failed: {e}");
+                            continue;
+                        }
+                    };
+                    if serving.len() >= CONNECTIONS {
+                        debug!(%peer, "closed a log check connection: {CONNECTIONS} are being served");
+                        continue;
+                    }
+                    connection += 1;
+                    let span = info_span!("log_check", id = connection, peer = %peer);
+                    serving.push(async move {
+                        if let Err(e) = self.serve(stream).await {
+                            warn!("a log check connection failed: {e:#}");
+                        }
+                    }.instrument(span));
                 }
-            };
-            connection += 1;
-            let span = info_span!("log_check", id = connection, peer = %peer);
-            if let Err(e) = self.serve(stream).instrument(span.clone()).await {
-                span.in_scope(|| warn!("a log check connection failed: {e:#}"));
+                Some(()) = serving.next(), if !serving.is_empty() => {}
             }
         }
     }
@@ -145,7 +170,7 @@ impl Answering {
     /// Error cases:
     /// - the question does not arrive in time or does not parse, or the answer cannot be sent
     async fn serve(&self, mut stream: TcpStream) -> anyhow::Result<()> {
-        let ask: Ask = timeout(MESSAGE_TIMEOUT, receive(&mut stream)).await.context("no question in time")??;
+        let ask: Ask = timeout(QUESTION_TIMEOUT, receive(&mut stream)).await.context("no question in time")??;
         let answer = self.answer(&ask).await;
         match &answer {
             Answer::Verified { .. } => {
@@ -156,8 +181,9 @@ impl Answering {
         send(&mut stream, &answer).await
     }
 
-    /// This member's answer to `ask`: its quote over the statement once its replica verified that
-    /// checkpoint in that turn assignment, at that turn's boundary; otherwise why not.
+    /// This member's answer to `ask`: its quote over the statement once the question is signed by the
+    /// checkpoint's signer and its replica verified that checkpoint in that turn assignment, at that
+    /// turn's boundary; otherwise why not.
     pub(crate) async fn answer(&self, ask: &Ask) -> Answer {
         match self.attest(ask).await {
             Ok(evidence) => Answer::Verified { config_sha256: hex::encode(self.config_sha256), evidence },
@@ -165,27 +191,39 @@ impl Answering {
         }
     }
 
-    /// The quote over `ask`'s statement.
+    /// The quote over `ask`'s statement, produced only once the question is authenticated.
     /// Error cases:
     /// - the challenge is not 32 bytes of hex, the replica has not verified that checkpoint or holds
-    ///   another, or the boundary is not the turn's, or the quote cannot be produced
+    ///   another, the boundary is not the turn's, the question is not signed by the checkpoint's
+    ///   signer, or the quote cannot be produced
     async fn attest(&self, ask: &Ask) -> anyhow::Result<crate::handover::Evidence> {
         let nonce: [u8; 32] = hex::decode(&ask.nonce)
             .ok()
             .and_then(|nonce| nonce.try_into().ok())
             .context("the challenge is not 32 bytes")?;
-        self.verifies(&ask.statement)?;
+        let checked = self.verifies(&ask.statement)?;
+        let signature: [u8; 65] = hex::decode(ask.signature.trim_start_matches("0x"))
+            .ok()
+            .and_then(|signature| signature.try_into().ok())
+            .context("the question's signature is not 65 bytes of hex")?;
+        let signer = eip712::recover(&ask_digest(self.domain, &nonce, &ask.statement), &Signature::from(signature));
+        anyhow::ensure!(
+            signer == Some(checked.signer),
+            "the question is not signed by {}, which signed the checkpoint at seq {}",
+            checked.signer,
+            ask.statement.head.seq
+        );
         let quoting =
             Quoting { provider: self.provider, processor: self.processor.as_deref(), kds_base: &self.kds_base };
         let bound = report_data(self.domain, &nonce, &ask.statement, &self.config_sha256);
         evidence::produce(&quoting, self.attestor.as_ref(), &self.platform, bound).await
     }
 
-    /// Whether this member's replica verified `statement`'s checkpoint in its turn assignment.
+    /// The checkpoint this member's replica verified for `statement`, in its turn assignment.
     /// Error cases:
     /// - the boundary is not the turn's, the replica has not reached the seq or no longer retains
     ///   it, or holds another link, root or taken assignment there
-    fn verifies(&self, statement: &Statement) -> anyhow::Result<()> {
+    fn verifies(&self, statement: &Statement) -> anyhow::Result<Checked> {
         let head = statement.head;
         anyhow::ensure!(
             engine_core::turns::boundary(statement.turn) == Some(statement.boundary),
@@ -214,7 +252,7 @@ impl Answering {
             statement.turn,
             statement.position
         );
-        Ok(())
+        Ok(checked)
     }
 }
 

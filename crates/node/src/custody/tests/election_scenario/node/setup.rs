@@ -1,5 +1,6 @@
 //! The scenario node's chain-facing pieces: the checkpoint worker and the custody section.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use engine_core::Fixed;
@@ -45,13 +46,14 @@ pub(super) fn poster(
     }
 }
 
-/// A seat's asking for the boundary's log check: the vault read at the chain's release tag, quotes
-/// verified against the mock TEE's platform `store` seals under, at `trusted` time.
+/// A seat's asking for the boundary's log check: the vault read at the chain's release tag, questions
+/// signed with `key`, quotes verified against the mock TEE's platform `store` seals under, at
+/// `trusted` time.
 pub(super) fn asker(
     chain: &Chain,
     sequencer: &mpsc::Sender<Request>,
     due: watch::Receiver<Option<Due>>,
-    store: &KeyStore,
+    (store, key): (&KeyStore, Arc<EnclaveKey>),
     trusted: TrustedClock,
 ) -> Asker<CheckpointRpc> {
     let section: CheckpointSection = toml::from_str(&format!(
@@ -61,7 +63,7 @@ pub(super) fn asker(
     .unwrap();
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(chain.vault.into()) };
     let vault = CheckpointRpc::read_only(&section, domain, chain.usdc, chain.release_tag, 0).unwrap();
-    Asker::new(vault, sequencer, due, (domain, TeeProvider::Mock, store.platform()), trusted)
+    Asker::new(vault, sequencer, due, (domain, TeeProvider::Mock, store.platform()), key, trusted)
 }
 
 /// The governance the chain's vote contract runs, when it has one.

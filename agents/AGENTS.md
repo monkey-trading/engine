@@ -224,16 +224,20 @@ an index: load only the rule whose hint matches the current action.
   (`sequencer/payout_schedule.rs`), public queue/account-position reads, and an account's unpaid
   payouts with their latest authorizations (`api/payouts.rs`, answered from the sequencer's memory).
   From #594, the boundary's log check (`log_check/`, `sequencer/log_check.rs`, `node/log_check.rs`):
-  while rotation is on and a daily turn is in effect whose set names two or more members, a withdrawal is signed only for
-  an approval at or below the head the last check verified, #14's posted root still applying; at a
-  handover the check is the successor's own, sealed with the keys as its first start passes the
-  predecessor's head, and at a boundary the operator holds on through, its node writes a checkpoint
-  after `TurnTaken` and asks the turn's order (`turn_order`), first to last, for a quote-bound
-  verification of it from a release that sequenced none of the range since the last verified head,
-  as the log's `TurnTaken` commands record (Warning `log_check_pending` after 30 minutes), which a
-  following member answers on its handover endpoint from the checkpoints its replica verified; the
-  verified head is sealed with the keys, restored only when the log holds its checkpoint, carried by
-  an upgrade, and `/v1/accounts/{a}/payouts` names the boundary each waiting approval's check is at.
+  while rotation is on and a daily turn is in effect whose set names two or more members, a withdrawal
+  is signed only for an approval at or below the head the last check verified, #14's posted root still
+  applying; at a handover the check is the successor's own, sealed with the keys as its first start
+  passes the predecessor's head, unless its member sequenced part of the range, as after its own
+  upgrade, and at a boundary the operator holds on through, its node writes a checkpoint after
+  `TurnTaken` and asks the turn's order (`turn_order`), first to last, in questions its enclave signs,
+  for a quote-bound verification of it from a member that sequenced none of the range since the last
+  verified head under any release, nor runs a release that did, as the log's `TurnTaken` commands
+  record (Warning `log_check_pending` after 30 minutes, and `log_check_unattributable` while those
+  records cannot say who sequenced the range, as after a snapshot start), which a following member
+  answers on its handover endpoint from the checkpoints its replica verified under the question's
+  signer; the verified head is sealed with the keys, restored only when the log holds its checkpoint,
+  carried by an upgrade, and `/v1/accounts/{a}/payouts` names the boundary each waiting approval's
+  check is at.
   With `[log_heads]` (#541), `log_heads/` posts the enclave's newest released `(seq, prefix)` — the
   cumulative command-prefix digest, which checkpoints do not reset, and every post names the
   previously accepted head it extends — the

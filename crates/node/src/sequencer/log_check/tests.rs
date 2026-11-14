@@ -1,9 +1,9 @@
-//! The gate on payouts while a turn whose set names two or more members is in effect: a check comes
-//! due once this node holds a turn on that its verified head does not cover, a signature waits for a
-//! member's verification of the log through its approval, one from a release that sequenced the
-//! range is refused, a reissue waits as a first signature does, a one-member set or rotation off
-//! leaves #14's gate alone, and a restart restores the verified head only when the log holds its
-//! checkpoint.
+//! The gate on payouts while rotation is on and a turn whose set names two or more members is in
+//! effect: a check comes due once this node holds a turn on that its verified head does not cover, a
+//! signature waits for a member's verification of the log through its approval, one from a member or
+//! release that sequenced the range is refused, a reissue waits as a first signature does, a check no
+//! member can be asked for pages, a one-member set or rotation off leaves #14's gate alone, and a
+//! restart restores the verified head only when the log holds its checkpoint.
 
 use super::*;
 
@@ -15,7 +15,7 @@ use engine_core::Fixed;
 use engine_core::auth::Operator;
 use engine_core::command::Command;
 use engine_core::emissions::TokenUnits;
-use engine_core::turns::SetMember;
+use engine_core::turns::{RegistryTurn, SetMember, TurnReason};
 use engine_core::types::AccountId;
 use tokio::sync::{broadcast, mpsc};
 
@@ -23,17 +23,22 @@ use crate::checkpoints::{ApprovalId, ApprovalStatus, Health, LifecycleEvidence};
 use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
 use crate::log::{Checkpoint, LogEntry, Manifest};
+use crate::log_check::Sequencers;
 use crate::sequencer::fixture_tests::finished_genesis;
 use crate::sequencer::tests::operator::turn_log_under;
 use crate::sequencer::{Reissue, ReissueScreening, SequencerConfig, SignedWithdrawal};
 use crate::tee::EnclaveKey;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::MockSealer;
-use crate::test_support::{access, dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
+use crate::test_support::{
+    access, capture_alerts_and_resolutions, dev_config, log_entries, sample_around, scratch_dir, sequencer_config,
+};
 
 const DIGEST: [u8; 48] = [0x44; 48];
 const CONFIG: [u8; 32] = [0xc1; 32];
 const OTHER: B256 = B256::repeat_byte(0xb2);
+/// The candidate whose turns this node's key takes.
+const CANDIDATE: AccountId = AccountId([0xc1; 20]);
 
 #[test]
 fn a_held_turn_in_a_two_member_set_signs_only_what_a_members_check_verified() {
@@ -46,7 +51,8 @@ fn a_held_turn_in_a_two_member_set_signs_only_what_a_members_check_verified() {
     let due = node.due.borrow().clone().expect("no check came due");
     let head = due.head;
     assert!(head.seq >= taken_seq, "the check's checkpoint {} precedes the TurnTaken at {taken_seq}", head.seq);
-    assert_eq!((due.turn, due.excluded.clone()), (turn, BTreeSet::from([node.release])));
+    let excluded = Sequencers { candidates: BTreeSet::from([CANDIDATE]), releases: BTreeSet::from([node.release]) };
+    assert_eq!((due.turn, due.excluded.clone()), (turn, excluded));
     assert_eq!(head, node.checkpoint_head(head.seq));
 
     // Posted and healthy, the approval still waits for the check, and the payouts read names its boundary.
@@ -55,14 +61,17 @@ fn a_held_turn_in_a_two_member_set_signs_only_what_a_members_check_verified() {
     let boundary = engine_core::turns::boundary(turn).unwrap();
     assert_eq!(node.check_of(1), Some(CheckWait { turn, boundary_ms: boundary }));
 
-    // A verification from this release, which sequenced the range, or of another head, is refused.
-    assert!(!node.seq.log_checked(head, node.release), "a check from a release in the range was taken");
-    assert!(!node.seq.log_checked(VerifiedHead { root: OTHER, ..head }, OTHER), "a check of another head was taken");
+    // A verification from this release, or this member on another release, which sequenced the
+    // range, or of another head, is refused.
+    assert!(!node.seq.log_checked(head, (other().candidate, node.release)), "a release in the range checked");
+    assert!(!node.seq.log_checked(head, (CANDIDATE, OTHER)), "the member that sequenced the range checked");
+    let elsewhere = VerifiedHead { root: OTHER, ..head };
+    assert!(!node.seq.log_checked(elsewhere, (other().candidate, OTHER)), "a check of another head was taken");
     node.release();
     assert!(node.signed.try_recv().is_err(), "a refused check released a signature");
 
     // Another member's verification is taken, sealed, and releases the approval.
-    assert!(node.seq.log_checked(head, OTHER));
+    assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
     assert!(node.due.borrow().is_none(), "the check stayed due once verified");
     assert_eq!(node.store.keys().log_check, Some(head), "the verified head was not sealed");
     node.release();
@@ -74,6 +83,10 @@ fn a_held_turn_in_a_two_member_set_signs_only_what_a_members_check_verified() {
     node.release();
     assert!(node.signed.try_recv().is_err(), "an approval past the verified head was signed");
     let next = engine_core::turns::boundary(turn + 1).unwrap();
+    assert_eq!(node.check_of(2), Some(CheckWait { turn: turn + 1, boundary_ms: next }));
+
+    // Once the next turn, the other member's, applies here, its handover still checks the approval.
+    node.hand_over_turn();
     assert_eq!(node.check_of(2), Some(CheckWait { turn: turn + 1, boundary_ms: next }));
 }
 
@@ -94,7 +107,7 @@ fn a_restart_restores_the_verified_head_only_when_the_log_holds_its_checkpoint()
     node.approve(1);
     node.take_turn();
     let (head, turn) = (node.due.borrow().clone().expect("no check came due").head, node.turn);
-    assert!(node.seq.log_checked(head, OTHER));
+    assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
     let restarted = node.restart();
     assert!(
         restarted.seq.log_check.covers(&restarted.seq.engine, head.seq),
@@ -151,12 +164,15 @@ fn a_reissue_on_a_signer_change_waits_for_the_check_as_a_first_signature_does() 
     // Signed before any turn is in effect, under #14's gate alone.
     node.release();
     assert_eq!(node.signed.try_recv().expect("signed before the turn").nonce, 1);
-    node.take_turn();
+    let (turn, _) = node.take_turn();
     let head = node.due.borrow().clone().expect("no check came due").head;
+    assert_eq!(node.check_of(1), None, "an approval with a usable signature waits for no check");
 
     node.release_at(2);
     assert!(node.signed.try_recv().is_err(), "a signer change reissued an approval no check covers");
-    assert!(node.seq.log_checked(head, OTHER));
+    let boundary = engine_core::turns::boundary(turn).unwrap();
+    assert_eq!(node.check_of(1), Some(CheckWait { turn, boundary_ms: boundary }), "the retired signature's wait");
+    assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
     node.release_at(2);
     let reissued = node.signed.try_recv().expect("the covered approval was not reissued");
     assert_eq!((reissued.nonce, reissued.authorization.unwrap().signer_epoch), (1, 2));
@@ -182,7 +198,7 @@ fn a_reissue_its_holder_requests_waits_for_the_check_as_a_first_signature_does()
     assert_eq!(node.seq.request_reissue(trader(), 1, expires_at, Some(&screening)), Reissue::Queued);
     node.release();
     assert!(node.signed.try_recv().is_err(), "a requested reissue signed an approval no check covers");
-    assert!(node.seq.log_checked(head, OTHER));
+    assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
     node.release();
     assert_eq!(node.signed.try_recv().expect("the covered approval was not reissued").nonce, 1);
 }
@@ -192,22 +208,56 @@ fn the_target_is_the_first_checkpoint_at_or_after_the_turn_taken_whichever_is_no
     let taken = |release| [Event::TurnTaken { turn: 1, candidate: AccountId([1; 20]), release }];
     // The schedule writes a checkpoint at the `TurnTaken` before the `TurnTaken` is recorded.
     let mut check = LogCheck::default();
-    check.command(0, &[], None);
+    check.command(0, &[]);
     check.checkpointed(head_at(17));
     check.checkpointed(head_at(23));
-    check.command(23, &taken(OTHER), Some(OTHER));
+    check.command(23, &taken(OTHER));
     assert_eq!(check.target, Some(head_at(23)));
     check.checkpointed(head_at(30));
     assert_eq!(check.target, Some(head_at(23)), "a chosen target moved");
 
     // The `TurnTaken` is recorded first, and the checkpoint after it is the target.
     let mut check = LogCheck::default();
-    check.command(0, &[], None);
+    check.command(0, &[]);
     check.checkpointed(head_at(17));
-    check.command(23, &taken(OTHER), Some(OTHER));
+    check.command(23, &taken(OTHER));
     assert!(check.target.is_none_or(|target| target.seq < 23), "a checkpoint before the TurnTaken was chosen");
     check.checkpointed(head_at(24));
     assert_eq!(check.target, Some(head_at(24)));
+}
+
+#[test]
+fn a_check_no_member_can_be_asked_for_pages_until_it_can() {
+    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
+    let mut node = Node::start("log-check-unattributable", &[other()]);
+    node.approve(1);
+    let (turn, taken_seq) = node.take_turn();
+    let complete = node.seq.log_check.takings.clone();
+    // Records that start at the `TurnTaken`, as a start from a snapshot past the verified head gives,
+    // cannot say who sequenced the commands before it.
+    let mut partial = crate::log_check::Takings::default();
+    let taken = Event::TurnTaken { turn, candidate: CANDIDATE, release: node.release };
+    partial.command(taken_seq, &[taken]);
+    node.seq.log_check.takings = partial;
+    node.seq.refresh_log_check();
+    assert!(node.due.borrow().is_none(), "a check came due over a range no record attributes");
+    let mut unattributable = || {
+        let named = |alert: &crate::test_support::Alert| alert["alert"] == "log_check_unattributable";
+        std::iter::from_fn(|| alerts.try_recv().ok()).filter(named).collect::<Vec<_>>()
+    };
+    let paged = unattributable();
+    assert_eq!(paged.len(), 1, "{paged:?}");
+    assert_eq!(paged[0]["turn"], turn.to_string());
+    node.seq.refresh_log_check();
+    assert!(unattributable().is_empty(), "the alert paged again in the same episode");
+    // Once the records reach back again, the check comes due and the episode ends.
+    node.seq.log_check.takings = complete;
+    node.seq.refresh_log_check();
+    assert!(node.due.borrow().is_some(), "the check did not come due");
+    let named = |alert: &crate::test_support::Alert| alert["alert_resolved"] == "log_check_unattributable";
+    let ended: Vec<_> = std::iter::from_fn(|| resolved.try_recv().ok()).filter(named).collect();
+    assert_eq!(ended.len(), 1, "{ended:?}");
+    assert_eq!(ended[0]["turn"], turn.to_string());
 }
 
 // ── Helpers ──
@@ -303,6 +353,23 @@ impl Node {
         assert_eq!((taken.turn, taken.release), (self.turn, self.release));
         let (seq, _) = self.seq.log_check.takings.last().expect("the TurnTaken was recorded");
         (self.turn, seq)
+    }
+
+    /// Mirrors the turn after this node's for the other member, and moves past its boundary, where the
+    /// other member's key applies on this node before any handover.
+    fn hand_over_turn(&mut self) {
+        let (next, other) = (self.turn + 1, other());
+        let (candidate, admin_key) = (other.candidate, other.admin_key);
+        let (reason, block, chain_ref) = (TurnReason::Draw, 15, "0x05:0".to_owned());
+        let assignment =
+            RegistryTurn { turn: next, set: 1, position: 0, reason, candidate, admin_key, block, chain_ref };
+        let events = self.seq.sequence(Command::AssignTurn(assignment)).unwrap().expect("admitted");
+        assert!(matches!(events.last(), Some(Event::TurnAssigned { .. })), "{events:?}");
+        let begins = engine_core::turns::boundary(next).unwrap();
+        self.clock.advance(Duration::from_millis((begins + 1_000 - self.clock.now_ms()) as u64));
+        self.seq.trust(sample_around(self.clock.as_ref())).unwrap();
+        self.seq.sequence(Command::Tick).unwrap().expect("admitted");
+        assert_eq!(self.seq.engine.daily_turns().in_effect.map(|turn| turn.turn), Some(next));
     }
 
     /// Releases payouts on finalized evidence that the vault holds the latest checkpoint and every

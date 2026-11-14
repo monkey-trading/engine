@@ -166,7 +166,7 @@ async fn serve_node(
     let replica = replica.zip(ready.as_ref());
     let Recovered { mut log, history: history_plan, pending: log_heads_pending, anchor, stats } =
         recovery::recover(cfg, &key, checkpoint_setup.as_ref(), &marks, replica, &metrics).await?;
-    log_check::after_handover(store.as_deref(), start, &log)
+    log_check::after_handover(store.as_deref(), cfg.operator()?.address, &log)
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // Refuses a log the on-chain posted head does not hold (Critical `log_rollback` names the range).
     let log_heads_setup = crate::log_heads::setup::startup(log_heads_pending, &log)?;
@@ -312,7 +312,7 @@ async fn serve_node(
     if let Some(setup) = log_heads_setup {
         tasks.spawn(setup.spawn(tx.clone(), trusted()));
     }
-    log_check::spawn(cfg, &mut tasks, (log_check_due, turn_store.as_ref()), &tx, trusted())?;
+    log_check::spawn(cfg, &mut tasks, (log_check_due, turn_store.as_ref()), &key, &tx, trusted())?;
 
     // A successor's request stops sequencing through `drain_rx`, once the vault approves it; the
     // stop itself goes to the sequencer as a final-checkpoint request, which refuses while the

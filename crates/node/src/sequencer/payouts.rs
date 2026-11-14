@@ -326,6 +326,14 @@ impl Sequencer {
             return AccountPayouts { seq, loaded: false, payouts: Vec::new(), next: None };
         };
         let first = after.map_or(0, |after| after.saturating_add(1));
+        let now = u64::try_from(self.last_ts / 1_000).unwrap_or_default();
+        // An authorization of the latest signer epoch that has not expired needs no new signature, so
+        // it waits for no log check.
+        let usable = |released: Option<(u64, u64)>| {
+            released.is_some_and(|(epoch, expires_at)| {
+                now < expires_at && gate.schedule.epoch().is_none_or(|latest| latest == epoch)
+            })
+        };
         let mut held = gate.payouts.range((account, first)..=(account, u64::MAX));
         let payouts = held
             .by_ref()
@@ -334,7 +342,7 @@ impl Sequencer {
                 nonce,
                 amount: payout.approval.amount,
                 withdrawal: payout.latest.clone(),
-                check: self.log_check_wait(payout.approval.approved_seq),
+                check: (!usable(payout.released)).then(|| self.log_check_wait(payout.approval.approved_seq)).flatten(),
             })
             .collect::<Vec<_>>();
         let next = held.next().and(payouts.last().map(|last| last.nonce));
