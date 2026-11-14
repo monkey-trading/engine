@@ -72,6 +72,7 @@ async fn fork_bound_empty_and_partial_staking_responses_cannot_advance_canonical
             1..=3,
             &hashes_through(3),
             (true, true, true),
+            None,
         )
         .await;
         assert!(result.is_err(), "a fork endpoint cannot certify canonical completeness");
@@ -121,6 +122,7 @@ async fn canonical_bound_staking_responses_apply_events_and_complete_the_proven_
         1..=3,
         &hashes_through(3),
         (true, true, true),
+        None,
     )
     .await
     .unwrap();

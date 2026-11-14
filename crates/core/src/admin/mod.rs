@@ -10,10 +10,11 @@
 //! or closes a position in an open market with a price. From `V56`, while rotation is on, only a
 //! passed vote applies the governed commands (`governance`).
 
+use crate::auth::auth_failure;
 use crate::command::{AdminCommand, AdminRequest};
 use crate::deposits::legacy_chain_reference;
 use crate::engine::{Engine, MarketState};
-use crate::event::{Event, Reject};
+use crate::event::Event;
 use crate::futures::FuturesState;
 use crate::params::{DEFAULT_MAX_RESTING_ORDERS, MAX_BENCHMARK_BPS};
 use crate::protocol::ProtocolVersion;
@@ -479,17 +480,5 @@ impl Engine {
             return Err("while rotation is on, only a passed vote changes this".into());
         }
         self.admin(&req.command, false, events)
-    }
-}
-
-/// The reason an admin command fails its signature, nonce, or expiry check.
-fn auth_failure(reject: &Reject) -> String {
-    match reject {
-        Reject::InvalidSignature => "invalid signature".into(),
-        Reject::InvalidNonce { expected } => format!("invalid nonce: expected {expected}"),
-        Reject::Expired { expires_at } => format!("expired at {expires_at}"),
-        Reject::ExpiryTooFar { latest } => format!("expiry after the latest allowed, {latest}"),
-        // `authorise_admin` refuses only for the reasons above.
-        other => serde_json::to_string(other).expect("rejections serialise"),
     }
 }

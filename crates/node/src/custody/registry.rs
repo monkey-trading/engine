@@ -48,6 +48,7 @@ sol! {
         bytes command
     );
     function schedule() external view returns (address);
+    function rotationState() external view returns (bool enabled, bytes32 release, uint64 generation, uint64 until);
 }
 
 /// The topics of the registry events the engine mirrors.
@@ -192,6 +193,25 @@ pub(super) fn decode_vote_schedule(
 /// The call that reads a vote contract's schedule.
 pub(super) fn vote_schedule_call() -> alloy::primitives::Bytes {
     scheduleCall {}.abi_encode().into()
+}
+
+/// The call that reads the registry's rotation state: whether rotation is on, the named release, the
+/// generation of the turn naming the operator (zero when none does) and when the last started turn ends.
+pub(super) fn rotation_state_call() -> alloy::primitives::Bytes {
+    rotationStateCall {}.abi_encode().into()
+}
+
+/// The boundary, in milliseconds, of the drawn turn the registry's `rotationState()` answer `out` names
+/// the operator by, a day before its end; `None` when no turn names it.
+/// Error cases:
+/// - data that does not decode, or a turn end before a day or past `i64` milliseconds
+pub(super) fn decode_named_turn(out: &alloy::primitives::Bytes) -> anyhow::Result<Option<engine_core::types::Millis>> {
+    let state = rotationStateCall::abi_decode_returns(out).context("decoding the registry's rotation state")?;
+    if state.generation == 0 {
+        return Ok(None);
+    }
+    let since = state.until.checked_sub(86_400).and_then(millis);
+    since.map(Some).with_context(|| format!("the named turn's end {} is out of range", state.until))
 }
 
 /// `seconds` as milliseconds, if they fit `i64`.

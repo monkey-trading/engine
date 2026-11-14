@@ -145,6 +145,7 @@ async fn events_stall_until_the_registry_binding_is_verified() {
         1..=3,
         &hashes_through(3),
         (false, true, true),
+        None,
     )
     .await
     .unwrap_err();
@@ -162,6 +163,7 @@ async fn events_stall_until_the_registry_binding_is_verified() {
         1..=3,
         &hashes_through(3),
         (true, true, true),
+        None,
     )
     .await
     .unwrap();

@@ -17,5 +17,6 @@ impl Engine {
         self.start_volume_tiers(version);
         self.start_weekend_closes(version);
         self.start_house_loss(version);
+        self.start_turns_from(version);
     }
 }

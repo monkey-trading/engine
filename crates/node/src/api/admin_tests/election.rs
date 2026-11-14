@@ -56,6 +56,7 @@ impl Node {
             block: 3,
             block_hash: alloy::primitives::B256::repeat_byte(9),
             block_time: Some(effective_at),
+            named_turn: None,
         };
         let events = self.state.submit(frontier).await.unwrap();
         assert!(!events.iter().any(|event| matches!(event, Event::AdminRejected { .. })), "{events:?}");

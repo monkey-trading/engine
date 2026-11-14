@@ -93,6 +93,7 @@ pub(crate) fn session(h: &mut Harness) {
         block: 46_000_020,
         block_hash: alloy_primitives::B256::repeat_byte(46),
         block_time: Some(effective_at),
+        named_turn: None,
     };
     h.cmd(frontier);
     let (shares, excess, _) = close(h);

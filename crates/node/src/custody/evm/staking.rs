@@ -166,6 +166,8 @@ impl<V: VaultReader> DepositWatcher<V> {
         let bound = self.registry.is_some_and(|(_, bound)| bound);
         let schedule_bound = self.schedule.is_none_or(|(_, bound)| bound);
         let vote_bound = self.vote.is_none_or(|(_, bound)| bound);
+        // The registry's own state says which drawn turn, of the schedule it names, names the operator.
+        let turns = self.registry.and_then(|(registry, bound)| bound.then_some(registry));
         let window = from..=to;
         staking::mirror(
             &self.vault,
@@ -176,6 +178,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             window,
             &hashes,
             (bound, schedule_bound, vote_bound),
+            turns,
         )
         .await
     }

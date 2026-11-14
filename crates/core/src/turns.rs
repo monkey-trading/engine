@@ -171,6 +171,12 @@ impl DailyTurns {
         *self == Self::default()
     }
 
+    /// The set in effect at `at`, as the schedule's `setAt(at)` names it: the last adopted whose time has
+    /// come. A set is dropped only once a later one has taken effect, so the set in effect is kept.
+    pub fn set_at(&self, at: Millis) -> Option<&RotationSet> {
+        self.sets.values().rev().find(|set| set.effective_at <= at)
+    }
+
     /// Why an assignment from `set` naming `candidate` with `admin_key` cannot apply its key at
     /// `applies_at`, if it cannot: the set is not kept, does not name them, or the log's notice of
     /// that key began less than seven days before, from `V53` at the first of the unbroken run of

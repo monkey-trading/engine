@@ -11,12 +11,12 @@ use engine_core::listing_bounds::ListingNotice;
 use engine_core::session::{Period, Schedule};
 use engine_core::weekend::WeekendGap;
 
-/// `governed`, with `V60` activated by a vote, as rotation requires.
+/// `governed_under(V56)`, with `V60` activated by a vote, as rotation requires.
 fn weekend_governed() -> Harness {
-    weekend_governed_from(governed())
+    weekend_governed_from(governed_under(ProtocolVersion::V56, TTL))
 }
 
-/// `h`, a `governed` harness, with `V60` activated by a vote.
+/// `h`, a `governed_under(V56)` harness, with `V60` activated by a vote.
 fn weekend_governed_from(mut h: Harness) -> Harness {
     let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V60 };
     pass(&mut h, 90, false, activate.clone());
@@ -109,7 +109,7 @@ fn held_aapl(equity: &str, last: &str, calendar: impl FnOnce(&Harness) -> AdminC
     base.price(AAPL, "250");
     let events = base.market_order(acct(2), AAPL, Side::Buy, "50", "250");
     assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
-    let mut h = weekend_governed_from(governed_from(base, TTL));
+    let mut h = weekend_governed_from(governed_from(base, ProtocolVersion::V56, TTL));
     let set = weekend(&h, 3_000);
     pass(&mut h, 1, false, set.clone());
     h.advance(NOTICE_MS);

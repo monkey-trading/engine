@@ -12,7 +12,7 @@ fn threshold(h: &Harness, threshold: Option<Fixed>) -> AdminCommand {
 
 #[test]
 fn a_vote_keeps_the_loss_threshold_at_its_level_and_at_most_launchs() {
-    let mut h = governed_at(ProtocolVersion::V62, TTL);
+    let mut h = governed_under(ProtocolVersion::V62, TTL);
     let launch = vec![LossTrigger { level: 2, house_loss: Fixed::ZERO }];
     assert_eq!(h.engine.operator_bounds().launch_loss_triggers, Some(launch));
     let (dropped, raised, lowered) = (threshold(&h, None), threshold(&h, Some(f("1"))), threshold(&h, Some(f("-1"))));

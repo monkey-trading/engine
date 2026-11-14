@@ -54,6 +54,7 @@ fn finalised(h: &mut Harness, time: Millis) -> Vec<Event> {
         block,
         block_hash: alloy_primitives::B256::repeat_byte(9),
         block_time: Some(time),
+        named_turn: None,
     })
 }
 
@@ -413,7 +414,8 @@ fn registry_mirrors_advance_the_staking_frontier_that_progress_extends() {
     elect_soon(&mut h, 1, elected(), "0xelect:0");
     assert_eq!(h.engine.staking().unwrap().mirrored_through, Some(block));
     let hash = alloy_primitives::B256::repeat_byte(9);
-    let progress = |block, block_time| Command::StakingProgress { block, block_hash: hash, block_time };
+    let progress =
+        |block, block_time| Command::StakingProgress { block, block_hash: hash, block_time, named_turn: None };
     let rejected = |events: Vec<Event>| matches!(events.last(), Some(Event::AdminRejected { .. }));
     assert!(rejected(h.cmd(progress(block - 1, None))));
     assert!(!rejected(h.cmd(progress(block, None))));

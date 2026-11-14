@@ -45,7 +45,9 @@ Check: for the example, the close of Tuesday 3 November 2026, 16:00 New York, pr
 and the open of Wednesday 4 November, 09:30, prints `1793802600000`. If the calendar does not list a
 close or an open you expect (a half-day, a holiday), stop: the calendar is changed by an
 `upsert-market` admin command, which is a protocol change for the owner, and a pending action locks
-the calendar once scheduled.
+the calendar once scheduled. While votes govern ([operator-candidate.md](operator-candidate.md) §7),
+only a normal vote changes the calendar, applying seven days after the engine logs it: until then,
+schedule an action only at an open the calendar already lists.
 
 ## 3. Write the instruction
 
