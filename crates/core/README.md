@@ -839,9 +839,9 @@ between. A close-spread ceiling adoption for a market not yet listed binds only 
 markout floor, since from V54 a first listing names one and must be the listing its adoption bound.
 Activation gives each listing an adoption bound earlier, applied or pending, that names no floor its
 asset class's default, as V54's activation gives a listed market's, and carrying the log across V54 it
-is refused while such a listing's ceiling, or that of the pending listing that replaces it, is below
-its launch close charge under the score tiers the activation converts to, as it is for a listed
-market. Before V58 none of this is checked or changed, so earlier logs replay unchanged. Its session
+is refused while the listing a market's first listing must be, the pending one where an adoption
+waits, has a ceiling below its launch close charge under the score tiers the activation converts to,
+as it is for a listed market. Before V58 none of this is checked or changed, so earlier logs replay unchanged. Its session
 is in `examples/reference_log/v58.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
