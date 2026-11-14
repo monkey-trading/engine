@@ -44,7 +44,14 @@ impl Epochs {
         {
             self.reads.push((at.number, call.epoch));
             let (seq, link) = self.by_epoch.get(&call.epoch).and_then(|(_, head)| *head).unwrap_or_default();
-            return Ok(headsCall::abi_encode_returns(&headsReturn { seq, link, signedAt: 0, boundBlock: 0, postedAt: 0 }).into());
+            return Ok(headsCall::abi_encode_returns(&headsReturn {
+                seq,
+                link,
+                signedAt: 0,
+                boundBlock: 0,
+                postedAt: 0,
+            })
+            .into());
         }
         bail!("the fake chain answers no such call")
     }
