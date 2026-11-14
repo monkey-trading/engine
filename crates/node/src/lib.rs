@@ -36,6 +36,8 @@ pub mod sequencer;
 mod sequencer_thread;
 mod snapshot;
 pub mod standby;
+#[cfg_attr(not(test), expect(dead_code, reason = "the member transport (#595) wires the standby keys in"))]
+mod standby_key;
 mod stats;
 pub use sequencer::{
     replay, replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust, replay_with_signer,

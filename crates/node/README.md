@@ -231,6 +231,19 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   built by one replay as the copy opens and fed every entry the copy takes after, a handover's tail
   included; `src/standby/replica/tests.rs` starts the sequencer from the replica with the copy's files
   altered, and extends the copy with a tail, refusing a forged one
+- `src/standby_key/mod.rs` — a member's standby key and the TLS key it would serve with, sealed per
+  release apart from the turn's keys; the seal opens only while the schedule lists the key as
+  promotable, or as the signer of a promotion still its turn's latest assignment until its reseal as
+  the turn's keys is durable, and a start seals a new one in any other state
+- `src/standby_key/chain.rs` — the vault, registry and schedule reads the standby key's rules make, at
+  the latest block the custody quorum agrees on: the key's state and what a vouch depends on
+- `src/standby_key/vouch.rs` — the standby key's attestation report data, the vouch request and
+  reply, the client's request, the vouching enclave's handler (one-hour expiry bound), and the
+  registration a vouch gives
+- `src/standby_key/tests.rs` — the fake chain the tests set; `src/standby_key/tests/seal.rs` covers
+  sealing, the opening rule, and crashes before, during and after a reseal;
+  `src/standby_key/tests/vouch.rs` covers the digest against the schedule's, the report data, and
+  every refusal of the handler
 - `src/node/mod.rs` — startup, task supervision, and shutdown; a member's start from its replica
   reads nothing from the chain and takes no trusted time sample, using what it read before connecting
 - `src/node/run.rs` — `run_with_cpu`: a member's wait for its turns around each `serve_node`, or one
@@ -698,7 +711,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   reseal into a daily turn's new generation, and the mock TEE's public stand-in for sealing;
   `src/tee/sealing/tests.rs` covers it
 - `src/tee/release_file.rs` — a file sealed to a release alone, under a tag naming its kind: the
-  secrets' and the certificate's
+  secrets', the certificate's and the standby keys'
 - `src/tee/secrets.rs` — the sealed secrets file, per release and apart from the keys, and what the
   host can do with it; `src/tee/secrets/tests.rs` covers it
 - `src/tee/snp.rs` — the SEV-SNP sealing key and report through `/dev/sev-guest` (Linux)
@@ -1107,6 +1120,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/stall.rs` — what a poll did, the watcher's run loop, and the alert each kind of
   stall raises
 - `src/custody/sizing.rs` — read sizes that adapt to a provider's limits
+- `src/custody/standby_keys.rs` — the standby key's reads through its own quorum, at the latest block
+  a strict majority agrees on, one session at a time; `src/custody/standby_keys/tests.rs` covers the
+  agreed block, its time, and a minority, split or wrong-chain answer
 - `src/custody/credit.rs` — crediting or reserving one deposit once, and the sequencer round trips it needs
 - `src/custody/pending.rs` — bounded, backed-off log-derived retries of deposits left pending by source failures
 - `src/custody/quorum.rs` — strict-majority reads at common block heights, provider alerts, and
