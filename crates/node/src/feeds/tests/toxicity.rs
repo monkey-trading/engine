@@ -28,11 +28,11 @@ use tokio::time::{sleep, timeout};
 use tokio_tungstenite::accept_async;
 
 use crate::clock::now_ms;
-use crate::config::Venue;
+use crate::config::{Genesis, Venue};
 use crate::feeds::tests::fake::{WAIT, coinbase_levels, fast, kraken_book, listen, next_text, spawn_feed_into, stream};
 use crate::log::Manifest;
 use crate::replay_path;
-use crate::sequencer::{Request, Sequencer, SequencerConfig, StreamMsg};
+use crate::sequencer::{Request, Sequencer, SequencerConfig, StreamMsg, genesis_commands};
 use crate::tee::EnclaveKey;
 use crate::test_support::access::{account, declaration, funding, order, policy};
 use crate::test_support::{dev_config, scratch_dir, sequencer_config, trusted_now};
@@ -53,7 +53,7 @@ const HOUR_MS: i64 = 60 * 60 * 1000;
 const TOXIC_PHASE_MS: i64 = 4 * 60 * 1000;
 
 /// The index both stand-ins quote: each book is a dollar wide around it.
-type Mid = Arc<Mutex<Fixed>>;
+pub(super) type Mid = Arc<Mutex<Fixed>>;
 
 #[tokio::test]
 #[ignore = "dev scenario, run by scripts/dev-toxicity.sh"]
@@ -191,6 +191,16 @@ fn boot(
     key: &Arc<EnclaveKey>,
     fresh: bool,
 ) -> (mpsc::Sender<Request>, JoinHandle<anyhow::Result<()>>) {
+    boot_with(dir, key, &dev_config().genesis, fresh)
+}
+
+/// `boot` under `genesis`, which a fresh log sequences and a recovered one must have run.
+pub(super) fn boot_with(
+    dir: &std::path::Path,
+    key: &Arc<EnclaveKey>,
+    genesis: &Genesis,
+    fresh: bool,
+) -> (mpsc::Sender<Request>, JoinHandle<anyhow::Result<()>>) {
     let (stream_tx, _): (broadcast::Sender<Arc<StreamMsg>>, _) = broadcast::channel(65_536);
     let (withdrawals_tx, _) = mpsc::unbounded_channel();
     let (manifest, _) = watch::channel(Manifest::default());
@@ -200,12 +210,13 @@ fn boot(
         checkpoint_every: 1_000,
         checkpoint_parent: Default::default(),
         checkpoints: None,
+        genesis: genesis_commands(genesis),
         ..sequencer_config(dir, manifest)
     };
     let mut seq = Sequencer::recover(cfg, key.clone(), stream_tx, withdrawals_tx).expect("recovers");
     if fresh {
         seq.activate_protocol().expect("protocol activation");
-        seq.genesis(&dev_config().genesis).expect("genesis");
+        seq.genesis(genesis).expect("genesis");
     }
     seq.trust(trusted_now()).expect("trusted time");
     let (tx, rx) = mpsc::channel(65_536);
@@ -221,7 +232,7 @@ fn boot(
 
 /// Starts a Coinbase and a Kraken stand-in quoting BTC-USD a dollar either side of `mid` every 20ms,
 /// and the feeds that read them; aborting the handles stops both.
-async fn start_venues(tx: &mpsc::Sender<Request>, mid: &Mid) -> Vec<AbortHandle> {
+pub(super) async fn start_venues(tx: &mpsc::Sender<Request>, mid: &Mid) -> Vec<AbortHandle> {
     let mut tasks = Vec::new();
     for (venue, symbol) in [(Venue::Coinbase, "BTC-USD"), (Venue::Kraken, "BTC/USD")] {
         let (listener, url) = listen().await;
@@ -258,7 +269,7 @@ fn serve(listener: TcpListener, venue: Venue, mid: Mid) -> JoinHandle<()> {
 
 /// Gives the sequencer a trusted time sample every 10 s, as the node's Roughtime client does, until
 /// aborted: past `NO_SAMPLE_GRACE` without one, sequencing halts.
-fn keep_time(tx: &mpsc::Sender<Request>) -> AbortHandle {
+pub(super) fn keep_time(tx: &mpsc::Sender<Request>) -> AbortHandle {
     let tx = tx.clone();
     tokio::spawn(async move {
         loop {
@@ -286,12 +297,12 @@ fn wander(mid: &Mid) -> JoinHandle<()> {
 }
 
 /// The shared mid now.
-fn now(mid: &Mid) -> Fixed {
+pub(super) fn now(mid: &Mid) -> Fixed {
     *mid.lock().unwrap()
 }
 
 /// Declares and funds the client with access seed `seed`.
-async fn fund(tx: &mpsc::Sender<Request>, seed: u8) {
+pub(super) async fn fund(tx: &mpsc::Sender<Request>, seed: u8) {
     let declared = signed(tx, move |engine| declaration(engine, seed)).await;
     assert!(matches!(declared.as_slice(), [Event::EligibilityAttested { .. }]), "{declared:?}");
     let reference = format!("dev-toxicity-{seed}");
@@ -302,7 +313,7 @@ async fn fund(tx: &mpsc::Sender<Request>, seed: u8) {
 }
 
 /// The client's market order of `qty` quoted at `index`, which must fill.
-async fn fill(tx: &mpsc::Sender<Request>, seed: u8, side: Side, qty: &str, index: Fixed) -> Fill {
+pub(super) async fn fill(tx: &mpsc::Sender<Request>, seed: u8, side: Side, qty: &str, index: Fixed) -> Fill {
     let request = OrderRequest {
         account: account(seed),
         client_id: 1,
@@ -318,7 +329,7 @@ async fn fill(tx: &mpsc::Sender<Request>, seed: u8, side: Side, qty: &str, index
 }
 
 /// Builds a command from the engine's state, sequences it and returns its events.
-async fn signed(
+pub(super) async fn signed(
     tx: &mpsc::Sender<Request>,
     build: impl FnOnce(&engine_core::Engine) -> Command + Send + 'static,
 ) -> Vec<Event> {
@@ -329,7 +340,7 @@ async fn signed(
 }
 
 /// Reads `read` from the engine.
-async fn query<T: Send + 'static>(
+pub(super) async fn query<T: Send + 'static>(
     tx: &mpsc::Sender<Request>,
     read: impl FnOnce(&engine_core::Engine) -> T + Send + 'static,
 ) -> T {
@@ -344,7 +355,7 @@ async fn standing(tx: &mpsc::Sender<Request>, seed: u8) -> ToxicityStanding {
 }
 
 /// Waits until the engine's index for BTC-USD is `index`.
-async fn wait_for_index(tx: &mpsc::Sender<Request>, index: Fixed) {
+pub(super) async fn wait_for_index(tx: &mpsc::Sender<Request>, index: Fixed) {
     let found = async {
         while query(tx, |engine| engine.markets()[&BTC].index(engine.now()).ok().map(|i| i.mid)).await != Some(index) {
             sleep(Duration::from_millis(50)).await;

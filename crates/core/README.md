@@ -139,6 +139,12 @@ this crate and reproduce the signed state roots exactly.
   loser first, at their marks; it moves only as a listing notice of seven days, or while rotation is
   on a passed vote, names it, and a calendar change that is not a vote may not narrow or remove a gap
   starting within seven days, nor add or bring forward a held market's gap within seven days
+- From protocol `V62`, a stress trigger on the house's marked loss to its clients over the trailing
+  day (`src/house_loss/`): the fall in house NAV less net capital moved in, kept as one result per
+  15-minute slot. Every market rises to the level whose threshold the loss is above, re-read before
+  every fill and after every command, and steps down after the cooldown; each change is a
+  `house_loss_changed` event. The stress levels keep each launch threshold at its level or above,
+  at most its launch value, by notice and by vote; activation gives level 2 a threshold of zero
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -289,7 +295,8 @@ this crate and reproduce the signed state roots exactly.
 - `tests/withdrawal_finality.rs` — payout capacity that waits for receipt finality and ignores reversals
 - `tests/withdrawals/setup.rs` — shared Engine::apply-driven withdrawal setup
 - `src/admin/mod.rs` — operator commands and signed admin commands; `src/admin/quote_currency.rs`
-  checks a listing's quote currency
+  checks a listing's quote currency, and `src/admin/activation.rs` starts the rule sets an activation
+  carries the log into that check their own version
 - `src/operator_bounds/mod.rs` — the V35 bounds: launch rates, rate notices and price-rule checks
 - `src/operator_bounds/rotation.rs` — the V35 operator rotation: a signed `RotateOperator` and its seven-day notice
 - `src/spread_tier.rs` — size spread bands: the `V52` unit in tenths of a bp beside the whole-bps
@@ -367,6 +374,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch; from `V57` a voted extension lending an add no more than the launch curve's last hold
 - `tests/parameter_votes/volume_tiers.rs` — `V59` activated by a vote, a voted volume tier table held to its launch bounds without a notice, and a voted relisting held at every tier
 - `tests/parameter_votes/weekend.rs` — `V60`: a voted weekend margin with no listing notice, held to its listing's range, the operator's weekend margin notice refused while rotation is on, the fast path refusing to move it, and a fast-path margin raise past it
+- `tests/parameter_votes/house_loss.rs` — `V62`: a voted change to the house loss threshold, refused above launch's or off its level, applied below it, with no notice
 - `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, and the turn's time in office
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
 - `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
@@ -391,6 +399,19 @@ this crate and reproduce the signed state roots exactly.
   floor-preserving and principal locks
 - `src/stress.rs` — stress levels: the automatic triggers, the move window, and the floors, from `V46`
   bounded at level 1 and lapsing after 72 hours
+- `src/house_loss/mod.rs` — the V62 house loss: the trading result per slot over the trailing day,
+  the loss read from it, capital moved in or out, and the level it sets; unit tests in
+  `src/house_loss/tests.rs`
+- `src/house_loss/bounds.rs` — the V62 loss trigger's activation, launch thresholds, and the bound
+  every new set of stress levels meets
+- `tests/house_loss.rs` — the trigger through `Engine::apply`: activation, firing in every priced
+  market, the cooldown, ageing out of the window, the ceiling clamp at level 2, a pair across an
+  unpriced move at 1% margin, and a property over three days of trades, moves and capital moves, with
+  the shared harness in `tests/common/house_loss.rs`
+- `tests/house_loss_accounting.rs` — what the loss leaves out: a vault receipt for the house credited
+  and reversed, a distribution, and a cash dividend paid before its market reprices
+- `tests/house_loss_bounds.rs` — the trigger's bounds under a stress notice and the operator's
+  parameters, a lower threshold after its notice, and refusal before `V62`
 - `src/access/mod.rs` — signed eligibility, source policy and bounded public screening types
 - `src/access/engine.rs` — deterministic screening, declarations and uncredited custody holds
 - `src/auth.rs` — client auth, the operator record, request signatures and nonces, and the checks
@@ -403,8 +424,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/merkle/leaf/mod.rs` — each leaf's key and value hash, and the account leaf;
   `src/merkle/leaf/market.rs` the market leaf
 - `src/merkle/proof.rs` — account, market, and entitlement proofs, and how to check them
-- `src/merkle/state.rs` — the engine's state tree: what each root rehashes, the remaining-state
-  leaf, and distribution proofs
+- `src/merkle/state.rs` — the engine's state tree: what each root rehashes and distribution proofs;
+  the remaining-state leaf is in `src/merkle/state/globals.rs`
 - `src/merkle/state/touched.rs` — tracked changes and complete leaf-key enumeration
 - `src/merkle/proofs.rs` — account, entitlement, and withdrawal-approval proofs
 - `src/merkle/tests.rs` — tree, proof, and work tests, and the layout fixture
@@ -528,7 +549,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V57` parts (`v15.rs` to `v57.rs`)
+  `V15` to `V62` parts (`v15.rs` to `v62.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -982,6 +1003,30 @@ only pending ones, so a reopening never restores units the score did not match. 
 V59 keeps the launch table it recorded. Its log is `v61.jsonl`, and its session is in
 `examples/reference_log/v61.rs`.
 
+Protocol V62 adds a stress trigger on the house's marked loss to its clients over the trailing day
+(`src/house_loss/`). The house's trading result is its NAV, which counts clients' unrealised PnL at
+the marks, less the house capital credited in net since activation: capital moves and house deposits
+in, distributions out. A cash dividend paid at its ex-date open counts its market without it until
+the market takes a fresh mark, at whatever price and with any split in between, so the payment is
+not read as a loss before the price falls by it. The window opens at activation, and after every
+command the engine records the result in its 15-minute slot, keeping the result after the slot's
+last command and the highest after any. The loss is measured from the window's start a day ago: from
+the higher of the result at the end of the newest slot before it and the highest in the slot holding
+it, so the loss read is never below the loss over the trailing day and is above it only by a fall
+from a high in that one slot. The window keeps at most 98 slots. A stress level's trigger may name
+`house_loss`, a threshold in USD met when the loss is above it, so a threshold of zero fires once
+the house has lost money over the day and an idle house never does. The loss is one reading in every
+market's stress check, before every fill and after every command, so every open, priced market rises
+to that level at once and steps down after the cooldown once the loss is back at or below the
+threshold; a market with no price keeps its level until it prices. Each change of the level the loss
+sets after a command is a `house_loss_changed` event, which the node alerts on. A change to the
+stress levels, by a V49 notice, the operator's parameters or a V56 vote, keeps each launch threshold
+at its level or above, at most its launch value. Before V62 a threshold the parameters name reads
+nothing, nothing records the window, and the state encodes as before, so earlier logs replay
+unchanged. Activation keeps a threshold named before it, gives level 2's trigger one of zero where
+the parameters have a level 2 and name none, and takes the thresholds in force as launch's. Its
+session is in `examples/reference_log/v62.rs`.
+
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
 is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
@@ -1121,6 +1166,7 @@ command-processing regression guards, not an end-to-end service latency promise.
 | A signed cancel-all of 100 resting orders | 100,000 | 2 ms |
 | A signed close-all across the 37 launch markets | 100,000 | 2 ms |
 | From `V54`, a signed fill among scored accounts with 2,000 markouts within the horizon | 100,000 | 2 ms |
+| From `V62`, a price and a signed fill among accounts all holding BTC, with a day of loss slots, against `V61` | 100,000 | twice `V61`'s, plus 200 us |
 | First command after a year-long gap with quotes held across it, or at the last stamp the engine accepts (one sample each) | 1 | 5 ms |
 
 A concentrated price update still visits every holder, and a rollover still finances and checks
@@ -1159,3 +1205,13 @@ holding an hour of spread history, 1,045 / 1,095 us p50 / p99 against 1,565 / 1,
 markout, and the state root after it 50 ms against 47 ms; one price triggering 20,001 stops 227 ms
 against 236 ms, no more a fill. Budgets: a fill's p99 2 ms, scoring 50 ms, the root after it 100 ms,
 and the triggered fills twice `V52`'s plus 10 ms.
+
+The house loss trigger's cost from `V62` (`house_loss_latency` in
+`tests/hot_path_benchmark/house_loss.rs`, against `V61` running the same commands), measured on 15
+November 2026 on the machine above with other workspace builds running: every one of 100,000
+accounts holds 0.01 BTC, every launch market is listed, level 2 carries a threshold of zero and the
+window a slot for every 15 minutes of the day before. A BTC price, which visits every holder, took
+22,037 / 22,845 us p50 / p99 against 21,942 / 25,308 for `V61`, and a signed fill 406 / 440 us
+against 409 / 459: the loss is read from the house NAV the stress check already sums over the
+markets, so it adds a slot's record and a search of at most 98 slots per market, and no scan of the
+accounts. The budget is twice `V61`'s p99 plus 200 us, which a scan of the accounts would exceed.

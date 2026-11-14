@@ -19,6 +19,7 @@ use crate::params::{DEFAULT_MAX_RESTING_ORDERS, MAX_BENCHMARK_BPS};
 use crate::protocol::ProtocolVersion;
 use crate::types::MarketId;
 
+mod activation;
 mod quote_currency;
 
 impl Engine {
@@ -384,13 +385,7 @@ impl Engine {
                 if self.protocol_version < ProtocolVersion::V46 && *version >= ProtocolVersion::V46 {
                     self.bound_stress_floors(events);
                 }
-                self.start_listing_bounds(*version);
-                self.carry_kept_notices(*version);
-                self.start_toxicity_score(*version);
-                self.floor_bound_listings(*version);
-                self.start_hold_clocks(*version);
-                self.start_volume_tiers(*version);
-                self.start_weekend_closes(*version);
+                self.start_rule_sets(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
                 self.protocol_version = *version;
                 // Rules before `V47` record no candidate, so one an election already seated is seated before

@@ -34,7 +34,10 @@ Every fill pays its market's size spread: a number of tenths of a basis point on
 position it opens or closes, by size band, tight at small and medium sizes and wider above, so a
 round trip pays it on the way in and again on the way out. No market quotes a zero spread: no band
 is below a tenth of a basis point on FX and indices, or 1 basis point elsewhere. Spreads widen at
-times of stress, when venues diverge, prices move fast, or the house's exposure runs high. Accounts
+times of stress, when venues diverge, prices move fast, or the house's exposure runs high, and from
+protocol V62 in every market once the house has lost money to its clients over the trailing day: its
+loss counts open positions at current prices, net of the fees and spreads it has earned, and the
+wider spreads hold until the house is ahead again and a cooldown has passed. Accounts
 whose trades are consistently followed by a move in their favour, the mark of trading on prices
 that are about to change, pay a small additional spread on every trade. From V54 that measure is
 how many standard errors an account's recent edge sits above zero, in each market's own units of
@@ -146,7 +149,8 @@ every tier and size a spread stays between that tier's launch spread and twice i
 listed market's weekend margin also changes only after the same notice, or while rotation is on by a
 vote; the operator's calendar change may not shorten or remove a weekend closure starting within
 seven days, and while the market holds positions may not add or bring one forward within seven days
-either.
+either. From V62 the stress levels keep the trigger on the house's loss at its launch
+level or above, with a threshold no higher than launch's.
 While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
 distribution, which it claims from the vault as a staker claims its own; from V50 the fifth is split
 among the operators by their time in office during the epoch.

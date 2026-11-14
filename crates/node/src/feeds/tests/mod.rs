@@ -9,6 +9,7 @@ pub(super) mod fake;
 mod hostile;
 mod hours;
 mod late;
+mod loss_trigger;
 mod mock;
 mod quiet;
 mod redate;

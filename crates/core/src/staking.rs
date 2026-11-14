@@ -381,6 +381,7 @@ impl Engine {
             // `allocated` is at most `usdc_excess`, so the raw amount fits an `i128`.
             let amount = Fixed::from_raw((allocated * USDC_SCALE as u128) as i128);
             self.house_cash -= amount;
+            self.note_house_capital(-amount);
             if self.protocol_version >= ProtocolVersion::V31 {
                 *self.withdrawal_cash.as_mut().expect("V31 requires V22 capacity") -= amount;
             }

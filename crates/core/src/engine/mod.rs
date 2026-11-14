@@ -34,6 +34,7 @@ use crate::election::OperatorElection;
 use crate::emissions::{EmissionLedger, Emissions, PeriodResult, TokenUnits};
 use crate::event::Event;
 use crate::governance::Governance;
+use crate::house_loss::HouseLoss;
 pub(crate) use crate::markouts::Markout;
 use crate::merkle::state::{Changed, StateTree, is_zero};
 use crate::operator_bounds::OperatorBounds;
@@ -196,6 +197,9 @@ pub struct Engine {
     /// From `V59`, each account's counted volume and the notional waiting to count (`volume_tier`).
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) volumes: TrackedMap<AccountId, AccountVolume>,
+    /// From `V62`, the house's trading result over the trailing day and the level its loss sets.
+    #[serde(default, skip_serializing_if = "HouseLoss::is_default")]
+    pub(crate) house_loss: HouseLoss,
 
     /// The screening source and freshness bound, recorded once from `V24`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

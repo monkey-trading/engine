@@ -44,6 +44,7 @@ impl Engine {
             DepositBeneficiary::House => {
                 self.house_cash = Fixed::from_raw(balance);
                 self.unfinalised_house_deposits = Fixed::from_raw(locked);
+                self.note_house_capital(Fixed::from_raw(delta));
             }
         }
         Ok(())

@@ -202,7 +202,13 @@ closure starting within seven days, nor add or bring forward a held market's clo
 days, the weekend margin holds against withdrawals and new risk from two hours before the
 closure until the market reopens, and an account below it when the closure starts is closed out on
 that market at its last price, so a weekend margin change past those bounds, or a position held across
-the closure below it, is in scope. With `[checkpoints]` configured, startup verifies the replayed log
+the closure below it, is in scope. From protocol V62 every market rises to the stress level the house loss
+trigger names once the house has lost money to its clients over the trailing day, its NAV less net
+capital moved in, and the stress levels keep that trigger at its launch level or above with a
+threshold no higher than launch's, so a fill below that level while the house is behind on the day,
+or a change past that bound, is in scope. The trigger caps how fast the house loses, not what a fast
+client takes from the house's income: `research/loss-rate-trigger` gives the bound and the classes it
+leaves open. With `[checkpoints]` configured, startup verifies the replayed log
 against the latest posted vault commitment at custody finality and refuses a shorter or conflicting log before serving or opening
 history for writes; checkpoint signatures verify
 against their chain, vault, and named signer. Those checks reach only as far as the vault's
@@ -392,8 +398,9 @@ requirement at or above launch's, no stress level's size multiplier below 1x), V
 (each score tier within ±50% of launch, markout floors fixed), V55's holding-fee bounds (the base fee
 from its launch value up to +50%, the curve at or above its launch curve at every hold and reaching
 at most 30 minutes), V59's volume tier bounds (the launch tiers, no threshold or day divisor below
-launch, no best-price share above it, and each tier's spread from its launch spread to twice it) and
-each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
+launch, no best-price share above it, and each tier's spread from its launch spread to twice it), V62's
+(each launch house loss threshold kept at its level or above, at most its launch value) and each
+field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
 can set the other parameters to any valid value after seven days' notice, and a normal change applies only over the
 parameters or market it passed on; a fast-path proposal applies at once but only as a restriction that
 moves fields toward lower risk and lapses at the recorded lifetime, at most seven days, and its margin

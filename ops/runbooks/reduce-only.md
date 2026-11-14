@@ -24,6 +24,7 @@ Read [reference.md](reference.md) first, for `$ENGINE`, `$API`, `$PIN` and the c
 | A market has no usable price, or its feeds disagree ([feed-and-custody-failures.md](feed-and-custody-failures.md)) | That market. It already cannot fill without a price; this stops the first fill after it recovers while you check it. |
 | A corporate action failed (`corporate_action_failed`) | That market. A failed split already stops dealing there; a failed dividend does not. |
 | House NAV is below zero (`house_deficit`) or exposure is near a cap | The markets that carry it, or all. |
+| The house keeps losing to the same accounts through the raised spreads of `house_loss_stress` | The markets they trade, while you check them. |
 | A venue or vendor is under suspected manipulation | The markets it prices. |
 | An upgrade, handover or recovery where you want no new risk during the change | All markets, then lift it afterwards. |
 | An incident you cannot yet explain ([incident-response.md](incident-response.md)) | All markets. It is reversible and loses nothing. |
