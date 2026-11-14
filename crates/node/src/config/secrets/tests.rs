@@ -250,7 +250,9 @@ fn a_production_build_loads_the_release_config_with_cme_as_a_standby_without_a_l
         ["ops/runbooks/production-node.toml", "config/benchmark-publishers.toml", "config/production-genesis.toml"]
             .map(|path| std::fs::read_to_string(format!("{}/../../{path}", env!("CARGO_MANIFEST_DIR"))).unwrap());
     let release = format!("{template}{publishers}{genesis}");
-    let listener = "[tee.sealing.secrets]\n# Where the operator delivers secrets. Forward it from the operator's addresses, not the public.\nlisten = \"0.0.0.0:9472\"\n";
+    let listener = "[tee.sealing.secrets]\n\
+                    # Where the operator delivers secrets. Forward it from the operator's addresses, not the public.\n\
+                    listen = \"0.0.0.0:9472\"\n";
     assert!(release.contains(listener) && release.contains("venue = \"cme\""));
     // `standby.md`: no listener, RPC and screening URLs written out, webhooks from the environment.
     let mut standby = release.replace(listener, "");
