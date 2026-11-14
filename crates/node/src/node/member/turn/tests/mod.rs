@@ -309,6 +309,8 @@ struct Registry {
     own: Arc<Mutex<Option<[u8; 32]>>>,
     source: Arc<Mutex<Option<HandoverSource>>>,
     prior: Arc<Mutex<Option<HandoverSource>>>,
+    /// A transient failure of the vault read after the next one.
+    flaky: take::Flaky,
 }
 
 impl Registry {
@@ -354,6 +356,7 @@ impl Registry {
 
 impl CheckpointChain for Registry {
     async fn state(&self, view: View) -> anyhow::Result<VaultState> {
+        self.flaky.read()?;
         let moving = self.moving.lock().unwrap().filter(|_| matches!(view, View::Latest));
         Ok(VaultState {
             height: 1,

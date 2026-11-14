@@ -113,9 +113,20 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                         match self.open(None).await {
                             Ok(opened) => follower = Some(opened),
                             Err(e) if e.downcast_ref::<Stopping>().is_some() => return Ok(Turn::Stop),
+                            // Only a copy that does not replay is left to the start's whole-log take.
+                            Err(e) if e.downcast_ref::<CopyRefused>().is_some() => {
+                                warn!("the copy does not replay for this member's turn: {e:#}");
+                                return Ok(Turn::Hold);
+                            }
+                            // A chain read that failed is retried, as a failed take is, for `RETRY_FOR`.
                             Err(e) => {
                                 warn!("opening the copy for this member's turn failed: {e:#}");
-                                return Ok(Turn::Hold);
+                                failing_since.get_or_insert_with(Instant::now);
+                                if failing_since.is_some_and(|since| since.elapsed() >= RETRY_FOR) {
+                                    return Ok(Turn::Hold);
+                                }
+                                tokio::time::sleep(RETRY_PAUSE).await;
+                                continue;
                             }
                         }
                         // A stale copy, restarted past its boundary or rebuilt, catches up with the
@@ -356,7 +367,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// dashboard record and the history index's check beside it, and the latest posted head pinned.
     /// Error cases:
     /// - the archive, the vault, the history index or the copy cannot be read, or the copy does not
-    ///   replay
+    ///   replay (`CopyRefused`)
     pub(super) async fn open(&self, operator: Option<&Followed>) -> anyhow::Result<Opened> {
         self.open_admitting(operator, None, &[]).await
     }
@@ -402,7 +413,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             anyhow::ensure!(!stopping.load(Ordering::Acquire), Stopping);
             history.observe(entry);
             Ok(())
-        })?;
+        })
+        .map_err(|e| e.context(CopyRefused))?;
         self.metrics.full_replays.inc();
         info!(seq = ?follower.replica().last_seq(), elapsed = ?started.elapsed(), "built the replica from the copy");
         Ok((follower, stats, history, marks))
@@ -490,7 +502,7 @@ pub(crate) use episodes::Episodes;
 use episodes::Step;
 pub(in crate::node::member) use tries::Stopping;
 pub(crate) use tries::set_copy_aside;
-use tries::{SourcesFailed, catch_up, damaged, page_refusal, refused};
+use tries::{CopyRefused, SourcesFailed, catch_up, damaged, page_refusal, refused};
 
 #[cfg(test)]
 mod tests;
