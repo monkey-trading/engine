@@ -46,7 +46,8 @@ fn weekend_aapl(h: &Harness) -> AdminCommand {
 /// gives AAPL one with no listing notice; applied before `V59`, which a vote activates after it, it
 /// does nothing until the activation starts it. A client's AAPL long opened three hours before the
 /// weekend close cannot add in the last two, and is closed out at its last mark when the gap starts;
-/// on Monday's open the normal margin applies again.
+/// on Monday's open the normal margin applies again, and the client opens a long of about four times
+/// its equity, which the 20% band admits and the 30% weekend margin would not.
 pub(crate) fn session(h: &mut Harness) {
     let weekend = weekend_aapl(h);
     let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V59 };
@@ -86,7 +87,7 @@ pub(crate) fn session(h: &mut Harness) {
 
     h.advance_to(next_monday_open(close));
     h.price(AAPL, "251");
-    only_fill(&trade(h, &client, AAPL, Side::Buy, "10", "251"));
+    only_fill(&trade(h, &client, AAPL, Side::Buy, "160", "251"));
 }
 
 const HOUR_MS: Millis = 60 * 60 * 1000;

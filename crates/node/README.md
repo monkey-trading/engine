@@ -2241,7 +2241,7 @@ current gap counts at its normal margin there until it reopens and keeps its nex
 few hours a week one market has reopened and another not, the first one's figure can be low.
 `GET /v1/markets` gives each market's `weekend_margin_bps` (left out when none) and, for a market
 with one, `weekend_margin`: `{"weekend_margin_bps", "from", "close", "reopen"}` for its next or
-current weekend gap, or nothing while no gap starts within 366 days.
+current weekend gap, or nothing while no gap starts within 366 days or before V59 activates.
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns
 `{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the

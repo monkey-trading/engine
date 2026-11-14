@@ -26,8 +26,9 @@ pub(super) struct MarketView {
     /// The FX index a market quoted in another currency than USD is valued at.
     fx_mark: Option<Fixed>,
     stress_level: usize,
-    /// From `V59`, for a market with a weekend margin, when it next applies: to opens and adds
-    /// from `from`, and to every holder when the weekend gap starts at `close`, until the reopen.
+    /// From `V59`, for a market with a weekend margin, when it next applies: to new risk in any
+    /// market and to withdrawals from `from`, and to every holder when the weekend gap starts at
+    /// `close`, until the reopen. Absent before `V59` activates.
     #[serde(skip_serializing_if = "Option::is_none")]
     weekend_margin: Option<WeekendWindow>,
 }
