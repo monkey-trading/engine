@@ -15,7 +15,8 @@
 //!
 //! From `V54` the toxicity score's tiers take the same notice, within ±50% of their launch values
 //! (`toxicity`). From `V55` the profit fee moves only up from its launch value, and a notice may name
-//! a new profit fee curve, at or above its launch curve at every hold (`holding_fee`).
+//! a new profit fee curve, at or above its launch curve at every hold (`holding_fee`). From `V59` a
+//! notice may name a new volume tier table, within its launch bounds (`volume_tier`).
 
 use std::collections::BTreeMap;
 
@@ -29,6 +30,7 @@ use crate::params::{MAX_RATE_BPS, ProtocolParams, StressLevel};
 use crate::protocol::ProtocolVersion;
 use crate::toxicity::ScoreTier;
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis};
+use crate::volume_tier::{VolumeTier, spend_volume_tier_notice};
 
 mod rotation;
 
@@ -62,6 +64,9 @@ pub struct ParamsNotice {
     /// From `V55`, a new profit fee curve, left out of the encoding when none is named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profit_fee_curve: Option<Vec<CurvePoint>>,
+    /// From `V59`, a new volume tier table, left out of the encoding when none is named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_tiers: Option<Vec<VolumeTier>>,
     /// The sequenced time the new values may apply from.
     pub effective_at: Millis,
 }
@@ -130,6 +135,10 @@ pub struct OperatorBounds {
     /// them: later curves stay at or above it, and from `V57` its last hold, if any, clamps an add's age.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_curve: Option<Vec<CurvePoint>>,
+    /// From `V59`, the volume tier table in force when parameters are first set under `V59` or when it
+    /// activates over them, which bounds every later table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_volume_tiers: Option<Vec<VolumeTier>>,
 }
 
 impl OperatorBounds {
@@ -147,6 +156,7 @@ impl ParamsNotice {
             && self.stress.is_none()
             && self.score_tiers.is_none()
             && self.profit_fee_curve.is_none()
+            && self.volume_tiers.is_none()
     }
 }
 
@@ -184,6 +194,7 @@ impl Engine {
     ///   `ProtocolParams::validate_for` or `ProtocolParams::check_closing_spread`
     /// - score tiers `Engine::check_score_tier_notice` refuses
     /// - from `V55`, a profit fee below its launch value; a curve `Engine::check_curve_notice` refuses
+    /// - a volume tier table `Engine::check_volume_tier_notice` refuses
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_params(&mut self, notice: &ParamsNotice) -> Result<(), String> {
         self.require_bounds_protocol("a parameter notice")?;
@@ -206,6 +217,7 @@ impl Engine {
             self.check_score_tier_notice(tiers)?;
         }
         self.check_curve_notice(notice.profit_fee_curve.as_deref())?;
+        self.check_volume_tier_notice(notice.volume_tiers.as_deref())?;
         if notice.names_nothing() {
             return Err("a parameter notice names no rate".into());
         }
@@ -303,6 +315,7 @@ impl Engine {
     ///   effect later than the sequenced time
     /// - from `V54`, changed score tiers `Engine::check_score_tier_change` refuses
     /// - a changed profit fee curve that fails `Engine::check_curve_change`
+    /// - a changed volume tier table that fails `Engine::check_volume_tier_change`
     pub(crate) fn check_rate_changes(&self, params: &ProtocolParams, voted: bool) -> Result<(), String> {
         let Some(current) = &self.baseline_params() else { return Ok(()) };
         // Recorded with the first parameters under `V35`, or at its activation over them.
@@ -339,6 +352,7 @@ impl Engine {
         }
         self.check_score_tier_change(params, voted)?;
         self.check_curve_change(&params.profit_fee_curve, &current.profit_fee_curve, voted)?;
+        self.check_volume_tier_change(params, current, voted)?;
         let stress = StressSettings::of(params);
         if self.protocol_version < ProtocolVersion::V49 || stress == StressSettings::of(current) || voted {
             return Ok(());
@@ -352,13 +366,14 @@ impl Engine {
         }
     }
 
-    /// After new parameters apply: records the launch rates and score tiers if these are the first,
-    /// and spends the notice of each rate, of the stress parameters, of the score tiers, and of the
-    /// profit fee curve, that changed.
+    /// After new parameters apply: records the launch rates, score tiers, curve and volume tiers if
+    /// these are the first, and spends the notice of each rate, of the stress parameters, of the score
+    /// tiers, of the profit fee curve, and of the volume tier table, that changed.
     pub(crate) fn settle_rate_changes(&mut self, before: Option<&ProtocolParams>, params: &ProtocolParams) {
         self.record_launch_rates();
         self.record_launch_score_tiers();
         self.record_launch_curve();
+        self.record_launch_volume_tiers();
         let Some(before) = before else { return };
         let tiers = &params.toxicity.score_tiers;
         let spends_tiers = *tiers != before.toxicity.score_tiers;
@@ -378,6 +393,7 @@ impl Engine {
             notice.score_tiers = None;
         }
         spend_curve_notice(notice, &before.profit_fee_curve, &params.profit_fee_curve);
+        spend_volume_tier_notice(notice, &before.volume_tiers, &params.volume_tiers);
         if notice.names_nothing() {
             self.operator_bounds.notice = None;
         }

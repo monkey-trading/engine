@@ -173,6 +173,7 @@ fn announce_and_apply(h: &mut common::Harness, params: engine_core::params::Prot
         closeout_level_bps: None,
         stress,
         profit_fee_curve: None,
+        volume_tiers: None,
         effective_at: due,
         score_tiers: None,
     };

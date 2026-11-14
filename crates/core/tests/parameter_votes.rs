@@ -30,7 +30,11 @@ fn governed() -> Harness {
 
 /// `governed`, with restrictions lasting `ttl`.
 fn governed_with(ttl: Millis) -> Harness {
-    let mut h = Harness::v21();
+    governed_from(Harness::v21(), ttl)
+}
+
+/// `governed_with` from `h`, a `V21` harness.
+fn governed_from(mut h: Harness, ttl: Millis) -> Harness {
     let mut parameters = h.engine.params().expect("the fixture sets parameters").clone();
     let top = StressLevel { min_spread_bps: 8, trigger: None, ..parameters.stress_levels[1].clone() };
     parameters.stress_levels.push(top);
@@ -199,6 +203,7 @@ fn while_rotation_is_on_the_operators_and_the_nodes_governed_commands_are_refuse
         stress: None,
         score_tiers: None,
         profit_fee_curve: None,
+        volume_tiers: None,
         effective_at: h.ts + NOTICE_MS,
     });
     for command in [fee.clone(), margin(&h, BTC, 1_500), notice.clone()] {
@@ -443,3 +448,5 @@ mod limits;
 mod listing;
 #[path = "parameter_votes/toxicity.rs"]
 mod toxicity;
+#[path = "parameter_votes/volume_tiers.rs"]
+mod volume_tiers;

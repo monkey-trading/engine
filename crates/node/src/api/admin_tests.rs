@@ -472,7 +472,7 @@ impl Node {
 }
 
 /// `SetReduceOnly` on for `market`, or for every market.
-fn reduce_only(market: Option<MarketId>) -> AdminCommand {
+fn reduce_only(market: Option<engine_core::types::MarketId>) -> AdminCommand {
     AdminCommand::SetReduceOnly { market, reduce_only: true }
 }
 

@@ -1,10 +1,15 @@
 //! Read-only quotes: the price a fill would get, from the same pricing and risk checks a fill uses.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+
 use crate::Fixed;
 use crate::engine::Engine;
 use crate::event::Reject;
 use crate::execution::{Exec, HouseTotals, PriceGuard};
+use crate::spread_tier::SpreadTier;
 use crate::types::{AccountId, MarketId, Side};
+use crate::volume_tier::AccountBands;
 
 /// What a market order of the quoted size would pay now, were it sequenced next with nothing moved.
 #[derive(Clone, Debug, PartialEq)]
@@ -24,16 +29,17 @@ pub struct Quote {
 }
 
 /// Quotes over one state of the engine, which compute the house totals once however many orders
-/// they price.
+/// they price, and each account's best-price share once however many of its orders.
 pub struct Quoter<'a> {
     engine: &'a Engine,
     house: HouseTotals,
+    shares: RefCell<BTreeMap<AccountId, Option<i64>>>,
 }
 
 impl Engine {
     /// A [`Quoter`] over the engine as it is now.
     pub fn quoter(&self) -> Quoter<'_> {
-        Quoter { engine: self, house: HouseTotals::of(self) }
+        Quoter { engine: self, house: HouseTotals::of(self), shares: RefCell::new(BTreeMap::new()) }
     }
 
     /// `Quoter::quote` over the engine as it is now, for a single order.
@@ -43,6 +49,17 @@ impl Engine {
 }
 
 impl Quoter<'_> {
+    /// `tiers`, a market's spread bands, as `account` pays them: from `V59` with the first band ending
+    /// at its tier's share of the first bound, read once per quoter, and as listed before it.
+    pub fn account_bands<'b>(&self, account: AccountId, tiers: &'b [SpreadTier]) -> AccountBands<'b> {
+        AccountBands::at(tiers, self.share(account))
+    }
+
+    /// `account`'s best-price share, read once per quoter.
+    fn share(&self, account: AccountId) -> Option<i64> {
+        *self.shares.borrow_mut().entry(account).or_insert_with(|| self.engine.best_price_share(account))
+    }
+
     /// Prices a market order for `account` as `execute` would, without changing anything: the same
     /// `price` and, for an order that adds risk, the same margin and house exposure checks, with no
     /// slippage guard. It reads the market's stored open flag and stress level, which every sequenced
@@ -72,7 +89,7 @@ impl Quoter<'_> {
             guard: PriceGuard::None,
             liquidation: false,
         };
-        let priced = engine.price(&exec)?;
+        let priced = engine.price(&exec, self.share(account))?;
         let declined = if priced.increases { engine.check_risk(&exec, &priced, &self.house).err() } else { None };
         Ok(Quote {
             price: priced.price,

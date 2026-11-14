@@ -198,6 +198,7 @@ fn notice(
         closeout_level_bps: None,
         stress: None,
         profit_fee_curve,
+        volume_tiers: None,
         effective_at,
         score_tiers: None,
     })

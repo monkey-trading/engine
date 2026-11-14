@@ -143,6 +143,7 @@ impl Engine {
             session_keys,
             toxicity_scores,
             markout_spreads,
+            volumes,
             deposits,
             deposit_transactions,
             legacy_deposits,
@@ -275,6 +276,7 @@ impl Engine {
                 .map(|account| (session_key_key(account), self.session_keys.get(&account).map(session_key_hash))),
         );
         changes.extend(self.toxicity_leaves(toxicity_scores, markout_spreads));
+        changes.extend(self.volume_leaves(volumes));
 
         // A seq has been applied: `V9` takes effect through a sequenced `ActivateProtocol`.
         let seq = self.last_seq.expect("a state root under V9 follows a command");
@@ -450,6 +452,7 @@ impl Engine {
             session_keys: _,
             toxicity_scores: _,
             markout_spreads: _,
+            volumes: _,
             eligibility: _,
             held_deposits: _,
             pending_deposits: _,
