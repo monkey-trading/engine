@@ -98,11 +98,11 @@ pub(super) fn market_quote(
             return Some(quote);
         }
     };
-    let tops: Vec<Fixed> = market
-        .spec
-        .spread_tiers
-        .iter()
-        .filter_map(|tier| tier.up_to)
+    // From `V59` the first band ends at the account's best-price bound (`Quoter::account_bands`).
+    let tops: Vec<Fixed> = quoter
+        .account_bands(account, &market.spec.spread_tiers)
+        .bounds()
+        .into_iter()
         .map(|usd| market.spec.quote_currency.from_usd(usd, fx, Rounding::Down).div_rounded(mid, Rounding::Down))
         .collect();
     // The least size worth looking for: the market's minimum order, and at least the smallest quantity.
@@ -126,7 +126,7 @@ pub(super) fn market_quote(
 }
 
 /// What a ladder is built from: the account's position, the least size searched for, and the
-/// spread tiers' upper bounds as absolute positions.
+/// upper bounds of the spread tiers it pays as absolute positions.
 struct Held<'a> {
     qty: Fixed,
     floor: Fixed,

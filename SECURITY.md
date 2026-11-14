@@ -191,7 +191,11 @@ fee than at launch: the base fee moves only from its launch value up to half aga
 only to one at or above its launch curve at every hold, each after a seven-day notice, so a change past
 those bounds is in scope too; from V57 an add's averaged age is clamped at the last hold of the curve
 a log launched with, whatever curve is in force, so a curve change that widens it is in scope as
-well. With `[checkpoints]` configured, startup verifies the replayed log
+well. From protocol V59 the volume tier table moves only after a seven-day
+notice, keeping its launch tiers with no threshold or day divisor below launch and no best-price share
+above it, and at every tier and notional each market's spread stays from that tier's launch spread to
+twice it, as does every tier below one whose threshold or day divisor was raised, so a change past
+those bounds is in scope as well. With `[checkpoints]` configured, startup verifies the replayed log
 against the latest posted vault commitment at custody finality and refuses a shorter or conflicting log before serving or opening
 history for writes; checkpoint signatures verify
 against their chain, vault, and named signer. Those checks reach only as far as the vault's
@@ -380,7 +384,9 @@ close charge, the V52 listing bounds (each spread band from its launch rate to t
 requirement at or above launch's, no stress level's size multiplier below 1x), V54's toxicity bounds
 (each score tier within ±50% of launch, markout floors fixed), V55's holding-fee bounds (the base fee
 from its launch value up to +50%, the curve at or above its launch curve at every hold and reaching
-at most 30 minutes) and each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
+at most 30 minutes), V59's volume tier bounds (the launch tiers, no threshold or day divisor below
+launch, no best-price share above it, and each tier's spread from its launch spread to twice it) and
+each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
 can set the other parameters to any valid value after seven days' notice, and a normal change applies only over the
 parameters or market it passed on; a fast-path proposal applies at once but only as a restriction that
 moves fields toward lower risk and lapses at the recorded lifetime, at most seven days, and its margin
@@ -444,6 +450,11 @@ score there; the floor each listing names bounds that, and is fixed once listed.
 is the market's markout spread over a year (#699). A round trip at the same index within the 5 s horizon
 scores nothing on either fill; one across an index move scores both, so diluting a score takes
 trades that bear the index's moves over the horizon.
+From protocol `V59` the same round trips count nothing towards a volume tier, and volume counts only
+once an opening has been held 60 s of sequenced time. A host that delays a client's opening request
+delays when it counts, and one that holds a close back holds back its count; neither grants volume
+that was not traded, and a host trading through its own accounts earns a tier only by holding the
+volume, paying both spreads and the holding-time fee on it.
 A price's age under a hostile host is bounded on the monotonic clock, not the wall clock. The host
 carries every byte and sets the wall clock, so it can hold back a venue's TLS stream and set its clock
 back to match, and a quote's venue stamp then looks fresh: the drift bound alone would let prices run

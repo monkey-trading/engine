@@ -14,7 +14,11 @@ an index: load only the rule whose hint matches the current action.
   along a hold curve from each position's open time, `holding_fee/`, with the open time's own leaf in
   `merkle/open_time.rs`, the base, from launch to +50%, and the curve, at or above launch at every hold,
   moved only after notice, and from `V57` an add's averaged age clamped at the launch curve's last hold
-  whatever curve is in force, `tests/holding_fee_clamp.rs`), overnight financing, trading
+  whatever curve is in force, `tests/holding_fee_clamp.rs`), volume tiers (from `V59`, `volume_tier/`: each account's volume counted
+  over 30 UTC days, opening notional once held 60 s and a matured close once the round-trip horizon has
+  passed, a round trip counting nothing, in its own leaf in `merkle/volume.rs`, setting where its first spread
+  band ends in every market; the table moved only after notice or by vote, never more generously than at
+  launch, with each tier's spread from its launch spread to twice it), overnight financing, trading
   sessions (from `V21` no quote stamped outside a market's hours prices it), markets priced from
   roll-adjusted front futures contracts (`futures.rs`), dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring (from `V54` a stick in `toxicity/`: markouts from
@@ -214,7 +218,9 @@ an index: load only the rule whose hint matches the current action.
   `/v1/house/state` read of the protocol parameters (with the seq that set them, and from `V54` the toxicity
   score's constants), the pending parameter and listing notices, from V56 the recorded vote contract with the
   passed changes waiting and the restrictions in force, and the latest checkpoint (`api/house_state.rs`,
-  `sequencer/house.rs`), the account read's toxicity score, tier and add-on from `V54`, checkpoint posting
+  `sequencer/house.rs`), the account read (`api/account.rs`) with the toxicity score, tier and add-on from `V54` and the
+  volume tier, counted and pending volume, each tier's progress and each market's best-price bound from `V59`, the
+  signed quote ladder's steps at the account's own band bounds, checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), at most one signed checkpoint on its way to
   finality at a time (`sequencer/checkpoints/hold_back.rs`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
@@ -387,8 +393,9 @@ an index: load only the rule whose hint matches the current action.
   launch margins and fees, from `V52` each market's spread bands in tenths of a bp (#623's tiers,
   with FX and index first bands pending the owner's confirmation), from `V40` each market's
   close-spread ceiling (#147's calibrated values, recomputed for `V52`'s floor and `V54`'s score
-  tiers), and from `V54` the toxicity score's tiers and each market's markout floor, its year's
-  markout spread (#699); a deployment's node sections complete it into a config. Every section
+  tiers), from `V54` the toxicity score's tiers and each market's markout floor, its year's
+  markout spread (#699), and from `V59` the volume tier table (#614, D1); a deployment's node sections
+  complete it into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP, launched with Secure TSC:
@@ -478,6 +485,10 @@ an index: load only the rule whose hint matches the current action.
   close-out of a gaining and a losing position, the account and house reads, a refused cut and a noticed
   raise over TLS, from V57 an add to a position held a day after a noticed 30-minute curve extension
   closing at the launch curve's 15-minute clamp, restart and replay;
+  `dev-volume-tiers.sh`, the V59 volume tiers on a dev node: a fresh wallet's $600k BTC long against an
+  offsetting short paying the first band only to $500k, churn and round trips counting nothing, an open
+  crossing midnight counting on the day it matures, pending volume granting nothing, tier 1 on the third
+  day with its first band to $1M, the account and house reads, restart and replay;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
@@ -637,7 +648,7 @@ an index: load only the rule whose hint matches the current action.
   before, and a job that times out is cancelled rather than failed, so the run continues too.
   `gh run rerun --failed` re-runs the failed, cancelled, and unstarted jobs with `ci-passed`, so a
   re-run after a flake repeats everything the first failure cut short. The test job also runs the
-  corporate-action, operator bounds, parameter notice and holding-time fee dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
+  corporate-action, operator bounds, parameter notice, holding-time fee and volume tier dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
   their own job, `test-production`, which compiles a different feature set.
   `merge-approval.yaml` runs only on merge groups: its `merge-approved` job, the merge-group side of
   the required `merge-approved` check, runs `scripts/check-merge-approved.sh`, which follows the
@@ -792,6 +803,9 @@ Run from the repo root:
 - Holding-time fee dev scenario: `./scripts/dev-holding-fee.sh` (runs the isolated access-screened
   trading, account and house reads and signed admin over TLS scenario with deterministic time, restart
   and public replay)
+- Volume tier dev scenario: `./scripts/dev-volume-tiers.sh` (runs the isolated access-screened trading
+  and account and house reads scenario with deterministic time over three days, restart and public
+  replay)
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault

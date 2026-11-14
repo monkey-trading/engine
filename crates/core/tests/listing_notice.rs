@@ -236,6 +236,7 @@ fn from_v52_no_stress_level_waives_the_size_spread() {
         closeout_level_bps: None,
         stress,
         profit_fee_curve: None,
+        volume_tiers: None,
         effective_at: at,
         score_tiers: None,
     };

@@ -25,6 +25,7 @@ use crate::toxicity::legs::Leg;
 use crate::types::MarketId;
 
 /// What booking a fill tells the score about it.
+#[derive(Clone, Copy)]
 pub(crate) struct FillMark {
     /// The account's position in the market before the fill.
     pub(crate) held: Fixed,
@@ -52,8 +53,10 @@ impl Engine {
     /// part that closes and then the part that opens (see the module docs); its markout is measured
     /// from its index, carries its quantity, the quantity it matched and the quantities it opened and
     /// closed that are left to match, and falls due `HORIZON_MS` later. A close-out is not marked,
-    /// though from `V54` the quantity it closes is no longer open.
-    pub(crate) fn mark_fill(&mut self, exec: &Exec, mark: FillMark) {
+    /// though from `V54` the quantity it closes is no longer open. Returns the quantity the fill closes
+    /// that it matched as a round trip, so `closing` less it is the fill's closed leg; zero before `V54`
+    /// and for a close-out.
+    pub(crate) fn mark_fill(&mut self, exec: &Exec, mark: FillMark) -> Fixed {
         let (account, market, side) = (exec.account, exec.market, exec.side);
         let quote = self.markets[&market].spec.quote_currency;
         let notional = quote.to_usd(mark.qty.mul(mark.price), mark.fx, Rounding::Down);
@@ -65,14 +68,14 @@ impl Engine {
                 let markout = Markout { due, account, market, side, price, notional, qty, matched, open, closed };
                 self.record_markout(markout);
             }
-            return;
+            return Fixed::ZERO;
         }
         let closes = !mark.held.is_zero() && mark.held.signum() != side.sign();
         let closing = if closes { mark.qty.min(mark.held.abs()) } else { Fixed::ZERO };
         let at = (!exec.liquidation).then_some(mark.index);
         let closed_matched = self.match_round_trips((account, market, side), closing, at, Leg::Open);
         if exec.liquidation {
-            return;
+            return closed_matched;
         }
         // A close-out only reduces, so it opens nothing.
         let opening = mark.qty - closing;
@@ -83,6 +86,7 @@ impl Engine {
         let newest = self.markouts.back().is_none_or(|last| last.due <= due);
         self.record_markout(Markout { due, account, market, side, price, notional, qty, matched, open, closed });
         self.index_markout(newest);
+        closed_matched
     }
 
     /// From `V54`, scores each markout that has fallen due: the share of its fill no round trip

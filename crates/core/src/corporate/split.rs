@@ -162,6 +162,7 @@ impl Engine {
                 state.orders.values().filter(|o| o.market == action.market).map(|o| o.order_id).collect();
             let held = self.accounts[&account].positions.contains_key(&action.market);
             self.accounts.insert(account, state);
+            self.scale_volume_lots(account, action.market, new, old);
             if held {
                 self.record_position(account, action.market);
             }

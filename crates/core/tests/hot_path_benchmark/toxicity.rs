@@ -103,7 +103,11 @@ fn toxicity_trigger_latency() {
 /// but the harness's, each priced 200 ms before a grid point and holding a full hour of
 /// markout-spread history; with `stop`, the client and each copy rest a stop buy of 0.01 BTC at that
 /// price. Returns the copies' account keys.
-fn scored_fixture(version: ProtocolVersion, count: usize, stop: Option<&str>) -> (Harness, Client, Vec<String>) {
+pub(super) fn scored_fixture(
+    version: ProtocolVersion,
+    count: usize,
+    stop: Option<&str>,
+) -> (Harness, Client, Vec<String>) {
     let (mut h, client, _) = funded_at(version);
     h.advance_to((h.ts.div_euclid(GRID_MS) + 2) * GRID_MS - 200);
     h.price(BTC, "100000");

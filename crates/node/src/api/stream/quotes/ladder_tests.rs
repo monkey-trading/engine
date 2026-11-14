@@ -431,3 +431,29 @@ fn a_scored_accounts_quote_names_the_toxicity_add_on_its_prices_include() {
     let wider = [tiered.ask[0].price - neutral.ask[0].price, neutral.bid[0].price - tiered.bid[0].price];
     assert!(wider.iter().all(|wider| (*wider - add_on).abs() <= Fixed::from_raw(10)), "{wider:?} against {add_on}");
 }
+
+#[test]
+fn from_v59_the_steps_follow_the_accounts_own_best_price_bound() {
+    let mut engine = funded(100_000_000);
+    let events =
+        apply(&mut engine, T0, Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST }));
+    assert_eq!(events.last(), Some(&Event::AdminApplied), "{events:?}");
+    // BTC's first band ends at $2m, and a fresh account's at a quarter of it: 5 BTC at 100,000.
+    let fresh = read(&engine, TRADER, BTC);
+    assert_eq!(fresh.ask[0].qty, Fixed::from_int(5), "{fresh:?}");
+    // $500k counted on each of the last two days reaches tier 1, whose first band ends at half the
+    // bound, $1m.
+    let mut state = serde_json::to_value(&engine).unwrap();
+    let key = serde_json::to_value(TRADER).unwrap().as_str().unwrap().to_owned();
+    let today = engine_core::volume_tier::day_of(engine.now());
+    let days = [today - 1, today].map(|day| serde_json::json!({"day": day, "volume": "500000"}));
+    state["volumes"][key] = serde_json::json!({ "days": days });
+    let mut tiered: Engine = serde_json::from_value(state).unwrap();
+    tiered.restore_indexes();
+    assert_eq!(tiered.volume_tier(TRADER), 1);
+    let quote = read(&tiered, TRADER, BTC);
+    assert_eq!(quote.ask[0].qty, Fixed::from_int(10), "{quote:?}");
+    // An order of that size fills at that step's price: 2bp on all of it.
+    let (qty, price) = (quote.ask[0].qty, quote.ask[0].price);
+    assert_eq!((price, fitting(&tiered, TRADER, BTC, Side::Buy, qty)), (Fixed::from_int(100_020), price));
+}

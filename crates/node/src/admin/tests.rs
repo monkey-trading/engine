@@ -149,6 +149,7 @@ fn each_action_builds_its_admin_command() {
                 stress: None,
                 score_tiers: None,
                 profit_fee_curve: None,
+                volume_tiers: None,
                 effective_at: 1_798_761_600_000,
             }),
         ),
@@ -249,6 +250,14 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
     };
     assert_eq!(notice.profit_fee_curve, Some(dev_config().genesis.params.profit_fee_curve));
     assert_eq!(notice.stress, None);
+    // A volume tier notice takes the table of the file a later `set-params` carries.
+    let AdminCommand::AnnounceParams(notice) =
+        action(&["announce-params", "--volume-tiers-from", &params, "--effective-at", at]).command().unwrap()
+    else {
+        panic!("announce-params gives notice")
+    };
+    assert_eq!(notice.volume_tiers, Some(dev_config().genesis.params.volume_tiers));
+    assert_eq!(notice.profit_fee_curve, None);
 
     let mut wide = dev_config().genesis.params;
     let top = wide.stress_levels.len() - 1;
