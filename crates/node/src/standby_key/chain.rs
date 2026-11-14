@@ -166,8 +166,8 @@ impl StandbyDomain {
 
 /// What `key` is for `candidate` at the latest agreed block (see `StandbyState`). A promotion counts
 /// while the turn in effect at the block's time names it as its latest assignment, that assignment
-/// installed `key`, the vault is still in the signer epoch it started, and the turn still holds the
-/// generation it reserved.
+/// installed `key`, the vault still names `key` as its signer in the epoch the promotion started, and
+/// the turn still holds the generation it reserved.
 /// Error cases:
 /// - a read fails, or the schedule records a promotion with no generation
 pub(crate) async fn standby_state(
@@ -195,6 +195,10 @@ pub(crate) async fn standby_state(
     let epoch = call(&block, "standby_signer_epoch", domain.vault, signerEpochCall {}).await?;
     if epoch != assignment.signerEpoch {
         return Ok(StandbyState::Unusable("the vault has left the signer epoch the promotion started"));
+    }
+    // The guardian's retirement clears the signer within the epoch.
+    if call(&block, "standby_signer", domain.vault, checkpointSignerCall {}).await? != key {
+        return Ok(StandbyState::Unusable("the vault no longer names the key as its signer"));
     }
     let generation = revisions.first().context("the schedule records a promotion with no generation")?.generation;
     if named.generation != generation {

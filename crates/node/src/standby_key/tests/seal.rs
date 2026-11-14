@@ -118,6 +118,7 @@ async fn a_restart_after_the_promotion_is_superseded_refuses_the_seal() {
                 as Box<dyn Fn(&mut ChainState)>,
         ),
         ("another signer epoch", Box::new(|chain: &mut ChainState| chain.epoch += 1)),
+        ("the guardian's retirement", Box::new(|chain: &mut ChainState| chain.signer = Address::ZERO)),
         ("a release move's generation", Box::new(|chain: &mut ChainState| chain.named.3 += 1)),
     ] {
         let dir = scratch_dir("standby-superseded");
