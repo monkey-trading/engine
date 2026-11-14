@@ -18,10 +18,11 @@ use crate::checkpoints::{CheckpointChain, CurrentRelease};
 use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::{current_release, ensure_named, vault_reader};
 use crate::log::Checkpoint;
+use crate::log_check::VerifiedHead;
 use crate::metrics::Metrics;
 use crate::tee::certificates::CertificateStore;
 use crate::tee::clock::GuestClock;
-use crate::tee::keys::KeySet;
+use crate::tee::keys::{Head, KeySet};
 use crate::tee::sealing::{KeyStore, Release, file_for};
 use crate::tee::{Attestation, AttestationBundle, Attestor, EnclaveKey, attest_bundle};
 use crate::tls::TlsIdentity;
@@ -439,13 +440,16 @@ pub(super) async fn watch_release(
 
 /// Refuses the first start after a handover unless the log ends at the predecessor's final
 /// checkpoint, so this release never continues from a log the host truncated, replaced, or extended
-/// at the handover; once it passes, the head is forgotten, since this release then extends the log.
+/// at the handover; once it passes, the head is forgotten, since this release then extends the log,
+/// and the head the boundary's log check verified becomes what `check` makes of the one the keys
+/// carried and the handed-over checkpoint, sealed in the same write (`log_check::own_check`).
 /// Error cases:
 /// - the log does not end at that checkpoint, or forgetting the head cannot be sealed
-pub(super) fn check_predecessor_head(
+pub(crate) fn check_predecessor_head(
     store: Option<&KeyStore>,
     last_seq: Option<u64>,
     last_checkpoint: Option<&Checkpoint>,
+    check: impl FnOnce(Option<VerifiedHead>, &Head) -> Option<VerifiedHead>,
 ) -> anyhow::Result<()> {
     let Some(head) = store.and_then(|store| store.keys().predecessor_head) else { return Ok(()) };
     let ends_at_head =
@@ -458,7 +462,11 @@ pub(super) fn check_predecessor_head(
         head.root
     );
     let store = store.expect("a head comes from a store");
-    store.update(|keys| keys.predecessor_head = None).context("forgetting the predecessor's checkpoint")
+    let update = |keys: &mut KeySet| {
+        keys.log_check = check(keys.log_check, &head);
+        keys.predecessor_head = None;
+    };
+    store.update(update).context("forgetting the predecessor's checkpoint")
 }
 
 /// Why a release with no keys sealed in `dir` for the vault's `generation` of it, and no flag, does

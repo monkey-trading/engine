@@ -44,6 +44,10 @@ pub(crate) struct KeySet {
     /// segments: inside the ciphertext, the listing binds the raw frames that follow the keys.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handover_tail: Option<crate::handover::tail::TailListing>,
+    /// The head of the log the last boundary's check verified (`log_check`), which a restart restores
+    /// and an approved upgrade carries to the next release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_check: Option<crate::log_check::VerifiedHead>,
 }
 
 /// An ACME account and the directory it is registered with.
@@ -80,6 +84,7 @@ impl fmt::Debug for KeySet {
             .field("acme_account", &self.acme_account.as_ref().map(|account| &account.directory_url))
             .field("certificate", &self.certificate.as_ref().map(|certificate| &certificate.directory_url))
             .field("predecessor_head", &self.predecessor_head)
+            .field("log_check", &self.log_check)
             .finish_non_exhaustive()
     }
 }
@@ -98,6 +103,7 @@ impl KeySet {
             predecessor_head: None,
             handover_tails: Vec::new(),
             handover_tail: None,
+            log_check: None,
         })
     }
 
@@ -160,6 +166,18 @@ mod tests {
 
         let printed = format!("{keys:?}");
         assert!(!printed.contains(&keys.signing_key) && !printed.contains(&keys.tls_key), "{printed}");
+    }
+
+    #[test]
+    fn a_verified_head_round_trips_and_a_set_without_one_encodes_as_before() {
+        let mut keys = KeySet::generate().unwrap();
+        let encoded: serde_json::Value = serde_json::to_value(&keys).unwrap();
+        assert!(encoded.get("log_check").is_none(), "a set with no verified head names one: {encoded}");
+        let seq = 7;
+        let (link, root) = (alloy::primitives::B256::repeat_byte(1), alloy::primitives::B256::repeat_byte(2));
+        keys.log_check = Some(crate::log_check::VerifiedHead { seq, link, root });
+        let restored: KeySet = serde_json::from_slice(&serde_json::to_vec(&keys).unwrap()).unwrap();
+        assert_eq!(restored.log_check, keys.log_check);
     }
 
     #[test]

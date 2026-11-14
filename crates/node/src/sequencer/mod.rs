@@ -25,12 +25,14 @@ mod claims;
 pub use claims::ClaimAnswer;
 mod messages;
 pub use messages::{
-    AccountPayouts, HandoverRefused, PayoutView, Query, Reissue, ReissueScreening, Request, SignedWithdrawal,
-    StreamBody, StreamMsg,
+    AccountPayouts, CheckWait, HandoverRefused, PayoutView, Query, Reissue, ReissueScreening, Request,
+    SignedWithdrawal, StreamBody, StreamMsg,
 };
 mod access;
 mod benchmark_schedule;
 pub(crate) mod house;
+mod log_check;
+pub(crate) use log_check::LogCheckSetup;
 mod payout_schedule;
 #[cfg(test)]
 mod payout_tests;
@@ -120,6 +122,8 @@ pub struct Sequencer {
     turn_release: Option<engine_core::eip712::B256>,
     /// With sealed keys, the generation each `TurnTaken` waits for them to be sealed in.
     turn_sealing: Option<turns::TurnSealing>,
+    /// The boundary's log check, which `release_payouts` gates signatures on.
+    log_check: log_check::LogCheck,
     governance: Option<engine_core::governance::GovernanceConfig>,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
@@ -186,6 +190,7 @@ impl Sequencer {
     pub async fn run(mut self, mut rx: mpsc::Receiver<Request>) -> anyhow::Result<()> {
         let mut batch = Batch::default();
         let mut queries: Vec<Query> = Vec::new();
+        self.refresh_log_check();
         while let Some(first) = self.next_request(&mut rx).await? {
             let started = self.clock.instant();
             let mut sequenced = false;
@@ -204,6 +209,9 @@ impl Sequencer {
                     Request::Quote { cmd, not_after } => sequenced |= self.sequence_quote(cmd, not_after)?.is_some(),
                     Request::Query(q) => queries.push(q),
                     Request::PrefixAt { seq, reply } => _ = reply.send(self.prefixes.prefix_at(seq)),
+                    Request::LogChecked { head, candidate, release, reply } => {
+                        _ = reply.send(self.log_checked(head, (candidate, release)))
+                    }
                     Request::HouseState(reply) => self.house.wait(reply),
                     Request::TimeSample(sample) => self.take_sample(sample)?,
                     Request::Sync(reply) => batch.syncs.push(reply),

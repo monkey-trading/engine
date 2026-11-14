@@ -318,7 +318,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let marks = Rc::new(RefCell::new(MarkFold::new(Retentions::of(self.cfg.history.marks.as_ref())?)));
         let started = Instant::now();
         let segment_commands = self.cfg.node.segment_commands;
-        let kept = (Some(stats.clone()), Some(marks.clone()));
+        let kept = (Some(stats.clone()), Some(marks.clone()), Some(self.checked.clone()));
         let stopping = &self.stopping;
         let follower = Follower::open_pinned(dir, segment_commands, domain, enclave, signers, kept, posted, |entry| {
             anyhow::ensure!(!stopping.load(Ordering::Acquire), Stopping);
