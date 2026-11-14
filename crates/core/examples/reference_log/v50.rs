@@ -54,6 +54,7 @@ pub(crate) fn session(h: &mut Harness) {
         block: 50_000_020,
         block_hash: alloy_primitives::B256::repeat_byte(50),
         block_time: Some(effective_at),
+        named_turn: None,
     };
     h.cmd(frontier);
     h.cmd(Command::Tick);

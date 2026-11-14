@@ -44,10 +44,10 @@ fn a_voted_base_fee_never_falls_below_launch() {
 
 #[test]
 fn a_voted_curve_extension_lends_an_add_no_more_than_the_launch_curves_last_hold() {
-    // A declared client holds a BTC long under the latest version with rotation on, and a vote extends
-    // the curve to 30 minutes with a flat 10% tail. The vote moves the curve in force, not the launch
-    // curve, so a ninefold add to the long, held a week, counts the units held as 15 minutes old: the
-    // open time moves 90 s back, not the 180 s the voted curve's reach would give.
+    // A declared client holds a BTC long under the latest version with rotation on and a set in
+    // effect, and a vote extends the curve to 30 minutes with a flat 10% tail. The vote moves the curve
+    // in force, not the launch curve, so a ninefold add to the long, held a week, counts the units held
+    // as 15 minutes old: the open time moves 90 s back, not the 180 s the voted curve's reach would give.
     let (mut h, client, _) = funded_at(ProtocolVersion::LATEST);
     let config = engine_core::StakingConfig {
         liquidity_floor: f("1000000"),
@@ -57,6 +57,8 @@ fn a_voted_curve_extension_lends_an_add_no_more_than_the_launch_curves_last_hold
     };
     h.operator_admin(AdminCommand::InitStaking(config));
     h.admin(AdminCommand::SetGovernance(GovernanceConfig { vote: VOTE, restriction_ttl_ms: TTL }));
+    let now = h.ts;
+    super::rotation::adopt_set(&mut h, 1, now);
     switch_rotation(&mut h, true);
     let launch = h.engine.operator_bounds().launch_curve.clone();
     let extended = with_params(&h, |params| {

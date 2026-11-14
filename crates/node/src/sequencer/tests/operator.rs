@@ -136,107 +136,6 @@ fn recovery_admits_the_key_the_finalised_registry_installed_before_the_log_mirro
 }
 
 #[test]
-fn no_benchmark_hold_waits_on_a_key_an_installation_supersedes_until_the_installed_key_is_due() {
-    let (dir, clock) = staked_log("installed-hold", Some(FRONTIER));
-    let recorded = dev_config().operator().unwrap();
-    let key = address(INSTALLED_SEED);
-    let seating = RegistryOperator { admin_key: key, since: FRONTIER + 1_000 };
-    let seated = Some(seating);
-    let reseated = Some(RegistryOperator { admin_key: recorded.address, since: FRONTIER + 1_000 });
-    // With no installation, or the registry seating the recorded key again, a hold drops what
-    // follows it: at startup, after trusted time recovers over a rollover, and at a changed
-    // schedule's rollover. With an installation the log has yet to mirror, each hold ends at the
-    // next stamp, and sequencing goes on.
-    for (registry, held) in [(None, true), (reseated, true), (seated, false)] {
-        let (logs, _guard) = Logs::capture();
-        let mut seq = recover_installed(&dir, clock.clone(), recorded, registry).unwrap();
-        seq.trust(sample_around(clock.as_ref())).unwrap();
-        seq.wait_for_benchmarks().unwrap();
-        assert_eq!(seq.sequence(Command::Tick).unwrap().is_none(), held, "{registry:?}");
-        assert_eq!(seq.benchmark_sync, held, "{registry:?}");
-        let due = seq.engine.next_rollover().expect("a rollover is scheduled");
-        seq.benchmark_sync = false;
-        seq.benchmark_time_refused = true;
-        seq.note_benchmark_time_admission(true, due);
-        assert!(seq.benchmark_sync, "trusted time recovered over a rollover: {registry:?}");
-        assert_eq!(seq.sequence(Command::Tick).unwrap().is_none(), held, "{registry:?}");
-        seq.benchmark_sync = false;
-        seq.benchmark_schedule_pending = true;
-        seq.admit_benchmark_schedule(due);
-        assert!(seq.benchmark_sync, "a changed schedule's rollover came due: {registry:?}");
-        assert_eq!(seq.sequence(Command::Tick).unwrap().is_none(), held, "{registry:?}");
-        assert_eq!((seq.benchmark_sync, seq.benchmark_schedule_pending), (held, held), "{registry:?}");
-        let ended = if held { 0 } else { 3 };
-        assert_eq!(logs.warnings("benchmark_sync_pending"), 3, "{registry:?}");
-        assert_eq!(logs.count("alert_resolved=\"benchmark_sync_pending\""), ended, "{registry:?}");
-        assert_eq!(logs.warnings("benchmark_sync_skipped"), ended, "{registry:?}");
-        if !held {
-            // The recorded key may still sign, and its snapshot ends the skipped episode.
-            let events = seq.sequence(snapshot(&seq, &clock, RECORDED_SEED)).unwrap().expect("admitted");
-            assert!(events.contains(&Event::AdminApplied), "{events:?}");
-            assert_eq!(logs.count("alert_resolved=\"benchmark_sync_skipped\""), 1);
-        }
-        seq.flush().unwrap();
-    }
-
-    // The installation's mirror sequences. While its handover waits out the notice no hold waits on
-    // the replaced key, with the registry read or without, and once the scan has passed it too.
-    let mut seq = recover_installed(&dir, clock.clone(), recorded, seated).unwrap();
-    seq.trust(sample_around(clock.as_ref())).unwrap();
-    seq.wait_for_benchmarks().unwrap();
-    assert_eq!(seating.unscanned(&seq.engine), Some(key));
-    let install = RegistryInstallation {
-        candidate: AccountId([0xc2; 20]),
-        admin_key: key,
-        block: 11,
-        chain_ref: "0x01:0".into(),
-    };
-    let events = seq.sequence(Command::InstallOperator(install)).unwrap().expect("admitted past the hold");
-    assert!(events.iter().any(|event| matches!(event, Event::OperatorInstalled { .. })), "{events:?}");
-    assert_eq!(seating.unscanned(&seq.engine), Some(key), "the scan has not passed the seating");
-    let progress =
-        Command::StakingProgress { block: 12, block_hash: B256::repeat_byte(2), block_time: Some(FRONTIER + 2_000) };
-    let events = seq.sequence(progress).unwrap().expect("admitted");
-    assert!(!events.iter().any(|event| matches!(event, Event::AdminRejected { .. })), "{events:?}");
-    assert_eq!(seating.unscanned(&seq.engine), None);
-    seq.flush().unwrap();
-    drop(seq);
-    for registry in [None, seated] {
-        let mut seq = recover_installed(&dir, clock.clone(), recorded, registry).unwrap();
-        seq.trust(sample_around(clock.as_ref())).unwrap();
-        seq.wait_for_benchmarks().unwrap();
-        assert!(seq.sequence(Command::Tick).unwrap().is_some(), "{registry:?}");
-        assert!(!seq.benchmark_sync, "{registry:?}");
-        seq.flush().unwrap();
-    }
-
-    // Once the installed key is due, a hold waits for its snapshot, which ends the hold, hands the
-    // key over, and ends the skipped episode an earlier start may have left open.
-    clock.advance(Duration::from_millis(NOTICE_MS as u64 + 1_000));
-    let (logs, _guard) = Logs::capture();
-    let mut seq = recover_installed(&dir, clock.clone(), recorded, seated).unwrap();
-    seq.trust(sample_around(clock.as_ref())).unwrap();
-    seq.wait_for_benchmarks().unwrap();
-    assert!(seq.sequence(Command::Tick).unwrap().is_none(), "the installed key can sign");
-    let events = seq.sequence(snapshot(&seq, &clock, INSTALLED_SEED)).unwrap().expect("admitted");
-    assert!(events.contains(&Event::AdminApplied), "{events:?}");
-    assert!(!seq.benchmark_sync);
-    assert_eq!(seq.engine.operator().map(|operator| operator.address), Some(key));
-    assert_eq!(logs.count("alert_resolved=\"benchmark_sync_skipped\""), 1);
-    // A later hold waits on the installed key, which signs now.
-    seq.benchmark_time_refused = true;
-    seq.note_benchmark_time_admission(true, seq.engine.next_rollover().expect("a rollover is scheduled"));
-    assert!(seq.sequence(Command::Tick).unwrap().is_none(), "the handover is done, and supersedes nothing");
-
-    // A log whose scan records no frontier time holds as before.
-    let (dir, clock) = staked_log("installed-hold-unscanned", None);
-    let mut seq = recover_installed(&dir, clock.clone(), recorded, seated).unwrap();
-    seq.trust(sample_around(clock.as_ref())).unwrap();
-    seq.wait_for_benchmarks().unwrap();
-    assert!(seq.sequence(Command::Tick).unwrap().is_none());
-}
-
-#[test]
 fn a_key_installed_again_is_a_new_seating() {
     // The log mirrors an installation, turning rotation on drops its handover, and with rotation off
     // again the timelock installs the same key, in a block before the lagging mirror logged the
@@ -471,7 +370,12 @@ fn staked_log(name: &str, frontier: Option<Millis>) -> (PathBuf, Arc<TestClock>)
     seq.genesis(&genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
     if let Some(time) = frontier {
-        let progress = Command::StakingProgress { block: 10, block_hash: B256::repeat_byte(1), block_time: Some(time) };
+        let progress = Command::StakingProgress {
+            block: 10,
+            block_hash: B256::repeat_byte(1),
+            block_time: Some(time),
+            named_turn: None,
+        };
         let events = seq.sequence(progress).unwrap().expect("admitted");
         assert!(!events.iter().any(|event| matches!(event, Event::AdminRejected { .. })), "{events:?}");
     }

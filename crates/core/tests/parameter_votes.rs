@@ -1,8 +1,8 @@
-//! Parameter changes by stake-weighted operator vote from `V56`, through `Engine::apply`: passed
-//! proposals mirrored once, a normal change applying no sooner than seven days after it is logged, a
-//! fast-path restriction in force at once and lapsing at its lifetime, the values in force the
-//! stricter of the baseline and every restriction, and the operator's and the node's own commands
-//! for the governed fields refused while rotation is on.
+//! Parameter changes by stake-weighted operator vote from `V56`, under `V59`'s rules but where a test
+//! names `V56`, through `Engine::apply`: passed proposals mirrored once, a normal change applying no
+//! sooner than seven days after it is logged, a fast-path restriction in force at once and lapsing at
+//! its lifetime, the values in force the stricter of the baseline and every restriction, and the
+//! operator's and the node's own commands for the governed fields refused while votes govern.
 
 mod common;
 
@@ -22,14 +22,29 @@ const VOTE: AccountId = AccountId([0x70; 20]);
 /// How long a restriction lasts: a day.
 const TTL: Millis = 24 * 60 * 60 * 1000;
 
-/// `V21` with three stress levels, a trader holding 9 BTC at 10% margin on 15,000 of equity, then
-/// staking, `V37`, the ceilings, `V56`, the recorded vote contract and rotation on.
+/// `voting` under `V59` with rotation on and a rotation set in effect: votes govern.
 fn governed() -> Harness {
     governed_with(TTL)
 }
 
 /// `governed`, with restrictions lasting `ttl`.
 fn governed_with(ttl: Millis) -> Harness {
+    governed_under(ProtocolVersion::V59, ttl)
+}
+
+/// `voting` under `version`, with a rotation set in effect from now and rotation on.
+fn governed_under(version: ProtocolVersion, ttl: Millis) -> Harness {
+    let mut h = voting(version, ttl);
+    let now = h.ts;
+    rotation::adopt_set(&mut h, 1, now);
+    switch_rotation(&mut h, true);
+    h
+}
+
+/// `V21` with three stress levels, a trader holding 9 BTC at 10% margin on 15,000 of equity, then
+/// staking, `V37`, the ceilings and `version`, and from `V56` the recorded vote contract, with
+/// restrictions lasting `ttl`. Rotation is off and no rotation set is mirrored.
+fn voting(version: ProtocolVersion, ttl: Millis) -> Harness {
     let mut h = Harness::v21();
     let mut parameters = h.engine.params().expect("the fixture sets parameters").clone();
     let top = StressLevel { min_spread_bps: 8, trigger: None, ..parameters.stress_levels[1].clone() };
@@ -49,16 +64,17 @@ fn governed_with(ttl: Millis) -> Harness {
     h.operator_admin(AdminCommand::InitStaking(config));
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V37 });
     install_expect(&mut h, ceilings());
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V56 });
-    h.admin(AdminCommand::SetGovernance(GovernanceConfig { vote: VOTE, restriction_ttl_ms: ttl }));
-    switch_rotation(&mut h, true);
+    h.admin(AdminCommand::ActivateProtocol { version });
+    if version >= ProtocolVersion::V56 {
+        h.admin(AdminCommand::SetGovernance(GovernanceConfig { vote: VOTE, restriction_ttl_ms: ttl }));
+    }
     h
 }
 
 fn switch_rotation(h: &mut Harness, enabled: bool) {
     let (block, chain_ref) = (h.log.len() as u64, format!("0xrotation:{}", h.log.len()));
     let events = h.cmd(Command::SwitchRotation { enabled, election_cancelled: false, block, chain_ref });
-    assert!(matches!(events.last(), Some(Event::RotationSwitched { .. })), "{events:?}");
+    assert!(events.iter().any(|e| matches!(e, Event::RotationSwitched { .. })), "{events:?}");
 }
 
 /// Mirrors proposal `proposal` passing on `fast` with `command`.
@@ -201,10 +217,15 @@ fn while_rotation_is_on_the_operators_and_the_nodes_governed_commands_are_refuse
         profit_fee_curve: None,
         effective_at: h.ts + NOTICE_MS,
     });
-    for command in [fee.clone(), margin(&h, BTC, 1_500), notice.clone()] {
+    let markup = AdminCommand::AnnounceMarkup { market: BTC, markup_bps: 300, effective_at: h.ts + NOTICE_MS };
+    for command in [fee.clone(), margin(&h, BTC, 1_500), notice.clone(), markup.clone()] {
         rejected(&h.operate(command), "only a passed vote changes this");
     }
     let unsigned = h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V56 }));
+    rejected(&unsigned, "only a passed vote applies this command");
+    // Refused for the vote before the weighting the parameters already carry could refuse it.
+    let weighting = h.engine.params().unwrap().toxicity.notional.expect("the parameters weigh by notional");
+    let unsigned = h.cmd(Command::Admin(AdminCommand::SetToxicityNotional(weighting)));
     rejected(&unsigned, "only a passed vote applies this command");
     // The levers kept with the operator still apply.
     assert_eq!(
@@ -219,13 +240,14 @@ fn while_rotation_is_on_the_operators_and_the_nodes_governed_commands_are_refuse
     // With rotation off, the timelock governs and the operator's notices apply again.
     switch_rotation(&mut h, false);
     assert_eq!(h.operate(notice).last(), Some(&Event::AdminApplied));
+    assert_eq!(h.operate(markup).last(), Some(&Event::AdminApplied));
     h.advance(NOTICE_MS);
     assert_eq!(h.operate(fee).last(), Some(&Event::AdminApplied));
     assert_eq!(h.engine.params().unwrap().profit_fee_bps, 1_200);
 }
 
 #[test]
-fn a_proposal_mirrored_with_rotation_off_or_no_canonical_command_is_credited_and_refused() {
+fn a_proposal_mirrored_with_no_set_in_effect_or_no_canonical_command_is_credited_and_refused() {
     let mut h = governed();
     let passed = PassedProposal {
         proposal: 1,
@@ -237,10 +259,16 @@ fn a_proposal_mirrored_with_rotation_off_or_no_canonical_command_is_credited_and
     };
     refused(&h.cmd(Command::PassProposal(Box::new(passed))), "not an admin command's canonical JSON");
     assert!(h.engine.is_staking_credited("0xbytes:0"));
+    let mut h = voting(ProtocolVersion::V59, TTL);
+    switch_rotation(&mut h, true);
+    let command = margin(&h, BTC, 1_500);
+    refused(&pass(&mut h, 2, false, command), "no rotation set is in effect");
+    assert!(h.engine.governance().pending.is_empty());
+    // Before `V59`, a proposal mirrored with rotation off is refused.
+    let mut h = governed_under(ProtocolVersion::V56, TTL);
     switch_rotation(&mut h, false);
     let command = margin(&h, BTC, 1_500);
-    refused(&pass(&mut h, 2, false, command), "rotation is off");
-    assert!(h.engine.governance().pending.is_empty());
+    refused(&pass(&mut h, 3, false, command), "rotation is off");
 }
 
 #[test]
@@ -441,5 +469,7 @@ mod holding_fee;
 mod limits;
 #[path = "parameter_votes/listing.rs"]
 mod listing;
+#[path = "parameter_votes/rotation.rs"]
+mod rotation;
 #[path = "parameter_votes/toxicity.rs"]
 mod toxicity;

@@ -212,8 +212,10 @@ impl StakingCursor {
 /// deploys the staking contract atomically no event can legitimately exist in the window, so any
 /// event is a contradiction that stalls rather than mirrors. Its second half is whether a configured
 /// schedule has been read to name the registry, and its third whether a configured vote contract has
-/// been read to name the schedule: a schedule or vote event before then stalls the same way. A failed
-/// event read halves `range`; a completed chunk lets it grow back.
+/// been read to name the schedule: a schedule or vote event before then stalls the same way. With
+/// `turns`, the bound registry, the progress from `V59` carries the registry's turn state at `to`: the
+/// boundary of the drawn turn naming the operator, or none. A failed event read halves `range`; a
+/// completed chunk lets it grow back.
 /// Error cases:
 /// - stalled: a read fails, an event is on an unproven block, an event arrives before the
 ///   registry binding is verified, or the engine refuses a mirror
@@ -228,6 +230,7 @@ pub(super) async fn mirror<V: VaultReader>(
     window: std::ops::RangeInclusive<u64>,
     hashes: &std::collections::BTreeMap<u64, B256>,
     (bound, schedule_bound, vote_bound): (bool, bool, bool),
+    turns: Option<alloy::primitives::Address>,
 ) -> Result<(), PollError> {
     let (from, to) = (*window.start(), *window.end());
     if from > to {
@@ -294,7 +297,12 @@ pub(super) async fn mirror<V: VaultReader>(
         // From V37 the frontier carries its block time, which an elected key waits for.
         let block_time =
             if version >= ProtocolVersion::V37 { Some(block_time(reader, to, block_hash).await?) } else { None };
-        let events = submit(tx, Command::StakingProgress { block: to, block_hash, block_time }).await?;
+        let named_turn = match turns.filter(|_| version >= ProtocolVersion::V59) {
+            Some(registry) => Some(named_turn(reader, registry, to, block_hash).await?),
+            None => None,
+        };
+        let progress = Command::StakingProgress { block: to, block_hash, block_time, named_turn };
+        let events = submit(tx, progress).await?;
         if events.iter().any(|event| matches!(event, Event::AdminRejected { .. })) {
             return Err(PollError::Stalled(Stall::Refused(anyhow::anyhow!("the engine refused staking progress"))));
         }
@@ -375,6 +383,20 @@ async fn block_time<V: VaultReader>(reader: &V, to: u64, hash: B256) -> Result<M
         .ok()
         .and_then(|seconds| seconds.checked_mul(1000))
         .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("block {to}'s time {} is out of range", link.timestamp)))
+}
+
+/// The boundary of the drawn turn `registry` names the operator by in proven block `to`, if one does.
+/// Error cases:
+/// - stalled: the read fails, or its answer does not decode
+async fn named_turn<V: VaultReader>(
+    reader: &V,
+    registry: alloy::primitives::Address,
+    to: u64,
+    hash: B256,
+) -> Result<Option<Millis>, PollError> {
+    let at = crate::custody::evm::BlockRef { number: to, hash };
+    let out = reader.contract_call(at, registry, crate::custody::registry::rotation_state_call()).await;
+    crate::custody::registry::decode_named_turn(&out.map_err(PollError::rpc)?).map_err(PollError::rpc)
 }
 
 /// MONKEY base units as the engine's `TokenUnits`, refusing amounts past u128.

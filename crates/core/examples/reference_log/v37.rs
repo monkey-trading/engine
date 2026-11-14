@@ -80,6 +80,7 @@ pub(crate) fn session(h: &mut Harness) {
         block: 37_000_030,
         block_hash: alloy_primitives::B256::repeat_byte(37),
         block_time: Some(effective_at),
+        named_turn: None,
     };
     assert!(h.cmd(frontier).is_empty());
     refused(&h.operate_as(OPERATOR_SEED, reduce_only(false)));

@@ -86,6 +86,29 @@ async fn open_proposals_are_listed_newest_first_and_the_read_stops_past_the_long
 }
 
 #[tokio::test]
+async fn the_read_stops_one_page_past_the_first_proposal_older_than_the_longest_window() {
+    let day = 86_400;
+    // Ids 1 to 16, two pages, opened 40 days ago, below ids 17 to 24 opened an hour ago.
+    let mut proposals: Vec<_> = (1..=16).map(|id| proposal(id, 40 * day, day, false)).collect();
+    proposals.extend((17..=24).map(|id| proposal(id, 3_600, 2 * day, false)));
+    let mut providers = honest(1);
+    for provider in &mut providers {
+        provider.model.proposals = proposals.clone();
+    }
+    let (mut reader, _) = reader(providers.clone(), Duration::from_secs(60));
+    reader.vote = Some(VOTE);
+    let list = json_of(&reader.read().await.unwrap());
+    let open: Vec<u64> =
+        list["proposals"]["open"].as_array().unwrap().iter().map(|p| p["id"].as_u64().unwrap()).collect();
+    assert_eq!(open, (17..=24).rev().collect::<Vec<_>>());
+    assert_eq!(list["proposals"]["truncated"], json!(false));
+    // The page of 17 to 24, then the page of 9 to 16, whose proposals are past the longest window, and
+    // no page of 1 to 8. The three providers share one log: each call is made to every one of them.
+    let pages = providers[0].calls().iter().filter(|selector| **selector == proposalsCall::SELECTOR).count();
+    assert_eq!(pages, 2 * 3);
+}
+
+#[tokio::test]
 async fn a_read_stops_at_its_page_limit_and_says_so() {
     let proposals: Vec<_> = (1..=80).map(|id| proposal(id, 3_600, 86_400, false)).collect();
     let list = json_of(&reading(proposals).read().await.unwrap());

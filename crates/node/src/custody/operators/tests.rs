@@ -123,7 +123,7 @@ impl Provider {
         Self { model, calls: Arc::default(), down: false, fails: None, fail_from: None }
     }
 
-    fn calls(&self) -> Vec<[u8; 4]> {
+    pub(super) fn calls(&self) -> Vec<[u8; 4]> {
         self.calls.lock().unwrap().clone()
     }
 }

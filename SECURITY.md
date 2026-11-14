@@ -373,7 +373,16 @@ turn until the next boundary and the governance fallback (rotation off and `inst
 drawn turns end) applies; from V56, while rotation is on, the governed parameters, listings,
 close-spread adoptions, the access policy and protocol activation change only by a proposal the
 rotation set passes with more than two thirds of its snapshotted weight on the vote contract, which
-the engine mirrors from finalised events, so the operator's own commands for them are refused; the
+the engine mirrors from finalised events, so the operator's own commands for them are refused; from
+V59 votes govern only while a rotation set with members is in effect, as only its members can propose,
+so from rotation's start until the first set takes effect, and while an empty set is in effect, the
+operator keeps its bounded commands, and a drawn turn keeps votes governing from its boundary until an
+installation; a turn the engine refused before V59 left no boundary, so each mirrored staking frontier
+carries the registry's turn state at that finalised block, read through the custody quorum, and from
+V59's activation until the first such frontier a log holding rotation sets counts rotation as on; a
+voted access policy that a
+member's config does not name stops that member's node from starting on the log, so every member
+moves to a release whose config names it before it is proposed, as for a command a release added; the
 vote contract carries no limits, and the engine holds each change to the ±50% range of the launch
 profit fee and close-out level, lower-only close-spread ceilings at or above their market's launch
 close charge, the V52 listing bounds (each spread band from its launch rate to twice it, each margin

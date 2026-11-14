@@ -339,7 +339,8 @@ async fn run_configured(
     println!("{}", serde_json::to_string(&req)?);
     let events = submit(&node, &req).await?;
     println!("{}", serde_json::to_string(&events)?);
-    if let Some(Event::AdminRejected { reason }) = events.last() {
+    // The withdrawals the queue pays after the command follow its outcome.
+    if let Some(reason) = crate::sequencer::genesis::rejection(&events) {
         bail!("the engine rejected the command: {reason}");
     }
     Ok(req)
