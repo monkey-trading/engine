@@ -41,7 +41,7 @@ sol! {
 
 // The LogHeads companion contract's ABI, as `contracts/src/LogHeads.sol` declares it (#541).
 sol! {
-    function heads(uint64 epoch) external view returns (uint64 seq, bytes32 link);
+    function heads(uint64 epoch) external view returns (uint64 seq, bytes32 link, uint64 signedAt, uint64 boundBlock, uint64 postedAt);
 }
 
 // The staking contract's mirrorable events, and the registry that deployed it, as

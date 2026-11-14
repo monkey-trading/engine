@@ -29,7 +29,7 @@ use crate::log::CheckpointDomain;
 // history, as `contracts/src/Vault.sol` declares it.
 sol! {
     function post(uint64 seq, bytes32 link, uint64 parentSeq, bytes32 parentLink, bytes signature) external;
-    function heads(uint64 epoch) external view returns (uint64 seq, bytes32 link);
+    function heads(uint64 epoch) external view returns (uint64 seq, bytes32 link, uint64 signedAt, uint64 boundBlock, uint64 postedAt);
     function signerAtEpoch(uint64 epoch) external view returns (address signer);
 }
 

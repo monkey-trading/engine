@@ -14,7 +14,7 @@ use crate::custody::evm::BlockRef;
 pub(in crate::custody::tests) const LOG_HEADS: Address = Address::repeat_byte(0x11);
 
 sol! {
-    function heads(uint64 epoch) external view returns (uint64 seq, bytes32 link);
+    function heads(uint64 epoch) external view returns (uint64 seq, bytes32 link, uint64 signedAt, uint64 boundBlock, uint64 postedAt);
     function signerAtEpoch(uint64 epoch) external view returns (address signer);
 }
 
@@ -44,7 +44,7 @@ impl Epochs {
         {
             self.reads.push((at.number, call.epoch));
             let (seq, link) = self.by_epoch.get(&call.epoch).and_then(|(_, head)| *head).unwrap_or_default();
-            return Ok(headsCall::abi_encode_returns(&headsReturn { seq, link }).into());
+            return Ok(headsCall::abi_encode_returns(&headsReturn { seq, link, signedAt: 0, boundBlock: 0, postedAt: 0 }).into());
         }
         bail!("the fake chain answers no such call")
     }
