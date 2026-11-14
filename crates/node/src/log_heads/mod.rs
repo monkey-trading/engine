@@ -35,6 +35,10 @@ use crate::log::CheckpointDomain;
 use crate::sequencer::Request;
 use crate::tee::EnclaveKey;
 
+/// How often the poster reads whether a turn names the operator, between its posts: a turn's start
+/// moves it to v2 heads within this, well inside a heartbeat interval.
+const TURN_READ_EVERY: Duration = Duration::from_secs(10);
+
 /// A rollback freeze latch shared between the log-head poster and the sequencer. The poster sets
 /// it the moment it detects a rollback, before its `Freeze` request dequeues behind work already
 /// queued, so nothing is stamped after the detection — the ordinary request queue cannot delay it.
@@ -219,6 +223,10 @@ impl<R: HeadsChain> Poster<R> {
         // it, and the newest signing time of a head it signed.
         let mut bound: Option<v2::Assignment> = None;
         let mut last_signed = 0_u64;
+        // The last read of the turn naming the operator, and when it was made: read again at least
+        // every `TURN_READ_EVERY`, and before each post.
+        let mut turn: Option<TurnHeads> = None;
+        let mut turn_read: Option<tokio::time::Instant> = None;
         loop {
             // A release only extends the evidence; reads run on the retry cadence, whatever the
             // release rate, so the poster never adds more than one quorum read per tick to the
@@ -248,9 +256,6 @@ impl<R: HeadsChain> Poster<R> {
                     continue;
                 }
             };
-            if std::mem::take(&mut read_failed) {
-                info!(alert_resolved = "log_head_read_failed", "reading the posted log head recovered");
-            }
             if epoch != confirmed_epoch {
                 // A signer rotation starts a new chain: the epoch's first post names no parent.
                 // The retained ancestry stays: a cumulative prefix commits to log history, not to
@@ -322,17 +327,21 @@ impl<R: HeadsChain> Poster<R> {
             }
             // While a turn names the operator, the head is the heartbeat: it goes out at least twice per
             // heartbeat interval, as v2.
-            let turn = match &self.heartbeat {
-                Some(_) => match self.chain.turn().await {
-                    Ok(turn) => turn,
+            let pace = turn.map_or(self.interval, |turn| turn.interval / 3);
+            let due = posted_at.is_none_or(|at| at.elapsed() >= pace);
+            if self.heartbeat.is_some() && (due || turn_read.is_none_or(|at| at.elapsed() >= TURN_READ_EVERY)) {
+                match self.chain.turn().await {
+                    Ok(read) => (turn, turn_read) = (read, Some(tokio::time::Instant::now())),
                     Err(cause) => {
                         warn!(alert = "log_head_read_failed", "reading the turn naming the operator failed: {cause:#}");
                         read_failed = true;
                         continue;
                     }
-                },
-                None => None,
-            };
+                }
+            }
+            if std::mem::take(&mut read_failed) {
+                info!(alert_resolved = "log_head_read_failed", "reading the posted log head recovered");
+            }
             let pace = turn.map_or(self.interval, |turn| turn.interval / 3);
             let carried = first_post.is_some_and(|at| at.elapsed() >= pace);
             let since_anchor =

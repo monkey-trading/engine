@@ -58,12 +58,15 @@ sol! {
     function signerEpoch() external view returns (uint64);
     function checkpointSigner() external view returns (address);
     function promotionDueAt() external view returns (uint64);
+    function relayAlias() external view returns (address);
+    function seedEpoch(uint64 turn) external view returns (uint64);
+    function receiveSeed(uint64 turn, uint64 epoch, bytes32 seed) external;
 }
 
 const DIGEST_C: [u8; 48] = [0xc1; 48];
-/// The heartbeat rule the scenario deploys, short enough to run in minutes: 30 s slots, 10 s tolerance,
+/// The heartbeat rule the scenario deploys, short enough to run in minutes: 30 s slots, 20 s tolerance,
 /// 3 misses, 10 blocks, under a 60 s switch budget.
-const RULE: (u64, u64, u16, u16) = (30, 10, 3, 10);
+const RULE: (u64, u64, u16, u16) = (30, 20, 3, 10);
 const KEYS: [[u8; 32]; 3] = [[0x42; 32], [0x55; 32], [0x56; 32]];
 const STAKES: [u64; 3] = [50_000, 30_000, 20_000];
 const DAY_SECS: u64 = 86_400;
@@ -173,6 +176,13 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
     // The first turn whose draw deadline finds the set in effect, drawn at its deadline.
     let turn = (SET_EFFECTIVE_SECS + DAY_SECS - BOUNDARY_OFFSET_SECS) / DAY_SECS + 1;
     let boundary = turn * DAY_SECS + BOUNDARY_OFFSET_SECS;
+    // The turn's seed arrives from the relay's alias before its draw deadline, as a relay would send it.
+    let alias = chain.view(receiver, relayAliasCall {}).await;
+    let seed_epoch = chain.view(receiver, seedEpochCall { turn }).await;
+    chain.impersonate(alias).await;
+    chain
+        .send(alias, receiver, receiveSeedCall { turn, epoch: seed_epoch, seed: B256::repeat_byte(0x5e) }.abi_encode())
+        .await;
     chain.mine_at(boundary - DAY_SECS + 60).await;
     chain.send(chain.accounts[1], schedule, drawCall { turn }.abi_encode()).await;
     warp(&chain, &clock, boundary + 1).await;
@@ -185,6 +195,7 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
 
     // The operator's node and the members' callers.
     let dir = scratch_dir("liveness-operator");
+    std::fs::create_dir_all(&dir).unwrap();
     let cfg = config(&chain, &dir, log_heads, chain.accounts[5]);
     let domain = LivenessDomain {
         standby: StandbyDomain {

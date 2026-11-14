@@ -65,6 +65,12 @@ impl Chain {
         let expiry = self.latest_timestamp().await + 3_600;
         let digest = self.view(schedule, vouchDigestCall { candidate, key, release, nonce: 1, expiry }).await;
         let vouch: Bytes = signer.sign_digest(digest.0).parse().expect("65 bytes of hex");
-        self.send(candidate, schedule, registerStandbyCall { key, nonce: 1, expiry, vouch }.abi_encode()).await;
+        let call = registerStandbyCall { key, nonce: 1, expiry, vouch }.abi_encode();
+        let request =
+            alloy::rpc::types::TransactionRequest::default().from(candidate).to(schedule).input(call.clone().into());
+        if let Err(e) = self.provider.request::<_, Bytes>("eth_call", (request, "latest")).await {
+            panic!("registerStandby for {candidate} would revert: {e}");
+        }
+        self.send(candidate, schedule, call).await;
     }
 }

@@ -33,7 +33,6 @@ pub(super) struct Rig {
     pub hold: watch::Sender<Hold>,
     released: watch::Sender<Released>,
     tip: watch::Sender<Head>,
-    signed: watch::Receiver<Option<SignedHead>>,
     relayer: Address,
     pub poster: JoinHandle<anyhow::Result<()>>,
     tasks: Vec<JoinHandle<()>>,
@@ -135,9 +134,19 @@ impl Rig {
                 let _ = server.run().await;
             }));
         }
+        // The members' streams: each signed head reaches their copies as the operator signs it.
+        let mut heads = signed.clone();
+        let copies: Vec<_> =
+            members.iter().enumerate().filter(|(i, _)| *i != operator).map(|(_, m)| m.copy.clone()).collect();
+        tasks.push(tokio::spawn(async move {
+            while heads.changed().await.is_ok() {
+                let Some(head) = heads.borrow_and_update().clone() else { continue };
+                copies.iter().for_each(|copy| copy.signed_head(head.clone()));
+            }
+        }));
         let (sequencer_tx, _) = mpsc::channel::<Request>(1);
         let poster = tokio::spawn(poster.run(tip_rx, sequencer_tx));
-        Self { gate, hold, released, tip, signed, relayer: heads_cfg.relayer, poster, tasks }
+        Self { gate, hold, released, tip, relayer: heads_cfg.relayer, poster, tasks }
     }
 
     /// Takes the operator's relayer's funds, so its posts fail.
@@ -169,9 +178,6 @@ impl Log {
         rig.released.send_replace(released);
         for member in members.iter().enumerate().filter(|(i, _)| *i != operator).map(|(_, member)| member) {
             member.copy.durable(released.head);
-            if let Some(signed) = rig.signed.borrow().clone() {
-                member.copy.signed_head(signed);
-            }
         }
     }
 }
