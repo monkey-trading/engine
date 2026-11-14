@@ -143,7 +143,7 @@ abstract contract RegistryTest is GovernanceTest {
     /// @dev Stakes `stake` for `candidate`, registers it with a minimum bond and release `seed`, and
     /// has the timelock approve that release. The authorization is read before the prank: the view
     /// call would otherwise consume it.
-    function _candidate(address candidate, uint256 stake, uint256 seed) internal {
+    function _candidate(address candidate, uint256 stake, uint256 seed) internal virtual {
         _stake(candidate, stake);
         bytes memory authorization = _authorization(candidate);
         vm.prank(candidate);

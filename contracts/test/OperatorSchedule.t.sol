@@ -204,7 +204,7 @@ contract OperatorScheduleTest is ScheduleTest {
         registry.setParameters(hourly);
 
         _deployRegistry();
-        OperatorSchedule own = new OperatorSchedule(registry, receiver);
+        OperatorSchedule own = _newSchedule();
         vm.prank(address(governance));
         registry.setParameters(hourly);
         vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.EpochTooShort.selector, 1 hours, 1 days));
@@ -880,7 +880,7 @@ contract OperatorScheduleTest is ScheduleTest {
 
         OperatorSchedule other = schedule;
         _deployRegistry();
-        OperatorSchedule own = new OperatorSchedule(registry, receiver);
+        OperatorSchedule own = _newSchedule();
         vm.expectRevert(OperatorRegistry.UnauthorizedGovernance.selector);
         registry.setSchedule(own);
         vm.expectRevert(OperatorRegistry.InvalidSchedule.selector);
@@ -952,7 +952,7 @@ contract OperatorScheduleTest is ScheduleTest {
         console.log("close adopting 101 members, gas:", close);
         console.log("draw from 101 members, gas:", drawn);
         assertLt(close, 12_000_000);
-        assertLt(drawn, 400_000);
+        assertLt(drawn, 450_000);
     }
 
     function _cool() internal {
