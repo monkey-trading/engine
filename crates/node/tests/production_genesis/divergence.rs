@@ -39,9 +39,9 @@ fn every_launch_market_can_reach_each_divergence_level() {
 // ── Helpers ──
 
 /// The stress levels each of `markets` reaches under the latest protocol version and `params`, all
-/// listed 24/7 with house capital and no positions, as two venues diverge around a flat index of 1
-/// from zero up to the market's bound, in listing order, so each FX market is priced before the
-/// markets that convert at it.
+/// listed 24/7, so with no weekend margin, which needs a weekly calendar, with house capital and no
+/// positions, as two venues diverge around a flat index of 1 from zero up to the market's bound, in
+/// listing order, so each FX market is priced before the markets that convert at it.
 fn divergence_levels(params: &ProtocolParams, markets: &[MarketSpec]) -> Vec<(String, BTreeSet<usize>)> {
     let mut engine = Engine::new();
     let operator = NodeConfig::load(Path::new(DEV)).unwrap().operator().unwrap();
@@ -53,7 +53,8 @@ fn divergence_levels(params: &ProtocolParams, markets: &[MarketSpec]) -> Vec<(St
         Command::Admin(AdminCommand::SetParams(params.clone())),
     ];
     let listings = markets.iter().map(|market| {
-        Command::Admin(AdminCommand::UpsertMarket(MarketSpec { schedule: Schedule::AlwaysOpen, ..market.clone() }))
+        let always = MarketSpec { schedule: Schedule::AlwaysOpen, weekend_margin_bps: 0, ..market.clone() };
+        Command::Admin(AdminCommand::UpsertMarket(always))
     });
     activation.into_iter().chain(listings).for_each(|cmd| apply_at_zero(&mut engine, cmd));
     // House funding is screened like any deposit: clear evidence from the funding payer credits it.

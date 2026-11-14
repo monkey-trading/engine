@@ -1,5 +1,6 @@
 //! `GET /v1/accounts/{address}`: one account's balance, equity, margin, positions, orders, toxicity,
-//! each position's close-out and close fee, and from `V59` its volume tier.
+//! each position's close-out and close fee, from `V59` its volume tier, and from `V60` the weekend
+//! margin each position needs.
 
 use std::collections::BTreeMap;
 
@@ -36,10 +37,14 @@ pub(crate) struct AccountView {
     /// each market's best-price bound.
     #[serde(skip_serializing_if = "Option::is_none")]
     volume: Option<engine_core::volume_tier::VolumeStanding>,
+    /// From `V60`, for each position in a market with a weekend margin, when it applies and the
+    /// margin requirement the account must meet when its weekend gap starts, at its marks now.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    weekend_margins: BTreeMap<MarketId, engine_core::weekend::WeekendRequirement>,
 }
 
 /// One account's balance, equity, margin, positions, orders, each position's close-out and close fee,
-/// and its volume tier.
+/// its volume tier, and the weekend margin each position needs.
 /// Error cases:
 /// - the address is malformed
 /// - the account has never been credited
@@ -68,5 +73,6 @@ pub(crate) fn account_view(e: &Engine, id: AccountId) -> Option<AccountView> {
         closeouts,
         close_fees: e.close_fees(id),
         volume: e.volume_standing(id),
+        weekend_margins: e.weekend_requirements(id),
     })
 }

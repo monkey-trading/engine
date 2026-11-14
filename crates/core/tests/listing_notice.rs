@@ -26,7 +26,13 @@ fn doubled() -> Vec<SpreadTier> {
 }
 
 fn notice(spread: Option<Vec<SpreadTier>>, margin: Option<Vec<Tier>>, markup: Option<i64>, at: i64) -> ListingNotice {
-    ListingNotice { spread_tiers: spread, margin_tiers: margin, markup_bps: markup, effective_at: at }
+    ListingNotice {
+        spread_tiers: spread,
+        margin_tiers: margin,
+        markup_bps: markup,
+        weekend_margin_bps: None,
+        effective_at: at,
+    }
 }
 
 #[test]

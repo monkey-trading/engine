@@ -53,8 +53,13 @@ fn a_voted_margin_band_change_stays_at_or_above_launch() {
 #[test]
 fn the_operators_listing_notice_waits_for_rotation_to_end() {
     let mut h = governed();
-    let notice =
-        ListingNotice { spread_tiers: None, margin_tiers: None, markup_bps: Some(5), effective_at: h.ts + NOTICE_MS };
+    let notice = ListingNotice {
+        spread_tiers: None,
+        margin_tiers: None,
+        markup_bps: Some(5),
+        weekend_margin_bps: None,
+        effective_at: h.ts + NOTICE_MS,
+    };
     let announce = AdminCommand::AnnounceListing { market: BTC, notice };
     rejected(&h.operate(announce.clone()), "only a passed vote changes this");
     switch_rotation(&mut h, false);
