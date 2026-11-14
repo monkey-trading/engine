@@ -43,6 +43,7 @@ async fn the_stall_alert_fires_after_the_configured_intervals_and_pages_once() {
             trusted: None,
             prefix_ring: Default::default(),
             stall_intervals: intervals,
+            heartbeat: None,
         };
         let task = tokio::spawn(poster.run(rx, sequencer));
         tx.send_replace(Head { seq: 5, link: B256::from([5; 32]) });

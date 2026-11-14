@@ -274,4 +274,17 @@ pub(crate) trait CheckpointChain: Send + Sync {
         let _ = (at, now_ms);
         Ok(None)
     }
+
+    /// `candidate`'s handover data as its candidacy registered it, at the already pinned finalized
+    /// observation: where the member a promotion named in a turn hands its keys over from (#595). A
+    /// chain with no registry reads `None`.
+    /// Error cases: the observation is not finalized and pinned, or the chain cannot be read
+    async fn handover_source_at(
+        &self,
+        at: &Observation,
+        candidate: AccountId,
+    ) -> anyhow::Result<Option<HandoverSource>> {
+        let _ = (at, candidate);
+        Ok(None)
+    }
 }

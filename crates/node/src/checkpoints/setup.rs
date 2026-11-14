@@ -87,6 +87,20 @@ async fn at_finality<C: CheckpointChain>(chain: &C, signer: AccountId) -> anyhow
     Ok(finalized)
 }
 
+/// The vault's latest view, validated, naming `signer`, unretired.
+/// Error cases:
+/// - the read or its validation fails, the guardian retired the signer, or the view names another
+///   signer (`Unregistered`)
+async fn at_latest<C: CheckpointChain>(chain: &C, signer: AccountId) -> anyhow::Result<Observation> {
+    let latest = chain.observe(View::Latest, &[]).await?;
+    latest.validate(&[])?;
+    anyhow::ensure!(!latest.state.signer_retired(), "the vault's guardian retired its signer");
+    if latest.state.signer != signer {
+        return Err(Unregistered { vault_signer: latest.state.signer }.into());
+    }
+    Ok(latest)
+}
+
 /// The vault's latest and finalized views, validated, each naming `signer`, unretired.
 /// Error cases:
 /// - a read or its validation fails, the guardian retired the signer, or either view names another
@@ -126,7 +140,7 @@ pub(crate) async fn connect(
     key: &Arc<EnclaveKey>,
     metrics: &Metrics,
 ) -> anyhow::Result<Option<Setup>> {
-    connect_with(cfg, AccountId(key.address()), metrics, true).await
+    connect_with(cfg, AccountId(key.address()), metrics, Start::Quiescent).await
 }
 
 /// `connect` for a member, the enclave whose address is `signer`, before the handover brings it the
@@ -139,16 +153,56 @@ pub(crate) async fn connect_successor(
     signer: AccountId,
     metrics: &Metrics,
 ) -> anyhow::Result<Option<Setup>> {
-    connect_with(cfg, signer, metrics, false).await
+    connect_with(cfg, signer, metrics, Start::Successor).await
 }
 
-/// `connect` for `signer`, awaiting a quiescent vault when `quiescent`: a restart must not sign from
-/// a finalized parent while its own latest inclusion is pending.
+/// `connect` for a member a promotion made the vault's signer (#595), before the promotion is final:
+/// at the vault's latest block, which names `signer`, whose checkpoint is the one the promotion fixed
+/// as its latest accepted, since no other key can post one after it. The poster it builds runs only
+/// once the promotion is final (`await_signer_final`).
+/// Error cases:
+/// - see `connect`
+pub(crate) async fn connect_promoted(
+    cfg: &NodeConfig,
+    signer: AccountId,
+    metrics: &Metrics,
+) -> anyhow::Result<Option<Setup>> {
+    connect_with(cfg, signer, metrics, Start::Promoted).await
+}
+
+/// Waits until the vault's finalized view names `signer`, as it does once a promotion that made it
+/// the signer is final, reading every `retry`.
+/// Error cases:
+/// - none: a failed read is retried
+pub(crate) async fn await_signer_final<C: CheckpointChain>(chain: &C, signer: AccountId, retry: Duration) {
+    loop {
+        match chain.observe(View::Finalized, &[]).await {
+            Ok(finalized) if finalized.state.signer == signer => return,
+            Ok(_) => tracing::debug!("the vault's finalized view does not name this key yet"),
+            Err(e) => tracing::debug!("reading the vault's finalized view failed: {e:#}"),
+        }
+        tokio::time::sleep(retry).await;
+    }
+}
+
+/// Which view a start's checkpoint setup reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Start {
+    /// A restart: the finalized view once the latest has nothing in flight.
+    Quiescent,
+    /// A member taking its keys over: the finalized view as it is.
+    Successor,
+    /// A promoted member: the latest view.
+    Promoted,
+}
+
+/// `connect` for `signer`, at the view `start` reads: a restart must not sign from a finalized parent
+/// while its own latest inclusion is pending.
 async fn connect_with(
     cfg: &NodeConfig,
     signer: AccountId,
     metrics: &Metrics,
-    quiescent: bool,
+    start: Start,
 ) -> anyhow::Result<Option<Setup>> {
     let Some(checkpoints) = &cfg.checkpoints else { return Ok(None) };
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
@@ -161,12 +215,17 @@ async fn connect_with(
     } else {
         chain
     };
-    let state = match quiescent {
-        true => await_finality_boundary(&chain, signer, checkpoints.retry_interval, evm).await?,
-        false => at_finality(&chain, signer).await?,
+    let state = match start {
+        Start::Quiescent => await_finality_boundary(&chain, signer, checkpoints.retry_interval, evm).await?,
+        Start::Successor => at_finality(&chain, signer).await?,
+        Start::Promoted => at_latest(&chain, signer).await?,
     };
     chain.authenticate_reservation(&state).await?;
-    let registry_operator = chain.registry_operator_at(&state).await?;
+    // The registry's operator is read at finality: a promoted start's latest view is not finalized.
+    let registry_operator = match start {
+        Start::Promoted => chain.registry_operator_at(&chain.observe(View::Finalized, &[]).await?).await?,
+        Start::Quiescent | Start::Successor => chain.registry_operator_at(&state).await?,
+    };
     let parent = match &state.state.checkpoint {
         Some((seq, root)) => crate::log::CheckpointParent { has_checkpoint: true, seq: *seq, root: root.parse()? },
         None => Default::default(),

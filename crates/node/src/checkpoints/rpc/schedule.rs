@@ -86,6 +86,25 @@ impl CheckpointRpc {
         }))
     }
 
+    /// See `CheckpointChain::handover_source_at`.
+    /// Error cases:
+    /// - the observation is not finalized and pinned, or a call or its decoding fails
+    pub(super) async fn read_handover_source(
+        &self,
+        at: &Observation,
+        candidate: AccountId,
+    ) -> anyhow::Result<Option<HandoverSource>> {
+        ensure!(at.view == View::Finalized, "the registry requires a finalized observation");
+        let evidence = at.lifecycle.as_ref().context("the registry requires a pinned canonical observation")?;
+        let block = BlockId::hash_canonical(evidence.block_hash);
+        let vault = Address::from(self.domain.vault.0);
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), block).await?)?;
+        if registry.is_zero() {
+            return Ok(None);
+        }
+        self.handover_source_of(registry, Address::from(candidate.0), block).await.map(Some)
+    }
+
     /// `candidate`'s registration at `block`.
     /// Error cases:
     /// - the call or its decoding fails

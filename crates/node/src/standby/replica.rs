@@ -29,6 +29,8 @@ pub(crate) struct Follower {
     writer: LogWriter,
     copied: Chain,
     replica: LiveReplay,
+    /// What a member's link answers from: the copy's durable head, latest entries and signed heads.
+    link: Option<crate::liveness::link::Copy>,
 }
 
 impl Follower {
@@ -96,7 +98,7 @@ impl Follower {
                 Ok(())
             })
             .context("the copy does not replay")?;
-        Ok(Self { writer, copied, replica })
+        Ok(Self { writer, copied, replica, link: None })
     }
 
     /// The replica.
@@ -132,7 +134,21 @@ impl Follower {
         budget: Duration,
     ) -> anyhow::Result<Option<Offset>> {
         self.copied.admit(followed.enclave);
-        follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica)).await
+        let link = self.link.as_ref();
+        follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica), link).await
+    }
+
+    /// Whether a member link records what the copy holds.
+    pub(crate) fn linked(&self) -> bool {
+        self.link.is_some()
+    }
+
+    /// Records what the copy holds into `link` from here on, starting with its head as durable.
+    pub(crate) fn link_with(&mut self, link: crate::liveness::link::Copy) {
+        if let Some((seq, head)) = self.tip() {
+            link.durable(crate::log_heads::Head { seq, link: head });
+        }
+        self.link = Some(link);
     }
 
     /// Takes a handover's tail: the JSON lines in `bytes`, the entries the predecessor's log holds

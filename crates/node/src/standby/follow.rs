@@ -2,7 +2,7 @@
 //! module doc on `Chain` says what extends a copy; this is the wire path that feeds it.
 
 use engine_core::types::AccountId;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use futures_util::{StreamExt, pin_mut};
@@ -12,6 +12,9 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::{FETCH_TIMEOUT, stream_url, tls};
 
+/// How often a member's copy is synced while it takes entries, for its confirmations.
+const SYNC_EVERY: Duration = Duration::from_millis(200);
+
 /// What a signed heartbeat names: the operator's flushed log head, or `None` before its first entry.
 #[derive(serde::Deserialize)]
 struct Heartbeat {
@@ -20,7 +23,9 @@ struct Heartbeat {
 use super::chain::{Chain, Step};
 use super::operator::Followed;
 use crate::config::NodeConfig;
+use crate::liveness::link::Copy;
 use crate::log::{LogEntry, LogWriter, Offset};
+use crate::log_heads::{Head, SignedHead};
 use crate::sequencer::replay::LiveReplay;
 
 /// An entry the operator sealed that the replica refused: the replica may hold part of it, so it is
@@ -47,6 +52,7 @@ impl std::error::Error for ReplicaRefused {}
 /// - the connection fails, a frame fails verification, or the copy cannot be written
 /// - the operator's log no longer extends the copy (a `Rollback`); nothing more is appended
 /// - the replica refuses an entry (`ReplicaRefused`), which the copy then does not take
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn follow(
     writer: &mut LogWriter,
     copied: &mut Chain,
@@ -54,6 +60,7 @@ pub(super) async fn follow(
     followed: &Followed,
     budget: Duration,
     mut replica: Option<&mut LiveReplay>,
+    link: Option<&Copy>,
 ) -> anyhow::Result<Option<Offset>> {
     let mut challenge = [0u8; 32];
     rand::thread_rng().fill(&mut challenge);
@@ -83,7 +90,15 @@ pub(super) async fn follow(
         // A connection the host holds open but feeds nothing must not read as a working stint: no
         // frame, no evidence of anything.
         let mut frames = 0usize;
+        // With a member link, the copy is synced at most every `SYNC_EVERY` once it took entries, and
+        // its durable head recorded, so the operator's confirmations trail its log by little.
+        let (mut unsynced, mut synced_at) = (false, Instant::now());
         loop {
+            if unsynced && let Some(link) = link.filter(|_| synced_at.elapsed() >= SYNC_EVERY) {
+                writer.sync().context("syncing the copy")?;
+                durable(link, replica.as_deref());
+                (unsynced, synced_at) = (false, Instant::now());
+            }
             let frame = {
                 let next = stream.next();
                 futures_util::pin_mut!(next);
@@ -109,16 +124,26 @@ pub(super) async fn follow(
                 copied.heartbeat(heartbeat.head)?;
                 continue;
             }
+            if value.get("type").and_then(serde_json::Value::as_str) == Some("log_head") {
+                if let Some(link) = link {
+                    signed_head(link, value, cfg, followed)?;
+                }
+                continue;
+            }
             let message: crate::sequencer::StreamMsg =
                 serde_json::from_value(value).context("a stream message is not a log entry")?;
             let entry = LogEntry::from(message.body);
-            if let Step::Extends(link) = copied.check(message.offset, &entry)? {
+            if let Step::Extends(chained) = copied.check(message.offset, &entry)? {
                 if let Some(replica) = replica.as_deref_mut() {
                     replica.apply(&entry).map_err(|e| e.context(ReplicaRefused))?;
                 }
                 writer.append(&entry).context("appending a stream entry to the copy")?;
-                copied.extend(message.offset, entry, link);
+                if let Some(copy) = link {
+                    copy.appended(message.offset, &entry);
+                }
+                copied.extend(message.offset, entry, chained);
                 writer.flush().context("flushing the copy")?;
+                unsynced = true;
             }
         }
         anyhow::ensure!(frames > 0, "the stream delivered no frame in the stint's {budget:?}");
@@ -126,5 +151,34 @@ pub(super) async fn follow(
     }
     .await;
     writer.sync().context("syncing the copy")?;
+    if let Some(link) = link {
+        durable(link, replica.as_deref());
+    }
     followed
+}
+
+/// Records the replica's head as the copy's durable one, once synced.
+fn durable(link: &Copy, replica: Option<&LiveReplay>) {
+    if let Some(seq) = replica.and_then(LiveReplay::last_seq) {
+        link.durable(Head { seq, link: replica.map(LiveReplay::head_link).unwrap_or_default() });
+    }
+}
+
+/// Takes a signed head the operator's stream carried, once its signature recovers to the followed
+/// enclave over its digest: a head no key the vault names signed is refused.
+/// Error cases:
+/// - the message is no signed head, or its signature does not recover to the followed enclave
+fn signed_head(link: &Copy, value: serde_json::Value, cfg: &NodeConfig, followed: &Followed) -> anyhow::Result<()> {
+    let signed: SignedHead = serde_json::from_value(value).context("a log_head message is no signed head")?;
+    let vault = cfg.custody.vault.parse::<AccountId>().context("custody.vault")?;
+    let digest = signed.head.digest(cfg.custody.chain_id, alloy::primitives::Address::from(vault.0), signed.epoch);
+    let signature: engine_core::eip712::Signature = signed.signature.parse().context("a signed head's signature")?;
+    anyhow::ensure!(
+        engine_core::eip712::recover(&engine_core::eip712::B256::from(digest), &signature) == Some(followed.enclave),
+        "a signed head does not recover to the followed enclave {}",
+        followed.enclave
+    );
+    link.saw(signed.epoch, signed.head.head);
+    link.signed_head(signed);
+    Ok(())
 }

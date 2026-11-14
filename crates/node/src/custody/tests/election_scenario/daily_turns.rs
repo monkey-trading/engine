@@ -31,7 +31,7 @@ use tokio::task::LocalSet;
 
 use alloy::primitives::{Address, B256};
 use alloy::sol;
-use alloy::sol_types::{SolCall, SolValue};
+use alloy::sol_types::SolCall;
 use axum::http::StatusCode;
 use engine_core::command::{AdminCommand, Command};
 use engine_core::emissions::TokenUnits;
@@ -42,7 +42,6 @@ use serde_json::{Value, json};
 use super::chain::{Chain, Parameters, delegateCall, setParametersCall, setRotationCall};
 use super::node::Node;
 use super::{DIGEST_A, DIGEST_B, FINALITY_MARGIN_SECS, T0_SECS, address, monkey};
-use crate::checkpoints::scenario::deploy;
 use crate::checkpoints::staking_scenario::access::Source;
 use crate::checkpoints::{CheckpointChain, View};
 use crate::clock::test_clock::TestClock;
@@ -108,9 +107,7 @@ async fn scenario() {
         Member::new("C", chain.accounts[4], KEYS[2], DIGEST_C),
     ];
     let seeds = Seeds::start(&chain).await;
-    let schedule_args = (chain.registry, seeds.receiver).abi_encode_params();
-    let schedule =
-        deploy(&chain.provider, chain.accounts[0], "OperatorSchedule.sol/OperatorSchedule.json", &schedule_args).await;
+    let (schedule, _) = chain.deploy_schedule(seeds.receiver).await;
     chain.schedule = Some(schedule);
 
     // 1. A, B and C stake and register with their handover endpoints; the timelock lengthens the
@@ -139,6 +136,9 @@ async fn scenario() {
         let delegate = delegateCall { candidate: member.candidate, amount: monkey(stake) };
         chain.send(member.candidate, chain.staking, delegate.abi_encode()).await;
     }
+    // A close adopts only members with a promotable standby key: the vault's signer vouches for each.
+    let standbys: Vec<_> = members.iter().map(|member| (member.candidate, B256::from(member.release().id()))).collect();
+    chain.register_standbys(&standbys, &keys.enclave_key().unwrap()).await;
     chain.finalize().await;
     assert_eq!(chain.view(chain.vault, currentReleaseCall {}).await.0, members[0].release().id());
 

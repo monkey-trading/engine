@@ -96,6 +96,7 @@ async fn a_head_signed_before_a_crash_is_adopted_after_restart() {
         trusted: None,
         prefix_ring: Default::default(),
         stall_intervals: 3,
+        heartbeat: None,
     };
     let task1 = tokio::spawn(poster.run(rx1, sequencer));
     tx1.send_replace(first);
@@ -119,6 +120,7 @@ async fn a_head_signed_before_a_crash_is_adopted_after_restart() {
         trusted: None,
         prefix_ring,
         stall_intervals: 3,
+        heartbeat: None,
     };
     let (sequencer, _from_poster) = tokio::sync::mpsc::channel(8);
     let task = tokio::spawn(poster.run(rx, sequencer));
@@ -368,6 +370,7 @@ async fn a_foreign_head_at_a_retained_seq_freezes() {
         trusted: None,
         prefix_ring,
         stall_intervals: 3,
+        heartbeat: None,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -405,6 +408,7 @@ async fn a_divergent_history_head_freezes_at_the_ancestor() {
         trusted: None,
         prefix_ring,
         stall_intervals: 3,
+        heartbeat: None,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -441,6 +445,7 @@ async fn a_head_beyond_the_retained_evidence_is_not_adopted() {
         trusted: None,
         prefix_ring,
         stall_intervals: 3,
+        heartbeat: None,
     };
     let task = tokio::spawn(poster.run(rx, sequencer));
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -485,6 +490,7 @@ fn restarted(
         trusted: Some(crate::trusted_time::TrustedClock::new(clock, samples, Duration::from_secs(1))),
         prefix_ring: Default::default(),
         stall_intervals: 3,
+        heartbeat: None,
     };
     (tx, tokio::spawn(poster.run(rx, sequencer)))
 }

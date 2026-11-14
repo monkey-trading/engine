@@ -403,6 +403,8 @@ jobs:
         run: ./scripts/dev-daily-rotation.sh
       - name: Run the parameter votes dev scenario
         run: ./scripts/dev-parameter-votes.sh
+      - name: Run the minute-scale liveness dev scenario
+        run: ./scripts/dev-liveness.sh
 
   # Builds the node and the scenario tools once, for the scenarios that only run them. Each of those
   # used to compile the same binary, about seven minutes apiece. A push to main that only refreshes

@@ -47,6 +47,8 @@ pub(crate) use crate::custody::evm::VaultReader;
 pub(crate) use crate::custody::rpc::VaultRpc;
 mod sizing;
 mod stall;
+pub(crate) mod standby_keys;
+pub(crate) use standby_keys::{QuorumBlock, StandbyReader};
 mod watchdog;
 use crate::sequencer::{Request, SignedWithdrawal};
 

@@ -152,7 +152,7 @@ async fn the_released_head_announced_is_the_batchs_own_not_a_later_one() {
     };
     let mut seq = Sequencer::recover(cfg, Arc::new(crate::tee::EnclaveKey::test_key()), stream, withdrawals).unwrap();
     let (heads_tx, heads) = watch::channel(crate::log_heads::Head::default());
-    seq.log_heads = Some(crate::log_heads::Publisher { tx: heads_tx, freeze: Default::default() });
+    seq.log_heads = Some(crate::log_heads::Publisher::for_test(heads_tx, Default::default()));
     let syncs = Arc::new(AtomicUsize::new(0));
     let counted = syncs.clone();
     let (permits, verdicts): (StdSender<()>, StdReceiver<()>) = channel();

@@ -157,6 +157,9 @@ pub struct Sequencer {
     /// freeze latch the poster sets the moment it detects a rollback — before its `Freeze`
     /// request dequeues — so nothing queued behind the detection is stamped or checkpointed.
     log_heads: Option<crate::log_heads::Publisher>,
+    /// A checkpoint waiting for another member to confirm holding its seq, and whether it was
+    /// paced: nothing is stamped past that seq until it is written (`liveness`).
+    checkpoint_waits: Option<bool>,
 }
 
 impl Sequencer {
@@ -249,6 +252,7 @@ impl Sequencer {
                     next = self.next_queued(&mut rx);
                 }
             }
+            self.release_waiting_checkpoint()?;
             batch.timing = sequenced.then_some(started);
             let release = self.stage(std::mem::take(&mut batch))?;
             self.submit(release)?;
@@ -444,6 +448,7 @@ impl Sequencer {
 mod alerts;
 pub(crate) mod genesis;
 mod governance;
+mod liveness;
 mod snapshots;
 pub use genesis::{GenesisProgress, genesis_commands};
 mod quotes;

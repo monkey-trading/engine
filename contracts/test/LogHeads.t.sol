@@ -66,10 +66,22 @@ contract LogHeadsTest is GovernanceTest {
 
     function testFirstPostOfTheEpochNeedsNoParent() public {
         // The empty epoch head accepts any parent fields on its first post.
+        vm.warp(1_800_000_000);
         heads.post(10, bytes32(uint256(10)), 0, bytes32(0), sign(10, bytes32(uint256(10)), 0, bytes32(0), KEY));
-        (uint64 seq, bytes32 link) = heads.heads(vault.signerEpoch());
+        (uint64 seq, bytes32 link, uint64 signedAt, uint64 boundBlock, uint64 postedAt) =
+            heads.heads(vault.signerEpoch());
         assertEq(seq, 10);
         assertEq(link, bytes32(uint256(10)));
+        assertEq(signedAt, 0, "a v1 head carries no signing time");
+        assertEq(boundBlock, 0);
+        assertEq(postedAt, 1_800_000_000);
+    }
+
+    function testAVaultWithNoRegistryTakesNoV2Head() public {
+        LogHeads.HeadV2 memory head;
+        (head.seq, head.link, head.signedAt) = (10, bytes32(uint256(10)), uint64(block.timestamp * 1000));
+        vm.expectRevert(LogHeads.UseV1.selector);
+        heads.postV2(head, new bytes(65));
     }
 
     function testPostsExtendTheStoredHeadAsAParentChain() public {
@@ -81,7 +93,7 @@ contract LogHeadsTest is GovernanceTest {
             bytes32(uint256(10)),
             sign(12, bytes32(uint256(12)), 10, bytes32(uint256(10)), KEY)
         );
-        (uint64 seq, bytes32 link) = heads.heads(vault.signerEpoch());
+        (uint64 seq, bytes32 link,,,) = heads.heads(vault.signerEpoch());
         assertEq(seq, 12);
         assertEq(link, bytes32(uint256(12)));
     }
@@ -124,7 +136,7 @@ contract LogHeadsTest is GovernanceTest {
         } else {
             heads.post(second, link, first, link, again);
         }
-        (uint64 seq,) = heads.heads(vault.signerEpoch());
+        (uint64 seq,,,,) = heads.heads(vault.signerEpoch());
         assertEq(seq, second <= first ? first : second);
     }
 
@@ -141,7 +153,7 @@ contract LogHeadsTest is GovernanceTest {
         heads.post(2, bytes32(uint256(8)), 0, bytes32(0), signature);
         vm.expectRevert(LogHeads.InvalidSigner.selector);
         heads.post(2, bytes32(uint256(7)), 0, bytes32(0), forged2);
-        (uint64 seq,) = heads.heads(vault.signerEpoch());
+        (uint64 seq,,,,) = heads.heads(vault.signerEpoch());
         assertEq(seq, 0);
         heads.post(2, bytes32(uint256(7)), 0, bytes32(0), signature);
     }
@@ -167,8 +179,8 @@ contract LogHeadsTest is GovernanceTest {
         // and the new epoch's first post needs no parent.
         bytes memory rotated = sign(3, bytes32(uint256(3)), 0, bytes32(0), KEY + 7);
         heads.post(3, bytes32(uint256(3)), 0, bytes32(0), rotated);
-        (uint64 oldSeq,) = heads.heads(firstEpoch);
-        (uint64 newSeq,) = heads.heads(vault.signerEpoch());
+        (uint64 oldSeq,,,,) = heads.heads(firstEpoch);
+        (uint64 newSeq,,,,) = heads.heads(vault.signerEpoch());
         assertEq(oldSeq, 5);
         assertEq(newSeq, 3);
         // The old key no longer posts at all.

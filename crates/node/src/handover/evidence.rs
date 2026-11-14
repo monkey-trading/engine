@@ -110,3 +110,22 @@ pub(crate) fn verify(
         }
     }
 }
+
+/// Requires a peer to run under the same guest policy as this release, since the launch measurement
+/// does not cover the policy and one that allowed debugging would expose what it is given, and, on
+/// hardware, at a TCB no lower than this platform's committed one.
+/// Error cases:
+/// - the policy differs, or the TCB is below the floor
+pub(crate) fn no_weaker(own: &Platform, peer: &Peer) -> anyhow::Result<()> {
+    ensure!(
+        peer.policy == own.policy,
+        "the peer's guest policy {:#x} differs from this release's {:#x}",
+        peer.policy,
+        own.policy
+    );
+    if let Some(tcb) = peer.tcb {
+        let floor = Tcb::from_packed(own.tcb);
+        ensure!(tcb.meets(floor), "the peer's TCB {tcb:?} is below this platform's committed {floor:?}");
+    }
+    Ok(())
+}

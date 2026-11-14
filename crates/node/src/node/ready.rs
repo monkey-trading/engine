@@ -48,6 +48,9 @@ pub(crate) struct Ready {
     /// The sealed certificate, opened before connecting, with `[api.tls.acme]`: one that does not
     /// open refuses the turn before the incumbent stops.
     pub certificates: Option<Arc<CertificateStore>>,
+    /// The promotion that made this member the operator, for a promoted start (#595): its
+    /// checkpoints wait for the promotion's finality, and its reorg stops it.
+    pub promoted: Option<crate::standby_key::chain::Promotion>,
 }
 
 /// A member's start: its replica, the keys its tail handover sealed, what it read before
@@ -109,7 +112,55 @@ impl Ready {
         let heads = crate::log_heads::setup::read_heads(cfg, signer).await?;
         let generations = BTreeMap::from([(turn.turn, generation)]);
         let sample = sample.await.context("taking the trusted time sample the start stamps under")?;
-        Ok(Self { setup, anchor, emission_budget, heads, generations, sample, certificates })
+        Ok(Self { setup, anchor, emission_budget, heads, generations, sample, certificates, promoted: None })
+    }
+
+    /// What a promoted member's start reads (#595), as `read` does for a handover, but at the vault's
+    /// latest block, which names `signer`, the promoted standby key, before the promotion is final:
+    /// the checkpoint setup's parent is the vault's latest accepted checkpoint, which the promotion
+    /// fixed and the replica holds, and `candidate`'s registered hostname is the one the certificate
+    /// names.
+    /// Error cases:
+    /// - as `read`, or the latest view does not name `signer`, or its checkpoint is not the one the
+    ///   promotion fixed
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn read_promoted(
+        cfg: &NodeConfig,
+        start: &KeyStart,
+        metrics: &Metrics,
+        signer: AccountId,
+        candidate: AccountId,
+        replica: &LiveReplay,
+        promotion: crate::standby_key::chain::Promotion,
+        sample: impl Future<Output = anyhow::Result<Sample>>,
+    ) -> anyhow::Result<Self> {
+        let certificates = crate::node::keys::certificates(cfg, start)?;
+        crate::node::handover::check_rotation_for(cfg, &mut false, Some(candidate)).await?;
+        let setup = crate::checkpoints::setup::connect_promoted(cfg, signer, metrics).await?;
+        let fixed = (promotion.checkpoint_seq > 0).then_some(promotion.checkpoint_seq);
+        anyhow::ensure!(
+            setup.as_ref().is_none_or(|setup| setup.posted_seq == fixed),
+            "the vault's latest checkpoint is not the one the promotion fixed at seq {}",
+            promotion.checkpoint_seq
+        );
+        let anchor = match fixed {
+            Some(seq) => Some(replica.checkpoint_at(seq).cloned().with_context(|| {
+                format!("the replica does not retain the checkpoint the promotion fixed at seq {seq}")
+            })?),
+            None => None,
+        };
+        let emission_budget = match &setup {
+            Some(setup) => {
+                let view = crate::checkpoints::View::Latest;
+                setup.poster.startup_at(view, anchor.as_ref()).await.context("checking the vault's anchor")?;
+                Some(emission_preflight(&setup.poster, replica.engine().emissions()).await?)
+            }
+            None => None,
+        };
+        let heads = crate::log_heads::setup::read_heads(cfg, signer).await?;
+        let generations = BTreeMap::from([(promotion.turn, promotion.generation)]);
+        let sample = sample.await.context("taking the trusted time sample the start stamps under")?;
+        Ok(Self { setup, anchor, emission_budget, heads, generations, sample, certificates, promoted: Some(promotion) })
     }
 }
 

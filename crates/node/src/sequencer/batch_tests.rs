@@ -88,10 +88,10 @@ async fn a_freeze_refuses_commands_queued_before_the_freeze_request() {
         let (manifest, _) = watch::channel(Manifest::default());
         let key = Arc::new(EnclaveKey::generate());
         let mut seq = Sequencer::recover(sequencer_config(&dir, manifest), key, stream, withdrawals).unwrap();
-        seq.log_heads = Some(crate::log_heads::Publisher {
-            tx: watch::channel(crate::log_heads::Head::default()).0,
-            freeze: freeze.clone(),
-        });
+        seq.log_heads = Some(crate::log_heads::Publisher::for_test(
+            watch::channel(crate::log_heads::Head::default()).0,
+            freeze.clone(),
+        ));
         seq.trust(trusted_now()).unwrap();
         seq
     };
@@ -133,10 +133,10 @@ async fn frozen_checkpoint_paths_write_nothing_and_refuse_the_handover() {
         let (manifest, _) = watch::channel(Manifest::default());
         let key = Arc::new(EnclaveKey::generate());
         let mut seq = Sequencer::recover(sequencer_config(&dir, manifest), key, stream, withdrawals).unwrap();
-        seq.log_heads = Some(crate::log_heads::Publisher {
-            tx: watch::channel(crate::log_heads::Head::default()).0,
-            freeze: freeze.clone(),
-        });
+        seq.log_heads = Some(crate::log_heads::Publisher::for_test(
+            watch::channel(crate::log_heads::Head::default()).0,
+            freeze.clone(),
+        ));
         seq.trust(trusted_now()).unwrap();
         seq
     };
@@ -177,10 +177,10 @@ fn frozen_checkpoint_entries_and_stamps_are_refused() {
         let (manifest, _) = watch::channel(Manifest::default());
         let key = Arc::new(EnclaveKey::generate());
         let mut seq = Sequencer::recover(sequencer_config(&dir, manifest), key, stream, withdrawals).unwrap();
-        seq.log_heads = Some(crate::log_heads::Publisher {
-            tx: watch::channel(crate::log_heads::Head::default()).0,
-            freeze: freeze.clone(),
-        });
+        seq.log_heads = Some(crate::log_heads::Publisher::for_test(
+            watch::channel(crate::log_heads::Head::default()).0,
+            freeze.clone(),
+        ));
         seq.trust(trusted_now()).unwrap();
         seq
     };
@@ -251,10 +251,10 @@ fn a_freeze_mid_catch_up_refuses_the_remaining_ticks_and_the_command() {
     let after = LOG_START + (engine_core::corporate::MAX_CATCH_UP_BOUNDARIES as i64 + 40) * DAY;
     let freeze = crate::log_heads::FreezeLatch::default();
     let mut seq = boot(&dir, after);
-    seq.log_heads = Some(crate::log_heads::Publisher {
-        tx: watch::channel(crate::log_heads::Head::default()).0,
-        freeze: freeze.clone(),
-    });
+    seq.log_heads = Some(crate::log_heads::Publisher::for_test(
+        watch::channel(crate::log_heads::Head::default()).0,
+        freeze.clone(),
+    ));
     let ts = seq.admitted_ts(None).expect("trusted time admits a stamp");
     assert!(seq.engine.catch_up_pending(ts), "the outage owes catch-up ticks");
     let tick_at = if seq.last_ts < ts { ts - 1 } else { ts };

@@ -31,12 +31,34 @@ pub(crate) struct Setup {
     pub rx: watch::Receiver<Head>,
     /// The rollback freeze latch the poster shares with the sequencer.
     pub freeze: super::FreezeLatch,
+    /// The released head with its stamp, and what holds the sequencer, for the liveness rule.
+    pub released: watch::Sender<crate::liveness::Released>,
+    pub hold: watch::Sender<super::Hold>,
+    /// The liveness gate the sequencer admits commands through: open unless the rule runs.
+    pub gate: crate::liveness::Gate,
+    /// What the poster's v2 heartbeat reads, with the liveness rule: set before `spawn`.
+    pub liveness: Option<Liveness>,
+}
+
+/// The liveness rule's inputs to the poster's v2 heartbeat.
+pub(crate) struct Liveness {
+    /// The release and generation this enclave's keys are sealed in.
+    pub keys: Option<(alloy::primitives::B256, u64)>,
+    pub signing: watch::Receiver<crate::liveness::operator::Signing>,
+    pub signed: watch::Sender<Option<super::SignedHead>>,
 }
 
 impl Setup {
-    /// The sequencer's publish end: the released-head watch and the shared freeze latch.
+    /// The sequencer's publish end: the released-head watches, what holds it, the shared freeze latch
+    /// and the liveness gate.
     pub(crate) fn publisher(&self) -> super::Publisher {
-        super::Publisher { tx: self.tx.clone(), freeze: self.freeze.clone() }
+        super::Publisher {
+            tx: self.tx.clone(),
+            freeze: self.freeze.clone(),
+            released: self.released.clone(),
+            hold: self.hold.clone(),
+            gate: self.gate.clone(),
+        }
     }
 
     /// Runs the poster as a supervised task until a rollback freezes it, its stall alarm reading
@@ -46,6 +68,15 @@ impl Setup {
         sequencer: mpsc::Sender<Request>,
         trusted: crate::trusted_time::TrustedClock,
     ) -> (&'static str, anyhow::Result<()>) {
+        self.poster.heartbeat = self.liveness.take().map(|liveness| super::Heartbeat {
+            keys: liveness.keys,
+            signing: liveness.signing,
+            released: self.released.subscribe(),
+            hold: self.hold.subscribe(),
+            gate: self.gate.clone(),
+            signed: liveness.signed,
+            trusted: trusted.clone(),
+        });
         self.poster.trusted = Some(trusted);
         ("log_heads", self.poster.run(self.rx, sequencer).await)
     }
@@ -103,6 +134,7 @@ impl Pending {
             trusted: None,
             prefix_ring: Default::default(),
             stall_intervals: 3,
+            heartbeat: None,
         };
         Self { poster, posted, freeze }
     }
@@ -156,6 +188,7 @@ pub(crate) fn pending(cfg: &NodeConfig, key: &Arc<EnclaveKey>, heads: StartupHea
         trusted: None,
         prefix_ring: Default::default(),
         stall_intervals: stall_intervals(cfg),
+        heartbeat: None,
     };
     Ok(Pending::from_heads(poster, heads, freeze))
 }
@@ -247,5 +280,8 @@ pub(crate) fn startup(pending: Option<Pending>, log: &crate::sequencer::Replayed
     // only the internal seal chain.
     let head = Head { seq: log.last_seq().unwrap_or(0), link: log.head_link() };
     let (tx, rx) = watch::channel(head);
-    Ok(Some(Setup { poster, tx, rx, freeze }))
+    let stamp = u64::try_from(log.replayed.engine.now()).unwrap_or(0);
+    let (released, _) = watch::channel(crate::liveness::Released { head, stamp });
+    let (hold, _) = watch::channel(super::Hold::Live);
+    Ok(Some(Setup { poster, tx, rx, freeze, released, hold, gate: Default::default(), liveness: None }))
 }

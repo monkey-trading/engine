@@ -274,6 +274,7 @@ contract OperatorRegistry {
     error ScheduleNamesTurns();
     error TurnsPending(uint64 until);
     error EpochTooShort(uint64 epochLength, uint64 minimum);
+    error EnclaveIsStandbyKey(address enclave);
 
     /// @param monkey_ The MONKEY token the staking contract holds.
     /// @param cooldownSeconds_ The staking contract's unstake cooldown, in seconds, which also keeps
@@ -335,6 +336,7 @@ contract OperatorRegistry {
         if (candidates[msg.sender].adminKey != address(0)) revert AlreadyRegistered();
         address adminKey = registration.adminKey;
         if (adminKey == address(0) || registration.enclave == address(0)) revert ZeroAddress();
+        _refuseStandbyKey(registration.enclave);
         if (!_authorizedByAdminKey(msg.sender, adminKey, signature)) revert UnauthorizedAdminKey();
         if (keyHolder[adminKey] != address(0)) revert AdminKeyTaken(keyHolder[adminKey]);
         if (registration.bond < parameters.minSelfBond) {
@@ -383,6 +385,14 @@ contract OperatorRegistry {
         );
     }
 
+    /// @dev Reverts when `enclave` is a standby key registered in the schedule.
+    function _refuseStandbyKey(address enclave) private view {
+        OperatorSchedule turns = schedule;
+        if (address(turns) != address(0) && turns.standbyHolder(enclave) != address(0)) {
+            revert EnclaveIsStandbyKey(enclave);
+        }
+    }
+
     /// @dev Reverts unless the registration names a nonempty, bounded endpoint.
     function _checkEndpoint(Registration calldata registration) private pure {
         uint256 hostname = bytes(registration.apiHostname).length;
@@ -428,11 +438,13 @@ contract OperatorRegistry {
 
     /// @notice Updates the enclave address the caller's candidacy registers: the only address the
     /// vault's limited `setSigner` installs while rotation is on. A standby promotes with fresh
-    /// enclave keys, which it registers here before the timelock installs them.
+    /// enclave keys, which it registers here before the timelock installs them. Neither this nor
+    /// `register` takes a standby key the schedule registered: only a promotion installs one.
     function setEnclave(address enclave) external {
         Candidate storage registered = candidates[msg.sender];
         if (registered.adminKey == address(0)) revert NotRegistered();
         if (enclave == address(0)) revert ZeroAddress();
+        _refuseStandbyKey(enclave);
         registered.enclave = enclave;
         emit CandidateEnclaveChanged(msg.sender, enclave);
     }
@@ -799,8 +811,9 @@ contract OperatorRegistry {
     }
 
     /// @dev Adopts the rotation set the close of `epoch` makes in the schedule, to take effect seven
-    /// days plus the finality margin from now: every eligible listed candidate with its admin key
-    /// and votes, and whether a quorum of total stake is delegated to listed candidates.
+    /// days plus the finality margin from now: every eligible listed candidate holding a promotable
+    /// standby key, with its admin key and votes, and whether a quorum of total stake is delegated to
+    /// listed candidates, whether or not they hold one.
     function _adopt(uint64 epoch, Parameters memory p) private {
         uint256 total = staking.totalStaked();
         uint256 delegated = 0;
@@ -813,7 +826,7 @@ contract OperatorRegistry {
             address candidate = candidateList[i];
             uint256 cast = staking.votes(candidate);
             delegated += cast;
-            if (!_eligible(candidate, cast, total, p)) continue;
+            if (!_eligible(candidate, cast, total, p) || schedule.promotable(candidate) == address(0)) continue;
             (eligible[count], keys[count], votes[count]) = (candidate, candidates[candidate].adminKey, cast);
             ++count;
         }

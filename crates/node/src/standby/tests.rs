@@ -211,6 +211,7 @@ async fn follow_appends_verified_frames_and_refuses_a_wrong_signer() {
         &Followed::from_standby(&standby_section(port)),
         Duration::from_secs(5),
         None,
+        None,
     )
     .await
     .unwrap_err();
@@ -238,6 +239,7 @@ async fn follow_resumes_at_the_copys_last_command() {
         &config(),
         &Followed::from_standby(&standby_section(port)),
         Duration::from_millis(300),
+        None,
         None,
     )
     .await
@@ -270,6 +272,7 @@ async fn follow_repeats_the_tail_without_reappending_it() {
         &config(),
         &Followed::from_standby(&standby_section(port)),
         Duration::from_secs(5),
+        None,
         None,
     )
     .await
@@ -305,6 +308,7 @@ async fn follow_stops_at_an_operator_cut_back_and_keeps_its_copy() {
         &Followed::from_standby(&standby_section(port)),
         Duration::from_secs(5),
         None,
+        None,
     )
     .await
     .unwrap_err();
@@ -338,6 +342,7 @@ async fn follow_stops_at_a_signed_head_behind_its_copy() {
         &config(),
         &Followed::from_standby(&standby_section(port)),
         Duration::from_secs(5),
+        None,
         None,
     )
     .await

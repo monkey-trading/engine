@@ -179,7 +179,7 @@ an index: load only the rule whose hint matches the current action.
   start, which serves only its attestation until the timelock installs the registered enclave;
   `engine replay --attestation` pairs one attestation with each signer), a rotation-set member's
   life (`node/member.rs`, #593: between its turns it follows the operator in effect, resolved from
-  the registry's registered hostname and the vault's signer at finality each turn and after a failed
+  the registry's registered hostname and the vault's signer at the latest block each turn and after a failed
   stint, `standby/operator.rs`, into a copy with a live replica built by one replay,
   `standby/replica.rs` over `sequencer/replay/live.rs`, `node/member/turn.rs`; at its turn it reads
   everything its start needs from the chain and takes its trusted time sample first, `node/ready.rs`,
@@ -232,7 +232,21 @@ an index: load only the rule whose hint matches the current action.
   on a log the posted head does not hold, freezing sequencing when a posted head overtakes it or
   names another prefix at a seq it retains (`log_rollback`); the check is per signer epoch, so a standby takeover dropping the outgoing
   key's tail is not refused, while a key `setSigner` reinstalls is checked against the newest head of
-  its earlier epochs.
+  its earlier epochs. Minute-scale liveness (#595, `liveness/`): while a turn names the operator the
+  poster posts `engine.log-head.v2` heads (`log_heads/v2.rs`) at least twice per heartbeat interval,
+  held through a benchmark-sync hold or trusted-time halt; with another member in the turn's set the
+  operator's rule (`liveness/operator.rs`) asks the members' handover endpoints for their copies'
+  signed statuses (`liveness/link.rs`), signs heads and checkpoints only at a confirmed seq
+  (`sequencer/liveness.rs`), refuses to sequence before a start check, stops commands while its log
+  runs an interval past the newest confirmation, and fences answers, heads and commands by its own
+  clock before the earliest promotion (`liveness/fence.rs`, `api/signing.rs`), with `/v1/operator`
+  naming its enclave and the vault's signer epoch; every member between its turns answers on its
+  handover endpoint, with `[liveness]` witnesses, promotes and relays signed heads from the stream
+  (`liveness/caller.rs`), keeps a standby key sealed for its release (`standby_key/`), has it vouched
+  by the operator's `POST /v1/standby/vouch` or a member and writes the registration for its candidate
+  to send (`node/member/standby.rs`), and once a promotion names it starts in process from its copy,
+  fetching any gap of the promotion's prefixes from members, its checkpoints after the promotion's
+  finality and a reorg of the promotion stopping it (`node/member/promoted.rs`, `node/liveness.rs`).
   Withdrawal authorizations carry EIP-712 data and an approval inclusion proof; custody's used nonce
   determines payment, and unpaid approvals are reissued on signer rotation or on their account's
   signed request, never on a schedule. It also has price feeds: live crypto
@@ -322,6 +336,16 @@ an index: load only the rule whose hint matches the current action.
   newest released `(seq, link)` under an `engine.log-head.v1` signature checked against the vault's current
   `checkpointSigner` and `signerEpoch`, keeping the highest seq per epoch so a restarted node refuses a truncated
   log before writing anything; the posting interval is config, an hour by default, on its own relayer sender.
+  While a turn of the schedule names the operator it takes only `engine.log-head.v2` heartbeats (#595): the
+  assignment the enclave holds, its release and generation, the stamp, the signing time within
+  `headTolerance` of the block's, or for a held head a recent block (`ArbSys`, `src/ArbSys.sol`) newer
+  than the bound one and no older than the latest witnessed slot's, and latches each assignment's first
+  head once (`latches`). `OperatorSchedule` holds the heartbeat rule within deployment bounds, marks
+  slots (`witness`), promotes the next qualified member's vouched standby key to the vault's signer in a
+  new epoch with no timelock (`promote`, `Vault.promoteSigner`), keeps every assignment and its release
+  revisions (`assignmentOf`), and registers standby keys from the candidate with a vouch from the vault's
+  signer or a promotable standby key (`registerStandby`, `promotable`); `promotionDueAt` is the earliest
+  time a promotion could pass.
   `src/SeedSchedule.sol` fixes each daily operator turn's seed epoch
   (the beacon epoch holding the time two days before its draw deadline, which is a day before its 22:30 UTC boundary);
   `src/SeedRelay.sol` on Ethereum proves that epoch's RANDAO mix from an EIP-4788 beacon block root, its
@@ -370,7 +394,8 @@ an index: load only the rule whose hint matches the current action.
   from the checkpoint relayer, and the posting interval (an hour by default); it requires
   `[checkpoints]`, and with it the node refuses to start on a log the posted head does not hold;
   `operator.rotation_enabled` requires it, and the stall alarm (`log_head_stalled`) then fires after two
-  posting intervals, not three.
+  posting intervals, not three. The optional `[liveness]` (#595) names a member's liveness caller, an
+  account the checkpoint endpoint signs for apart from every relayer, and its `min_balance`.
   `ct-watch.toml` is the Certificate Transparency watcher's config, documenting what it needs: the
   domain, the node and its release manifest, the logs to follow, and alert routing.
   A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,
@@ -514,6 +539,12 @@ an index: load only the rule whose hint matches the current action.
   member's first command is `TurnTaken` and its time in office starts there, `/v1/operator` shows the
   sets and turns, and the last member's log replays; then an installation of the last turn's own
   candidate ends the turns;
+  `dev-liveness.sh`, the minute-scale liveness scenario (#595) on Anvil with a chain-backed `ArbSys`
+  stand-in and trusted time on the chain's clock: the real head poster, liveness rule, member links and
+  liveness callers; v2 heads at confirmed seqs and the turn's latch, relayed heads with the operator's
+  relayer silenced, held heads through a trusted-time halt, the operator's stop through a paused chain,
+  and a failed operator's fence before the promotion that moves the vault's signer to the next member's
+  standby key;
   `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
   contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
   relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped
@@ -837,6 +868,8 @@ Run from the repo root:
   budget, the admin keys, `TurnTaken`, the time in office and `/v1/operator` checked at each
   boundary, a stream client following each holder, then the log replayed and the turns ended by an
   installation)
+- Minute-scale liveness dev scenario: `./scripts/dev-liveness.sh` (Anvil, Forge and installed Soldeer
+  dependencies; about ten minutes of wall time; CI runs it in the `dev-daily-rotation` job)
 - Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens
   read through the custody quorum into `/v1/operators`, the closed epochs in `/v1/monkey/distributions`
   across a delegation and a restart, and each saved answer verified with `engine verify-response`)

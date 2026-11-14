@@ -299,6 +299,9 @@ impl Sequencer {
         {
             return Ok(());
         }
+        if self.checkpoint_waits_for(seq, paced) {
+            return Ok(());
+        }
         // The worker finalizes one checkpoint at a time, so a full queue defers the next checkpoint
         // instead of stopping the sequencer; unproved approvals wait for the next one that fits.
         if let Some(gate) = &mut self.gate

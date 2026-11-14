@@ -45,6 +45,10 @@ pub(super) struct Reservation {
     /// endpoint received the transaction still leaves the call that may land.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// A v2 head's whole `postV2` call, which a rebroadcast sends as it is; `None` for a v1 head,
+    /// whose call is rebuilt from the head, the parent and the signature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calldata: Option<alloy::primitives::Bytes>,
     /// The parent head the stored call extends; zeroes for the first post of the signer epoch.
     #[serde(default)]
     pub parent_seq: u64,
@@ -213,6 +217,7 @@ impl SubmissionStore {
             nonce,
             tx_hash: None,
             signature: None,
+            calldata: None,
             parent_seq: 0,
             parent_link: B256::ZERO,
             stored_at: now,

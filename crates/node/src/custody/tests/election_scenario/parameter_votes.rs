@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 
 use super::chain::{Chain, Parameters, delegateCall, setParametersCall, setRotationCall};
 use super::node::Node;
-use super::{DIGEST_A, DIGEST_B, FINALITY_MARGIN_SECS, T0_SECS, address, monkey};
+use super::{CONFIG_HASH, DIGEST_A, DIGEST_B, FINALITY_MARGIN_SECS, T0_SECS, address, monkey};
 use crate::checkpoints::scenario::deploy;
 use crate::sequencer::replay_path;
 use crate::tee::EnclaveKey;
@@ -87,14 +87,13 @@ async fn dev_scenario_members_vote_parameter_changes_by_stake() {
         &(chain.accounts[9], BEACON_GENESIS).abi_encode_params(),
     )
     .await;
-    let schedule_args = (chain.registry, receiver).abi_encode_params();
-    let schedule =
-        deploy(&chain.provider, chain.accounts[0], "OperatorSchedule.sol/OperatorSchedule.json", &schedule_args).await;
+    let (schedule, _) = chain.deploy_schedule(receiver).await;
     chain.schedule = Some(schedule);
     let vote_args = (schedule, NORMAL_WINDOW_SECS, FAST_WINDOW_SECS).abi_encode_params();
     let vote = deploy(&chain.provider, chain.accounts[0], "ParameterVote.sol/ParameterVote.json", &vote_args).await;
     chain.vote = Some((vote, TTL_MS));
     chain.deploy_lens().await;
+    let vouching = enclave.clone();
     let mut node = Node::start(&chain, enclave).await;
     let recorded = node.query(|e| e.governance().config).await.expect("the node records the vote contract");
     assert_eq!((recorded.vote.0, recorded.restriction_ttl_ms), (vote.0.0, TTL_MS));
@@ -126,6 +125,14 @@ async fn dev_scenario_members_vote_parameter_changes_by_stake() {
             .send(*member, chain.staking, delegateCall { candidate: *member, amount: monkey(stake) }.abi_encode())
             .await;
     }
+    // A close adopts only members with a promotable standby key: the vault's signer vouches for each.
+    let releases = [DIGEST_A, DIGEST_B, DIGEST_C].map(|digest| {
+        alloy::primitives::B256::from(
+            crate::tee::sealing::Release { launch_digest: digest, config_sha256: CONFIG_HASH }.id(),
+        )
+    });
+    let standbys: Vec<_> = members.into_iter().zip(releases).collect();
+    chain.register_standbys(&standbys, &vouching).await;
     node.advance_to((SET_CLOSE_SECS as Millis + 60) * 1000).await;
     chain.close_epoch_at(SET_CLOSE_SECS).await;
     node.wait("the rotation set to mirror", |e| e.daily_turns().sets.contains_key(&1)).await;
