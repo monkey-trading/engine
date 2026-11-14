@@ -368,9 +368,34 @@ before it logs `TurnTaken`, so no copy is sealed after it has stopped for a hand
 its enclave's `TurnTaken` to the end of its turn, an incumbent past its turn earns nothing, and from
 V53 the operator in office before the first turn earns nothing past the moment that turn applies, its
 boundary or its mirror when later;
-promotion over turns, which is the liveness rule's, is not built yet, so a failed member holds its
-turn until the next boundary and the governance fallback (rotation off and `installOperator` once the
-drawn turns end) applies; from V56, while rotation is on, the governed parameters, listings,
+while a turn names the operator and its set has another member, the operator's enclave posts an
+`engine.log-head.v2` head at least twice per heartbeat interval (60 s by default) as its heartbeat, and
+signs a head or a checkpoint only at a seq another member's enclave confirmed holding, so it runs, and
+checkpoints, only while another member confirms its log, and stops taking commands while its log runs
+more than one interval past the newest confirmation; once `heartbeatMisses` witnessed slots (5 by
+default) pass with no head of the signer epoch, anyone promotes the next qualified member in the turn's
+order, and the vault moves its signer to that member's vouched standby key in a new signer epoch, with
+no timelock; detection takes 5 to 6 intervals after the last landed head (about 6 minutes at the
+defaults, at most 10 under the deployment bounds), each promotion adds the promoted member's start,
+and each member in the order that fails to start adds one more detection window; once no position
+qualifies the order is exhausted, and the governance fallback (rotation off, then `installOperator`
+once the drawn turns end) applies, which takes at most the 10-minute bound plus the timelock delay,
+below the 14-day exit period; a promoted member starts at a block the custody quorum agrees on, before
+finality, so an Arbitrum reorg of that block can remove its promotion after it traded, which stops it,
+pages `promotion_reorged` and quarantines what it sequenced; the old operator stops by its own clock
+before the earliest promotion could pass, assuming Arbitrum's block timestamps lead true time by no
+more than 10 s and its monotonic clock runs no more than 500 ppm slow, and it stops whenever its reads
+cannot rule out a promotion within the 15 s margin, as through an Arbitrum sequencer outage or a lost
+custody quorum lasting about `heartbeatMisses` intervals, resuming on its first read after one; two
+copies of one key, which only a host keeping or restoring a sealed copy can run, can serve together
+until the losing copy reads the conflicting posted head, or, if its host blocks its reads, until the
+stop time it last computed, so one interval is not a bound on the overlap, and a host that rolls its
+member back within the unposted window, keeping the answering members from seeing what it signed, can
+make it sign a second history over at most that window, which #597 penalises as the member's fault;
+a heartbeat proves that the enclave sequences, not that clients are served; a host can keep its own
+turn halted with held heads, through a benchmark-sync hold or a trusted-time halt, until the turn
+ends; a standby key's registration is sent by the candidate's own account, so a candidate that does
+not send it is not promotable; from V56, while rotation is on, the governed parameters, listings,
 close-spread adoptions, the access policy and protocol activation change only by a proposal the
 rotation set passes with more than two thirds of its snapshotted weight on the vote contract, which
 the engine mirrors from finalised events, so the operator's own commands for them are refused; the

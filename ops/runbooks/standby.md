@@ -53,7 +53,7 @@ with the operator.
 
    With `operator.rotation_enabled = true` the standby does not keep to `operator` and `enclave`: it
    reads the operator in effect from the registry before each stint, at `https://` its registered
-   API hostname and against the vault's signer at finality, so it moves with each daily turn and
+   API hostname and against the vault's signer at the latest block, so it moves with each daily turn and
    election, and with a `setSigner` replacement at an unchanged hostname, archive recovery and the
    copy's first signer included, and a promotion replays the copy against every signer the vault
    recorded rather than `enclave`; a failed stint within five minutes of a move logs a warning rather

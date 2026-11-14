@@ -305,7 +305,7 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
   endpoint you take the keys from.
 - **Between your turns.** Keep the node running, started with no key flag. While a turn names another
   member it follows the operator in effect: the candidate the registry names, at `https://` its
-  registered API hostname, every frame verified against the vault's signer at finality. It keeps a
+  registered API hostname, every frame verified against the vault's signer at the latest block. It keeps a
   copy of the log with a live replica built by one replay when it starts following, resolves the
   operator again at each boundary and after a failed stint, and pins the latest posted log head as
   its replica passes it. `standby_follow_failed`, `operator_log_rollback` and `replica_diverged`
@@ -365,9 +365,64 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
   stops, a successor whose build reads only versions older than its log runs, and keeps the keys.
 - **Rotation off.** Turning rotation off stops draws; the turns already drawn stand, and the last
   member stays named until the timelock installs an operator once they end.
-- **Liveness.** `promote` reverts while a schedule is named: promotion over turns is not built yet. A
-  failed member holds its turn until the next boundary, and a member that cannot hand over at all
-  needs the governance fallback: rotation off, then `installOperator` once the drawn turns end.
+- **Liveness.** A failed operator is replaced within minutes (section 6a); the registry's own `promote`
+  reverts while a schedule is named. Once the turn's order is exhausted, the governance fallback
+  applies: rotation off, then `installOperator` once the drawn turns end.
+
+## 6a. Minute-scale liveness
+
+While a turn names the operator, its enclave's log head is the heartbeat, and a member whose operator
+misses it is promoted at once.
+
+- **What the operator's node does.** It posts an `engine.log-head.v2` head at least twice per
+  `heartbeatInterval` (the schedule's `liveness()`, 60 s by default) through `[log_heads]`'s relayer,
+  which must hold enough for two posts a minute. With another member in the turn's set, it signs a
+  head or a checkpoint only at a seq another member's enclave confirmed holding, so it sequences only
+  while a member follows it: before it sequences after any start it asks the other members for their
+  copies (`liveness_start_refused` names a member that holds more), and it stops taking commands while
+  its log runs more than one interval past the newest confirmation (`liveness_unconfirmed`). Through
+  a benchmark-sync hold or a trusted-time halt it posts held heads, so no promotion follows. It stops by
+  its own clock 15 s before the earliest block time a promotion could pass (`liveness_fenced`), and
+  resumes on the first read that moves that time on. `GET /v1/operator` names its `enclave` and the
+  vault's `signer` epoch and key; a client takes an answer only while they match.
+- **What every member's node does between its turns.** It follows the operator, syncing its copy every
+  200 ms, and answers on its registered handover endpoint: its copy's status, signed by its standby key,
+  the copy's latest entries, and vouches for other candidates' standby keys. With `[liveness]` it also
+  witnesses each slot, promotes once `promotionDueAt()` passes, and relays the operator's signed heads
+  from its stream when the chain's head is older than two thirds of an interval. Fund
+  `liveness.caller` apart from every relayer; `liveness_caller_unfunded` pages below
+  `liveness.min_balance`.
+  ```toml
+  [liveness]
+  caller = "0x..."        # an account the checkpoint endpoint signs for, apart from every relayer
+  min_balance = "0.01"
+  ```
+- **Your standby key.** Your enclave seals a standby key for its release and asks the operator in
+  effect's API (`POST /v1/standby/vouch`), then each member, to vouch for it. The schedule takes the
+  registration only from your candidate account, which the node does not hold: once vouched, the node
+  writes `standby-registration.json` in the sealing directory and pages `standby_unregistered` with the
+  call. Send it before the vouch expires (30 minutes; the node asks again 10 minutes before):
+  `cast send $SCHEDULE "$(jq -r .calldata standby-registration.json)"` from the candidate's account,
+  or `cast send $SCHEDULE 'registerStandby(address,uint64,uint64,bytes)' <key> <nonce> <expiry> <vouch>`.
+  `cast call $SCHEDULE 'promotable(address)' $CANDIDATE` shows the key once registered. Register before
+  the timelock turns rotation on: the deployment's operator vouches for the first members. A candidate
+  with no promotable key at an election close is not adopted into the set; a `setRelease` voids the key,
+  and the node registers a new one for the new release.
+- **A promotion.** Once `heartbeatMisses` witnessed slots (5 by default) pass with no head, anyone's
+  `promote()` names the next qualified member, and the vault moves its signer to that member's standby
+  key in a new signer epoch. The promoted node starts sequencing from its copy at once, if its copy holds
+  the outgoing epoch's latest head and the vault's latest checkpoint the promotion fixed, fetching any gap
+  from the member that confirmed the head and then every other; `promotion_start_refused` pages a copy
+  that cannot, and the next promotion passes it. Its checkpoints and payouts wait for the promotion's
+  finality; `promotion_reorged` pages a promotion the chain dropped, which stops the node and records
+  the history it sequenced in `quarantine.json` beside the log: restart it only once the chain shows
+  the same promotion again, or set that history aside for the owner.
+- **Pinned assumptions.** Arbitrum's block timestamps lead true time by no more than 10 s (the stop
+  margin's first part) and the enclave's clock runs no more than 500 ppm slow. A sequencer outage
+  produces no blocks, so no slot is marked and no promotion passes; the operator stops about
+  `heartbeatMisses` intervals after its last read and resumes on its first read after the outage. The
+  delayed inbox and forced inclusion take hours, so nothing in the rule relies on them. `headBlocks`
+  must span less than one interval at the block rate the deployment pins (200 blocks at 250 ms).
 
 ## 7. Parameter votes
 

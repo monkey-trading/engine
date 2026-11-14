@@ -220,10 +220,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   cut-back operator or a heartbeat behind the copy with the copy unchanged
 - `src/standby/follow.rs` — one follow stint: the signed stream at the copy's last command, each frame
   verified against the followed enclave, each new entry applied to a replica, when there is one,
-  before the copy takes it (`ReplicaRefused` otherwise)
+  before the copy takes it (`ReplicaRefused` otherwise); with a member link, the copy synced every
+  200 ms and its durable head, entries and the stream's signed heads recorded for it
 - `src/standby/operator.rs` — the operator a follower follows: under rotation the registry's candidate
-  in effect at `https://` its registered API hostname, verified against the vault's signer at
-  finality; without rotation the one `[standby]` names; a `--standby` node's, with `[standby]`'s
+  in effect at `https://` its registered API hostname, verified against the vault's signer at the
+  latest block; without rotation the one `[standby]` names; a `--standby` node's, with `[standby]`'s
   mirrors; and the signers a promotion replays the copy against, the vault's recorded ones under
   rotation; `src/standby/operator/tests.rs` covers a turn change, rotation off, a standby and a
   promotion whose configured enclave is not the vault's signer
@@ -244,6 +245,30 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   sealing, the opening rule, and crashes before, during and after a reseal;
   `src/standby_key/tests/vouch.rs` covers the digest against the schedule's, the report data, and
   every refusal of the handler
+- `src/liveness/mod.rs` — the minute-scale liveness rule (#595): the gate sequencing, signed answers and
+  heads wait on, the released head with its stamp, a member's signed status, and the stop margin and
+  drift rate the fence assumes
+- `src/liveness/chain.rs` — what the rule reads at one block the custody quorum agrees on: the vault's
+  signer, the registry's rotation state, the schedule's heartbeat rule, marks, turn and
+  `promotionDueAt`, the epoch's stored head, a set's members with their endpoints and standby keys
+- `src/liveness/fence.rs` — the operator's stop by its own clock before the earliest promotion
+- `src/liveness/operator.rs` — the operator's side: members' statuses, the start check, the newest
+  confirmation the poster signs at, the lag stop, and the fence tick; `src/liveness/operator/tests.rs`
+  drives it against fake members, chain and sequencer
+- `src/liveness/link.rs` — the member link: statuses, entries and vouches a member answers on its
+  handover endpoint while it follows, and how a node asks; `src/liveness/link/tests.rs`
+- `src/liveness/caller.rs` — a member's liveness caller: witnesses, promotions and relayed heads from its
+  own account; `src/liveness/caller/tests.rs`
+- `src/liveness/fake.rs` — the fake chain the rule's tests set
+- `src/node/liveness.rs` — the operator's wiring of the rule, a promoted start's checkpoints after
+  finality and retired work, and the watch that stops on a reorged promotion
+- `src/node/member/standby.rs` — a member's standby side beside its following: standby keys, member
+  link, liveness caller, the vouched registration it writes for its candidate, and promotion checks
+- `src/node/member/promoted.rs` — a promoted member's start: the promotion's prefixes, the gap fetched
+  from members, the record, the reseal; `src/node/member/promoted/tests.rs`
+- `src/sequencer/liveness.rs` — the sequencer's hold, and checkpoints that wait for a member's
+  confirmation; `src/sequencer/liveness/tests.rs`
+- `src/api/standby.rs` — `POST /v1/standby/vouch`, the operator's vouch for a standby key
 - `src/node/mod.rs` — startup, task supervision, and shutdown; a member's start from its replica
   reads nothing from the chain and takes no trusted time sample, using what it read before connecting
 - `src/node/run.rs` — `run_with_cpu`: a member's wait for its turns around each `serve_node`, or one
@@ -1004,6 +1029,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log_heads/tests/mod.rs` — the poster's loop tests: pacing, lost responses, rollback freezes
   at a higher or forked posted head, stall and transport-failure alert episodes, and the reorg
   reparenting
+- `src/log_heads/v2.rs` — `engine.log-head.v2` heads: the digest, the `postV2` call, which head the
+  poster signs, live or held, and the assignment it binds; `src/log_heads/tests/heartbeat.rs` covers
+  the heartbeat against the fake chain
 - `src/log_heads/tests/stall.rs` — the stall alarm's window: three posting intervals, or two under rotation, and one page per episode
 - `src/log_heads/tests/recovery.rs` — recovery behaviors: heads that land despite a lost response
   or across a restart, the stall alarm counting across a restart from the checked head or the
