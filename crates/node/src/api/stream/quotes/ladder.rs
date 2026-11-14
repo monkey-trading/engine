@@ -149,19 +149,21 @@ struct Held<'a> {
 /// first and refuses the second admits a range from the first. So the side quotes a reversal only
 /// when the smallest the engine admits by size, the position and one unit or the minimum order,
 /// whichever is larger, is admitted; and it ends at the largest size that fills below the first
-/// reversal top the engine refuses, since a later step could cover sizes it refuses. A side with no
-/// step cannot open any size.
+/// reversal top of at least the minimum order that the engine refuses, since a later step could cover
+/// sizes it refuses. A side with no step cannot open any size.
 fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held: &Held) -> Vec<Step> {
     let quote = |qty: Fixed| quoter.quote(account, market, side, qty).ok();
     let fits = |qty: Fixed| quote(qty).filter(|quote| quote.declined.is_none()).map(|quote| quote.price);
     let same_side = held.qty.is_zero() || held.qty.signum() == side.sign();
     let holding = held.qty.abs();
-    // The largest size known to fill, which includes closing what the account holds on the other
-    // side (at most the input bound, past which no order is placeable).
+    // Closing what the account holds on the other side fills, up to the input bound, past which no
+    // order is placeable.
     let closing = holding.min(Fixed::MAX_INPUT);
     // The minimum order notional is the whole order's, so past a position that clears it the smallest
     // reversal is one unit more.
-    let reverses = same_side || quote((closing + Fixed::from_raw(1)).max(held.floor)).is_some();
+    let smallest = (closing + Fixed::from_raw(1)).max(held.floor);
+    let reversal = if same_side { None } else { quote(smallest) };
+    let reverses = same_side || reversal.is_some();
     let closes = held.tops.iter().rev().filter(|top| !same_side && **top < holding).map(|top| holding - *top);
     let opens = held.tops.iter().filter(|_| reverses).filter_map(|top| {
         let qty = if same_side { *top - holding } else { *top + holding };
@@ -169,11 +171,21 @@ fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held
     });
     let orders = closes.chain(opens);
     let mut steps: Vec<Step> = Vec::new();
-    // Whether the side has reached a top it cannot fill: one declined, or a reversal refused.
-    let (mut known, mut ended) = (if same_side { Fixed::ZERO } else { closing }, false);
+    // The largest size known to fill: the whole close, or the smallest reversal when it fills, so the
+    // sizes a minimum order above the position refuses lie below every search. And whether the side
+    // has reached a top it cannot fill: one declined, or a reversal of at least the minimum refused.
+    let fills_smallest = reversal.is_some_and(|reversal| reversal.declined.is_none());
+    let known = if same_side {
+        Fixed::ZERO
+    } else if fills_smallest {
+        smallest
+    } else {
+        closing
+    };
+    let (mut known, mut ended) = (known, false);
     for qty in orders {
         let priced = quote(qty);
-        let refused = priced.is_none() && !same_side && qty > holding;
+        let refused = priced.is_none() && !same_side && qty > holding && qty >= held.floor;
         if priced.as_ref().is_some_and(|priced| priced.declined.is_none()) {
             known = known.max(qty);
         } else if (priced.is_some() || refused) && !ended {

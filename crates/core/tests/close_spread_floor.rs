@@ -225,6 +225,24 @@ fn v58_does_not_activate_across_v54_over_a_bound_listing_below_its_converted_clo
 }
 
 #[test]
+fn v58_measures_a_bound_listing_a_pending_adoption_replaces_by_the_pending_one() {
+    let mut h = genesis_v52();
+    install_expect(&mut h, ceilings());
+    // An applied adoption binds a 7bp listing at 30bps, a charge of 22bps under `V52` and 24bps under
+    // `V54`'s tiers. A pending one at 16bps binds the 3bp proposal, 16bps under `V54`'s, and replaces
+    // it: only the proposal can list.
+    let wide = MarketSpec { spread_tiers: tenths(&[(None, 70)]), ..proposal() };
+    let due = h.ts + NOTICE_MS;
+    h.admin(adopt(SOL, 30, due, Some(wide)));
+    h.advance_to(due);
+    h.cmd(Command::Tick);
+    h.admin(adopt(SOL, 16, h.ts + NOTICE_MS, Some(proposal())));
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V58 });
+    let pending = h.engine.pending_ceiling().and_then(|pending| pending.listing.clone());
+    assert_eq!(pending, Some(floored(proposal(), "1")));
+}
+
+#[test]
 fn a_first_listing_while_an_adoption_waits_is_held_to_its_listing_and_value() {
     let mut h = genesis_v52();
     // An entry for SOL from genesis, at 50bps, before any proposal.

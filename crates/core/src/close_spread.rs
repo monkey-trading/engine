@@ -360,7 +360,7 @@ impl Engine {
     /// the parameters as it converts them, with the market's bands as `V52`'s activation writes them,
     /// since a ceiling cannot be raised; and from `V58` none below the launch close charge of a listing
     /// an adoption binds, applied or pending, for a market not yet listed, which its first listing
-    /// must be.
+    /// must be: the pending one where both bind, since it replaces the applied one.
     /// Error cases:
     /// - a listed market's ceiling or pending adoption below its launch close charge
     /// - from `V58`, a bound listing's ceiling or pending adoption below its launch close charge
@@ -396,9 +396,12 @@ impl Engine {
         if version < ProtocolVersion::V58 {
             return Ok(());
         }
+        // A pending adoption's listing replaces the applied one for its market once it applies, and until
+        // then a first listing must be both, so only the pending one can list.
         let pending_listing = pending.and_then(|p| Some((&p.market, p.listing.as_ref()?)));
-        let bound = self.operator_bounds.proposed_listings.iter().chain(pending_listing);
-        for (id, spec) in bound.filter(|(id, _)| !self.markets.contains_key(*id)) {
+        let replaced = |id: &MarketId| pending_listing.is_some_and(|(market, _)| market == id);
+        let applied = self.operator_bounds.proposed_listings.iter().filter(|(id, _)| !replaced(id));
+        for (id, spec) in applied.chain(pending_listing).filter(|(id, _)| !self.markets.contains_key(*id)) {
             // An adoption that binds a listing records its value, as an entry once it applies.
             let ceiling = ceiling_of(*id).expect("a bound listing's adoption has a value");
             let charge = launch_close_charge_tenth_bps(params, spec);

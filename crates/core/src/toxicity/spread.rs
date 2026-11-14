@@ -104,7 +104,12 @@ impl Engine {
         if first >= end && self.protocol_version < ProtocolVersion::V58 {
             return;
         }
-        let ids: Vec<MarketId> = self.markets.keys().copied().collect();
+        // With no grid point passed, only a lapse can change a market, and only one with an open interval.
+        let ids: Vec<MarketId> = if first < end {
+            self.markets.keys().copied().collect()
+        } else {
+            self.markout_spreads.iter().filter(|(_, spread)| spread.last.is_some()).map(|(id, _)| *id).collect()
+        };
         for id in ids {
             self.sample_market(id, last_now, first, end);
         }

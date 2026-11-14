@@ -111,8 +111,10 @@ impl Engine {
         if self.protocol_version >= ProtocolVersion::V58 || version < ProtocolVersion::V58 {
             return;
         }
-        let pending = self.pending_ceiling.as_mut().and_then(|pending| pending.listing.as_mut());
-        for spec in self.operator_bounds.proposed_listings.values_mut().chain(pending) {
+        let listed = |id: MarketId| self.markets.contains_key(&id);
+        let pending = self.pending_ceiling.as_mut().filter(|pending| !listed(pending.market));
+        for spec in self.operator_bounds.proposed_listings.values_mut().chain(pending.and_then(|p| p.listing.as_mut()))
+        {
             spec.convert_to_floored();
         }
     }
