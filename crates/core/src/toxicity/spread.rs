@@ -8,18 +8,20 @@
 //! from then or before and a closure between ends them. Every grid point is sampled once, by the
 //! first command after it. A change counts when the market had an index at both ends of an interval
 //! and was open throughout it, and had one just before and just after each price command and each
-//! relisting of it within the interval, the commands that change what prices it: between them its
-//! quotes only age, which can end its index but not bring it back, so the next grid point or one of
-//! those commands finds any moment without one. Each counted change is kept, as its square in bps
-//! of the earlier index, for the trailing hour. A split needs a venue close before its ex-date open, so no change
-//! spans it, and the changes kept are relative, so a split leaves the history as it is.
+//! relisting of it within the interval, the commands that change what prices it. Between them its
+//! quotes only age. From `V58` a change also needs an index at each moment within the interval at
+//! which one of the market's quotes aged out, since where three or more venues quote, ageing alone can
+//! end its index and bring it back; before `V58` those moments are not checked. Each counted change
+//! is kept, as its square in bps of the earlier index, for the trailing hour. A split needs a venue
+//! close before its ex-date open, so no change spans it, and the changes kept are relative, so a
+//! split leaves the history as it is.
 
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
-use crate::engine::Engine;
+use crate::engine::{Engine, MarketState};
 use crate::event::Event;
 use crate::fixed::Rounding;
 use crate::markouts::MAX_MARKOUT_BPS;
@@ -66,6 +68,19 @@ fn grid_at_or_after(ts: Millis) -> i64 {
     ts.div_euclid(GRID_MS) + i64::from(ts.rem_euclid(GRID_MS) != 0)
 }
 
+/// The moments from `from` up to but not including `to` at which one of the market's quotes ages out
+/// and leaves it with no index. Every stored quote is stamped no later than the command that stored
+/// it, so between commands only these moments change what the quotes give.
+fn lapses(market: &MarketState, from: Millis, to: Millis) -> Vec<Millis> {
+    let max_age_ms = market.spec.price_rules.max_age_ms;
+    market
+        .quotes
+        .values()
+        .map(|quote| quote.ts.saturating_add(max_age_ms).saturating_add(1))
+        .filter(|at| (from..to).contains(at) && market.index(*at).is_err())
+        .collect()
+}
+
 /// The square of the change from `before` to `after`, in bps of `before`, clamped as a markout is.
 fn change_square(before: Fixed, after: Fixed) -> Fixed {
     let max = Fixed::from_int(MAX_MARKOUT_BPS);
@@ -78,14 +93,15 @@ impl Engine {
     /// From `V54`, samples every market's index at the grid points from `last_now`, the previous
     /// command's time, up to but not including the sequenced time, as the commands before this one
     /// left the market (see the module docs). After a gap longer than the trailing hour, only its
-    /// last hour is sampled.
+    /// last hour is sampled. From `V58` the moments its quotes aged out since `last_now` are checked
+    /// too, also when no grid point has passed.
     pub(crate) fn sample_markout_spreads(&mut self, last_now: Millis) {
         if self.protocol_version < ProtocolVersion::V54 {
             return;
         }
         let end = grid_at_or_after(self.now);
         let first = grid_at_or_after(last_now).max(end - WINDOW - 1);
-        if first >= end {
+        if first >= end && self.protocol_version < ProtocolVersion::V58 {
             return;
         }
         let ids: Vec<MarketId> = self.markets.keys().copied().collect();
@@ -95,13 +111,18 @@ impl Engine {
     }
 
     /// Samples one market at the grid points from `first` up to `end`, the previous command having
-    /// been at `last_now`, and drops the changes the trailing hour before `end` no longer holds. The
-    /// market's history is taken for change only when the sampling changes it.
+    /// been at `last_now`, and drops the changes the trailing hour before `end` no longer holds. From
+    /// `V58` an interval in which a quote aged out and left the market no index since `last_now`
+    /// counts no change, and ends if it is still open. The market's history is taken for change only
+    /// when the sampling changes it.
     fn sample_market(&mut self, id: MarketId, last_now: Millis, first: i64, end: i64) {
         let market = &self.markets[&id];
         let schedule = &market.spec.schedule;
         let kept = self.markout_spreads.get(&id);
         let mut last = kept.and_then(|spread| spread.last);
+        let lapses =
+            if self.protocol_version >= ProtocolVersion::V58 { lapses(market, last_now, self.now) } else { vec![] };
+        let lapsed = |from: Millis, to: Millis| lapses.iter().any(|at| from < *at && *at < to);
         let mut added = Vec::new();
         for at in first..end {
             let ts = at * GRID_MS;
@@ -115,10 +136,15 @@ impl Engine {
             if let (Some(mid), Some((previous, before))) = (index, last)
                 && previous == at - 1
                 && schedule.open_throughout(ts - GRID_MS, ts)
+                && !lapsed(ts - GRID_MS, ts)
             {
                 added.push((at, change_square(before, mid)));
             }
             last = index.map(|mid| (at, mid));
+        }
+        // A lapse after the last grid point sampled ends the interval it opened.
+        if last.is_some_and(|(at, _)| lapsed(at * GRID_MS, self.now)) {
+            last = None;
         }
         let stale = kept.is_some_and(|spread| spread.squares.front().is_some_and(|(at, _)| *at < end - WINDOW));
         if added.is_empty() && !stale && kept.and_then(|spread| spread.last) == last {

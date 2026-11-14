@@ -6,11 +6,11 @@ mod common;
 
 use common::close_spread::{NOTICE_MS, ceilings, install_expect, trade, widen_slippage};
 use common::events::only_fill;
-use common::spreads::{applied, btc_bands, funded, refused, spread_notice, tenths, with_spreads};
+use common::spreads::{applied, btc_bands, funded, genesis_v52, refused, spread_notice, tenths, with_spreads};
 use common::{BTC, DE40, EURUSD, Harness, f};
 use engine_core::auth::ClientAuth;
 use engine_core::close_spread::CloseSpreadCeiling;
-use engine_core::command::AdminCommand;
+use engine_core::command::{AdminCommand, Command};
 use engine_core::listing_bounds::ListingNotice;
 use engine_core::market::{MarketSpec, Tier};
 use engine_core::operator_bounds::{ParamsNotice, StressSettings};
@@ -153,6 +153,18 @@ fn a_listing_notice_needs_v52_a_listed_market_a_named_value_and_seven_days() {
     for (market, notice, reason) in cases {
         assert_eq!(refused(&h.operate(AdminCommand::AnnounceListing { market, notice })), reason);
     }
+}
+
+#[test]
+fn a_listing_notice_is_refused_unsigned_before_any_funds_are_credited() {
+    // Before funds are credited the operator's other commands may arrive unsigned; a notice may not.
+    let mut h = genesis_v52();
+    let (announce, _) = spread_notice(&h, BTC, doubled());
+    let events = h.cmd(Command::Admin(announce.clone()));
+    assert_eq!(refused(&events), "the operator signs a parameter notice or a rotation");
+    assert!(h.engine.operator_bounds().markups.is_empty());
+    // The same notice, signed, applies.
+    assert!(applied(&h.operate(announce)));
 }
 
 /// `V8`'s genesis with the FX markets listed, a ceiling for every market, a level-1 size multiplier

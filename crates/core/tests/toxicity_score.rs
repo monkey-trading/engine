@@ -14,7 +14,7 @@ use engine_core::event::Fill;
 use engine_core::fixed::Rounding;
 use engine_core::market::{MarketSpec, PriceRules};
 use engine_core::protocol::ProtocolVersion;
-use engine_core::toxicity::{GRID_MS, HALF_LIFE_MS, HORIZON_MS, MIN_FILLS};
+use engine_core::toxicity::{GRID_MS, HALF_LIFE_MS, HORIZON_MS, MIN_FILLS, WINDOW_MS};
 use engine_core::types::Side;
 
 #[test]
@@ -240,6 +240,50 @@ fn a_change_across_a_relisting_that_unpriced_the_market_counts_nothing() {
     h.advance(100);
     h.cmd(Command::Tick);
     assert_eq!(h.engine.markout_spread_bps(BTC), Some(f("0.5")));
+}
+
+#[test]
+fn from_v58_a_change_across_an_index_quote_expiry_alone_ends_and_brings_back_counts_nothing() {
+    // Five venues quote BTC, each quote fresh for 6 s, within a 25 bps bound.
+    let price_rules = PriceRules { max_age_ms: 6_000, max_divergence_bps: 25, min_sources: 2 };
+    let listing = floored(MarketSpec { price_rules, ..crypto(BTC, "BTC-USD") }, "0.5");
+    // (version, whether a command falls between the lapse and the next grid point)
+    for (version, between) in
+        [(ProtocolVersion::V54, false), (ProtocolVersion::V58, false), (ProtocolVersion::V58, true)]
+    {
+        let (mut h, _) = relisted_v54([listing.clone()]);
+        if version > ProtocolVersion::V54 {
+            h.admin(AdminCommand::ActivateProtocol { version });
+        }
+        // Past the trailing hour of the setup's own prices, so this is the only change it can hold.
+        let grid = h.ts.div_euclid(GRID_MS) * GRID_MS + WINDOW_MS + 4 * GRID_MS;
+        h.advance_to(grid - 500);
+        // At the grid point two venues quote 100 and three 100.2602, 25 bps apart about the median.
+        // One high ages out 1 s on and leaves it valid, another at 1.2 s leaves the median at 100 and
+        // the spread at 26 bps, and a low at 1.4 s brings it back to 25. Venues b and d stay fresh to
+        // the next grid point, where the index is 13 bps lower.
+        let quotes = [
+            ("a", "100", grid - 4_601),
+            ("b", "100", h.ts),
+            ("c", "100.2602", grid - 5_001),
+            ("d", "100.2602", h.ts),
+            ("e", "100.2602", grid - 4_801),
+        ];
+        let quotes = quotes.iter().map(|(source, mid, ts)| quote(source, mid, *ts)).collect();
+        h.cmd(Command::Prices { market: BTC, quotes });
+        if between {
+            h.advance_to(grid + 2_000);
+            h.cmd(Command::Tick);
+        }
+        h.advance_to(grid + GRID_MS + 100);
+        h.cmd(Command::Tick);
+        let spread = h.engine.markout_spread_bps(BTC).expect("floored");
+        if version < ProtocolVersion::V58 {
+            assert!(spread > f("12.9"), "{version:?}: {spread}");
+        } else {
+            assert_eq!(spread, f("0.5"), "between {between}");
+        }
+    }
 }
 
 #[test]

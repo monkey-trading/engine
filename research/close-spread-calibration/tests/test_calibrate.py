@@ -65,6 +65,25 @@ class GapComparisonTests(unittest.TestCase):
                          {"market": None, "skipped": "no market has effects rows"})
 
 
+class ExceedanceTests(unittest.TestCase):
+    def test_each_row_reads_its_own_markets_bars_past_a_deferred_market(self):
+        import numpy as np
+        hours = (CALIBRATE.RUN.CALIBRATION_WEEKS + 1) * 168
+        bars = np.zeros((hours, 3, 4), dtype=np.int32)
+        # The market between the two launch markets, which the genesis omits, moves 10.5% every hour.
+        bars[:, 1, 3] = 100_000
+        rows = [{"symbol": symbol, "proposed_ceiling_bps": 10, "calibration_only_ceiling_bps": 10,
+                 "max_divergence_bps": 5, "max_age_ms": 3_600_000} for symbol in ("A", "B")]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bars.npz"
+            np.savez(path, bars=bars, unit=np.float64(1_000_000), symbols=np.array(["A", "DEFERRED", "B"]))
+            result = CALIBRATE.exceedances(rows, path)
+        for row in result:
+            for field in ("validation_hours_over_calibration_ceiling", "calibration_hours_over_proposed_ceiling",
+                          "validation_hours_over_proposed_ceiling"):
+                self.assertEqual(row[field], 0.0, (row["symbol"], field))
+
+
 class BlockedFxReportTests(unittest.TestCase):
     def check_report(self, gap, needle):
         data = json.loads((HERE / "results/ceilings.json").read_text())

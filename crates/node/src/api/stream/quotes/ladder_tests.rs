@@ -308,22 +308,69 @@ fn a_side_whose_smallest_reversal_the_ceiling_refuses_ends_at_the_whole_close() 
         apply(&mut engine, T0, cmd);
     }
     // At level 2, 10bps and 4x, closing the 120 BTC through every tier costs 27.3bps a unit, over a
-    // 26bps ceiling, so a sell just past the position is refused, while 40 BTC more at the first
-    // tier's 18bps brings the average to 25bps, under it.
+    // 26bps ceiling, so a sell one unit past the position is refused, while 40 BTC more at the first
+    // tier's 18bps brings the average to 25bps, under it. The minimum order is the whole order's, so
+    // a $4m one, 40 BTC, leaves the sell one unit past the position the smallest reversal still.
+    for min_order in [None, Some("4000000")] {
+        let mut state = serde_json::to_value(&engine).unwrap();
+        state["markets"]["1"]["stress"]["level"] = serde_json::json!(2);
+        state["markets"]["1"]["stress"]["auto"] = serde_json::json!(2);
+        state["close_spread_ceilings"]["1"] = serde_json::json!(26);
+        if let Some(min_order) = min_order {
+            state["markets"]["1"]["spec"]["min_order_notional"] = serde_json::json!(min_order);
+        }
+        let engine: Engine = serde_json::from_value(state).unwrap();
+        let held = Fixed::from_int(120);
+        let next = engine.quote(TRADER, BTC, Side::Sell, held + Fixed::from_raw(1));
+        assert!(matches!(next, Err(Reject::CloseSpreadCeiling { ceiling_bps: 26 })), "{min_order:?}: {next:?}");
+        assert_eq!(engine.quote(TRADER, BTC, Side::Sell, Fixed::from_int(160)).unwrap().declined, None);
+        let quote = read(&engine, TRADER, BTC);
+        let qtys: Vec<Fixed> = quote.bid.iter().map(|step| step.qty).collect();
+        assert_eq!(qtys, [20, 100, 120].map(Fixed::from_int), "{min_order:?}: {quote:?}");
+        // Each step's size fills, and so does every smaller order, at no better than its step.
+        for units in 1..=120 {
+            let qty = Fixed::from_int(units);
+            let step = quote.bid.iter().find(|step| step.qty >= qty).expect("a step");
+            assert!(step.price <= fitting(&engine, TRADER, BTC, Side::Sell, qty), "{qty}: {step:?}");
+        }
+    }
+}
+
+#[test]
+fn a_reversal_side_ends_below_the_first_top_the_ceiling_refuses_where_band_rates_fall() {
+    let mut engine = engine();
+    let capital = Command::HouseCapital { amount: Fixed::from_int(90_000_000), chain_ref: "0xh".into() };
+    let (qty, mid) = (Fixed::from_int(5), Fixed::from_int(100_000));
+    let v52 = Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V52 });
+    for cmd in [capital, order(TRADER, BTC, Side::Buy, qty, mid, 10_000), v52] {
+        apply(&mut engine, T0, cmd);
+    }
+    // Bands a listing notice admits, each from BTC's launch rate to twice it, that fall at $5m: 2bp
+    // to $2m, 8bp to $5m, 4bp to $10m and 8bp above. At level 2, 10bps and 4x, under a 30bps
+    // ceiling, a long of 5 BTC sells 25 BTC at 18bps, 55 BTC at 31.1bps, refused, and 105 BTC at
+    // 28.7bps, admitted again.
     let mut state = serde_json::to_value(&engine).unwrap();
+    state["markets"]["1"]["spec"]["spread_tiers"] = serde_json::json!([
+        { "up_to": "2000000", "tenth_bps": 20 },
+        { "up_to": "5000000", "tenth_bps": 80 },
+        { "up_to": "10000000", "tenth_bps": 40 },
+        { "tenth_bps": 80 },
+    ]);
     state["markets"]["1"]["stress"]["level"] = serde_json::json!(2);
     state["markets"]["1"]["stress"]["auto"] = serde_json::json!(2);
-    state["close_spread_ceilings"]["1"] = serde_json::json!(26);
+    state["close_spread_ceilings"]["1"] = serde_json::json!(30);
     let engine: Engine = serde_json::from_value(state).unwrap();
-    let held = Fixed::from_int(120);
-    assert!(engine.quote(TRADER, BTC, Side::Sell, held + fixed("0.01")).is_err());
-    assert_eq!(engine.quote(TRADER, BTC, Side::Sell, Fixed::from_int(160)).unwrap().declined, None);
+    let refused = engine.quote(TRADER, BTC, Side::Sell, Fixed::from_int(55));
+    assert!(matches!(refused, Err(Reject::CloseSpreadCeiling { ceiling_bps: 30 })), "{refused:?}");
+    assert_eq!(engine.quote(TRADER, BTC, Side::Sell, Fixed::from_int(105)).unwrap().declined, None);
     let quote = read(&engine, TRADER, BTC);
-    let qtys: Vec<Fixed> = quote.bid.iter().map(|step| step.qty).collect();
-    assert_eq!(qtys, [20, 100, 120].map(Fixed::from_int), "{quote:?}");
-    // Each step's size fills, and so does every smaller order, at no better than its step.
-    for units in 1..=120 {
-        let qty = Fixed::from_int(units);
+    let last = quote.bid.last().expect("a reversal is quoted");
+    assert_eq!(quote.bid[0].qty, Fixed::from_int(25), "{quote:?}");
+    assert!(last.qty > Fixed::from_int(49) && last.qty < Fixed::from_int(55), "{quote:?}");
+    // Every size up to the last step, by tenths of a BTC, fills at no better than its step.
+    let tenth = Fixed::ONE.div_int(10);
+    let sizes = (1..).map(|n| tenth.mul_int(n)).take_while(|qty| *qty < last.qty).chain([last.qty]);
+    for qty in sizes {
         let step = quote.bid.iter().find(|step| step.qty >= qty).expect("a step");
         assert!(step.price <= fitting(&engine, TRADER, BTC, Side::Sell, qty), "{qty}: {step:?}");
     }

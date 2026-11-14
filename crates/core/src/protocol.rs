@@ -337,11 +337,20 @@ pub enum ProtocolVersion {
     /// age an add borrows. A log launched with no curve has no hold to pin and clamps at the curve in
     /// force's, as before. Activation keeps every held position's open time.
     V57,
+    /// The markout spread counts no change across a moment its market's index lapsed by quote expiry
+    /// alone: the sampler also checks the index at each moment one of the market's quotes aged out
+    /// since the previous command, which where three or more venues quote can end the index and bring
+    /// it back with no command between. A close-spread ceiling adoption for a market not yet listed
+    /// binds only a listing that names a markout floor. Activation gives each listing an adoption
+    /// bound, applied or pending, that names none its asset class's default floor, and carrying the
+    /// log across `V54` it is refused while such a listing's ceiling is below its launch close charge
+    /// under the parameters as it converts them.
+    V58,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V57;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V58;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

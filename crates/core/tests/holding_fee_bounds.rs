@@ -8,6 +8,7 @@ mod common;
 use common::close_spread::trade;
 use common::events::only_fill;
 use common::spreads::{applied, funded, refused};
+use common::toxicity::{fresh_at, v54_params};
 use common::{BTC, Harness};
 use engine_core::command::AdminCommand;
 use engine_core::holding_fee::{CurvePoint, DEFAULT_PROFIT_FEE_CURVE, fee_at};
@@ -93,6 +94,24 @@ fn a_curve_change_needs_a_notice_and_stays_at_or_above_launch_to_at_most_thirty_
     assert!(applied(&h.operate(set)));
     assert_eq!(params(&h).profit_fee_curve, steeper);
     assert_eq!(h.engine.operator_bounds().notice, None, "the applied curve spends its notice");
+}
+
+#[test]
+fn a_fresh_log_records_its_first_parameters_curve_as_the_launch_curve() {
+    // A fresh node's log activates the version before its genesis parameters, which here name a curve
+    // other than the default.
+    let curve =
+        vec![CurvePoint { hold_ms: 60_000, fee_bps: 10_000 }, CurvePoint { hold_ms: 1_800_000, fee_bps: 1_000 }];
+    for version in [V55, ProtocolVersion::LATEST] {
+        let mut h = fresh_at(version, ProtocolParams { profit_fee_curve: curve.clone(), ..v54_params() });
+        assert_eq!(h.engine.operator_bounds().launch_curve.as_ref(), Some(&curve), "{version:?}");
+        // A bp below it at 30 minutes is refused, though it is above the default curve at every hold.
+        let mut lowered = curve.clone();
+        lowered[1].fee_bps -= 1;
+        let events = h.operate(notice(None, Some(lowered), h.ts + NOTICE_MS));
+        let reason = "profit_fee_curve is below its launch curve at a hold of 1800000 ms";
+        assert_eq!(refused(&events), reason, "{version:?}");
+    }
 }
 
 #[test]

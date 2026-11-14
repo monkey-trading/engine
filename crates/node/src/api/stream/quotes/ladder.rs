@@ -143,9 +143,13 @@ struct Held<'a> {
 /// closes first. Each price is the worst of its own and the steps before it, so it holds for every
 /// smaller order even where a tier charges less than the one before: a close's average falls as it
 /// reaches cheaper tiers, and a reversal's then rises, so between two steps no order's average is
-/// worse than both ends'. A reversal's average spread falls and then rises with its size, so the
-/// sizes a close-spread ceiling admits are one range; when the smallest reversal is refused, the side
-/// ends at the whole close, since a reversal step would cover sizes that are refused. A side with no
+/// worse than both ends'. A reversal closes the whole position and grows the new one through the
+/// tiers, so between two of its tops its average spread only falls or only rises with its size: a
+/// close-spread ceiling that admits both tops admits every size between, and one that admits the
+/// first and refuses the second admits a range from the first. So the side quotes a reversal only
+/// when the smallest the engine admits by size, the position and one unit or the minimum order,
+/// whichever is larger, is admitted; and it ends at the largest size that fills below the first
+/// reversal top the engine refuses, since a later step could cover sizes it refuses. A side with no
 /// step cannot open any size.
 fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held: &Held) -> Vec<Step> {
     let quote = |qty: Fixed| quoter.quote(account, market, side, qty).ok();
@@ -155,7 +159,9 @@ fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held
     // The largest size known to fill, which includes closing what the account holds on the other
     // side (at most the input bound, past which no order is placeable).
     let closing = holding.min(Fixed::MAX_INPUT);
-    let reverses = same_side || quote(closing + held.floor).is_some();
+    // The minimum order notional is the whole order's, so past a position that clears it the smallest
+    // reversal is one unit more.
+    let reverses = same_side || quote((closing + Fixed::from_raw(1)).max(held.floor)).is_some();
     let closes = held.tops.iter().rev().filter(|top| !same_side && **top < holding).map(|top| holding - *top);
     let opens = held.tops.iter().filter(|_| reverses).filter_map(|top| {
         let qty = if same_side { *top - holding } else { *top + holding };
@@ -163,21 +169,26 @@ fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held
     });
     let orders = closes.chain(opens);
     let mut steps: Vec<Step> = Vec::new();
-    // Whether a tier's top is declined.
-    let (mut known, mut declined) = (if same_side { Fixed::ZERO } else { closing }, false);
+    // Whether the side has reached a top it cannot fill: one declined, or a reversal refused.
+    let (mut known, mut ended) = (if same_side { Fixed::ZERO } else { closing }, false);
     for qty in orders {
-        let Some(priced) = quote(qty) else { continue };
-        if priced.declined.is_none() {
+        let priced = quote(qty);
+        let refused = priced.is_none() && !same_side && qty > holding;
+        if priced.as_ref().is_some_and(|priced| priced.declined.is_none()) {
             known = known.max(qty);
-        } else if !declined {
-            declined = true;
+        } else if (priced.is_some() || refused) && !ended {
+            ended = true;
             let step = largest(&fits, held.floor, known, qty)
                 .filter(|step| steps.last().is_none_or(|last| step.qty > last.qty));
             steps.extend(step);
         }
-        steps.push(Step { qty, price: priced.price, declined: priced.declined });
+        match priced {
+            Some(priced) => steps.push(Step { qty, price: priced.price, declined: priced.declined }),
+            None if refused => break,
+            None => {}
+        }
     }
-    if !declined {
+    if !ended {
         let step = if reverses {
             // The unbounded last tier: double until the account cannot open the size.
             let mut probe = known.max(held.floor);

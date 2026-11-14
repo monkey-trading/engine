@@ -48,7 +48,8 @@ impl Engine {
     /// Error cases:
     /// - the parameters as the activation leaves them fail `ProtocolParams::check_closing_spread`
     /// - carrying the log to `V54`, a listed market's ceiling or pending adoption below its launch
-    ///   close charge under them (see `Engine::check_ceilings_cover`)
+    ///   close charge under them, and carrying it to `V58`, a bound listing's (see
+    ///   `Engine::check_ceilings_cover`)
     pub(crate) fn check_activation_closing_spread(&self, version: ProtocolVersion) -> Result<(), String> {
         let Some(params) = self.params.as_ref().filter(|_| version >= ProtocolVersion::V8) else { return Ok(()) };
         if self.protocol_version >= ProtocolVersion::V54 || version < ProtocolVersion::V54 {
@@ -60,7 +61,7 @@ impl Engine {
         if self.protocol_version < ProtocolVersion::V52 {
             converted.raise_size_multipliers();
         }
-        self.check_ceilings_cover(&converted, ProtocolVersion::V54)
+        self.check_ceilings_cover(&converted, ProtocolVersion::V54, version)
     }
 
     /// Starts the score when an activation carries the log from before `V54` to `version` at or past
@@ -99,6 +100,20 @@ impl Engine {
         if let Some(params) = self.params.as_mut() {
             params.convert_to_score();
             self.operator_bounds.launch_score_tiers = Some(params.toxicity.score_tiers.clone());
+        }
+    }
+
+    /// When an activation carries the log from before `V58` to `version` at or past it, gives each
+    /// listing an adoption binds for a market not yet listed, applied or pending, that names no
+    /// markout floor its asset class's default, as `V54`'s activation gives a listed market's: from
+    /// `V54` a first listing names one, and it must be the listing its adoption bound.
+    pub(crate) fn floor_bound_listings(&mut self, version: ProtocolVersion) {
+        if self.protocol_version >= ProtocolVersion::V58 || version < ProtocolVersion::V58 {
+            return;
+        }
+        let pending = self.pending_ceiling.as_mut().and_then(|pending| pending.listing.as_mut());
+        for spec in self.operator_bounds.proposed_listings.values_mut().chain(pending) {
+            spec.convert_to_floored();
         }
     }
 
