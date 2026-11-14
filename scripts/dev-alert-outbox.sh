@@ -100,6 +100,11 @@ for _ in $(seq 1 100); do [[ -f "$work/receiver.ready" ]] && break; sleep 0.1; d
 start_node after
 wait_for 'engine_alert_deliveries_total{severity="critical",outcome="sent"}' 1
 wait_for 'engine_alert_pages_pending{severity="critical"}' 0
+# Metrics are served for the process's whole life, so they can answer before the API listens.
+for _ in $(seq 1 150); do
+  curl --max-time 2 -sfk -o /dev/null "https://127.0.0.1:$api_port/v1/health" && break
+  sleep 0.2
+done
 archive_status="$(curl --max-time 2 -sk -o /dev/null -w '%{http_code}' \
   "https://127.0.0.1:$api_port/v1/archive/outbox.sqlite")"
 [[ "$archive_status" == 404 ]] || fail "private outbox archive request answered $archive_status"
