@@ -27,6 +27,8 @@ use crate::tee::clock::GuestClock;
 use crate::tee::sealing::{Release, Sealer};
 use crate::trusted_time::Sample;
 
+mod promoted;
+pub(crate) mod standby;
 pub(crate) mod turn;
 
 /// How a node's run ended.

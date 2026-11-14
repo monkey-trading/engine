@@ -275,3 +275,48 @@ pub(super) fn vouch_digest(
     );
     keccak256(fields.abi_encode()).0
 }
+
+/// The operator's vouching for candidates' standby keys, over its API (`POST /v1/standby/vouch`):
+/// with the vault's signer key, which only the operator in effect's enclave holds, so it vouches for
+/// the first members before rotation is on.
+pub(crate) struct Service<C> {
+    pub provider: TeeProvider,
+    pub platform: Platform,
+    pub trusted: TrustedClock,
+    pub chain: C,
+    /// The chain and the vault, whose registry and schedule the first vouch reads.
+    pub deployment: (u64, Address),
+    pub signer: std::sync::Arc<EnclaveKey>,
+    domain: tokio::sync::OnceCell<StandbyDomain>,
+}
+
+impl<C: StandbyChain> Service<C> {
+    /// Vouching with `signer` over `chain`.
+    pub(crate) fn new(
+        (provider, platform): (TeeProvider, Platform),
+        trusted: TrustedClock,
+        chain: C,
+        deployment: (u64, Address),
+        signer: std::sync::Arc<EnclaveKey>,
+    ) -> Self {
+        Self { provider, platform, trusted, chain, deployment, signer, domain: tokio::sync::OnceCell::new() }
+    }
+
+    /// The vouch for `request` (see `answer`).
+    /// Error cases:
+    /// - the vault names no registry or the registry no schedule, or `answer` refuses
+    pub(crate) async fn vouch(&self, request: &VouchRequest) -> anyhow::Result<VouchReply> {
+        let (chain_id, vault) = self.deployment;
+        let domain = *self.domain.get_or_try_init(|| StandbyDomain::read(&self.chain, chain_id, vault)).await?;
+        let voucher = Voucher {
+            provider: self.provider,
+            platform: self.platform,
+            trusted: &self.trusted,
+            chain: &self.chain,
+            domain,
+            signer: Some(self.signer.as_ref()),
+            standby: None,
+        };
+        answer(request, &voucher).await
+    }
+}

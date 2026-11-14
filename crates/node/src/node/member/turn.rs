@@ -16,6 +16,7 @@ use crate::history::HistoryPlan;
 use crate::history::marks::Retentions;
 use crate::history::marks::fold::MarkFold;
 use crate::log::{CheckpointDomain, MANIFEST};
+use crate::node::member::standby::Standby;
 use crate::node::member::{Member, PostedHead, Replica, Sampling, Turn};
 use crate::node::ready::{Moved, Ready, Start};
 use crate::standby::{Followed, Follower, ReplicaRefused};
@@ -45,7 +46,7 @@ const RETRY_PAUSE: Duration = if cfg!(test) { Duration::from_millis(100) } else 
 
 /// A member's copy opened with its replica, and what was built beside it: the dashboard record, the
 /// history index's check, and the marks the replica folded.
-type Opened = (Follower, Stats, HistoryPlan, Rc<RefCell<MarkFold>>);
+pub(super) type Opened = (Follower, Stats, HistoryPlan, Rc<RefCell<MarkFold>>);
 
 /// What a member does now.
 enum Holding {
@@ -65,10 +66,30 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// Error cases:
     /// - none past a configuration error: failed reads, stints and handovers are retried
     pub(crate) async fn until_turn(&mut self) -> anyhow::Result<Turn> {
+        let mut standby = None;
+        let turn = self.follow_until_turn(&mut standby).await;
+        // The member link frees the handover endpoint before the node binds it.
+        if let Some(standby) = standby {
+            standby.stop().await;
+        }
+        turn
+    }
+
+    /// `until_turn`, with the member's standby side (`standby`) opened beside the following, and
+    /// started as the operator when a promotion makes its standby key the vault's signer (`promoted`).
+    /// Error cases:
+    /// - as `until_turn`
+    async fn follow_until_turn(&mut self, standby: &mut Option<Standby>) -> anyhow::Result<Turn> {
         let mut follower: Option<Opened> = None;
         let mut followed: Option<(Followed, Option<u64>)> = None;
         let (mut refusals, mut failing_since) = (0, None::<Instant>);
         loop {
+            match self.keep_standby(standby, &mut follower, followed.as_ref().map(|(operator, _)| operator)).await {
+                Ok(Some(start)) => return Ok(Turn::Replica(Box::new(start))),
+                Ok(None) => {}
+                Err(e) if e.downcast_ref::<Stopping>().is_some() => return Ok(Turn::Stop),
+                Err(e) => warn!("the promoted member did not start: {e:#}"),
+            }
             let holding = self.holding().await;
             match &holding {
                 Ok(_) => self.episodes.cleared(Step::ReadTurn),
@@ -282,7 +303,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// it had reached when it last handed its keys over.
     /// Error cases:
     /// - no trusted time sample can be taken
-    async fn reached(&mut self) -> anyhow::Result<Millis> {
+    pub(super) async fn reached(&mut self) -> anyhow::Result<Millis> {
         if self.sample.is_none_or(|sample| sample.at.elapsed() > SAMPLE_FOR) {
             self.sample = Some(self.time.sample().await?);
         }
@@ -298,7 +319,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// Error cases:
     /// - the archive, the vault, the history index or the copy cannot be read, or the copy does not
     ///   replay
-    async fn open(&self, operator: Option<&Followed>) -> anyhow::Result<Opened> {
+    pub(super) async fn open(&self, operator: Option<&Followed>) -> anyhow::Result<Opened> {
         let dir = self.cfg.node.log_dir.as_path();
         if let Some(operator) = operator.filter(|_| !dir.join(MANIFEST).exists()) {
             let archive = crate::standby::archive::archive_client(operator.danger_accept_invalid_certs)?;
@@ -432,7 +453,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
 
 /// A replica's build ended by a shutdown signal (`Member::wait`).
 #[derive(Debug)]
-struct Stopping;
+pub(super) struct Stopping;
 
 impl std::fmt::Display for Stopping {
     /// What happened.

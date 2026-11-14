@@ -80,6 +80,14 @@ impl AgreedBlock for FakeBlock<'_> {
         self.0.0.lock().unwrap().time
     }
 
+    fn number(&self) -> u64 {
+        self.0.0.lock().unwrap().time
+    }
+
+    fn hash(&self) -> B256 {
+        B256::from(U256::from(self.0.0.lock().unwrap().time))
+    }
+
     async fn call(&self, _operation: &'static str, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
         answer(&self.0.0.lock().unwrap(), to, &data).map(Bytes::from)
     }

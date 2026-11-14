@@ -249,4 +249,17 @@ impl StandbyKeys {
 }
 
 #[cfg(test)]
+impl StandbyKeys {
+    /// New standby keys sealed in `dir` under the mock sealer, for tests outside this module.
+    pub(crate) fn for_test(dir: &Path) -> Self {
+        let sealer: Arc<dyn Sealer> = Arc::new(crate::tee::sealing::MockSealer { launch_digest: [0x11; 48] });
+        let platform = sealer.platform().unwrap();
+        let file = ReleaseFile::new(dir, STANDBY, Box::new(Shared(sealer.clone())), [0xc1; 32]).unwrap();
+        let keys = Self::new(file, dir.to_owned(), sealer, platform, KeySet::generate().unwrap()).unwrap();
+        keys.seal().unwrap();
+        keys
+    }
+}
+
+#[cfg(test)]
 mod tests;

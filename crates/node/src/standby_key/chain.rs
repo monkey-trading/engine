@@ -87,6 +87,12 @@ pub(crate) trait AgreedBlock: Send + Sync {
     /// The block's time, in Unix seconds.
     fn time(&self) -> u64;
 
+    /// The block's number.
+    fn number(&self) -> u64;
+
+    /// The block's hash.
+    fn hash(&self) -> B256;
+
     /// The return data of a read-only call of `data` to `to` at the block, voted under `operation`.
     /// Error cases:
     /// - no quorum
@@ -155,10 +161,16 @@ impl StandbyDomain {
     /// Error cases:
     /// - a read fails, or the vault names no registry or the registry no schedule
     pub(crate) async fn read(chain: &impl StandbyChain, chain_id: u64, vault: Address) -> anyhow::Result<Self> {
-        let block = chain.latest().await?;
-        let registry = call(&block, "standby_registry", vault, registryCall {}).await?;
+        Self::at(&chain.latest().await?, chain_id, vault).await
+    }
+
+    /// The vault's registry and schedule at `block`, on `chain_id`.
+    /// Error cases:
+    /// - a read fails, or the vault names no registry or the registry no schedule
+    pub(crate) async fn at(block: &impl AgreedBlock, chain_id: u64, vault: Address) -> anyhow::Result<Self> {
+        let registry = call(block, "standby_registry", vault, registryCall {}).await?;
         ensure!(!registry.is_zero(), "the vault names no operator registry");
-        let schedule = call(&block, "standby_schedule", registry, scheduleCall {}).await?;
+        let schedule = call(block, "standby_schedule", registry, scheduleCall {}).await?;
         ensure!(!schedule.is_zero(), "the registry names no schedule");
         Ok(Self { chain_id, vault, registry, schedule })
     }
