@@ -9,7 +9,8 @@ mod common;
 
 use common::close_spread::{NOTICE_MS, ceilings, install, install_expect, into_v40, share_params, with};
 use common::spreads::{applied, genesis_v52, refused, tenths};
-use common::{AAPL, BTC, ETH, Harness, market};
+use common::toxicity::floored;
+use common::{AAPL, BTC, ETH, Harness, f, market};
 use engine_core::Engine;
 use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::{AdminCommand, Command, Sequenced};
@@ -17,6 +18,7 @@ use engine_core::market::MarketSpec;
 use engine_core::params::ToxicityTier;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session::Schedule;
+use engine_core::spread_tier::SpreadTier;
 use engine_core::types::{AssetClass, MarketId};
 
 /// A market not yet listed.
@@ -124,6 +126,120 @@ fn an_adoption_for_a_market_not_yet_listed_binds_its_first_listing() {
     assert!(bounds.proposed_listings.is_empty(), "spent by the first listing");
     assert_eq!(bounds.launch_bands[&SOL].spread_tiers, proposal().spread_tiers);
     assert_eq!(h.engine.close_spread_ceilings().unwrap()[&SOL], 15);
+}
+
+#[test]
+fn an_adoption_naming_a_listing_the_listing_checks_refuse_is_refused() {
+    let mut h = genesis_v52();
+    install_expect(&mut h, ceilings());
+    let due = h.ts + NOTICE_MS;
+    // (listing, the refusal): one `MarketSpec::validate` refuses, and two `check_spread_tiers` does.
+    let cases = [
+        (MarketSpec { symbol: String::new(), ..proposal() }, "symbol is empty"),
+        (
+            MarketSpec { spread_tiers: tenths(&[(None, 9)]), ..proposal() },
+            "a spread band of 9 tenths of a bp is below the 10 tenths floor of a Crypto market",
+        ),
+        (
+            MarketSpec { spread_tiers: vec![SpreadTier::bps(None, 3)], ..proposal() },
+            "from protocol V52 spread bands are in tenths of a bp (tenth_bps)",
+        ),
+    ];
+    for (listing, reason) in cases {
+        assert_eq!(refused(&h.cmd(Command::Admin(adopt(SOL, 15, due, Some(listing))))), reason);
+    }
+    assert_eq!(h.engine.pending_ceiling(), None);
+}
+
+#[test]
+fn from_v58_an_adoption_binds_only_a_listing_that_names_a_markout_floor() {
+    let mut h = genesis_v52();
+    install_expect(&mut h, ceilings());
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V58 });
+    // `V54`'s launch score tiers add 5bps at the top, so the proposal's charge is 16bps.
+    let due = h.ts + NOTICE_MS;
+    assert_eq!(
+        refused(&h.cmd(Command::Admin(adopt(SOL, 16, due, Some(proposal()))))),
+        "market 7 names no markout floor"
+    );
+    h.admin(adopt(SOL, 16, due, Some(floored(proposal(), "1"))));
+}
+
+#[test]
+fn v58_floors_each_listing_an_adoption_bound_so_its_first_listing_can_list() {
+    let mut h = genesis_v52();
+    install_expect(&mut h, ceilings());
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V54 });
+    // Under `V54` an adoption binds a listing that names no floor, which a first listing must name.
+    let due = h.ts + NOTICE_MS;
+    h.admin(adopt(SOL, 16, due, Some(proposal())));
+    h.advance_to(due);
+    h.cmd(Command::Tick);
+    let events = h.cmd(Command::Admin(AdminCommand::UpsertMarket(proposal())));
+    assert_eq!(refused(&events), "market 7 names no markout floor");
+    let events = h.cmd(Command::Admin(AdminCommand::UpsertMarket(floored(proposal(), "1"))));
+    assert_eq!(refused(&events), "market 7's first listing must be the listing its ceiling adoption bound");
+    // Another adoption, for market 8, waits out its notice.
+    let link = MarketSpec { id: 8, symbol: "LINK-USD".into(), ..proposal() };
+    h.admin(adopt(8, 16, h.ts + NOTICE_MS, Some(link)));
+
+    // `V58` gives both a crypto listing's 1bp floor, and the first listing takes it.
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V58 });
+    assert_eq!(h.engine.operator_bounds().proposed_listings[&SOL], floored(proposal(), "1"));
+    let pending = h.engine.pending_ceiling().and_then(|pending| pending.listing.as_ref());
+    assert_eq!(pending.and_then(|listing| listing.markout_floor_bps), Some(f("1")));
+    h.admin(AdminCommand::UpsertMarket(floored(proposal(), "1")));
+    assert_eq!(h.engine.markets()[&SOL].spec.markout_floor_bps, Some(f("1")));
+}
+
+#[test]
+fn v58_does_not_activate_across_v54_over_a_bound_listing_below_its_converted_close_charge() {
+    // Under `V52` the proposal's charge is 14bps, with the 3bps add-on; `V54`'s launch score tiers
+    // lift it to 16bps. A pending adoption binds the listing, then an applied one.
+    for applied_first in [false, true] {
+        let mut h = genesis_v52();
+        install_expect(&mut h, ceilings());
+        let due = h.ts + NOTICE_MS;
+        h.admin(adopt(SOL, 15, due, Some(proposal())));
+        if applied_first {
+            h.advance_to(due);
+            h.cmd(Command::Tick);
+            assert!(h.engine.operator_bounds().proposed_listings.contains_key(&SOL));
+        }
+        let events = h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V58 }));
+        assert_eq!(
+            refused(&events),
+            "protocol V54 cannot activate: market 7's close-spread ceiling of 15bps is below the launch close charge \
+             of 16.0bps of the listing its adoption bound, and a ceiling cannot be raised, so the log needs a fresh \
+             start"
+        );
+        assert_eq!(h.engine.protocol_version(), ProtocolVersion::V52);
+        // `V54` itself takes no check of a listing not yet listed.
+        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V54 });
+    }
+    // A ceiling that covers the converted charge lets `V58` activate.
+    let mut h = genesis_v52();
+    install_expect(&mut h, ceilings());
+    h.admin(adopt(SOL, 16, h.ts + NOTICE_MS, Some(proposal())));
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V58 });
+}
+
+#[test]
+fn v58_measures_a_bound_listing_a_pending_adoption_replaces_by_the_pending_one() {
+    let mut h = genesis_v52();
+    install_expect(&mut h, ceilings());
+    // An applied adoption binds a 7bp listing at 30bps, a charge of 22bps under `V52` and 24bps under
+    // `V54`'s tiers. A pending one at 16bps binds the 3bp proposal, 16bps under `V54`'s, and replaces
+    // it: only the proposal can list.
+    let wide = MarketSpec { spread_tiers: tenths(&[(None, 70)]), ..proposal() };
+    let due = h.ts + NOTICE_MS;
+    h.admin(adopt(SOL, 30, due, Some(wide)));
+    h.advance_to(due);
+    h.cmd(Command::Tick);
+    h.admin(adopt(SOL, 16, h.ts + NOTICE_MS, Some(proposal())));
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V58 });
+    let pending = h.engine.pending_ceiling().and_then(|pending| pending.listing.clone());
+    assert_eq!(pending, Some(floored(proposal(), "1")));
 }
 
 #[test]

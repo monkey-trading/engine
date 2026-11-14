@@ -282,9 +282,10 @@ this crate and reproduce the signed state roots exactly.
   each band, reversals, the stress multiplier, reduce-only orders, close-all, closing limits, stops
   and close-outs, and a pure close at the widest admitted parameters
 - `tests/listing_notice.rs` — `V52`'s listing notices and bounds, the class floors, the multiplier
-  floor, and activation's conversion
+  floor, activation's conversion, and a notice refused unsigned
 - `tests/close_spread_floor.rs` — `V52`'s floor under the close-spread ceilings and the listing an
-  adoption binds
+  adoption binds, the listing checks it is held to, and from `V58` its markout floor and the
+  activation check across `V54`
 - `src/close_spread.rs` — the V40 close-spread ceilings: the genesis registry, the seven-day
   adoption, the pricing-site clamp and reversal refusal, and the listing guards
 - `src/holding_fee/mod.rs` — the V55 holding-time profit fee: the hold curve, its default, its shape
@@ -293,8 +294,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/merkle/open_time.rs` — the V55 open-time leaves, kind 27, beside each position's leaf
 - `tests/holding_fee.rs` — the fee at each hold, losses, adds, flips, close-outs, the margin check on
   a flip, close-all pieces, splits, activation, and what a close pays now
-- `tests/holding_fee_bounds.rs` — the bounds on the base fee and the curve, their notices, and the
-  launch fee held from below at every hold
+- `tests/holding_fee_bounds.rs` — the bounds on the base fee and the curve, their notices, the
+  launch curve a fresh log's first parameters record, and the launch fee held from below at every hold
 - `tests/holding_fee_clamp.rs` — `V57`'s add clamp at the launch curve's last hold: an add after a
   noticed curve extension, against `V55`'s clamp at the curve in force, activation over held open
   times, a launch curve longer than 15 minutes, and a fresh log launched with no curve
@@ -389,8 +390,9 @@ this crate and reproduce the signed state roots exactly.
   balance, the rest bad debt; and from `V54` the same round trips leaving the score at its tier
 - `tests/toxicity_score.rs` — `V54`: the add-on from 20 scored fills, an edgeless account at the
   best price, markouts from the fill's index, decay, close-outs left unmarked, a venue gap at the due
-  time, and the markout spread's grid, window, floor, and closed and unpriced intervals, with the
-  shared harness in `tests/common/toxicity.rs`
+  time, and the markout spread's grid, window, floor, and closed and unpriced intervals, from `V58`
+  an index quote expiry alone ends and brings back, with the shared harness in
+  `tests/common/toxicity.rs`
 - `tests/toxicity_round_trips.rs` — `V54` round trips: a fill closed in parts, adds closed by one,
   partial and flipping matches, a close and its reopening, another index or the horizon past,
   newest-first matching, close-outs, matching after recovery,
@@ -827,6 +829,20 @@ age an add borrows. Under V55 and V56 the clamp is the last hold of the curve in
 stays from V57 in a log launched with no curve, which has no hold to pin and whose bounds admit any
 curve later. Activation keeps every held position's open time and records nothing, so earlier logs
 replay unchanged. Its session is in `examples/reference_log/v57.rs`.
+
+Protocol V58 checks the markout spread's index between commands and the markout floor of the
+listings ceiling adoptions bind. The markout spread counts no change across a moment its market's
+index lapsed by quote expiry alone: besides the grid points, price commands and relistings, the
+sampler checks the index at each moment one of the market's quotes aged out since the previous
+command, which where three or more venues quote can end the index and bring it back with no command
+between. A close-spread ceiling adoption for a market not yet listed binds only a listing that names
+a markout floor, since from V54 a first listing names one and must be the listing its adoption
+bound. Activation gives each listing an adoption bound earlier, applied or pending, that names no
+floor its asset class's default, as V54's activation gives a listed market's, and carrying the log
+across V54 it is refused while the listing a market's first listing must be, the pending one where
+an adoption waits, has a ceiling below its launch close charge under the score tiers the activation
+converts to, as it is for a listed market. Before V58 none of this is checked or changed, so earlier
+logs replay unchanged. Its session is in `examples/reference_log/v58.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

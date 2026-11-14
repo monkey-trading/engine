@@ -427,7 +427,7 @@
       "within_burden_limit": false,
       "ceiling_if_volatility_doubled_bps": 19,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0002967359050445104,
+      "calibration_hours_over_proposed_ceiling": 0.00011721955222131051,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -501,7 +501,7 @@
       "within_burden_limit": true,
       "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.00011721955222131051,
+      "calibration_hours_over_proposed_ceiling": 0.0004683292354525231,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -538,7 +538,7 @@
       "within_burden_limit": true,
       "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0,
+      "calibration_hours_over_proposed_ceiling": 0.00047778308647873863,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -575,7 +575,7 @@
       "within_burden_limit": true,
       "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0004683292354525231,
+      "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -612,7 +612,7 @@
       "within_burden_limit": true,
       "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.00047778308647873863,
+      "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {
@@ -648,9 +648,9 @@
       "ceiling_percent_of_min_margin": 2.7,
       "within_burden_limit": true,
       "ceiling_if_volatility_doubled_bps": 27,
-      "validation_hours_over_calibration_ceiling": 0.0015151515151515152,
-      "calibration_hours_over_proposed_ceiling": 0.00011738466956215518,
-      "validation_hours_over_proposed_ceiling": 0.0015151515151515152
+      "validation_hours_over_calibration_ceiling": 0.0,
+      "calibration_hours_over_proposed_ceiling": 0.0,
+      "validation_hours_over_proposed_ceiling": 0.0
     },
     {
       "market_id": 43,
@@ -908,7 +908,7 @@
       "within_burden_limit": true,
       "ceiling_if_volatility_doubled_bps": 23,
       "validation_hours_over_calibration_ceiling": 0.0,
-      "calibration_hours_over_proposed_ceiling": 0.0007704160246533128,
+      "calibration_hours_over_proposed_ceiling": 0.0,
       "validation_hours_over_proposed_ceiling": 0.0
     },
     {

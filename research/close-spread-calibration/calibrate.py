@@ -25,14 +25,18 @@ GAP_SHOCK = D("0.05")
 ATTACK_BPS = 100
 
 
-def exceedances(rows):
-    """Out-of-sample exceedance of the calibration-only ceiling, and in-sample exceedance of the proposal."""
-    with np.load(RUN.REPO / "research/cap-calibration/data/derived/hourly_bars.npz", allow_pickle=False) as data:
-        bars, unit = data["bars"], float(data["unit"])
+def exceedances(rows, bars_path=RUN.REPO / "research/cap-calibration/data/derived/hourly_bars.npz"):
+    """Out-of-sample exceedance of the calibration-only ceiling, and in-sample exceedance of the proposal.
+
+    The pinned bars also hold markets the launch genesis has deferred, so each row reads its own
+    symbol's column."""
+    with np.load(bars_path, allow_pickle=False) as data:
+        bars, unit, symbols = data["bars"], float(data["unit"]), data["symbols"].tolist()
     cutoff = RUN.CALIBRATION_WEEKS * 168
-    for index, row in enumerate(rows):
+    for row in rows:
         if row["proposed_ceiling_bps"] is None:
             continue
+        index = symbols.index(row["symbol"])
         args = (unit, row["max_divergence_bps"], row["max_age_ms"])
         row["validation_hours_over_calibration_ceiling"] = CEILINGS.exceedance(
             bars[cutoff:, index], *args, row["calibration_only_ceiling_bps"])

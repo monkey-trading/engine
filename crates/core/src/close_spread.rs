@@ -20,6 +20,11 @@
 //! does not activate over a listed market whose ceiling, or pending adoption, is below the launch
 //! close charge the activation sets: such a log needs a fresh start. A pure close's charge clamps to
 //! the ceiling before the check that a spread stays under the price, so a pure close always prices.
+//!
+//! From `V58` the listing an adoption binds names a markout floor, as a first listing from `V54`
+//! does. An activation to `V58` gives a listing bound earlier that names none its class's default,
+//! and carrying the log across `V54` it is refused while such a listing's ceiling is below its launch
+//! close charge under the converted parameters.
 
 use std::collections::BTreeMap;
 
@@ -185,7 +190,7 @@ impl Engine {
     /// - an effective time past the latest stamp
     /// - a listing before `V52`, or from `V52` one for a listed market, none for a market not yet
     ///   listed, or one that is for another market, fails `MarketSpec::validate` or
-    ///   `check_spread_tiers`
+    ///   `check_spread_tiers`, or from `V58` names no markout floor
     /// - from `V52`, a value below the launch close charge of the listed market under the parameters
     ///   in force or those it launched under, or of the listing
     pub(crate) fn adopt_close_spread_ceiling(
@@ -247,6 +252,10 @@ impl Engine {
                 }
                 spec.validate()?;
                 check_spread_tiers(&spec.spread_tiers, spec.asset_class, self.protocol_version)?;
+                // From `V58` the listing names a markout floor, as a first listing from `V54` does.
+                if self.protocol_version >= ProtocolVersion::V58 {
+                    self.check_markout_floor(spec)?;
+                }
                 spec
             }
         };
@@ -343,27 +352,33 @@ impl Engine {
         let Some(params) = &self.params else { return Ok(()) };
         let mut params = params.clone();
         params.raise_size_multipliers();
-        self.check_ceilings_cover(&params, ProtocolVersion::V52)
+        self.check_ceilings_cover(&params, ProtocolVersion::V52, version)
     }
 
-    /// Checks an activation to `activating` leaves no listed market's ceiling, or pending adoption's
-    /// value, below its launch close charge under `params`, the parameters as it converts them, with
-    /// the market's bands as `V52`'s activation writes them, since a ceiling cannot be raised.
+    /// Checks an activation to `version`, through `activating`'s conversion, leaves no listed
+    /// market's ceiling, or pending adoption's value, below its launch close charge under `params`,
+    /// the parameters as it converts them, with the market's bands as `V52`'s activation writes them,
+    /// since a ceiling cannot be raised; and from `V58` none below the launch close charge of a listing
+    /// an adoption binds, applied or pending, for a market not yet listed, which its first listing
+    /// must be: the pending one where both bind, since it replaces the applied one.
     /// Error cases:
     /// - a listed market's ceiling or pending adoption below its launch close charge
+    /// - from `V58`, a bound listing's ceiling or pending adoption below its launch close charge
     pub(crate) fn check_ceilings_cover(
         &self,
         params: &ProtocolParams,
         activating: ProtocolVersion,
+        version: ProtocolVersion,
     ) -> Result<(), String> {
         let Some(ceilings) = &self.close_spread_ceilings else { return Ok(()) };
+        let pending = self.pending_ceiling.as_ref();
+        // The lower of a market's entry and a pending adoption's value for it.
+        let ceiling_of = |id: MarketId| {
+            let pending = pending.filter(|pending| pending.market == id).map(|p| p.max_close_spread_bps);
+            ceilings.get(&id).copied().into_iter().chain(pending).min()
+        };
         for (id, market) in self.markets.iter() {
-            let pending = self.pending_ceiling.as_ref().filter(|pending| pending.market == *id);
-            let Some(ceiling) =
-                ceilings.get(id).copied().into_iter().chain(pending.map(|p| p.max_close_spread_bps)).min()
-            else {
-                continue;
-            };
+            let Some(ceiling) = ceiling_of(*id) else { continue };
             let mut spec = market.spec.clone();
             if self.protocol_version < ProtocolVersion::V52 {
                 spec.convert_spread_tiers();
@@ -373,6 +388,28 @@ impl Engine {
                 return Err(format!(
                     "protocol {activating:?} cannot activate: market {id}'s close-spread ceiling of {ceiling}bps is below \
                      its launch close charge of {}.{}bps, and a ceiling cannot be raised, so the log needs a fresh start",
+                    charge / 10,
+                    charge % 10
+                ));
+            }
+        }
+        if version < ProtocolVersion::V58 {
+            return Ok(());
+        }
+        // A pending adoption's listing replaces the applied one for its market once it applies, and until
+        // then a first listing must be both, so only the pending one can list.
+        let pending_listing = pending.and_then(|p| Some((&p.market, p.listing.as_ref()?)));
+        let replaced = |id: &MarketId| pending_listing.is_some_and(|(market, _)| market == id);
+        let applied = self.operator_bounds.proposed_listings.iter().filter(|(id, _)| !replaced(id));
+        for (id, spec) in applied.chain(pending_listing).filter(|(id, _)| !self.markets.contains_key(*id)) {
+            // An adoption that binds a listing records its value, as an entry once it applies.
+            let ceiling = ceiling_of(*id).expect("a bound listing's adoption has a value");
+            let charge = launch_close_charge_tenth_bps(params, spec);
+            if ceiling * 10 < charge {
+                return Err(format!(
+                    "protocol {activating:?} cannot activate: market {id}'s close-spread ceiling of {ceiling}bps is below \
+                     the launch close charge of {}.{}bps of the listing its adoption bound, and a ceiling cannot be \
+                     raised, so the log needs a fresh start",
                     charge / 10,
                     charge % 10
                 ));
