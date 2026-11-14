@@ -302,7 +302,11 @@ With `[log_heads]`, the same endpoint also funds a second relayer, `log_heads.re
 the log-head posts; it must differ from the checkpoint relayer, whose nonce tracking assumes it
 alone uses its account. Its failures raise `log_head_read_failed` or `log_head_post_failed`
 (Warning) and retry; checkpoints and trading are unaffected, but while posts fail the truncation
-window stays the unposted tail.
+window stays the unposted tail. A rotating node (`operator.rotation_enabled`) must have `[log_heads]`
+and raises `log_head_stalled` after two posting intervals without an advance, not three: its
+successor checks the tail's head against the posted one at each handover, so a stalled anchor
+widens the tail it cannot check. Find why posts fail (`log_head_post_failed`, the relayer's balance)
+before the next boundary.
 
 1. Check the endpoint: `cast block-number --rpc-url <checkpoint endpoint>` and
    `cast balance <relayer> --rpc-url <checkpoint endpoint>`. The relayer needs gas on Arbitrum One;

@@ -102,7 +102,9 @@ an index: load only the rule whose hint matches the current action.
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
   `/v1/session-keys` registration and revocation a session key trades under (from `V41`), admission before a first deposit (`api/state.rs`: a never-credited account may declare, then manage its session keys, each within the fresh-account budgets in `limits/`, set by `[api.fresh_accounts]` apart from `api.per_ip` and `api.per_account` and capped in a production build (`config/fresh_accounts.rs`), with a declaration from an account with a pending deposit exempt from both, and nothing else; declarations hold at most half the API's screening slots), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps, and with `[api.tls.acme]` a public CA certificate for that
-  key, obtained and renewed over ACME TLS-ALPN-01 answered on the API's listener, in `tls/acme/`),
+  key, obtained and renewed over ACME TLS-ALPN-01 answered on the API's listener, in `tls/acme/`,
+  which a restart or the member's next daily turn under the same key serves again from the member's
+  sealed certificate and orders nothing until renewal),
   signed answers (`api/signing.rs`: every `/v1` response but
   health, the attestation and the archive carries the enclave key's signature over the request and
   its body, the client's challenge, the node's time and log head, signed only while trusted time
@@ -142,8 +144,11 @@ an index: load only the rule whose hint matches the current action.
   quote's vendor certificate chain and revocation list in the background, checks and bounds them,
   and serves them at `/v1/attestation/collateral` for a verifier that cannot call the vendor, which
   pins the roots itself), the enclave key lifecycle (`tee/keys.rs` and `tee/sealing.rs`: the signing
-  key, TLS key, ACME account and certificate sealed per release with AES-256-GCM under the SEV-SNP
-  derived key in `tee/snp.rs`, or the mock TEE's public stand-in; `node/keys.rs`: sealed keys, new
+  key, TLS key and ACME account sealed per release with AES-256-GCM under the SEV-SNP
+  derived key in `tee/snp.rs`, or the mock TEE's public stand-in; `tee/certificates.rs`: the member's
+  certificate, sealed per release apart from the keys on `tee/release_file.rs` as the delivered secrets
+  are, keyed by the API domain and the TLS key's SHA-256, which no handover moves, a file that does not
+  open refusing the start before the keys (`sealed_certificates_unreadable`); `node/keys.rs`: sealed keys, new
   ones only on `run --new-key`, or a predecessor's on `run --predecessor`; `node/registration.rs`:
   a node the vault does not name serves only its attestation until governance registers it;
   `handover/`: an upgrade the vault's timelock approved, or an election the registry in effect
@@ -171,14 +176,35 @@ an index: load only the rule whose hint matches the current action.
   and takes over when the registry's liveness rule promotes its candidate: it finalizes the copy at
   the latest checkpoint the vault accepted, drops the unsigned tail, and exits for a `--new-key`
   start, which serves only its attestation until the timelock installs the registered enclave;
-  `engine replay --attestation` pairs one attestation with each signer), the
+  `engine replay --attestation` pairs one attestation with each signer), a rotation-set member's
+  life (`node/member.rs`, #593: between its turns it follows the operator in effect, resolved from
+  the registry's registered hostname and the vault's signer at finality each turn and after a failed
+  stint, `standby/operator.rs`, into a copy with a live replica built by one replay,
+  `standby/replica.rs` over `sequencer/replay/live.rs`, `node/member/turn.rs`; at its turn it reads
+  everything its start needs from the chain and takes its trusted time sample first, `node/ready.rs`,
+  so nothing between the confirmation and its first command reads the chain or samples time, then
+  takes only the tail past its tip, bound by range and SHA-256 inside the keys and checked against
+  its seal chain, the head and the posted log head, `handover/tail.rs`; a predecessor that does not
+  find the tip against its sequencer's retained prefixes, `sequencer/prefixes.rs`, or whose tail is
+  over its bound, refuses before its stop, saying why, and keeps the keys, the member paging Critical
+  `handover_tip_not_on_log` or Warning `handover_tail_lagged`, retrying, and after three refusals,
+  or five minutes of other failures, falling back to a whole-log take, which, as every whole-log take of
+  a member's does (an election's included), sets its copy aside first, since its segment files are its own writer's;
+  a stale copy catches up, bounded, before its first take; it starts sequencing from the replica
+  with no replay and nothing its log or caches' size sets before its first command, its marks
+  cache's earlier history and its history index's catch-up taken after it, and, once it hands over, follows its
+  successor; `engine_full_replays` counts full replays, a cold handover's included; every
+  rotation-set member must run this release before rotation is turned on, since an older predecessor
+  refuses the tail request), the
   `/v1/operator` read of the key in effect, its pending rotation, the last election, and the rotation
-  sets, today's and tomorrow's turns and the turn history paged from the log (`stats/turns.rs`), the
+  sets, today's and tomorrow's turns and the turn history paged from the log (`stats/turns.rs`), and, for a
+  rotating node with `[checkpoints]`, the operator in effect's registered API hostname and the finalized
+  block it was read at (`handover/hostname.rs`), the
   `/v1/operators` list of the registry's approved candidates with their stake and role, and with a vote
   contract its open proposals (`custody/operators/`, the proposals in `proposals.rs`:
   `RegistryLens` read over its own custody quorum at one final block every `api.operators_interval`, the answer
   naming the block; 404 without `custody.evm.staking.registry.lens`), the seed relayer
-  (`seed_relay/`, `[seed_relay]`, in either mode: each poll reads the seed receiver on Arbitrum through its own
+  (`seed_relay/`, `[seed_relay]`, in either mode, for the process's life, a member's following included: each poll reads the seed receiver on Arbitrum through its own
   custody quorum at one block of the custody credit tag (`latest` in production), raises `seed_missing` while the turn whose draw deadline passed has no seed and
   `seed_relayer_unfunded`, and relays the two upcoming turns' seeds the receiver lacks, one transaction in flight at a time, raising `seed_relay_failed`;
   it proves each from the beacon node's finalized Fulu state with its own SSZ code, `seed_relay/state.rs`, finds the
@@ -341,7 +367,9 @@ an index: load only the rule whose hint matches the current action.
   synchronization before startup catch-up and after trusted-time halts spanning unpaid rollovers.
   The optional `[log_heads]` (#541) names the LogHeads contract, a dedicated funded relayer distinct
   from the checkpoint relayer, and the posting interval (an hour by default); it requires
-  `[checkpoints]`, and with it the node refuses to start on a log the posted head does not hold.
+  `[checkpoints]`, and with it the node refuses to start on a log the posted head does not hold;
+  `operator.rotation_enabled` requires it, and the stall alarm (`log_head_stalled`) then fires after two
+  posting intervals, not three.
   `ct-watch.toml` is the Certificate Transparency watcher's config, documenting what it needs: the
   domain, the node and its release manifest, the logs to follow, and alert routing.
   A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,
@@ -476,10 +504,14 @@ an index: load only the rule whose hint matches the current action.
   `dev-daily-rotation.sh`, the daily rotation scenario, from `V51`, on two Anvil chains with warped time:
   A, B and C delegate 50:30:20 and a close adopts them as a rotation set; eight days on, five turns are
   drawn from relayed seeds, and at each boundary the turn's key applies and the previous one's is
-  refused, the incumbent hands the keys and the log over while the vault's finalised view still names
-  its release, the member's first command is `TurnTaken` and its time in office starts there,
-  `/v1/operator` shows the sets and turns, and the last member's log replays; then an installation of
-  the last turn's own candidate ends the turns;
+  refused, B and C follow A from boot and each member follows the operator in effect between its
+  turns under a load of BTC-USD orders, the turn's member takes the keys and only the tail past its
+  replica's tip while the vault's finalised view still names the incumbent's release, starts from the
+  replica with no whole-log replay within a wall-clock window budget it prints, and the incumbent
+  follows it, a stream client resumes on each successor's hostname against the same enclave, the
+  member's first command is `TurnTaken` and its time in office starts there, `/v1/operator` shows the
+  sets and turns, and the last member's log replays; then an installation of the last turn's own
+  candidate ends the turns;
   `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
   contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
   relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped
@@ -491,7 +523,9 @@ an index: load only the rule whose hint matches the current action.
   list, a restart keeps the epoch list, and `engine verify-response` verifies every answer;
   `dev-operator-handover.sh`, the operator handover scenario on Anvil: an elected candidate's enclave
   takes the keys and the log from the incumbent's at the election's effective time, a withdrawal the
-  incumbent authorized pays, a stale sealed copy refuses, a re-election hands the keys back, and
+  incumbent authorized pays, a restart leaves a stale sealed copy unopened and follows, a
+  re-election hands the keys back and the other member follows, a third member following since
+  before the first election is elected and takes the whole log onto its set-aside copy and back, and
   the operator in effect upgrades with rotation on to a release the timelock approved;
   `dev-standby-operator.sh`, the standby takeover scenario on Anvil: a failed operator, the liveness
   rule's promotion, the limited `setSigner`, and the reissued payout across the signer change;
@@ -795,9 +829,11 @@ Run from the repo root:
   outgoing and incoming candidates about half the share each, both in their histories and both claimed)
 - Daily rotation dev scenario: `./scripts/dev-daily-rotation.sh` (the same requirements; the
   operator-share harness's in-process nodes on a test clock, against a custody Anvil finalising two
-  blocks behind its head and the seed relay fixture's stand-in Ethereum; five daily turns, each
-  handover through the real listener and `handover::take`, the admin keys, `TurnTaken`, the time in
-  office and `/v1/operator` checked at each boundary, then the log replayed and the turns ended by an
+  blocks behind its head and the seed relay fixture's stand-in Ethereum; three members following the
+  operator in effect under a load generator, five daily turns, each switch a tail handover through
+  the real listener and the member's own wait (`Member::until_turn`), its window printed against its
+  budget, the admin keys, `TurnTaken`, the time in office and `/v1/operator` checked at each
+  boundary, a stream client following each holder, then the log replayed and the turns ended by an
   installation)
 - Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens
   read through the custody quorum into `/v1/operators`, the closed epochs in `/v1/monkey/distributions`
@@ -809,9 +845,12 @@ Run from the repo root:
 - Operator handover dev scenario: `./scripts/dev-operator-handover.sh` (the same requirements; A runs
   as the operator in effect with rotation on, an election names B and, past its effective time, B
   takes the keys and the log from A through the handover listener, A exits, a withdrawal A
-  authorized pays, A's stale sealed copy refuses to open, and a re-election of A hands the keys back
-  from B; then A's candidacy moves to a release the timelock approved, with rotation on, and that
-  release takes the keys and the whole log from A over `--predecessor`, under the same signer)
+  authorized pays, A restarted as a member follows B with its stale sealed copy unopened, and a
+  re-election of A hands the keys back from B, which then follows A; C, following since before B's
+  election, is elected and takes the whole log from A, its own writer's copy set aside first, and a
+  re-election hands it back to A the same way; then A's candidacy moves to a
+  release the timelock approved, with rotation on, and that release takes the keys and the whole log
+  from A over `--predecessor`, under the same signer, while the old release follows it unopened)
 - Standby operator dev scenario: `./scripts/dev-standby-operator.sh` (the same requirements; A runs
   with rotation on and payouts paused, B follows A's stream into a copy, A fails, the registry's
   liveness rule promotes B, the timelock's `setSigner` installs only B's registered enclave, B

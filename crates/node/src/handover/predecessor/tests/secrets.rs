@@ -240,6 +240,8 @@ async fn a_host_cannot_turn_a_request_for_the_keys_into_one_for_the_secrets_or_b
         public_key: hex::encode(&public),
         config_sha256: hex::encode(config),
         log_tip: None,
+        tail: None,
+        reads: String::new(),
         secrets_only: false,
         evidence,
     };

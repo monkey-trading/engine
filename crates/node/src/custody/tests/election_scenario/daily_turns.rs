@@ -1,22 +1,33 @@
 //! The daily rotation dev scenario, from `V51`, which `scripts/dev-daily-rotation.sh` runs: on a
 //! custody chain whose finality trails its head by two blocks, A (the operator in effect's
-//! candidate), B and C register with their handover endpoints and delegate 50, 30 and 20 thousand
-//! MONKEY, and a close adopts them as a rotation set. Eight days on, five daily turns are drawn
-//! from RANDAO seeds the node's own relayer relays from a stand-in Ethereum, each at its draw
-//! deadline. At each boundary the turn's key signs the admin commands and the previous turn's key is
-//! refused; a member taking the turn from another takes the keys and the log by the existing
-//! handover, from the source the finalised schedule names, while the vault's finalised view still
-//! names the incumbent's release; the member's first command is `TurnTaken`, from which the time in
-//! office is its; `/v1/operator` shows the sets, the turns and their history; and the last member's
-//! log replays to its roots.
+//! candidate), B and C register with their handover endpoints and API hostnames and delegate 50, 30
+//! and 20 thousand MONKEY, and a close adopts them as a rotation set. B and C follow A's signed
+//! stream from boot into live replicas, as every member does between its holdings, under a load
+//! that places and cancels BTC-USD orders on the node holding the turn. Eight days on, five daily
+//! turns are drawn from RANDAO seeds the node's own relayer relays from a stand-in Ethereum, each at
+//! its draw deadline. At each boundary the turn's key signs the admin commands and the previous
+//! turn's key is refused; a member taking the turn from another takes the keys and only the tail
+//! past its replica's tip, from the source the finalised schedule names, while the vault's
+//! finalised view still names the incumbent's release, and its node starts from the replica with no
+//! whole-log replay; the incumbent then follows its successor. Each switch prints its window, on
+//! the wall clock from the incumbent's last command to the member's `TurnTaken`, held to
+//! `SWITCH_BUDGET`. The member's first command is `TurnTaken`, from which the time in office is its;
+//! a stream client following the operator in effect resumes on each successor's hostname from its
+//! seq, verifying against the same enclave; `/v1/operator` shows the sets, the turns and their
+//! history; and the last member's log replays to its roots. The scenario runs no ACME:
+//! `tls::acme::tests::sealed` checks that a member's next turn serves the certificate it holds.
 
 mod checks;
+mod load;
 mod seat;
 mod seeds;
+mod switch;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
+
+use tokio::task::LocalSet;
 
 use alloy::primitives::{Address, B256};
 use alloy::sol;
@@ -32,13 +43,16 @@ use super::chain::{Chain, Parameters, delegateCall, setParametersCall, setRotati
 use super::node::Node;
 use super::{DIGEST_A, DIGEST_B, FINALITY_MARGIN_SECS, T0_SECS, address, monkey};
 use crate::checkpoints::scenario::deploy;
+use crate::checkpoints::staking_scenario::access::Source;
 use crate::checkpoints::{CheckpointChain, View};
 use crate::clock::test_clock::TestClock;
 use crate::sequencer::replay_path;
 use crate::tee::keys::KeySet;
 use checks::{credited, logged_commands, office, operator_view, turn_taken};
+use load::Client;
 use seat::{Holder, Member};
 use seeds::Seeds;
+use switch::{Members, Switched, switch};
 
 sol! {
     struct Turn { address candidate; uint16 position; uint8 reason; uint32 setId; uint64 generation; uint64 prior; bytes32 seed; address source; }
@@ -67,10 +81,20 @@ const SET_EFFECTIVE_SECS: u64 = SET_CLOSE_SECS + 7 * DAY_SECS + FINALITY_MARGIN_
 const FIRST_TURN: u64 = 20_755;
 const TURNS: u64 = 5;
 const DAY_SECS: u64 = 86_400;
+/// The most wall time a switch may take, from the incumbent's last command to the member's
+/// `TurnTaken`: about twice the longest window measured, rounded up: 0.085 to 0.22 s on a
+/// development machine, 0.21 to 0.41 s on a CI runner. The member's full-replay counter, checked
+/// at each switch, is the guard against a replay inside the window.
+const SWITCH_BUDGET: Duration = Duration::from_secs(1);
 
 #[tokio::test]
 #[ignore = "requires Anvil, Python 3, and compiled contracts; scripts/dev-daily-rotation.sh runs it"]
 async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
+    // The members' waits and the stream client run on this thread: their reads are not `Send`.
+    LocalSet::new().run_until(scenario()).await;
+}
+
+async fn scenario() {
     let _tracing = tracing::subscriber::set_default(
         tracing_subscriber::fmt().with_ansi(false).with_writer(std::io::stderr).finish(),
     );
@@ -96,7 +120,10 @@ async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
     chain.impersonate(a).await;
     for (member, stake) in members.iter().zip(STAKES) {
         chain.stake(member.candidate, monkey(stake)).await;
-        chain.register_serving(member.candidate, &member.key, monkey(BOND), member.digest, &member.endpoint).await;
+        let (bond, hostname) = (monkey(BOND), member.hostname());
+        chain
+            .register_serving_at(member.candidate, &member.key, bond, member.digest, &member.endpoint, &hostname)
+            .await;
     }
     let daily = Parameters { epochLength: DAY_SECS, ..super::dev_parameters().0 };
     let mut calls = vec![
@@ -118,8 +145,28 @@ async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
     // A runs the operator's node with the vault's signing key, sealed for its release.
     let clock = Arc::new(TestClock::at(T0_SECS as Millis * 1000));
     let generation = chain.view(chain.vault, releaseGenerationCall {}).await;
-    let mut holder = Holder::start(&chain, &members, 0, members[0].seal(keys, generation), clock.clone()).await;
+    // Deposits and orders pass a signed screening source, which each holder's node runs with in turn.
+    let operator = engine_core::auth::Operator {
+        vault: AccountId(chain.vault.into()),
+        ..crate::test_support::dev_config().operator().unwrap()
+    };
+    let source = Source::start(clock.clone(), operator).await;
+    let sealed = (members[0].seal(keys, generation), Some(source));
+    let mut holder = Holder::start(&chain, &members, 0, sealed, clock.clone()).await;
     holder.node.advance_to(chain.latest_timestamp().await as Millis * 1000).await;
+    // The load's account declares and is funded. B and C follow A from boot, bootstrapping their
+    // copies from its archive; the load runs on A's node, and a stream client follows the operator
+    // in effect.
+    load::fund(&chain, &holder.node).await;
+    let mut shared = Members::start(&chain, &members, &holder, &clock);
+    shared.loaded().await;
+    shared.following(1, 1).await;
+    shared.following(2, 1).await;
+    let watcher = Member::new("watcher", Address::ZERO, [0x57; 32], [0x57; 48]);
+    let client = Client::start(Box::leak(Box::new(watcher.config(&chain))));
+    println!(
+        "PASS: B and C follow A's signed stream from boot into replicas, under a load of BTC-USD orders a funded account places and cancels"
+    );
     let c = AccountId(members[2].candidate.into());
     let staked = TokenUnits(monkey(STAKES[2]).to());
     holder
@@ -182,7 +229,7 @@ async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
 
     // 4. Five turns, each crossing its boundary.
     let mut generations = vec![next_generation];
-    let mut crossings = Vec::new();
+    let (mut crossings, mut holders) = (Vec::new(), vec![0]);
     for k in 0..TURNS {
         let turn = FIRST_TURN + k;
         let (member, generation) = (next, next_generation);
@@ -223,7 +270,10 @@ async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
             );
             None
         } else {
-            let taken = holder.hand_over(&chain, &members[member]).await;
+            let Switched { holder: next, head, scheduled, sealed, window, moved: (bytes, entries, whole) } =
+                switch(&chain, &members, holder, member, clock.clone(), &mut shared).await;
+            holder = next;
+            holders.push(member);
             let finalized = chain.view_at(chain.vault, currentReleaseCall {}, "finalized").await;
             assert_eq!(
                 finalized.0,
@@ -232,30 +282,29 @@ async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
             );
             assert!(chain.timestamp_at("finalized").await < start_secs, "turn {turn}: finality passed the boundary");
             assert_eq!(chain.view(chain.vault, currentReleaseCall {}).await.0, members[member].release().id());
-            let source = taken.scheduled.source.as_ref().map(|source| source.candidate);
-            assert_eq!(
-                (taken.scheduled.turn, source),
-                (turn, Some(incumbent_account)),
-                "turn {turn}: the handover source"
-            );
-            assert_eq!((taken.store.release(), taken.store.generation()), (members[member].release(), generation));
-            // A minute of the turn passes with no node sequencing, then the member's node starts
-            // from the log it took and sequences its first command.
-            clock.advance(Duration::from_secs(60));
-            holder = Holder::start(&chain, &members, member, taken.store, clock.clone()).await;
-            holder.node.submit(Command::Tick).await;
+            let source = scheduled.source.as_ref().map(|source| source.candidate);
+            assert_eq!((scheduled.turn, source), (turn, Some(incumbent_account)), "turn {turn}: the handover source");
+            assert_eq!(sealed, (members[member].release(), generation));
+            assert!(window <= SWITCH_BUDGET, "turn {turn}: the switch took {window:?}, over {SWITCH_BUDGET:?}");
             assert_eq!(
                 office(&holder.node).await.0,
                 at_boundary,
                 "turn {turn}: no one held the office before TurnTaken"
             );
             println!(
-                "PASS: turn {turn}: {} took the keys and the log from {} at the boundary, while the finalised vault still named {}'s release",
+                "PASS: turn {turn}: {} took the keys and the tail from {} at the boundary, while the finalised vault still named {}'s release",
                 named(member),
                 named(incumbent),
                 named(incumbent)
             );
-            Some(taken.head)
+            println!(
+                "PASS: turn {turn}: the switch window was {:.3} s (budget {:.1} s), the tail {bytes} bytes in {entries} entries of a {whole}-byte log, with no whole-log replay, orders placed and cancelled on both sides of it, and {} follows {}",
+                window.as_secs_f64(),
+                SWITCH_BUDGET.as_secs_f64(),
+                named(incumbent),
+                named(member)
+            );
+            Some(head)
         };
 
         // The turn is taken under its member's release, and its key alone signs admin commands.
@@ -329,6 +378,27 @@ async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
         "PASS: /v1/operator shows the set in effect, the waiting set, today's turn, and all five assignments with their TurnTaken"
     );
 
+    // The stream client followed each holder at its registered hostname in turn, resuming from its
+    // copy's seq and verifying against the same enclave throughout, to the last holder's head.
+    shared.stop();
+    let target = checks::last_seq(&holder.node.dir);
+    let reached = client.seq.clone();
+    crate::test_support::wait_for("the stream client to reach the last holder's head", async move {
+        while reached.load(std::sync::atomic::Ordering::Relaxed) < target {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    client.stop();
+    let signer = AccountId(enclave.into());
+    let expected: Vec<(String, AccountId)> =
+        holders.iter().map(|&index| (format!("https://{}", members[index].hostname()), signer)).collect();
+    assert_eq!(*client.followed.lock().unwrap(), expected, "the stream client's operators");
+    println!(
+        "PASS: a stream client followed {} at their hostnames, resuming on each successor from its seq, against one enclave",
+        holders.iter().map(|&index| members[index].name).collect::<Vec<_>>().join(", ")
+    );
+
     // 6. The last member's log replays to its roots across every handover, to the same turns,
     //    operator and time in office; each TurnTaken is its member's first command in its turn.
     let live = holder.node.query(|e| (e.daily_turns().clone(), e.operator().copied(), office_of(e))).await;
@@ -338,6 +408,7 @@ async fn dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary() {
     let engine = &replayed.engine;
     assert_eq!((engine.daily_turns().clone(), engine.operator().copied(), office_of(engine)), live);
     let commands = logged_commands(&dir);
+    checks::is_prefix(&watcher.dir, &dir, target);
     let handovers = crossings.iter().filter(|(_, _, head, _)| head.is_some()).count();
     for (turn, start, head, taken_ms) in crossings {
         let (seq, ts) = turn_taken(&commands, turn);

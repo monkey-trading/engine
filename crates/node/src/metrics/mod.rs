@@ -7,6 +7,9 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
+mod listener;
+pub(crate) use listener::{alongside, bind};
+
 use axum::Router;
 use axum::extract::State;
 use axum::http::header::CONTENT_TYPE;
@@ -112,6 +115,7 @@ pub struct DeliveryLabels {
 pub struct Metrics {
     registry: Registry,
     pub commands: Counter,
+    pub full_replays: Counter,
     pub batch_seconds: Histogram,
     pub queue_depth: Gauge,
     pub access_pending_deposits: Gauge,
@@ -150,6 +154,7 @@ impl Metrics {
         let mut metrics = Self {
             registry: Registry::with_prefix("engine"),
             commands: Counter::default(),
+            full_replays: Counter::default(),
             // 50µs to about 1.6s.
             batch_seconds: Histogram::new(exponential_buckets(0.000_05, 2.0, 16)),
             queue_depth: Gauge::default(),
@@ -187,6 +192,11 @@ impl Metrics {
             metrics.alert_outbox_overflows.clone(),
         );
         r.register("commands", "Commands sequenced", metrics.commands.clone());
+        r.register(
+            "full_replays",
+            "Replays of the whole log this process ran: a start's recovery, a follower's replica, or a handover's check",
+            metrics.full_replays.clone(),
+        );
         r.register(
             "sequencer_batch_seconds",
             "Time from taking a batch's first request to its log flush and replies, for batches that sequence a command",

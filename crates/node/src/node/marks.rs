@@ -1,6 +1,8 @@
 //! Marks-cache startup: seed the derived cache during recovery on a hidden file, move it into
 //! place once startup commits (so a refused startup changes no persisted bytes), and hand the
-//! store, the API's reader, and the task's settings to who uses them.
+//! store, the API's reader, and the task's settings to who uses them. A member's start from its
+//! replica does none of the work its cache's size sets before its first command: it starts on an
+//! empty cache, sets its earlier holding's aside at activation, and the marks task takes it after.
 
 use anyhow::Context;
 use std::cell::{Cell, RefCell};
@@ -31,22 +33,29 @@ pub(super) struct MarksStartup {
     pub backfill: Option<BackfillSection>,
     /// The markets the feeds map to a candles adapter, one source per market.
     pub sources: BTreeMap<MarketId, Source>,
+    /// Whether the prior cache waits for the marks task (a member's start from its replica).
+    deferred: bool,
     active: bool,
 }
 
 /// The hidden file recovery seeds into, before activation moves it to `MARKS_FILE`.
 const SEED_FILE: &str = ".marks-seed";
+/// Where a deferred start's activation sets the prior cache aside until the marks task takes it:
+/// one a start finds holds everything the cache held, since nothing is written before it is taken.
+const PRIOR_FILE: &str = ".marks-prior";
 
-/// What activation returns: the store for the marks task, the reader the API serves from, and
-/// the task's backfill settings.
-pub(super) type Activated = (Store, Reader, Option<BackfillSection>, BTreeMap<MarketId, Source>);
+/// What activation returns: the store for the marks task, the reader the API serves from, the
+/// task's backfill settings, and the prior cache a deferred start leaves the task to take.
+pub(super) type Activated = (Store, Reader, Option<BackfillSection>, BTreeMap<MarketId, Source>, Option<PathBuf>);
 
 /// Opens the cache on its hidden seed file in `cfg`'s history directory with its configured
 /// retentions, authenticating rows with `mac_key` (the enclave key's marks derivation), and
-/// resolves the backfill settings and the feed symbols a candles adapter serves.
+/// resolves the backfill settings and the feed symbols a candles adapter serves. A `deferred`
+/// start imports nothing: its readers answer not ready until the marks task has taken the prior
+/// cache (`run::CatchUp`).
 /// Error cases:
 /// - the retentions do not parse, or the cache cannot be opened
-pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32]) -> anyhow::Result<MarksStartup> {
+pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32], deferred: bool) -> anyhow::Result<MarksStartup> {
     let retentions = Retentions::of(cfg.history.marks.as_ref())?;
     let created_dir = !cfg.history.dir.exists();
     // A seed file a killed startup left behind is transient: its rows are re-imported and
@@ -57,16 +66,22 @@ pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32]) -> anyhow::Result<Mar
     }
     let mut store = Store::create(&seed, retentions, mac_key)?;
     // A previous run's cache carries provider-seeded rows and backfill markers the log cannot
-    // rebuild; recovery's re-derivation resets only the log-derived content over them.
-    store.import_prior(&cfg.history.dir.join(MARKS_FILE)).context("importing the prior marks cache")?;
-    if let Err(e) = store.validate_chains() {
-        // A chain the import committed that does not validate is host-altered: rebuild from
-        // nothing. The log re-derives what it proves (a full recovery), a configured backfill
-        // re-seeds the rest, and snapshot-recovery deployments — which replay no log prefix into
-        // the cache — never inherit the hole.
-        warn!(alert = "marks_cache_rebuilt", "the prior marks cache fails validation and is rebuilt: {e:#}");
-        discard_file(&seed).with_context(|| format!("clearing the invalid marks seed at {}", seed.display()))?;
-        store = Store::create(&seed, retentions, mac_key)?;
+    // rebuild; recovery's re-derivation resets only the log-derived content over them. A prior set
+    // aside by a deferred start that never took it holds all the cache did.
+    let prior = [PRIOR_FILE, MARKS_FILE].map(|file| cfg.history.dir.join(file)).into_iter().find(|path| path.exists());
+    if deferred {
+        store.defer();
+    } else if let Some(prior) = &prior {
+        store.import_prior(prior).context("importing the prior marks cache")?;
+        if let Err(e) = store.validate_chains() {
+            // A chain the import committed that does not validate is host-altered: rebuild from
+            // nothing. The log re-derives what it proves (a full recovery), a configured backfill
+            // re-seeds the rest, and snapshot-recovery deployments — which replay no log prefix into
+            // the cache — never inherit the hole.
+            warn!(alert = "marks_cache_rebuilt", "the prior marks cache fails validation and is rebuilt: {e:#}");
+            discard_file(&seed).with_context(|| format!("clearing the invalid marks seed at {}", seed.display()))?;
+            store = Store::create(&seed, retentions, mac_key)?;
+        }
     }
     let backfill =
         cfg.history.marks.as_ref().and_then(|marks| marks.backfill.clone()).filter(|backfill| backfill.enabled);
@@ -77,6 +92,7 @@ pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32]) -> anyhow::Result<Mar
         created_dir,
         backfill,
         sources,
+        deferred,
         active: false,
     })
 }
@@ -85,9 +101,11 @@ impl MarksStartup {
     /// Moves the seeded cache into place once startup commits — after custody and recovery
     /// authorization — returning the store for the marks task, the reader the API serves from,
     /// and the task's backfill settings. The open store keeps its file after the rename, with its
-    /// authenticator.
+    /// authenticator. A deferred start first sets the prior cache aside as `PRIOR_FILE`, unless an
+    /// earlier one never taken is there, and returns it for the marks task; any other start's
+    /// import took it, and it goes.
     /// Error cases:
-    /// - the checkpoint or rename fails
+    /// - the checkpoint, a rename, or the discard fails
     pub(super) fn activate(mut self) -> anyhow::Result<Activated> {
         let shared = self.shared.take().expect("activate runs once");
         let mut store = match Rc::try_unwrap(shared) {
@@ -99,21 +117,39 @@ impl MarksStartup {
         store.checkpoint().context("checkpointing the marks cache")?;
         let from = store.path().to_owned();
         let to = self.dir.join(MARKS_FILE);
-        std::fs::rename(&from, &to).with_context(|| format!("moving {} into place", to.display()))?;
-        for suffix in ["-wal", "-shm"] {
-            let mut side = from.as_os_str().to_owned();
-            side.push(suffix);
-            if Path::new(&side).exists() {
-                let mut to_side = to.as_os_str().to_owned();
-                to_side.push(suffix);
-                std::fs::rename(&side, &to_side).context("moving the marks cache's side files")?;
+        let prior = self.dir.join(PRIOR_FILE);
+        match self.deferred {
+            true if !prior.exists() && to.exists() => move_file(&to, &prior)?,
+            true => {}
+            false if prior.exists() => {
+                discard_file(&prior).with_context(|| format!("discarding the imported {}", prior.display()))?
             }
+            false => {}
         }
+        move_file(&from, &to)?;
         store.relocate(to);
         self.active = true;
         let reader = Store::reader(&store);
-        Ok((store, reader, backfill, sources))
+        let prior = Some(prior).filter(|prior| self.deferred && prior.exists());
+        Ok((store, reader, backfill, sources, prior))
     }
+}
+
+/// Renames the SQLite file at `from` to `to`, with its `-wal` and `-shm` side files.
+/// Error cases:
+/// - a rename fails
+fn move_file(from: &Path, to: &Path) -> anyhow::Result<()> {
+    std::fs::rename(from, to).with_context(|| format!("moving {} to {}", from.display(), to.display()))?;
+    for suffix in ["-wal", "-shm"] {
+        let mut side = from.as_os_str().to_owned();
+        side.push(suffix);
+        if Path::new(&side).exists() {
+            let mut to_side = to.as_os_str().to_owned();
+            to_side.push(suffix);
+            std::fs::rename(&side, &to_side).context("moving the marks cache's side files")?;
+        }
+    }
+    Ok(())
 }
 
 impl Drop for MarksStartup {
@@ -158,15 +194,17 @@ pub(super) fn live(rx: mpsc::Receiver<MarkSample>) -> crate::history::marks::run
     crate::history::marks::run::Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() }
 }
 
-/// The supervised marks task: writes live mark reports and backfills provider history.
+/// The supervised marks task: takes a member's earlier history (`catch_up`), if any, then writes live
+/// mark reports and backfills provider history.
 pub(super) async fn task(
     store: Store,
     sequencer: mpsc::WeakSender<Request>,
     backfill: Option<BackfillSection>,
     sources: BTreeMap<MarketId, Source>,
     live: crate::history::marks::run::Live,
+    catch_up: crate::history::marks::run::CatchUp,
 ) -> (&'static str, anyhow::Result<()>) {
-    ("marks", crate::history::marks::run::run(store, sequencer, backfill, sources, live).await)
+    ("marks", crate::history::marks::run::run(store, sequencer, backfill, sources, live, catch_up).await)
 }
 
 #[cfg(test)]
@@ -198,7 +236,7 @@ mod tests {
                 .execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base + 60_000])
                 .unwrap();
         }
-        let marks = startup(&cfg, key).unwrap();
+        let marks = startup(&cfg, key, false).unwrap();
         let reader = marks.shared.as_ref().unwrap().borrow().reader();
         let page = reader.page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
         assert!(page.entries.is_empty(), "the invalid prior cache is not served");
@@ -214,6 +252,52 @@ mod tests {
         assert_eq!(page.entries.len(), 1);
     }
 
+    /// A member's start from its replica imports nothing before its first command: its reader is not
+    /// ready, activation sets the prior cache aside, and the marks task's catch-up takes it. A prior
+    /// set aside and never taken, by a start that stopped first, is what the next start imports.
+    #[tokio::test]
+    async fn a_deferred_start_leaves_the_prior_cache_to_the_catch_up() {
+        let mut cfg = crate::test_support::dev_config();
+        cfg.history.dir = crate::test_support::scratch_dir("marks-deferred").join("history");
+        let key = crate::tee::EnclaveKey::test_key().marks_key();
+        std::fs::create_dir_all(&cfg.history.dir).unwrap();
+        let base = 1_792_489_860_000;
+        {
+            let mut prior = Store::open(&cfg.history.dir.join(MARKS_FILE), Retentions::defaults(), key).unwrap();
+            prior
+                .observe(&[(1, base, "67000".parse().unwrap()), (1, base + 60_000, "67100".parse().unwrap())])
+                .unwrap();
+        }
+        let minutes = async |reader: &Reader| reader.page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
+
+        // A start that stops after activation, before its catch-up, leaves the prior aside.
+        let marks = startup(&cfg, key, true).unwrap();
+        let reader = marks.shared.as_ref().unwrap().borrow().reader();
+        assert!(!reader.ready(), "a deferred start's reader is ready before its catch-up");
+        assert!(minutes(&reader).await.entries.is_empty(), "the start imported the prior cache");
+        let (store, _, _, _, prior) = marks.activate().unwrap();
+        assert_eq!(prior.as_deref(), Some(cfg.history.dir.join(PRIOR_FILE).as_path()), "the prior set aside");
+        drop(store);
+
+        // The next deferred start keeps that prior, and its catch-up takes it.
+        let marks = startup(&cfg, key, true).unwrap();
+        let (mut store, reader, _, _, prior) = marks.activate().unwrap();
+        let prior = prior.expect("the prior never taken is kept");
+        store.catch_up(Some(&prior), None).unwrap();
+        assert!(reader.ready(), "the reader is not ready after the catch-up");
+        assert_eq!(minutes(&reader).await.entries.len(), 2, "the catch-up did not take the prior cache");
+        assert!(!prior.exists(), "the catch-up left the prior cache");
+        drop(store);
+
+        // Set aside again and never taken, it is what a full recovery's start imports.
+        let (store, ..) = startup(&cfg, key, true).unwrap().activate().unwrap();
+        drop(store);
+        let marks = startup(&cfg, key, false).unwrap();
+        let (_store, reader, ..) = marks.activate().unwrap();
+        assert_eq!(minutes(&reader).await.entries.len(), 2, "the next start did not import the prior set aside");
+        assert!(!cfg.history.dir.join(PRIOR_FILE).exists(), "the imported prior was kept");
+    }
+
     /// A seed file a killed startup left behind is discarded: startup rebuilds from the prior
     /// cache and the log, never from chains a prune may have moved since.
     #[tokio::test]
@@ -226,7 +310,7 @@ mod tests {
             let mut leftover = Store::open(&cfg.history.dir.join(SEED_FILE), Retentions::defaults(), key).unwrap();
             leftover.observe(&[(7, 1_792_489_860_000, "67000".parse().unwrap())]).unwrap();
         }
-        let marks = startup(&cfg, key).unwrap();
+        let marks = startup(&cfg, key, false).unwrap();
         let reader = marks.shared.as_ref().unwrap().borrow().reader();
         let page = reader.page(7, Resolution::S1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
         assert!(page.entries.is_empty(), "the leftover seed's rows are not served");
@@ -239,7 +323,7 @@ mod tests {
         let mut cfg = crate::test_support::dev_config();
         cfg.history.dir = crate::test_support::scratch_dir("marks-activate").join("history");
         let key = crate::tee::EnclaveKey::test_key().marks_key();
-        let marks = startup(&cfg, key).unwrap();
+        let marks = startup(&cfg, key, false).unwrap();
         marks
             .shared
             .as_ref()
@@ -247,7 +331,7 @@ mod tests {
             .borrow_mut()
             .observe(&[(1, 1_792_489_860_000, "67000".parse().unwrap())])
             .unwrap();
-        let (mut store, reader, _, _) = marks.activate().unwrap();
+        let (mut store, reader, ..) = marks.activate().unwrap();
         let final_path = cfg.history.dir.join(crate::history::marks::store::MARKS_FILE);
         assert!(final_path.exists(), "the cache moved into place");
         assert!(!cfg.history.dir.join(SEED_FILE).exists(), "no seed file remains");

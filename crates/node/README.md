@@ -47,7 +47,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   when the head moved; startup reads the posted head through the custody RPC quorum and refuses to
   start on a log that lacks it, naming the missing range or the seq whose link differs (Critical
   `log_rollback`), and a posted head that overtakes the running node, or names another prefix at a
-  seq it retains, freezes sequencing
+  seq it retains, freezes sequencing; a node with `operator.rotation_enabled` refuses to start without
+  `[log_heads]` and raises `log_head_stalled` after two posting intervals, not three, without an advance
 - Attestation through Linux configfs-tsm, covering TDX and SEV-SNP, or a clearly marked mock: the
   report data is the SHA-256 of a served bundle of the enclave address, the config file's SHA-256,
   and the TLS key's hash; with configfs-tsm a start refuses, raising `clocksource_unprotected`,
@@ -173,7 +174,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   reads narrow after an RPC size or timeout failure on a range of their own, apart from deposits'
 - Mock custody and a mock price feed for local development
 - Prometheus metrics on a separate operator address, from a registry the node owns, with no
-  per-account labels or values
+  per-account labels or values, bound once for the process, so a member or a standby answers while
+  it follows as well as while it sequences
 - Alert routing: Critical and Warning alert lines are posted as JSON to a webhook per severity,
   once when an episode starts and once when it is resolved
 
@@ -203,8 +205,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/ct_watch/state.rs` — the watcher's durable, locked state file
 - `src/ct_watch/tests/` — leaf, log client, tracker, state, config, and loopback poll-flow tests
 - `src/standby/mod.rs` — the standby: following the operator in effect's signed stream into a local
-  copy of the published log, the archive bootstrap and refresh, the takeover's promotion watch, and
-  finalizing the copy at the vault's latest checkpoint
+  copy of the published log, under rotation read again from the registry each stint, the archive
+  bootstrap and refresh from it, the takeover's promotion watch, and finalizing the copy at the
+  vault's latest checkpoint; `src/standby/stint.rs` is what one stint says about the follow alerts
 - `src/standby/chain.rs` — whether the operator's stream extends the copy: a resumed stream repeats
   the copy's last command exactly, each later command carries the enclave's seal over the link that
   continues the copy, and a signed heartbeat never names a head behind it; otherwise the copy takes
@@ -215,7 +218,42 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/standby/tests.rs` — copy appends that verify frames and refuse a wrong signer, truncation at
   the resume checkpoint, stream resumption at the copy's last command, and a follow that stops at a
   cut-back operator or a heartbeat behind the copy with the copy unchanged
-- `src/node/mod.rs` — startup, task supervision, and shutdown
+- `src/standby/follow.rs` — one follow stint: the signed stream at the copy's last command, each frame
+  verified against the followed enclave, each new entry applied to a replica, when there is one,
+  before the copy takes it (`ReplicaRefused` otherwise)
+- `src/standby/operator.rs` — the operator a follower follows: under rotation the registry's candidate
+  in effect at `https://` its registered API hostname, verified against the vault's signer at
+  finality; without rotation the one `[standby]` names; a `--standby` node's, with `[standby]`'s
+  mirrors; and the signers a promotion replays the copy against, the vault's recorded ones under
+  rotation; `src/standby/operator/tests.rs` covers a turn change, rotation off, a standby and a
+  promotion whose configured enclave is not the vault's signer
+- `src/standby/replica.rs` — a member's `Follower`: the copy, its seal chain, and its live replica,
+  built by one replay as the copy opens and fed every entry the copy takes after, a handover's tail
+  included; `src/standby/replica/tests.rs` starts the sequencer from the replica with the copy's files
+  altered, and extends the copy with a tail, refusing a forged one
+- `src/node/mod.rs` — startup, task supervision, and shutdown; a member's start from its replica
+  reads nothing from the chain and takes no trusted time sample, using what it read before connecting
+- `src/node/run.rs` — `run_with_cpu`: a member's wait for its turns around each `serve_node`, or one
+  `serve_node` for a node that is no member, beside the process's own tasks, one each for its life:
+  the metrics listener and the seed relayer
+- `src/node/ready.rs` — what a member reads before it connects for its turn, so the window from the
+  confirmation to its first command holds no chain read and no time sample: the sealed certificate,
+  opened first, the rotation check, the checkpoint setup with the vault's anchor checked against its
+  replica, the MONKEY budget, the posted log heads, the turn's generation, and last the trusted time
+  sample; `src/node/ready/tests.rs` starts a node from a replica with every chain endpoint and time
+  server unreachable, and refuses an altered certificate store before any chain read. Between the
+  confirmation and the first command, a start from the replica then runs: the certificate store
+  and the keys the handover sealed, attested (one quote); the marks cache opened empty on its seed
+  file (no import: `src/node/marks.rs`); the replica finished as the log (`LiveReplay::into_log`, its
+  anchor among at most 4,096 retained checkpoints, no replay); the predecessor's head, the posted
+  log head and the recovery checks against the finished engine; the history index opened without
+  its integrity check, which the member's plan ran when it opened its copy
+  (`HistoryPlan::for_member`); the sequencer built from the engine; and the marks cache moved into
+  place, its prior file set aside by renames. Each is bounded by the engine's outstanding work or
+  costs one file operation, none by the log the member followed or a cache's size. After the
+  first command the marks task takes the prior cache and the replica's folded marks
+  (`src/history/marks/run.rs`), and the history task indexes the log from where its index
+  stopped, `GET /v1/markets/{id}/marks` and the history reads answering 503 until each is done
 - `src/node/price_feeds.rs` — the price feed tasks: the mock feed, or one task per venue connection
 - `src/node/ticker.rs` — the `Tick` command at `node.tick`, so sessions and rollovers fire without traffic
 - `src/node/turn_keys.rs` — the generation the finalised schedule holds for each untaken turn the
@@ -223,7 +261,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/node/handover.rs` — the registry's rotation switch checked against the config at start, and the
   incumbent's election watcher
 - `src/node/keys.rs` — this start's enclave keys and their attestation, and the check that the log
-  reaches the final checkpoint of the release that handed the keys over
+  reaches the final checkpoint of the release that handed the keys over; a member sets its copy
+  aside (`<log_dir>.aside`, `node::member::before_whole_log_take`) before any whole-log take, a
+  turn's or an election's, since its copy's segment files are its own writer's
+- `src/node/keys/platform.rs` — the platform a start runs on: the attestor its quotes come from and
+  the sealer its keys are sealed under, the mock TEE's stand-in measurement included
 - `src/node/keys/tests.rs` — sealed, new, refused, and unsealed keys, the vault's current release,
   the stand-in measurement, the first start's head check, and the release watch, which reads the
   keys' current generation
@@ -231,11 +273,39 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   refuses it, keys sealed in the turn's generation open, a returning holder's restart opens the keys
   it sealed there, a member without them asks the turn's source for them, no turn drawn takes no
   trusted time sample, and a turn drawn with no sample refuses it
-- `src/node/recovery.rs` — reading the log and the history index it must match before anything is
-  written
+- `src/node/recovery.rs` — the log a start runs from, before anything is written: a member's replica
+  with no replay, its marks cache's log-derived rows kept and taken after its first command, or the
+  log on disk replayed with the
+  history index it must match, counted in `engine_full_replays` once it has run, a snapshot start
+  that falls back to the whole log included (as are a member's replica builds and the replays of a
+  cold handover in `handover::take` and `sync_predecessor_log`); `src/node/recovery/tests.rs`
+  counts both
+- `src/node/member.rs` — a rotation-set member's life: following the operator in effect between its
+  turns, taking a turn with the tail past its copy's tip, starting from the replica, and following
+  its successor once it hands over, a shutdown signal ending a replica's build at its next entry;
+  `src/node/member/tests.rs` covers the loop between holdings, the metrics listener answering
+  through it and through a held future, and the process's own tasks running through it
+- `src/node/member/turn.rs` — `Member::until_turn`: what the member holds at trusted time, following
+  the operator in effect, re-resolved at each boundary, into a replica bootstrapped from its archive
+  when the copy is empty, pinning the posted log head, also as a replica is built, each alert of its
+  following paged once per episode and resolved under the fields it paged with (`turn/episodes.rs`:
+  `member_follow_blocked` for a step failing two polls in a row), and taking its
+  turn with the tail, a stale copy caught up from the incumbent first, rebuilding the replica after a
+  failed attempt only when the replica refused an entry or the attempt began changing the copy, and
+  following for a stint before retrying, each attempt's lines in a `take{turn}` span; each source's
+  refusal of the tip pages naming the turn, and each is classified, a later source's failure hiding
+  none (`turn/tries.rs`), and after three refusals, or five minutes of failures no source refused
+  (the start's reads, or no source answering), it leaves its turn to a whole-log start; after a
+  confirmed handover it never
+  holds again the generation it gave away, and its trusted reach, and the next start's, never falls
+  below what it had reached then; `src/node/member/turn/tests/` drives it against stand-in registry,
+  operator, archive, heads and time, `take.rs` there its tries at the turn, a take that changed the
+  copy rebuilding the replica, against `src/handover/stand_in.rs`, `episodes.rs` its alerts'
+  episodes, and `stop.rs` a shutdown during a replica's build
 - `src/node/secrets.rs` — this start's delivered secrets: opening the sealed bundle, asking a
   predecessor, holding for what the node cannot run without, setting the rest into the config and
-  the alert routes, and `secret_missing`; `src/node/secrets/tests/` covers each, and
+  the alert routes, `secret_missing`, and the listener handed back to a member's own operator key
+  once its run hands the keys over; `src/node/secrets/tests/` covers each, and
   `src/node/secrets/tests/wiring.rs` drives `run_with_cpu` over a log that recorded a rotated
   operator: the listener refuses the configured key and takes the recorded one
 - `src/node/registration.rs` — serving only the attestation until the vault names the key
@@ -300,8 +370,15 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/origin.rs` — command-origin coverage shared by replay and writable recovery
 - `src/sequencer/replay.rs` — log replay, which recovery and `engine replay` share
 - `src/sequencer/replay/snapshot.rs` — replay restored from a verified state snapshot
-- `src/sequencer/replay/replayed_log.rs` — a log read and replayed before anything is written, and
-  the head link and prefix ring the log-head poster reads from it
+- `src/sequencer/replay/replayed_log.rs` — a log read and replayed before anything is written, or a
+  member's copy whose writer is already open, and the head link and prefix ring the log-head poster
+  reads from it
+- `src/sequencer/replay/live.rs` — a replay kept live for a member's replica: each checkpoint's custody
+  work and the latest commands' cumulative prefixes retained, and the finish recovery's replay of the
+  same log anchored at the vault's finalized checkpoint would give; `src/sequencer/replay/live/tests.rs`
+  compares both with a full replay
+- `src/sequencer/prefixes.rs` — the cumulative command prefix after each of the latest commands the
+  sequencer applied, which a handover checks a successor's tip against
 - `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, signed, unsigned or voted, and the pending parameter and listing notices, which `GET /v1/house/state` answers from, with the mirrored votes
 - `src/sequencer/governance.rs` — the `ApplyProposal` this node sequences for each passed change whose seven days have run
 - `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, with a pending parameter or listing notice, and after a restart
@@ -344,6 +421,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log/catalog_seal.rs` — the exact checkpoint boundary captured for a paired cache
 - `src/log/commitment.rs` — commitments to the complete typed command/event prefix, and the bounded
   ring of a log's (seq, cumulative prefix) pairs the log-head poster adopts on-chain heads against
+  and the sequencer checks a successor's tip against, as many as a replica retains, whether a start
+  replays the log or starts from a replica
 - `src/log/suffix.rs` — recovery that replays only the suffix after a catalog-located checkpoint
 - `src/log/truncate.rs` — takeover truncation of a standby's copy at the checkpoint a promotion
   resumes from, dropping the unsigned tail
@@ -485,6 +564,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/signing_bench.rs` — the ignored cost benchmark: one frame, a signed account read, and a
   signed fan-out at `api.max_subscribers`
 - `src/api/archive.rs` — the archive routes: the manifest and completed segments
+- `src/api/attestation.rs` — the attestation routes: the boot attestation and its relayed vendor collateral
 - `src/api/stats.rs` — the dashboard routes: `/v1/stats/series`, `/v1/house/positions`, `/v1/monkey`,
   and `/v1/monkey/activity`, read on the sequencer's thread right after the batch they arrive in is
   written, and answered once the log holds what they read
@@ -506,7 +586,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/history/mod.rs` — the history index: which events name an account, the startup check
   against the log and the rebuild when it fails, and the supervised task that follows the log into
   the index
-- `src/history/store.rs` — the index's SQLite schema, its writer, its page reader, and its discard
+- `src/history/store.rs` — the index's SQLite schema, its writer, its page reader, and its discard;
+  `src/history/store/tests.rs` covers them
 - `src/history/authenticated/` — dense account/kind lists, complete cursor pages, chronological expiry,
   state proofs, and their tests
 - `src/history/reader.rs` — legacy/authenticated page dispatch, version leases, and corruption-to-repair signals
@@ -542,10 +623,24 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   under that file's run key, log-derived included, which a full recovery's reset then deletes) and
   backfill markers into the seed file, re-tagged under this run's key; what cannot be
   authenticated is skipped
+- `src/history/marks/store/catch_up.rs` — a member's start from its replica taking its earlier
+  history after its first command: the prior cache imported, validated (one that fails is cleared)
+  and discarded, then the replica's folded marks merged 50,000 buckets a write, its readers
+  answering not ready until it is done
 - `src/history/marks/backfill.rs` — the provider backfill: which feed symbols map to a candles
   adapter, the public candles client, and window paging (`tests.rs`)
-- `src/history/marks/run.rs` — the supervised marks task: flushing live mark reports and backfilling
-  listed markets one at a time
+- `src/history/marks/run.rs` — the supervised marks task: a member's catch-up (`store/catch_up.rs`)
+  on a blocking thread beside the sequencer, the live reports taken into the buffer meanwhile so
+  the 4,096-sample queue drops none and written only after it, then flushing live mark reports and
+  backfilling listed markets one at a time
+- `src/history/marks/fold.rs` — a member's marks while it follows another holder, with no key to
+  write the cache: its replica's mark changes folded into per-resolution OHLC buckets, each
+  resolution pruned to its `[history.marks]` retention as marks arrive (about 100 bytes per market
+  and second at 1s, some 17 MB per market at the default 48 h, and as much per bucket at each
+  coarser resolution; no raw sample kept), and merged into the cache as `log_derived` buckets
+  (`Store::observe_buckets`) once the node starts from the replica; `src/history/marks/fold/tests.rs`
+  checks the bound, and `src/history/marks/task_tests/fold.rs` that the merged buckets equal
+  recovery's for a first turn and a return after another member's turn
 - `src/stats/mod.rs` — the dashboard record: its settings, the lock, recovery's restart and finish
 - `src/stats/series.rs` — the bucketed series: metrics, kinds and units, retention pruning, paging
 - `src/stats/record.rs` — what each applied command adds: volume, levels, totals, activity, scans
@@ -567,7 +662,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   cost (`closeout_cost.rs`, ignored), MONKEY totals and epochs, bounds, recovery
 - `src/sequencer/replay/stats.rs` — the replay's sink into the record
 - `src/history/marks/task_tests/` — recovery seeding from a short log, live maintenance through
-  the sequencer's reports, and a cache write fault during a backfill stopping the task
+  the sequencer's reports, a member's catch-up dropping no live sample while it merges a day of
+  folded marks (`catch_up.rs`), and a cache write fault during a backfill stopping the task
 - `src/history/tests/mod.rs` — history index tests: pages, filters, retention, following the log,
   and restarts
 - `src/history/tests/recovery.rs` — startup checks against the log, readiness to serve, and
@@ -591,11 +687,17 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/tee/digests.rs` — the digests the enclave key signs: withdrawal
   authorizations, checkpoint roots with and without their exact parent, and the on-chain log
   heads with the parent head they extend, each mirroring its contract's packed encoding
+- `src/tee/certificates.rs` — the member's sealed certificate, per release and apart from the keys,
+  found only for the domain, TLS key, and ACME directory it was issued for, and what the host can do
+  with its file; `src/tee/certificates/tests.rs` covers it
 - `src/tee/keys.rs` — the key set a restart keeps and an upgrade hands over: the signing key, the
-  TLS key, the ACME account, the certificate, and the predecessor's final checkpoint
+  TLS key, the ACME account, and the predecessor's final checkpoint, and an earlier release's
+  certificate, read but never handed over
 - `src/tee/sealing.rs` — the sealed key file, AES-256-GCM under the platform's derived key, the
   reseal into a daily turn's new generation, and the mock TEE's public stand-in for sealing;
   `src/tee/sealing/tests.rs` covers it
+- `src/tee/release_file.rs` — a file sealed to a release alone, under a tag naming its kind: the
+  secrets' and the certificate's
 - `src/tee/secrets.rs` — the sealed secrets file, per release and apart from the keys, and what the
   host can do with it; `src/tee/secrets/tests.rs` covers it
 - `src/tee/snp.rs` — the SEV-SNP sealing key and report through `/dev/sev-guest` (Linux)
@@ -630,25 +732,49 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `src/secrets/listener/tests.rs` covers a real enclave's refusal of a published signer and the
   connection cap, and `src/secrets/tests/leaks.rs` checks where a value must never go;
   `src/secrets/bundle/tests.rs` covers what the signature binds and a file that does not parse
-- `src/handover/mod.rs` — the handover's messages, framing, report data, HPKE encryption of the keys,
+- `src/handover/mod.rs` — the handover's framing, report data, HPKE encryption of the keys,
   the vault's current release check that a start and a handover share, the registry's handover
   source an elected successor resolves the incumbent from, and the predecessor's published-log
   fetch that precedes it
+- `src/handover/messages.rs` — the handover's wire messages: the predecessor's challenge, the
+  successor's request, the predecessor's answers (the keys, a refusal, a tail refused before its
+  stop, a confirmation, the secrets), and the successor's confirmation
 - `src/handover/evidence.rs` — a peer's quote and its collateral, produced and verified
-- `src/handover/successor.rs` — the new release's side: request with the restored tip, verify, take
+- `src/handover/successor.rs` — the new release's side: request with the restored tip and the newest
+  protocol version its build reads, which the predecessor checks before it stops, verify, take
   every log segment past it, each bound to its listing inside the keys, require the chain to reach
   the handed-over checkpoint, seal, confirm
+- `src/handover/tail.rs` — the tail-only handover: a following successor's tip and the protocol
+  versions it reads, bound in its report data, and the version check every request for the keys
+  passes; the entries past the tip the predecessor reads from its
+  log and lists inside the keys; the successor's chain, schedule and signer reads before it connects,
+  its checks of the tail against its copy, the head and the posted log head, and a predecessor's
+  refusal before its stop (`TailMiss`: a tip not on its log, one older than it retains, or a tail
+  over its bound), which never sends whole segments onto a member's copy, its segment files being
+  its own writer's; `src/handover/tail/tests.rs` covers the pieces
+- `src/handover/stand_in.rs` — a scripted stand-in predecessor for tests outside the handover: the
+  keys with a given tail, attested as a predecessor attests them, or a refusal of the tip
+- `src/handover/published.rs` — what the sequencer has published since the start, which becomes a
+  handover's final head, with the incumbent's last stamp logged
 - `src/handover/predecessor.rs` — the running release's side: its listener, the current release, the
   stop, the final checkpoint, and the sealed tail segments it sends after the keys;
   `src/handover/predecessor/tests/` runs it over loopback, the stop and final-checkpoint tests in
   `stop.rs`, the successor-side transfer tests in `successor.rs`, a daily turn's handover from its
   boundary in `turns.rs`, with a member taking the keys from its source while that source's archive
-  is unreachable, and a later turn's member admitted after an unconfirmed handover
+  is unreachable, and a later turn's member admitted after an unconfirmed handover, and the tail
+  handover in `tail_handover.rs`: only the entries past the tip move, a forged entry, a wrong seal, a
+  head mismatch and a posted-head mismatch are refused before the confirmation, a lagging tip and one
+  not on the log are refused before the stop while the predecessor sequences on, a member whose copy
+  its own writer cut falls back to the whole log once it sets the copy aside, and an older reader,
+  following or with no copy, is refused before the stop; `src/handover/predecessor/tail.rs` holds
+  the predecessor's checks on a request for the keys: the versions every successor reads, and a tail
+  request's tip, on its log and still retained
 - `src/handover/secrets.rs` — the new release's side of moving the delivered secrets with an
   approved upgrade, checked by the operator's signature; `src/handover/predecessor/secrets.rs` is
   the running release's, which refuses an election's successor; `src/handover/predecessor/tests/`'s
   `secrets.rs` covers both, against the switch in its `vault.rs`
 - `src/handover/turns.rs` — a daily turn's handover authorisation: the finalised schedule's member, once trusted time reaches the turn's boundary, in the generation the schedule fixed; and the operators the member takes the keys from, its turn's source and then each earlier turn's, a week back; `src/handover/turns/tests.rs` walks those sources
+- `src/handover/hostname.rs` — the API hostname the registry records for the operator in effect, read at a finalized block every `api.operators_interval` for `GET /v1/operator`, under daily turns the member's of the turn in effect at trusted time from the finalised schedule, withdrawn with Warning `operator_hostname_read_failed` while it cannot be read, and the check that a certificate names the registered hostname, a member taking a turn its own; its tests cover the read, the turn in effect and the failure episode
 - `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence;
   `src/handover/tests/archive.rs` covers the published-log fetch ahead of a handover, which only an
   archive failing its integrity checks refuses
@@ -695,8 +821,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   and timeouts
 - `src/tls/certificates.rs` — the certificates the key serves: a CA certificate swapped in for the
   attested key only, and the challenge certificate while a validation is answered
-- `src/tls/acme/mod.rs` — the certificate task: the ACME account, the order, the challenge, and
-  checking and installing what the CA issues
+- `src/tls/acme/mod.rs` — the certificate task: the ACME account, the order, the challenge,
+  checking and installing what the CA issues, and restoring the member's sealed certificate
 - `src/tls/acme/http.rs` — the ACME client's HTTP, against compiled-in roots or a test CA's root
 - `src/tls/acme/schedule.rs` — when the certificate is renewed, the retry backoff, and the
   `certificate_pending` and `certificate_expiring` alerts
@@ -707,8 +833,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/tls/acme/tests/fake_ca.rs` — the scripted ACME CA behind the client's HTTP
 - `src/tls/acme/tests/http.rs` — the ACME HTTP client against a loopback HTTPS stand-in: its roots,
   its response cap, and its refusal to follow redirects
-- `src/tls/acme/tests/sealed.rs` — the sealed account and certificate across a restart, and a
-  restored certificate's renewal by trusted time
+- `src/tls/acme/tests/sealed.rs` — the sealed account and the member's sealed certificate across a
+  restart and its next turn, a restored certificate's renewal by trusted time, and a certificate that
+  cannot be sealed
 - `src/tls/tests/mod.rs` — the API end to end over TLS: key pinning, limits, caps, and the harness
 - `src/tls/tests/acme.rs` — TLS-ALPN-01 on the listener, and a CA certificate installed without a
   restart
@@ -725,7 +852,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/collateral.rs` — the `[tee]` keys of the attestation collateral relay and their bounds
 - `src/config/checkpoints.rs` — the `[checkpoints]` relayer config and validation, and the
   `[log_heads]` section: the LogHeads contract, a dedicated relayer distinct from the checkpoint
-  relayer, and the posting interval
+  relayer, and the posting interval, which `operator.rotation_enabled` requires
 - `src/config/seed_relay.rs` — the `[seed_relay]` section: Ethereum providers, the signing endpoint
   and relayer, the beacon API, fees and the balance threshold, and their checks;
   `src/config/seed_relay/tests.rs` covers them
@@ -793,7 +920,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/rpc/submission/tests.rs` — response-loss, restart, identity, and reservation regressions
 - `src/checkpoints/rpc/submission/tests/fakes.rs` — isolated relay and canonical transaction RPC fixtures
 - `src/checkpoints/rpc/submission/tests/nonce_progress.rs` — free, obsolete, and resurfaced nonce regressions
-- `src/checkpoints/setup.rs` — finalized chain anchor and registry operator lookup and pending-inclusion startup wait
+- `src/checkpoints/setup.rs` — finalized chain anchor and registry operator lookup and pending-inclusion startup wait;
+  a member taking its turn reads the finalized checkpoint with no wait, the incumbent's checkpoint in
+  flight resumed from its replica as outstanding work
 - `src/checkpoints/tests.rs` — signature mutations, rollback, retry, and reconciliation tests
 - `src/checkpoints/tests/latest.rs` — the worker reports the vault's latest included checkpoint ahead of the finalized one, and when its signer is retired
 - `src/checkpoints/tests/collateral.rs` — shortfall, ledger-difference, surplus, and uncredited-deposit deadline tests
@@ -848,7 +977,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log_heads/submission.rs` — crash-durable relayer nonce reservations for log-head posts:
   a nonce advances only on chain evidence, an unsent reservation is reused for the newer head, a
   pending one is awaited rather than replaced, and the lock is held inside each blocking write
-- `src/log_heads/setup.rs` — reading the posted head before the log replays, so the startup gate
+- `src/log_heads/read.rs` — the latest posted log head, read for a member that follows the operator
+  in effect
+- `src/log_heads/setup.rs` — reading the posted head before the log replays (for a member, before it
+  connects for its turn), so the startup gate
   binds to the link the replay captures at the posted seq (seq-only at or under an attested
   snapshot base), refuses a log the posted head does not hold within the custody finality budget —
   the current epoch's head or, while it holds none, the newest head of the earlier epochs the
@@ -858,6 +990,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log_heads/tests/mod.rs` — the poster's loop tests: pacing, lost responses, rollback freezes
   at a higher or forked posted head, stall and transport-failure alert episodes, and the reorg
   reparenting
+- `src/log_heads/tests/stall.rs` — the stall alarm's window: three posting intervals, or two under rotation, and one page per episode
 - `src/log_heads/tests/recovery.rs` — recovery behaviors: heads that land despite a lost response
   or across a restart, the stall alarm counting across a restart from the checked head or the
   finalized checkpoint, same-epoch reorg reparenting, an emptied epoch, the transport episodes'
@@ -879,20 +1012,31 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/election_scenario/chain.rs` — the scenario's chain at a fixed genesis time, its
   RPC proxies, deployments, and registry and timelock calls, optionally finalising two blocks behind
   its head
-- `src/custody/tests/election_scenario/node.rs` — the scenario's sequencer on a test clock, custody
-  watcher, and API, and a daily turn member's seat: its own operator key and turn release
+- `src/custody/tests/election_scenario/node/mod.rs` — the scenario's sequencer on a test clock,
+  custody watcher, and API, and a daily turn member's seat: its own operator key and turn release,
+  its API over TLS at its registered hostname, and a start from a member's replica; `node/setup.rs`
+  holds the custody and checkpoint sections, and `node/stamps.rs` the wall time of a seat's last
+  command and its `TurnTaken`
 - `src/custody/tests/election_scenario/parameter_votes.rs` — the parameter votes dev scenario
 - `src/custody/tests/election_scenario/daily_turns.rs` — the daily rotation dev scenario
-  `scripts/dev-daily-rotation.sh` runs: a rotation set of three, five turns drawn from relayed seeds,
-  and at each boundary the turn's key, the handover while finality trails, `TurnTaken`, the time in
-  office and `/v1/operator` checked, then the log replayed, and an installation of the last turn's
-  own candidate ending the turns
-- `src/custody/tests/election_scenario/daily_turns/seat.rs` — a member and its node while it holds a
-  turn: sealed keys, the handover listener, and the stop a handover asks for
+  `scripts/dev-daily-rotation.sh` runs: a rotation set of three following the operator in effect
+  under load, five turns drawn from relayed seeds, and at each boundary the turn's key, the tail
+  handover while finality trails, the switch's window, `TurnTaken`, the time in office and
+  `/v1/operator` checked, a stream client following each holder, then the log replayed, and an
+  installation of the last turn's own candidate ending the turns
+- `src/custody/tests/election_scenario/daily_turns/seat.rs` — a member's wait for its turns between
+  its holdings, and its node while it holds a turn: sealed keys, the handover listener, the stop a
+  handover asks for, and a start from the replica
+- `src/custody/tests/election_scenario/daily_turns/switch.rs` — one switch: the window on the wall
+  clock, the tail's bytes against the incumbent's log, no whole-log replay, counted in the member's
+  own metrics, which its successor node's start shares, and the incumbent
+  following its successor
+- `src/custody/tests/election_scenario/daily_turns/load.rs` — the load of signed BTC-USD orders on
+  the node holding the turn, and the stream client following the operator in effect
 - `src/custody/tests/election_scenario/daily_turns/seeds.rs` — the scenario's seed source over the
   seed relay scenario's two-chain fixture
 - `src/custody/tests/election_scenario/daily_turns/checks.rs` — the time in office, the operator
-  view, and the stopped log's commands the scenario checks
+  view, the stopped log's commands, and a copy's commands against the log, which the scenario checks
 - `src/custody/tests/election_scenario/operator_share.rs` — the operator's share dev scenario on
   isolated Anvil: the election's candidate and a staker claim through the vault, an epoch below the
   floor pays neither, and the candidate's unclaimed leaf registers and pays through the exit
@@ -900,7 +1044,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   dev scenario: a second election takes effect halfway through an epoch, whose close credits the
   outgoing and incoming candidates about half the share each, both in their histories and both
   claimed through the vault
-- `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation
+- `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation, and a
+  member's plan, which checks the index's integrity when the member opens its copy so its start
+  from the replica does not
 - `src/history/preflight/tests.rs` — private WAL resume and malformed geometry byte-preservation regressions
 - `src/node/tests/custody_preflight.rs` — local custody refusal preserves log/history across image states
 - `src/node/preflight.rs` — chain validation before writable history recovery, and the vault's MONKEY
@@ -937,7 +1083,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/staking/vote.rs` — passed proposals mirrored only once the vote contract is read to name the configured schedule
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, the staking contract's deployer checked against the configured registry, and the schedule checked against the one the registry and the config name and against the registry it records
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, the pending listing notices, and the latest checkpoint
-- `src/api/operator.rs` — `GET /v1/operator`: the key in effect, its pending rotation, whether rotation is on, the last election, and from `V51` the rotation set in effect and the next with its time, today's and tomorrow's turns, and the turn history (`?before=&limit=`)
+- `src/api/operator.rs` — `GET /v1/operator`: the registry's `api_hostname` for the operator in effect, the key in effect, its pending rotation, whether rotation is on, the last election, and from `V51` the rotation set in effect and the next with its time, today's and tomorrow's turns, and the turn history (`?before=&limit=`)
 - `src/api/operator_list.rs` — `GET /v1/operators`: the list `custody/operators/` last read, 404 without a lens and 503 before the first read or once it is stale
 - `src/custody/operators/` — the operator list's reader over its own custody quorum: `lens.rs` is the `RegistryLens` ABI and the checks that make the list, `proposals.rs` the vote contract's open proposals read at the same block (its tests in `proposals/tests.rs`), `mod.rs` the reader, its loop and the feed the API serves from, `tests.rs` the stand-in providers
 - `src/stats/distributions.rs` — the bounded history of closed distribution epochs behind `GET /v1/monkey/distributions`
@@ -1107,6 +1253,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/clock.rs` — the wall and monotonic clocks the sequencer stamps and checks with, and the pace
   sequenced time keeps with monotonic time (`StampPace`)
 - `src/metrics/mod.rs` — the metrics registry, event counting, and the `/metrics` route
+- `src/metrics/listener.rs` — the metrics listener, bound once for the process and served on a task
+  of its own beside everything it runs, so a following member or standby answers too, through a
+  replica's build
 - `src/metrics/tests.rs` — metrics tests
 - `src/monitor/mod.rs` — samples queue depth, the house, markets, and quote freshness into
   metrics, and raises `market_no_price`, `market_unfed`, `futures_roll_overdue`, and
@@ -2215,7 +2364,12 @@ it applies the command; recovery restores both from the replay it already runs, 
 it starts at, which carries them. The answer waits for the batch before it to be flushed, so it never
 shows what a crash could take back.
 `GET /v1/operator` returns the key in effect, the pending rotation and its time, whether rotation is
-on, and the last election. `GET /v1/operators` lists the registry's approved candidates (at most 100, by
+on, and the last election. With `operator.rotation_enabled` and `[checkpoints]` it also names
+`api_hostname`: the API hostname the vault's registry records for the operator it names, with the
+`block` and `block_hash` of the finalized block it was read at, refreshed every `api.operators_interval`.
+Stream clients reconnect there and resume with `from=<seq>`; answers keep verifying against the same
+enclave address because the keys move with the turn. The value comes only from the registry, never
+from this node's config, and is left out while it cannot be read. `GET /v1/operators` lists the registry's approved candidates (at most 100, by
 registration order) with each one's address, `admin_key`, `enclave`, `self_bond`, `release`, `registration`,
 `api_hostname`, `handover_endpoint`, `votes`, `eligible` and `role` (`candidate`, `elected` or `operator`), and the
 registry's `rotation_enabled`, `parameters`, open epoch, `total_staked`, `operator_in_effect`, `named_operator`
@@ -2450,18 +2604,28 @@ Before the first production certificate:
   own, as can whoever controls the domain's DNS. A browser that trusts the certificate alone cannot
   tell; the console's in-browser attestation check and signed answers (#292) are what bind it to the
   enclave, and `engine ct-watch` flags any certificate whose key is not the attested one. With
-  `[tee.sealing]` the ACME account is sealed with the keys, so a CAA `accounturi` naming it binds
-  issuance to the enclave's account too; the account's URL is in the node's log when it registers.
+  `[tee.sealing]` the ACME account is sealed with the keys and moves with them, so a CAA
+  `accounturi` naming it binds issuance to the enclave's account too, across every handover; the
+  account's URL is in the node's log when it registers.
 - Start `engine ct-watch` (`config/ct-watch.toml`) on a host independent of the node's, before the
   first production certificate is issued: it reads each log from its current end the first time, so
   it does not see a certificate logged before it started.
 - Run against the CA's staging directory first (for Let's Encrypt,
   `https://acme-staging-v02.api.letsencrypt.org/directory`), then its production one.
 
-With `[tee.sealing]`, the account and the certificate are sealed with the TLS key: a restart serves
-the certificate it had from the first handshake, without `certificate_pending`, and renews it on
-schedule, its age read from trusted time once a sample arrives, under the same account. An upgrade
-hands them to the next release with the keys. Without sealing, every start generates a new TLS key
+With `[tee.sealing]`, the account is sealed with the TLS key, and each certificate in the member's
+own file, `<release id>.certificates.json`, sealed to the release alone as the delivered secrets are,
+with the domain, the TLS key, and the directory it was issued for. Under daily turns every member
+serves its own hostname with the same TLS key, so a certificate stays with the member it names: no
+handover moves the file, and the keys the next member takes carry none. A restart, or the member's
+next turn under the same TLS key, serves the certificate it holds from the first handshake, without
+`certificate_pending`, and renews it on schedule, its age read from trusted time once a sample
+arrives, under the same account; one inside its renewal window, or past expiry, is renewed at once,
+and one for another domain, key, or directory is never served. So daily turns stay within the CA's
+per-hostname limits. A new release, an upgrade included, orders its own certificate under the account
+the keys carry. A file that does not open stops the start before the keys open or move
+(`sealed_certificates_unreadable`, Critical); one that cannot be written leaves the new certificate
+served (`sealed_certificate_write_failed`, Warning). Without sealing, every start generates a new TLS key
 and ACME account and orders a new certificate, which the CA's issuance limits cap: Let's Encrypt
 publishes, among others, 5 certificates per exact set of identifiers every 7 days, 10 new accounts
 per IP address every 3 hours, and 5 failed authorizations per identifier per account every hour
@@ -2609,13 +2773,14 @@ made, and a successor whose incumbent left nothing on chain refuses to start wit
 The runbook registers the operator in effect as a candidate before rotation's first election.
 
 - **What a restart keeps.** The signing key (the vault's signer and the attested address), the
-  API's TLS key, the ACME account, and the certificate, in one file per release and generation
+  API's TLS key, and the ACME account, in one file per release and generation
   (`<release id>-<generation>.sealed.json`, as the vault records them), encrypted with AES-256-GCM
   under a key the SEV-SNP firmware derives from the chip's VCEK, the launch measurement, the guest
   policy, and the TCB committed when the file was sealed, with the config's SHA-256 and the
   generation bound to the ciphertext. Only the same code under the same config, launched under the
   same policy on the same chip, opens it, in the same generation; a firmware update leaves the older
-  TCB derivable. A restart opens the file, so
+  TCB derivable. A restart opens the file, and the certificate's own file beside it
+  (`<release id>.certificates.json`), so
   the attested address, the vault's signer and epoch, the outstanding withdrawal authorizations, and
   the certificate are unchanged, and no governance transaction is needed.
 - **What forces new keys.** A compromise, or keys lost with no release running to hand them over

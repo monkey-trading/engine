@@ -204,7 +204,9 @@ pub fn fake_sequencer() -> (mpsc::Sender<Request>, mpsc::Receiver<Request>) {
                         | Request::EntitlementClaim { .. }
                         | Request::DistributionClaim { .. },
                     ) => unreachable!("only the API asks for payouts and claims"),
-                    Some(Request::FinalCheckpoint(_)) => unreachable!("only a handover asks for the final checkpoint"),
+                    Some(Request::FinalCheckpoint(_) | Request::PrefixAt { .. }) => {
+                        unreachable!("only a handover asks for the final checkpoint or a tip")
+                    }
                     Some(Request::Freeze) => unreachable!("only the log-head poster freezes sequencing"),
                     Some(Request::TimeSample(_)) => unreachable!("a feed sends no time samples"),
                     Some(Request::Sync(_)) => unreachable!("only custody asks for a log sync"),

@@ -16,6 +16,7 @@ async fn the_final_segment_rides_with_the_keys_into_an_empty_log() {
     let store = exchange.take().await.unwrap();
     assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
     assert_eq!(store.keys().predecessor_head, Some(head.clone()));
+    assert_eq!(exchange.metrics.full_replays.get(), 1, "the whole-segment transfer's replay is not counted");
     // The segment the predecessor sealed is in the successor's log, manifest and all, and the log
     // ends at the head.
     let log = crate::log::SegmentedLog::open(&exchange.successor_log, |_| Ok(())).unwrap();
@@ -42,7 +43,7 @@ async fn segment_bytes_that_differ_from_the_listing_inside_the_keys_are_refused_
         send(&mut stream, &Challenge { nonce: hex::encode(challenge) }).await.unwrap();
         let request: Request = receive(&mut stream).await.unwrap();
         let public_key = hex::decode(&request.public_key).unwrap();
-        let report_data = request_report_data(domain, &challenge, &public_key, &config);
+        let report_data = request_report_data(domain, &challenge, &public_key, &config, &request.reads);
         let platform = Platform { launch_digest: RELEASE, policy: 0, tcb: 0 };
         let quoting = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "https://kds.test" };
         // The real segment, whose listing travels inside the keys, attested; the host swaps the
@@ -74,7 +75,7 @@ async fn segment_bytes_that_differ_from_the_listing_inside_the_keys_are_refused_
         scheduled: Default::default(),
     };
     let sealer = MockSealer { launch_digest: UPGRADE };
-    let err = take(&successor, &address, &sealer, &MockAttestor, &vault, None)
+    let err = take(&successor, &address, &sealer, &MockAttestor, &vault, None, &crate::metrics::Metrics::new())
         .await
         .err()
         .expect("started on a tampered log");
@@ -99,7 +100,7 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
         send(&mut stream, &Challenge { nonce: hex::encode(challenge) }).await.unwrap();
         let request: Request = receive(&mut stream).await.unwrap();
         let public_key = hex::decode(&request.public_key).unwrap();
-        let report_data = request_report_data(domain, &challenge, &public_key, &config);
+        let report_data = request_report_data(domain, &challenge, &public_key, &config, &request.reads);
         let (encapped_key, ciphertext) = seal_keys(domain, &public_key, &report_data, &handed).unwrap();
         let bound = keys_report_data(domain, &report_data, &encapped_key, &ciphertext);
         let platform = Platform { launch_digest: RELEASE, policy: 0, tcb: 0 };
@@ -121,8 +122,10 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
         scheduled: Default::default(),
     };
     let sealer = MockSealer { launch_digest: UPGRADE };
-    let err =
-        take(&successor, &address, &sealer, &MockAttestor, &vault, None).await.err().expect("started unacknowledged");
+    let err = take(&successor, &address, &sealer, &MockAttestor, &vault, None, &crate::metrics::Metrics::new())
+        .await
+        .err()
+        .expect("started unacknowledged");
     assert!(format!("{err:#}").contains("did not acknowledge"), "{err:#}");
     predecessor.await.unwrap();
 

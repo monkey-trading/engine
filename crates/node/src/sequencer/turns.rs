@@ -109,7 +109,7 @@ impl Sequencer {
         }
         let events = self.stamp_once(ts, Command::TurnTaken { turn: turn.turn, release })?;
         match events.last() {
-            Some(Event::TurnTaken { .. }) => info!(turn = turn.turn, position = turn.position, "took the turn"),
+            Some(Event::TurnTaken { .. }) => info!(turn = turn.turn, position = turn.position, ts, "took the turn"),
             other => warn!(turn = turn.turn, "the engine did not record this node's turn: {other:?}"),
         }
         Ok(())

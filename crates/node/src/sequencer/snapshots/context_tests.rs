@@ -95,7 +95,7 @@ fn cache_restores_each_outstanding_checkpoint_with_its_original_accounting() {
         assert_eq!((actual.liabilities, actual.deposits), (expected.liabilities, expected.deposits));
     }
     let restored = ReplayedLog {
-        log: SegmentedLog::open(&dir, |_| Ok(())).unwrap(),
+        log: SegmentedLog::open(&dir, |_| Ok(())).unwrap().into(),
         replayed,
         snapshot_seq: None,
         legacy_authorizations: Default::default(),

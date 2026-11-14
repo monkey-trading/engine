@@ -94,6 +94,7 @@ sol! {
     function setVault(address vault) external;
     function staking() external view returns (address);
     function delegate(address candidate, uint256 amount) external;
+    function redelegate(address from, address to, uint256 amount) external;
     function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
     function closeEpoch() external returns (uint64);
     function openEpochStart() external view returns (uint64);
@@ -119,6 +120,8 @@ pub(super) struct Chain {
     pub signer: engine_core::types::AccountId,
     /// The operator registry the standby scenario deploys and the vault follows.
     pub registry: Address,
+    /// The log-head contract and the funded relayer account a rotating node posts through.
+    pub log_heads: (Address, Address),
     /// Held for writing while a block is mined; node RPC proxies hold it for reading.
     pub mining: Arc<RwLock<()>>,
     client: reqwest::Client,
@@ -186,6 +189,7 @@ impl Chain {
             funder: Address::ZERO,
             deployer: Address::ZERO,
             registry: Address::ZERO,
+            log_heads: (Address::ZERO, Address::ZERO),
             signer: engine_core::types::AccountId(key.address()),
             mining,
             client,

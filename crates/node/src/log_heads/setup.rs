@@ -6,15 +6,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use engine_core::types::AccountId;
 use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 
-use super::{Head, Poster, rpc::HeadsRpc};
+use super::{Head, Poster, StartupHeads, rpc::HeadsRpc};
 use crate::config::NodeConfig;
 use crate::custody::heads_reader;
 use crate::log::CheckpointDomain;
 use crate::sequencer::Request;
 use crate::tee::EnclaveKey;
+
+/// Posting intervals without an advance before `log_head_stalled`: three, or two with rotation on,
+/// whose handover checks the tail's head against the latest posted one.
+pub(super) fn stall_intervals(cfg: &NodeConfig) -> u32 {
+    if cfg.operator.rotation_enabled { 2 } else { 3 }
+}
 
 /// The poster and both ends of the watch carrying released heads to it. The watch starts at the
 /// recovered log's head, so the poster posts even before the first new batch flushes.
@@ -95,6 +102,7 @@ impl Pending {
             anchored: None,
             trusted: None,
             prefix_ring: Default::default(),
+            stall_intervals: 3,
         };
         Self { poster, posted, freeze }
     }
@@ -107,11 +115,34 @@ impl Pending {
 /// - `[log_heads]` is set without `[checkpoints]` or EVM custody (config validation rules out),
 ///   a client or the nonce store cannot be built, or the read budget elapses with no quorum read
 pub(crate) async fn read_posted(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::Result<Option<Pending>> {
-    let Some(log_heads) = &cfg.log_heads else { return Ok(None) };
+    let Some(heads) = read_heads(cfg, AccountId(key.address())).await? else { return Ok(None) };
+    pending(cfg, key, heads).map(Some)
+}
+
+/// The heads startup checks `signer`'s log against, read through the custody RPC quorum, with
+/// `[log_heads]`: a member reads them before it connects for its turn's tail, so its start reads
+/// nothing after the confirmation.
+/// Error cases:
+/// - as `read_posted`
+pub(crate) async fn read_heads(cfg: &NodeConfig, signer: AccountId) -> anyhow::Result<Option<StartupHeads>> {
+    let Some(chain) = heads_chain(cfg)? else { return Ok(None) };
+    let checkpoints = cfg.checkpoints.as_ref().context("[log_heads] requires [checkpoints]")?;
+    let (retry, budget) = (
+        checkpoints.retry_interval,
+        cfg.custody.evm.as_ref().map_or(Duration::from_secs(30), |evm| evm.finality_stalled_after),
+    );
+    let signer = alloy::primitives::Address::from(signer.0);
+    read_posted_with_retry(&chain, signer, retry, budget).await.map(Some)
+}
+
+/// The poster for `key` over `heads`, read already: it builds clients and reads nothing.
+/// Error cases:
+/// - `[log_heads]` is missing, or a client or the nonce store cannot be built
+pub(crate) fn pending(cfg: &NodeConfig, key: &Arc<EnclaveKey>, heads: StartupHeads) -> anyhow::Result<Pending> {
+    let chain = heads_chain(cfg)?.context("the posted heads were read without [log_heads]")?;
+    let log_heads = cfg.log_heads.as_ref().context("[log_heads] is set")?;
     let checkpoints = cfg.checkpoints.as_ref().context("[log_heads] requires [checkpoints]")?;
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
-    let quorum = Arc::new(heads_reader(&cfg.custody)?);
-    let chain = HeadsRpc::new(checkpoints, log_heads, domain, &cfg.node.log_dir, quorum)?;
     let freeze = super::FreezeLatch::default();
     let poster = Poster {
         chain,
@@ -124,13 +155,20 @@ pub(crate) async fn read_posted(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyh
         anchored: None,
         trusted: None,
         prefix_ring: Default::default(),
+        stall_intervals: stall_intervals(cfg),
     };
-    let (retry, budget) = (
-        checkpoints.retry_interval,
-        cfg.custody.evm.as_ref().map_or(Duration::from_secs(30), |evm| evm.finality_stalled_after),
-    );
-    let heads = read_posted_with_retry(&poster, alloy::primitives::Address::from(key.address()), retry, budget).await?;
-    Ok(Some(Pending::from_heads(poster, heads, freeze)))
+    Ok(Pending::from_heads(poster, heads, freeze))
+}
+
+/// The log heads' chain access `[log_heads]` configures, built without network access.
+/// Error cases:
+/// - as `read_posted`
+fn heads_chain(cfg: &NodeConfig) -> anyhow::Result<Option<HeadsRpc>> {
+    let Some(log_heads) = &cfg.log_heads else { return Ok(None) };
+    let checkpoints = cfg.checkpoints.as_ref().context("[log_heads] requires [checkpoints]")?;
+    let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
+    let quorum = Arc::new(heads_reader(&cfg.custody)?);
+    HeadsRpc::new(checkpoints, log_heads, domain, &cfg.node.log_dir, quorum).map(Some)
 }
 
 /// Reads, through the custody RPC quorum, the current signer epoch, its posted head, and the newest
@@ -140,15 +178,15 @@ pub(crate) async fn read_posted(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyh
 /// Error cases:
 /// - the budget elapses with no quorum read
 async fn read_posted_with_retry(
-    poster: &Poster<HeadsRpc>,
+    chain: &HeadsRpc,
     signer: alloy::primitives::Address,
     retry: Duration,
     budget: Duration,
-) -> anyhow::Result<super::rpc::StartupHeads> {
+) -> anyhow::Result<StartupHeads> {
     tokio::time::timeout(budget, async {
         let mut failed = false;
         loop {
-            match poster.chain.startup_heads(signer).await {
+            match chain.startup_heads(signer).await {
                 Ok(posted) => {
                     if std::mem::take(&mut failed) {
                         info!(alert_resolved = "log_head_read_failed", "reading the posted log head recovered");

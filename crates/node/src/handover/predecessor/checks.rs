@@ -1,10 +1,13 @@
 //! The predecessor's checks before it stops: whether the tail fits the handover, and whether its
 //! own log accepted the daily turn a successor takes, or, once it has stopped, will accept it.
 
+use std::path::Path;
+
 use anyhow::{Context, anyhow, ensure};
 use engine_core::turns::{DAY_MS, DailyTurns};
 use engine_core::types::AccountId;
 use tokio::sync::oneshot;
+use tracing::warn;
 
 use crate::checkpoints::{CheckpointChain, ScheduledTurn};
 use crate::handover::Predecessor;
@@ -42,7 +45,8 @@ impl<C: CheckpointChain> Predecessor<C> {
         }
         ensure!(
             count <= MAX_TAILS && bytes <= MAX_TRANSFER_BYTES,
-            "the log past seq {tip:?} is {count} segments, {bytes} bytes: beyond the handover's bounds, so sync              the successor's archive copy first"
+            "the log past seq {tip:?} is {count} segments, {bytes} bytes: beyond the handover's bounds, so sync \
+             the successor's archive copy first"
         );
         let entries = match std::fs::read_dir(&self.log_dir) {
             Ok(entries) => entries,
@@ -110,7 +114,7 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// Runs `read` on the sequencer's engine.
     /// Error cases:
     /// - the listener reads no log, or the node is stopping
-    async fn query<T: Send + 'static>(
+    pub(super) async fn query<T: Send + 'static>(
         &self,
         read: impl FnOnce(&engine_core::Engine) -> T + Send + 'static,
     ) -> anyhow::Result<T> {
@@ -129,4 +133,37 @@ impl<C: CheckpointChain> Predecessor<C> {
 fn logged(turns: &DailyTurns, number: u64, key: AccountId) -> bool {
     let in_effect = turns.in_effect.as_ref().filter(|in_effect| in_effect.turn == number);
     turns.assigned.get(&number).or(in_effect).is_some_and(|assigned| assigned.admin_key == key)
+}
+
+/// Whether the tail past `after` may be over `bound` bytes, judged before the stop from the
+/// listed segments that hold an entry past it and the open segment the stop seals: an upper
+/// bound on what `read_tail` reads after it. A log this cannot read is taken to be over.
+pub(super) fn tail_over(log_dir: &Path, after: u64, bound: u64) -> bool {
+    let estimate = || -> anyhow::Result<u64> {
+        let manifest = Manifest::load(log_dir)?;
+        let listed: u64 = manifest.segments.iter().filter(|listed| listed.last_seq >= after).map(|l| l.bytes).sum();
+        let mut open = 0;
+        for entry in std::fs::read_dir(log_dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if crate::log::segment_seq(&name).is_some() && !manifest.segments.iter().any(|l| l.file == name) {
+                open += entry.metadata()?.len();
+            }
+        }
+        Ok(listed + open)
+    };
+    match estimate() {
+        Ok(bytes) if bytes <= bound => false,
+        Ok(bytes) => {
+            warn!(
+                after,
+                bytes, bound, "the tail past the successor's tip may be over its bound: it is refused before the stop"
+            );
+            true
+        }
+        Err(e) => {
+            warn!("estimating the tail past seq {after} failed, so it is refused before the stop: {e:#}");
+            true
+        }
+    }
 }

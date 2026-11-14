@@ -12,6 +12,7 @@ use engine_core::eip712::B256;
 use crate::checkpoints::{HandoverSource, ScheduledTurn};
 use crate::sequencer::Request;
 use crate::sequencer::tests::operator::{recover_turns, turn_log};
+use crate::tee::keys::AcmeAccount;
 use crate::trusted_time::Sample;
 
 /// The generation the schedule fixed for the turn.
@@ -87,6 +88,24 @@ async fn from_its_boundary_the_turns_member_takes_the_keys_under_the_schedules_g
     assert_eq!((store.release(), store.generation()), (exchange.upgrade(), TURN_GENERATION));
     assert!(file_for(&exchange.successor_dir, &exchange.upgrade(), TURN_GENERATION).exists());
     timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_turns_member_takes_the_keys_and_the_account_but_no_certificate_of_the_incumbents() {
+    let logged = Logged::start("handover-turn-certificate-log");
+    let mut exchange = Exchange::start_logged("handover-turn-certificate", Some(logged.engine.clone())).await;
+    // The incumbent's keys carry its ACME account, and a certificate for its hostname that an earlier
+    // release sealed with them.
+    let account = AcmeAccount { directory_url: "https://ca.test/dir".into(), credentials: serde_json::json!({}) };
+    exchange.store.update(|keys| keys.acme_account = Some(account.clone())).unwrap();
+    exchange.store.update(|keys| keys.set_certificate("https://ca.test/dir", &[vec![0x5a; 48].into()])).unwrap();
+    exchange.schedule_successor(logged.turn, logged.key, logged.boundary);
+    exchange.reach(logged.boundary);
+    let head = write_log_tail(&exchange.successor_log, 9, &exchange.old.enclave_key().unwrap());
+    let _answer = exchange.answer_drain(Ok(head));
+    let taken = exchange.take().await.unwrap().keys();
+    assert!(taken.acme_account == Some(account), "the account did not move with the keys");
+    assert_eq!(taken.certificate, None, "the incumbent's certificate moved with the keys");
 }
 
 #[tokio::test]
@@ -199,9 +218,17 @@ async fn a_turns_member_takes_the_keys_from_its_source_while_the_sources_archive
     };
     let at = vault.observe(View::Finalized, &[]).await.unwrap();
     let sealer = MockSealer { launch_digest: UPGRADE };
-    let store = crate::handover::turns::take_keys(&exchange.successor, &vault, &at, &turn, &sealer, &MockAttestor)
-        .await
-        .expect("the keys came over the source's listener");
+    let store = crate::handover::turns::take_keys(
+        &exchange.successor,
+        &vault,
+        &at,
+        &turn,
+        &sealer,
+        &MockAttestor,
+        &crate::metrics::Metrics::new(),
+    )
+    .await
+    .expect("the keys came over the source's listener");
     assert_eq!((store.release(), store.generation()), (exchange.upgrade(), TURN_GENERATION));
     assert!(file_for(&exchange.successor_dir, &exchange.upgrade(), TURN_GENERATION).exists());
     timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();

@@ -20,7 +20,7 @@ use crate::log::{Checkpoint, CheckpointDomain, LogEntry, Offset, offset_of};
 
 /// The copy's command-origin chain, and its last command with the entries after it.
 #[derive(Clone)]
-pub(super) struct Chain {
+pub(crate) struct Chain {
     domain: CheckpointDomain,
     /// Every enclave that may seal the log's commands: the followed one, and each a checkpoint the
     /// copy holds names — a checkpoint authenticates its signer, since only that enclave's key
@@ -33,6 +33,8 @@ pub(super) struct Chain {
     tail: Vec<(Offset, LogEntry)>,
     /// How many tail entries this connection has repeated; `None` once it has repeated them all.
     repeat: Option<usize>,
+    /// The operator's head as its last signed heartbeat named it: how far behind the copy is.
+    operator_head: Option<Offset>,
 }
 
 /// What an entry the operator streams is to the copy.
@@ -67,7 +69,8 @@ impl std::error::Error for Rollback {}
 impl Chain {
     /// An empty copy's chain, for the commands the enclave `standby.enclave` names seals in `domain`.
     pub(super) fn new(domain: CheckpointDomain, enclave: AccountId) -> Self {
-        Self { domain, signers: [enclave].into_iter().collect(), link: B256::default(), tail: Vec::new(), repeat: None }
+        let signers = [enclave].into_iter().collect();
+        Self { domain, signers, link: B256::default(), tail: Vec::new(), repeat: None, operator_head: None }
     }
 
     /// Takes the copy's next entry as read from its own files, which hold only what the stream or
@@ -115,6 +118,18 @@ impl Chain {
         self.repeat = Some(0);
     }
 
+    /// Starts a handover's tail, which follows the copy's last command: it repeats the entries
+    /// after that command the copy holds before anything new.
+    pub(super) fn begin_after_command(&mut self) {
+        self.repeat = Some(1);
+    }
+
+    /// Admits `enclave`, the vault's signer, as one that may seal the copy's next commands: a
+    /// follower that re-resolves the operator in effect follows whichever enclave the vault names.
+    pub(super) fn admit(&mut self, enclave: AccountId) {
+        self.signers.insert(enclave);
+    }
+
     /// Whether this connection has repeated the whole tail, or for an empty copy has extended it:
     /// the operator's log holds the copy's.
     pub(super) fn confirmed(&self) -> bool {
@@ -124,7 +139,7 @@ impl Chain {
     /// Checks a signed heartbeat's head: an operator's flushed head never trails what it streamed.
     /// Error cases:
     /// - the head is behind the copy's
-    pub(super) fn heartbeat(&self, head: Option<Offset>) -> Result<(), Rollback> {
+    pub(super) fn heartbeat(&mut self, head: Option<Offset>) -> Result<(), Rollback> {
         match (self.head(), head) {
             (Some(copy), Some(head)) if head < copy => Err(self.rollback(format!(
                 "its signed head is {head}, so it no longer holds the copy's entries after {head} through {copy}"
@@ -132,8 +147,16 @@ impl Chain {
             (Some(copy), None) => Err(self.rollback(format!(
                 "its signed head is empty, so it no longer holds the copy's entries through {copy}"
             ))),
-            _ => Ok(()),
+            _ => {
+                self.operator_head = head;
+                Ok(())
+            }
         }
+    }
+
+    /// The operator's head as its last signed heartbeat named it, if one has.
+    pub(super) fn operator_head(&self) -> Option<Offset> {
+        self.operator_head
     }
 
     /// Checks the operator's next streamed entry: a repeat of the tail, or the copy's next entry.

@@ -4,6 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context, bail, ensure};
 use rand::RngCore;
@@ -113,6 +114,7 @@ impl Store {
             newest_seen: Millis::MIN,
             schema,
             anchors: Arc::default(),
+            ready: Arc::new(AtomicBool::new(true)),
         };
         // An existing file (a reopened cache in tests; production opens a fresh seed) gets its
         // anchors established here; re-derivation at recovery validates them before any read.
@@ -124,7 +126,7 @@ impl Store {
     /// writing for the task that owns it. The reader shares the committed chain anchors, so every
     /// page it serves is checked against the index this store advances.
     pub fn reader(&self) -> Reader {
-        Reader::new(self.path.clone(), self.mac.clone(), self.anchors.clone())
+        Reader::new(self.path.clone(), self.mac.clone(), self.anchors.clone(), self.ready.clone())
     }
 
     /// This cache's retention policy, recorded with backfill completion.

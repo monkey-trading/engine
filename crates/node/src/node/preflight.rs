@@ -40,11 +40,13 @@ pub(super) async fn finish_preflight<R: CheckpointChain>(
         engine_core::types::AccountId,
     )>,
 ) -> anyhow::Result<crate::history::History> {
-    authorize(checkpoint, recovery).await?;
+    authorize(checkpoint, recovery, false).await?;
     plan.finish().inspect_err(|e| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}"))
 }
 
-/// Finishes all independent recovery checks before any history, catalog or append mutation.
+/// Finishes all independent recovery checks before any history, catalog or append mutation. With
+/// `anchored`, the vault already authenticated the anchor, before a member connected for its tail
+/// (`ready`), and nothing here reads the chain.
 /// Error cases:
 /// - pure recovery, reserved-work or independently finalized anchor validation fails
 pub(super) async fn authorize<R: CheckpointChain>(
@@ -54,6 +56,7 @@ pub(super) async fn authorize<R: CheckpointChain>(
         &crate::sequencer::SequencerConfig<'_>,
         engine_core::types::AccountId,
     )>,
+    anchored: bool,
 ) -> anyhow::Result<()> {
     if let Some((log, cfg, signer)) = recovery {
         log.validate_recovery(cfg, signer)
@@ -67,7 +70,7 @@ pub(super) async fn authorize<R: CheckpointChain>(
                 .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
         }
     }
-    if let Some((poster, anchor)) = checkpoint {
+    if let Some((poster, anchor)) = checkpoint.filter(|_| !anchored) {
         poster
             .startup(anchor)
             .await

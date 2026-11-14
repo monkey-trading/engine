@@ -1,17 +1,17 @@
 //! The enclave's keys and what belongs with them: what a restart keeps and an upgrade hands to the
 //! next release. The signing key is the vault's signer and the attested address; the TLS key is the
-//! attested key the API serves, with the ACME account and the certificate the CA issued for it, so a
-//! restart orders nothing and a CAA `accounturi` can name the enclave's own account. Delivered
+//! attested key the API serves, with the ACME account it orders certificates under, which moves with
+//! it so a CAA `accounturi` can name the enclave's own account across every handover. Delivered
 //! secrets do not belong with them (`tee::secrets`): the keys move to an elected operator, while its
-//! vendor accounts and provider keys are its own.
+//! vendor accounts and provider keys are its own. Nor do certificates (`tee::certificates`): each
+//! daily turn's member serves its own hostname, so a certificate stays with the member it names.
 
 use std::fmt;
 
-use anyhow::{Context, ensure};
+use anyhow::Context;
 use k256::ecdsa::SigningKey;
 use k256::elliptic_curve::Generate;
 use rcgen::KeyPair;
-use rustls::pki_types::CertificateDer;
 use serde::{Deserialize, Serialize};
 
 use crate::tee::EnclaveKey;
@@ -27,7 +27,8 @@ pub(crate) struct KeySet {
     /// The ACME account, once registered.
     #[serde(default)]
     pub acme_account: Option<AcmeAccount>,
-    /// The CA's certificate chain for the TLS key, once issued.
+    /// A certificate an earlier release sealed with the keys. It is still read, so those keys open,
+    /// but never served or handed over: certificates stay in each member's store.
     #[serde(default)]
     pub certificate: Option<SealedCertificate>,
     /// The final checkpoint of the release that handed these keys over, which this release's log
@@ -39,6 +40,10 @@ pub(crate) struct KeySet {
     /// segment frames that follow the keys.
     #[serde(default)]
     pub handover_tails: Vec<crate::log::SegmentInfo>,
+    /// The entries past a following successor's tip a tail handover carries in place of whole
+    /// segments: inside the ciphertext, the listing binds the raw frames that follow the keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handover_tail: Option<crate::handover::tail::TailListing>,
 }
 
 /// An ACME account and the directory it is registered with.
@@ -50,7 +55,7 @@ pub(crate) struct AcmeAccount {
     pub credentials: serde_json::Value,
 }
 
-/// A certificate chain and the ACME directory that issued it.
+/// A certificate chain and the ACME directory that issued it, as earlier releases sealed it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SealedCertificate {
@@ -92,6 +97,7 @@ impl KeySet {
             certificate: None,
             predecessor_head: None,
             handover_tails: Vec::new(),
+            handover_tail: None,
         })
     }
 
@@ -125,25 +131,9 @@ impl KeySet {
         KeyPair::try_from(der).context("the sealed TLS key does not load")
     }
 
-    /// The certificate chain `directory_url`'s CA issued, if that is the one sealed.
-    /// Error cases:
-    /// - a certificate is not hex, or the chain is empty
-    pub fn certificate_chain(&self, directory_url: &str) -> anyhow::Result<Option<Vec<CertificateDer<'static>>>> {
-        let Some(certificate) = self.certificate.as_ref().filter(|sealed| sealed.directory_url == directory_url) else {
-            return Ok(None);
-        };
-        ensure!(!certificate.chain.is_empty(), "the sealed certificate chain is empty");
-        let chain = certificate
-            .chain
-            .iter()
-            .map(|der| hex::decode(der).map(CertificateDer::from))
-            .collect::<Result<Vec<_>, _>>()
-            .context("a sealed certificate is not hex")?;
-        Ok(Some(chain))
-    }
-
-    /// Records the chain `directory_url`'s CA issued for the TLS key.
-    pub fn set_certificate(&mut self, directory_url: &str, chain: &[CertificateDer<'_>]) {
+    /// Records `chain` as an earlier release sealed its certificate with the keys, for tests.
+    #[cfg(test)]
+    pub(crate) fn set_certificate(&mut self, directory_url: &str, chain: &[rustls::pki_types::CertificateDer<'_>]) {
         let chain = chain.iter().map(hex::encode).collect();
         self.certificate = Some(SealedCertificate { directory_url: directory_url.to_owned(), chain });
     }
@@ -153,6 +143,7 @@ impl KeySet {
 mod tests {
     use super::*;
     use rcgen::PublicKeyData;
+    use rustls::pki_types::CertificateDer;
 
     #[test]
     fn a_set_round_trips_its_keys_and_prints_no_secret() {
@@ -166,9 +157,6 @@ mod tests {
             restored.tls_key().unwrap().subject_public_key_info(),
             keys.tls_key().unwrap().subject_public_key_info()
         );
-        let chain = restored.certificate_chain("https://ca.test/dir").unwrap();
-        assert_eq!(chain, Some(vec![CertificateDer::from(vec![1, 2, 3])]));
-        assert_eq!(restored.certificate_chain("https://other.test/dir").unwrap(), None, "another CA's directory");
 
         let printed = format!("{keys:?}");
         assert!(!printed.contains(&keys.signing_key) && !printed.contains(&keys.tls_key), "{printed}");
@@ -193,8 +181,5 @@ mod tests {
             change(&mut damaged);
             assert!(damaged.enclave_key().is_err() || damaged.tls_key().is_err(), "{what} loaded");
         }
-        let mut empty = keys;
-        empty.set_certificate("https://ca.test/dir", &[]);
-        assert!(empty.certificate_chain("https://ca.test/dir").is_err(), "an empty chain loaded");
     }
 }

@@ -100,6 +100,33 @@ async fn the_operator_route_reports_the_key_its_pending_rotation_and_the_last_el
     );
 }
 
+#[tokio::test]
+async fn the_operator_route_names_the_registrys_hostname_with_its_block_and_omits_what_is_unread() {
+    let mut node = Node::staking("operator-hostname").await;
+    let (feed, served) = tokio::sync::watch::channel(None);
+    node.state.operator_hostname = Some(served);
+    let (_, body) = node.get("/v1/operator").await;
+    assert!(body.get("api_hostname").is_none(), "an unread hostname is left out: {body}");
+
+    feed.send_replace(Some(crate::handover::hostname::RegisteredHostname {
+        hostname: "registry.example".into(),
+        block: 42,
+        block_hash: alloy::primitives::B256::repeat_byte(0xb1),
+    }));
+    let (status, body) = node.get("/v1/operator").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["api_hostname"],
+        serde_json::json!({
+            "hostname": "registry.example", "block": 42, "block_hash": format!("{:#x}", alloy::primitives::B256::repeat_byte(0xb1)),
+        })
+    );
+
+    feed.send_replace(None);
+    let (_, body) = node.get("/v1/operator").await;
+    assert!(body.get("api_hostname").is_none(), "a withdrawn hostname is left out: {body}");
+}
+
 /// The turn history of a log no schedule has assigned a turn in.
 fn no_turns() -> serde_json::Value {
     serde_json::json!({ "records": [], "next": null, "truncated": false, "retained_from_seq": null })

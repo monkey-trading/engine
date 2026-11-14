@@ -44,23 +44,43 @@ pub(crate) fn extend_command_prefix(previous: [u8; 32], command: [u8; 32]) -> [u
 /// The highest-seq `PrefixRing::CAPACITY` (seq, cumulative-prefix) pairs recorded from one log:
 /// evidence that the log holds an on-chain head. A head at a retained seq naming another prefix is
 /// foreign to the log; one at a seq the ring does not hold carries no evidence either way.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct PrefixRing {
     pairs: BTreeMap<u64, B256>,
+    capacity: usize,
+}
+
+impl Default for PrefixRing {
+    /// An empty ring of `CAPACITY` pairs.
+    fn default() -> Self {
+        Self::with_capacity(Self::CAPACITY)
+    }
 }
 
 impl PrefixRing {
-    /// How many pairs the ring retains. A head at a seq the ring no longer holds carries no
-    /// evidence: the log-head poster does not adopt it, and a restart checks whatever the chain
-    /// holds against the whole log.
-    pub(crate) const CAPACITY: usize = 1024;
+    /// How many pairs the ring retains: the latest commands' as many as a follower's replica keeps
+    /// links for (`RETAINED_LINKS`), so a restart that replays the log and a start from a replica
+    /// seed the sequencer's tip ring and the log-head poster alike (2,048 in tests, so a test can
+    /// lag past it). A head at a seq the ring no longer holds carries no evidence: the log-head
+    /// poster does not adopt it, and a restart checks whatever the chain holds against the whole log.
+    pub(crate) const CAPACITY: usize = if cfg!(test) { 2_048 } else { 1 << 16 };
+
+    /// An empty ring retaining `capacity` pairs.
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        Self { pairs: BTreeMap::new(), capacity }
+    }
 
     /// Records the cumulative prefix after `seq`, evicting the lowest seq past the capacity.
     pub(crate) fn record(&mut self, seq: u64, prefix: B256) {
         self.pairs.insert(seq, prefix);
-        if self.pairs.len() > Self::CAPACITY {
+        if self.pairs.len() > self.capacity {
             self.pairs.pop_first();
         }
+    }
+
+    /// Records every pair `other` retains.
+    pub(crate) fn extend(&mut self, other: &PrefixRing) {
+        other.pairs.iter().for_each(|(seq, prefix)| self.record(*seq, *prefix));
     }
 
     /// The retained cumulative prefix after `seq`, if the ring holds it.

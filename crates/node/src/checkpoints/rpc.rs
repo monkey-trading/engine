@@ -217,6 +217,29 @@ impl CheckpointRpc {
         )?)
     }
 
+    /// The API hostname `candidate`, or else the candidate the registry names as the operator,
+    /// registered, at `at`.
+    /// Error cases:
+    /// - an RPC call or decoding fails, or the vault has no registry
+    async fn hostname_at(&self, at: BlockId, candidate: Option<Address>) -> anyhow::Result<String> {
+        let vault = Address::from(self.domain.vault.0);
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), at).await?)?;
+        ensure!(!registry.is_zero(), "the vault follows no operator registry");
+        // The operator the vault names, not the one in effect: a promoted standby's release moves
+        // at once, while its key waits out the notice.
+        let candidate = match candidate {
+            Some(candidate) => candidate,
+            None => {
+                let named = self.call(registry, namedOperatorCall {}.abi_encode(), at).await?;
+                namedOperatorCall::abi_decode_returns(&named)?.candidate
+            }
+        };
+        Ok(candidateOfCall::abi_decode_returns(
+            &self.call(registry, candidateOfCall { candidate }.abi_encode(), at).await?,
+        )?
+        .apiHostname)
+    }
+
     /// The operator the vault's registry names in effect at the pinned block of a finalized
     /// observation, while rotation is off; `None` while rotation is on, when elections move the key,
     /// or for a vault that follows no registry.
@@ -406,22 +429,34 @@ impl CheckpointChain for CheckpointRpc {
         })
     }
 
-    /// The API hostname the candidate the registry names as the operator in effect registered.
+    /// The API hostname the candidate the registry names as the operator in effect registered, at
+    /// the latest block.
     /// Error cases:
     /// - an RPC call or decoding fails, or the vault has no registry
     async fn operator_hostname(&self) -> anyhow::Result<String> {
-        let vault = Address::from(self.domain.vault.0);
-        let at = BlockId::latest();
-        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), at).await?)?;
-        ensure!(!registry.is_zero(), "the vault follows no operator registry");
-        // The operator the vault names, not the one in effect: a promoted standby's release moves
-        // at once, while its key waits out the notice.
-        let named =
-            namedOperatorCall::abi_decode_returns(&self.call(registry, namedOperatorCall {}.abi_encode(), at).await?)?;
-        Ok(candidateOfCall::abi_decode_returns(
-            &self.call(registry, candidateOfCall { candidate: named.candidate }.abi_encode(), at).await?,
-        )?
-        .apiHostname)
+        self.hostname_at(BlockId::latest(), None).await
+    }
+
+    /// The same registered hostname at the pinned block of a finalized observation.
+    /// Error cases:
+    /// - the observation is not finalized and pinned, or an RPC call or decoding fails
+    async fn operator_hostname_at(&self, at: &Observation) -> anyhow::Result<String> {
+        ensure!(at.view == View::Finalized, "the registered hostname requires a finalized observation");
+        let evidence = at.lifecycle.as_ref().context("the registered hostname requires a pinned observation")?;
+        self.hostname_at(BlockId::hash_canonical(evidence.block_hash), None).await
+    }
+
+    /// `candidate`'s registered hostname at the pinned block of a finalized observation.
+    /// Error cases:
+    /// - the observation is not finalized and pinned, or an RPC call or decoding fails
+    async fn candidate_hostname_at(
+        &self,
+        at: &Observation,
+        candidate: engine_core::types::AccountId,
+    ) -> anyhow::Result<String> {
+        ensure!(at.view == View::Finalized, "the registered hostname requires a finalized observation");
+        let evidence = at.lifecycle.as_ref().context("the registered hostname requires a pinned observation")?;
+        self.hostname_at(BlockId::hash_canonical(evidence.block_hash), Some(Address::from(candidate.0))).await
     }
 
     /// Relays at a durable explicit nonce; only later canonical state reads confirm inclusion.

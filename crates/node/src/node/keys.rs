@@ -18,12 +18,17 @@ use crate::checkpoints::{CheckpointChain, CurrentRelease};
 use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::{current_release, ensure_named, vault_reader};
 use crate::log::Checkpoint;
+use crate::metrics::Metrics;
+use crate::tee::certificates::CertificateStore;
 use crate::tee::clock::GuestClock;
 use crate::tee::keys::KeySet;
-use crate::tee::sealing::{KeyStore, MockSealer, Release, Sealer, file_for};
-use crate::tee::{Attestation, AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
+use crate::tee::sealing::{KeyStore, Release, file_for};
+use crate::tee::{Attestation, AttestationBundle, Attestor, EnclaveKey, attest_bundle};
 use crate::tls::TlsIdentity;
 use engine_core::types::{AccountId, Millis};
+
+mod platform;
+pub(super) use platform::{attestor_for, sealer};
 
 /// The operator's one-off choices for a start of a release that has no sealed keys.
 #[derive(Clone, Debug, Default)]
@@ -60,13 +65,18 @@ pub(super) struct Keys {
 /// - with real attestation, the guest kernel does not time on the TSC in the frequency the
 ///   hardware reports (alert `clocksource_unprotected`)
 /// - the keys cannot be obtained (see `obtain`), or the attestor cannot produce a quote
-pub(super) async fn attested(cfg: &NodeConfig, start: &KeyStart) -> anyhow::Result<Keys> {
+pub(super) async fn attested(
+    cfg: &NodeConfig,
+    start: &KeyStart,
+    metrics: &Metrics,
+    floor: Option<Millis>,
+) -> anyhow::Result<Keys> {
     if cfg.tee.provider == TeeProvider::Mock {
         warn!("mock TEE: attestation reports are not backed by hardware");
     }
     let attestor = attestor_for(cfg.tee.provider, &GuestClock::default())
         .inspect_err(|e| error!(alert = "clocksource_unprotected", "refusing to serve: {e:#}"))?;
-    let (enclave, tls, store) = obtain(cfg, start, attestor.as_ref())
+    let (enclave, tls, store) = obtain(cfg, start, attestor.as_ref(), metrics, floor)
         .await
         .inspect_err(|e| error!(alert = "enclave_key_failed", "refusing to serve: {e:#}"))?;
     if cfg.tee.use_published_mock_key {
@@ -90,16 +100,20 @@ pub(super) async fn attested(cfg: &NodeConfig, start: &KeyStart) -> anyhow::Resu
 }
 
 /// The keys `start` and the config call for (see the module docs), reading the vault `[checkpoints]`
-/// names, if any (see `obtain_with`).
+/// names, if any, at trusted time never below `floor`, which a member's last handover reached (see
+/// `obtain_with`).
 /// Error cases:
 /// - the vault's client cannot be built, or see `obtain_with`
 async fn obtain(
     cfg: &NodeConfig,
     start: &KeyStart,
     attestor: &dyn Attestor,
+    metrics: &Metrics,
+    floor: Option<Millis>,
 ) -> anyhow::Result<(EnclaveKey, TlsIdentity, Option<KeyStore>)> {
-    let sampled = crate::handover::turns::sampled_now(cfg);
-    obtain_with(cfg, start, attestor, vault_reader(cfg)?.as_ref(), sampled).await
+    let floor = floor.unwrap_or(Millis::MIN);
+    let sampled = async { crate::handover::turns::sampled_now(cfg).await.map(|reached| reached.max(floor)) };
+    obtain_with(cfg, start, attestor, vault_reader(cfg)?.as_ref(), sampled, metrics).await
 }
 
 /// `obtain`, reading the vault through `vault`, when the config names one, and the time trusted time
@@ -119,6 +133,7 @@ async fn obtain_with(
     attestor: &dyn Attestor,
     vault: Option<&impl CheckpointChain>,
     reached: impl Future<Output = anyhow::Result<Millis>>,
+    metrics: &Metrics,
 ) -> anyhow::Result<(EnclaveKey, TlsIdentity, Option<KeyStore>)> {
     let Some(sealing) = &cfg.tee.sealing else {
         ensure!(
@@ -201,13 +216,14 @@ async fn obtain_with(
         let vault = vault.context("--predecessor needs [checkpoints]: the vault names the key")?;
         // Trusted time has reached a turn's boundary when the schedule names this release for it.
         let reached = turn.as_ref().map(|turn| turn.boundary);
-        crate::handover::take(cfg, address, sealer.as_ref(), attestor, vault, reached).await?
+        crate::handover::take(cfg, address, sealer.as_ref(), attestor, vault, reached, metrics).await?
     } else if let (Some(vault), Some(turn)) = (vault, &turn) {
         // No sealed keys and no flag, and the schedule names this release for the turn trusted time
         // has reached: take the keys from the operator the turn takes over from, or, when that one
         // never took its own turn, from the one before it.
         let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
-        crate::handover::turns::take_keys(cfg, vault, &at, turn, sealer.as_ref(), attestor).await?
+        crate::node::member::before_whole_log_take(cfg, start)?;
+        crate::handover::turns::take_keys(cfg, vault, &at, turn, sealer.as_ref(), attestor, metrics).await?
     } else if let Some(vault) = vault {
         // No sealed keys and no flag: while the registry has rotation on and the vault names this
         // release — so an election has taken effect naming this node the operator — take the keys
@@ -221,7 +237,8 @@ async fn obtain_with(
                 info!(predecessor = %source.endpoint, "election handover: resolved the incumbent");
                 let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
                 let signers = crate::handover::vault_signers(vault, &at).await?;
-                crate::handover::sync_predecessor_log(cfg, &source, signers).await?;
+                crate::node::member::before_whole_log_take(cfg, start)?;
+                crate::handover::sync_predecessor_log(cfg, &source, signers, metrics).await?;
                 info!("election handover: fetched the incumbent's published log");
                 info!(
                     predecessor = %source.endpoint,
@@ -230,7 +247,7 @@ async fn obtain_with(
                     "the vault names this release through an election in effect: taking the keys from the \
                      operator it replaced"
                 );
-                crate::handover::take(cfg, &source.endpoint, sealer.as_ref(), attestor, vault, None).await?
+                crate::handover::take(cfg, &source.endpoint, sealer.as_ref(), attestor, vault, None, metrics).await?
             }
             None => bail!("{}", refusal(dir, generation)),
         }
@@ -241,40 +258,19 @@ async fn obtain_with(
     Ok((keys.enclave_key()?, TlsIdentity::new(keys.tls_key()?)?, Some(store)))
 }
 
-/// The source of `provider`'s quotes. With real attestation nothing is attested before the guest
-/// clock proves protected (`image/README.md`, "The guest's clock").
+/// This release's sealed certificate store (`tee::certificates`), with `[tee.sealing]` and
+/// `[api.tls.acme]`. A start opens it before the keys, so one that does not open refuses before a
+/// handover takes them from the operator in effect.
 /// Error cases:
-/// - with `ConfigfsTsm`, `clock` is not the TSC in the frequency the hardware reports
-pub(super) fn attestor_for(provider: TeeProvider, clock: &GuestClock) -> anyhow::Result<Box<dyn Attestor>> {
-    match provider {
-        TeeProvider::Mock => Ok(Box::new(MockAttestor)),
-        TeeProvider::ConfigfsTsm => {
-            clock.require_protected()?;
-            Ok(Box::new(ConfigfsTsm::default()))
-        }
-    }
-}
-
-/// The platform's sealing for `provider`.
-/// Error cases:
-/// - the mock TEE has no stand-in measurement, real attestation is given one, or SEV-SNP sealing is
-///   asked for off Linux
-pub(super) fn sealer(provider: TeeProvider, start: &KeyStart) -> anyhow::Result<Box<dyn Sealer>> {
-    if provider == TeeProvider::Mock {
-        let launch_digest = start
-            .mock_launch_digest
-            .context("the mock TEE's stand-in for sealing needs --mock-launch-digest, its stand-in measurement")?;
-        warn!(launch_digest = %hex::encode(launch_digest), "mock TEE: the keys' sealing is a public stand-in, not sealing");
-        return Ok(Box::new(MockSealer { launch_digest }));
-    }
-    ensure!(
-        start.mock_launch_digest.is_none(),
-        "--mock-launch-digest is for the mock TEE: the platform measures this release"
-    );
-    #[cfg(target_os = "linux")]
-    return Ok(Box::new(crate::tee::snp::SnpSealer));
-    #[cfg(not(target_os = "linux"))]
-    bail!("SEV-SNP sealing needs a Linux guest")
+/// - the platform's sealing is not available (alert `enclave_key_failed`, see `sealer`)
+/// - the store does not open (alert `sealed_certificates_unreadable`, see `CertificateStore::open`)
+pub(super) fn certificates(cfg: &NodeConfig, start: &KeyStart) -> anyhow::Result<Option<Arc<CertificateStore>>> {
+    let (Some(sealing), Some(_)) = (&cfg.tee.sealing, &cfg.api.tls) else { return Ok(None) };
+    let sealer = sealer(cfg.tee.provider, start)
+        .inspect_err(|e| error!(alert = "enclave_key_failed", "refusing to serve: {e:#}"))?;
+    let store = CertificateStore::open(&sealing.dir, sealer, cfg.file_sha256)
+        .inspect_err(|e| error!(alert = "sealed_certificates_unreadable", "refusing to serve: {e:#}"))?;
+    Ok(Some(Arc::new(store)))
 }
 
 /// On a takeover's first start under the new signer, cuts the log to the vault's finalized

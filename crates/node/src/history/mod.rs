@@ -282,11 +282,19 @@ impl HistoryCheck {
     /// Error cases:
     /// - the retention is invalid
     /// - no index was on disk and a new one cannot be opened (see `Writer::open`)
+    #[cfg(test)]
     pub fn open(cfg: &HistorySection) -> anyhow::Result<Self> {
+        Self::open_with(cfg, true)
+    }
+
+    /// `open`, checking the file's integrity only with `integrity` (see `Writer::open_with`).
+    /// Error cases:
+    /// - as for `open`
+    pub(crate) fn open_with(cfg: &HistorySection, integrity: bool) -> anyhow::Result<Self> {
         let path = cfg.dir.join(INDEX_FILE);
         let retention_ms = cfg.retention_ms().context("history.retention")?;
         let found_file = path.exists();
-        let opened = Writer::open(&path, retention_ms).and_then(|(writer, progress)| match progress {
+        let opened = Writer::open_with(&path, retention_ms, integrity).and_then(|(writer, progress)| match progress {
             Some(progress) if progress.retention_ms != retention_ms => Err(anyhow!(
                 "its events were pruned under a retention of {} ms, not the {retention_ms} ms history.retention gives",
                 progress.retention_ms

@@ -102,6 +102,8 @@ pub(crate) async fn fetch_secrets(
         public_key: hex::encode(&public),
         config_sha256: hex::encode(cfg.file_sha256),
         log_tip: None,
+        tail: None,
+        reads: String::new(),
         secrets_only: true,
         evidence,
     };
@@ -114,7 +116,9 @@ pub(crate) async fn fetch_secrets(
             hex::decode(ciphertext).context("ciphertext")?,
             evidence,
         ),
-        Reply::Refused { reason } => bail!("the predecessor keeps its secrets: {reason}"),
+        Reply::Refused { reason } | Reply::Missed { reason, .. } => {
+            bail!("the predecessor keeps its secrets: {reason}")
+        }
         Reply::Keys { .. } | Reply::Confirmed { .. } => {
             bail!("the predecessor answered a request for secrets with keys")
         }

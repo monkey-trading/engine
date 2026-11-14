@@ -211,7 +211,8 @@ You are the incumbent and an election has named another operator.
    (`curl -sf $API/v1/archive/manifest.jsonl | head -1`). The successor fetches the published log from
    the hostname or its mirrors, and the log's tail segment from the handover.
 3. At `effectiveAt` the vault names the successor's release. `release_superseded` fires on your node
-   (expected). The successor connects, your node hands over and powers off.
+   (expected). The successor connects and your node hands over. It then follows the successor, as a
+   member does between turns, and opens none of its keys again; a restart of it does the same.
 4. If the successor has not connected by `effectiveAt`, your node raises `handover_overdue` (Critical).
    It still holds the keys and keeps sequencing. Contact the successor and check the same three things
    from its side. Do not stop your node.
@@ -293,18 +294,54 @@ epoch, from a day before that boundary until it: `cast send $SCHEDULE 'draw(uint
 turn as soon as its deadline passes, so the engine mirrors it well before its boundary; a turn not
 drawn by its boundary is not drawn at all, and the member before it stays named.
 
-- **Before your turn.** Run the node with `operator.rotation_enabled = true`, sealing and a handover
-  listener, and `custody.evm.staking.registry.schedule` naming the schedule. `cast call $SCHEDULE
+- **Deploy order.** Every member of the rotation set must run the release that follows and hands
+  over only the tail before the timelock turns rotation on: every request for the keys now names the
+  newest protocol version the successor's build reads, which an older incumbent does not read, so a
+  member on this release takes no turn from it, tail or whole log. Upgrade each candidate
+  (`setRelease`, section 5) first, then turn rotation on.
+- **Before your turn.** Run the node with `operator.rotation_enabled = true`, `[log_heads]` (the node refuses to start
+  without it), sealing and a handover listener, and `custody.evm.staking.registry.schedule` naming the schedule. `cast call $SCHEDULE
   'turnOf(uint64)' $n` shows the member, its generation and the turn before it, whose handover
   endpoint you take the keys from.
-- **At the boundary.** Start the node with no sealed keys for the turn's generation. It takes a trusted
-  time sample, reads the turn from the finalised schedule, connects to the incumbent's handover
-  endpoint, and takes the keys and the log's tail; neither side waits for chain finality after the
-  boundary. When the turn before never changed hands, because its member never took it, the node
+- **Between your turns.** Keep the node running, started with no key flag. While a turn names another
+  member it follows the operator in effect: the candidate the registry names, at `https://` its
+  registered API hostname, every frame verified against the vault's signer at finality. It keeps a
+  copy of the log with a live replica built by one replay when it starts following, resolves the
+  operator again at each boundary and after a failed stint, and pins the latest posted log head as
+  its replica passes it. `standby_follow_failed`, `operator_log_rollback` and `replica_diverged`
+  ([alerts.md](alerts.md)) page what it finds, each once per episode, and `member_follow_blocked`
+  a step of following (reading the turn, resolving the operator, opening the copy, reading or
+  pinning the posted head) that fails two polls in a row; each resolves once it works again.
+- **At the boundary.** A following node reads the vault, the schedule, the signers, the checkpoint
+  anchor at the vault's finalized checkpoint (the incumbent's checkpoint still in flight is in its
+  copy, and its node resumes it as outstanding), the MONKEY budget and the latest posted log head,
+  and takes its trusted time sample, all before it connects; one short stint then catches its copy
+  up, and it asks the incumbent for the keys and only the entries past its copy's tip, takes them onto its copy and replica, and starts sequencing from the replica with no replay
+  of the log and no chain read or time sample in between, so the switch costs the incumbent's final
+  checkpoint, the tail's transfer and the node's start. `engine_full_replays` stays put across it.
+  With `[snapshots]` configured, a member that took the tail does not start from its replica: it
+  recovers from disk, waits for checkpoint finality and may replay the whole log inside the switch,
+  so leave `[snapshots]` unset on rotation-set members. An incumbent that does
+  not find the tip on its log refuses before it stops, keeping the keys and sequencing on: Critical
+  `handover_tip_not_on_log` for a copy that diverged, Warning `handover_tail_lagged` for one older
+  than the 65,536 prefixes the incumbent retains or with a tail over its bound, which your node
+  catches up and retries. After three refusals it sets its copy aside (`<log dir>.aside`, replacing
+  any earlier one) and takes the whole log as a node with no copy does, since its copy's segment
+  files are its own writer's, not the holder's; an election naming your node, or a turn whose copy
+  does not open, takes the whole log the same way. Other failures of a take (the chain reads or the
+  trusted time sample before it connects, or no source answering) are retried for five minutes
+  before it does the same, so a passing RPC or Roughtime outage does not cost the tail. A copy that is stale when your turn comes, after a
+  restart, follows the incumbent until it is within 4,096 commands of its head, for ten stints at
+  most, before its first take. Once a successor confirms, the incumbent's
+  node goes back to following, now its successor. A node started at the boundary with no copy takes
+  a trusted time sample, reads the turn from the finalised schedule, connects to the incumbent's
+  handover endpoint, and takes the keys and the log's tail; neither side waits for chain finality
+  after the boundary. When the turn before never changed hands, because its member never took it, the node
   tries each earlier turn's source in turn, a week back at most, and the operator still holding the
   keys hands them over. That includes an incumbent that stopped for an earlier member whose transfer
   never confirmed (`handover_unconfirmed`): it admits you when the set your turn was drawn from names
-  your candidate and key, logged at least seven days before your boundary. Failing that, start it
+  your candidate and key with seven days' notice by your boundary, from V53 counted from the first of
+  the unbroken run of sets that named them. Failing that, start it
   with `--predecessor <host:port>` naming the holder's handover endpoint. Its first command is
   `TurnTaken`, which starts your time in office for the operator's share. A turn you hold again the
   next day needs no handover: your node logs `TurnTaken` for it at the boundary. Neither does a turn
@@ -314,7 +351,8 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
 - **After your turn.** Your key stops signing at the next boundary, and you earn nothing past it,
   even if your node keeps sequencing because no successor came. The next member's node takes the keys
   from yours at the boundary; `release_superseded` pages only if it has not 15 minutes on. Hand over
-  as section 4 describes.
+  as section 4 describes. Once a successor confirms, your node follows it and never takes back the
+  generation it handed over, even when a later trusted time sample falls just before the boundary.
 - **A turn the engine refused.** `turn_refused` ([alerts.md](alerts.md)) means no set mirrored at
   least seven days earlier names your candidate with your key: the key in effect stays for that turn.
   From V53 the seven days run from the first of the unbroken run of mirrored sets that named your
@@ -323,7 +361,8 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
 - **A new protocol version.** A node activates its build's newest protocol version when it boots, and
   a build that predates a version cannot read a log that activated it. Move every candidate in the
   rotation sets to a release that implements the version before any member boots one, or the next
-  member on an older release cannot take the keys and the log.
+  member on an older release cannot take the keys and the log. An incumbent refuses, before it
+  stops, a successor whose build reads only versions older than its log runs, and keeps the keys.
 - **Rotation off.** Turning rotation off stops draws; the turns already drawn stand, and the last
   member stays named until the timelock installs an operator once they end.
 - **Liveness.** `promote` reverts while a schedule is named: promotion over turns is not built yet. A

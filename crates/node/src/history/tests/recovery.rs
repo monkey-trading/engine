@@ -18,19 +18,7 @@ async fn history_rebuilds_when_a_secondary_index_omits_events() {
         let (dir, index) = (scratch_dir("history-index-omission"), index_dir("index-omission"));
         indexed_log(&dir, &index, 1).await;
         let path = file(&index);
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
-        let root: u32 = conn
-            .query_row("SELECT rootpage FROM sqlite_schema WHERE name = ?1", [index_name], |row| row.get(0))
-            .unwrap();
-        let page_size: u32 = conn.pragma_query_value(None, "page_size", |row| row.get(0)).unwrap();
-        drop(conn);
-        let mut bytes = fs::read(&path).unwrap();
-        let page = ((root - 1) * page_size) as usize;
-        assert_eq!(bytes[page], 10, "fixture index fits on a leaf page");
-        bytes[page + 1..page + page_size as usize].fill(0);
-        bytes[page + 5..page + 7].copy_from_slice(&(page_size as u16).to_be_bytes());
-        fs::write(&path, bytes).unwrap();
+        omit_index_entries(&path, index_name);
         let conn = Connection::open(&path).unwrap();
         let cursor_integrity: String =
             conn.query_row("PRAGMA integrity_check(progress)", [], |row| row.get(0)).unwrap();
@@ -46,6 +34,46 @@ async fn history_rebuilds_when_a_secondary_index_omits_events() {
         let query = PageQuery { account: TRADER, kind: None, before: None, after: None, limit: 200 };
         assert!(history.reader().page(query).await.unwrap().is_none(), "rebuild is unavailable until caught up");
     }
+}
+
+/// A member's plan checks the index's integrity when the member opens its copy, which its start
+/// then skips: an index damaged after the check still opens at the start, and one damaged before it
+/// is planned for its rebuild.
+#[tokio::test]
+async fn a_members_plan_checks_the_index_when_it_opens_and_its_start_does_not() {
+    let (dir, index) = (scratch_dir("history-member-plan"), index_dir("member-plan"));
+    indexed_log(&dir, &index, 1).await;
+    let cfg = HistorySection { dir: index.clone(), retention: RETENTION, marks: None };
+    let start = |mut plan: crate::history::preflight::HistoryPlan| {
+        crate::log::SegmentedLog::open(&dir, |entry| {
+            plan.observe(&entry);
+            Ok(())
+        })
+        .unwrap();
+        plan.finish().unwrap().resume_at()
+    };
+    let planned = crate::history::preflight::HistoryPlan::for_member(&cfg).unwrap();
+    omit_index_entries(&file(&index), "events_by_account");
+    assert_ne!(start(planned), Offset::start_of(0), "the start checked the index's integrity again");
+    let planned = crate::history::preflight::HistoryPlan::for_member(&cfg).unwrap();
+    assert_eq!(start(planned), Offset::start_of(0), "the member's plan missed the damage");
+}
+
+/// Zeroes the entries of the secondary index `index_name` in the history index at `path`, which
+/// only SQLite's integrity check finds.
+fn omit_index_entries(path: &Path, index_name: &str) {
+    let conn = Connection::open(path).unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
+    let root: u32 =
+        conn.query_row("SELECT rootpage FROM sqlite_schema WHERE name = ?1", [index_name], |row| row.get(0)).unwrap();
+    let page_size: u32 = conn.pragma_query_value(None, "page_size", |row| row.get(0)).unwrap();
+    drop(conn);
+    let mut bytes = fs::read(path).unwrap();
+    let page = ((root - 1) * page_size) as usize;
+    assert_eq!(bytes[page], 10, "fixture index fits on a leaf page");
+    bytes[page + 1..page + page_size as usize].fill(0);
+    bytes[page + 5..page + 7].copy_from_slice(&(page_size as u16).to_be_bytes());
+    fs::write(path, bytes).unwrap();
 }
 
 /// Pages wait until the index has taken every command the log held when it started: a rebuild over

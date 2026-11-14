@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
+use tokio::sync::watch;
 use tracing::{info, warn};
 
 pub(super) mod seal;
@@ -13,7 +14,7 @@ pub(super) mod seal;
 use crate::log::catalog::{CheckpointLocator, LazyCatalogView};
 use crate::log::segments::{Segment, command_seq, segment_name};
 use crate::log::writer::seal::SealWork;
-use crate::log::{ActivePrefix, CatalogBoundary, LogEntry, LogWriter, Offset, offset_of};
+use crate::log::{ActivePrefix, CatalogBoundary, LogEntry, LogWriter, Manifest, Offset, offset_of};
 
 /// Catalog garbage collection runs once per checkpoint on the sequencer thread; each turn consumes
 /// whole receipts, so a few turns drain what one checkpoint's folds retire.
@@ -318,6 +319,18 @@ impl LogWriter {
     /// stream right after it.
     pub fn last_offset(&self) -> Option<Offset> {
         self.last
+    }
+
+    /// Publishes the manifest on `manifest` from now on, starting with the one published so far: a
+    /// follower's writer, which published to no reader, becomes the sequencer's.
+    pub(crate) fn publish_on(&mut self, manifest: watch::Sender<Manifest>) {
+        manifest.send_replace(self.published());
+        self.manifest = manifest;
+    }
+
+    /// The manifest this writer has published.
+    pub(crate) fn published(&self) -> Manifest {
+        self.manifest.borrow().clone()
     }
 
     /// How many times the open segment's bytes reached storage; tests bound sync budgets with it.

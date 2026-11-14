@@ -6,6 +6,7 @@ mod secrets;
 mod stop;
 mod successor;
 mod tail;
+mod tail_handover;
 mod turns;
 use tail::write_log_tail;
 mod vault;
@@ -24,10 +25,13 @@ use engine_core::command::{Command, Sequenced};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use tokio::sync::broadcast;
+
 use crate::checkpoints::{CurrentRelease, Observation, VaultState, View};
 use crate::clock::SystemClock;
-use crate::handover::{Challenge, Kx, take};
-use crate::log::{CommandEntry, LogEntry, Offset};
+use crate::handover::{Challenge, Kx, Published, take};
+use crate::log::{Checkpoint, CommandEntry, LogEntry, Offset};
+use crate::sequencer::StreamMsg;
 use crate::tee::MockAttestor;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::{MockSealer, file_for};
@@ -49,6 +53,8 @@ struct Exchange {
     run: JoinHandle<anyhow::Result<()>>,
     drains: mpsc::Receiver<oneshot::Sender<anyhow::Result<Head>>>,
     old: KeySet,
+    /// The predecessor's sealed keys, which it hands over.
+    store: Arc<KeyStore>,
     successor: NodeConfig,
     successor_dir: PathBuf,
     /// The successor's log directory: what the archive bootstrap would leave, and what the
@@ -73,6 +79,8 @@ struct Exchange {
     samples: watch::Sender<Option<crate::trusted_time::Sample>>,
     /// The time the successor's own sample has reached, for a turn's boundary.
     reached: Option<engine_core::types::Millis>,
+    /// The successor's metrics, which count its replays of the whole log.
+    metrics: crate::metrics::Metrics,
 }
 
 #[tokio::test]
@@ -251,19 +259,28 @@ impl Exchange {
 
     /// `start`, with the predecessor checking daily turns against the log `engine` answers for.
     async fn start_logged(name: &str, engine: Option<mpsc::Sender<crate::sequencer::Request>>) -> Self {
+        Self::start_with(name, engine, None).await
+    }
+
+    /// `start_logged`, with the predecessor's log in `log`, when given.
+    async fn start_with(
+        name: &str,
+        engine: Option<mpsc::Sender<crate::sequencer::Request>>,
+        log: Option<PathBuf>,
+    ) -> Self {
         let (successor, successor_dir) = successor_config(name);
 
         let old = KeySet::generate().unwrap();
         let (dir, sealer) = (scratch_dir(&format!("{name}-old")), MockSealer { launch_digest: RELEASE });
         // The predecessor runs another config than the successor's, as a config change does.
-        let store = KeyStore::create(&dir, &sealer, PREDECESSOR_CONFIG, 1, old.clone()).unwrap();
+        let store = Arc::new(KeyStore::create(&dir, &sealer, PREDECESSOR_CONFIG, 1, old.clone()).unwrap());
         let current = Arc::new(Mutex::new(CurrentRelease::default()));
         let synced = Arc::new(Mutex::new(None));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap().to_string();
         let (drain, drains) = mpsc::channel(1);
         let (signing, signing_rx) = watch::channel(true);
-        let predecessor_log = scratch_dir(&format!("{name}-old-log"));
+        let predecessor_log = log.unwrap_or_else(|| scratch_dir(&format!("{name}-old-log")));
         let rotation = Rotation::default();
         let scheduled = Arc::new(Mutex::new(None));
         let (samples, samples_rx) = watch::channel(None);
@@ -279,7 +296,7 @@ impl Exchange {
             processor: None,
             kds_base: "https://kds.test".into(),
             signer: AccountId(old.enclave_key().unwrap().address()),
-            store: Arc::new(store),
+            store: store.clone(),
             attestor: Box::new(MockAttestor),
             vault: Vault {
                 signer: AccountId([0; 20]),
@@ -296,6 +313,12 @@ impl Exchange {
             engine: engine.as_ref().map(mpsc::Sender::downgrade),
             logged: std::sync::Mutex::new(None),
             retained: std::sync::Mutex::new(None),
+            // With no sequencer to ask, the log's version is what a stop retained: this build's. One
+            // with a sequencer retains its own.
+            tail_evidence: std::sync::Mutex::new(match engine {
+                Some(_) => Default::default(),
+                None => super::tail::Evidence::running(engine_core::protocol::ProtocolVersion::LATEST),
+            }),
         };
         let run = tokio::spawn(predecessor.run());
         let successor_log = successor.node.log_dir.clone();
@@ -304,6 +327,7 @@ impl Exchange {
             run,
             drains,
             old,
+            store,
             successor,
             successor_dir,
             successor_log,
@@ -316,6 +340,7 @@ impl Exchange {
             scheduled,
             samples,
             reached: None,
+            metrics: crate::metrics::Metrics::new(),
         }
     }
 
@@ -328,13 +353,21 @@ impl Exchange {
         let challenge: [u8; 32] = hex::decode(challenge.nonce).unwrap().try_into().unwrap();
         let (_, public) = <Kx as hpke::Kem>::gen_keypair();
         let public = hpke::Serializable::to_bytes(&public).to_vec();
-        let report_data = request_report_data(self.domain(), &challenge, &public, &quoted);
+        let reads = crate::handover::tail::version_name(engine_core::protocol::ProtocolVersion::LATEST);
+        let report_data = request_report_data(self.domain(), &challenge, &public, &quoted, &reads);
         let platform = Platform { launch_digest: UPGRADE, policy: 0, tcb: 0 };
         let quoting = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "https://kds.test" };
         let evidence = evidence::produce(&quoting, &MockAttestor, &platform, report_data).await.unwrap();
         let config_sha256 = hex::encode(self.successor.file_sha256);
-        let message =
-            Request { public_key: hex::encode(&public), config_sha256, log_tip: None, secrets_only: false, evidence };
+        let message = Request {
+            public_key: hex::encode(&public),
+            config_sha256,
+            log_tip: None,
+            tail: None,
+            reads,
+            secrets_only: false,
+            evidence,
+        };
         (stream, report_data, message)
     }
 
@@ -410,7 +443,7 @@ impl Exchange {
     /// The successor's side, reading `vault`.
     async fn take_reading(&self, vault: Vault) -> anyhow::Result<KeyStore> {
         let sealer = MockSealer { launch_digest: UPGRADE };
-        take(&self.successor, &self.address, &sealer, &MockAttestor, &vault, self.reached).await
+        take(&self.successor, &self.address, &sealer, &MockAttestor, &vault, self.reached, &self.metrics).await
     }
 }
 

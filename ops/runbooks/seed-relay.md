@@ -10,7 +10,8 @@ relayed seed hashed with the turn number.
 
 Anyone may relay, and every relay of a turn carries the same seed, so the relay needs one working
 relayer among the rotation set. Every member's node runs one under `[seed_relay]`, in either mode,
-operator or standby. It holds no key of the node's. Read [reference.md](reference.md) first.
+operator or standby, for the process's whole life: while it follows between its turns as well as
+while it holds one, and the same one across each handover. It holds no key of the node's. Read [reference.md](reference.md) first.
 
 ## What a member needs
 

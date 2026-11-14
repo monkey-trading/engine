@@ -31,7 +31,8 @@ async fn an_archive_that_is_unreachable_or_answers_an_error_leaves_the_start_to_
     for (what, mirror) in [("unreachable", &unreachable), ("answering 503", &unavailable)] {
         for local in [false, true] {
             let cfg = mirrored(&format!("archive-transport-{}-{local}", what.replace(' ', "-")), mirror, local);
-            let synced = sync_predecessor_log(&cfg, &incumbent(), BTreeSet::new()).await;
+            let synced =
+                sync_predecessor_log(&cfg, &incumbent(), BTreeSet::new(), &crate::metrics::Metrics::new()).await;
             synced.unwrap_or_else(|e| panic!("an archive {what} (local copy: {local}) refused the start: {e:#}"));
         }
     }
@@ -50,7 +51,7 @@ async fn an_archive_whose_listings_fail_their_checks_refuses_the_start() {
         let mirror = serve(Answer::Manifest(manifest)).await;
         for local in [false, true] {
             let cfg = mirrored(&format!("archive-integrity-{case}-{local}"), &mirror, local);
-            let err = sync_predecessor_log(&cfg, &incumbent(), BTreeSet::new())
+            let err = sync_predecessor_log(&cfg, &incumbent(), BTreeSet::new(), &crate::metrics::Metrics::new())
                 .await
                 .err()
                 .unwrap_or_else(|| panic!("{what} (local copy: {local}) passed"));

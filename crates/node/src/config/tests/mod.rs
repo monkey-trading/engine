@@ -113,6 +113,26 @@ fn log_heads_need_checkpoints_a_distinct_relayer_and_a_real_contract() {
 }
 
 #[test]
+fn rotation_needs_log_heads() {
+    const POSTING: &str = "\n[checkpoints]\nrpc_url = \"http://127.0.0.1:8545\"\
+        \nrelayer = \"0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\nretry_interval = \"5s\"\n\
+        rpc_timeout = \"5s\"";
+    const HEADS: &str = "\n[log_heads]\ncontract = \"0x00000000000000000000000000000000000000aa\"\n\
+        relayer = \"0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC\"\ninterval = \"1h\"";
+    let rotating =
+        std::fs::read_to_string(ANVIL).unwrap().replace("rotation_enabled = false", "rotation_enabled = true");
+    let cfg: NodeConfig = toml::from_str(&format!("{rotating}{POSTING}")).unwrap();
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("operator.rotation_enabled") && err.contains("[log_heads]"), "{err}");
+    let cfg: NodeConfig = toml::from_str(&format!("{rotating}{POSTING}{HEADS}")).unwrap();
+    cfg.validate().unwrap();
+    // Without rotation, log heads stay optional.
+    let single = std::fs::read_to_string(ANVIL).unwrap();
+    let cfg: NodeConfig = toml::from_str(&format!("{single}{POSTING}")).unwrap();
+    cfg.validate().unwrap();
+}
+
+#[test]
 fn signed_requests_take_their_domain_from_the_custody_chain_and_vault() {
     let dev = std::fs::read_to_string(DEV).unwrap();
     assert_eq!(toml::from_str::<NodeConfig>(&dev).unwrap().client_auth().unwrap(), ClientAuth::Unsigned);

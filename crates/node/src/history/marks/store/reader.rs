@@ -3,6 +3,7 @@
 //! a host that deletes, reorders, or rolls the cache back is refused mid-run, at serve time.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, bail, ensure};
@@ -39,19 +40,33 @@ pub struct Reader {
     /// The committed chain heads, shared with the writer: a page is served only against the
     /// head the store advanced, so a rolled-back file fails before any entry leaves.
     anchors: Arc<Mutex<ChainAnchors>>,
+    /// Whether the cache holds the history it serves, which its store sets (`Store::catch_up`).
+    ready: Arc<AtomicBool>,
 }
 impl Reader {
     /// A reader of the cache at `path`, authenticating rows with `mac` and checking chains
     /// against `anchors`, on its own read-only connections; the store keeps writing for the task
     /// that owns it.
-    pub(super) fn new(path: PathBuf, mac: hmac::Hmac<sha2::Sha256>, anchors: Arc<Mutex<ChainAnchors>>) -> Self {
+    pub(super) fn new(
+        path: PathBuf,
+        mac: hmac::Hmac<sha2::Sha256>,
+        anchors: Arc<Mutex<ChainAnchors>>,
+        ready: Arc<AtomicBool>,
+    ) -> Self {
         Reader {
             path,
             permits: Arc::new(Semaphore::new(super::MAX_READS)),
             mac,
             schema: super::expected_schema().into(),
             anchors,
+            ready,
         }
+    }
+
+    /// Whether the cache holds the history it serves: a member's start serves none until its store
+    /// has taken the member's earlier history, after its first command.
+    pub fn ready(&self) -> bool {
+        self.ready.load(Ordering::Acquire)
     }
 
     /// One page of `market`'s marks at `resolution`, oldest first, over the inclusive window

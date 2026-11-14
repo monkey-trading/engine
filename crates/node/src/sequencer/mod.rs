@@ -12,7 +12,7 @@ pub(crate) mod legacy;
 mod marks;
 pub(crate) mod origin;
 mod recovery;
-mod replay;
+pub(crate) mod replay;
 pub(crate) use replay::replay_path_with_authorities;
 pub use replay::{
     Replayed, ReplayedLog, replay, replay_path, replay_path_in_domain, replay_path_with_attested,
@@ -36,6 +36,7 @@ mod payout_schedule;
 mod payout_tests;
 mod payouts;
 mod pipeline;
+pub(crate) mod prefixes;
 use pipeline::{Batch, Pipeline};
 #[cfg(test)]
 mod withdrawal_scenario;
@@ -137,6 +138,7 @@ pub struct Sequencer {
     sealing: Option<crate::snapshot::sealing::Endpoint>,
     progress: Progress,
     command_prefix: [u8; 32],
+    prefixes: crate::log::PrefixRing,
     snapshot_base: Option<RecoveryBase>,
     snapshot_work: Vec<crate::checkpoints::Work>,
     snapshot_anchor_work: Option<crate::checkpoints::Work>,
@@ -201,6 +203,7 @@ impl Sequencer {
                     }
                     Request::Quote { cmd, not_after } => sequenced |= self.sequence_quote(cmd, not_after)?.is_some(),
                     Request::Query(q) => queries.push(q),
+                    Request::PrefixAt { seq, reply } => _ = reply.send(self.prefixes.prefix_at(seq)),
                     Request::HouseState(reply) => self.house.wait(reply),
                     Request::TimeSample(sample) => self.take_sample(sample)?,
                     Request::Sync(reply) => batch.syncs.push(reply),
@@ -377,10 +380,7 @@ impl Sequencer {
         self.last_ts = ts;
         let mut entry = CommandEntry { sequenced, events: Some(events.clone()), seal: None };
         let link = crate::log::command_seal::command_link(self.command_link, &entry)?;
-        let domain = crate::log::CheckpointDomain { chain_id: self.chain_id, vault: self.vault };
-        entry.seal = Some(self.key.seal_command(domain, link));
-        self.command_prefix =
-            crate::log::extend_command_prefix(self.command_prefix, crate::log::command_digest(&entry)?);
+        self.seal_and_extend(&mut entry, link)?;
         self.record(LogEntry::Command(entry))?;
         self.command_link = link;
         if let Some(previous) = previous_schedule.filter(|_| events.contains(&Event::AdminApplied)) {

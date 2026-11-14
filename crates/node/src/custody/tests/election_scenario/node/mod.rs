@@ -34,25 +34,32 @@ use super::{COOLDOWN_SECS, DISTRIBUTION_EPOCH_SECS, T0_SECS};
 use crate::api::Signing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, router};
 use crate::checkpoints::staking_scenario::access::Source;
-use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
+use crate::checkpoints::{CheckpointChain, View};
 use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
-use crate::config::{
-    CheckpointSection, CustodyProvider, CustodySection, FinalityTag, Genesis, RateLimit, RpcProviderSection,
-};
+use crate::config::{CustodyProvider, Genesis, RateLimit};
 use crate::custody::{Custody, OperatorsReader};
 use crate::handover::Published;
 use crate::limits::ApiLimits;
-use crate::log::{CheckpointDomain, CheckpointParent, Manifest};
+use crate::log::{CheckpointParent, Manifest};
+use crate::metrics::Metrics;
+use crate::node::member::Replica;
 use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
-use crate::test_support::{CHECKPOINT_EVERY, dev_config, sample_around, scratch_dir, sequencer_config};
+use crate::test_support::{
+    CHECKPOINT_EVERY, SEGMENT_COMMANDS, dev_config, sample_around, scratch_dir, sequencer_config,
+};
 use crate::trusted_time::{Sample, TrustedClock};
 
 /// Commands between the checkpoints a scenario that posts them signs: few enough to reach one with
 /// a handful of ticks, and more than the custody watcher's progress after each post sequences, so
 /// the node goes quiet between a scenario's steps.
 const POSTED_CHECKPOINT_EVERY: u64 = 10;
+/// Commands per log segment, and between checkpoints, on a seat, which sequences under a load of
+/// orders: enough that neither sealing segments nor signing checkpoints is most of the work, for the
+/// seat or for the members following it.
+pub(super) const SEAT_SEGMENT_COMMANDS: u64 = 1_000;
+const SEAT_CHECKPOINT_EVERY: u64 = 500;
 
 /// The running node the scenario drives.
 pub(super) struct Node {
@@ -75,17 +82,24 @@ pub(super) struct Node {
     /// A seat's stream since the start, whose drain gives a handover's final head, and whether the
     /// sequencer signs its checkpoints.
     pub(super) handover: Option<(Published, watch::Receiver<bool>)>,
+    /// A seat's API served over TLS.
+    api: Option<JoinHandle<anyhow::Result<()>>>,
+    /// When a seat published its commands, and the task recording it.
+    pub(super) stamps: Arc<std::sync::Mutex<Stamps>>,
+    tracking: JoinHandle<()>,
 }
 
 /// What a restart keeps of the node it replaces: its log directory, clock and screening source.
 type Resume = (PathBuf, Arc<TestClock>, Option<Source>);
 
-/// A daily turn's member: the operator key its config names, and the release its sealed keys run,
-/// which takes each turn the log assigns that key.
+/// A daily turn's member: the operator key its config names, the release its sealed keys run, which
+/// takes each turn the log assigns that key, and where it serves its API over TLS, as its registered
+/// hostname names it, for the members that follow it.
 #[derive(Clone, Copy)]
 pub(super) struct Seat {
     pub(super) operator: AccountId,
     pub(super) release: B256,
+    pub(super) api: SocketAddr,
 }
 
 impl Node {
@@ -96,15 +110,32 @@ impl Node {
         Self::launch(chain, key, false, None, None).await
     }
 
-    /// Starts `seat`'s node over the log in `dir` (a fresh log when it holds none) on `clock`.
+    /// Starts `seat`'s node over the log in `dir` (a fresh log when it holds none) on `clock`, with
+    /// the screening `source` deposits and orders pass through, if any, its replay counted in
+    /// `metrics`.
     pub(super) async fn start_seated(
         chain: &Chain,
         key: Arc<EnclaveKey>,
-        seat: Seat,
+        (seat, metrics): (Seat, Arc<Metrics>),
         dir: PathBuf,
         clock: Arc<TestClock>,
+        source: Option<Source>,
     ) -> Self {
-        Self::launch(chain, key, false, Some((dir, clock, None)), Some(seat)).await
+        Self::launch(chain, key, false, Some((dir, clock, source)), Some((seat, None, metrics))).await
+    }
+
+    /// Starts `seat`'s node from the replica a member's tail handover left, over its copy in `dir`,
+    /// on `clock`, with `source` as `start_seated` takes it: nothing replays the log, which `metrics`,
+    /// the member's own, would count.
+    pub(super) async fn start_from_replica(
+        chain: &Chain,
+        key: Arc<EnclaveKey>,
+        (seat, metrics): (Seat, Arc<Metrics>),
+        (dir, clock): (PathBuf, Arc<TestClock>),
+        replica: Replica,
+        source: Option<Source>,
+    ) -> Self {
+        Self::launch(chain, key, false, Some((dir, clock, source)), Some((seat, Some(replica), metrics))).await
     }
 
     /// `start`, with the checkpoint worker posting roots to the vault and a signed screening source,
@@ -126,8 +157,12 @@ impl Node {
         key: Arc<EnclaveKey>,
         post_checkpoints: bool,
         resume: Option<Resume>,
-        seat: Option<Seat>,
+        seated: Option<(Seat, Option<Replica>, Arc<Metrics>)>,
     ) -> Self {
+        let (seat, replica, metrics) = match seated {
+            Some((seat, replica, metrics)) => (Some(seat), replica, metrics),
+            None => (None, None, Arc::new(Metrics::new())),
+        };
         let (dir, clock, resumed_source) = match resume {
             Some((dir, clock, source)) => (dir, clock, Some(source)),
             None => (
@@ -153,6 +188,7 @@ impl Node {
             cooldown_ms: COOLDOWN_SECS as Millis * 1000,
         });
         let (stream, _) = broadcast::channel(1024);
+        let (stamps, tracking) = stamps::track(&stream);
         let (withdrawals, signed) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
         let auth = ClientAuth::Eip712 { chain_id: 31337, vault: operator.vault };
@@ -176,7 +212,12 @@ impl Node {
             client_auth: auth.clone(),
             clock: clock.clone(),
             genesis: genesis_commands(&genesis),
-            checkpoint_every: if post_checkpoints { POSTED_CHECKPOINT_EVERY } else { CHECKPOINT_EVERY },
+            checkpoint_every: match (post_checkpoints, seat) {
+                (true, _) => POSTED_CHECKPOINT_EVERY,
+                (false, Some(_)) => SEAT_CHECKPOINT_EVERY,
+                (false, None) => CHECKPOINT_EVERY,
+            },
+            segment_commands: if seat.is_some() { SEAT_SEGMENT_COMMANDS } else { SEGMENT_COMMANDS },
             checkpoint_parent,
             checkpoints: post_checkpoints.then_some(work_tx),
             access_policy: source.as_ref().map(|source| source.policy.clone()),
@@ -185,6 +226,7 @@ impl Node {
                 vote: AccountId(vote.into()),
                 restriction_ttl_ms: ttl,
             }),
+            metrics: metrics.clone(),
             ..sequencer_config(&dir, manifest_tx)
         };
         let signing = seat.map(|_| {
@@ -192,21 +234,30 @@ impl Node {
             seq_cfg.checkpoint_signing = Some(signing_tx);
             signing
         });
-        // As a boot does: the replay feeds the dashboard record and checks the history index.
-        let stats = crate::test_support::stats();
+        // As a boot does: the replay feeds the dashboard record and checks the history index; a
+        // member's replica brings both, and nothing replays.
         let mut history_cfg = dev_config();
         history_cfg.node.log_dir = dir.clone();
         history_cfg.history.dir = dir.join("history");
         history_cfg.custody.chain_id = 31337;
         history_cfg.custody.vault = format!("{:#x}", chain.vault);
-        let (replayed, plan) = crate::node::tests::read_log_and_history_recording(
-            &history_cfg,
-            &key,
-            seq_cfg.checkpoints.as_ref().map(|_| seq_cfg.checkpoint_parent),
-            &stats,
-        )
-        .await
-        .unwrap();
+        let (replayed, plan, stats) = match replica {
+            Some(replica) => {
+                let replayed = replica.follower.into_log(None, AccountId(key.address()), None).unwrap();
+                (replayed, replica.history, replica.stats)
+            }
+            None => {
+                let stats = crate::test_support::stats();
+                let parent = seq_cfg.checkpoints.as_ref().map(|_| seq_cfg.checkpoint_parent);
+                let (replayed, plan) =
+                    crate::node::tests::read_log_and_history_recording(&history_cfg, &key, parent, &stats)
+                        .await
+                        .unwrap();
+                // Counted as a boot counts its full replay (`node::recovery`).
+                metrics.full_replays.inc();
+                (replayed, plan, stats)
+            }
+        };
         let (replayed, mut history) = plan.finish_with_log(replayed, key.clone()).unwrap();
         seq_cfg.history_sealing = history.sealing();
         let handover = signing.map(|signing| {
@@ -286,6 +337,7 @@ impl Node {
             collateral: None,
             listing: Default::default(),
             operators: feed,
+            operator_hostname: None,
             signing: Arc::new(Signing::new(
                 key.clone(),
                 31337,
@@ -294,7 +346,20 @@ impl Node {
                 TrustedClock::new(clock.clone(), samples_rx, dev_config().time.max_drift),
             )),
         };
+        // A seat serves its API over TLS at its registered hostname, for the members following it.
+        let api = match seat {
+            Some(seat) => {
+                let listener = tokio::net::TcpListener::bind(seat.api).await.unwrap();
+                let tls = crate::tls::TlsIdentity::generate().unwrap();
+                let (app, limits) = (router(state.clone()), state.limits.clone());
+                Some(tokio::spawn(crate::tls::serve(listener, tls.acceptors, app, limits, api_cfg)))
+            }
+            None => None,
+        };
         Node {
+            api,
+            stamps,
+            tracking,
             state,
             clock,
             dir,
@@ -398,6 +463,10 @@ impl Node {
     /// Stops the checkpoint worker, the operator list's reader and the custody watcher, and drains the
     /// sequencer. Returns the screening source, for a node that resumes.
     pub(super) async fn stop(self) -> Option<Source> {
+        if let Some(api) = self.api {
+            api.abort();
+            let _ = api.await;
+        }
         if let Some(operators) = self.operators {
             operators.abort();
             let _ = operators.await;
@@ -414,6 +483,7 @@ impl Node {
         self.sequencer.await.unwrap().unwrap();
         self.history.abort();
         let _ = self.history.await;
+        self.tracking.abort();
         self.access
     }
 
@@ -427,64 +497,8 @@ impl Node {
     }
 }
 
-/// The checkpoint worker posting to the chain's vault at the latest block.
-fn poster(chain: &Chain, dir: &std::path::Path, key: &EnclaveKey) -> Poster<CheckpointRpc> {
-    let section: CheckpointSection = toml::from_str(&format!(
-        "rpc_url = {:?}\nrelayer = '{:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'",
-        chain.url, chain.accounts[9]
-    ))
-    .unwrap();
-    let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(chain.vault.into()) };
-    let signer = AccountId(key.address());
-    Poster {
-        chain: CheckpointRpc::new(&section, domain, chain.usdc, FinalityTag::Latest, 0, dir, signer).unwrap(),
-        registry: None,
-        domain,
-        signer,
-        retry: section.retry_interval,
-        pending_deposits_critical_after: Duration::from_secs(1),
-        post_withheld: Default::default(),
-        relayer_gas: None,
-    }
-}
-
-/// EVM custody over the chain's proxies, crediting at the latest block and releasing at the chain's
-/// release tag, with the staking contract, the registry, and any schedule mirrored.
-pub(super) fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody: CustodySection) -> CustodySection {
-    let anvil: crate::config::NodeConfig =
-        toml::from_str(&std::fs::read_to_string(crate::test_support::ANVIL_CONFIG).unwrap()).unwrap();
-    let mut evm = anvil.custody.evm.unwrap();
-    evm.providers = chain
-        .proxies
-        .iter()
-        .enumerate()
-        .map(|(index, url)| {
-            toml::from_str::<RpcProviderSection>(&format!("name = 'scenario-{index}'\nrpc_url = '{url}'")).unwrap()
-        })
-        .collect();
-    evm.usdc = chain.usdc;
-    evm.finality_tag = FinalityTag::Latest;
-    evm.withdrawal_finality_tag = chain.release_tag;
-    evm.confirmations = 0;
-    evm.start_block = 0;
-    evm.poll_interval = Duration::from_millis(30);
-    evm.cursor_path = dir.join("custody.json");
-    evm.staking = Some(
-        toml::from_str(&format!(
-            "contract = '{:#x}'\ncursor_path = '{}'\n[registry]\ncontract = '{:#x}'{}{}{}",
-            chain.staking,
-            dir.join("staking.json").display(),
-            chain.registry,
-            chain.lens.map(|lens| format!("\nlens = '{lens:#x}'")).unwrap_or_default(),
-            chain.schedule.map(|schedule| format!("\nschedule = '{schedule:#x}'")).unwrap_or_default(),
-            chain
-                .vote
-                .map(|(vote, ttl)| format!("\n[registry.vote]\ncontract = '{vote:#x}'\nrestriction_ttl = '{ttl}ms'"))
-                .unwrap_or_default()
-        ))
-        .unwrap(),
-    );
-    custody.chain_id = 31337;
-    custody.evm = Some(evm);
-    custody
-}
+mod setup;
+pub(super) use setup::custody_section;
+mod stamps;
+use setup::poster;
+pub(super) use stamps::Stamps;

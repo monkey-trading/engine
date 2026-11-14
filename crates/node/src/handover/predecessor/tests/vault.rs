@@ -10,7 +10,8 @@ use crate::checkpoints::ScheduledTurn;
 use super::*;
 
 /// A vault that names `signer`, and the release `current` holds as its current one; with `synced`
-/// set it reads the fold too, and that is the release its generation has folded.
+/// set it reads the fold too, and that is the release its generation has folded. Its earlier epoch's
+/// signer is the test sequencer's key, which signs the logs the tests' nodes write.
 pub(super) struct Vault {
     pub(super) signer: AccountId,
     pub(super) current: Arc<Mutex<CurrentRelease>>,
@@ -68,6 +69,11 @@ impl CheckpointChain for Vault {
     async fn scheduled_turn(&self, at: &Observation, now_ms: Millis) -> anyhow::Result<Option<ScheduledTurn>> {
         ensure!(at.view == View::Finalized, "the schedule is read at finality");
         Ok(self.scheduled.lock().unwrap().clone().filter(|turn| turn.boundary <= now_ms))
+    }
+
+    async fn epoch_signers(&self, at: &Observation, _epochs: &[u64]) -> anyhow::Result<Vec<AccountId>> {
+        ensure!(at.view == View::Finalized, "signer history is read at finality");
+        Ok(vec![AccountId(crate::tee::EnclaveKey::test_key().address())])
     }
 
     fn reads_release_fold(&self) -> bool {

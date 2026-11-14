@@ -260,7 +260,7 @@ impl Sequencer {
             replay.apply(&entry)
         })?;
         Ok(ReplayedLog {
-            log,
+            log: log.into(),
             replayed: replay.finish(),
             snapshot_seq: None,
             legacy_authorizations: legacy::Authorizations::new(),
@@ -301,6 +301,7 @@ impl Sequencer {
             genesis,
             activations,
             command_prefix,
+            prefix_ring,
             legacy_deposits,
             legacy_approvals,
             unreleased,
@@ -386,6 +387,7 @@ impl Sequencer {
             sealing: cfg.history_sealing,
             progress: Progress { genesis, activations, checkpoints, params_seq },
             command_prefix,
+            prefixes: prefixes::retained(&prefix_ring),
             snapshot_base: recovery_base,
             snapshot_work: recovery_work.clone(),
             snapshot_anchor_work: recovery_anchor_work.clone(),

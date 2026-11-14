@@ -319,6 +319,7 @@ impl Node {
             collateral: None,
             listing: Default::default(),
             operators: None,
+            operator_hostname: None,
             signing: crate::test_support::signing(),
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));

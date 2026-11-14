@@ -40,12 +40,18 @@ pub(crate) mod archive;
 mod chain;
 mod follow;
 use chain::{Chain, rollback_of};
+pub(crate) use follow::ReplicaRefused;
 use follow::follow;
+mod operator;
+pub(crate) use operator::{Followed, resolve};
+mod stint;
+use stint::{StintAction, stint_action};
+mod replica;
+pub(crate) use replica::Follower;
 
 use crate::config::{CustodyProvider, NodeConfig, StandbySection};
-use crate::log::{
-    CheckpointDomain, LogEntry, LogWriter, MANIFEST, Manifest, Offset, SegmentedLog, truncate_to_checkpoint,
-};
+use crate::log::{CheckpointDomain, LogEntry, LogWriter, MANIFEST, Manifest, SegmentedLog, truncate_to_checkpoint};
+use crate::node::member::turn::COMING_UP;
 use crate::telemetry::Telemetry;
 
 /// How long one follow stint runs before the standby re-checks the chain for its promotion: the
@@ -81,6 +87,7 @@ pub async fn run(mut cfg: NodeConfig, mut telemetry: Telemetry, start: crate::Ke
     }
     cfg.alerts.outbox.check_disk_location(&cfg.node.log_dir)?;
     let routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await?;
+    let metrics_listener = crate::metrics::bind(cfg.metrics.listen).await?;
     // A standby relays seeds too: every rotation-set member's node runs the relayer.
     let seed_relay = crate::seed_relay::task(&cfg, &metrics)?;
     let following = async {
@@ -92,13 +99,16 @@ pub async fn run(mut cfg: NodeConfig, mut telemetry: Telemetry, start: crate::Ke
             None => serve(&cfg, &standby).await,
         }
     };
-    let outcome = match seed_relay {
-        Some(seed_relay) => tokio::select! {
-            outcome = following => outcome,
-            outcome = seed_relay => outcome,
-        },
-        None => following.await,
+    let following = async {
+        match seed_relay {
+            Some(seed_relay) => tokio::select! {
+                outcome = following => outcome,
+                outcome = seed_relay => outcome,
+            },
+            None => following.await,
+        }
     };
+    let outcome = crate::metrics::alongside(metrics_listener, metrics, following).await;
     routing.drain(Duration::from_secs(10)).await;
     outcome
 }
@@ -110,11 +120,13 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
     let my_key: AccountId = cfg.operator()?.address;
     let chain = crate::handover::vault_reader(cfg)?.context("standby mode needs [checkpoints]")?;
     let archive = archive::archive_client(standby.danger_accept_invalid_certs)?;
+    // With rotation on, the operator moves with each turn and election: it is read again each stint.
+    let mut operator = operator::for_standby(cfg, standby, &chain).await?;
     // A cold start backfills completed segments from the archive; a restart resumes the stream at
     // its own last command, which backfills anything after it.
     let dir = cfg.node.log_dir.as_path();
     if !dir.join(MANIFEST).exists() {
-        archive::bootstrap_archive(&archive, &origins(standby), dir).await?;
+        archive::bootstrap_archive(&archive, &operator.origins(), dir).await?;
         // A poisoned cold start must surface now, not when the operator is already gone:
         // replay what was backfilled; a fresh deployment with no checkpoint yet has nothing
         // to verify, which is fine.
@@ -125,17 +137,26 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
     let domain =
         CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().context("custody.vault")? };
     let (mut writer, mut copied) =
-        open_copy(dir, cfg.node.segment_commands.max(1), Chain::new(domain, standby.enclave))?;
-    info!(operator = %standby.operator, enclave = %standby.enclave, "standby following the operator in effect");
-    let mut follow_failed = false;
+        open_copy(dir, cfg.node.segment_commands.max(1), Chain::new(domain, operator.enclave))?;
+    info!(operator = %operator.origin, enclave = %operator.enclave, "standby following the operator in effect");
+    // When the followed operator last moved: its successor may take a while to serve.
+    let mut moved_at: Option<std::time::Instant> = None;
+    // The operator each open episode paged, which its resolution names: a resolution under another
+    // key would end no episode.
+    let mut follow_failed: Option<String> = None;
     let mut signal_failed = false;
-    let mut rolled_back = false;
+    let mut rolled_back: Option<String> = None;
     loop {
         match chain.takeover(my_key).await {
             Ok(Some(takeover)) => {
                 writer.flush().context("flushing the copy before the takeover")?;
                 drop(writer);
-                if let Err(e) = finalize(&archive, standby, dir, &takeover, copied).await {
+                let signers = operator::takeover_signers(cfg, standby, &chain).await;
+                let finalized = match signers {
+                    Ok(signers) => finalize(&archive, signers, &operator.origins(), dir, &takeover, copied).await,
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = finalized {
                     error!(alert = "standby_takeover_failed", "the takeover could not finalize: {e:#}");
                     return Err(e);
                 }
@@ -163,82 +184,72 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
                 sleep(standby.poll_interval).await;
             }
         }
+        match operator::for_standby(cfg, standby, &chain).await {
+            Ok(resolved) if resolved.moved_from(&operator) => {
+                info!(operator = %resolved.origin, enclave = %resolved.enclave, "standby following the operator in effect");
+                moved_at = Some(std::time::Instant::now());
+                operator = resolved;
+            }
+            Ok(_) => {}
+            Err(e) => warn!("resolving the operator in effect failed; following {} on: {e:#}", operator.origin),
+        }
+        copied.admit(operator.enclave);
         // The copy's last command is the resume point, so an error mid-stint never duplicates
         // appends: the next stint re-requests from it.
-        let followed = follow(&mut writer, &mut copied, cfg, standby, STINT).await;
+        let followed = follow(&mut writer, &mut copied, cfg, &operator, STINT, None).await;
         // The stream itself worked: what it carried is another matter.
-        match stint_action(&followed, rolled_back, copied.confirmed()) {
+        match stint_action(&followed, rolled_back.is_some(), copied.confirmed()) {
             StintAction::FollowFailed => {
                 let error = followed.as_ref().unwrap_err();
-                if !follow_failed {
-                    error!(alert = "standby_follow_failed", operator = %standby.operator, "following failed: {error:#}");
+                // A turn's member serves only once it has taken the keys: no page while it comes up.
+                let coming_up = cfg.operator.rotation_enabled
+                    && moved_at.is_some_and(|at| at.elapsed() < Duration::from_millis(COMING_UP.unsigned_abs()));
+                if coming_up {
+                    warn!(operator = %operator.origin, "the operator in effect does not serve yet: {error:#}");
+                } else if follow_failed.is_none() {
+                    error!(alert = "standby_follow_failed", operator = %operator.origin, "following failed: {error:#}");
+                    follow_failed = Some(operator.origin.clone());
                 }
-                follow_failed = true;
                 // A dead operator refuses connections at once; the poll interval bounds the retry
                 // rate for as long as the liveness window lasts.
                 sleep(standby.poll_interval).await;
                 continue;
             }
             StintAction::Quiet => {
-                if std::mem::take(&mut follow_failed) {
-                    info!(alert_resolved = "standby_follow_failed", operator = %standby.operator, "following works again");
+                if let Some(paged) = follow_failed.take() {
+                    info!(alert_resolved = "standby_follow_failed", operator = %paged, "following works again");
                 }
                 // A host that closes every connection at once must not spin this loop.
                 sleep(Duration::from_secs(1)).await;
             }
             StintAction::Rollback(evidence) => {
-                if std::mem::take(&mut follow_failed) {
-                    info!(alert_resolved = "standby_follow_failed", operator = %standby.operator, "following works again");
+                if let Some(paged) = follow_failed.take() {
+                    info!(alert_resolved = "standby_follow_failed", operator = %paged, "following works again");
                 }
-                if !std::mem::replace(&mut rolled_back, true) {
+                if rolled_back.is_none() {
                     error!(
                         alert = "operator_log_rollback",
-                        operator = %standby.operator,
+                        operator = %operator.origin,
                         "{evidence}; the copy takes nothing more and is kept as the source to restore it from"
                     );
+                    rolled_back = Some(operator.origin.clone());
                 }
                 sleep(standby.poll_interval).await;
             }
             StintAction::Resolved => {
-                if std::mem::take(&mut follow_failed) {
-                    info!(alert_resolved = "standby_follow_failed", operator = %standby.operator, "following works again");
+                if let Some(paged) = follow_failed.take() {
+                    info!(alert_resolved = "standby_follow_failed", operator = %paged, "following works again");
                 }
-                info!(
-                    alert_resolved = "operator_log_rollback",
-                    operator = %standby.operator,
-                    "the operator's log holds the copy's history again"
-                );
-                rolled_back = false;
+                if let Some(paged) = rolled_back.take() {
+                    info!(
+                        alert_resolved = "operator_log_rollback",
+                        operator = %paged,
+                        "the operator's log holds the copy's history again"
+                    );
+                }
                 sleep(Duration::from_secs(1)).await;
             }
         }
-    }
-}
-
-/// What one follow stint says about the two follow alerts.
-#[derive(Debug, PartialEq)]
-enum StintAction {
-    /// The stream itself failed: raise (once) `standby_follow_failed`; nothing else changes.
-    FollowFailed,
-    /// The stream worked and carried nothing new about a rollback: resolve `standby_follow_failed`
-    /// if raised; no other change.
-    Quiet,
-    /// The stream worked and showed a rollback: resolve `standby_follow_failed` if raised; raise
-    /// (once per episode) `operator_log_rollback` with the evidence.
-    Rollback(String),
-    /// The stream worked and repeated the whole tail of a rolled-back copy: resolve both alerts.
-    Resolved,
-}
-
-/// The alert decision for one stint: the stream's failure is its own alert, whatever the failure
-/// carries; an Ok stint that repeated the whole tail resolves a rollback episode, and a quiet Ok
-/// stint resolves nothing but `standby_follow_failed`.
-fn stint_action(followed: &anyhow::Result<Option<Offset>>, rolled_back: bool, confirmed: bool) -> StintAction {
-    match followed.as_ref().err().and_then(rollback_of) {
-        None if followed.is_err() => StintAction::FollowFailed,
-        Some(rollback) => StintAction::Rollback(rollback.to_string()),
-        None if rolled_back && confirmed => StintAction::Resolved,
-        None => StintAction::Quiet,
     }
 }
 
@@ -249,11 +260,29 @@ fn stint_action(followed: &anyhow::Result<Option<Offset>>, rolled_back: bool, co
 /// Error cases:
 /// - the copy cannot be opened, or its links computed, and no takeover marker repairs it
 fn open_copy(dir: &std::path::Path, segment_commands: u64, empty: Chain) -> anyhow::Result<(LogWriter, Chain)> {
-    let open = |dir: &std::path::Path| {
+    open_copy_replayed(dir, segment_commands, empty, || (), |_, _| Ok(())).map(|(writer, copied, ())| (writer, copied))
+}
+
+/// `open_copy`, also handing each entry to `apply` on what `fresh` starts each attempt with: a
+/// replica replays the copy as it is opened, with no second read.
+/// Error cases:
+/// - as `open_copy`, or `apply` refuses an entry
+fn open_copy_replayed<R>(
+    dir: &std::path::Path,
+    segment_commands: u64,
+    empty: Chain,
+    fresh: impl Fn() -> R,
+    mut apply: impl FnMut(&mut R, &LogEntry) -> anyhow::Result<()>,
+) -> anyhow::Result<(LogWriter, Chain, R)> {
+    let mut open = |dir: &std::path::Path| {
         let (manifest_tx, _) = tokio::sync::watch::channel(Manifest::default());
         let mut copied = empty.clone();
-        let log = SegmentedLog::open(dir, |entry| copied.record(entry))?;
-        anyhow::Ok((log.into_writer(segment_commands, manifest_tx)?, copied))
+        let mut replayed = fresh();
+        let log = SegmentedLog::open(dir, |entry| {
+            apply(&mut replayed, &entry)?;
+            copied.record(entry)
+        })?;
+        anyhow::Ok((log.into_writer(segment_commands, manifest_tx)?, copied, replayed))
     };
     match open(dir) {
         Ok(opened) => Ok(opened),
@@ -272,23 +301,24 @@ fn open_copy(dir: &std::path::Path, segment_commands: u64, empty: Chain) -> anyh
 
 /// Finalizes the copy for the takeover: refreshes completed segments from the archive in case the
 /// vault's last accepted checkpoint posted after the stream last delivered, taking only segments
-/// that extend `copied`, then requires that checkpoint and truncates the copy after it, dropping
-/// the unsigned tail.
+/// that extend `copied`, then replays the whole copy against `signers`, requires that checkpoint
+/// and truncates the copy after it, dropping the unsigned tail.
 /// Error cases:
-/// - the archive refresh fails hard, or the copy holds no checkpoint at the vault's latest
+/// - the archive refresh fails hard, the copy does not replay against `signers`, or it holds no
+///   checkpoint at the vault's latest
 async fn finalize(
     archive: &reqwest::Client,
-    standby: &StandbySection,
+    signers: std::collections::BTreeSet<AccountId>,
+    origins: &[String],
     dir: &std::path::Path,
     takeover: &Takeover,
     mut copied: Chain,
 ) -> anyhow::Result<()> {
-    let refreshed =
-        archive::refresh_archive(archive, &origins(standby), dir, |staged| copied.extend_with(staged)).await;
+    let refreshed = archive::refresh_archive(archive, origins, dir, |staged| copied.extend_with(staged)).await;
     match refreshed.as_ref().err().map(|e| (e, rollback_of(e))) {
         Some((_, Some(rollback))) => error!(
             alert = "operator_log_rollback",
-            operator = %standby.operator,
+            operator = ?origins.last(),
             "{rollback}; the archive's segments are not added to the copy"
         ),
         Some((e, None)) => warn!("refreshing the archive before the takeover failed: {e:#}"),
@@ -296,9 +326,9 @@ async fn finalize(
     }
     // The whole copy must replay before any history is dropped: archive-fetched bytes were only
     // hash-checked against the server's own manifest, and this catches a forged prefix here
-    // rather than after the timelock installs this enclave. Withdrawals verify against the
-    // followed operator's attested enclave, the only key that signed this copy's payouts.
-    crate::sequencer::replay_path_with_attested(dir, None, [standby.enclave].into_iter().collect())
+    // rather than after the timelock installs this enclave. Withdrawals verify against `signers`,
+    // the keys that signed this copy's payouts (`operator::takeover_signers`).
+    crate::sequencer::replay_path_with_attested(dir, None, signers)
         .context("the copy does not replay; refusing to truncate it")?;
     // The resume point is the latest checkpoint in the published log that the outgoing key
     // signed and that extends the vault's latest root: the anchor itself, then every later
@@ -365,8 +395,8 @@ fn resume_checkpoint(dir: &std::path::Path, takeover: &Takeover) -> anyhow::Resu
 
 /// The TLS config for the stream: the venue feeds' public roots, or a verifier that accepts any
 /// certificate when the config says so. Frame signatures authenticate the stream's content.
-fn tls(standby: &StandbySection) -> anyhow::Result<Arc<rustls::ClientConfig>> {
-    if !standby.danger_accept_invalid_certs {
+fn tls(danger_accept_invalid_certs: bool) -> anyhow::Result<Arc<rustls::ClientConfig>> {
+    if !danger_accept_invalid_certs {
         return crate::feeds::venue::tls_config();
     }
     warn!("standby.danger_accept_invalid_certs: the operator's TLS certificate is not verified");
@@ -446,15 +476,14 @@ fn stream_url(origin: &str, path_and_query: &str) -> anyhow::Result<String> {
     Ok(url)
 }
 
+/// What shows the operator's log no longer extends the copy, anywhere in `error`'s causes.
+pub(crate) fn rollback_evidence(error: &anyhow::Error) -> Option<String> {
+    rollback_of(error).map(ToString::to_string)
+}
+
 pub(super) fn sha256(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     hex::encode(sha2::Sha256::digest(bytes))
-}
-
-/// The archive origins in fetch order: the mirrors first, the operator itself last, since the
-/// operator may be dead exactly when the archive matters.
-pub(super) fn origins(standby: &StandbySection) -> Vec<String> {
-    standby.mirrors.iter().cloned().chain(std::iter::once(standby.operator.clone())).collect()
 }
 
 #[cfg(test)]

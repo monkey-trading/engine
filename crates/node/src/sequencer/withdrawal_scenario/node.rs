@@ -282,6 +282,31 @@ impl Node {
     pub async fn stop(&mut self) -> anyhow::Result<()> {
         self.child.take().context("running node")?.stop().await
     }
+
+    /// Starts a rotation-set member under the mock TEE's `digest` whose release the vault no longer
+    /// names, requires it to follow the operator in effect without opening its sealed keys, and
+    /// drains it.
+    /// Error cases:
+    /// - the child exits, opens its keys, or does not follow in time, or does not drain
+    pub async fn follows_without_its_keys(&mut self, digest: [u8; 48]) -> anyhow::Result<()> {
+        let earlier = std::fs::read_to_string(self.dir.join("node.log")).map(|log| log.len()).unwrap_or(0);
+        self.spawn_keys(None, Some(digest)).await?;
+        timeout(LOADED_WAIT, async {
+            loop {
+                self.check_running()?;
+                let log = std::fs::read_to_string(self.dir.join("node.log"))?;
+                let start = log.get(earlier..).unwrap_or_default();
+                ensure!(!start.contains("opened this release's sealed keys"), "the superseded release opened its keys");
+                if start.contains("following the operator in effect") {
+                    return anyhow::Ok(());
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .context("the superseded release did not follow the operator in effect")??;
+        self.stop().await
+    }
 }
 
 /// Whether a metrics scrape shows withdrawals admitted on a verdict for checkpoint `after` or later.

@@ -326,6 +326,7 @@ impl Node {
             collateral: None,
             listing: Default::default(),
             operators: None,
+            operator_hostname: None,
             signing: crate::test_support::signing(),
         };
         assert_eq!(

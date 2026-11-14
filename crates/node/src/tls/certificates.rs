@@ -84,6 +84,11 @@ impl TlsKey {
         Self { provider, key_pair, signer, public_key_sha256, served, challenge }
     }
 
+    /// The SHA-256 of the key's DER SubjectPublicKeyInfo: what the attestation commits to.
+    pub fn public_key_sha256(&self) -> [u8; 32] {
+        self.public_key_sha256
+    }
+
     /// The key pair, for tests to have a CA certify it.
     #[cfg(test)]
     pub(crate) fn key_pair(&self) -> &KeyPair {

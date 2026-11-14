@@ -146,7 +146,8 @@ async fn recover(cfg: &NodeConfig, finalized: &Checkpoint) -> anyhow::Result<Opt
     let mut seq_cfg = sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0);
     seq_cfg.checkpoint_parent = parent;
     seq_cfg.checkpoints = Some(mpsc::channel(1).0);
-    preflight::authorize(Some((&poster, anchor.as_ref())), Some((&log, &seq_cfg, AccountId(key.address())))).await?;
+    preflight::authorize(Some((&poster, anchor.as_ref())), Some((&log, &seq_cfg, AccountId(key.address()))), false)
+        .await?;
     Ok(log.snapshot_sequence())
 }
 

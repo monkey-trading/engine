@@ -18,37 +18,56 @@ struct Heartbeat {
     head: Option<Offset>,
 }
 use super::chain::{Chain, Step};
-use crate::config::{NodeConfig, StandbySection};
+use super::operator::Followed;
+use crate::config::NodeConfig;
 use crate::log::{LogEntry, LogWriter, Offset};
+use crate::sequencer::replay::LiveReplay;
+
+/// An entry the operator sealed that the replica refused: the replica may hold part of it, so it is
+/// rebuilt from the copy, which did not take the entry.
+#[derive(Debug)]
+pub(crate) struct ReplicaRefused;
+
+impl std::fmt::Display for ReplicaRefused {
+    /// What happened.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the replica refused an entry the operator sealed")
+    }
+}
+
+impl std::error::Error for ReplicaRefused {}
 
 /// One follow stint: opens a signed stream at the copy's last command, verifies every frame against
-/// the operator's enclave address, checks each heartbeat and entry against the copy (`Chain`), and
-/// appends each new entry, for up to `budget`. Returns the copy's head. A closed, failed, or ended
-/// connection returns to re-check the chain; the next stint opens a fresh connection, which the
-/// verifier binds, so a spliced connection is never trusted across stints.
+/// the followed enclave's address, checks each heartbeat and entry against the copy (`Chain`), and
+/// applies each new entry to `replica`, if any, before appending it, for up to `budget`. Returns the
+/// copy's head. A closed, failed, or ended connection returns to re-check the chain; the next stint
+/// opens a fresh connection, which the verifier binds, so a spliced connection is never trusted
+/// across stints.
 /// Error cases:
 /// - the connection fails, a frame fails verification, or the copy cannot be written
 /// - the operator's log no longer extends the copy (a `Rollback`); nothing more is appended
+/// - the replica refuses an entry (`ReplicaRefused`), which the copy then does not take
 pub(super) async fn follow(
     writer: &mut LogWriter,
     copied: &mut Chain,
     cfg: &NodeConfig,
-    standby: &StandbySection,
+    followed: &Followed,
     budget: Duration,
+    mut replica: Option<&mut LiveReplay>,
 ) -> anyhow::Result<Option<Offset>> {
     let mut challenge = [0u8; 32];
     rand::thread_rng().fill(&mut challenge);
     let path_and_query =
         format!("/v1/stream?signed=1&challenge={}&from={}", hex::encode(challenge), copied.resume_seq());
-    let url = stream_url(&standby.operator, &path_and_query)?;
-    let connector = tokio_tungstenite::Connector::Rustls(tls(standby)?);
+    let url = stream_url(&followed.origin, &path_and_query)?;
+    let connector = tokio_tungstenite::Connector::Rustls(tls(followed.danger_accept_invalid_certs)?);
     let connect = tokio_tungstenite::connect_async_tls_with_config(url.as_str(), None, false, Some(connector));
     let (mut stream, _) = timeout(FETCH_TIMEOUT, connect)
         .await
         .context("connecting to the stream timed out")?
         .with_context(|| format!("connecting to {url}"))?;
     let mut verifier = engine_wire::FrameVerifier::new(
-        standby.enclave.0,
+        followed.enclave.0,
         engine_wire::Deployment {
             chain_id: cfg.custody.chain_id,
             vault: cfg.custody.vault.parse::<AccountId>().context("custody.vault")?.0,
@@ -94,6 +113,9 @@ pub(super) async fn follow(
                 serde_json::from_value(value).context("a stream message is not a log entry")?;
             let entry = LogEntry::from(message.body);
             if let Step::Extends(link) = copied.check(message.offset, &entry)? {
+                if let Some(replica) = replica.as_deref_mut() {
+                    replica.apply(&entry).map_err(|e| e.context(ReplicaRefused))?;
+                }
                 writer.append(&entry).context("appending a stream entry to the copy")?;
                 copied.extend(message.offset, entry, link);
                 writer.flush().context("flushing the copy")?;

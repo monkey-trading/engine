@@ -129,7 +129,7 @@ async fn handover_stop(tx: &mpsc::Sender<Request>, reply: DrainReply) -> anyhow:
 /// Resolves on SIGTERM or ctrl-c.
 /// Error cases:
 /// - a signal handler cannot be installed
-async fn shutdown_signal() -> anyhow::Result<()> {
+pub(super) async fn shutdown_signal() -> anyhow::Result<()> {
     let mut term = signal(SignalKind::terminate()).context("installing SIGTERM handler")?;
     tokio::select! {
         r = ctrl_c() => r.context("listening for ctrl-c"),

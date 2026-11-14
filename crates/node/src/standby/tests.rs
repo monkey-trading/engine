@@ -204,8 +204,16 @@ async fn follow_appends_verified_frames_and_refuses_a_wrong_signer() {
 
     let dir = scratch_dir("standby-follow");
     let (mut writer, mut copied) = open_copy(&dir, 100, Chain::new(DOMAIN, enclave())).unwrap();
-    let err =
-        follow(&mut writer, &mut copied, &config(), &standby_section(port), Duration::from_secs(5)).await.unwrap_err();
+    let err = follow(
+        &mut writer,
+        &mut copied,
+        &config(),
+        &Followed::from_standby(&standby_section(port)),
+        Duration::from_secs(5),
+        None,
+    )
+    .await
+    .unwrap_err();
     assert!(format!("{err:#}").contains("failed verification"), "{err:#}");
     assert!(rollback_of(&err).is_none(), "a frame that fails verification is not the operator's log: {err:#}");
     drop(writer);
@@ -224,9 +232,16 @@ async fn follow_resumes_at_the_copys_last_command() {
     let (mut writer, mut copied) = open_copy(&dir, 100, Chain::new(DOMAIN, enclave())).unwrap();
     let (port, server, request) = operator_stream(Vec::new()).await;
     // The host held the connection open and fed it nothing: that is a failed stint, not a working one.
-    let failed = follow(&mut writer, &mut copied, &config(), &standby_section(port), Duration::from_millis(300))
-        .await
-        .unwrap_err();
+    let failed = follow(
+        &mut writer,
+        &mut copied,
+        &config(),
+        &Followed::from_standby(&standby_section(port)),
+        Duration::from_millis(300),
+        None,
+    )
+    .await
+    .unwrap_err();
     assert!(format!("{failed:#}").contains("delivered no frame"), "{failed:#}");
     let request = request.await.unwrap();
     assert!(request.contains("from=0"), "the stream resumed at the copy's last command: {request}");
@@ -249,7 +264,16 @@ async fn follow_repeats_the_tail_without_reappending_it() {
         .map(|message| (By::Operator, message))
         .collect();
     let (port, server, _) = operator_stream(frames).await;
-    follow(&mut writer, &mut copied, &config(), &standby_section(port), Duration::from_secs(5)).await.unwrap();
+    follow(
+        &mut writer,
+        &mut copied,
+        &config(),
+        &Followed::from_standby(&standby_section(port)),
+        Duration::from_secs(5),
+        None,
+    )
+    .await
+    .unwrap();
     writer.flush().unwrap();
     drop(writer);
     // Every repeat was recognised, not appended again: the copy is the operator's log exactly.
@@ -274,8 +298,16 @@ async fn follow_stops_at_an_operator_cut_back_and_keeps_its_copy() {
     let frames = log_messages(&operator, Offset::start_of(head.seq)).into_iter().map(|message| (By::Operator, message));
     let (port, server, request) = operator_stream(frames.collect()).await;
 
-    let err =
-        follow(&mut writer, &mut copied, &config(), &standby_section(port), Duration::from_secs(5)).await.unwrap_err();
+    let err = follow(
+        &mut writer,
+        &mut copied,
+        &config(),
+        &Followed::from_standby(&standby_section(port)),
+        Duration::from_secs(5),
+        None,
+    )
+    .await
+    .unwrap_err();
     let rollback = rollback_of(&err).unwrap_or_else(|| panic!("a rollback: {err:#}"));
     assert_eq!(rollback.copy_head, Some(head));
     assert!(rollback.evidence.starts_with(&format!("its entry at {}:0 differs", head.seq)), "{}", rollback.evidence);
@@ -300,8 +332,16 @@ async fn follow_stops_at_a_signed_head_behind_its_copy() {
     let heartbeat = serde_json::json!({ "type": "heartbeat", "head": behind.to_string() }).to_string();
     let (port, server, _) = operator_stream(vec![(By::Operator, heartbeat)]).await;
 
-    let err =
-        follow(&mut writer, &mut copied, &config(), &standby_section(port), Duration::from_secs(5)).await.unwrap_err();
+    let err = follow(
+        &mut writer,
+        &mut copied,
+        &config(),
+        &Followed::from_standby(&standby_section(port)),
+        Duration::from_secs(5),
+        None,
+    )
+    .await
+    .unwrap_err();
     let rollback = rollback_of(&err).unwrap_or_else(|| panic!("a rollback: {err:#}"));
     assert_eq!(
         rollback.evidence,

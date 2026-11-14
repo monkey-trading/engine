@@ -12,6 +12,7 @@ use engine_core::types::{AccountId, Millis};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiError, ApiResult, ApiState};
+use crate::handover::hostname::RegisteredHostname;
 use crate::stats::TurnsPage;
 
 /// Turn history records per page by default.
@@ -39,6 +40,11 @@ pub(super) struct OperatorView {
     next_turn: Option<TurnView>,
     /// The turn assignments the log mirrored, newest first.
     turns: TurnsPage,
+    /// The API hostname the registry records for the operator in effect, with the finalized block
+    /// it was read at: where stream clients reconnect and resume with `from=<seq>`. Left out
+    /// when it cannot be read, or the node reads no registry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_hostname: Option<RegisteredHostname>,
 }
 
 /// A mirrored rotation set.
@@ -70,7 +76,8 @@ pub(super) struct OperatorParams {
 }
 
 /// The operator in effect, the pending rotation and its time, whether rotation is on, the last
-/// election, and the daily turns, from the engine and the record at one durable seq.
+/// election, and the daily turns, from the engine and the record at one durable seq, and the
+/// registered API hostname the last finalized read found.
 /// Error cases:
 /// - the turn history's limit is outside range
 /// - the sequencer has stopped
@@ -81,6 +88,7 @@ pub(super) async fn operator(
     let configured = s.operator.address;
     let stats = s.stats.clone();
     let limit = params.limit.unwrap_or(DEFAULT_TURNS_LIMIT);
+    let api_hostname = s.operator_hostname.as_ref().and_then(|feed| feed.borrow().clone());
     let view = s
         .query_durable(move |e| {
             stats.turns(params.before, limit).map(|turns| {
@@ -102,6 +110,7 @@ pub(super) async fn operator(
                     turn: daily.in_effect.map(view),
                     next_turn: daily.assigned.values().next().copied().map(view),
                     turns,
+                    api_hostname,
                 }
             })
         })

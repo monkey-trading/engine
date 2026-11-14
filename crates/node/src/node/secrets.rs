@@ -58,6 +58,17 @@ pub(crate) struct Delivered {
     pub store: Option<Arc<SecretStore>>,
 }
 
+impl Delivered {
+    /// Hands the delivery listener back to `operator`, the member's own key, once its run ended with
+    /// its keys handed over: the stopped sequencer answers nothing, and while the member follows,
+    /// its secrets are its own operator's to deliver.
+    pub(crate) fn following(&self, operator: AccountId) {
+        if let Some(authority) = &self.authority {
+            authority.send_replace(Authority::Configured(operator));
+        }
+    }
+}
+
 /// Moving the running release's secrets here on `--predecessor`.
 struct Moving<'a> {
     cfg: &'a NodeConfig,

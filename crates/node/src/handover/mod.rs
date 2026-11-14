@@ -17,7 +17,9 @@
 //! own quote over the ciphertext. The successor checks that quote, opens the keys, accepts them
 //! only if the vault already names their signing key, seals them for its own release, writes the
 //! segment, requires the log to end at the handed-over checkpoint, and confirms by signing with the
-//! handed-over key; the predecessor then exits, so the two never sign at once. The successor serves
+//! handed-over key; the predecessor, which stopped sequencing, then exits or, as a rotation-set
+//! member, follows its successor, so the two never sign at once. A successor that follows the log
+//! asks for the entries past its tip alone (`tail`). The successor serves
 //! only once its log reaches the predecessor's final checkpoint (`node::keys::check_predecessor_head`)
 //! and the vault names the key. It seals them in the vault's generation of its release, once that
 //! generation has folded it (`folded_release`), and once the vault names the successor, no start
@@ -39,7 +41,8 @@
 //!
 //! Delivered secrets are no part of the keys (`tee::secrets`). An approved upgrade moves them first,
 //! with no stop, since reading the vault can already take a delivered key (`secrets`). An election
-//! moves none: the elected operator's enclave brings its own, as #359 decides.
+//! moves none: the elected operator's enclave brings its own, as #359 decides. Nor is a member's
+//! certificate (`tee::certificates`), which no handover moves.
 //!
 //! The mock TEE's quotes and stand-in measurements prove nothing: two mock enclaves hand over to
 //! each other for development only, and a real enclave never accepts a mock one.
@@ -51,8 +54,8 @@ use hpke::aead::ChaCha20Poly1305;
 use hpke::kdf::HkdfSha256;
 use hpke::kem::X25519HkdfSha256;
 use hpke::{Deserializable, Kem, OpModeR, OpModeS};
+use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use sha3::{Digest as _, Keccak256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -67,12 +70,21 @@ use crate::tee::sealing::Release;
 
 pub(crate) mod evidence;
 pub(crate) use evidence::Evidence;
+pub(crate) mod hostname;
+pub(crate) use hostname::check_operator_hostname;
 mod predecessor;
-pub(crate) use predecessor::{DrainReply, Predecessor, Published};
+pub(crate) use predecessor::{DrainReply, Predecessor};
+mod published;
+pub(crate) use published::Published;
 pub(crate) mod secrets;
 pub(crate) use secrets::fetch_secrets;
+mod messages;
+use messages::{Challenge, Confirm, Reply, Request};
+#[cfg(test)]
+pub(crate) mod stand_in;
 mod successor;
 pub(crate) use successor::take;
+pub(crate) mod tail;
 pub(crate) mod turns;
 
 /// A read-only client for the vault `[checkpoints]` reads, or `None` without `[checkpoints]`.
@@ -142,74 +154,24 @@ pub(crate) const MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the successor waits for the keys: the predecessor's drain and its vendor fetch.
 pub(crate) const REPLY_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// The predecessor's first message on each connection, which the successor's request binds, so a
-/// request or confirmation recorded on one connection is refused on any other.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Challenge {
-    /// 32 random bytes, hex.
-    nonce: String,
-}
-
-/// The successor's request: a one-time public key and the config it runs with, and its quote over
-/// both and the connection's challenge.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Request {
-    /// The X25519 public key the keys are encrypted to, hex.
-    public_key: String,
-    /// The SHA-256 of the successor's config file, hex: with the quote's measurement, its release.
-    config_sha256: String,
-    /// The last seq of the log copy the successor restored from the published archive, if any: the
-    /// handover carries every segment past it, so nothing sequenced up to the stop is missing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    log_tip: Option<u64>,
-    /// Asks for the delivered secrets alone, with no stop: its quote binds that under its own tag.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    secrets_only: bool,
-    evidence: Evidence,
-}
-
-/// The predecessor's answers.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum Reply {
-    /// The keys, encrypted to the request's public key, and the predecessor's quote over them. The
-    /// keys name every log segment past the successor's tip (`handover_tails`), and each segment's
-    /// bytes follow as one raw frame, so the listings are bound by the attested ciphertext.
-    Keys { encapped_key: String, ciphertext: String, evidence: Evidence },
-    /// Why the predecessor keeps the keys.
-    Refused { reason: String },
-    /// The confirmation verified, signed with the handed-over key so the host cannot forge it: the
-    /// predecessor exits.
-    Confirmed { signature: String },
-    /// The delivered secrets, encrypted to the request's public key, and the predecessor's quote
-    /// over them. Sequencing goes on.
-    Secrets { encapped_key: String, ciphertext: String, evidence: Evidence },
-}
-
-/// The successor's proof that it holds the keys: the handed-over key's signature.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Confirm {
-    signature: String,
-}
-
-/// The report data a successor's quote binds: the connection's challenge, its public key, and its
-/// config's hash, for this deployment.
+/// The report data a successor's quote binds: the connection's challenge, its public key, its
+/// config's hash and the newest protocol version its build `reads`, for this deployment.
 fn request_report_data(
     domain: CheckpointDomain,
     challenge: &[u8; 32],
     public_key: &[u8],
     config_sha256: &[u8; 32],
+    reads: &str,
 ) -> [u8; 64] {
     let mut hash = Sha256::new();
-    hash.update(b"engine.handover.request.v1");
+    hash.update(b"engine.handover.request.v3");
     hash.update(domain.chain_id.to_be_bytes());
     hash.update(domain.vault.0);
     hash.update(challenge);
     hash.update(public_key);
     hash.update(config_sha256);
+    hash.update((reads.len() as u64).to_be_bytes());
+    hash.update(reads.as_bytes());
     padded(hash.finalize().into())
 }
 
@@ -405,22 +367,6 @@ pub(crate) async fn resolve_source(vault: &impl CheckpointChain) -> anyhow::Resu
     }))
 }
 
-/// While rotation is on, the certificate the enclave orders names the API hostname the registry
-/// records for the operator in effect: a mismatch would certify a hostname the candidate did not
-/// register, and clients of the registered one would find no attested endpoint. Without
-/// `[api.tls.acme]` there is no certificate to check.
-/// Error cases:
-/// - the chain cannot be read, or the registered hostname differs from the config's
-pub(crate) async fn check_operator_hostname(cfg: &NodeConfig, vault: &impl CheckpointChain) -> anyhow::Result<()> {
-    let Some(domain) = cfg.api.tls.as_ref().map(|tls| tls.acme.domain.clone()) else { return Ok(()) };
-    let registered = vault.operator_hostname().await?;
-    ensure!(
-        registered == domain,
-        "the registry names {registered} as the operator in effect's API hostname, but api.tls.acme.domain is          {domain}: point the config at the registered hostname, or register the one the config serves"
-    );
-    Ok(())
-}
-
 /// Every signer the vault has recorded, for authenticating the restored log: the current signer
 /// and each immutable signer epoch at the same finalized observation, as normal recovery uses. A
 /// log spanning a signer rotation replays as readily as a single-epoch one.
@@ -444,7 +390,8 @@ pub(crate) async fn vault_signers(
 /// Fetches the predecessor's published log into this node's log directory before the handover
 /// connects: the completed segments the archive lists, checked against their listings. The final
 /// segments arrive with the keys instead — the archive serves only completed segments, and this
-/// fetches while the predecessor's API is still up. A transport failure is not fatal: a local copy
+/// fetches while the predecessor's API is still up; the replay counts in `metrics.full_replays`. A
+/// transport failure is not fatal: a local copy
 /// from an earlier start may exist, and the strict tail checks at the handover decide; a fetched
 /// copy that fails its integrity checks or does not replay is fatal, surfacing a poisoned mirror
 /// before the predecessor stops.
@@ -455,6 +402,7 @@ pub(crate) async fn sync_predecessor_log(
     cfg: &NodeConfig,
     source: &Source,
     signers: std::collections::BTreeSet<engine_core::types::AccountId>,
+    metrics: &crate::metrics::Metrics,
 ) -> anyhow::Result<()> {
     let section = cfg.tee.sealing.as_ref().and_then(|sealing| sealing.handover.as_ref());
     let mut origins = section.map(|handover| handover.mirrors.clone()).unwrap_or_default();
@@ -487,6 +435,7 @@ pub(crate) async fn sync_predecessor_log(
     // only hash-checked against the server's own manifest, and this replay, of the whole restored
     // copy, is the authenticity check, as the standby's cold start does.
     crate::sequencer::replay_path_with_attested(dir, None, signers).context("the restored log copy does not replay")?;
+    metrics.full_replays.inc();
     info!("the restored log copy replays to its tip");
     Ok(())
 }

@@ -116,6 +116,9 @@ impl Chain {
         )
             .abi_encode_params();
         self.registry = self.deploy(self.deployer, "OperatorRegistry.sol/OperatorRegistry.json", &args).await?;
+        // A rotating node refuses to start without `[log_heads]`.
+        let heads = self.deploy(self.deployer, "LogHeads.sol/LogHeads.json", &self.vault.abi_encode()).await?;
+        self.log_heads = (heads, self.request::<Vec<Address>>("eth_accounts", json!([])).await?[6]);
         self.govern_target(self.registry, setVaultCall { vault: self.vault }.abi_encode()).await?;
         self.govern(setRegistryCall { registry_: self.registry }.abi_encode()).await?;
         if rotation {
@@ -278,6 +281,21 @@ impl Chain {
     pub(crate) async fn delegate_from(&self, account: Address, candidate: Address, amount: U256) -> anyhow::Result<()> {
         let staking: Address = self.read(self.registry, stakingCall {}).await?;
         self.send(account, staking, delegateCall { candidate, amount }.abi_encode()).await?;
+        Ok(())
+    }
+
+    /// Moves `amount` of `account`'s delegated stake from candidate `from` to candidate `to`.
+    /// Error cases:
+    /// - the redelegation reverts
+    pub(crate) async fn redelegate_from(
+        &self,
+        account: Address,
+        from: Address,
+        to: Address,
+        amount: U256,
+    ) -> anyhow::Result<()> {
+        let staking: Address = self.read(self.registry, stakingCall {}).await?;
+        self.send(account, staking, redelegateCall { from, to, amount }.abi_encode()).await?;
         Ok(())
     }
 

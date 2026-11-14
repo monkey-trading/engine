@@ -1,6 +1,7 @@
 //! The predecessor's side: a listener that hands this release's keys, and the log segment the
-//! final checkpoint is in, to the vault's current release, after stopping sequencing, and ends the
-//! node once the successor confirms.
+//! final checkpoint is in or, to a successor that follows the log, the entries past its tip, to the
+//! vault's current release, after stopping sequencing, and ends once the successor confirms: the
+//! node then exits, or, a rotation-set member's, follows its successor.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,7 +13,6 @@ use engine_verify::Tcb;
 use ring::rand::{SecureRandom, SystemRandom};
 use sha2::Digest as _;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::broadcast::{self, error::TryRecvError};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
 use tracing::{Instrument, error, info, info_span, warn};
@@ -20,12 +20,12 @@ use tracing::{Instrument, error, info, info_span, warn};
 use crate::checkpoints::{CheckpointChain, CheckpointRpc};
 use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::evidence::{self, Peer, Quoting};
+use crate::handover::tail::{TailMiss, read_tail, send_tail, tail_report_data};
 use crate::handover::{
     Challenge, Confirm, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, confirm_digest, confirmed_digest,
     keys_report_data, receive, request_report_data, seal_keys, send, send_bytes, vault_reader,
 };
-use crate::log::{Checkpoint, CheckpointDomain, Manifest, SegmentInfo};
-use crate::sequencer::{StreamBody, StreamMsg};
+use crate::log::{CheckpointDomain, Manifest, SegmentInfo};
 use crate::tee::keys::Head;
 use crate::tee::sealing::{KeyStore, Platform, Release};
 use crate::tee::secrets::SecretStore;
@@ -66,6 +66,9 @@ pub(crate) struct Predecessor<C = CheckpointRpc> {
     /// The log's daily turns as sequencing stopped, which admit a later turn's member once the
     /// sequencer is gone (`ensure_logged`).
     retained: std::sync::Mutex<Option<engine_core::turns::DailyTurns>>,
+    /// The log's protocol version and the last tip found on it, which answer a tail request once the
+    /// sequencer is gone (`tail_after`).
+    tail_evidence: std::sync::Mutex<tail::Evidence>,
 }
 
 /// How one connection ended.
@@ -117,6 +120,7 @@ impl Predecessor {
             engine: None,
             logged: std::sync::Mutex::new(None),
             retained: std::sync::Mutex::new(None),
+            tail_evidence: Default::default(),
         }))
     }
 }
@@ -135,7 +139,7 @@ impl<C: CheckpointChain> Predecessor<C> {
     }
 
     /// Serves successors one connection at a time until one confirms a handover, which ends the
-    /// node. Once sequencing has stopped it goes on serving them, under `handover_unconfirmed`: the
+    /// node's run. Once sequencing has stopped it goes on serving them, under `handover_unconfirmed`: the
     /// vault names the successor's release, so this release's own copy of the keys no longer opens,
     /// and only a confirmed handover or the operator ends it.
     /// Error cases:
@@ -193,19 +197,46 @@ impl<C: CheckpointChain> Predecessor<C> {
             self.serve_secrets(&mut stream, &request, &challenge, &public_key, config_sha256).await;
             return Ok(Served::Unconfirmed);
         }
-        let report_data = request_report_data(self.domain, &challenge, &public_key, &config_sha256);
+        let reads = &request.reads;
+        let report_data = match &request.tail {
+            Some(tip) => tail_report_data(self.domain, &challenge, &public_key, &config_sha256, reads, tip),
+            None => request_report_data(self.domain, &challenge, &public_key, &config_sha256, reads),
+        };
         let release = match self.admit(&request, &report_data, config_sha256).await {
             Ok(release) => release,
             Err(e) => return Ok(refuse(&mut stream, e).await),
         };
         info!(successor_release = %hex::encode(release.id()), "the vault names the successor's release");
+        // A successor whose build cannot read the log's protocol version could not replay what it
+        // takes: it is refused here, before the stop, tail or not.
+        if let Err(e) = self.ensure_successor_reads(reads).await {
+            return Ok(refuse(&mut stream, e).await);
+        }
+        // A following successor gets the entries past its tip, once the tip is on this log and the
+        // tail fits its bound, judged before the stop with a segment frame's room for what is
+        // sequenced first. Anything else is refused here, saying why: its copy's segment files are its
+        // own writer's, so whole segments never go onto it.
+        let room = crate::handover::tail::MAX_TAIL_BYTES - u64::from(crate::handover::MAX_SEGMENT_BYTES);
+        let after = match &request.tail {
+            Some(tip) => match self.tail_after(tip).await {
+                Ok(after) if checks::tail_over(&self.log_dir, after, room) => {
+                    return Ok(
+                        miss(&mut stream, TailMiss::OverBound, "the tail past the tip may be over its bound").await
+                    );
+                }
+                Ok(after) => Some(after),
+                Err(missed) => return Ok(miss(&mut stream, missed, "the successor's tip is not one it can tail").await),
+            },
+            None => None,
+        };
         // The segments the successor lacks must each fit the handover's bound, and the transfer
         // must fit memory: the writer rotates by command count, not bytes, so a runaway tail is
         // refused here, before the stop it could strand. A read error refuses this attempt and
         // keeps the node serving.
-        match self.transfer_bounds(request.log_tip) {
-            Ok(()) => {}
-            Err(e) => return Ok(refuse(&mut stream, e).await),
+        if after.is_none()
+            && let Err(e) = self.transfer_bounds(request.log_tip)
+        {
+            return Ok(refuse(&mut stream, e).await);
         }
         let head = match head {
             Some(head) => head.clone(),
@@ -220,6 +251,7 @@ impl<C: CheckpointChain> Predecessor<C> {
                     return Ok(refuse(&mut stream, withheld).await);
                 }
                 self.retain_turns().await;
+                self.retain_version().await;
                 let stopped = self.stop().await;
                 match &stopped {
                     // The checkpoint gate refused the final checkpoint: the node goes on sequencing,
@@ -253,7 +285,7 @@ impl<C: CheckpointChain> Predecessor<C> {
                 Vec::new()
             }
         };
-        match self.hand_over(&mut stream, &public_key, &report_data, head.clone(), tails).await {
+        match self.hand_over(&mut stream, &public_key, &report_data, head.clone(), tails, after).await {
             Ok(()) => {
                 info!(alert_resolved = "handover_unconfirmed", "the successor holds the keys; this release exits");
                 Ok(Served::Confirmed)
@@ -335,9 +367,11 @@ impl<C: CheckpointChain> Predecessor<C> {
 
     /// Sends the keys and `head` encrypted to `public_key`, with this enclave's quote over them,
     /// the segments past the successor's tip named inside the ciphertext, and each segment's bytes
-    /// behind them as one raw frame per listing, and waits for the successor to sign
-    /// `report_data`'s confirmation with the signing key.
+    /// behind them as one raw frame per listing — or, with `after`, the entries the log holds past
+    /// that seq, listed inside the ciphertext and sent as raw frames — and waits for the successor to
+    /// sign `report_data`'s confirmation with the signing key.
     /// Error cases:
+    /// - the tail cannot be read (see `tail::read_tail`)
     /// - encryption, quoting, or the exchange fails, or the confirmation is missing or not the key's
     async fn hand_over(
         &self,
@@ -346,10 +380,17 @@ impl<C: CheckpointChain> Predecessor<C> {
         report_data: &[u8; 64],
         head: Head,
         tails: Vec<SegmentInfo>,
+        after: Option<u64>,
     ) -> anyhow::Result<()> {
+        let tail = after.map(|after| read_tail(&self.log_dir, after, &head)).transpose()?;
+        let tails = if tail.is_some() { Vec::new() } else { tails };
         let mut keys = self.store.keys();
         keys.predecessor_head = Some(head);
         keys.handover_tails = tails.clone();
+        keys.handover_tail = tail.as_ref().map(|(listing, _)| listing.clone());
+        // Certificates stay with the member whose hostname they name (`tee::certificates`), so one an
+        // earlier release sealed with the keys does not leave with them.
+        keys.certificate = None;
         let (encapped_key, ciphertext) = seal_keys(self.domain, public_key, report_data, &keys)?;
         let bound = keys_report_data(self.domain, report_data, &encapped_key, &ciphertext);
         let quoting =
@@ -362,6 +403,15 @@ impl<C: CheckpointChain> Predecessor<C> {
             let bytes = self.segment_bytes(listed)?;
             send_bytes(stream, &bytes).await?;
             info!(file = %listed.file, "sent a log segment with the keys");
+        }
+        if let Some((listing, bytes)) = &tail {
+            send_tail(stream, bytes).await?;
+            info!(
+                entries = listing.entries,
+                bytes = listing.bytes,
+                after = listing.after,
+                "sent the tail past the successor's tip"
+            );
         }
         info!("sent the keys to the successor");
         // The successor replays the whole restored log before it seals and confirms, so the wait
@@ -403,67 +453,24 @@ async fn refuse(stream: &mut TcpStream, reason: anyhow::Error) -> Served {
     Served::Unconfirmed
 }
 
+/// Refuses a tail request before the stop, saying why: the node keeps the keys and sequences on.
+async fn miss(stream: &mut TcpStream, miss: TailMiss, reason: &str) -> Served {
+    warn!(?miss, "refusing the tail handover: {reason}");
+    if let Err(e) = send(stream, &Reply::Missed { reason: reason.into(), miss }).await {
+        warn!("sending the refusal failed: {e:#}");
+    }
+    Served::Unconfirmed
+}
+
 /// Logs a connection that ended without a confirmed handover.
 fn unconfirmed(why: &str) -> Served {
     warn!("the handover connection ended unconfirmed: {why}");
     Served::Unconfirmed
 }
 
-/// What the sequencer has published since the node started, read from its own stream: its last
-/// command and its last checkpoint, which become a handover's final head once it drains. Held in
-/// memory, so the host's disk plays no part; a receiver that falls behind skips the oldest entries
-/// only, never the newest.
-pub(crate) struct Published {
-    receiver: broadcast::Receiver<Arc<StreamMsg>>,
-    last_seq: Option<u64>,
-    checkpoint: Option<Head>,
-}
-
-impl Published {
-    /// Follows `receiver` on from the recovered log's last command and last checkpoint.
-    pub(crate) fn new(
-        receiver: broadcast::Receiver<Arc<StreamMsg>>,
-        last_seq: Option<u64>,
-        last_checkpoint: Option<&Checkpoint>,
-    ) -> Self {
-        let checkpoint = last_checkpoint.map(|cp| Head { seq: cp.seq, root: cp.root.clone() });
-        Self { receiver, last_seq, checkpoint }
-    }
-
-    /// The final checkpoint once the sequencer has drained, which publishes everything it wrote
-    /// before it returns: the checkpoint of its last command. A withheld final checkpoint is only a
-    /// post-commit defense: the stop the node commits to already wrote one, so this error names the
-    /// real recovery — new keys through the timelock — since a restart of this release refuses
-    /// once the vault names the successor.
-    /// Error cases:
-    /// - no checkpoint was written, or the drain withheld the last command's (custody not yet
-    ///   reconciled), so the keys stay with this release
-    pub(crate) fn final_head(mut self) -> anyhow::Result<Head> {
-        loop {
-            match self.receiver.try_recv() {
-                Ok(message) => match &message.body {
-                    StreamBody::Command(command) => self.last_seq = Some(command.sequenced.seq),
-                    StreamBody::Checkpoint(cp) => self.checkpoint = Some(Head { seq: cp.seq, root: cp.root.clone() }),
-                    StreamBody::Withdrawal(_) => {}
-                },
-                Err(TryRecvError::Lagged(_)) => {}
-                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
-            }
-        }
-        let head = self.checkpoint.context("the log has no checkpoint to hand over")?;
-        ensure!(
-            Some(head.seq) == self.last_seq,
-            "the final checkpoint was withheld after seq {}, so the keys stay with this release: the vault \
-             already names the successor and a restart of this release refuses, so the successor needs new \
-             keys, which the timelock registers",
-            head.seq
-        );
-        Ok(head)
-    }
-}
-
 mod checks;
 mod secrets;
+mod tail;
 
 #[cfg(test)]
 mod tests;

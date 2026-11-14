@@ -263,6 +263,19 @@ impl Chain {
         digest: [u8; 48],
         endpoint: &str,
     ) {
+        self.register_serving_at(candidate, admin_key, bond, digest, endpoint, "api.candidate.local").await;
+    }
+
+    /// `register_serving`, with the API hostname `api_hostname`, where the candidate's node serves.
+    pub(super) async fn register_serving_at(
+        &self,
+        candidate: Address,
+        admin_key: &k256::ecdsa::SigningKey,
+        bond: U256,
+        digest: [u8; 48],
+        endpoint: &str,
+        api_hostname: &str,
+    ) {
         let admin = Address::from(engine_core::eip712::address(admin_key.verifying_key()).0);
         let registration = Registration {
             adminKey: admin,
@@ -270,7 +283,7 @@ impl Chain {
             bond,
             launchDigest: Bytes::from(digest.to_vec()),
             configHash: CONFIG_HASH.into(),
-            apiHostname: "api.candidate.local".into(),
+            apiHostname: api_hostname.into(),
             handoverEndpoint: endpoint.into(),
         };
         let digest: B256 = self.view(self.registry, registrationDigestCall { candidate, adminKey: admin }).await;

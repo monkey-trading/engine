@@ -60,25 +60,8 @@ async fn await_finality_boundary<C: CheckpointChain>(
 ) -> anyhow::Result<Observation> {
     tokio::time::timeout(evm.finality_stalled_after, async {
         loop {
-            let latest = chain.observe(View::Latest, &[]).await?;
-            let finalized = chain.observe(View::Finalized, &[]).await?;
-            latest.validate(&[])?;
-            finalized.validate(&[])?;
-            // A running node rides out a retired signer; a starting one cannot authenticate the
-            // vault's authority until the timelock installs a signer.
-            anyhow::ensure!(
-                !latest.state.signer_retired() && !finalized.state.signer_retired(),
-                "the vault's guardian retired its signer; the node starts once the vault's timelock installs one"
-            );
-            for view in [&latest, &finalized] {
-                if view.state.signer != signer {
-                    return Err(Unregistered { vault_signer: view.state.signer }.into());
-                }
-            }
-            if latest.state.checkpoint == finalized.state.checkpoint
-                && latest.lifecycle.as_ref().map(|evidence| evidence.signer_epoch)
-                    == finalized.lifecycle.as_ref().map(|evidence| evidence.signer_epoch)
-            {
+            let (latest, finalized) = views(chain, signer).await?;
+            if latest.state.checkpoint == finalized.state.checkpoint && same_epoch(&latest, &finalized) {
                 break anyhow::Ok(finalized);
             }
             tokio::time::sleep(retry).await;
@@ -86,6 +69,51 @@ async fn await_finality_boundary<C: CheckpointChain>(
     })
     .await
     .context("checkpoint startup awaits custody finality beyond its finality budget")?
+}
+
+/// A successor's view of the vault: its finalized checkpoint, with no wait for the latest one to
+/// finalize. An incumbent nearly always has one in flight, and every checkpoint it posted past the
+/// finalized one is in the successor's copy, which recovery from the replica resumes as outstanding
+/// work, so the successor signs past it, never from the finalized parent beside it.
+/// Error cases:
+/// - see `views`, or a change of signer is not yet finalized
+async fn at_finality<C: CheckpointChain>(chain: &C, signer: AccountId) -> anyhow::Result<Observation> {
+    let (latest, finalized) = views(chain, signer).await?;
+    let epochs = latest.lifecycle.as_ref().zip(finalized.lifecycle.as_ref());
+    anyhow::ensure!(
+        epochs.is_none_or(|(latest, finalized)| latest.signer_epoch == finalized.signer_epoch),
+        "the vault's signer epoch is not yet finalized"
+    );
+    Ok(finalized)
+}
+
+/// The vault's latest and finalized views, validated, each naming `signer`, unretired.
+/// Error cases:
+/// - a read or its validation fails, the guardian retired the signer, or either view names another
+///   signer (`Unregistered`)
+async fn views<C: CheckpointChain>(chain: &C, signer: AccountId) -> anyhow::Result<(Observation, Observation)> {
+    let latest = chain.observe(View::Latest, &[]).await?;
+    let finalized = chain.observe(View::Finalized, &[]).await?;
+    latest.validate(&[])?;
+    finalized.validate(&[])?;
+    // A running node rides out a retired signer; a starting one cannot authenticate the vault's
+    // authority until the timelock installs a signer.
+    anyhow::ensure!(
+        !latest.state.signer_retired() && !finalized.state.signer_retired(),
+        "the vault's guardian retired its signer; the node starts once the vault's timelock installs one"
+    );
+    for view in [&latest, &finalized] {
+        if view.state.signer != signer {
+            return Err(Unregistered { vault_signer: view.state.signer }.into());
+        }
+    }
+    Ok((latest, finalized))
+}
+
+/// Whether both views are in the same signer epoch.
+fn same_epoch(latest: &Observation, finalized: &Observation) -> bool {
+    latest.lifecycle.as_ref().map(|evidence| evidence.signer_epoch)
+        == finalized.lifecycle.as_ref().map(|evidence| evidence.signer_epoch)
 }
 
 /// Connects the checkpoint endpoint and reads its rollback anchor, and the registry's operator at
@@ -98,26 +126,45 @@ pub(crate) async fn connect(
     key: &Arc<EnclaveKey>,
     metrics: &Metrics,
 ) -> anyhow::Result<Option<Setup>> {
+    connect_with(cfg, AccountId(key.address()), metrics, true).await
+}
+
+/// `connect` for a member, the enclave whose address is `signer`, before the handover brings it the
+/// key: at the vault's finalized checkpoint, with no wait for the incumbent's latest checkpoint to
+/// finalize (`at_finality`).
+/// Error cases:
+/// - see `connect`
+pub(crate) async fn connect_successor(
+    cfg: &NodeConfig,
+    signer: AccountId,
+    metrics: &Metrics,
+) -> anyhow::Result<Option<Setup>> {
+    connect_with(cfg, signer, metrics, false).await
+}
+
+/// `connect` for `signer`, awaiting a quiescent vault when `quiescent`: a restart must not sign from
+/// a finalized parent while its own latest inclusion is pending.
+async fn connect_with(
+    cfg: &NodeConfig,
+    signer: AccountId,
+    metrics: &Metrics,
+    quiescent: bool,
+) -> anyhow::Result<Option<Setup>> {
     let Some(checkpoints) = &cfg.checkpoints else { return Ok(None) };
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let token = cfg.custody.evm.as_ref().context("checkpoint custody is not EVM")?.usdc;
     let evm = cfg.custody.evm.as_ref().context("checkpoint custody is not EVM")?;
     let (release_tag, release_depth) = release_policy(evm);
-    let chain = CheckpointRpc::new(
-        checkpoints,
-        domain,
-        token,
-        release_tag,
-        release_depth,
-        &cfg.node.log_dir,
-        AccountId(key.address()),
-    )?;
+    let chain = CheckpointRpc::new(checkpoints, domain, token, release_tag, release_depth, &cfg.node.log_dir, signer)?;
     let chain = if checkpoints.relayer_gas.is_some() {
         chain.with_balance_quorum(BalanceQuorum::connect(&cfg.custody)?)
     } else {
         chain
     };
-    let state = await_finality_boundary(&chain, AccountId(key.address()), checkpoints.retry_interval, evm).await?;
+    let state = match quiescent {
+        true => await_finality_boundary(&chain, signer, checkpoints.retry_interval, evm).await?,
+        false => at_finality(&chain, signer).await?,
+    };
     chain.authenticate_reservation(&state).await?;
     let registry_operator = chain.registry_operator_at(&state).await?;
     let parent = match &state.state.checkpoint {
@@ -129,7 +176,7 @@ pub(crate) async fn connect(
         chain,
         registry: Some(Default::default()),
         domain,
-        signer: AccountId(key.address()),
+        signer,
         retry: checkpoints.retry_interval,
         pending_deposits_critical_after: evm.stall_critical_after,
         post_withheld: Default::default(),
@@ -304,6 +351,20 @@ mod tests {
             "the boundary arrived only through the release-tag retries: {:?}",
             start.elapsed()
         );
+    }
+
+    /// A successor reads the vault's finalized checkpoint at once while the incumbent's latest one is
+    /// still in flight: the cold start's wait would hold it until the release tag caught up.
+    #[tokio::test(start_paused = true)]
+    async fn a_successor_reads_the_finalized_checkpoint_with_one_in_flight() {
+        let signer = AccountId([0xaa; 20]);
+        let chain = LaggingChain::new(signer, usize::MAX);
+        let start = tokio::time::Instant::now();
+        let state = at_finality(&chain, signer).await.unwrap();
+        assert_eq!((state.view, state.state.checkpoint), (View::Finalized, None));
+        assert!(start.elapsed() < Duration::from_secs(1), "it waited for the latest checkpoint to finalize");
+        let other = at_finality(&chain, AccountId([0xbb; 20])).await.unwrap_err();
+        assert!(other.downcast::<Unregistered>().is_ok(), "another signer's vault was read");
     }
 
     #[tokio::test(start_paused = true)]

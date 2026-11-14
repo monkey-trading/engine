@@ -8,7 +8,7 @@ use rusqlite::config::DbConfig;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use crate::config::HistorySection;
-use crate::history::store::{check_schema, expected_schema, harden};
+use crate::history::store::{check_integrity, check_schema, expected_schema, harden};
 use crate::history::{History, HistoryCheck, INDEX_FILE};
 use crate::log::{CommandEntry, LogEntry};
 
@@ -18,6 +18,8 @@ pub(crate) struct HistoryPlan {
     progress: anyhow::Result<Option<CommandEntry>>,
     found: Option<bool>,
     authenticated: Option<crate::history::startup::Plan>,
+    /// Whether this plan checked the index's integrity, so `finish` need not (`for_member`).
+    checked: bool,
 }
 
 impl HistoryPlan {
@@ -25,6 +27,22 @@ impl HistoryPlan {
     /// Error cases:
     /// - the configured retention is invalid
     pub fn open(cfg: &HistorySection) -> anyhow::Result<Self> {
+        Self::plan(cfg, false)
+    }
+
+    /// `open`, for a member's copy, whose start from its replica must not check the index's
+    /// integrity, linear in its size, between its predecessor's last command and its own first: the
+    /// plan checks it on its read-only connection when the member opens its copy, and nothing
+    /// writes the index from then until its start, which skips the check. A damaged index plans its
+    /// repair, as one `finish` finds damaged.
+    /// Error cases:
+    /// - as for `open`
+    pub fn for_member(cfg: &HistorySection) -> anyhow::Result<Self> {
+        Self::plan(cfg, true)
+    }
+
+    /// `open`, checking the index's integrity with `check`.
+    fn plan(cfg: &HistorySection, check: bool) -> anyhow::Result<Self> {
         let retention_ms = cfg.retention_ms()?;
         let path = cfg.dir.join(INDEX_FILE);
         let progress = (|| {
@@ -63,6 +81,9 @@ impl HistoryPlan {
             }
             harden(&conn)?;
             check_schema(&conn, &expected_schema(), &path)?;
+            if check {
+                check_integrity(&conn, &path)?;
+            }
             let progress: Option<(String, engine_core::types::Millis)> = conn
                 .query_row("SELECT command, retention_ms FROM progress WHERE id = 0", [], |row| {
                     Ok((row.get(0)?, row.get(1)?))
@@ -75,7 +96,8 @@ impl HistoryPlan {
                 })
                 .transpose()
         })();
-        Ok(Self { dir: cfg.dir.clone(), retention_ms, progress, found: None, authenticated: None })
+        let checked = check && progress.is_ok();
+        Ok(Self { dir: cfg.dir.clone(), retention_ms, progress, found: None, authenticated: None, checked })
     }
 
     /// Keeps paired recovery entirely separate from the legacy eager SQL integrity scan.
@@ -88,6 +110,7 @@ impl HistoryPlan {
             progress: Ok(None),
             found: None,
             authenticated: Some(plan),
+            checked: false,
         })
     }
 
@@ -119,11 +142,12 @@ impl HistoryPlan {
     /// - SQLite open or authorized repair fails
     pub fn finish(self) -> anyhow::Result<History> {
         ensure!(self.authenticated.is_none(), "paired history requires authorized log-bound activation");
-        let mut check = HistoryCheck::open(&HistorySection {
+        let section = HistorySection {
             dir: self.dir,
             retention: std::time::Duration::from_millis(u64::try_from(self.retention_ms)?),
             marks: None,
-        })?;
+        };
+        let mut check = HistoryCheck::open_with(&section, !self.checked)?;
         match self.progress {
             Err(reason) => check.opened = Err(reason),
             Ok(expected) => {
