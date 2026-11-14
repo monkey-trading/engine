@@ -187,6 +187,23 @@ async fn a_tail_over_its_bound_is_judged_before_the_stop() {
     assert!(!super::super::checks::tail_over(&tailed.operator, tip, 1 << 30), "a small tail is over the bound");
 }
 
+/// A tail over its bound is refused before the stop, `OverBound`: no request to stop sequencing is
+/// made, and the predecessor goes on serving while its node sequences.
+#[tokio::test]
+async fn a_tail_over_its_bound_is_refused_before_the_stop_and_the_node_sequences_on() {
+    let mut tailed = Tailed::start("tail-over", 6, 5).await;
+    let (seq, link) = tailed.follower.tip().unwrap();
+    // No room at all: any tail is over, as a runaway one is over the real bound.
+    super::super::checks::TEST_ROOM.set(Some(0));
+    let tip = Tip { seq, link };
+    let (mut stream, request) = tailed.exchange.connect_tail(Some(&tip), &version_name(ProtocolVersion::LATEST)).await;
+    send(&mut stream, &request).await.unwrap();
+    let reply = timeout(Duration::from_secs(5), receive(&mut stream)).await.expect("no answer in time").unwrap();
+    let Reply::Missed { miss, .. } = reply else { panic!("a tail over its bound was not refused: {reply:?}") };
+    assert_eq!(miss, TailMiss::OverBound);
+    tailed.assert_sequencing_on().await;
+}
+
 /// A successor whose build reads only older protocol versions than the log runs could not replay
 /// it: the predecessor refuses before it stops sequencing.
 #[tokio::test]

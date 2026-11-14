@@ -224,7 +224,7 @@ impl<C: CheckpointChain> Predecessor<C> {
         // tail fits its bound, judged before the stop with a segment frame's room for what is
         // sequenced first. Anything else is refused here, saying why: its copy's segment files are its
         // own writer's, so whole segments never go onto it.
-        let room = crate::handover::tail::MAX_TAIL_BYTES - u64::from(crate::handover::MAX_SEGMENT_BYTES);
+        let room = checks::tail_room();
         let after = match &request.tail {
             Some(tip) => match self.tail_after(tip).await {
                 Ok(after) if checks::tail_over(&self.log_dir, after, room) => {
