@@ -7,9 +7,11 @@
 
 mod chain;
 mod daily_turns;
+mod liveness;
 mod node;
 mod operator_share;
 mod parameter_votes;
+mod schedule;
 mod staking_reads;
 mod time_in_office;
 

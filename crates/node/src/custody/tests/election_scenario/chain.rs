@@ -397,7 +397,7 @@ impl Chain {
     }
 
     /// One Anvil control RPC, asserted to succeed.
-    async fn rpc(&self, method: &str, params: Value) {
+    pub(super) async fn rpc(&self, method: &str, params: Value) {
         let response: Value = reqwest::Client::new()
             .post(&self.url)
             .json(&json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
