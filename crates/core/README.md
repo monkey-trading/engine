@@ -835,14 +835,14 @@ listings ceiling adoptions bind. The markout spread counts no change across a mo
 index lapsed by quote expiry alone: besides the grid points, price commands and relistings, the
 sampler checks the index at each moment one of the market's quotes aged out since the previous
 command, which where three or more venues quote can end the index and bring it back with no command
-between. A close-spread ceiling adoption for a market not yet listed binds only a listing that names a
-markout floor, since from V54 a first listing names one and must be the listing its adoption bound.
-Activation gives each listing an adoption bound earlier, applied or pending, that names no floor its
-asset class's default, as V54's activation gives a listed market's, and carrying the log across V54 it
-is refused while the listing a market's first listing must be, the pending one where an adoption
-waits, has a ceiling below its launch close charge under the score tiers the activation converts to,
-as it is for a listed market. Before V58 none of this is checked or changed, so earlier logs replay unchanged. Its session
-is in `examples/reference_log/v58.rs`.
+between. A close-spread ceiling adoption for a market not yet listed binds only a listing that names
+a markout floor, since from V54 a first listing names one and must be the listing its adoption
+bound. Activation gives each listing an adoption bound earlier, applied or pending, that names no
+floor its asset class's default, as V54's activation gives a listed market's, and carrying the log
+across V54 it is refused while the listing a market's first listing must be, the pending one where
+an adoption waits, has a ceiling below its launch close charge under the score tiers the activation
+converts to, as it is for a listed market. Before V58 none of this is checked or changed, so earlier
+logs replay unchanged. Its session is in `examples/reference_log/v58.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

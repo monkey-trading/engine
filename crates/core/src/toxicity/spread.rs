@@ -125,9 +125,9 @@ impl Engine {
         let schedule = &market.spec.schedule;
         let kept = self.markout_spreads.get(&id);
         let mut last = kept.and_then(|spread| spread.last);
-        let lapses =
+        let lapsed_at =
             if self.protocol_version >= ProtocolVersion::V58 { lapses(market, last_now, self.now) } else { vec![] };
-        let lapsed = |from: Millis, to: Millis| lapses.iter().any(|at| from < *at && *at < to);
+        let lapsed = |from: Millis, to: Millis| lapsed_at.iter().any(|at| from < *at && *at < to);
         let mut added = Vec::new();
         for at in first..end {
             let ts = at * GRID_MS;

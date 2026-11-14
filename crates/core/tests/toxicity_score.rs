@@ -247,10 +247,16 @@ fn from_v58_a_change_across_an_index_quote_expiry_alone_ends_and_brings_back_cou
     // Five venues quote BTC, each quote fresh for 6 s, within a 25 bps bound.
     let price_rules = PriceRules { max_age_ms: 6_000, max_divergence_bps: 25, min_sources: 2 };
     let listing = floored(MarketSpec { price_rules, ..crypto(BTC, "BTC-USD") }, "0.5");
-    // (version, whether a command falls between the lapse and the next grid point)
-    for (version, between) in
-        [(ProtocolVersion::V54, false), (ProtocolVersion::V58, false), (ProtocolVersion::V58, true)]
-    {
+    // (version, the offsets from the grid point of the commands before the next one): none, so one
+    // command samples both; one after the lapse, which samples the first; and one before the lapse,
+    // which samples the first, then one after it that crosses no grid point.
+    let cases: [(ProtocolVersion, &[i64]); 4] = [
+        (ProtocolVersion::V54, &[]),
+        (ProtocolVersion::V58, &[]),
+        (ProtocolVersion::V58, &[2_000]),
+        (ProtocolVersion::V58, &[500, 2_000]),
+    ];
+    for (version, between) in cases {
         let (mut h, _) = relisted_v54([listing.clone()]);
         if version > ProtocolVersion::V54 {
             h.admin(AdminCommand::ActivateProtocol { version });
@@ -271,8 +277,8 @@ fn from_v58_a_change_across_an_index_quote_expiry_alone_ends_and_brings_back_cou
         ];
         let quotes = quotes.iter().map(|(source, mid, ts)| quote(source, mid, *ts)).collect();
         h.cmd(Command::Prices { market: BTC, quotes });
-        if between {
-            h.advance_to(grid + 2_000);
+        for offset in between {
+            h.advance_to(grid + offset);
             h.cmd(Command::Tick);
         }
         h.advance_to(grid + GRID_MS + 100);
@@ -281,7 +287,7 @@ fn from_v58_a_change_across_an_index_quote_expiry_alone_ends_and_brings_back_cou
         if version < ProtocolVersion::V58 {
             assert!(spread > f("12.9"), "{version:?}: {spread}");
         } else {
-            assert_eq!(spread, f("0.5"), "between {between}");
+            assert_eq!(spread, f("0.5"), "commands between at {between:?}");
         }
     }
 }
