@@ -14,6 +14,7 @@ use common::{Harness, f};
 use engine_core::Fixed;
 use engine_core::command::Command;
 use engine_core::event::{Event, Reject};
+use engine_core::toxicity::HORIZON_MS;
 use engine_core::types::{Millis, Side};
 use engine_core::weekend::{WEEKEND_LEAD_MS, WeekendGap, WeekendRequirement, WeekendWindow};
 
@@ -77,6 +78,9 @@ fn when_the_gap_starts_an_account_below_the_weekend_margin_is_closed_out_at_the_
     let events = h.cmd(Command::Tick);
     let closed = only_fill(&events).clone();
     assert!(closed.liquidation && closed.account == a.account && closed.market == OIL, "{closed:?}");
+    // A tier 0 account's best price runs to a quarter of the $2m first band: 2bp on $500k and 4bp on
+    // the other $205k of the $705k, $182 over 10,000 units, below the mark.
+    assert_eq!(closed.price, f("70.4818"));
     assert_eq!(
         (closed.side, closed.qty, closed.index, closed.position),
         (Side::Sell, f("10000"), f("70.5"), Fixed::ZERO)
@@ -107,6 +111,34 @@ fn when_the_gap_starts_an_account_below_the_weekend_margin_is_closed_out_at_the_
     let next = WeekendGap { close: close + WEEK_MS, reopen: chicago(2026, 11, 1, 17, 0), closed_out: false };
     assert_eq!(h.engine.markets()[&OIL].weekend, Some(next));
     h.assert_conserved(Fixed::ZERO);
+}
+
+#[test]
+fn the_close_out_fills_at_the_best_price_the_account_has_earned() {
+    let mut h = genesis_v60(globex(vec![]), OIL_WEEKEND_BPS, 0);
+    let a = client(&mut h, 1, "20000");
+    // Two days of counted volume, each capped at half of tier 1's threshold, and a close that has
+    // waited out the round-trip horizon, take the account to tier 1.
+    h.price(OIL, "70");
+    only_fill(&trade(&mut h, &a, OIL, Side::Buy, "15000", "70"));
+    h.advance(DAY_MS);
+    h.price(OIL, "70");
+    only_fill(&trade(&mut h, &a, OIL, Side::Sell, "15000", "70"));
+    h.advance(HORIZON_MS);
+    h.cmd(Command::Tick);
+    h.price(OIL, "70");
+    only_fill(&trade(&mut h, &a, OIL, Side::Buy, "15000", "70"));
+    assert_eq!(h.engine.volume_standing(a.account).expect("from V59").tier, 1);
+    let close = friday_close();
+    h.advance_to(close - 500);
+    h.price(OIL, "70.5");
+    h.advance_to(close + HOUR_MS);
+    let closed = only_fill(&h.cmd(Command::Tick)).clone();
+    assert!(closed.liquidation && closed.account == a.account && closed.index == f("70.5"), "{closed:?}");
+    // Tier 1's first band is half of the $2m first band: 2bp on $1m and 4bp on the other $57.5k of the
+    // $1,057.5k, $223 over 15,000 units. The listed band would charge 2bp on all of it, tier 0's 4bp
+    // above $500k.
+    assert_eq!(closed.price, f("70.485133333"));
 }
 
 #[test]
@@ -177,6 +209,7 @@ fn markets_whose_gaps_start_together_close_the_largest_loser_first_until_the_acc
 }
 
 const HOUR_MS: Millis = 60 * 60 * 1000;
+const DAY_MS: Millis = 24 * HOUR_MS;
 const WEEK_MS: Millis = 7 * 24 * HOUR_MS;
 
 /// The client's oil position, if it holds one.
