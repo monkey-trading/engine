@@ -381,24 +381,6 @@ fn copy_holds_checkpoint(dir: &Path, seq: u64, root: B256) -> anyhow::Result<boo
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A copy whose last line is still being written is not yet holding the checkpoint, and one whose
-    /// segment is unreadable otherwise is an error.
-    #[test]
-    fn a_copy_mid_append_is_not_holding_the_checkpoint_yet() {
-        let dir = crate::test_support::scratch_dir("standby-copy-mid-append");
-        std::fs::create_dir_all(&dir).unwrap();
-        let segment = dir.join("00000000000000000000.jsonl");
-        std::fs::write(&segment, b"{\"entry\":").unwrap();
-        assert!(!copy_holds_checkpoint(&dir, 1, B256::ZERO).unwrap());
-        std::fs::write(&segment, b"not json\n").unwrap();
-        assert!(copy_holds_checkpoint(&dir, 1, B256::ZERO).is_err(), "an unreadable copy was not held yet");
-    }
-}
-
 /// Spawns B as a child: the standby, or its normal start with `keys`.
 fn spawn_b(
     b_dir: &Path,
@@ -454,4 +436,22 @@ pub(super) async fn pay_b(chain: &Chain, signed: &SignedWithdrawal) -> anyhow::R
     let claim = chain.claim_from(signed, signer)?.abi_encode();
     chain.send(chain.payer, chain.vault, claim.clone()).await?;
     chain.duplicate_reverts(claim).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A copy whose last line is still being written is not yet holding the checkpoint, and one whose
+    /// segment is unreadable otherwise is an error.
+    #[test]
+    fn a_copy_mid_append_is_not_holding_the_checkpoint_yet() {
+        let dir = crate::test_support::scratch_dir("standby-copy-mid-append");
+        std::fs::create_dir_all(&dir).unwrap();
+        let segment = dir.join("00000000000000000000.jsonl");
+        std::fs::write(&segment, b"{\"entry\":").unwrap();
+        assert!(!copy_holds_checkpoint(&dir, 1, B256::ZERO).unwrap());
+        std::fs::write(&segment, b"not json\n").unwrap();
+        assert!(copy_holds_checkpoint(&dir, 1, B256::ZERO).is_err(), "an unreadable copy was not held yet");
+    }
 }
