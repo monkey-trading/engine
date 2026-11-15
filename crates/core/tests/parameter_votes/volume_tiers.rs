@@ -7,9 +7,9 @@ use engine_core::Fixed;
 use engine_core::spread_tier::SpreadTier;
 use engine_core::volume_tier::launch_volume_tiers;
 
-/// `governed`, with BTC, ETH and AAPL relisted before their launch bands are recorded at 1bp to $1m,
-/// 2bp to $5m and 5bp above: a first band a share cut or a demotion can charge twice. At `governed`'s
-/// free first band no table less generous than launch is within the bound.
+/// `governed_under(V56)`, with BTC, ETH and AAPL relisted before their launch bands are recorded at
+/// 1bp to $1m, 2bp to $5m and 5bp above: a first band a share cut or a demotion can charge twice. At
+/// `governed`'s free first band no table less generous than launch is within the bound.
 fn governed_priced_from_the_first_dollar() -> Harness {
     let mut h = Harness::v21();
     for market in [BTC, ETH, AAPL] {
@@ -23,7 +23,7 @@ fn governed_priced_from_the_first_dollar() -> Harness {
             ..h.engine.markets()[&market].spec.clone()
         }));
     }
-    governed_from(h, TTL)
+    governed_from(h, ProtocolVersion::V56, TTL)
 }
 
 #[test]

@@ -203,6 +203,7 @@ fn an_election_after_an_installation_applies_normally() {
         block,
         block_hash: alloy_primitives::B256::repeat_byte(9),
         block_time: Some(election_at),
+        named_turn: None,
     });
     assert_eq!(signed_by(&mut h, 0x79, false), Some(Event::AdminApplied));
     assert_eq!(h.engine.operator().map(|o| o.address), Some(elected));
@@ -231,6 +232,7 @@ fn deferred_election() -> (Harness, AccountId, Millis) {
         block,
         block_hash: alloy_primitives::B256::repeat_byte(9),
         block_time: Some(registry_at),
+        named_turn: None,
     });
     (h, elected, registry_at)
 }
@@ -280,6 +282,7 @@ fn an_installation_seats_no_candidate_even_under_the_key_in_effect() {
         block,
         block_hash: alloy_primitives::B256::repeat_byte(9),
         block_time: Some(registry_at),
+        named_turn: None,
     });
     assert_eq!(h.engine.operator().map(|o| o.address), Some(elected));
     assert_eq!(h.engine.operator_candidate(), Some(AccountId([0xc9; 20])));

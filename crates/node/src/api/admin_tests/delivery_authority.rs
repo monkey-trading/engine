@@ -287,6 +287,7 @@ async fn an_installed_successor_takes_deliveries_from_its_own_key_and_not_the_fa
         block: 10,
         block_hash: engine_core::eip712::B256::repeat_byte(1),
         block_time: Some(NOW - 60_000),
+        named_turn: None,
     };
     assert!(
         !node.state.submit(progress).await.unwrap().iter().any(|event| matches!(event, Event::AdminRejected { .. }))
@@ -330,6 +331,7 @@ async fn re_seating_the_recorded_key_takes_deliveries_from_it_and_not_a_due_rota
         block: 10,
         block_hash: engine_core::eip712::B256::repeat_byte(1),
         block_time: Some(NOW - 60_000),
+        named_turn: None,
     };
     assert!(
         !node.state.submit(progress).await.unwrap().iter().any(|event| matches!(event, Event::AdminRejected { .. }))

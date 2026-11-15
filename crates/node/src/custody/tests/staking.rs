@@ -122,6 +122,7 @@ async fn mirror_range(
         from..=to,
         &hashes_through(to),
         (true, true, true),
+        None,
     )
     .await
 }
@@ -288,9 +289,14 @@ async fn authenticated_progress_overrides_a_forged_cursor_and_replays_a_partial_
         assert!(matches!(events[..], [Event::Staked { .. }]));
         if completed {
             assert!(
-                node.submit(Command::StakingProgress { block: 1, block_hash: canonical_hash(1), block_time: None })
-                    .await
-                    .is_empty()
+                node.submit(Command::StakingProgress {
+                    block: 1,
+                    block_hash: canonical_hash(1),
+                    block_time: None,
+                    named_turn: None
+                })
+                .await
+                .is_empty()
             );
         }
         let mut forged = cursor_at(10_000);

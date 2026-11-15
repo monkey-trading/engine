@@ -410,11 +410,20 @@ pub enum ProtocolVersion {
     /// each tier of the table in force, and of its launch table, at least a floor by position: 500 bps
     /// at tier 0, 200 at tier 1 and none above; before it a floor a table names charges nothing.
     V64,
+    /// Votes govern only while a rotation set with members is in effect, as only its members can
+    /// propose, so until the first takes effect, and while an empty one is, the operator keeps its
+    /// bounded commands. A drawn turn names the operator from its boundary, not its mirror. Each
+    /// mirrored staking frontier carries the registry's turn state at that block, the boundary of the
+    /// turn naming the operator or none, which a turn the engine refused before `V65` gives no other
+    /// record of, and a passed proposal mirrored while a set is in effect and the engine sees no
+    /// rotation shows such a turn from then. Activation takes the earliest boundary of the accepted
+    /// turns held, and a log holding rotation sets counts rotation as on until the first frontier.
+    V65,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V64;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V65;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

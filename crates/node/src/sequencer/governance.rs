@@ -27,12 +27,12 @@ impl Sequencer {
             let voted = VotedChange { proposal: due.proposal, command: due.command.clone() };
             let proposal = voted.proposal;
             let Some(events) = self.stamp(ts, Command::ApplyProposal(Box::new(voted)))? else { return Ok(()) };
-            match events.last() {
+            match admin_outcome(&events) {
                 Some(Event::AdminApplied) => info!(proposal, "a passed change applied"),
                 Some(Event::AdminRejected { reason }) => {
                     warn!(alert = "proposal_rejected", proposal, "a passed change did not apply: {reason}");
                 }
-                other => warn!(proposal, "a passed change had no admin outcome: {other:?}"),
+                _ => warn!(proposal, "a passed change had no admin outcome: {events:?}"),
             }
             if self.engine.due_change(ts).is_some_and(|due| due.proposal == proposal) {
                 bail!("the engine kept proposal {proposal} due after it was sequenced");
@@ -40,4 +40,10 @@ impl Sequencer {
         }
         Ok(())
     }
+}
+
+/// An admin command's outcome among its `events`: `AdminApplied` or `AdminRejected`, which the
+/// withdrawals the queue pays after the command follow.
+pub(super) fn admin_outcome(events: &[Event]) -> Option<&Event> {
+    events.iter().find(|event| matches!(event, Event::AdminApplied | Event::AdminRejected { .. }))
 }

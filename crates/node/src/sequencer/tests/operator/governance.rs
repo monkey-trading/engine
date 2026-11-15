@@ -1,12 +1,16 @@
 //! Parameter votes from `V56`: the config's vote contract recorded once, a log recording another
-//! refused, a passed change applied at the first stamp past its notice, and the node's own access
-//! policy waiting for a vote while rotation is on.
+//! refused, a passed change applied at the first stamp past its notice, its outcome found before the
+//! withdrawals its command pays, and the node's own access policy waiting for a vote while votes govern,
+//! decided at its stamp.
 
 use super::*;
 
 use engine_core::access::AccessPolicy;
 use engine_core::governance::{GovernanceConfig, PassedProposal, command_hash};
 use engine_core::market::{MarketSpec, Tier};
+
+use crate::sequencer::governance::admin_outcome;
+use crate::test_support::TRADER;
 
 const VOTE: AccountId = AccountId([0x5f; 20]);
 
@@ -64,6 +68,22 @@ fn a_passed_change_applies_at_the_first_stamp_past_its_notice() {
     assert_eq!(serde_json::to_value(house_state(&mut seq)).unwrap()["governance"]["pending"], serde_json::json!(null));
 }
 
+#[test]
+fn a_passed_changes_outcome_is_found_before_the_withdrawals_its_command_pays() {
+    // As `ApplyProposal` emits them when the queue pays after its outcome (see engine-core's
+    // `a_refused_change_pays_queued_withdrawals_after_its_outcome`).
+    let paid = [
+        Event::WithdrawalApproved { account: TRADER, amount: Fixed::from_int(10), nonce: 2 },
+        Event::WithdrawalQueueUpdated { account: TRADER, requested_seq: 40, remaining: Fixed::ZERO },
+    ];
+    let refused = Event::AdminRejected { reason: "outside ±50% of its launch value 1000".into() };
+    for outcome in [Event::AdminApplied, refused] {
+        let events = [vec![outcome.clone()], paid.to_vec()].concat();
+        assert_eq!(admin_outcome(&events), Some(&outcome));
+    }
+    assert_eq!(admin_outcome(&paid), None);
+}
+
 /// What the sequencer answers `GET /v1/house/state` with now, once the batch is flushed.
 fn house_state(seq: &mut Sequencer) -> crate::sequencer::house::HouseState {
     let (reply, mut answer) = oneshot::channel();
@@ -81,6 +101,28 @@ fn while_rotation_is_on_the_access_policy_waits_for_a_vote() {
     rotation_on(&mut seq);
     seq.flush().unwrap();
     drop(seq);
+    let policy = AccessPolicy { source: AccountId([0x5a; 20]), max_age_ms: 60_000 };
+    let before = commands(&log_entries(&dir)).len();
+    let mut seq = recover_governed(&dir, clock.clone(), Some(config(3_600_000)), Some(policy)).unwrap();
+    seq.activate_protocol().unwrap();
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    assert_eq!(commands(&log_entries(&dir)).len(), before, "the node sequences no access policy");
+    assert!(seq.engine.access_policy().is_none());
+}
+
+#[test]
+fn the_access_policy_waits_for_a_vote_when_a_set_takes_effect_between_the_last_command_and_its_stamp() {
+    let (dir, clock) = staked_log("vote-access-stamp", Some(FRONTIER));
+    let mut seq = recover_governed(&dir, clock.clone(), Some(config(3_600_000)), None).unwrap();
+    seq.activate_protocol().unwrap();
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    switch_on(&mut seq);
+    adopt_set(&mut seq, clock.now_ms() + 3_600_000);
+    seq.flush().unwrap();
+    drop(seq);
+    // The node restarts two hours on: votes did not govern at its last command, but do at the stamp the
+    // config's access policy would take.
+    clock.advance(Duration::from_secs(2 * 3_600));
     let policy = AccessPolicy { source: AccountId([0x5a; 20]), max_age_ms: 60_000 };
     let before = commands(&log_entries(&dir)).len();
     let mut seq = recover_governed(&dir, clock.clone(), Some(config(3_600_000)), Some(policy)).unwrap();
@@ -231,12 +273,29 @@ fn pass_raise(seq: &mut Sequencer) -> (Millis, Vec<Tier>) {
     (applies_at, margin_tiers)
 }
 
-/// Turns rotation on in the log.
+/// Turns rotation on in the log, with a rotation set in effect, so votes govern.
 fn rotation_on(seq: &mut Sequencer) {
+    switch_on(seq);
+    let now = seq.engine.now();
+    adopt_set(seq, now);
+}
+
+/// Turns rotation on in the log.
+fn switch_on(seq: &mut Sequencer) {
     let switch =
         Command::SwitchRotation { enabled: true, election_cancelled: false, block: 11, chain_ref: "0x01:0".into() };
     let events = seq.sequence(switch).unwrap().expect("admitted");
     assert!(matches!(events.last(), Some(Event::RotationSwitched { .. })), "{events:?}");
+}
+
+/// Mirrors a rotation set of one member, in effect from `effective_at`.
+fn adopt_set(seq: &mut Sequencer, effective_at: Millis) {
+    let member =
+        SetMember { candidate: AccountId([0xc1; 20]), admin_key: AccountId([0xa1; 20]), weight: TokenUnits(1) };
+    let (members, chain_ref) = (vec![member], "0x01:1".to_owned());
+    let set = RegistryRotationSet { set: 1, epoch: 1, effective_at, quorum: true, members, block: 11, chain_ref };
+    let events = seq.sequence(Command::AdoptRotationSet(set)).unwrap().expect("admitted");
+    assert!(matches!(events.last(), Some(Event::RotationSetAdopted { .. })), "{events:?}");
 }
 
 /// The log's entries once `seq` has flushed what it sequenced.

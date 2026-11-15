@@ -75,7 +75,7 @@ fn elect(h: &mut Harness, epoch: u64, candidate: AccountId, admin_key: AccountId
 fn finalised(h: &mut Harness, time: Millis) {
     let block = h.log.len() as u64;
     let block_hash = alloy_primitives::B256::repeat_byte(9);
-    let events = h.cmd(Command::StakingProgress { block, block_hash, block_time: Some(time) });
+    let events = h.cmd(Command::StakingProgress { block, block_hash, block_time: Some(time), named_turn: None });
     assert!(!events.iter().any(|event| matches!(event, Event::AdminRejected { .. })), "{events:?}");
 }
 

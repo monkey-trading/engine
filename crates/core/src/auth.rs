@@ -255,3 +255,15 @@ impl Engine {
         self.use_nonce(operator.address, auth)
     }
 }
+
+/// The reason an admin command fails its signature, nonce, or expiry check.
+pub(crate) fn auth_failure(reject: &Reject) -> String {
+    match reject {
+        Reject::InvalidSignature => "invalid signature".into(),
+        Reject::InvalidNonce { expected } => format!("invalid nonce: expected {expected}"),
+        Reject::Expired { expires_at } => format!("expired at {expires_at}"),
+        Reject::ExpiryTooFar { latest } => format!("expiry after the latest allowed, {latest}"),
+        // `authorise_admin` refuses only for the reasons above.
+        other => serde_json::to_string(other).expect("rejections serialise"),
+    }
+}

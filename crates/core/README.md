@@ -120,7 +120,9 @@ this crate and reproduce the signed state roots exactly.
   contract, mirrored as `pass_proposal` and credited once. A normal change waits seven days and
   applies when the node sequences `apply_proposal`; a fast-path proposal applies at once as a
   restriction that only raises a margin or the close-out level, sets a stress floor, lowers a cap, or
-  makes a market reduce-only, and lapses at the recorded lifetime unless renewed
+  makes a market reduce-only, and lapses at the recorded lifetime unless renewed. From `V65` votes
+  govern only while a rotation set with members is in effect, and a drawn turn names the operator from
+  its boundary, or from the registry's state each mirrored staking frontier carries
 - From protocol `V59`, volume tiers (`src/volume_tier/`): an account's tier is the highest its volume
   counted over the last 30 UTC days reaches, each day counting at most the tier's threshold over its
   day divisor, and its first spread band in every market ends at the tier's share of the first bound.
@@ -377,18 +379,19 @@ this crate and reproduce the signed state roots exactly.
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
 - `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record; from `V47`, the candidate seated and the account the operator's share goes to; from `V48`, the timelock-only installation the failed-key fallback mirrors
 - `tests/operator_election.rs` — the V37 elections: refusals, the effective time and its seven-day floor, cancellation, and the refused signed rotation
-- `src/governance/mod.rs` — the V56 parameter votes: the recorded vote contract, passed proposals mirrored once, the normal changes waiting out their notice and `ApplyProposal`, the governed commands, and the canonical command bytes a proposal carries
+- `src/governance/mod.rs` — the V56 parameter votes: the recorded vote contract, when votes govern (from V65 only with a set with members in effect, a drawn turn from its boundary), passed proposals mirrored once, the normal changes waiting out their notice and `ApplyProposal`, the governed commands, and the canonical command bytes a proposal carries
 - `src/governance/restriction.rs` — the V56 fast-path restrictions: what one may carry, the values in force as the stricter of the baseline and every restriction, the baselines, renewal and lapse
-- `tests/parameter_votes.rs` — `V56`: mirror refusals and crediting, a normal change no sooner than seven days after it is logged, the notices a vote replaces and the launch range it keeps, the operator's and the node's governed commands refused while rotation is on, fast-path refusals, the operator's levers beside a restriction, renewal and lapse, a normal vote under a restriction, and canonical bytes
-- `tests/parameter_votes/baseline.rs` — `V56`: voted commands meeting their own checks, a voted change applying only over the baseline it passed on, parameters under a restriction moving only the baseline, renewal after the baseline moves, restricted stress levels, and the one waiting ceiling adoption
-- `tests/parameter_votes/limits.rs` — `V56`: a refused drawn turn keeping votes governing until an installation, a restriction lapsing at a walked boundary, and the caps on waiting changes and restrictions
+- `tests/parameter_votes.rs` — `V56`, under `V65`'s rules: mirror refusals and crediting, a normal change no sooner than seven days after it is logged, the notices a vote replaces and the launch range it keeps, the operator's and the node's governed commands refused while votes govern, fast-path refusals, the operator's levers beside a restriction, renewal and lapse, a normal vote under a restriction, and canonical bytes
+- `tests/parameter_votes/baseline.rs` — `V56`: voted commands meeting their own checks, a voted change applying only over the baseline it passed on, also when mirrored under a restriction that lapses or is renewed through its application, parameters under a restriction moving only the baseline, renewal after the baseline moves, restrictions lowering a market's house cap and the cap floors, restricted stress levels, and the one waiting ceiling adoption
+- `tests/parameter_votes/limits.rs` — `V56`: under `V56`, a refused drawn turn keeping votes governing from its mirror until an installation, a restriction lapsing at a walked boundary, the caps on waiting changes and restrictions, and a refused change whose command pays queued withdrawals after its outcome
 - `tests/parameter_votes/listing.rs` — `V56`: a voted relisting held to the listing bounds without a notice, the operator's listing notice refused while rotation is on, the size multiplier and close charge floors on voted changes, and a relisting under a margin restriction measured from the baseline
 - `tests/parameter_votes/toxicity.rs` — `V56`: a voted score tier change held to ±50% of launch without a notice, and a voted relisting keeping its markout floor
 - `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch; from `V57` a voted extension lending an add no more than the launch curve's last hold
+- `tests/parameter_votes/rotation.rs` — `V65`: votes governing only while a rotation set with members is in effect, a drawn turn naming the operator from its boundary, an activation taking the turns the log holds and counting rotation as on until a frontier carries the registry's turn state, a frontier naming a turn refused before `V56` or none, and a proposal the registry passes showing a turn the engine has not seen
 - `tests/parameter_votes/volume_tiers.rs` — `V59` activated by a vote, a voted volume tier table held to its launch bounds without a notice, a voted relisting held at every tier, and from `V64` a voted table's margin floors held at or above launch
 - `tests/parameter_votes/weekend.rs` — `V60`: a voted weekend margin with no listing notice, held to its listing's range, the operator's weekend margin notice refused while rotation is on, the fast path refusing to move it, and a fast-path margin raise past it
 - `tests/parameter_votes/house_loss.rs` — `V62`: a voted change to the house loss threshold, refused above launch's or off its level, applied below it, with no notice
-- `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, and the turn's time in office
+- `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, the turn's time in office, and the set in effect, which V65's votes need
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
 - `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
 - `tests/operator_share/daily_turns.rs` — `V51`: a member earns from its `TurnTaken` to its turn's end, and no one before or after; from `V53`, the account before the first turn only until that turn applies
@@ -403,7 +406,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
 - `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
-  mirroring, epoch finalisation, the operator's share from `V47`, claimable distributions, and
+  mirroring, the mirrored frontier with, from `V65`, the turn the registry names the operator by,
+  epoch finalisation, the operator's share from `V47`, claimable distributions, and
   `distributable_excess`, the read-only figure an epoch close would distribute
 - `src/staking/office.rs` — from `V50`, each account's time in office in the open epoch, and the
   split of the operator's share by it
@@ -1068,6 +1072,21 @@ bounds it, at least a floor by position (`ACTIVATION_MARGIN_FLOORS_BPS`: 500 bps
 tier 1, none above), keeping a higher one the table names, so a held position stays open at its
 leverage. Before V64 a floor a table names charges nothing, so earlier logs replay unchanged.
 Its log is `v64.jsonl`, and its session is in `examples/reference_log/v64.rs`.
+
+Protocol V65 has votes govern only while a rotation set with members is in effect, since only its
+members can propose: with rotation on and no such set in effect, before the first takes effect or
+while an empty one does, the operator's bounded commands and the node's activation and access policy
+apply as with rotation off. A mirrored proposal still applies while any set is in effect, since one
+opened under an earlier set can pass. A drawn turn names the operator, as the registry's
+`rotationEnabled()` has it, from its boundary rather than from its mirror (`Governance::turns_from`),
+until an installation. A turn the engine refused before V65 left no boundary, so each mirrored
+staking frontier (`StakingProgress::named_turn`) carries the registry's turn state at that block, the
+boundary of the turn its `rotationState()` names the operator by or `null` for none, and a proposal
+the registry passes while a set is in effect and the engine sees no rotation shows such a turn from
+then. Activation takes the earliest boundary of an accepted turn in effect or waiting, and while the
+log holds rotation sets counts rotation as on until the first frontier carries the registry's state.
+Earlier logs keep V56's rule and encoding, and a frontier carries no turn before V65, so they replay
+unchanged. Its session is in `examples/reference_log/v65.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
