@@ -382,7 +382,7 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
                 }
             };
             while answering.try_join_next().is_some() {}
-            let Some(peer_slot) = PeerSlot::take(&peers, peer_key(peer.ip())) else {
+            let Some(peer_slot) = PeerSlot::take(&peers, peer_key(peer.ip()), PER_PEER) else {
                 debug!(%peer, "too many member link connections from this address: dropped");
                 continue;
             };
@@ -480,7 +480,7 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
 mod ask;
 mod state;
 pub(crate) use ask::{Asking, Tcp, describe, verified_status};
-mod slots;
+pub(crate) mod slots;
 
 #[cfg(test)]
 mod tests;

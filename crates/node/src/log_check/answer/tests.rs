@@ -4,6 +4,8 @@
 
 use super::*;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use engine_core::eip712::B256;
 
 use crate::handover::evidence::verify;
@@ -129,6 +131,83 @@ async fn one_address_holds_at_most_two_connections_so_it_cannot_fill_the_endpoin
     }
 }
 
+/// Counts the quotes it produces.
+struct Counting(Arc<AtomicUsize>);
+
+impl Attestor for Counting {
+    fn attest(&self, report_data: [u8; 64]) -> anyhow::Result<(String, Vec<u8>)> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        MockAttestor.attest(report_data)
+    }
+}
+
+/// A question replayed, however many times and however fast, is quoted once: the replays get the
+/// evidence already produced, and the challenge answers no other question.
+#[tokio::test]
+async fn a_replayed_question_is_answered_with_the_evidence_already_produced() {
+    let checked = CheckedHeads::default();
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
+    let quotes = Arc::new(AtomicUsize::new(0));
+    let answering = answering_with(checked, Box::new(Counting(quotes.clone())));
+    let (nonce, question) = ([0x21; 32], statement(head(40)));
+    let questions: Vec<Ask> = (0..8).map(|_| ask(&nonce, question)).collect();
+    let replays = futures_util::future::join_all(questions.iter().map(|question| answering.answer(question))).await;
+    assert!(replays.iter().all(|answer| matches!(answer, Answer::Verified { .. })), "{replays:?}");
+    assert_eq!(quotes.load(Ordering::SeqCst), 1, "a replay made the member quote again");
+    // The same challenge under a statement the signer also signed is not the question it answered.
+    let checked = CheckedHeads::default();
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
+    checked.record(Checked { head: head(41), taken: Some((TURN, 2)), signer: operator() });
+    let answering = answering_with(checked, Box::new(Counting(quotes.clone())));
+    assert!(matches!(answering.answer(&ask(&nonce, question)).await, Answer::Verified { .. }));
+    let other = Statement { head: head(41), position: 2, ..question };
+    assert!(
+        matches!(answering.answer(&ask(&nonce, other)).await, Answer::Refused { reason } if reason.contains("another question"))
+    );
+}
+
+/// However many distinct questions the signer signs, a member quotes at most `QUOTES_PER_MINUTE` times.
+#[tokio::test]
+async fn a_member_quotes_at_most_a_set_number_of_times_a_minute() {
+    let checked = CheckedHeads::default();
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
+    let quotes = Arc::new(AtomicUsize::new(0));
+    let answering = answering_with(checked, Box::new(Counting(quotes.clone())));
+    let mut refused = 0;
+    for n in 0..=QUOTES_PER_MINUTE as u8 {
+        if matches!(answering.answer(&ask(&[n; 32], statement(head(40)))).await, Answer::Refused { .. }) {
+            refused += 1;
+        }
+    }
+    assert_eq!((quotes.load(Ordering::SeqCst), refused), (QUOTES_PER_MINUTE, 1));
+}
+
+/// A table full of connections that have not asked makes room for the operator's: the oldest silent
+/// one is dropped.
+#[tokio::test]
+async fn a_full_table_drops_the_oldest_silent_connection_for_the_operators_question() {
+    let checked = CheckedHeads::default();
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
+    let mut answering = answering(checked);
+    // Every connection here shares one address, so let it hold the whole table.
+    (answering.connections, answering.per_peer) = (2, 3);
+    let listen = answering.listen;
+    let asking = async {
+        let (mut first, _second) = (connect(listen).await, connect(listen).await);
+        let mut stream = connect(listen).await;
+        send(&mut stream, &ask(&[0x31; 32], statement(head(40)))).await.unwrap();
+        let answer = receive::<Answer>(&mut stream).await.unwrap();
+        let dropped = timeout(QUESTION_TIMEOUT / 2, receive::<Answer>(&mut first)).await;
+        assert!(dropped.is_ok_and(|read| read.is_err()), "the oldest silent connection was kept");
+        answer
+    };
+    let answer = tokio::select! {
+        answer = asking => answer,
+        never = answering.run() => match never {},
+    };
+    assert!(matches!(answer, Answer::Verified { .. }), "{answer:?}");
+}
+
 // ── Helpers ──
 
 /// A connection to `listen`, once the member's endpoint accepts them.
@@ -143,11 +222,16 @@ async fn connect(listen: SocketAddr) -> TcpStream {
 
 /// A member's answers from `checked`, quoting under the mock TEE as `DIGEST`, on a free endpoint.
 pub(crate) fn answering(checked: CheckedHeads) -> Answering {
+    answering_with(checked, Box::new(MockAttestor))
+}
+
+/// `answering`, quoting with `attestor`.
+fn answering_with(checked: CheckedHeads, attestor: Box<dyn Attestor>) -> Answering {
     let mut cfg = dev_config();
     let listen = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
     cfg.tee.sealing = Some(toml::from_str(&format!("dir = '/nonexistent'\n[handover]\nlisten = '{listen}'")).unwrap());
     let platform = Platform { launch_digest: DIGEST, policy: 0, tcb: 0 };
-    Answering::new(&cfg, Box::new(MockAttestor), platform, checked).unwrap().expect("[tee.sealing.handover] is set")
+    Answering::new(&cfg, attestor, platform, checked).unwrap().expect("[tee.sealing.handover] is set")
 }
 
 /// The statement of `head` at `TURN`'s boundary, position 1.

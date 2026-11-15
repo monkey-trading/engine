@@ -16,6 +16,7 @@ use tracing::{error, info};
 use crate::checkpoints::ScheduledTurn;
 use crate::checkpoints::setup::Setup;
 use crate::config::NodeConfig;
+use crate::custody::ContractTerms;
 use crate::log::Checkpoint;
 use crate::log_heads::StartupHeads;
 use crate::metrics::Metrics;
@@ -39,6 +40,9 @@ pub(crate) struct Ready {
     pub anchor: Option<Checkpoint>,
     /// The emission period budget the vault's MONKEY cap was derived from.
     pub emission_budget: Option<TokenUnits>,
+    /// The staking contract's immutable epoch and cooldown, with one configured: the final replica's
+    /// staking config is checked against them before the member serves, with no read of the chain.
+    pub staking_terms: Option<ContractTerms>,
     /// The posted log heads the start checks the copy against, with `[log_heads]`.
     pub heads: Option<StartupHeads>,
     /// The generation the turn's keys are sealed in, by turn, which its `TurnTaken` waits on.
@@ -97,7 +101,7 @@ impl Ready {
     ) -> anyhow::Result<Self> {
         let certificates = crate::node::keys::certificates(cfg, start)?;
         // Read here, before the member connects, so the start after the confirmation reads no more.
-        crate::node::preflight::staking_preflight(
+        let staking_terms = crate::node::preflight::read_terms(
             crate::custody::StakingTerms::connect(&cfg.custody)?.as_ref(),
             replica.engine().staking().map(|staking| &staking.config),
             cfg.genesis.staking.as_ref(),
@@ -121,7 +125,17 @@ impl Ready {
         let heads = crate::log_heads::setup::read_heads(cfg, signer).await?;
         let generations = BTreeMap::from([(turn.turn, generation)]);
         let sample = sample.await.context("taking the trusted time sample the start stamps under")?;
-        Ok(Self { setup, anchor, emission_budget, heads, generations, sample, certificates, promoted: None })
+        Ok(Self {
+            setup,
+            anchor,
+            emission_budget,
+            staking_terms,
+            heads,
+            generations,
+            sample,
+            certificates,
+            promoted: None,
+        })
     }
 
     /// What a promoted member's start reads (#595), as `read` does for a handover, but at the vault's
@@ -145,8 +159,7 @@ impl Ready {
         sample: impl Future<Output = anyhow::Result<Sample>>,
     ) -> anyhow::Result<Self> {
         let certificates = crate::node::keys::certificates(cfg, start)?;
-        // The start's `ready` skips this check, as a member's does.
-        crate::node::preflight::staking_preflight(
+        let staking_terms = crate::node::preflight::read_terms(
             crate::custody::StakingTerms::connect(&cfg.custody)?.as_ref(),
             replica.engine().staking().map(|staking| &staking.config),
             cfg.genesis.staking.as_ref(),
@@ -192,7 +205,17 @@ impl Ready {
         let heads = crate::log_heads::setup::read_heads(cfg, signer).await?;
         let generations = BTreeMap::from([(promotion.turn, promotion.generation)]);
         let sample = sample.await.context("taking the trusted time sample the start stamps under")?;
-        Ok(Self { setup, anchor, emission_budget, heads, generations, sample, certificates, promoted: Some(promotion) })
+        Ok(Self {
+            setup,
+            anchor,
+            emission_budget,
+            staking_terms,
+            heads,
+            generations,
+            sample,
+            certificates,
+            promoted: Some(promotion),
+        })
     }
 }
 

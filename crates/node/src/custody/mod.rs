@@ -46,7 +46,7 @@ pub(crate) mod staking;
 mod staking_terms;
 pub(crate) use crate::custody::evm::VaultReader;
 pub(crate) use crate::custody::rpc::VaultRpc;
-pub use staking_terms::{Refused as StakingTermsRefused, StakingTerms};
+pub use staking_terms::{ContractTerms, Refused as StakingTermsRefused, StakingTerms};
 mod sizing;
 mod stall;
 pub(crate) mod standby_keys;

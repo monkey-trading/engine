@@ -8,7 +8,7 @@ use crate::checkpoints::emission_budget::check_recorded;
 use crate::checkpoints::setup::Setup;
 use crate::checkpoints::{CheckpointChain, Poster};
 use crate::config::NodeConfig;
-use crate::custody::{StakingTerms, StakingTermsRefused};
+use crate::custody::{ContractTerms, StakingTerms, StakingTermsRefused};
 use crate::log::Checkpoint;
 use crate::node::ready::Ready;
 use crate::sequencer::ReplayedLog;
@@ -48,31 +48,63 @@ pub(super) async fn staking_preflight(
     genesis: Option<&StakingConfig>,
 ) -> anyhow::Result<()> {
     let Some(terms) = terms else { return Ok(()) };
-    let sources = [("the log", recorded), ("the config's genesis", genesis)];
-    let Some((first, _)) = sources.iter().find(|(_, config)| config.is_some()) else { return Ok(()) };
-    let refuse = |source: &str, refused: StakingTermsRefused| {
-        match &refused {
-            StakingTermsRefused::Differs(_) => {
-                error!(alert = "staking_terms_mismatch", "refusing to serve: {source}: {refused}");
-            }
-            StakingTermsRefused::Unread(_) => {
-                error!(alert = "checkpoint_startup_failed", "refusing to serve: {source}: {refused}");
-            }
-        }
-        anyhow::anyhow!("{source}: {refused}")
-    };
+    if recorded.is_none() && genesis.is_none() {
+        return Ok(());
+    }
+    read_terms(Some(terms), recorded, genesis).await.map(drop)
+}
+
+/// `staking_preflight`, but always reading the contract's terms when there is a contract, and
+/// returning them: a member's start keeps them to check the staking config its tail introduces
+/// (`check_held`).
+/// Error cases:
+/// - see `staking_preflight`
+pub(super) async fn read_terms(
+    terms: Option<&StakingTerms>,
+    recorded: Option<&StakingConfig>,
+    genesis: Option<&StakingConfig>,
+) -> anyhow::Result<Option<ContractTerms>> {
+    let Some(terms) = terms else { return Ok(None) };
+    let first = if recorded.is_none() && genesis.is_some() { "the config's genesis" } else { "the log" };
     // One read of the contract, so both configs are compared with the values of one admitted quorum.
     let held = terms.read().await.map_err(|refused| refuse(first, refused))?;
-    for (source, config) in sources {
+    check_held(held, recorded, genesis)?;
+    Ok(Some(held))
+}
+
+/// Refuses a log or genesis staking config that differs from `held`, the terms read before, with no
+/// read of the chain.
+/// Error cases:
+/// - the log's or the genesis's epoch or cooldown differs (alert `staking_terms_mismatch`)
+pub(super) fn check_held(
+    held: ContractTerms,
+    recorded: Option<&StakingConfig>,
+    genesis: Option<&StakingConfig>,
+) -> anyhow::Result<()> {
+    for (source, config) in [("the log", recorded), ("the config's genesis", genesis)] {
         let Some(config) = config else { continue };
         held.check(config).map_err(|refused| refuse(source, refused))?;
     }
     Ok(())
 }
 
+/// Raises the alert `refused` calls for and names `source` in the error.
+fn refuse(source: &str, refused: StakingTermsRefused) -> anyhow::Error {
+    match &refused {
+        StakingTermsRefused::Differs(_) => {
+            error!(alert = "staking_terms_mismatch", "refusing to serve: {source}: {refused}");
+        }
+        StakingTermsRefused::Unread(_) => {
+            error!(alert = "checkpoint_startup_failed", "refusing to serve: {source}: {refused}");
+        }
+    }
+    anyhow::anyhow!("{source}: {refused}")
+}
+
 /// The emission period budget and the staking terms the API checks emission schedules and
-/// `InitStaking` against, after refusing a `log` or genesis that records others. A member's start made
-/// those checks before it connected (`ready`), and reads nothing now.
+/// `InitStaking` against, after refusing a `log` or genesis that records others. A member's start read
+/// the contract's terms before it connected (`ready`), so it compares the final replica's config with
+/// them and reads nothing now: an `InitStaking` in the catch-up or the tail is checked too.
 /// Error cases:
 /// - the staking contract's reader cannot be built (see `StakingTerms::connect`)
 /// - see `emission_preflight` and `staking_preflight`
@@ -89,10 +121,15 @@ pub(super) async fn chain_terms(
         (None, None) => None,
     };
     // Nor may the log or the genesis carry a staking config the staking contract does not hold: a
-    // member's start made that check before it connected (`ready`), and reads nothing now.
+    // member's start read the terms before it connected (`ready`), and checks the final log against
+    // them without another read.
     let staking_terms = StakingTerms::connect(&cfg.custody)?;
-    if ready.is_none() {
-        staking_preflight(staking_terms.as_ref(), log.staking_config(), cfg.genesis.staking.as_ref()).await?;
+    match ready.and_then(|ready| ready.staking_terms) {
+        Some(held) => check_held(held, log.staking_config(), cfg.genesis.staking.as_ref())?,
+        None if ready.is_none() => {
+            staking_preflight(staking_terms.as_ref(), log.staking_config(), cfg.genesis.staking.as_ref()).await?;
+        }
+        None => {}
     }
     Ok((emission_budget, staking_terms))
 }

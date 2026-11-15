@@ -1,6 +1,8 @@
 //! A handover peer's evidence: a quote over the report data the step binds, with the vendor chain
 //! that verifies it, or, between mock enclaves, a mock quote and a claimed stand-in measurement.
 
+use std::time::{Duration, Instant};
+
 use anyhow::{Context, ensure};
 use engine_verify::{RelayedCollateral, SnpReport, Tcb, verify_quote};
 use serde::{Deserialize, Serialize};
@@ -50,6 +52,47 @@ impl<'a> From<&'a TeeSection> for Quoting<'a> {
     }
 }
 
+/// The collateral fetched for one chip and TCB, kept for a while so each answer to a question does not
+/// fetch it again from the vendor.
+pub(crate) struct CollateralCache {
+    reuse: Duration,
+    held: tokio::sync::Mutex<Option<Held>>,
+}
+
+struct Held {
+    chip: [u8; 64],
+    tcb: Tcb,
+    at: Instant,
+    json: String,
+}
+
+impl CollateralCache {
+    /// A cache that reuses a fetch for `reuse`.
+    pub(crate) fn new(reuse: Duration) -> Self {
+        Self { reuse, held: tokio::sync::Mutex::new(None) }
+    }
+
+    /// The collateral for `chip` at `tcb`: the one fetched within the reuse time, else `fetch`'s.
+    /// Error cases:
+    /// - `fetch` fails
+    pub(super) async fn json<F: Future<Output = anyhow::Result<String>>>(
+        &self,
+        chip: [u8; 64],
+        tcb: Tcb,
+        fetch: impl FnOnce() -> F,
+    ) -> anyhow::Result<String> {
+        let mut held = self.held.lock().await;
+        if let Some(kept) =
+            held.as_ref().filter(|kept| kept.chip == chip && kept.tcb == tcb && kept.at.elapsed() < self.reuse)
+        {
+            return Ok(kept.json.clone());
+        }
+        let json = fetch().await?;
+        *held = Some(Held { chip, tcb, at: Instant::now(), json: json.clone() });
+        Ok(json)
+    }
+}
+
 /// This enclave's evidence over `report_data`, fetching the vendor chain for a hardware quote.
 /// Error cases:
 /// - the attestor cannot quote, or a hardware quote is not an SEV-SNP report, `tee.processor` is
@@ -60,14 +103,34 @@ pub(crate) async fn produce(
     platform: &Platform,
     report_data: [u8; 64],
 ) -> anyhow::Result<Evidence> {
+    produce_with(quoting, attestor, platform, report_data, None).await
+}
+
+/// `produce`, taking a hardware quote's collateral from `cache` while it holds that chip's and TCB's.
+/// Error cases:
+/// - see `produce`
+pub(crate) async fn produce_with(
+    quoting: &Quoting<'_>,
+    attestor: &dyn Attestor,
+    platform: &Platform,
+    report_data: [u8; 64],
+    cache: Option<&CollateralCache>,
+) -> anyhow::Result<Evidence> {
     let (provider, quote) = attestor.attest(report_data)?;
     let (collateral, mock_launch_digest) = match quoting.provider {
         TeeProvider::Mock => (None, Some(hex::encode(platform.launch_digest))),
         TeeProvider::ConfigfsTsm => {
             let report = SnpReport::parse(&quote).context("a handover needs an SEV-SNP quote")?;
             let processor = quoting.processor.context("tee.processor is required to fetch the quote's collateral")?;
-            let collateral = Collateral::new(quoting.kds_base, processor)?.relayed(&report).await?;
-            (Some(String::from_utf8(collateral.to_json()).context("collateral is JSON")?), None)
+            let fetch = || async {
+                let collateral = Collateral::new(quoting.kds_base, processor)?.relayed(&report).await?;
+                String::from_utf8(collateral.to_json()).context("collateral is JSON")
+            };
+            let json = match cache {
+                Some(cache) => cache.json(report.chip_id, report.reported_tcb, fetch).await?,
+                None => fetch().await?,
+            };
+            (Some(json), None)
         }
     };
     Ok(Evidence { provider, quote: hex::encode(quote), collateral, mock_launch_digest })
