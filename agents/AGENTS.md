@@ -18,7 +18,7 @@ an index: load only the rule whose hint matches the current action.
   over 30 UTC days, opening notional once held 60 s and a matured close once the round-trip horizon has
   passed, a round trip counting nothing, in its own leaf in `merkle/volume.rs`, setting where its first spread
   band ends in every market; the table moved only after notice or by vote, never more generously than at
-  launch, with each tier's spread from its launch spread to twice it), from `V60` a market's weekend margin
+  launch, with each tier's spread from its launch spread to twice it, and from `V61` measured from the launch table at an activation, a ceiling adoption's bound first listing held to it when adopted, and a closing lot joining another only when the order of their units does not matter), from `V60` a market's weekend margin
   (`weekend/`: each margin band at least its rate over the market's weekend gap, any closure of at
   least 40 hours found by `session/weekend.rs`; new risk in any market and withdrawals meet it from
   two hours before the gap until the market reopens, and an account below it is closed out at its

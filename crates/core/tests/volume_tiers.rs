@@ -23,6 +23,7 @@ use engine_core::{Engine, Fixed};
 
 const V58: ProtocolVersion = ProtocolVersion::V58;
 const V59: ProtocolVersion = ProtocolVersion::V59;
+const V61: ProtocolVersion = ProtocolVersion::V61;
 
 #[test]
 fn a_fresh_account_trades_a_quarter_of_the_first_band_at_the_best_price() {
@@ -271,6 +272,32 @@ fn a_reopening_at_another_index_uses_up_the_close_it_takes_so_a_later_round_trip
     only_fill(&trade(&mut h, &client, BTC, Side::Sell, "2", "100200"));
     tick_after(&mut h, MIN_HOLD_MS);
     assert_eq!(volumes(&h, &client), (open.price + fills[0].price, Fixed::ZERO));
+}
+
+#[test]
+fn from_v61_a_close_of_pending_units_does_not_join_a_matured_close_a_reopening_would_restore_from() {
+    // From a matured long of 1: sell 0.5 at A (matured), buy 0.1 at B (the leg falls to 0.4), sell 0.1 at A
+    // (pending, as it closes the buy at B's lot) and buy 0.1 at A, all within one sequenced
+    // millisecond. The score matches the last buy against the pending close, so the matured close
+    // keeps its 0.5. Joined, as before V61, the book restored a matured 0.1 from it instead.
+    let first_close = |version: ProtocolVersion| {
+        let (mut h, client, _) = funded_at(version);
+        only_fill(&trade(&mut h, &client, BTC, Side::Buy, "1", "100000"));
+        h.advance(MIN_HOLD_MS);
+        for (side, qty, mid) in [
+            (Side::Sell, "0.5", "100000"),
+            (Side::Buy, "0.1", "100100"),
+            (Side::Sell, "0.1", "100000"),
+            (Side::Buy, "0.1", "100000"),
+        ] {
+            h.price(BTC, mid);
+            only_fill(&trade(&mut h, &client, BTC, side, qty, mid));
+        }
+        let book = h.engine.account_volume(client.account).unwrap();
+        (book.closing.first().map(|lot| lot.qty), book.closing.len())
+    };
+    assert_eq!(first_close(V59), (Some(f("0.4")), 1));
+    assert_eq!(first_close(V61), (Some(f("0.5")), 1));
 }
 
 #[test]

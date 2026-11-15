@@ -6,10 +6,10 @@
 
 mod common;
 
-use common::close_spread::trade;
+use common::close_spread::{ceilings, trade};
 use common::events::only_fill;
 use common::session_keys::funded_at;
-use common::spreads::{applied, refused, spread_notice, tenths, with_spreads};
+use common::spreads::{applied, genesis_at, refused, spread_notice, tenths, with_spreads};
 use common::{BTC, Harness, f, market};
 use engine_core::command::AdminCommand;
 use engine_core::market::MarketSpec;
@@ -21,6 +21,7 @@ use engine_core::types::{AssetClass, MarketId, Millis, Side};
 use engine_core::volume_tier::{VolumeTier, launch_volume_tiers};
 
 const V59: ProtocolVersion = ProtocolVersion::V59;
+const V61: ProtocolVersion = ProtocolVersion::V61;
 /// A market the harness does not list.
 const SOL: MarketId = 7;
 
@@ -201,6 +202,202 @@ fn a_first_listing_after_a_share_cut_is_held_to_each_tiers_spread_at_its_own_ban
     h.advance_to(due);
     let refusal = refused(&h.operate(AdminCommand::UpsertMarket(listing))).to_owned();
     assert!(refusal.contains("market 7's first listing at volume tier 0: a spread rate of 30 tenths"), "{refusal}");
+    assert!(!h.engine.markets().contains_key(&SOL));
+}
+
+#[test]
+fn from_v61_a_table_set_before_v59_is_no_baseline_and_listings_are_held_to_d1s_table() {
+    // A tier 0 share of 1bp of the first bound, set at V58 with no notice, ends its first band at $100.
+    // BTC's second band doubled to 4bp is within the market's own bound, and within the bound measured
+    // from that table, but charges four times D1's 1bp on $100 to $250k.
+    let wider = tenths(&[(Some(1_000_000), 10), (Some(5_000_000), 40), (None, 50)]);
+    let tight = with_tiers(|tiers| tiers[0].best_price_share_bps = 1);
+    let activated = |version: ProtocolVersion| {
+        let (mut h, _, _) = funded_at(ProtocolVersion::V58);
+        assert!(applied(&h.operate(AdminCommand::SetParams(params(&h, tight.clone())))));
+        h.admin(AdminCommand::ActivateProtocol { version });
+        h
+    };
+    let mut h = activated(V59);
+    assert_eq!(h.engine.operator_bounds().launch_volume_tiers, Some(tight.clone()));
+    assert!(applied(&h.operate(spread_notice(&h, BTC, wider.clone()).0)));
+    let mut h = activated(V61);
+    assert_eq!(h.engine.operator_bounds().launch_volume_tiers, Some(launch_volume_tiers()));
+    assert_eq!(h.engine.params().unwrap().volume_tiers, tight, "the table set before is still in force");
+    let refusal = refused(&h.operate(spread_notice(&h, BTC, wider.clone()).0)).to_owned();
+    assert!(refusal.contains("market 1 at volume tier 0: a spread rate of 40 tenths"), "{refusal}");
+}
+
+#[test]
+fn from_v61_an_activation_checks_every_listing_against_d1s_table_not_the_one_it_takes_up() {
+    // BTC's second band was doubled by a noticed listing before V59, under a table whose tier 0 first band
+    // ends at $100: measured from that table it is within twice launch, from D1's it is four times.
+    let wider = tenths(&[(Some(1_000_000), 10), (Some(5_000_000), 40), (None, 50)]);
+    let tight = with_tiers(|tiers| tiers[0].best_price_share_bps = 1);
+    let log = || {
+        let (mut h, _, _) = funded_at(ProtocolVersion::V58);
+        assert!(applied(&h.operate(AdminCommand::SetParams(params(&h, tight.clone())))));
+        let (listing, listed_at) = spread_notice(&h, BTC, wider.clone());
+        assert!(applied(&h.operate(listing)));
+        h.advance_to(listed_at);
+        assert!(applied(&h.operate(AdminCommand::UpsertMarket(with_spreads(&h, BTC, wider.clone())))));
+        h
+    };
+    let mut h = log();
+    h.admin(AdminCommand::ActivateProtocol { version: V59 });
+    assert_eq!(h.engine.protocol_version(), V59);
+    let mut h = log();
+    let activate = engine_core::command::Command::Admin(AdminCommand::ActivateProtocol { version: V61 });
+    let refusal = refused(&h.cmd(activate.clone())).to_owned();
+    assert!(refusal.contains("market 1 at volume tier 0: a spread rate of 40 tenths"), "{refusal}");
+    // Setting the table to D1's, as the parameters may before V59, lets the log activate.
+    assert!(applied(&h.operate(AdminCommand::SetParams(params(&h, launch_volume_tiers())))));
+    assert!(applied(&h.cmd(activate)));
+    assert_eq!(h.engine.operator_bounds().launch_volume_tiers, Some(launch_volume_tiers()));
+}
+
+#[test]
+fn from_v61_an_activation_from_before_v52_checks_the_bands_it_takes_as_launch_bands() {
+    // A log at V51 has no launch bands, which V52's activation takes from the listings as converted. BTC
+    // at 1bp to $1M and 4bp above, under a tier 0 share of 1bp of the first bound, charges four times
+    // D1's 1bp from $100 to $250k.
+    let wider = tenths(&[(Some(1_000_000), 10), (Some(5_000_000), 40), (None, 50)]);
+    let tight = with_tiers(|tiers| tiers[0].best_price_share_bps = 1);
+    let log = || {
+        let mut h = genesis_at(ProtocolVersion::V51);
+        h.admin(AdminCommand::SetCloseSpreadCeilings { ceilings: ceilings() });
+        h.admin(AdminCommand::UpsertMarket(with_spreads(&h, BTC, wider.clone())));
+        h.admin(AdminCommand::SetParams(params(&h, tight.clone())));
+        h
+    };
+    let activate = |version| engine_core::command::Command::Admin(AdminCommand::ActivateProtocol { version });
+    let mut h = log();
+    let events = h.cmd(activate(V59));
+    assert!(applied(&events), "{events:?}");
+    let mut h = log();
+    let refusal = refused(&h.cmd(activate(V61))).to_owned();
+    assert!(refusal.contains("market 1 at volume tier 0: a spread rate of 40 tenths"), "{refusal}");
+    assert!(applied(&h.operate(AdminCommand::SetParams(params(&h, launch_volume_tiers())))));
+    assert!(applied(&h.cmd(activate(V61))));
+    assert_eq!(h.engine.operator_bounds().launch_volume_tiers, Some(launch_volume_tiers()));
+}
+
+#[test]
+fn from_v61_an_activation_checks_the_first_listings_adoptions_bind_applied_or_pending() {
+    // At V58 no tier bound exists, so an adoption binds bands that a tier 0 share of 1bp of the first bound
+    // charges three times launch's 1bp from $100 to $250k, which listing would refuse.
+    let listing = MarketSpec {
+        spread_tiers: tenths(&[(Some(1_000_000), 10), (None, 30)]),
+        markout_floor_bps: Some(f("1")),
+        ..market(SOL, "SOL-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000)
+    };
+    let tight = with_tiers(|tiers| tiers[0].best_price_share_bps = 1);
+    let log = |settled: bool| {
+        let (mut h, _, _) = funded_at(ProtocolVersion::V58);
+        assert!(applied(&h.operate(AdminCommand::SetParams(params(&h, tight.clone())))));
+        let due = h.ts + NOTICE_MS;
+        let adoption = AdminCommand::AdoptCloseSpreadCeiling {
+            market: SOL,
+            max_close_spread_bps: 50,
+            effective_at: due,
+            listing: Some(listing.clone()),
+        };
+        assert!(applied(&h.operate(adoption)));
+        if settled {
+            h.advance_to(due);
+            h.cmd(engine_core::command::Command::Tick);
+        }
+        h
+    };
+    let activate = |version| engine_core::command::Command::Admin(AdminCommand::ActivateProtocol { version });
+    for settled in [false, true] {
+        let mut h = log(settled);
+        assert!(applied(&h.cmd(activate(V59))), "V59 takes the bound listing unchecked");
+        let mut h = log(settled);
+        let refusal = refused(&h.cmd(activate(V61))).to_owned();
+        assert!(
+            refusal.contains("market 7's bound first listing at volume tier 0: a spread rate of 30 tenths"),
+            "{refusal}"
+        );
+        assert!(applied(&h.operate(AdminCommand::SetParams(params(&h, launch_volume_tiers())))));
+        assert!(applied(&h.cmd(activate(V61))));
+    }
+}
+
+#[test]
+fn from_v61_an_activation_checks_only_the_pending_listing_that_replaces_an_applied_one() {
+    // An applied adoption binds bands the tier 0 share of 1bp refuses, and a pending adoption for the same
+    // market, at a lower ceiling, binds bands within it: only the pending one can list.
+    let listing = |far: i64| MarketSpec {
+        spread_tiers: tenths(&[(Some(1_000_000), 10), (None, far)]),
+        markout_floor_bps: Some(f("1")),
+        ..market(SOL, "SOL-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000)
+    };
+    let adopt = |ceiling, far, effective_at| AdminCommand::AdoptCloseSpreadCeiling {
+        market: SOL,
+        max_close_spread_bps: ceiling,
+        effective_at,
+        listing: Some(listing(far)),
+    };
+    let activate = |version| engine_core::command::Command::Admin(AdminCommand::ActivateProtocol { version });
+    let log = |pending_far: i64| {
+        let (mut h, _, _) = funded_at(ProtocolVersion::V58);
+        let tight = with_tiers(|tiers| tiers[0].best_price_share_bps = 1);
+        assert!(applied(&h.operate(AdminCommand::SetParams(params(&h, tight)))));
+        let due = h.ts + NOTICE_MS;
+        assert!(applied(&h.operate(adopt(50, 30, due))));
+        h.advance_to(due);
+        h.cmd(engine_core::command::Command::Tick);
+        assert!(applied(&h.operate(adopt(40, pending_far, h.ts + NOTICE_MS))));
+        h
+    };
+    let mut h = log(20);
+    assert!(applied(&h.cmd(activate(V61))), "only the pending 2bp listing can list");
+    // A pending listing outside the bound is still refused.
+    let mut h = log(30);
+    let refusal = refused(&h.cmd(activate(V61))).to_owned();
+    assert!(refusal.contains("market 7's bound first listing at volume tier 0"), "{refusal}");
+}
+
+#[test]
+fn from_v61_an_adoption_is_held_to_the_volume_tiers_when_adopted_and_its_listing_again_when_it_applies() {
+    let adoption = |listing: &MarketSpec, effective_at: Millis| AdminCommand::AdoptCloseSpreadCeiling {
+        market: SOL,
+        max_close_spread_bps: 50,
+        effective_at,
+        listing: Some(listing.clone()),
+    };
+    let listing = MarketSpec {
+        spread_tiers: tenths(&[(Some(1_000_000), 10), (None, 30)]),
+        markout_floor_bps: Some(f("1")),
+        ..market(SOL, "SOL-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000)
+    };
+    let eighth = with_tiers(|tiers| tiers[0].best_price_share_bps = 1_250);
+    let cut = |h: &mut Harness| {
+        let due = h.ts + NOTICE_MS;
+        assert!(applied(&h.operate(notice(eighth.clone(), due))));
+        h.advance_to(due);
+        assert!(applied(&h.operate(AdminCommand::SetParams(params(h, eighth.clone())))));
+    };
+    // The share cut first: the adoption binding a listing that tier 0 would charge 3bp from $125k is refused.
+    let (mut h, _, _) = funded_at(V61);
+    cut(&mut h);
+    let refusal = refused(&h.operate(adoption(&listing, h.ts + NOTICE_MS))).to_owned();
+    assert!(refusal.contains("market 7's first listing at volume tier 0: a spread rate of 30 tenths"), "{refusal}");
+    // A listing within the cut table's bound is adopted and lists.
+    let fine = MarketSpec { spread_tiers: tenths(&[(Some(1_000_000), 10), (None, 20)]), ..listing.clone() };
+    let due = h.ts + NOTICE_MS;
+    assert!(applied(&h.operate(adoption(&fine, due))));
+    h.advance_to(due);
+    assert!(applied(&h.operate(AdminCommand::UpsertMarket(fine))));
+    // The adoption first: a cut that lands before the listing applies still refuses it then.
+    let (mut h, _, _) = funded_at(V61);
+    let due = h.ts + NOTICE_MS;
+    assert!(applied(&h.operate(adoption(&listing, due))));
+    cut(&mut h);
+    assert!(h.ts >= due);
+    let refusal = refused(&h.operate(AdminCommand::UpsertMarket(listing))).to_owned();
+    assert!(refusal.contains("market 7's first listing at volume tier 0"), "{refusal}");
     assert!(!h.engine.markets().contains_key(&SOL));
 }
 

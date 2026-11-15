@@ -136,7 +136,8 @@ pub struct OperatorBounds {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_curve: Option<Vec<CurvePoint>>,
     /// From `V59`, the volume tier table in force when parameters are first set under `V59` or when it
-    /// activates over them, which bounds every later table.
+    /// activates over them (from `V61` `launch_volume_tiers`, whether or not in force), which bounds every
+    /// later table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_volume_tiers: Option<Vec<VolumeTier>>,
 }

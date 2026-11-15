@@ -76,7 +76,9 @@
 //!   nothing, so round trips cannot dilute it.
 //! - From `V59`, an account's volume tier, earned with the volume it counts over 30 days, sets how much
 //!   size it trades in each market's first spread band; volume counts only once an opening has been
-//!   held 60 s, and a round trip counts nothing.
+//!   held 60 s, and a round trip counts nothing. From `V61` an activation over parameters set before
+//!   `V59` takes `launch_volume_tiers` as the launch table the bounds measure from, and a closing lot
+//!   joins another only when the order of their units does not matter.
 
 pub mod access;
 pub mod account;

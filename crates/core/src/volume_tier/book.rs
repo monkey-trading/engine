@@ -17,6 +17,7 @@ use crate::Fixed;
 use crate::engine::Engine;
 use crate::execution::Exec;
 use crate::fixed::Rounding;
+use crate::protocol::ProtocolVersion;
 use crate::toxicity::{FillMark, HORIZON_MS};
 use crate::types::{AccountId, MarketId, Millis, Side};
 use crate::volume_tier::{MIN_HOLD_MS, WINDOW_DAYS, day_of};
@@ -179,11 +180,14 @@ impl AccountVolume {
 
     /// Adds a closing lot, joining the newest when it closed in the same market, on the same side, at
     /// the same index and time, at the lower of their notionals a unit; past `MAX_CLOSING_LOTS` the
-    /// oldest is dropped and counts nothing.
-    fn push_closing(&mut self, lot: ClosingLot) {
+    /// oldest is dropped and counts nothing. When `ordered`, from `V61`, the join also needs the order
+    /// of their units not to matter (`order_free`), since a joined leg gives up its matured units first
+    /// at the close's index and its pending units first at another, where the score takes the newer
+    /// close's leg first.
+    fn push_closing(&mut self, lot: ClosingLot, ordered: bool) {
         let key = |lot: &ClosingLot| (lot.market, lot.side, lot.index, lot.closed_at);
         match self.closing.last_mut() {
-            Some(last) if key(last) == key(&lot) => {
+            Some(last) if key(last) == key(&lot) && (!ordered || order_free(last, &lot)) => {
                 let qty = last.qty + lot.qty;
                 last.notional = merged(qty, (last.qty, last.notional), (lot.qty, lot.notional));
                 (last.leg, last.matured_leg, last.qty) = (last.leg + lot.leg, last.matured_leg + lot.matured_leg, qty);
@@ -250,6 +254,7 @@ impl Engine {
         let closes = !mark.held.is_zero() && mark.held.signum() != exec.side.sign();
         let closing = if closes { mark.qty.min(mark.held.abs()) } else { Fixed::ZERO };
         let opening = mark.qty - closing;
+        let ordered = self.protocol_version >= ProtocolVersion::V61;
         let volume = self.volumes.entry(exec.account).or_default();
         volume.settle(now);
         let matured = closing - volume.consume_opening(exec.market, closing);
@@ -263,7 +268,7 @@ impl Engine {
             // matured unit is in the leg.
             let matured_leg = matured.min(leg);
             let lot = ClosingLot { market, side, index, closed_at: now, leg, matured_leg, qty: matured, notional };
-            volume.push_closing(lot);
+            volume.push_closing(lot, ordered);
         }
         let restored = if opening.is_positive() {
             volume.reopen(exec.market, exec.side.opposite(), mark.index, opening)
@@ -342,6 +347,15 @@ fn merged(qty: Fixed, a: (Fixed, Fixed), b: (Fixed, Fixed)) -> Fixed {
         .map(|(lot_qty, notional)| notional.mul_div(qty, lot_qty, Rounding::Down))
         .min()
         .unwrap_or(Fixed::ZERO)
+}
+
+/// Whether the units of closing lots `a` and `b` can join into one leg without changing which of them a
+/// reopening takes: either leg is empty, or both hold only matured units, or both only pending ones.
+fn order_free(a: &ClosingLot, b: &ClosingLot) -> bool {
+    let uniform = |lot: &ClosingLot| lot.matured_leg.is_zero() || lot.matured_leg == lot.leg;
+    a.leg.is_zero()
+        || b.leg.is_zero()
+        || (uniform(a) && uniform(b) && (a.matured_leg.is_zero() == b.matured_leg.is_zero()))
 }
 
 /// `a + b`, saturating, so no number of fills can overflow a day's volume.
