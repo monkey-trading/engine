@@ -34,7 +34,7 @@ pub struct ApiSection {
     /// Requests from one client, and requests that act for one account; excess requests get 429. From
     /// protocol `V67` a credited account whose volume tier names a request rate is held to that rate
     /// instead (`request_bursts`), and `per_account` holds the rest: accounts never credited, the
-    /// operator's requests, and tiers that name no rate.
+    /// operator's requests, payout reissue requests, and tiers that name no rate.
     pub per_ip: RateLimit,
     pub per_account: RateLimit,
     /// New connections from one client; one over it is closed before its TLS handshake. Set it

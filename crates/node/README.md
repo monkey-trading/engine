@@ -892,7 +892,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   restart
 - `src/tls/tests/proxy.rs` — the PROXY protocol header: the client it names, the trusted ranges, and every refusal
 - `src/tls/tests/stream.rs` — the stream end to end over TLS: the subscriber and message caps
-- `src/limits/mod.rs` — request rate limits, from `V67` a credited account's buckets at its tier's rate (one limiter for each rate a tier may name), connection caps, the stream subscriber cap, and the allowed browser origins
+- `src/limits/mod.rs` — request rate limits, connection caps, the stream subscriber cap, and the allowed browser origins
+- `src/limits/tier.rs` — from `V67`, a credited account's buckets at its tier's request rate: one limiter for each rate a tier may name, made when first used, with a burst of `api.request_bursts` seconds of it
 - `src/limits/tests.rs` — the limiters' buckets, caps, and alert throttle
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
 - `src/config/stats.rs` — the `[stats]` section: retention, activity length, position-map buckets
@@ -2359,7 +2360,7 @@ and `requests_per_second` where the table names them: the orders the account may
 which is refused as `tier_order_limit` naming the tier, and the signed requests a second the node takes
 from the account and its session keys, beyond which a request gets 429 with `Retry-After` and a body
 naming the `tier` and its `requests_per_second`. A tier naming no rate leaves `api.per_account`, which
-also holds accounts never credited and the operator.
+also holds accounts never credited, the operator and an account's payout reissue requests.
 `GET /v1/markets` gives each market's `weekend_margin_bps` (left out when none) and, for a market
 with one, `weekend_margin`: `{"weekend_margin_bps", "from", "close", "reopen"}` for its next or
 current weekend gap, or nothing while no gap starts within 366 days or before V60 activates.

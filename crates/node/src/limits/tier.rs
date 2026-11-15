@@ -14,8 +14,9 @@ use crate::limits::{KeyedLimiter, check};
 
 /// Request buckets for accounts at a volume tier's rate. A bucket's rate is fixed when it is made, so
 /// there is one limiter for each rate a tier may name (`1..=MAX_REQUESTS_PER_SECOND`), made when first
-/// used; an account is counted in the limiter of its tier's rate now, so one whose tier changes starts
-/// full at its new rate, and its old bucket is forgotten once it has refilled.
+/// used; an account is counted in the limiter of its tier's rate now, so one whose tier changes is
+/// counted in that rate's bucket, full unless it was spent there recently, and the one it left is
+/// forgotten once it has refilled.
 pub(super) struct TierBuckets<C: Clock> {
     pub(super) by_rate: Box<[OnceLock<KeyedLimiter<AccountId, C>>]>,
     /// Seconds of the rate a bucket holds.
@@ -27,6 +28,7 @@ pub(super) struct TierBuckets<C: Clock> {
 }
 
 impl<C: Clock + Clone> TierBuckets<C> {
+    /// Buckets of `burst_seconds` of each rate, made by `quota` on `clock` and named `name` in the log.
     pub(super) fn new(
         name: &'static str,
         burst_seconds: NonZeroU32,
@@ -43,7 +45,8 @@ impl<C: Clock + Clone> TierBuckets<C> {
     pub(super) fn check(&self, account: AccountId, limit: RequestLimit) -> Result<(), ApiError> {
         // The engine validates every tier's rate within 1..=MAX_REQUESTS_PER_SECOND.
         let rate = NonZeroU32::new(limit.per_second).expect("a tier's request rate is nonzero");
-        let slot = &self.by_rate[usize::try_from(rate.get() - 1).expect("a rate under 1000 is an index")];
+        let slot = usize::try_from(rate.get() - 1).ok().and_then(|at| self.by_rate.get(at));
+        let slot = slot.expect("the engine bounds a tier's request rate to 1..=MAX_REQUESTS_PER_SECOND");
         let limiter = slot.get_or_init(|| {
             let burst = rate.saturating_mul(self.burst_seconds);
             RateLimiter::dashmap_with_clock((self.quota)(RateLimit { per_second: rate, burst }), self.clock.clone())

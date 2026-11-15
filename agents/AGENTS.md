@@ -434,7 +434,9 @@ an index: load only the rule whose hint matches the current action.
   markout spread (#699), from `V59` the volume tier table (#614, D1), from `V60` the weekend margins of
   WTI, Japan 225, silver and US Tech 100 (#750), from `V62` level 2's house loss threshold of zero
   (`dev.toml` and `anvil.toml` carry a labelled $1M fixture), from `V64` its volume tiers' margin
-  floors (#614, D5), and from `V67` their resting-order limits and request rates (#614, D11 and D1); a deployment's node sections complete it
+  floors (#614, D5), and from `V67` their resting-order limits and request rates (#614, D11 and D1; `dev.toml` and
+  `anvil.toml` name none, so a log started from them keeps resuming, and fresh dev nodes keep the parameters' cap
+  and `api.per_account` until a notice names them); a deployment's node sections complete it
   into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.

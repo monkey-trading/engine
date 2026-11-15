@@ -157,8 +157,9 @@ impl Engine {
 
     /// Checks `tiers` against the launch table and the listings in force: as many tiers as at launch,
     /// each threshold and day divisor at or above its launch value and each share at or below it, from
-    /// `V67` each limit and rate named and at or below its launch value, and every listed market's bands within their launch spread at every tier (`check_tiered_spreads`),
-    /// and, at a tier needing more than at launch, within it at every tier below.
+    /// `V67` each limit and rate named and at or below its launch value, and every listed market's bands
+    /// within their launch spread at every tier (`check_tiered_spreads`), and, at a tier needing more
+    /// than at launch, within it at every tier below.
     /// Error cases:
     /// - another number of tiers than at launch
     /// - a threshold or day divisor below its launch value, or a share above it
