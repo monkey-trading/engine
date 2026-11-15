@@ -138,6 +138,7 @@ impl Engine {
             changed: _,
             tree: _,
             command_ms: _,
+            early_counts: _,
             hot_indexes: _,
         } = self;
         Globals {

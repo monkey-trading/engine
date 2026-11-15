@@ -47,6 +47,7 @@ use crate::spread_tier::SpreadTier;
 use crate::types::{AccountId, MarketId, Millis};
 
 mod book;
+pub(crate) use book::EarlyCount;
 pub use book::{AccountVolume, ClosingLot, DayVolume, MAX_CLOSING_LOTS, MAX_OPENING_LOTS, OpeningLot};
 mod benefits;
 pub(crate) use benefits::names_benefits;
@@ -343,12 +344,18 @@ impl Engine {
 
     /// The volume tier `account` trades at at sequenced time `at`, from the book as last changed: a lot
     /// whose time came by `at` counts and a day before `at`'s window does not. For a boundary a command
-    /// catches up, which no fill of the account came between.
+    /// catches up: from `V69` a fill of the account earlier in the catch-up has settled the book to the
+    /// command's stamp, and the lots that settlement counted after `at` are left out.
     pub(crate) fn volume_tier_at(&self, account: AccountId, at: Millis) -> usize {
         let (Some(tiers), Some(volume)) = (self.volume_tiers_in_force(), self.volumes.get(&account)) else {
             return 0;
         };
-        tier_of(&volume.window(at), tiers)
+        let mut window = volume.window(at);
+        // From `V69` a settlement the command made at a later time has counted lots whose time was after `at`.
+        if let Some(early) = self.early_counts.get(&account) {
+            AccountVolume::without_early(&mut window, at, early);
+        }
+        tier_of(&window, tiers)
     }
 
     /// `account`'s volume book, as last changed: a lot whose time has come counts on its day when the

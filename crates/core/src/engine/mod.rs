@@ -48,7 +48,7 @@ use crate::toxicity::{MarkoutSpread, ToxicityScore};
 use crate::tracked::{TrackedMap, TrackedSet};
 use crate::turns::DailyTurns;
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis, OrderId};
-use crate::volume_tier::AccountVolume;
+use crate::volume_tier::{AccountVolume, EarlyCount};
 use crate::withdrawal::{QueuedWithdrawal, WithdrawalApproval};
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -228,6 +228,11 @@ pub struct Engine {
     /// catch-up; this does not.
     #[serde(skip)]
     pub(crate) command_ms: Millis,
+    /// From `V69`, the lots a book settlement in the command being applied counted on their day though
+    /// their time came after the boundary a catch-up had rewound `now` to, by account, so a tier read at
+    /// that boundary leaves them out (`Engine::volume_tier_at`). Cleared with every command.
+    #[serde(skip)]
+    pub(crate) early_counts: BTreeMap<AccountId, Vec<EarlyCount>>,
 }
 
 impl Engine {
@@ -258,6 +263,7 @@ impl Engine {
         let last_now = self.now;
         self.now = sequenced.ts;
         self.command_ms = sequenced.ts;
+        self.early_counts.clear();
         // From `V50` the time since the last command was served under the office it left, before
         // this command's handover moves it.
         self.accrue_time_in_office(last_now);

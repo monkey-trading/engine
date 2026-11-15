@@ -15,7 +15,7 @@ fn an_opening_lot_counts_on_the_day_it_matures_and_not_before() {
     assert_eq!(volume.pending(opened + MIN_HOLD_MS - 1), usd("200"));
     let at = opened + MIN_HOLD_MS;
     assert_eq!((volume.window(at)[WINDOW_DAYS - 1], volume.pending(at)), (usd("200"), Fixed::ZERO));
-    volume.settle(at, at);
+    volume.settle(at, at, None);
     assert_eq!(volume.days, [DayVolume { day: 101, volume: usd("200") }]);
     assert!(volume.opening.is_empty());
 }
@@ -29,9 +29,9 @@ fn settling_keeps_the_days_of_the_window_that_ends_where_it_is_told_to_keep_from
     // 129's boundary keeps it, so the tier at that boundary still reads it.
     let at = 131 * DAY_MS;
     let mut kept = volume.clone();
-    kept.settle(at, 129 * DAY_MS);
+    kept.settle(at, 129 * DAY_MS, None);
     assert_eq!(kept.window(129 * DAY_MS)[0], usd("500"));
-    volume.settle(at, at);
+    volume.settle(at, at, None);
     assert!(volume.days.iter().all(|day| day.day != 100));
 }
 
@@ -41,7 +41,7 @@ fn a_closing_lot_counts_on_its_closing_day_once_the_horizon_has_passed() {
     let closed_at = 101 * DAY_MS - 1_000;
     volume.push_closing(closing(1, Side::Sell, "100", closed_at, ["1", "1", "100"]), true);
     assert_eq!(volume.pending(closed_at + HORIZON_MS - 1), usd("100"));
-    volume.settle(closed_at + HORIZON_MS, closed_at + HORIZON_MS);
+    volume.settle(closed_at + HORIZON_MS, closed_at + HORIZON_MS, None);
     assert_eq!(volume.days, [DayVolume { day: 100, volume: usd("100") }]);
     assert!(volume.closing.is_empty());
 }
@@ -51,7 +51,7 @@ fn a_lot_that_counts_nothing_adds_no_day() {
     let mut volume = AccountVolume::default();
     volume.push_opening(1, opening(NOON, "1", "0"));
     volume.push_closing(closing(1, Side::Sell, "100", NOON, ["1", "0", "0"]), true);
-    volume.settle(NOON + HORIZON_MS, NOON + HORIZON_MS);
+    volume.settle(NOON + HORIZON_MS, NOON + HORIZON_MS, None);
     assert_eq!((volume.days.len(), volume.opening.len(), volume.closing.len()), (0, 0, 0));
 }
 
@@ -63,7 +63,7 @@ fn settling_drops_the_days_before_the_window() {
     }
     let now = 100 * DAY_MS;
     assert_eq!(volume.window(now).iter().copied().sum::<Fixed>(), usd("2"));
-    volume.settle(now, now);
+    volume.settle(now, now, None);
     assert_eq!(volume.days.iter().map(|day| day.day).collect::<Vec<_>>(), [71, 99]);
 }
 
@@ -123,7 +123,7 @@ fn closes_at_one_index_and_time_join_and_past_the_cap_the_oldest_counts_nothing(
         volume.push_closing(closing(1, Side::Sell, "100", NOON + at, ["1", "1", "1"]), true);
     }
     assert_eq!((volume.closing.len(), volume.closing[0].closed_at), (MAX_CLOSING_LOTS, NOON + 1));
-    volume.settle(NOON + MAX_CLOSING_LOTS as i64 + HORIZON_MS, NOON + MAX_CLOSING_LOTS as i64 + HORIZON_MS);
+    volume.settle(NOON + MAX_CLOSING_LOTS as i64 + HORIZON_MS, NOON + MAX_CLOSING_LOTS as i64 + HORIZON_MS, None);
     assert_eq!(volume.days, [DayVolume { day: 100, volume: usd(&MAX_CLOSING_LOTS.to_string()) }]);
 }
 
@@ -248,6 +248,21 @@ fn a_split_scales_pending_lots_toward_zero_and_drops_one_scaled_to_nothing() {
 }
 
 #[test]
+fn from_v69_a_split_in_a_catch_up_names_the_lots_it_counts_after_its_boundary() {
+    let account = AccountId([7; 20]);
+    for (version, named) in [(ProtocolVersion::V68, false), (ProtocolVersion::V69, true)] {
+        // The clock stands at a boundary the command's stamp is 40 s past, and a lot matured between them.
+        let mut engine = Engine { protocol_version: version, now: NOON, command_ms: NOON + 40_000, ..Engine::new() };
+        let opening = vec![opening(NOON + 30_000, "3", "300")];
+        engine.volumes.entry(account).or_default().opening.insert(1, opening);
+        engine.scale_volume_lots(account, 1, 2, 1);
+        let early = engine.early_counts.get(&account).cloned();
+        let lot = EarlyCount { due: NOON + 30_000, day: 100, notional: usd("300") };
+        assert_eq!(early, named.then(|| vec![lot]), "{version:?}");
+    }
+}
+
+#[test]
 fn a_days_volume_saturates_rather_than_overflowing() {
     let mut days = Vec::new();
     count(&mut days, 1, Fixed::from_raw(i128::MAX - 1));
@@ -269,4 +284,41 @@ fn opening(matures_at: Millis, qty: &str, notional: &str) -> OpeningLot {
 fn closing(market: MarketId, side: Side, index: &str, closed_at: Millis, legs: [&str; 3]) -> ClosingLot {
     let [leg, qty, notional] = legs.map(usd);
     ClosingLot { market, side, index: usd(index), closed_at, leg, matured_leg: qty.min(leg), qty, notional }
+}
+
+#[test]
+fn a_settlement_names_the_lots_it_counts_after_the_boundary_it_is_told() {
+    let mut volume = AccountVolume::default();
+    // One opening lot due at the boundary and one 30 s after it; a closing lot whose horizon ends 3 s after.
+    volume.push_opening(1, opening(NOON, "1", "100"));
+    volume.push_opening(2, opening(NOON + 30_000, "1", "200"));
+    volume.push_closing(closing(3, Side::Sell, "300", NOON - HORIZON_MS + 3_000, ["1", "1", "300"]), true);
+    let early = volume.settle(NOON + 40_000, NOON, Some(NOON));
+    let due = |due: Millis, notional: &str| EarlyCount { due, day: 100, notional: usd(notional) };
+    assert_eq!(early, [due(NOON + 30_000, "200"), due(NOON + 3_000, "300")]);
+    assert_eq!(volume.days, [DayVolume { day: 100, volume: usd("600") }]);
+    // With no boundary named it names none.
+    let mut volume = AccountVolume::default();
+    volume.push_opening(1, opening(NOON + 30_000, "1", "200"));
+    assert!(volume.settle(NOON + 40_000, NOON, None).is_empty());
+}
+
+#[test]
+fn a_window_without_the_early_lots_keeps_those_due_by_its_time() {
+    let mut volume = AccountVolume::default();
+    volume.push_opening(1, opening(NOON + 30_000, "1", "200"));
+    volume.push_opening(2, opening(NOON, "1", "100"));
+    let early = volume.settle(NOON + 40_000, NOON, Some(NOON - 1));
+    let at = |at: Millis| {
+        let mut window = volume.window(at);
+        AccountVolume::without_early(&mut window, at, &early);
+        window[WINDOW_DAYS - 1]
+    };
+    // A lot due exactly at the time is counted, one due after it is not, and the full window counts both.
+    assert_eq!((at(NOON - 1), at(NOON), at(NOON + 30_000)), (usd("0"), usd("100"), usd("300")));
+    assert_eq!(volume.window(NOON - 1)[WINDOW_DAYS - 1], usd("300"));
+    // A lot on a day before the window is no part of it.
+    let mut window = volume.window(NOON + 31 * DAY_MS);
+    AccountVolume::without_early(&mut window, NOON + 31 * DAY_MS, &early);
+    assert!(window.iter().all(Fixed::is_zero));
 }

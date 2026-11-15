@@ -85,6 +85,15 @@ pub struct ClosingLot {
     pub notional: Fixed,
 }
 
+/// A lot a settlement counted on its day though its time came after the sequenced time a tier is read at:
+/// the day it counted on, its notional, and the time it was due to count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct EarlyCount {
+    pub(crate) due: Millis,
+    pub(crate) day: i64,
+    pub(crate) notional: Fixed,
+}
+
 impl ClosingLot {
     /// When the lot counts: the round-trip horizon after the close, when no reopening can match it.
     fn counts_at(&self) -> Millis {
@@ -100,21 +109,31 @@ impl AccountVolume {
 
     /// Counts every lot whose time has come by `now` on its day, and drops the days before the window
     /// that ends on `keep_from`'s day (`now`, or from `V68` the boundary a catch-up walks when that is
-    /// earlier, so a fill there keeps the days a later boundary's tier still reads).
-    fn settle(&mut self, now: Millis, keep_from: Millis) {
+    /// earlier, so a fill there keeps the days a later boundary's tier still reads). Returns, when
+    /// `after` is named, each lot it counted whose time came after `after`: from `V69` the boundary a
+    /// catch-up has rewound to, whose tier must not read them.
+    fn settle(&mut self, now: Millis, keep_from: Millis, after: Option<Millis>) -> Vec<EarlyCount> {
+        let mut early = Vec::new();
+        let mut counted = |days: &mut Vec<DayVolume>, due: Millis, day: i64, notional: Fixed| {
+            count(days, day, notional);
+            if after.is_some_and(|after| due > after) && notional.is_positive() {
+                early.push(EarlyCount { due, day, notional });
+            }
+        };
         for lots in self.opening.values_mut() {
             let matured = lots.partition_point(|lot| lot.matures_at <= now);
             for lot in lots.drain(..matured) {
-                count(&mut self.days, day_of(lot.matures_at), lot.notional);
+                counted(&mut self.days, lot.matures_at, day_of(lot.matures_at), lot.notional);
             }
         }
         self.opening.retain(|_, lots| !lots.is_empty());
         let due = self.closing.partition_point(|lot| lot.counts_at() <= now);
         for lot in self.closing.drain(..due) {
-            count(&mut self.days, day_of(lot.closed_at), lot.notional);
+            counted(&mut self.days, lot.counts_at(), day_of(lot.closed_at), lot.notional);
         }
         let first = day_of(keep_from) - (WINDOW_DAYS as i64 - 1);
         self.days.retain(|day| day.day >= first);
+        early
     }
 
     /// The volume counted on each day of the window that ends on `now`'s day, oldest first, every lot
@@ -133,6 +152,18 @@ impl AccountVolume {
         let closing = self.closing.iter().filter(|lot| lot.counts_at() <= now);
         closing.for_each(|lot| add(day_of(lot.closed_at), lot.notional));
         window
+    }
+
+    /// `window` less the lots in `early` whose time had not come by `at`: what `window(at)` was before a
+    /// settlement counted them. A day's volume that saturated stays saturated.
+    pub(crate) fn without_early(window: &mut [Fixed; WINDOW_DAYS], at: Millis, early: &[EarlyCount]) {
+        let first = day_of(at) - (WINDOW_DAYS as i64 - 1);
+        for lot in early.iter().filter(|lot| lot.due > at) {
+            let slot = usize::try_from(lot.day - first).ok().and_then(|slot| window.get_mut(slot));
+            if let Some(slot) = slot.filter(|slot| slot.raw() < i128::MAX) {
+                *slot = (*slot - lot.notional).max(Fixed::ZERO);
+            }
+        }
     }
 
     /// The notional whose time to count has not come by `now`.
@@ -257,13 +288,22 @@ impl Engine {
         let closing = if closes { mark.qty.min(mark.held.abs()) } else { Fixed::ZERO };
         let opening = mark.qty - closing;
         let ordered = self.protocol_version >= ProtocolVersion::V61;
+        let after = self.settles_ahead_of_boundary().then_some(self.now);
         let volume = self.volumes.entry(exec.account).or_default();
-        volume.settle(now, keep_from);
+        let early = volume.settle(now, keep_from, after);
+        if !early.is_empty() {
+            self.early_counts.entry(exec.account).or_default().extend(early);
+        }
         let matured = closing - volume.consume_opening(exec.market, closing);
         let leg = closing - closed_matched;
         if exec.liquidation {
             // A close-out is no round trip and opens nothing.
             count(&mut volume.days, day_of(now), usd(matured));
+            // It counts at the command's stamp, after the boundary a catch-up is at.
+            if after.is_some_and(|after| now > after) && usd(matured).is_positive() {
+                let lot = EarlyCount { due: now, day: day_of(now), notional: usd(matured) };
+                self.early_counts.entry(exec.account).or_default().push(lot);
+            }
         } else if leg.is_positive() || matured.is_positive() {
             let (market, side, index, notional) = (exec.market, exec.side, mark.index, usd(matured));
             // What the close matched as a round trip was opened within the horizon, so pending: every
@@ -310,6 +350,12 @@ impl Engine {
         if self.protocol_version >= ProtocolVersion::V68 { self.now } else { now }
     }
 
+    /// Whether a settlement records the lots it counts after the clock `now` stands at (`EarlyCount`):
+    /// from `V69`.
+    fn settles_ahead_of_boundary(&self) -> bool {
+        self.protocol_version >= ProtocolVersion::V69
+    }
+
     /// Scales `account`'s opening lots in `market` by a split of `old` units into `new`, each rounded
     /// toward zero as the position is, so they never exceed it; their notional keeps its value. The book
     /// first counts every lot whose time has come, so a matured lot rounded to nothing still counts.
@@ -319,8 +365,12 @@ impl Engine {
         }
         let now = self.hold_clock_time();
         let keep_from = self.volume_keep_from(now);
+        let after = self.settles_ahead_of_boundary().then_some(self.now);
         let volume = self.volumes.get_mut(&account).expect("checked above");
-        volume.settle(now, keep_from);
+        let early = volume.settle(now, keep_from, after);
+        if !early.is_empty() {
+            self.early_counts.entry(account).or_default().extend(early);
+        }
         let Some(lots) = volume.opening.get_mut(&market) else { return };
         // A lot is at most its position, whose scaled quantity the split checked is in range.
         lots.iter_mut().for_each(|lot| lot.qty = Fixed::from_raw(lot.qty.raw() * i128::from(new) / i128::from(old)));
