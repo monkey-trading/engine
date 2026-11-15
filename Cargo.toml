@@ -112,7 +112,7 @@ overflow-checks = true
 
 [profile.dev]
 opt-level = 2
-lto = "thin"
+lto = false
 # File and line numbers in backtraces, without the full debug info that every test binary would
 # otherwise carry through its link.
 debug = "line-tables-only"
