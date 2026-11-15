@@ -274,7 +274,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `src/liveness/operator/assess.rs` how members' statuses weigh against the log;
   `src/liveness/operator/limits.rs` its pure limits (an exempt read's hold, the lag, refused rules);
   `src/liveness/operator/tests.rs` drives it against fake members, chain and sequencer, with
-  `tests/assess.rs`, `tests/members.rs` (every member but this node's own is asked) and
+  `tests/assess.rs`, `tests/members.rs` (every member but this node's own is asked),
+  `tests/exemptions.rs` (reads under which no promotion can pass, and how long each holds),
+  `tests/copies.rs` (a reopened predecessor beside its successor) and
   `tests/rounds.rs` (the vault's signer before any exemption, a retired signer, confirmations per set,
   rounds while reads fail, a full set read within an interval, a former holder's tail, a promoted
   operator's blocked reads, the incumbent beside an orphaned holder)
@@ -316,7 +318,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   opened first, the rotation check, the checkpoint setup with the vault's anchor checked against its
   replica, the MONKEY budget, the posted log heads, the turn's generation, and last the trusted time
   sample; `src/node/ready/tests.rs` starts a node from a replica with every chain endpoint and time
-  server unreachable, and refuses an altered certificate store before any chain read. Between the
+  server unreachable, and refuses an altered certificate store before any chain read, with
+  `tests/promoted.rs` for a promoted member's start from its copy and its staking check. Between the
   confirmation and the first command, a start from the replica then runs: the certificate store
   and the keys the handover sealed, attested (one quote); the marks cache opened empty on its seed
   file (no import: `src/node/marks.rs`); the replica finished as the log (`LiveReplay::into_log`, its
