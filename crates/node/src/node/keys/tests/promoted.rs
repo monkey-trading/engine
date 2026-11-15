@@ -14,7 +14,7 @@ async fn a_promoted_nodes_release_watch_waits_for_its_promotion_to_be_final() {
     let vault = Vault::naming(CurrentRelease { id: [0x99; 32], generation: 3 });
     let (signer, promoted) = (vault.signer.clone(), AccountId([0x5e; 20]));
     let (store, every) = (sealed_store("keys-watch-promoted", sealed, 2), Duration::from_secs(60));
-    let watch = crate::node::liveness::watch_release(vault, (store, Some(promoted)), every, untrusted());
+    let watch = crate::node::liveness::watch_release(vault, (store, Some(promoted)), every, untrusted(), None);
     let watch = tokio::spawn(watch);
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the watch paged before the promotion was final");
