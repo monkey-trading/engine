@@ -195,8 +195,13 @@ async fn a_promoted_member_keeps_its_copy_and_extends_the_vaults_latest_under_it
     tokio::pin!(running);
     tokio::select! {
         outcome = &mut running => panic!("the promoted node stopped before its first command: {outcome:?}"),
-        () = crate::test_support::wait_for("the first command", async {
-            while metrics.commands.get() == 0 {
+        () = crate::test_support::wait_for("the first command in the log", async {
+            let follows = |log: &std::path::Path| {
+                log_entries(log)
+                    .into_iter()
+                    .any(|entry| matches!(entry, LogEntry::Command(command) if command.sequenced.seq == last + 1))
+            };
+            while !follows(&log) {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         }) => {}

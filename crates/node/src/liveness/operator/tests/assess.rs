@@ -10,7 +10,7 @@ fn the_assessment_confirms_matching_copies_and_names_longer_or_conflicting_ones(
     let prefix_at = |seq| prefixes.get(&seq).copied();
     let tip = Head { seq: 10, link: link(10) };
     let none = BTreeSet::new();
-    let status = |durable: Head, seen: Option<Head>| Status { epoch: 1, durable, sealer: OWN, seen };
+    let status = |durable: Head, seen: Option<Head>| Status { epoch: 1, durable: Some(durable), sealer: OWN, seen };
     let at = |seq| Head { seq, link: link(seq) };
     let assessment =
         assess(&[(account(1), status(at(8), None)), (account(2), status(at(10), None))], prefix_at, tip, (OWN, &none));
@@ -31,7 +31,7 @@ fn the_assessment_confirms_matching_copies_and_names_longer_or_conflicting_ones(
     // A failed operator's tail its own earlier key sealed, held by a member that held the turn, at
     // another link or past the tip, is no copy of this key; the same at this key's seal is a second
     // history.
-    let foreign = |durable: Head| Status { epoch: 1, durable, sealer: account(7), seen: None };
+    let foreign = |durable: Head| Status { epoch: 1, durable: Some(durable), sealer: account(7), seen: None };
     let held = BTreeSet::from([account(1), account(2)]);
     let both = [(account(1), foreign(forked)), (account(2), foreign(at(12)))];
     let assessment = assess(&both, prefix_at, tip, (OWN, &held));

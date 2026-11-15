@@ -7,7 +7,8 @@
 //! it then never sees paid, and is killed. It checks that the callers promote the next member, whose
 //! node starts from its copy under its standby key and fills an order within its start budget, printed,
 //! of the promotion and within `(heartbeatMisses + 1) x heartbeatInterval` plus that budget of A's
-//! last head; that its first checkpoint lands once the promotion is final; that it reissues A's
+//! last head; that its first checkpoint lands once the promotion is final; that it vouches for its
+//! replacement standby key with the signer key it now holds; that it reissues A's
 //! authorization under the promotion's epoch, which pays once while A's reverts; and that its log
 //! replays across the change of signer.
 
@@ -234,6 +235,16 @@ async fn run() -> anyhow::Result<()> {
     })
     .await?;
     println!("PASS: {}'s first checkpoint landed once the promotion was final", seats[p].name);
+
+    // The promotion consumed its standby key: it vouches for the replacement with the signer key it
+    // now holds, which a set of no other member needs, before asking another member.
+    let written = seats[p].dir.join("keys").join("standby-registration.json");
+    until("the promoted member's own vouch", Duration::from_secs(150), &mut seats, async || {
+        let file: serde_json::Value = serde_json::from_slice(&std::fs::read(&written).ok()?).ok()?;
+        (file["voucher"].as_str()?.parse::<AccountId>().ok()? == signer).then_some(())
+    })
+    .await?;
+    println!("PASS: {} vouched for its replacement standby key with its own signer key", seats[p].name);
 
     // A's authorization is reissued under the promotion's epoch: the reissue pays once, A's reverts.
     // The stream replays the log from its start, A's authorization first: the reissue follows it.

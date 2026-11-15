@@ -2,7 +2,7 @@
 //! log, and the chain's and enclaves' shared clock.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -27,10 +27,14 @@ use crate::sequencer::Request;
 use crate::tee::EnclaveKey;
 use crate::trusted_time::{Sample, TrustedClock};
 
-/// The operator's running parts: its poster, its rule, its gate and hold, and the members' links.
+/// The operator's running parts: its poster, its rule, its gate, the hold its sequencer would publish,
+/// and the members' links.
 pub(super) struct Rig {
     pub gate: Gate,
-    pub hold: watch::Sender<Hold>,
+    /// The sequencer's benchmark-sync hold, which the leg sets.
+    pub benchmark: watch::Sender<bool>,
+    /// The hold the poster reads, as the sequencer publishes it (`publish_hold`).
+    pub hold: watch::Receiver<Hold>,
     released: watch::Sender<Released>,
     tip: watch::Sender<Head>,
     relayer: Address,
@@ -43,13 +47,15 @@ pub(super) struct Rig {
 pub(super) struct Log(Arc<Mutex<BTreeMap<u64, Released>>>);
 
 impl Rig {
-    /// Starts the operator's poster and rule for `signing`, its keys sealed in `keys`, and the other
-    /// members' links.
+    /// Starts the operator's poster and rule for `signing`, its keys sealed in `keys`, under trusted
+    /// time from `samples` of `clock`, and the other members' links.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn start(
         cfg: &NodeConfig,
         signing: &Arc<EnclaveKey>,
         (domain, keys): (LivenessDomain, (B256, u64)),
         trusted: TrustedClock,
+        (samples, clock): (watch::Receiver<Option<Sample>>, Arc<dyn Clock>),
         log: &Log,
         members: &[Member],
         operator: usize,
@@ -63,14 +69,15 @@ impl Rig {
         let (tip, tip_rx) = watch::channel(Head::default());
         let (released, released_rx) = watch::channel(Released::default());
         let (signing_tx, signing_rx) = watch::channel(Signing::Nothing);
-        let (hold, hold_rx) = watch::channel(Hold::Live);
+        let (hold_tx, hold) = watch::channel(Hold::Live);
+        let (benchmark, benchmark_rx) = watch::channel(false);
         let (signed_tx, signed) = watch::channel(None);
         let gate = Gate::closed();
         let heartbeat = Heartbeat {
             keys: Some(Arc::new(move || keys)),
             signing: signing_rx,
             released: released_rx.clone(),
-            hold: hold_rx,
+            hold: hold.clone(),
             gate: gate.clone(),
             signed: signed_tx,
             trusted: trusted.clone(),
@@ -89,16 +96,18 @@ impl Rig {
             stall_intervals: 2,
             heartbeat: Some(heartbeat),
         };
+        // The sequencer's hold, from its own time gate fed the samples, checked at each tick.
+        let mut tasks = vec![tokio::spawn(publish_hold(samples, clock, benchmark_rx, hold_tx))];
         // The sequencer's prefix ring, as a fake answering from the synthetic log.
         let (sequencer, mut requests) = mpsc::channel(64);
         let prefixes = log.clone();
-        let mut tasks = vec![tokio::spawn(async move {
+        tasks.push(tokio::spawn(async move {
             while let Some(request) = requests.recv().await {
                 if let Request::PrefixAt { seq, reply } = request {
                     let _ = reply.send(prefixes.0.lock().unwrap().get(&seq).map(|released| released.head.link));
                 }
             }
-        })];
+        }));
         let rule = Operator {
             chain: crate::custody::StandbyReader::connect_named(&cfg.custody, domain.log_heads, "liveness").unwrap(),
             asking: Tcp,
@@ -152,7 +161,7 @@ impl Rig {
         }));
         let (sequencer_tx, _) = mpsc::channel::<Request>(1);
         let poster = tokio::spawn(poster.run(tip_rx, sequencer_tx));
-        Self { gate, hold, released, tip, relayer: heads_cfg.relayer, poster, tasks }
+        Self { gate, benchmark, hold, released, tip, relayer: heads_cfg.relayer, poster, tasks }
     }
 
     /// Takes the operator's relayer's funds, so its posts fail.
@@ -202,18 +211,51 @@ pub(super) async fn warp(chain: &Chain, clock: &Shifted, at: u64) {
     clock.0.store(i64::try_from(at).unwrap() * 1000 - now, Ordering::SeqCst);
 }
 
-/// A trusted time sample of `clock` every second, a second either side.
-pub(super) fn sampling(clock: Arc<Shifted>) -> watch::Sender<Option<Sample>> {
+/// A trusted time sample of `clock` every second, a second either side, but while the switch it
+/// returns is set: then no enclave gets one, as through a trusted-time halt.
+pub(super) fn sampling(clock: Arc<Shifted>) -> (watch::Sender<Option<Sample>>, Arc<AtomicBool>) {
     let (samples, _) = watch::channel(None);
-    let sender = samples.clone();
+    let paused = Arc::new(AtomicBool::new(false));
+    let (sender, pausing) = (samples.clone(), paused.clone());
     tokio::spawn(async move {
         loop {
-            let now = clock.now_ms();
-            sender.send_replace(Some(Sample { at: Instant::now(), earliest_ms: now - 1_000, latest_ms: now + 1_000 }));
+            if !pausing.load(Ordering::SeqCst) {
+                let now = clock.now_ms();
+                let sample = Sample { at: Instant::now(), earliest_ms: now - 1_000, latest_ms: now + 1_000 };
+                sender.send_replace(Some(sample));
+            }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
-    samples
+    (samples, paused)
+}
+
+/// The sequencer's hold as `Sequencer::publish_hold` gives it, each 250 ms tick: a trusted-time halt
+/// while its time gate, fed `samples`, refuses a stamp of `clock` for want of a sample within the
+/// grace, else a benchmark-sync hold while `benchmark` is set, else none.
+async fn publish_hold(
+    mut samples: watch::Receiver<Option<Sample>>,
+    clock: Arc<dyn Clock>,
+    benchmark: watch::Receiver<bool>,
+    hold: watch::Sender<Hold>,
+) {
+    let mut time = crate::trusted_time::TimeGate::new(Duration::from_secs(10), Instant::now());
+    loop {
+        if let Some(sample) = *samples.borrow_and_update() {
+            time.update(sample);
+        }
+        let host_ms = clock.now_ms();
+        time.observe(host_ms, host_ms, Instant::now());
+        let held = if time.halted() {
+            Hold::TimeHalt
+        } else if *benchmark.borrow() {
+            Hold::BenchmarkSync
+        } else {
+            Hold::Live
+        };
+        hold.send_if_modified(|was| std::mem::replace(was, held) != held);
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
 }
 
 /// The node config the scenario's parts build from: the chain's quorum, its RPC as the checkpoint

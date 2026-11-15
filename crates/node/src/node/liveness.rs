@@ -133,7 +133,7 @@ pub(super) fn start(
     // A serving candidate keeps a promotable standby key for its release: a promotion consumed the
     // last one, and a release move, as an upgrade by `--predecessor` makes, voids it.
     if crate::node::member::standby::applies(cfg) {
-        let renewal = crate::node::member::standby::renewal::Renewal::new(cfg, started.keys)?;
+        let renewal = crate::node::member::standby::renewal::Renewal::new(cfg, started.keys, vouching.clone())?;
         let trusted = trusted.clone();
         tasks.spawn(async move { ("standby renewal", renewal.run(trusted).await) });
     }

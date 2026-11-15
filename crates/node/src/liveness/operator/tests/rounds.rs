@@ -57,7 +57,8 @@ async fn a_former_members_confirmation_counts_for_no_later_set() {
     assert_eq!(*rig.signing.borrow(), Signing::Nothing, "the former member's confirmation still signs");
     assert_eq!(rig.gate.confirmed(), 0, "a checkpoint could sign at the former member's seq");
     assert!(!rig.gate.sequences(), "nothing the new set confirmed: commands wait");
-    let status = Status { epoch: 1, durable: Head { seq: 10, link: link(10) }, sealer: AccountId([0; 20]), seen: None };
+    let status =
+        Status { epoch: 1, durable: Some(Head { seq: 10, link: link(10) }), sealer: AccountId([0; 20]), seen: None };
     rig.members.0.lock().unwrap().insert("member:2".into(), (AccountId([NEWCOMER; 20]), newcomer, Some(status)));
     settle().await;
     let Signing::Confirmed(signable) = *rig.signing.borrow() else { panic!("the new set's member confirmed") };
@@ -168,8 +169,12 @@ async fn a_former_holders_tail_is_exempt_only_under_its_own_key() {
             chain.held = vec![Address::repeat_byte(MEMBER)];
             chain.holders = vec![(own_key, Address::repeat_byte(MEMBER)), (others_key, Address::repeat_byte(0xc3))];
         });
-        let status =
-            Status { epoch: 1, durable: Head { seq: 12, link: link(12) }, sealer: AccountId(sealer.0.0), seen: None };
+        let status = Status {
+            epoch: 1,
+            durable: Some(Head { seq: 12, link: link(12) }),
+            sealer: AccountId(sealer.0.0),
+            seen: None,
+        };
         rig.members.0.lock().unwrap().get_mut("member:1").unwrap().2 = Some(status);
         settle().await;
         assert_eq!(rig.gate.start_checked(), exempt, "{case}");
@@ -204,7 +209,8 @@ async fn the_returning_incumbent_sequences_beside_the_silent_orphaned_holder() {
     let follower_key = Arc::new(EnclaveKey::generate());
     let promotable = Address::from(follower_key.address());
     rig.chain.set(|chain| chain.members.push((Address::repeat_byte(FOLLOWER), "member:2".into(), promotable)));
-    let status = Status { epoch: 1, durable: Head { seq: 10, link: link(10) }, sealer: AccountId([0; 20]), seen: None };
+    let status =
+        Status { epoch: 1, durable: Some(Head { seq: 10, link: link(10) }), sealer: AccountId([0; 20]), seen: None };
     rig.members.0.lock().unwrap().insert("member:2".into(), (AccountId([FOLLOWER; 20]), follower_key, Some(status)));
     settle().await;
     assert!(rig.gate.start_checked() && rig.gate.sequences(), "the silent orphaned holder held the incumbent up");

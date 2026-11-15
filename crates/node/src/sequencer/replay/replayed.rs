@@ -78,3 +78,12 @@ pub struct Replayed {
     /// its base with no head posted: the stall alarm's anchor while no head of this key is posted.
     pub anchor_ts: Option<Millis>,
 }
+
+impl Replayed {
+    /// The root of the checkpoint at `seq`: an entry the log holds, or the vault's checkpoint the
+    /// recovery anchored at without one (#595), whose root the replayed state reproduced there.
+    pub(crate) fn checkpoint_root(&self, seq: u64) -> Option<engine_core::eip712::B256> {
+        let anchor = self.recovery_anchor_work.as_ref().map(|work| &work.checkpoint).filter(|cp| cp.seq == seq);
+        self.checkpoint_roots.get(&seq).copied().or_else(|| anchor.and_then(|cp| cp.root.parse().ok()))
+    }
+}

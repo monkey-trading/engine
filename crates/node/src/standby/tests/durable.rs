@@ -26,6 +26,7 @@ async fn a_stint_records_what_the_copy_appended_as_durable_with_its_sealer() {
     let (last, head) = follower.tip().unwrap();
     assert!(last > tip, "the stint took the operator's later commands");
     let status = link.status(1).unwrap();
-    assert_eq!((status.durable.seq, status.durable.link), (last, head), "durable through the copy's last command");
+    let durable = status.durable.expect("a durable head");
+    assert_eq!((durable.seq, durable.link), (last, head), "durable through the copy's last command");
     assert_eq!(status.sealer, enclave(), "the key that sealed it");
 }

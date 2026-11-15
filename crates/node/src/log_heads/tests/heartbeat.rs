@@ -222,6 +222,36 @@ async fn a_live_head_waits_for_a_signing_time_newer_than_the_chains() {
     drive.stop().await;
 }
 
+/// Two copies of one key: a restored copy beside the holder, with an identical prefix and open reads,
+/// freezes under the heartbeat at its first read after the holder's conflicting head is posted, at a seq
+/// it holds under another link or past its tip, including when that head's inclusion is delayed past
+/// the copy's own heads.
+#[tokio::test(start_paused = true)]
+async fn a_restored_copy_freezes_at_its_first_read_of_the_holders_conflicting_head() {
+    let holders = [
+        ("another link at the copy's tip", Head { seq: 8, link: B256::repeat_byte(0xee) }, false, "foreign"),
+        ("past the copy's tip", Head { seq: 12, link: B256::repeat_byte(0xee) }, false, "overtakes"),
+        ("included after the copy's own head", Head { seq: 8, link: B256::repeat_byte(0xee) }, true, "foreign"),
+    ];
+    for (case, holder, delayed, refusal) in holders {
+        let chain = FakeChain::new(None);
+        chain.name_turn(turn(GENERATION));
+        let drive = spawn(chain.clone(), Some((RELEASE, GENERATION)));
+        drive.release(8);
+        drive.confirm(8, 0xc1);
+        drive.clock.advance(Duration::from_secs(1));
+        if delayed {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            assert_eq!(chain.posts_v2().last().map(|(_, head)| head.head), Some(at(8)), "{case}: posted first");
+        }
+        chain.set_posted(holder);
+        // The poster reads every retry (1 s): the freeze comes at the first read after the post.
+        let ended = drive.ended(Duration::from_secs(2)).await.unwrap_or_else(|| panic!("{case}: did not freeze"));
+        let error = format!("{:#}", ended.expect_err("a freeze stops the poster"));
+        assert!(error.contains(refusal), "{case}: {error}");
+    }
+}
+
 // ── Helpers ──
 
 impl Drive {
@@ -235,6 +265,12 @@ impl Drive {
     fn confirm(&self, seq: u64, member: u8) {
         let released = Released { head: at(seq), stamp: stamp(seq) };
         self.signing.send_replace(Signing::Confirmed(Signable { released, confirmer: Address::repeat_byte(member) }));
+    }
+
+    /// How the poster ended within `within`, its inputs kept open meanwhile; `None` if it ran on.
+    async fn ended(self, within: Duration) -> Option<anyhow::Result<()>> {
+        let Drive { task, released: _released, signing: _signing, hold: _hold, tip: _tip, .. } = self;
+        tokio::time::timeout(within, task).await.ok().map(|joined| joined.unwrap())
     }
 
     /// Stops the poster by dropping its released-head watch.

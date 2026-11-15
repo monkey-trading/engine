@@ -4,9 +4,10 @@
 //!   the member's promotable standby key, names this signer epoch, and holds a link this log holds at
 //!   that seq, as that member's confirmation;
 //! - lets the poster sign at the newest confirmed seq only (`Signing::Confirmed`);
-//! - holds sequencing until a start check passes: a member answered, or the log is empty at genesis,
-//!   and none holds a seq past this log or a link that conflicts with it, which raises Critical
-//!   `liveness_start_refused` naming the range;
+//! - holds sequencing until a start check passes: a member whose copy holds a command answered, or,
+//!   with this log empty at genesis, any member did, an empty copy's included, and none holds a seq
+//!   past this log or a link that conflicts with it, which raises Critical `liveness_start_refused`
+//!   naming the range;
 //! - stops taking commands once the log has run more than one heartbeat interval of sequenced time from
 //!   the first command past the newest confirmation (Critical `liveness_unconfirmed`);
 //! - feeds the fence the read's `promotionDueAt`, which a separate tick checks against trusted time.
@@ -69,8 +70,10 @@ pub(crate) enum Signing {
 /// What one round of statuses shows against this log.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Assessment {
-    /// How many members answered with a verified status.
+    /// How many members answered with a verified status of a copy holding a command.
     pub answered: usize,
+    /// How many answered with a verified status of a copy holding none.
+    pub empty: usize,
     /// The newest seq a member's durable copy holds with this log's link there, and that member.
     pub confirmed: Option<(u64, AccountId)>,
     /// The highest seq a member holds past this log's tip, and that member.
@@ -226,9 +229,10 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             // Every other member, the turn's named one included: past a boundary that is the successor.
             let others: Vec<Member> = listed.into_iter().filter(|member| member.admin_key != self.admin).collect();
             if others.is_empty() {
-                // Slots may be witnessed already: the next turn's count can pass at its boundary.
+                // No member can be promoted before the boundary, nor past it before `E`: slots may be
+                // witnessed already, so the next turn's count can pass from the later of the two.
                 applied = None;
-                self.exempt(&mut lock(&state), next_boundary(view.time));
+                self.exempt(&mut lock(&state), next_boundary(view.time).max(view.due_at));
                 continue;
             }
             let scope = (view.epoch, schedule, named.set);
@@ -324,9 +328,8 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         episodes: &mut Episodes,
     ) {
         let tip = *self.released.borrow();
-        // An empty log holds nothing a second copy could have extended past what the chain's posted
-        // heads and checkpoints pin, and startup refuses a log they are not on: at genesis it starts
-        // unconfirmed, and its first commands are what the members then confirm.
+        // An empty log holds nothing to confirm: at genesis it starts unconfirmed once a member answers,
+        // an empty copy's included, and its first commands are what the members then confirm.
         let genesis = tip.head.link == B256::ZERO;
         if let Some((seq, member)) = assessment.conflict {
             error!(alert = "liveness_member_conflict", seq, %member,
@@ -420,9 +423,9 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         })
     }
 
-    /// Opens sequencing once a member answered, or at `genesis` with no answer, and none holds more
-    /// than this log or a conflicting link; otherwise raises Critical `liveness_start_refused` naming the
-    /// range, once.
+    /// Opens sequencing once a member holding a command answered, or at `genesis` any member, and none
+    /// holds more than this log or a conflicting link; otherwise raises Critical `liveness_start_refused`
+    /// naming the range, once.
     fn start_check(&self, assessment: &Assessment, tip: u64, genesis: bool, episodes: &mut Episodes) {
         let refusal = match (assessment.beyond, assessment.conflict) {
             (Some((seq, member)), _) => Some(format!(
@@ -430,7 +433,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                 tip + 1
             )),
             (None, Some((seq, member))) => Some(format!("member {member} holds another link at seq {seq}")),
-            (None, None) if assessment.answered == 0 && !genesis => None,
+            (None, None) if assessment.answered == 0 && !(genesis && assessment.empty > 0) => None,
             (None, None) => {
                 self.gate.checked(true);
                 info!(answered = assessment.answered, tip, "the start check passed: sequencing");

@@ -8,8 +8,9 @@
 //! giving a later `E` reopens it, while the vault still names this enclave's key.
 //!
 //! A read under which no promotion can pass holds only until a drawn turn could let one: with a set of
-//! no other member, until the next turn boundary after its block; with no turn naming the operator, or
-//! no schedule, until `2 x DELTA` past it, since no slot can be witnessed before a turn names it.
+//! no other member, until the later of the next turn boundary after its block and `E`; with no turn
+//! naming the operator, or no schedule, until `2 x DELTA` past that boundary, since no slot can be
+//! witnessed before a turn names it.
 
 use engine_core::types::AccountId;
 
@@ -40,8 +41,8 @@ impl Fence {
         self.replaced |= signer != key && signer != AccountId([0; 20]);
     }
 
-    /// Takes a read under which no promotion can pass before `until` seconds, the next turn boundary.
-    /// It leaves a vault that named another key as it was.
+    /// Takes a read under which no promotion can pass before `until` seconds, at or past the next turn
+    /// boundary. It leaves a vault that named another key as it was.
     pub(crate) fn exempt(&mut self, until: u64) {
         self.due_ms = Some(until.saturating_mul(1000));
     }

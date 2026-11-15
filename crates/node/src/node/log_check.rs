@@ -57,7 +57,7 @@ pub(crate) fn after_promotion(
     let replayed = &log.replayed;
     let Some(store) = store.filter(|_| applies(&replayed.engine)) else { return Ok(()) };
     let link = replayed.prefix_ring.prefix_at(checkpoint_seq);
-    let (Some(link), Some(root)) = (link, replayed.checkpoint_roots.get(&checkpoint_seq).copied()) else {
+    let (Some(link), Some(root)) = (link, replayed.checkpoint_root(checkpoint_seq)) else {
         return Ok(());
     };
     let head = VerifiedHead { seq: checkpoint_seq, link, root };

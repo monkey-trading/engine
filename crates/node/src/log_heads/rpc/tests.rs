@@ -231,6 +231,43 @@ async fn post_sends_waits_then_reconciles_a_pending_send_by_its_hash() {
     assert_eq!((sent.len(), posted_seq(&sent[2])), (3, 6), "the reserved head's call is rebroadcast");
 }
 
+/// A v2 head is fresh for less than the heartbeat interval a pending send waits out, so once the wait
+/// is over — at once after a restart — the head now being sent replaces a pending heartbeat the
+/// endpoint still knows at its nonce (a known pending v1 head is rebroadcast, as above).
+#[tokio::test]
+async fn a_pending_heartbeat_is_replaced_at_its_nonce_by_the_head_now_being_sent() {
+    let dir = crate::test_support::scratch_dir("log-head-heartbeat-replaced");
+    std::fs::create_dir_all(&dir).unwrap();
+    let endpoint = Endpoint::start(dir.join("log-head-submission.json")).await;
+    let signature = format!("0x{}", hex::encode([7u8; 65]));
+    let heartbeat = |seq: u64, signed_at: u64| crate::log_heads::v2::HeadV2 {
+        head: Head { seq, link: B256::from([seq as u8; 32]) },
+        parent: None,
+        turn: 20_400,
+        position: 0,
+        release: B256::repeat_byte(0x33),
+        generation: 5,
+        stamp: 1_800_000_000_000,
+        signed_at,
+        hold: crate::log_heads::v2::Hold::Live,
+        confirmer: Address::ZERO,
+        block_number: 0,
+        block_hash: B256::ZERO,
+    };
+    let (first, second) = (heartbeat(5, 1_800_000_000_100), heartbeat(6, 1_800_000_030_100));
+    let rpc = crate::log_heads::tests::heads_rpc(&endpoint.url, &dir);
+    assert_eq!(rpc.post_v2(1, &first, &signature).await.unwrap(), PostOutcome::Accepted);
+    // The endpoint still holds the first send; a restart reconciles it at once.
+    let restarted = crate::log_heads::tests::heads_rpc(&endpoint.url, &dir);
+    assert_eq!(restarted.post_v2(1, &second, &signature).await.unwrap(), PostOutcome::Accepted);
+    let sent = endpoint.sent();
+    assert_eq!((sent.len(), sent[1]["nonce"].as_str()), (2, Some("0x7")), "sent again at the same nonce");
+    let input = sent[1].get("input").or_else(|| sent[1].get("data")).and_then(Value::as_str).unwrap();
+    assert_eq!(input, format!("0x{}", hex::encode(second.calldata(&signature).unwrap())), "the fresh head's call");
+    let record: Value = serde_json::from_slice(&std::fs::read(dir.join("log-head-submission.json")).unwrap()).unwrap();
+    assert_eq!(record["head"][1]["seq"], 6, "the record names the call now in flight: {record}");
+}
+
 // ── Helpers ──
 
 /// A loopback endpoint for the post path's RPCs, with the relayer's count at seven.

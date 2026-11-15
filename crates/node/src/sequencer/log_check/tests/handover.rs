@@ -5,8 +5,9 @@
 
 use super::*;
 
-use crate::log::CheckpointDomain;
+use crate::log::{CheckpointDomain, CheckpointParent, SegmentedLog};
 use crate::tee::keys::Head;
+use crate::test_support::SEGMENT_COMMANDS;
 
 #[test]
 fn a_start_after_a_handover_seals_its_check_only_while_the_gate_applies() {
@@ -42,6 +43,41 @@ fn a_promoted_start_seals_its_check_only_when_another_member_sequenced_the_range
     node.seq.sequence(off).unwrap().expect("admitted");
     node.seq.flush().unwrap();
     assert_eq!(promoted(&node, other().admin_key, fixed, "ungated"), None, "sealed with the gate off");
+}
+
+/// A promotion can fix a checkpoint the vault accepted whose entry no member received: the promoted
+/// start anchors at its own state there, and that root is the one its check seals and a restart's log
+/// check restores the verified head against.
+#[test]
+fn a_promoted_start_checks_through_a_fixed_checkpoint_whose_entry_its_log_lacks() {
+    let mut node = Node::start("log-check-after-promotion-unheld", &[other()]);
+    node.approve(1);
+    node.take_turn();
+    node.seq.checkpoint().unwrap();
+    node.seq.flush().unwrap();
+    let fixed = node.last_checkpoint();
+    let copy = scratch_dir("log-check-promoted-unheld-copy");
+    let (manifest, _) = tokio::sync::watch::channel(Manifest::default());
+    let mut writer = SegmentedLog::open(&copy, |_| Ok(())).unwrap().into_writer(SEGMENT_COMMANDS, manifest).unwrap();
+    for entry in log_entries(&node.dir) {
+        if !matches!(&entry, LogEntry::Checkpoint(checkpoint) if checkpoint.seq == fixed.seq) {
+            writer.append(&entry).unwrap();
+        }
+    }
+    writer.sync().unwrap();
+    let parent = CheckpointParent { has_checkpoint: true, seq: fixed.seq, root: fixed.root.parse().unwrap() };
+    let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) };
+    let signer = AccountId(EnclaveKey::test_key().address());
+    let log = Sequencer::read_log_for_recovery(&copy, Some(domain), Some(signer), Some(parent), |_| {}).unwrap();
+    let sealer = MockSealer { launch_digest: [0x48; 48] };
+    let dir = scratch_dir("log-check-promoted-unheld-keys");
+    let store = Arc::new(KeyStore::create(&dir, &sealer, CONFIG, 9, KeySet::generate().unwrap()).unwrap());
+    crate::node::log_check::after_promotion(Some(&store), other().admin_key, &log, fixed.seq).unwrap();
+    let head = node.checkpoint_head(fixed.seq);
+    assert_eq!(store.keys().log_check, Some(head), "the promotion's check verified the log through it");
+    let setup = LogCheckSetup { store, due: tokio::sync::watch::channel(None).0 };
+    let restored = LogCheck::recovered(Some(setup), other().admin_key, &log.replayed);
+    assert_eq!(restored.verified, Some(head), "a restart restores the head the check sealed");
 }
 
 // ── Helpers ──

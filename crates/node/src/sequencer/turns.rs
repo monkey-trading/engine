@@ -114,7 +114,7 @@ impl Sequencer {
             other => warn!(turn = turn.turn, "the engine did not record this node's turn: {other:?}"),
         }
         match self.engine.last_seq() {
-            Some(seq) if !events.is_empty() => self.log_check_taken(seq, &events),
+            Some(seq) if !events.is_empty() => self.log_check_taken(seq),
             _ => Ok(()),
         }
     }

@@ -32,7 +32,7 @@ use crate::node::KeyStart;
 use crate::node::member::standby::registration::{REGISTRATION, remove_registration};
 use crate::standby::Followed;
 use crate::standby_key::chain::{Promotion, StandbyChain, StandbyDomain, StandbyState, may_vouch, standby_state};
-use crate::standby_key::vouch::{StandbyRegistration, VouchReply, VouchRequest, request};
+use crate::standby_key::vouch::{Service, StandbyRegistration, VouchReply, VouchRequest, request};
 use crate::standby_key::{StandbyKeys, StandbyStart};
 use crate::tee::Attestor;
 use crate::tee::certificates::CertificateStore;
@@ -67,6 +67,9 @@ pub(crate) struct Standby {
     /// The standby key's certificate store, with `[api.tls.acme]` (`certificate`), and the node's
     /// metrics, which its certificate's gauges report in.
     certificates: Option<(Arc<CertificateStore>, Arc<Metrics>)>,
+    /// A serving operator's own vouching with the vault's signer key (`renewal`): a set of no other
+    /// member has no one else to ask.
+    vouching: Option<Arc<Service<StandbyReader>>>,
 }
 
 /// Whether a member runs the rule's standby side: rotation on, `[log_heads]`, EVM custody, sealing.
@@ -170,6 +173,7 @@ impl Standby {
             samples: watch::channel(None).0,
             answering,
             certificates: certificate::store(cfg, start).map(|store| (store, metrics)),
+            vouching: None,
         };
         let samples = standby.samples.subscribe();
         standby.spawn(cfg, samples)?;
@@ -381,10 +385,19 @@ impl Standby {
         }
     }
 
-    /// The first usable registration for `request`: a vouch from `operator`'s API, then from each
-    /// member of the turn's set but this one, passing over any that does not recover to its voucher or
-    /// whose voucher the schedule does not take (`usable`).
+    /// The first usable registration for `request`: a serving operator's own vouch, a vouch from
+    /// `operator`'s API, then from each member of the turn's set but this one, passing over any that
+    /// does not recover to its voucher or whose voucher the schedule does not take (`usable`).
     async fn vouched(&self, request: &VouchRequest, operator: Option<&Followed>) -> Option<StandbyRegistration> {
+        if let Some(own) = &self.vouching {
+            match own.vouch(request).await.map(|reply| self.usable(request, reply)) {
+                Ok(usable) => match usable.await {
+                    Ok(registration) => return Some(registration),
+                    Err(e) => warn!("this operator's own vouch is unusable: {e:#}"),
+                },
+                Err(e) => warn!("this operator did not vouch for its standby key: {e:#}"),
+            }
+        }
         if let Some(operator) = operator {
             match vouch_from_api(operator, request).await.map(|reply| self.usable(request, reply)) {
                 Ok(usable) => match usable.await {

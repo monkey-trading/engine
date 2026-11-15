@@ -244,6 +244,8 @@ async fn a_copy_lacking_the_vaults_checkpoint_entry_anchors_at_its_own_state_wit
     anchored.capture_tip();
     anchored.anchor(vault(root), None).unwrap();
     assert_eq!(anchored.replay.recovery_anchor.as_ref().map(|cp| cp.seq), Some(accepted.seq));
+    // Its root is the finished replay's checkpoint root there, as an entry's would be.
+    assert_eq!(anchored.replay.finish().checkpoint_root(accepted.seq), Some(root));
     let refused = tip.anchor(vault(other), None).unwrap_err();
     assert!(format!("{refused:#}").contains("not among the checkpoints"), "another root: {refused:#}");
     // At a command sealed by another key, captured before it applies.
@@ -259,8 +261,11 @@ async fn a_copy_lacking_the_vaults_checkpoint_entry_anchors_at_its_own_state_wit
         replay.finish()
     };
     let replayed = recovered(root);
+    assert_eq!(replayed.checkpoint_root(accepted.seq), Some(root));
     assert_eq!(replayed.recovery_anchor_work.map(|work| work.checkpoint.seq), Some(accepted.seq));
-    assert!(recovered(other).recovery_anchor_work.is_none(), "another root anchors nothing");
+    let refused = recovered(other);
+    assert!(refused.recovery_anchor_work.is_none(), "another root anchors nothing");
+    assert_eq!(refused.checkpoint_root(accepted.seq), None, "nor counts as a checkpoint root");
 }
 
 /// A full recovery under a promoted key passes the checkpoints the outgoing key signed past the vault's

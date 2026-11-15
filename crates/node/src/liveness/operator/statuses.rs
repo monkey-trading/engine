@@ -43,7 +43,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             let tip = self.released.borrow().head;
             let mut seqs: Vec<u64> = Vec::new();
             for (_, status) in &statuses {
-                seqs.extend([Some(status.durable), status.seen].into_iter().flatten().map(|head| head.seq));
+                seqs.extend([status.durable, status.seen].into_iter().flatten().map(|head| head.seq));
             }
             seqs.retain(|seq| *seq <= tip.seq);
             seqs.sort_unstable();

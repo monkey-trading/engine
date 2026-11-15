@@ -405,7 +405,8 @@ member's replay through the vault's checkpoint the promotion fixed, unless that 
 of the range, as after its own upgrade, and at a boundary its holder holds on through an
 attested verification, bound to the boundary, the turn assignment and the vault's signer epoch, from a
 member of the turn's order that sequenced none of the commands since the last verified head under any
-release, nor runs a release that did, as the log's `TurnTaken` commands record, asked first to last in
+release, nor runs a release that did, as the log's `TurnTaken` commands record, or was promoted after
+the `TurnTaken` in office, as the mirrored promotions record, asked first to last in
 questions the holder's enclave signs, which a member answers only from the checkpoints it verified
 under that signer; an approval made during a turn therefore waits for the next boundary, a day at most
 plus the switch, payouts stay anchored to the roots the vault accepted as before, a member of the set
@@ -450,8 +451,8 @@ more than 10 s and its monotonic clock runs no more than 500 ppm slow, and it st
 cannot rule out a promotion within the 15 s margin, as through an Arbitrum sequencer outage or a lost
 custody quorum lasting about `heartbeatMisses` intervals, resuming on its first read after one, and a
 read showing no promotion can pass keeps it running without a newer read only until 15 s before the
-next turn boundary for a set with no other member, and until 15 s after it with no turn naming it or
-no schedule; a signer the guardian retired ends no run, but its heads no longer land, so the operator
+later of the next turn boundary and `promotionDueAt` for a set with no other member, and until 15 s
+after that boundary with no turn naming it or no schedule; a signer the guardian retired ends no run, but its heads no longer land, so the operator
 fences once `promotionDueAt` nears, since a signer the timelock installs could be promoted past soon
 after; two
 copies of one key, which only a host keeping or restoring a sealed copy can run, can serve together

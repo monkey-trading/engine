@@ -24,11 +24,12 @@ pub(crate) fn assess(
     tip: Head,
     (own, held): (AccountId, &BTreeSet<AccountId>),
 ) -> Assessment {
-    let mut out = Assessment { answered: statuses.len(), ..Default::default() };
+    let empty = statuses.iter().filter(|(_, status)| status.durable.is_none()).count();
+    let mut out = Assessment { answered: statuses.len() - empty, empty, ..Default::default() };
     for &(member, status) in statuses {
         let mut conflicts = false;
         let foreign = status.sealer != AccountId([0; 20]) && status.sealer != own && held.contains(&member);
-        let durable = (!foreign).then_some(status.durable);
+        let durable = status.durable.filter(|_| !foreign);
         for head in [durable, status.seen].into_iter().flatten() {
             if head.seq > tip.seq {
                 out.beyond = out.beyond.max(Some((head.seq, member)));
@@ -39,8 +40,11 @@ pub(crate) fn assess(
         }
         // A member that holds, or has seen, another history at a seq of this log confirms nothing,
         // whatever its durable copy matches.
-        let durable = status.durable;
-        if !conflicts && durable.seq <= tip.seq && prefix_at(durable.seq).is_some_and(|link| link == durable.link) {
+        if let Some(durable) = status.durable
+            && !conflicts
+            && durable.seq <= tip.seq
+            && prefix_at(durable.seq).is_some_and(|link| link == durable.link)
+        {
             out.confirmed = out.confirmed.max(Some((durable.seq, member)));
         }
     }

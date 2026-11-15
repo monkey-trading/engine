@@ -16,7 +16,7 @@ use alloy::transports::http::reqwest::redirect::Policy;
 use alloy::transports::http::reqwest::{Certificate, Client};
 use anyhow::{Context, anyhow, ensure};
 use tokio::time::timeout;
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::submission::{Reserve, SubmissionStore};
 use super::{Head, HeadV2, HeadsChain, PostOutcome, TurnHeads};
@@ -239,10 +239,9 @@ impl HeadsRpc {
     }
 
     /// The pending send's own call, rebuilt from the reservation: rebroadcasting it repeats that
-    /// call at its nonce, never a newer head. Replacing a live transaction with a newer head at the same nonce — a fee-bumped
-    /// replacement — is out of scope for this change: a known pending transaction is rebroadcast
-    /// until it mines or the endpoint drops it (the dropped case reconciles at once, see
-    /// `pending_due`).
+    /// call at its nonce, never a newer head. A known pending v1 head is rebroadcast until it mines or
+    /// the endpoint drops it (the dropped case reconciles at once, see `pending_due`); a pending v2
+    /// head is replaced instead (see `send`).
     fn rebroadcast_request(&self, pending: &super::submission::Reservation) -> anyhow::Result<TransactionRequest> {
         rebroadcast_call(self.contract, self.relayer, self.domain.chain_id, pending)
     }
@@ -413,7 +412,9 @@ impl HeadsRpc {
     /// nonce waits out an in-memory bound — twice the posting interval, or for a v2 head one
     /// heartbeat interval, from when this process stored it, never from the host-written file — then its stored hash is reconciled against the chain:
     /// unknown (dropped, or planted by the host) it is cleared so this or a newer head re-sends at the
-    /// nonce; present it is rebroadcast — the reserved head's own call at the same nonce.
+    /// nonce; present it is rebroadcast — the reserved head's own call at the same nonce. A v2 head is
+    /// fresh for less than the heartbeat interval that wait spans, so its call can no longer land:
+    /// this head's call replaces it at the nonce, known or not.
     /// Error cases:
     /// - nonce reservation, the transaction lookup, gas estimation, the submission, or a bounded
     ///   reservation-store operation fails or outruns its bound
@@ -434,7 +435,9 @@ impl HeadsRpc {
             Reserve::Pending(_) if !self.pending_action(calldata.is_some()) => return Ok(PostOutcome::Waiting),
             Reserve::Pending(mut pending) => {
                 let hash = pending.tx_hash.context("a pending reservation carries its hash")?;
-                if self.transaction_known(hash).await? {
+                if pending.calldata.is_some() {
+                    info!(nonce = pending.nonce, %hash, "replacing the pending heartbeat at its nonce with a fresh head");
+                } else if self.transaction_known(hash).await? {
                     let tx = self.rebroadcast_request(&pending)?;
                     let tx = self.with_gas(tx).await?;
                     let _: B256 = self.deadline(self.client.request("eth_sendTransaction", (tx,))).await?;
@@ -442,9 +445,10 @@ impl HeadsRpc {
                     pending.stored_at = now;
                     self.persist_update(pending).await?;
                     return Ok(PostOutcome::Waiting);
+                } else {
+                    warn!(nonce = pending.nonce, %hash,
+                        "the stored log-head send is unknown to the endpoint: clearing it to re-send at the nonce");
                 }
-                warn!(nonce = pending.nonce, %hash,
-                    "the stored log-head send is unknown to the endpoint: clearing it to re-send at the nonce");
                 // The replacement is the call now being sent: rewrite the record to it, so a
                 // later reconciliation rebroadcasts exactly these bytes — never a newer
                 // signature against the older head.

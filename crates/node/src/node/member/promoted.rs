@@ -165,42 +165,9 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             record.standing_at_start(&chain, &domain, B256::from(self.release.id()), &sealing.dir).await
         });
         let promotion = record.promotion();
-        match read.await? {
-            Standing::Stands => {}
-            Standing::Ended => {
-                info!(
-                    turn = record.turn,
-                    "the promotion's signer epoch has ended, or the registry names another release or generation: the \
-                     member follows"
-                );
-                std::fs::remove_file(sealing.dir.join(RECORD)).context("removing the promotion record")?;
-                return Ok(Resumed::None);
-            }
-            Standing::Passed => {
-                info!(
-                    turn = record.turn,
-                    "the promotion's term has ended at the latest block, before a final block records it: the \
-                     member follows and keeps the record until one does"
-                );
-                return Ok(Resumed::None);
-            }
-            Standing::Unsettled => {
-                warn!(
-                    turn = record.turn,
-                    position = record.position,
-                    "the latest block no longer records the promotion that made this key the vault's signer, and no \
-                     final block has settled it: waiting, signing nothing"
-                );
-                return Ok(Resumed::Wait);
-            }
-            Standing::Behind => {
-                debug!(turn = record.turn, "the latest agreed block is older than the promotion's: waiting");
-                return Ok(Resumed::Wait);
-            }
-            Standing::Gone => {
-                quarantine(&self.cfg.node.log_dir, &sealing.dir, &key_file, &record)?;
-                return Ok(Resumed::None);
-            }
+        let dirs = (self.cfg.node.log_dir.as_path(), sealing.dir.as_path(), key_file.as_path());
+        if let Some(resumed) = settle(read.await?, &record, dirs)? {
+            return Ok(resumed);
         }
         // The promotion's fixed head and checkpoint stay checkable however far the copy has run past.
         let keep = [promotion.head_seq, promotion.checkpoint_seq];
@@ -217,6 +184,56 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         );
         let start = self.launch(store, promotion, record.candidate, opened, before).await?;
         Ok(Resumed::Start(Box::new(start)))
+    }
+}
+
+/// What a start does with an earlier promotion's `record` whose promotion the chain shows `standing`,
+/// with the copy in `log_dir`, the sealing directory `sealing` and the resealed keys in `key`: `None`
+/// while it stands, for the start to resume from the copy; otherwise follow or wait, and once a reorg
+/// removed it, follow with its history quarantined.
+/// Error cases:
+/// - the record cannot be removed, or the quarantine fails
+fn settle(
+    standing: Standing,
+    record: &Record,
+    (log_dir, sealing, key): (&Path, &Path, &Path),
+) -> anyhow::Result<Option<Resumed>> {
+    match standing {
+        Standing::Stands => Ok(None),
+        Standing::Ended => {
+            info!(
+                turn = record.turn,
+                "the promotion's signer epoch has ended, or the registry names another release or generation: the \
+                 member follows"
+            );
+            std::fs::remove_file(sealing.join(RECORD)).context("removing the promotion record")?;
+            Ok(Some(Resumed::None))
+        }
+        Standing::Passed => {
+            info!(
+                turn = record.turn,
+                "the promotion's term has ended at the latest block, before a final block records it: the member \
+                 follows and keeps the record until one does"
+            );
+            Ok(Some(Resumed::None))
+        }
+        Standing::Unsettled => {
+            warn!(
+                turn = record.turn,
+                position = record.position,
+                "the latest block no longer records the promotion that made this key the vault's signer, and no final \
+                 block has settled it: waiting, signing nothing"
+            );
+            Ok(Some(Resumed::Wait))
+        }
+        Standing::Behind => {
+            debug!(turn = record.turn, "the latest agreed block is older than the promotion's: waiting");
+            Ok(Some(Resumed::Wait))
+        }
+        Standing::Gone => {
+            quarantine(log_dir, sealing, key, record)?;
+            Ok(Some(Resumed::None))
+        }
     }
 }
 

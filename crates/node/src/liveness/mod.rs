@@ -112,8 +112,9 @@ pub(crate) struct VaultSigner {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Status {
     pub epoch: u64,
-    /// The copy's durable head: its last command's seq and the cumulative prefix after it.
-    pub durable: crate::log_heads::Head,
+    /// The copy's durable head: its last command's seq and the cumulative prefix after it; `None`
+    /// while the copy holds no command, as a member's does before the operator's first reaches it.
+    pub durable: Option<crate::log_heads::Head>,
     /// The key that sealed the durable head's command, zero when the copy does not know it: a failed
     /// operator restarted as a member holds a tail its own, earlier key sealed.
     pub sealer: AccountId,
@@ -288,13 +289,14 @@ impl Status {
     /// deployment `vault` on `chain_id`: so a reply recorded for one question answers no other.
     pub(crate) fn digest(&self, chain_id: u64, vault: Address, member: AccountId, nonce: &[u8; 32]) -> [u8; 32] {
         let (seen_seq, seen_link) = self.seen.map_or((0, B256::ZERO), |seen| (seen.seq, seen.link));
+        let (durable_seq, durable_link) = self.durable.map_or((0, B256::ZERO), |durable| (durable.seq, durable.link));
         let mut packed = STATUS_DOMAIN.to_vec();
         packed.extend_from_slice(&chain_id.to_be_bytes());
         packed.extend_from_slice(vault.as_slice());
         packed.extend_from_slice(&member.0);
         packed.extend_from_slice(&self.epoch.to_be_bytes());
-        packed.extend_from_slice(&self.durable.seq.to_be_bytes());
-        packed.extend_from_slice(self.durable.link.as_slice());
+        packed.extend_from_slice(&durable_seq.to_be_bytes());
+        packed.extend_from_slice(durable_link.as_slice());
         packed.extend_from_slice(&self.sealer.0);
         packed.extend_from_slice(&seen_seq.to_be_bytes());
         packed.extend_from_slice(seen_link.as_slice());
@@ -360,7 +362,7 @@ mod tests {
     fn a_status_digest_binds_the_member_the_epoch_the_heads_the_sealer_and_the_nonce() {
         let status = Status {
             epoch: 3,
-            durable: crate::log_heads::Head { seq: 10, link: B256::repeat_byte(1) },
+            durable: Some(crate::log_heads::Head { seq: 10, link: B256::repeat_byte(1) }),
             sealer: AccountId([6; 20]),
             seen: Some(crate::log_heads::Head { seq: 8, link: B256::repeat_byte(2) }),
         };
@@ -370,6 +372,7 @@ mod tests {
         assert_ne!(digest, status.digest(1, vault, member, &[5; 32]));
         assert_ne!(digest, Status { epoch: 4, ..status }.digest(1, vault, member, &nonce));
         assert_ne!(digest, Status { seen: None, ..status }.digest(1, vault, member, &nonce));
+        assert_ne!(digest, Status { durable: None, ..status }.digest(1, vault, member, &nonce));
         assert_ne!(digest, Status { sealer: AccountId([5; 20]), ..status }.digest(1, vault, member, &nonce));
         assert_ne!(digest, status.digest(2, vault, member, &nonce));
     }

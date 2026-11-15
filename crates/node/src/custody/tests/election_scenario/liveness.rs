@@ -9,8 +9,10 @@
 //!    operator's gate opens only once a member answered;
 //! 2. relays: with the operator's relayer silenced, the members relay its signed heads from the stream
 //!    and nothing is promoted;
-//! 3. holds: through a benchmark-sync hold and then a trusted-time halt, each past the detection
-//!    window, the operator posts held heads on newer blocks, and nothing is promoted;
+//! 3. holds: through a benchmark-sync hold, and then a trusted-time halt in which no enclave gets a
+//!    sample past `NO_SAMPLE_GRACE` so the sequencer's own time gate holds it, each past the detection
+//!    window, the operator posts held heads on newer blocks and nothing is promoted; once samples
+//!    come again the halt ends;
 //! 4. a paused chain: the operator stops by its own clock, nothing is promoted, and it resumes on its
 //!    first read once blocks come again;
 //! 5. blocked reads: with the operator's chain reads blocked, its heads stop, the members witness each
@@ -216,7 +218,7 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
         },
         log_heads,
     };
-    let samples = sampling(clock.clone());
+    let (samples, halting) = sampling(clock.clone());
     let trusted = || TrustedClock::new(clock.clone(), samples.subscribe(), Duration::from_secs(10));
     let log = Log::default();
     // The operator reads through proxies of its own, which leg 5 stops.
@@ -227,7 +229,8 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
         .enumerate()
         .map(|(index, url)| toml::from_str(&format!("name = 'operator-{index}'\nrpc_url = '{url}'")).unwrap())
         .collect();
-    let rig = Rig::start(&operator_cfg, &signing, (domain, keys), trusted(), &log, &members, operator).await;
+    let time = (samples.subscribe(), clock.clone() as Arc<dyn Clock>);
+    let rig = Rig::start(&operator_cfg, &signing, (domain, keys), trusted(), time, &log, &members, operator).await;
     let callers: Vec<JoinHandle<anyhow::Result<()>>> = members
         .iter()
         .enumerate()
@@ -277,20 +280,37 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
     println!("PASS: with the operator's relayer silenced, members relay its heads and nothing is promoted");
 
     // 3. A benchmark-sync hold, then a trusted-time halt, each past the detection window: held heads on
-    //    newer blocks, no promotion.
+    //    newer blocks, no promotion. The halt is real: no enclave gets a sample, and the sequencer's
+    //    time gate holds once the last is older than the grace.
     let window = Duration::from_secs(RULE.0 * (u64::from(RULE.2) + 2));
     for hold in [Hold::BenchmarkSync, Hold::TimeHalt] {
-        rig.hold.send_replace(hold);
-        let held_until = Instant::now() + window;
-        let mut bound = 0;
+        let (halt, grace) = (hold == Hold::TimeHalt, crate::trusted_time::NO_SAMPLE_GRACE);
+        match halt {
+            true => halting.store(true, Ordering::SeqCst),
+            false => drop(rig.benchmark.send_replace(true)),
+        }
+        let bound_before = chain.view(log_heads, headsCall { epoch }).await.boundBlock;
+        let held_until = Instant::now() + window + if halt { grace } else { Duration::ZERO };
+        let (mut bound, mut held) = (0, false);
         while Instant::now() < held_until {
             chain.rpc("evm_mine", json!([])).await;
             tokio::time::sleep(Duration::from_secs(5)).await;
+            held |= *rig.hold.borrow() == hold;
             bound = bound.max(chain.view(log_heads, headsCall { epoch }).await.boundBlock);
         }
-        assert!(bound > 0, "{hold:?}: held heads landed");
+        assert!(held, "{hold:?}: the sequencer held");
+        assert!(bound > bound_before, "{hold:?}: held heads landed on newer blocks");
         assert_eq!(chain.view(chain.vault, signerEpochCall {}).await, epoch, "{hold:?}: no promotion through a hold");
-        rig.hold.send_replace(Hold::Live);
+        match halt {
+            true => halting.store(false, Ordering::SeqCst),
+            false => drop(rig.benchmark.send_replace(false)),
+        }
+        crate::test_support::wait_for("the hold to end", async {
+            while *rig.hold.borrow() != Hold::Live {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await;
         println!("PASS: through a {hold:?} hold past the detection window, held heads land and nothing is promoted");
     }
 

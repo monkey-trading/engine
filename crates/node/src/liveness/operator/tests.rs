@@ -94,6 +94,9 @@ async fn a_start_waits_for_a_members_status_then_signs_only_where_it_confirmed()
     settle().await;
     assert!(!rig.gate.start_checked() && !rig.gate.sequences(), "no member answered: nothing sequences");
     assert_eq!(*rig.signing.borrow(), Signing::Nothing);
+    rig.answer_empty();
+    settle().await;
+    assert!(!rig.gate.start_checked(), "a member whose copy holds no command checks nothing past genesis");
     rig.answer(Some(8));
     settle().await;
     assert!(rig.gate.start_checked(), "a member answered and holds nothing past this log");
@@ -118,13 +121,16 @@ async fn a_start_waits_for_a_members_status_then_signs_only_where_it_confirmed()
     rig.task.abort();
 }
 
-/// An empty log at genesis holds nothing a start check could protect: it opens with no member's status
-/// and no stamp bound, and once its first command is out it stops until a member confirms it.
+/// An empty log at genesis holds nothing to confirm: it opens once a member answers, an empty copy's
+/// included, with no stamp bound, and once its first command is out it stops until a member confirms it.
 #[tokio::test(start_paused = true)]
-async fn an_empty_log_starts_unconfirmed_and_waits_for_its_first_command_to_be_confirmed() {
+async fn an_empty_log_starts_unconfirmed_once_a_member_answers_and_waits_for_its_first_command_to_be_confirmed() {
     let rig = Rig::spawn(0);
     settle().await;
-    assert!(rig.gate.start_checked() && rig.gate.sequences(), "genesis starts with no member's status");
+    assert!(!rig.gate.start_checked() && !rig.gate.sequences(), "no member answered: genesis waits");
+    rig.answer_empty();
+    settle().await;
+    assert!(rig.gate.start_checked() && rig.gate.sequences(), "an empty copy's answer starts genesis");
     assert!(rig.gate.admits(TRUE_MS), "no stamp bound before the first command");
     rig.prefixes.lock().unwrap().insert(1, link(1));
     rig._released.send_replace(Released { head: Head { seq: 1, link: link(1) }, stamp: 5 });
@@ -158,7 +164,7 @@ async fn a_member_holding_another_link_is_paged_as_a_second_history() {
     let rig = Rig::spawn(10);
     rig.members.0.lock().unwrap().get_mut("member:1").unwrap().2 = Some(Status {
         epoch: 1,
-        durable: Head { seq: 10, link: B256::repeat_byte(0xee) },
+        durable: Some(Head { seq: 10, link: B256::repeat_byte(0xee) }),
         sealer: AccountId([0; 20]),
         seen: None,
     });
@@ -214,63 +220,6 @@ async fn with_no_turn_naming_the_operator_the_gate_opens_and_heads_go_at_the_tip
     assert_eq!(rig.gate.confirmed(), u64::MAX, "no checkpoint waits");
     assert_eq!(*rig.signing.borrow(), Signing::Tip);
     rig.task.abort();
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_set_with_no_other_member_is_exempt() {
-    let rig = Rig::spawn(10);
-    rig.chain.set(|chain| chain.members.retain(|(candidate, ..)| *candidate == Address::repeat_byte(OPERATOR)));
-    settle().await;
-    assert!(rig.gate.sequences());
-    assert_eq!(*rig.signing.borrow(), Signing::Tip);
-    rig.task.abort();
-}
-
-/// Every read under which no promotion can pass holds the gate open only until the next turn boundary
-/// past its block: past it, with no newer read, the fence closes and pages; a fresh read reopens it.
-#[tokio::test(start_paused = true)]
-async fn an_exempt_read_holds_only_until_the_next_turn_boundary() {
-    type Exempting = fn(&mut ChainState);
-    // Where no turn names the operator, no slot can be witnessed before the boundary: the exemption
-    // holds 2 x DELTA past it. A one-member set's slots can be, and it ends at the boundary.
-    let past = 2 * DELTA.as_secs();
-    let exemptions: [(&str, Exempting, u64); 3] = [
-        ("no turn names the operator", |chain| chain.generation = 0, past),
-        (
-            "the set has no other member",
-            |chain| chain.members.retain(|(candidate, ..)| *candidate == Address::repeat_byte(OPERATOR)),
-            0,
-        ),
-        ("the registry names no schedule", |chain| chain.scheduled = false, past),
-    ];
-    // The tests' block is at 08:00 UTC: the next boundary, 22:30, is 52,200 s on.
-    assert_eq!(next_boundary(seconds(TRUE_MS)) - seconds(TRUE_MS), 52_200);
-    for (case, exempting, after) in exemptions {
-        let (_guard, mut alerts) = capture_alerts();
-        let rig = Rig::spawn(10);
-        rig.chain.set(exempting);
-        settle().await;
-        assert!(rig.gate.sequences() && rig.gate.signs(), "{case}: exempt");
-        assert_eq!(*rig.signing.borrow(), Signing::Tip, "{case}");
-        rig.chain.set(|chain| chain.down = true);
-        // The upper bound is 3 s past true time at the sample, and runs 500 ppm fast after it: with
-        // the boundary 52,200 s on, it reaches the boundary less DELTA after about 52,156 s.
-        rig.clock.advance(Duration::from_secs(52_150 + after));
-        settle().await;
-        assert!(rig.gate.signs(), "{case}: before the exemption's end less DELTA, it holds");
-        rig.clock.advance(Duration::from_secs(10));
-        settle().await;
-        assert!(!rig.gate.signs() && !rig.gate.sequences(), "{case}: no read since, past the boundary less DELTA");
-        let raised: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok()).collect();
-        assert!(raised.iter().any(|alert| alert["alert"] == "liveness_fenced"), "{case}: {raised:?}");
-        rig.chain.set(|chain| {
-            chain.down = false;
-            chain.time += 52_200;
-        });
-        settle().await;
-        assert!(rig.gate.signs() && rig.gate.sequences(), "{case}: a read at a later block moves it on");
-        rig.task.abort();
-    }
 }
 
 /// A read where the rule applies after reads where it did not runs the start check again: a member
@@ -456,11 +405,17 @@ impl Rig {
     fn answer(&self, seq: Option<u64>) {
         let status = seq.map(|seq| Status {
             epoch: 1,
-            durable: Head { seq, link: link(seq) },
+            durable: Some(Head { seq, link: link(seq) }),
             sealer: AccountId([0; 20]),
             seen: None,
         });
         self.members.0.lock().unwrap().get_mut("member:1").unwrap().2 = status;
+    }
+
+    /// The member answers from a copy that holds no command.
+    fn answer_empty(&self) {
+        let status = Status { epoch: 1, durable: None, sealer: AccountId([0; 20]), seen: None };
+        self.members.0.lock().unwrap().get_mut("member:1").unwrap().2 = Some(status);
     }
 }
 
@@ -480,5 +435,7 @@ fn seconds(ms: Millis) -> u64 {
 }
 
 mod assess;
+mod copies;
+mod exemptions;
 mod members;
 mod rounds;

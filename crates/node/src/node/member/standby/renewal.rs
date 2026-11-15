@@ -2,8 +2,8 @@
 //! release move (an upgrade by `--predecessor`) voids it, while a candidate with no promotable key is
 //! left out of the rotation set an election close adopts. While it serves, the operator keeps its
 //! release's standby key, sealing a new one when it has none with authority, and registers it as a
-//! following member does, asking the turn's members for a vouch. It runs no member link: the handover
-//! endpoint is the operator's own.
+//! following member does, vouching for it with the vault's signer key it holds, then asking the
+//! turn's members. It runs no member link: the handover endpoint is the operator's own.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -26,6 +26,7 @@ use crate::node::KeyStart;
 use crate::node::member::standby::Standby;
 use crate::node::member::standby::registration::remove_registration;
 use crate::standby_key::chain::{StandbyChain, StandbyDomain};
+use crate::standby_key::vouch::Service;
 use crate::standby_key::{StandbyKeys, StandbyStart};
 use crate::tee::Attestor;
 use crate::trusted_time::TrustedClock;
@@ -45,14 +46,20 @@ pub(crate) struct Renewal {
     dir: PathBuf,
     tee: (TeeProvider, Option<String>, String),
     attestor: Box<dyn Attestor>,
+    /// The operator's own vouching with the vault's signer key, asked first.
+    vouching: Option<Arc<Service<StandbyReader>>>,
 }
 
 impl Renewal {
-    /// The renewal `cfg` and `start` describe.
+    /// The renewal `cfg` and `start` describe, vouching with the operator's own `vouching`.
     /// Error cases:
     /// - `[log_heads]`, `[tee.sealing]` or the operator key is missing, or the custody quorum or the
     ///   attestor cannot be built
-    pub(crate) fn new(cfg: &NodeConfig, start: &KeyStart) -> anyhow::Result<Self> {
+    pub(crate) fn new(
+        cfg: &NodeConfig,
+        start: &KeyStart,
+        vouching: Option<Arc<Service<StandbyReader>>>,
+    ) -> anyhow::Result<Self> {
         let log_heads = cfg.log_heads.as_ref().context("[log_heads]")?.contract;
         let sealing = cfg.tee.sealing.as_ref().context("an operator seals its keys")?;
         Ok(Self {
@@ -65,6 +72,7 @@ impl Renewal {
             dir: sealing.dir.clone(),
             tee: (cfg.tee.provider, cfg.tee.processor.clone(), cfg.tee.kds_base.clone()),
             attestor: crate::node::keys::attestor_for(cfg.tee.provider, &crate::tee::clock::GuestClock::default())?,
+            vouching,
         })
     }
 
@@ -81,7 +89,7 @@ impl Renewal {
             tokio::time::sleep(EVERY).await;
         };
         info!(key = %keys.address(), %candidate, "the serving operator's standby key for its release");
-        let Self { chain, dir, tee, attestor, .. } = self;
+        let Self { chain, dir, tee, attestor, vouching, .. } = self;
         let mut standby = Standby {
             keys: Arc::new(keys),
             candidate,
@@ -95,6 +103,7 @@ impl Renewal {
             samples: watch::channel(None).0,
             answering: None,
             certificates: None,
+            vouching,
         };
         let quoting = Quoting { provider: tee.0, processor: tee.1.as_deref(), kds_base: &tee.2 };
         loop {

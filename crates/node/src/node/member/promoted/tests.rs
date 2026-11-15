@@ -4,9 +4,12 @@ use alloy::primitives::B256;
 use engine_core::command::Command;
 
 use super::*;
-use crate::log::CheckpointDomain;
+use crate::log::{CheckpointDomain, LogEntry};
 use crate::standby::Follower;
+use crate::standby_key::{StandbyKeys, StandbyStart};
 use crate::tee::EnclaveKey;
+use crate::tee::sealing::{KeyStore, MockSealer};
+use crate::test_support::log_entries;
 use crate::test_support::{CHECKPOINT_EVERY, SEGMENT_COMMANDS, TestSequencer, scratch_dir};
 
 /// The deployment the test sequencer seals and signs for.
@@ -93,6 +96,100 @@ fn an_interrupted_quarantine_finishes_from_its_recorded_phase() {
     fresh.write(&sealing).unwrap();
     quarantine(&log, &sealing, &key, &fresh).unwrap();
     assert!(!key.exists() && !log.exists() && Record::load(&sealing).unwrap().is_none());
+}
+
+/// A start after a promotion routes by what the chain shows of it, over a copy holding a trade the
+/// promoted member sequenced and the keys resealed for it: standing, it resumes; unsettled or behind,
+/// it waits with everything in place; passed or ended, it follows; removed by a reorg, it sets that
+/// exact history aside with the resealed keys, so no start reopens the promoted key, which a new
+/// standby key replaces, nor resumes under its epoch.
+#[tokio::test]
+async fn a_start_after_a_promotion_routes_by_its_standing_and_sets_a_removed_ones_trade_aside() {
+    let standings =
+        [Standing::Stands, Standing::Unsettled, Standing::Behind, Standing::Passed, Standing::Ended, Standing::Gone];
+    for standing in standings {
+        let dir = scratch_dir(&format!("promoted-settle-{standing:?}"));
+        let (sealing, log) = (dir.join("sealing"), dir.join("log"));
+        let traded = sequence_a_trade(&log).await;
+        let keys = StandbyKeys::sealed_for_test(&sealing, LAUNCH, CONFIG);
+        let promoted = keys.address();
+        let store = keys.reseal(PROMOTION.generation).unwrap();
+        let key = crate::tee::sealing::file_for(&sealing, &store.release(), PROMOTION.generation);
+        let record = Record::new(AccountId([0xca; 20]), promoted, PROMOTION, traded);
+        record.write(&sealing).unwrap();
+        let resumed = settle(standing, &record, (&log, &sealing, &key)).unwrap();
+        let held = (log.exists(), key.exists(), Record::load(&sealing).unwrap().is_some());
+        match standing {
+            Standing::Stands => assert!(resumed.is_none() && held == (true, true, true), "resumes from the copy"),
+            Standing::Unsettled | Standing::Behind => {
+                assert!(matches!(resumed, Some(Resumed::Wait)) && held == (true, true, true), "{standing:?}: waits");
+            }
+            Standing::Passed => assert!(matches!(resumed, Some(Resumed::None)) && held == (true, true, true)),
+            Standing::Ended => assert!(matches!(resumed, Some(Resumed::None)) && held == (true, true, false)),
+            Standing::Gone => {
+                assert!(matches!(resumed, Some(Resumed::None)) && held == (false, false, false), "set aside");
+                let aside = dir.join("log.quarantined-20400-1-0");
+                let fills = log_entries(&aside).into_iter().filter(|entry| match entry {
+                    LogEntry::Command(command) => command.sequenced.seq == traded,
+                    _ => false,
+                });
+                assert_eq!(fills.count(), 1, "the trade the promotion's history holds is aside");
+                let sealer = MockSealer { launch_digest: LAUNCH };
+                let reopened = KeyStore::open(&sealing, &sealer, CONFIG, PROMOTION.generation).unwrap();
+                assert!(reopened.is_none(), "the promoted key opens as no generation's keys");
+                let chain = crate::liveness::fake::FakeChain::new(Default::default());
+                let domain = crate::liveness::fake::DOMAIN.standby;
+                let opened = StandbyKeys::open_or_generate(
+                    &sealing,
+                    Box::new(sealer),
+                    CONFIG,
+                    &chain,
+                    &domain,
+                    record.candidate,
+                );
+                let StandbyStart::Standby { keys, generated } = opened.await.unwrap() else { panic!("promoted") };
+                assert!(generated && keys.address() != promoted, "a new standby key replaces the promoted one");
+            }
+        }
+    }
+}
+
+/// The measurement and config hash the routing test's keys are sealed for.
+const LAUNCH: [u8; 48] = [0x5d; 48];
+const CONFIG: [u8; 32] = [0xc5; 32];
+
+/// Sequences a deposit and a filled order into a log at `dir`, returning the seq of the fill.
+async fn sequence_a_trade(dir: &std::path::Path) -> u64 {
+    let clock = std::sync::Arc::new(crate::clock::test_clock::TestClock::default());
+    let genesis = crate::sequencer::genesis_commands(&crate::test_support::dev_config().genesis);
+    let node = TestSequencer::start_legacy_at(dir, 64, clock.clone(), genesis);
+    let ts = crate::clock::Clock::now_ms(clock.as_ref());
+    let quotes = ["a", "b", "c"].map(|source| engine_core::price::SourceQuote {
+        source: source.into(),
+        mid: engine_core::Fixed::from_int(100_000),
+        ts,
+        contract: None,
+    });
+    node.submit(Command::Prices { market: 1, quotes: quotes.to_vec() }).await;
+    node.submit(crate::test_support::deposit(1_000, "promoted-trade")).await;
+    let order = engine_core::command::OrderRequest {
+        account: crate::test_support::TRADER,
+        client_id: 1,
+        market: 1,
+        side: engine_core::types::Side::Buy,
+        qty: "0.01".parse().unwrap(),
+        kind: engine_core::command::OrderKind::Market {
+            quoted: engine_core::Fixed::from_int(100_000),
+            max_slippage_bps: None,
+        },
+        reduce_only: false,
+        auth: None,
+    };
+    let filled = node.submit(Command::PlaceOrder(order)).await;
+    assert!(filled.iter().any(|event| matches!(event, engine_core::event::Event::Fill(_))), "{filled:?}");
+    let seq = node.next_seq().await - 1;
+    node.stop().await;
+    seq
 }
 
 /// The promotion the quarantine test records.

@@ -106,7 +106,9 @@ impl Sequencer {
     }
 
     /// Proves loaded approvals against the checkpoint that already covers the engine state, or
-    /// writes one that does.
+    /// writes one that does. A vault checkpoint the log holds no entry for, as a promotion's copy can
+    /// start at (#595), proves nothing: no replay of the log could check an authorization's root
+    /// against it, so the approvals wait for the next checkpoint written.
     /// Error cases:
     /// - the checkpoint cannot be written
     pub(super) fn prove_loaded(&mut self) -> anyhow::Result<()> {
@@ -114,7 +116,8 @@ impl Sequencer {
         if gate.unproved.is_empty() {
             return Ok(());
         }
-        if gate.parent.has_checkpoint && Some(gate.parent.seq) == self.engine.last_seq() {
+        let held = self.dedup_checkpoint_seq == Some(gate.parent.seq);
+        if gate.parent.has_checkpoint && held && Some(gate.parent.seq) == self.engine.last_seq() {
             self.capture_payout_proofs();
             Ok(())
         } else {

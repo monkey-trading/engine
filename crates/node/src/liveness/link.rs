@@ -274,19 +274,18 @@ impl Copy {
         self.0.lock().unwrap_or_else(PoisonError::into_inner).signed.clone()
     }
 
-    /// The status under `epoch`, once the copy is durable through a command.
+    /// The status under `epoch`, with no durable head while the copy holds no command.
     /// Error cases:
-    /// - the copy is not durable through a command, or holds another link than a head of `epoch` it saw
+    /// - the copy holds another link than a head of `epoch` it saw
     pub(crate) fn status(&self, epoch: u64) -> anyhow::Result<Status> {
         let state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let (epoch, key) = state.under(epoch);
         if let Some(seq) = state.conflicted.get(&(epoch, key)) {
             bail!("the copy holds another link at seq {seq} than a head of signer epoch {epoch}: it confirms nothing");
         }
-        let durable = state.durable.context("the copy is not yet durable through a command")?;
         Ok(Status {
             epoch,
-            durable,
+            durable: state.durable,
             sealer: state.sealer.unwrap_or(AccountId([0; 20])),
             seen: state.seen.get(&(epoch, key)).copied(),
         })

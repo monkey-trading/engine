@@ -37,8 +37,9 @@ fn a_copy_keeps_the_newest_head_of_each_recent_epoch_and_the_newest_signed_head(
         copy.saw(epoch, head(epoch));
     }
     assert_eq!(copy.status(1).ok().map(|status| status.seen), Some(None), "only the latest epochs are kept");
-    assert_eq!(copy.status(1).ok().map(|status| status.durable), Some(head(5)));
-    assert!(Copy::default().status(1).is_err(), "nothing durable: no status");
+    assert_eq!(copy.status(1).ok().and_then(|status| status.durable), Some(head(5)));
+    let empty = Copy::default().status(1).expect("a copy holding no command answers");
+    assert_eq!(empty.durable, None, "nothing durable: no durable head");
 }
 
 /// A copy set aside serves none of its entries; the heads seen and the conflicts are kept per key, so
@@ -99,7 +100,8 @@ fn a_copy_confirms_nothing_under_an_epoch_whose_head_conflicts_with_its_links_no
         assert_eq!(copy.conflicted(2), Some(7), "{name}");
         let refused = copy.status(2).unwrap_err();
         assert!(format!("{refused:#}").contains("another link at seq 7"), "{name}: {refused:#}");
-        assert_eq!(copy.status(3).unwrap().durable, head(10), "{name}: another epoch's matching head still confirms");
+        let durable = copy.status(3).unwrap().durable;
+        assert_eq!(durable, Some(head(10)), "{name}: another epoch's matching head still confirms");
         copy.rebuilt();
         assert!(copy.status(2).is_err(), "{name}: a rebuilt copy keeps the conflict");
     }
@@ -129,7 +131,7 @@ fn a_copy_confirms_nothing_under_an_epoch_whose_head_conflicts_with_its_links_no
 #[test]
 fn a_status_counts_only_from_the_members_standby_key_over_the_askers_nonce() {
     let key = crate::tee::EnclaveKey::generate();
-    let status = Status { epoch: 3, durable: head(10), sealer: AccountId([6; 20]), seen: Some(head(11)) };
+    let status = Status { epoch: 3, durable: Some(head(10)), sealer: AccountId([6; 20]), seen: Some(head(11)) };
     let deployment = (42161, Address::repeat_byte(0x7a));
     let nonce = [9; 32];
     let signed = |member: AccountId, nonce: &[u8; 32]| {
@@ -183,7 +185,7 @@ async fn a_member_answers_its_status_and_entries_on_its_endpoint() {
     };
     let deployment = (DOMAIN.standby.chain_id, DOMAIN.standby.vault);
     let status = verified_status(reply, deployment, MEMBER, keys.address(), &nonce.0).unwrap();
-    assert_eq!((status.epoch, status.durable), (1, head(3)));
+    assert_eq!((status.epoch, status.durable), (1, Some(head(3))));
     let Reply::Entries { entries } =
         Tcp.ask(&endpoint, &Request::Entries { after: Offset::start_of(1) }).await.unwrap()
     else {
@@ -307,7 +309,7 @@ async fn the_oldest_silent_connection_gives_its_place_up_to_a_newer_one() {
     };
     let (served, asked) = tokio::join!(server.serve(newer, &heavy, newer_place), asking);
     served.unwrap();
-    assert!(matches!(asked.unwrap(), Reply::Refused { reason } if reason.contains("durable")), "answered");
+    assert!(matches!(asked.unwrap(), Reply::Status { .. }), "answered");
     assert!(!silent.evict_oldest(), "a connection that asked is no longer silent");
 }
 
