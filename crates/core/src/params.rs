@@ -12,7 +12,7 @@ use crate::market::MarketSpec;
 use crate::protocol::ProtocolVersion;
 use crate::toxicity::{HORIZON_MS, ScoreTier, validate_score_tiers};
 use crate::types::Millis;
-use crate::volume_tier::{VolumeTier, validate_volume_tiers};
+use crate::volume_tier::{VolumeTier, names_limits, validate_volume_tiers};
 
 /// The most any per-trade rate may be: 100%.
 pub(crate) const MAX_RATE_BPS: i64 = 10_000;
@@ -32,7 +32,7 @@ const MAX_HORIZON_MS: i64 = 3_600_000;
 pub const DEFAULT_MAX_RESTING_ORDERS: usize = 100;
 /// The highest resting-order cap accepted. A price update checks every resting order in its market,
 /// so the cap bounds what one account adds to that work.
-const MAX_RESTING_ORDERS: usize = 1_000;
+pub(crate) const MAX_RESTING_ORDERS: usize = 1_000;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -296,6 +296,7 @@ impl ProtocolParams {
     /// - from `V54`, no score tiers, tiers of the earlier score, or a horizon other than
     ///   `toxicity::HORIZON_MS`
     /// - from `V59`, no volume tiers
+    /// - before `V67`, a volume tier naming a resting-order limit or a request rate
     pub fn validate_for(&self, version: ProtocolVersion) -> Result<(), String> {
         self.validate()?;
         if version >= ProtocolVersion::V52
@@ -316,6 +317,9 @@ impl ProtocolParams {
         }
         if version >= ProtocolVersion::V59 && self.volume_tiers.is_empty() {
             return Err(format!("from protocol {:?} the parameters name volume_tiers", ProtocolVersion::V59));
+        }
+        if version < ProtocolVersion::V67 && names_limits(&self.volume_tiers) {
+            return Err(format!("a tier limit needs protocol {:?}", ProtocolVersion::V67));
         }
         let mut triggers = self.stress_levels.iter().filter_map(|level| level.trigger.as_ref());
         if version >= ProtocolVersion::V13 {

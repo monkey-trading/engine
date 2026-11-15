@@ -244,6 +244,8 @@ fn tiers(version: ProtocolVersion) -> Vec<VolumeTier> {
             } else {
                 0
             },
+            max_resting_orders: 0,
+            requests_per_second: 0,
         })
         .collect()
 }

@@ -9,7 +9,7 @@ use super::api_defaults::{
     default_heartbeat_interval, default_operators_interval, default_quote_interval, default_quote_max_markets,
 };
 use super::stats::{default_stats_interval, default_stats_light_interval};
-use super::{ApiTlsSection, FreshAccountBudgets, ProxyProtocolSection};
+use super::{ApiTlsSection, FreshAccountBudgets, ProxyProtocolSection, RequestBursts};
 
 /// Limits on the public API. A client is its socket peer IP, or the address a trusted proxy's PROXY
 /// protocol header names, with an IPv6 client counted by its /64; forwarding headers are ignored
@@ -31,7 +31,10 @@ pub struct ApiSection {
     /// Largest request body, which gets 413 when larger, and largest message a stream subscriber
     /// may send, which ends its stream when larger.
     pub max_body_bytes: NonZeroUsize,
-    /// Requests from one client, and requests that act for one account; excess requests get 429.
+    /// Requests from one client, and requests that act for one account; excess requests get 429. From
+    /// protocol `V67` a credited account whose volume tier names a request rate is held to that rate
+    /// instead (`request_bursts`), and `per_account` holds the rest: accounts never credited, the
+    /// operator's requests, and tiers that name no rate.
     pub per_ip: RateLimit,
     pub per_account: RateLimit,
     /// New connections from one client; one over it is closed before its TLS handshake. Set it
@@ -85,6 +88,8 @@ pub struct ApiSection {
     pub proxy_protocol: Option<ProxyProtocolSection>,
     /// What a never-credited account's declaration and session-key requests may add to the log.
     pub fresh_accounts: FreshAccountBudgets,
+    /// How many seconds of its tier's request rate each of a credited account's buckets holds at once.
+    pub request_bursts: RequestBursts,
 }
 
 /// A token bucket: `burst` requests at once, refilled at `per_second`.

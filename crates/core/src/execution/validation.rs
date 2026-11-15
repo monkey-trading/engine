@@ -17,7 +17,8 @@ impl Engine {
     /// - an unknown market
     /// - a qty, quoted price, or trigger price at or below zero or above `Fixed::MAX_INPUT`
     /// - an account that has never been credited
-    /// - from `V14`, a limit or stop order from an account already resting the parameters' cap, or
+    /// - from `V14`, a limit or stop order from an account already resting the parameters' cap, from
+    ///   `V67` its volume tier's limit where the table names one, or
     ///   one whose notional at its own price, in USD at that price in a market that converts at its
     ///   own index and at its FX market's last mark in any other, is below the market's minimum, or
     ///   whose FX market has no mark yet; a reduce-only order is never checked, and from `V15`
@@ -31,8 +32,13 @@ impl Engine {
         };
         let (params, market, acct) = self.orderable(req.account, req.market, req.qty, Some(price))?;
         if rests && self.protocol_version >= ProtocolVersion::V14 {
-            if acct.orders.len() >= params.max_resting_orders {
-                return Err(Reject::TooManyOrders { max: params.max_resting_orders });
+            match self.order_limit(req.account) {
+                Some((tier, max)) if acct.orders.len() >= max => return Err(Reject::TierOrderLimit { tier, max }),
+                Some(_) => {}
+                None if acct.orders.len() >= params.max_resting_orders => {
+                    return Err(Reject::TooManyOrders { max: params.max_resting_orders });
+                }
+                None => {}
             }
             // A reduce-only order never adds risk, as a reducing fill pays no minimum; from `V15`
             // neither does an order that can only reduce the account's position in this market. A

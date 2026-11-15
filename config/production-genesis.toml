@@ -237,12 +237,15 @@ profit_fee_curve = [
 # withdrawals must leave; close-outs read the market's bands alone (#614, D5):
 # 5% at tier 0 (20x), 2% at tier 1 (50x), and none above, where BTC-USD and
 # ETH-USD reach their own 1% (100x, D4).
+# From protocol V67 a tier's max_resting_orders is the orders an account rests at once, in place of
+# max_resting_orders above (D11), and its requests_per_second the signed requests a second the node
+# admits from it (D1); the node's bursts are set in [api.request_bursts].
 # The table moves only after a seven-day notice, never more generously (D7).
 volume_tiers = [
-  { threshold = "0", day_divisor = 1, best_price_share_bps = 2500, margin_floor_bps = 500 },
-  { threshold = "1000000", day_divisor = 2, best_price_share_bps = 5000, margin_floor_bps = 200 },
-  { threshold = "25000000", day_divisor = 5, best_price_share_bps = 10000 },
-  { threshold = "250000000", day_divisor = 10, best_price_share_bps = 25000 },
+  { threshold = "0", day_divisor = 1, best_price_share_bps = 2500, margin_floor_bps = 500, max_resting_orders = 25, requests_per_second = 2 },
+  { threshold = "1000000", day_divisor = 2, best_price_share_bps = 5000, margin_floor_bps = 200, max_resting_orders = 50, requests_per_second = 5 },
+  { threshold = "25000000", day_divisor = 5, best_price_share_bps = 10000, max_resting_orders = 100, requests_per_second = 10 },
+  { threshold = "250000000", day_divisor = 10, best_price_share_bps = 25000, max_resting_orders = 250, requests_per_second = 20 },
 ]
 
 [genesis.params.rollover]

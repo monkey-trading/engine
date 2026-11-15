@@ -53,7 +53,7 @@ use engine_core::merkle::{AccountProof, EntitlementProof};
 use engine_core::types::{AccountId, Millis};
 use engine_core::{Engine, Fixed};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
 use tracing::field::{Empty, display};
 use tracing::{Instrument, Span, info_span};
@@ -93,6 +93,13 @@ pub enum ApiError {
     },
     /// Over a rate limit; the client may retry after the wait.
     RateLimited(Duration),
+    /// A credited account is over the request rate of its volume tier; the client may retry after the
+    /// wait.
+    TierLimited {
+        wait: Duration,
+        tier: usize,
+        per_second: u32,
+    },
     /// A never-credited account's request is over the fresh-account budgets; the client may retry
     /// after the wait.
     SetupLimited(Duration),
@@ -207,6 +214,9 @@ impl IntoResponse for ApiError {
                 return (StatusCode::FORBIDDEN, Json(body)).into_response();
             }
             ApiError::RateLimited(wait) => return too_many_requests(wait, "rate limited"),
+            ApiError::TierLimited { wait, tier, per_second } => {
+                return too_many_requests_at_tier(wait, tier, per_second);
+            }
             ApiError::SetupLimited(wait) => return too_many_requests(wait, SETUP_LIMITED),
             ApiError::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "engine unavailable".to_owned()),
             ApiError::CatchingUp => (StatusCode::SERVICE_UNAVAILABLE, "history is catching up with the log".to_owned()),
@@ -230,9 +240,18 @@ impl IntoResponse for ApiError {
 
 /// 429 with `Retry-After` in whole seconds, rounded up, and `message` as the error.
 fn too_many_requests(wait: Duration, message: &str) -> Response {
+    retry_after(wait, json!({ "error": message }))
+}
+
+/// 429 for an account over its volume tier's request rate, naming the tier and its rate.
+fn too_many_requests_at_tier(wait: Duration, tier: usize, per_second: u32) -> Response {
+    retry_after(wait, json!({ "error": "rate limited", "tier": tier, "requests_per_second": per_second }))
+}
+
+/// 429 with `Retry-After` in whole seconds, rounded up, and `body`.
+fn retry_after(wait: Duration, body: Value) -> Response {
     let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
-    let body = Json(json!({ "error": message }));
-    (StatusCode::TOO_MANY_REQUESTS, [(RETRY_AFTER, secs.max(1).to_string())], body).into_response()
+    (StatusCode::TOO_MANY_REQUESTS, [(RETRY_AFTER, secs.max(1).to_string())], Json(body)).into_response()
 }
 
 /// Every route, with the request span outermost, then the browser origin check, the per-client rate,

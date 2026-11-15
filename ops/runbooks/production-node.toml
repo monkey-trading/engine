@@ -55,6 +55,13 @@ allowed_origins = ["https://console.example.com"] # REPLACE
 shared = { per_minute = 60, burst = 120 }
 per_client = { per_minute = 12, burst = 6 }
 
+# Seconds of its tier's request rate each of a credited account's buckets holds at once: the
+# account's own, and its session keys' together. The rate is the tier's (`volume_tiers`, from
+# protocol V67). A production build refuses more than 5 seconds.
+[api.request_bursts]
+account = 2
+session_key = 2
+
 [api.tls.acme]
 # The API's DNS name, lowercase. The CA connects to it on port 443.
 domain = "api.example.com" # REPLACE

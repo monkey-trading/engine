@@ -419,11 +419,20 @@ pub enum ProtocolVersion {
     /// rotation shows such a turn from then. Activation takes the earliest boundary of the accepted
     /// turns held, and a log holding rotation sets counts rotation as on until the first frontier.
     V65,
+    /// Request and order limits (`volume_tier`): a volume tier may carry a resting-order limit and a
+    /// request rate, each named for every tier or none. An account rests at most its tier's limit in
+    /// place of the parameters' cap, a new resting order past it refused with its own rejection while
+    /// orders already resting stay, and the node admits its signed requests at its tier's rate. The
+    /// limits move only with the table, by a seven-day notice or a vote, never above launch's and never
+    /// falling with the tier. Activation gives each tier of the table in force, and of its launch table,
+    /// that names none a limit by position: 25, 50, 100 and 250 orders, and 2, 5, 10 and 20 requests a
+    /// second; before it a limit a table names does nothing.
+    V67,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V65;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V67;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

@@ -129,8 +129,14 @@ fn the_production_genesis_applies_the_launch_decisions() {
     );
     let floors: Vec<i64> = production.params.volume_tiers.iter().map(|tier| tier.margin_floor_bps).collect();
     assert_eq!(floors, [500, 200, 0, 0]);
+    // D11's resting-order limits and D1's request rates (#614).
+    let orders: Vec<usize> = production.params.volume_tiers.iter().map(|tier| tier.max_resting_orders).collect();
+    let rates: Vec<u32> = production.params.volume_tiers.iter().map(|tier| tier.requests_per_second).collect();
+    assert_eq!((orders, rates), (vec![25, 50, 100, 250], vec![2, 5, 10, 20]));
     let mut volume_tiers = production.params.volume_tiers.clone();
-    volume_tiers.iter_mut().for_each(|tier| tier.margin_floor_bps = 0);
+    for tier in &mut volume_tiers {
+        (tier.margin_floor_bps, tier.max_resting_orders, tier.requests_per_second) = (0, 0, 0);
+    }
     assert_eq!(
         ProtocolParams {
             house_total_cap_floor: floor,

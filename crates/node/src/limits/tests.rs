@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::FreshAccountBudgets;
+use crate::config::{FreshAccountBudgets, RequestBursts};
 use std::net::Ipv4Addr;
 use std::num::{NonZeroU32, NonZeroUsize};
 
@@ -228,6 +228,96 @@ fn a_client_with_no_connection_left_is_forgotten() {
     assert!(caps.per_client.lock().unwrap().is_empty());
 }
 
+#[test]
+fn a_credited_account_is_held_to_its_tiers_rate_and_the_burst_of_seconds_the_config_names() {
+    let clock = FakeRelativeClock::default();
+    let limits = ApiLimits::with_quota(&section(1, 1), per_second, clock.clone());
+    let account = AccountId([7; 20]);
+    let tier_one = Some(RequestLimit { tier: 1, per_second: 5 });
+    // Two seconds of 5 a second: 10 at once.
+    for _ in 0..10 {
+        limits.check_account_at(account, tier_one).unwrap();
+    }
+    let Err(ApiError::TierLimited { wait, tier, per_second }) = limits.check_account_at(account, tier_one) else {
+        panic!("an eleventh request in a burst of 10")
+    };
+    assert_eq!((wait, tier, per_second), (Duration::from_millis(200), 1, 5));
+    clock.advance(Duration::from_millis(199));
+    assert!(limits.check_account_at(account, tier_one).is_err());
+    clock.advance(Duration::from_millis(1));
+    limits.check_account_at(account, tier_one).unwrap();
+    assert!(limits.check_account_at(account, tier_one).is_err());
+    // The tier-less bucket, `api.per_account` at 1 with a burst of 1, is a different one.
+    limits.check_account_at(account, None).unwrap();
+    assert!(matches!(limits.check_account_at(account, None), Err(ApiError::RateLimited(_))));
+    // Another account has its own bucket.
+    limits.check_account_at(AccountId([8; 20]), tier_one).unwrap();
+}
+
+#[test]
+fn an_account_at_a_lower_tier_is_counted_at_that_tiers_rate() {
+    let clock = FakeRelativeClock::default();
+    let limits = ApiLimits::with_quota(&section(1, 1), per_second, clock.clone());
+    let account = AccountId([7; 20]);
+    let tier_zero = Some(RequestLimit { tier: 0, per_second: 2 });
+    for _ in 0..4 {
+        limits.check_account_at(account, tier_zero).unwrap();
+    }
+    let Err(ApiError::TierLimited { wait, tier, per_second }) = limits.check_account_at(account, tier_zero) else {
+        panic!("a fifth request in a burst of 4")
+    };
+    assert_eq!((wait, tier, per_second), (Duration::from_millis(500), 0, 2));
+    // At tier 3's 20 a second the same account has a bucket of its own at that rate, full: a tier
+    // that rises is not held to the bucket of the one it left.
+    let tier_three = Some(RequestLimit { tier: 3, per_second: 20 });
+    for _ in 0..40 {
+        limits.check_account_at(account, tier_three).unwrap();
+    }
+    assert!(limits.check_account_at(account, tier_three).is_err());
+}
+
+#[test]
+fn an_accounts_session_keys_share_a_tier_bucket_apart_from_the_accounts() {
+    let limits = ApiLimits::with_quota(&section(1, 1), per_second, FakeRelativeClock::default());
+    let account = AccountId([7; 20]);
+    let tier_zero = Some(RequestLimit { tier: 0, per_second: 2 });
+    // Three seconds of 2 a second for the keys together, and two for the account's own.
+    for _ in 0..6 {
+        limits.check_session_account_at(account, tier_zero).unwrap();
+    }
+    assert!(matches!(limits.check_session_account_at(account, tier_zero), Err(ApiError::TierLimited { .. })));
+    for _ in 0..4 {
+        limits.check_account_at(account, tier_zero).unwrap();
+    }
+    assert!(matches!(limits.check_account_at(account, tier_zero), Err(ApiError::TierLimited { .. })));
+    // With no tier rate, the session bucket is `api.per_account`'s: a burst of 1.
+    limits.check_session_account_at(AccountId([8; 20]), None).unwrap();
+    assert!(matches!(limits.check_session_account_at(AccountId([8; 20]), None), Err(ApiError::RateLimited(_))));
+}
+
+#[test]
+fn a_tier_bucket_that_has_refilled_is_forgotten() {
+    let clock = FakeRelativeClock::default();
+    let limits = ApiLimits::with_quota(&section(1, 1), per_second, clock.clone());
+    let tier_zero = Some(RequestLimit { tier: 0, per_second: 2 });
+    limits.check_account_at(AccountId([7; 20]), tier_zero).unwrap();
+    let limiter = || limits.tier_accounts.by_rate[1].get().expect("made on first use");
+    assert_eq!(limiter().len(), 1);
+    clock.advance(Duration::from_secs(1));
+    limits.retain_recent();
+    assert_eq!(limiter().len(), 0);
+}
+
+#[tokio::test]
+async fn a_tier_limited_request_gets_429_with_the_wait_and_names_its_tier_and_rate() {
+    let response = ApiError::TierLimited { wait: Duration::from_millis(1500), tier: 2, per_second: 10 }.into_response();
+    assert_eq!(response.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "2");
+    let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body, serde_json::json!({ "error": "rate limited", "tier": 2, "requests_per_second": 10 }));
+}
+
 // ── Helpers ──
 
 fn budget(per_minute: u32, burst: u32) -> Budget {
@@ -260,6 +350,10 @@ fn section(per_second: u32, burst: u32) -> ApiSection {
         fresh_accounts: FreshAccountBudgets {
             shared: Budget { per_minute: rate.per_second, burst: rate.burst },
             per_client: Budget { per_minute: rate.per_second, burst: rate.burst },
+        },
+        request_bursts: RequestBursts {
+            account: NonZeroU32::new(2).unwrap(),
+            session_key: NonZeroU32::new(3).unwrap(),
         },
     }
 }

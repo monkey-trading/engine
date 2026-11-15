@@ -450,6 +450,7 @@ fn reject_kind(reason: &Reject) -> &'static str {
         Reject::HouseCapacity => "house_capacity",
         Reject::CloseSpreadCeiling { .. } => "close_spread_ceiling",
         Reject::TooManyOrders { .. } => "too_many_orders",
+        Reject::TierOrderLimit { .. } => "tier_order_limit",
         Reject::InvalidAmount => "invalid_amount",
         Reject::InvalidSessionKey => "invalid_session_key",
         Reject::SessionKeyRevoked => "session_key_revoked",

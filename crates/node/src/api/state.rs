@@ -8,6 +8,7 @@ use engine_core::command::Command;
 use engine_core::eip712::{B256, Eip712Domain, recover};
 use engine_core::event::{Event, Reject};
 use engine_core::types::{AccountId, Millis};
+use engine_core::volume_tier::RequestLimit;
 use tokio::sync::oneshot;
 use tracing::field::display;
 use tracing::{Span, debug};
@@ -48,7 +49,8 @@ impl ApiState {
     /// - the request is signed and the engine has never credited `account`
     /// - the request is signed with a nonce other than the account's next
     /// - the request is signed with an expiry already past by the clock or the last sequenced time
-    /// - the account, or its session keys, are over their rate
+    /// - the account, or its session keys, are over their rate: from `V67`, for a credited account
+    ///   whose tier names one, its tier's (`TierLimited`)
     /// - the sequencer has stopped
     pub(super) async fn authorise(
         &self,
@@ -193,7 +195,8 @@ impl ApiState {
         // Counted last, so only a request the node would sequence spends the account's rate. Every
         // signed request is in the public log, so anyone can replay one; a replay fails the nonce
         // or expiry check first and spends nothing.
-        self.limits.check_account(account)?;
+        let limit = if credited { self.request_limit(account).await? } else { None };
+        self.limits.check_account_at(account, limit)?;
         Ok(Some(auth))
     }
 
@@ -255,8 +258,17 @@ impl ApiState {
         // Counted against the account's session bucket, not the account's own: all of an
         // account's keys share one allowance at the per-account rate, so keys cannot multiply
         // it, and a flooding key cannot starve the wallet's requests, its revocation above all.
-        self.limits.check_session_account(account)?;
+        let limit = self.request_limit(account).await?;
+        self.limits.check_session_account_at(account, limit)?;
         Ok(Some(auth))
+    }
+
+    /// The request rate `account`'s volume tier admits, read on the stats worker's copy of the engine
+    /// (`read`): `None` before `V67` or where the tier names none.
+    /// Error cases:
+    /// - the sequencer has stopped
+    async fn request_limit(&self, account: AccountId) -> Result<Option<RequestLimit>, ApiError> {
+        self.read(move |e| e.request_limit(account)).await
     }
 
     /// Checks a signed request carries its signer's next nonce, `next`, and has not expired by the

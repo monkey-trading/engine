@@ -563,6 +563,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   last price when the gap starts beside a long that holds the margin, a withdrawal held to it over the
   gap, the normal margin at the reopen, a calendar change refused that would narrow the gap and a
   weekend margin change refused without notice over TLS, replay and a restart
+- `src/api/access_tests/tier_limits.rs` — the `V67` dev scenario: a fresh wallet resting 25 orders and
+  refused the 26th naming tier 0, its next requests refused with 429 naming tier 0's rate, a wallet at
+  tier 2 resting 30 orders under its own rate, the tier falling thirty days on with the 30 orders
+  left resting and a new one refused at 25, the account read, replay and a restart
 - `src/api/access_tests/earned_leverage.rs` — the `V64` dev scenario: a fresh wallet's BTC short
   refused at 25x by tier 0's margin floor and opened at 19.8x, 50x at tier 1 and 100x at tier 2, the
   tier falling thirty days on with the short open, a withdrawal stopped at the initial requirement, the
@@ -888,7 +892,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   restart
 - `src/tls/tests/proxy.rs` — the PROXY protocol header: the client it names, the trusted ranges, and every refusal
 - `src/tls/tests/stream.rs` — the stream end to end over TLS: the subscriber and message caps
-- `src/limits/mod.rs` — request rate limits, connection caps, the stream subscriber cap, and the allowed browser origins
+- `src/limits/mod.rs` — request rate limits, from `V67` a credited account's buckets at its tier's rate (one limiter for each rate a tier may name), connection caps, the stream subscriber cap, and the allowed browser origins
 - `src/limits/tests.rs` — the limiters' buckets, caps, and alert throttle
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
 - `src/config/stats.rs` — the `[stats]` section: retention, activity length, position-map buckets
@@ -930,6 +934,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   config's telemetry, and webhook URLs
 - `src/config/proxy.rs` — `[api.proxy_protocol]`: the trusted proxy ranges and a production build's refusal of loopback and wide ones
 - `src/config/proxy_tests.rs` — the proxy section's parsing, matching, and refusals
+- `src/config/request_bursts.rs` — `[api.request_bursts]`: the seconds of its tier's request rate each of a credited account's buckets holds, and a production build's refusal of more than 5
 - `src/config/fresh_accounts.rs` — `[api.fresh_accounts]`: the budgets a never-credited account's declaration and session-key requests share, the check that a client's share is below the shared budget, and a production build's refusal of rates above its values
 - `src/config/origins.rs` — `api.allowed_origins` validation: exact browser origins, `https` only in a production build
 - `src/config/origins_tests.rs` — the origin allowlist's accepted and refused spellings
@@ -2349,7 +2354,12 @@ changes (a weekend gap's start closes out below `weekend_margins`' `required` in
 `withdrawable` is the cash a withdrawal may take now, the engine's own check; and `max_leverage`,
 keyed by every listed market, is the most leverage a position opened now can take or approach in the
 market's margin bands at the same floors (at the production genesis's floors, 20 at tier 0 on a 1%
-market, 50 at tier 1 and 100 above).
+market, 50 at tier 1 and 100 above). From `V67`, `volume` also gives the tier's `max_resting_orders`
+and `requests_per_second` where the table names them: the orders the account may rest, a new one past
+which is refused as `tier_order_limit` naming the tier, and the signed requests a second the node takes
+from the account and its session keys, beyond which a request gets 429 with `Retry-After` and a body
+naming the `tier` and its `requests_per_second`. A tier naming no rate leaves `api.per_account`, which
+also holds accounts never credited and the operator.
 `GET /v1/markets` gives each market's `weekend_margin_bps` (left out when none) and, for a market
 with one, `weekend_margin`: `{"weekend_margin_bps", "from", "close", "reopen"}` for its next or
 current weekend gap, or nothing while no gap starts within 366 days or before V60 activates.
@@ -2462,8 +2472,9 @@ window and cooldown that a `set-params` carrying that file applies, and from `V5
 `--profit-fee-curve-from <params.toml>` the notice for its `profit_fee_curve`, which must stay at or
 above the launch curve at every hold, as the profit fee stays at or above its launch value, and from
 `V59` with `--volume-tiers-from <params.toml>` the notice for its `volume_tiers`, which keeps the
-launch tiers, no threshold or day divisor below launch and no share above it, and from `V64` no margin
-floor below launch or above the tier before it; `announce-markup <market> <bps>
+launch tiers, no threshold or day divisor below launch and no share above it, from `V64` no margin
+floor below launch or above the tier before it, and from `V67` no `max_resting_orders` or
+`requests_per_second` unnamed, above launch or below the tier before it; `announce-markup <market> <bps>
 --effective-at <time>` gives the notice a listed market's markup change needs before an
 `upsert-market` carries it. From `V52`, `announce-listing <market>` with `--spreads-from` and
 `--margins-from` (TOML market specs whose bands it names) and `--markup-bps` gives the notice a listed
