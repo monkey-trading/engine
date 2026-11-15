@@ -8,9 +8,9 @@ orders them. Read [reference.md](reference.md) and [operator-candidate.md](opera
 
 Rotation must be on for any of this to apply. While it is off, a stalled operator is handled by the
 fallback at the end of this page. It applies to a registry that elects: one that names a schedule
-rotates daily turns, where `promote()` reverts `ScheduleNamesTurns` until promotion over turns is
-built, and a stalled member is handled by the same fallback once the drawn turns end
-([operator-candidate.md](operator-candidate.md), section 6).
+rotates daily turns, where the registry's `promote()` reverts `ScheduleNamesTurns` and a failed
+operator is promoted past within minutes by the schedule's own `promote()`, which the members'
+liveness callers send ([operator-candidate.md](operator-candidate.md), section 6a).
 
 ## How a takeover goes
 

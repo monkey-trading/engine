@@ -238,6 +238,8 @@ impl Standby {
                 }
                 "liveness caller"
             });
+        } else {
+            warn!("no [liveness] caller: this member witnesses, promotes and relays nothing for a failed operator");
         }
         Ok(())
     }

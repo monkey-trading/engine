@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use engine_core::emissions::TokenUnits;
-use engine_core::types::AccountId;
+use engine_core::types::{AccountId, Millis};
 use tracing::{error, info};
 
 use crate::checkpoints::ScheduledTurn;
@@ -153,7 +153,15 @@ impl Ready {
         )
         .await?;
         crate::node::handover::check_rotation_for(cfg, &mut false, Some(candidate)).await?;
-        let setup = crate::checkpoints::setup::connect_promoted(cfg, signer, metrics).await?;
+        let mut setup = crate::checkpoints::setup::connect_promoted(cfg, signer, metrics).await?;
+        // This member's admin key is the operator's from the promotion's block, which the log's scan
+        // has yet to reach: a benchmark hold only the outgoing key could end lifts, so the mirror
+        // that hands the log over to this key comes in.
+        let admin_key = cfg.operator()?.address;
+        let since = Millis::try_from(promotion.at).unwrap_or(Millis::MAX).saturating_mul(1000);
+        if let Some(setup) = setup.as_mut() {
+            setup.registry_operator = Some(crate::checkpoints::RegistryOperator { admin_key, since });
+        }
         let fixed = (promotion.checkpoint_seq > 0).then_some(promotion.checkpoint_seq);
         // The vault's latest is the checkpoint the promotion fixed, or, on a restart, a later one this
         // key posted: the vault takes checkpoints from its signer only.

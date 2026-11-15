@@ -82,6 +82,8 @@ pub(crate) struct Named {
     pub reason: u8,
     pub set: u32,
     pub generation: u64,
+    /// The turn drawn before it, zero for the first.
+    pub prior: u64,
 }
 
 /// What the liveness rule depends on, at one agreed block.
@@ -121,7 +123,8 @@ pub(crate) struct Member {
     pub standby: Option<AccountId>,
     /// The admin key its candidacy registered: the node that runs for it.
     pub admin_key: AccountId,
-    /// Whether it held an assignment of the turn the members were read for: the turn's first member, or
+    /// Whether it held an assignment of the turn the members were read for, or of the turn drawn before
+    /// it, whose holder keeps the keys until the turn's member takes them: the turn's first member, or
     /// one a promotion moved past, whose own tail past the promotion's head no member had to hold.
     pub held: bool,
 }
@@ -177,6 +180,7 @@ async fn read_view(block: &impl AgreedBlock, domain: &LivenessDomain) -> anyhow:
         reason: found._1.reason,
         set: found._1.setId,
         generation: found._1.generation,
+        prior: found._1.prior,
     });
     Ok(View {
         time: block.time(),
@@ -282,15 +286,16 @@ pub(crate) fn stored_head<'a, B: AgreedBlock>(
 }
 
 /// The members of set `set` at `block`, each with its registered handover endpoint and promotable
-/// standby key.
+/// standby key, and whether it held an assignment of `turn`, or of `prior`, the turn drawn before it,
+/// whose holder keeps the keys into `turn` until its member takes them.
 /// Error cases:
 /// - a call fails, or its return does not decode
 pub(crate) fn members<'a, B: AgreedBlock>(
     block: &'a B,
     domain: &'a StandbyDomain,
-    (set, turn): (u32, u64),
+    (set, turn, prior): (u32, u64, u64),
 ) -> BoxFuture<'a, anyhow::Result<Vec<Member>>> {
-    Box::pin(read_members(block, domain, set, turn))
+    Box::pin(read_members(block, domain, set, (turn, prior)))
 }
 
 /// `members`, unboxed.
@@ -300,7 +305,7 @@ async fn read_members(
     block: &impl AgreedBlock,
     domain: &StandbyDomain,
     set: u32,
-    turn: u64,
+    (turn, prior): (u64, u64),
 ) -> anyhow::Result<Vec<Member>> {
     let listed = call(block, "liveness_set", domain.schedule, setOfCall { setId: set }).await?;
     let member = |candidate: Address| async move {
@@ -310,6 +315,9 @@ async fn read_members(
             call(block, "liveness_held", domain.schedule, heldTurnCall { turn, candidate }),
         )
         .await?;
+        let held = held
+            || (prior != 0
+                && call(block, "liveness_held", domain.schedule, heldTurnCall { turn: prior, candidate }).await?);
         anyhow::Ok(Member {
             candidate: AccountId(candidate.0.0),
             endpoint: registered.handoverEndpoint,
@@ -329,11 +337,11 @@ async fn read_members(
 pub(crate) fn turn_set<'a, B: AgreedBlock>(
     block: &'a B,
     domain: &'a LivenessDomain,
-) -> BoxFuture<'a, anyhow::Result<Option<(u32, u64)>>> {
+) -> BoxFuture<'a, anyhow::Result<Option<(u32, u64, u64)>>> {
     Box::pin(async move {
         let found =
             call(block, "liveness_turn", domain.standby.schedule, turnAtCall { timestamp: block.time() }).await?;
-        Ok((found.turn != 0).then_some((found._1.setId, found.turn)))
+        Ok((found.turn != 0).then_some((found._1.setId, found.turn, found._1.prior)))
     })
 }
 

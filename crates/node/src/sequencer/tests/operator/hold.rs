@@ -53,6 +53,18 @@ fn re_seating_the_recorded_key_supersedes_a_due_rotation_to_another_key() {
     assert!(holds(&mut seq, &clock));
 }
 
+/// A promoted member's admin key, seated from the promotion's block that the log's scan has yet to
+/// reach, ends a hold only the outgoing operator's key could end: holding would keep out the mirror
+/// that hands the log over to the promoted key.
+#[test]
+fn a_promoted_key_the_scan_has_not_reached_lifts_a_hold_the_outgoing_key_alone_could_end() {
+    let (dir, clock) = staked_log("promoted-seating", Some(FRONTIER));
+    let promoted = RegistryOperator { admin_key: address(INSTALLED_SEED), since: FRONTIER + 1_000 };
+    let mut seq = recovered(&dir, &clock, Some(promoted));
+    assert_eq!(promoted.unscanned(&seq.engine), Some(promoted.admin_key));
+    assert!(!holds(&mut seq, &clock), "a hold waits for a snapshot only the outgoing key could sign");
+}
+
 #[test]
 fn an_unscanned_installation_whose_own_key_is_due_keeps_the_hold() {
     let (dir, clock) = staked_log("seating-due", Some(FRONTIER));

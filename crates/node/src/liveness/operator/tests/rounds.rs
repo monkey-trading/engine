@@ -126,7 +126,7 @@ async fn a_full_set_reads_well_within_an_interval() {
     });
     let block = chain.latest().await.unwrap();
     let started = tokio::time::Instant::now();
-    let read = members(&block, &DOMAIN.standby, (1, 20_400)).await.unwrap();
+    let read = members(&block, &DOMAIN.standby, (1, 20_400, 0)).await.unwrap();
     assert!(started.elapsed() <= Duration::from_secs(5), "{:?}", started.elapsed());
     let candidates: Vec<Address> = read.iter().map(|member| Address::from(member.candidate.0)).collect();
     assert_eq!(candidates, listed.iter().map(|(candidate, ..)| *candidate).collect::<Vec<_>>(), "in the set's order");
@@ -180,6 +180,21 @@ async fn a_former_holders_tail_is_exempt_only_under_its_own_key() {
         assert_eq!(rig.gate.start_checked(), exempt, "{case}");
         rig.task.abort();
     }
+}
+
+/// A member that held the turn drawn before the one in effect, and kept its keys into it because the
+/// turn's member never took them, reports its own cut-off tail as no copy of this key, as a holder of
+/// the turn itself does.
+#[tokio::test(start_paused = true)]
+async fn a_prior_turns_holder_tail_is_exempt_as_a_turn_holders_is() {
+    let rig = Rig::spawn(10);
+    rig.chain.set(|chain| chain.prior = (20_399, vec![Address::repeat_byte(MEMBER)]));
+    let sealer = AccountId([0x73; 20]);
+    let status = Status { epoch: 1, durable: Some(Head { seq: 12, link: link(12) }), sealer, seen: None };
+    rig.members.0.lock().unwrap().get_mut("member:1").unwrap().2 = Some(status);
+    settle().await;
+    assert!(rig.gate.start_checked(), "the prior turn's holder's tail refused the start");
+    rig.task.abort();
 }
 
 /// A promoted operator, whose reads count only from the block its start read the promotion at, still

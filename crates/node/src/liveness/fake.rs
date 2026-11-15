@@ -56,6 +56,8 @@ pub(crate) struct ChainState {
     pub members: Vec<(Address, String, Address)>,
     /// The members that held an assignment of the turn in effect.
     pub held: Vec<Address>,
+    /// The turn drawn before the one in effect, and the members that held an assignment of it.
+    pub prior: (u64, Vec<Address>),
     /// The epoch's stored head: seq, signing time, posted-at.
     pub head: (u64, u64, u64),
     /// How long each call takes to answer.
@@ -93,6 +95,7 @@ impl Default for ChainState {
             scheduled: true,
             members: Vec::new(),
             held: Vec::new(),
+            prior: (0, Vec::new()),
             head: (0, 0, 0),
             latency: std::time::Duration::ZERO,
             holders: Vec::new(),
@@ -191,7 +194,7 @@ fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8
             reason: 0,
             setId: chain.set,
             generation: chain.generation,
-            prior: 0,
+            prior: chain.prior.0,
             seed: B256::ZERO,
             source: Address::ZERO,
         };
@@ -222,7 +225,9 @@ fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8
         promotableCall::abi_encode_returns(&key.unwrap_or_default())
     } else if to == SCHEDULE && is::<heldTurnCall>(data) {
         let asked = heldTurnCall::abi_decode(data)?;
-        heldTurnCall::abi_encode_returns(&(asked.turn == chain.turn && chain.held.contains(&asked.candidate)))
+        let held = (asked.turn == chain.turn && chain.held.contains(&asked.candidate))
+            || (asked.turn == chain.prior.0 && chain.prior.1.contains(&asked.candidate));
+        heldTurnCall::abi_encode_returns(&held)
     } else if to == SCHEDULE && is::<standbyHolderCall>(data) {
         let key = standbyHolderCall::abi_decode(data)?.key;
         let holder = chain.holders.iter().find(|(held, _)| *held == key).map(|(_, holder)| *holder);

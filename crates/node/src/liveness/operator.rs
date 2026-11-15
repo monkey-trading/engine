@@ -432,7 +432,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             let view = view(&block, &domain).await?;
             let listed = match (view.named.filter(|_| view.turn_names_operator()), cached) {
                 (Some(named), Some((id, listed))) if id == (standby.schedule, named.set, named.turn) => Some(listed),
-                (Some(named), _) => Some(members(&block, &standby, (named.set, named.turn)).await?),
+                (Some(named), _) => Some(members(&block, &standby, (named.set, named.turn, named.prior)).await?),
                 (None, _) => None,
             };
             let turnable = match &listed {
