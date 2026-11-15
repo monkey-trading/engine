@@ -136,6 +136,21 @@ checking it alone can miss a fractional-basis-point excess: a ceiling must bound
 - The sweep conditions on two existing isolated positions and one price jump; it is not an admission or
   cross-margin simulation and scenario counts are not probabilities. Positions of other venues' holders are
   scenario inputs, not launch behaviour.
+- The sweep charges the profit fee at the genesis's `profit_fee_bps`. From V55 a gain pays the larger of
+  that and `profit_fee_curve`'s fee at the position's hold, which is `profit_fee_bps` alone from 15 minutes,
+  so the sweep's positions are held across the gap for longer than that. A shorter hold pays more fee and
+  leaves the house a smaller shortfall than the sweep shows. The curve and the markout floors are in the
+  pinned inventory but no ceiling reads them.
+- The study prices every close with each market's first band at its listed width, which is volume tier 2's
+  (V59: the share of the first bound is 10000 bps, against 2500, 5000 and 25000 for tiers 0, 1 and 3).
+  Tiers 0 and 1 have a narrower first band, so more of their closes reach a higher band, and tier 3's
+  reaches further, so fewer do; `reversal_summary`'s count of closes above a ceiling is tier 2's. No
+  ceiling or floor reads the band width: the floor is the first band's rate.
+  The sweep's margin is each market's base margin, where V60 charges at least a market's weekend margin
+  over its weekend gap, so a gap across a weekend there leaves the house less bad debt than the sweep
+  shows. V62 adds a house-loss trigger to stress level 2, which raises the level earlier and changes no
+  level's spread, so the floor's widest stress minimum reads as before. These are in the pinned inventory,
+  and no result moved when it was re-pinned.
 - No historical calibration guarantees future outcomes. A market with too thin a sample, or no bootstrap
   interval, is blocked and takes no value from another market; none is blocked in this sample.
 

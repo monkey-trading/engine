@@ -1,8 +1,8 @@
 {
   "engine_revision": "41a9ef4a52cb26ac592c5a0e372f610d8d1ba067",
   "input_sha256": {
-    "genesis_inventory": "2626ad9d79233d70c7d15dc9d8a57c1d00d9fa1ab4ea5b8f38cff93ca1488c23",
-    "genesis_file_informational": "c7f9d813931f2bfcfb47ab6cbb7cd31ab05ddb34adf757969e4daa7fba770c6a",
+    "genesis_inventory": "4cb0d7d4b81d31203f926e886fa91d64866ec28245132f1c9a136f14ed94469b",
+    "genesis_file_informational": "d0766cbcec7695fb2f17001384bb6f34f4b6a1360d01582175fd2b2dd4b76d4e",
     "bars": "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522",
     "catalogue.py": "90bda1cc31a5b885318a7d475a4095c464ee589f79fec7b78028fa9294ae1f9c",
     "derive/markets.py": "32629c08a2adcb27109f4dddd529828ccc81421fd583245e673d9108d1edd428",
@@ -21,6 +21,74 @@
     "stress_move_window_ms": 60000,
     "stress_cooldown_ms": 300000,
     "max_resting_orders": 100,
+    "profit_fee_curve": [
+      {
+        "hold_ms": 10000,
+        "fee_bps": 10000
+      },
+      {
+        "hold_ms": 15683,
+        "fee_bps": 9100
+      },
+      {
+        "hold_ms": 24596,
+        "fee_bps": 8200
+      },
+      {
+        "hold_ms": 38573,
+        "fee_bps": 7300
+      },
+      {
+        "hold_ms": 60492,
+        "fee_bps": 6400
+      },
+      {
+        "hold_ms": 94869,
+        "fee_bps": 5500
+      },
+      {
+        "hold_ms": 148781,
+        "fee_bps": 4600
+      },
+      {
+        "hold_ms": 233330,
+        "fee_bps": 3700
+      },
+      {
+        "hold_ms": 365927,
+        "fee_bps": 2800
+      },
+      {
+        "hold_ms": 573877,
+        "fee_bps": 1900
+      },
+      {
+        "hold_ms": 900000,
+        "fee_bps": 1000
+      }
+    ],
+    "volume_tiers": [
+      {
+        "threshold": "0",
+        "day_divisor": 1,
+        "best_price_share_bps": 2500
+      },
+      {
+        "threshold": "1000000",
+        "day_divisor": 2,
+        "best_price_share_bps": 5000
+      },
+      {
+        "threshold": "25000000",
+        "day_divisor": 5,
+        "best_price_share_bps": 10000
+      },
+      {
+        "threshold": "250000000",
+        "day_divisor": 10,
+        "best_price_share_bps": 25000
+      }
+    ],
     "rollover": {
       "tz": "Europe/London",
       "hour": 22,
@@ -64,7 +132,8 @@
         "trigger": {
           "divergence_share_bps": 9500,
           "move_bps": 200,
-          "utilisation_bps": 9500
+          "utilisation_bps": 9500,
+          "house_loss": "0"
         }
       }
     ]
@@ -111,7 +180,7 @@
           "max_divergence_bps": 25,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.68",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 500,
@@ -196,7 +265,7 @@
           "max_divergence_bps": 25,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "2.53",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 500,
@@ -277,7 +346,7 @@
           "max_divergence_bps": 25,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "2.53",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 500,
@@ -359,7 +428,7 @@
           "max_divergence_bps": 5,
           "min_sources": 2
         },
-        "markout_floor_bps": "0.1",
+        "markout_floor_bps": "0.28",
         "financing": {
           "benchmark": "ESTR",
           "markup_bps": 100,
@@ -465,7 +534,7 @@
           "max_divergence_bps": 5,
           "min_sources": 2
         },
-        "markout_floor_bps": "0.1",
+        "markout_floor_bps": "0.27",
         "financing": {
           "benchmark": "SONIA",
           "markup_bps": 100,
@@ -575,7 +644,7 @@
           "max_divergence_bps": 5,
           "min_sources": 2
         },
-        "markout_floor_bps": "0.1",
+        "markout_floor_bps": "0.38",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 100,
@@ -681,7 +750,7 @@
           "max_divergence_bps": 5,
           "min_sources": 2
         },
-        "markout_floor_bps": "0.1",
+        "markout_floor_bps": "0.36",
         "financing": {
           "benchmark": "AONIA",
           "markup_bps": 100,
@@ -787,7 +856,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "0.5",
+        "markout_floor_bps": "0.70",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -979,7 +1048,8 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "0.5",
+        "markout_floor_bps": "0.91",
+        "weekend_margin_bps": 100,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -1171,7 +1241,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "0.5",
+        "markout_floor_bps": "0.65",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -1367,7 +1437,8 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "0.5",
+        "markout_floor_bps": "1.05",
+        "weekend_margin_bps": 150,
         "financing": {
           "benchmark": "TONA",
           "markup_bps": 250,
@@ -1535,7 +1606,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.22",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -1735,7 +1806,8 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "2.24",
+        "weekend_margin_bps": 150,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -1931,7 +2003,8 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "2.04",
+        "weekend_margin_bps": 750,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2164,7 +2237,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.83",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2301,7 +2374,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.65",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2438,7 +2511,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "2.71",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2575,7 +2648,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "2.03",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2712,7 +2785,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "2.03",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2849,7 +2922,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "2.28",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2986,7 +3059,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "3.47",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3123,7 +3196,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "3.03",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3260,7 +3333,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.24",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3397,7 +3470,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.69",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3534,7 +3607,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.51",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3671,7 +3744,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.55",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3808,7 +3881,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "2.33",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3945,7 +4018,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.38",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4082,7 +4155,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.65",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4219,7 +4292,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.59",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4356,7 +4429,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "1.48",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4493,7 +4566,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "2.14",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4630,7 +4703,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "3.44",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4767,7 +4840,7 @@
           "max_divergence_bps": 10,
           "min_sources": 2
         },
-        "markout_floor_bps": "1",
+        "markout_floor_bps": "3.10",
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
