@@ -39,11 +39,12 @@ import {Vault} from "./Vault.sol";
 /// signer moves at once, in a new epoch, to the vouched standby key of the next member in the turn's
 /// order that qualifies, and the promotion becomes the turn's assignment in a new generation.
 /// @notice A turn's member takes it with its first log head under its assignment, which `LogHeads`
-/// latches. Once `takeWindow` slots after the later of the boundary's slot and the assignment's are
-/// all marked with no latch for it, anyone may `skip` the turn to the next member in its order, which
-/// the key holder hands the keys to, in a new generation and with no signer change. Once
-/// `heartbeatMisses + 1` slots after the later of the boundary's slot and the signer change's are all
-/// marked with no assignment of the turn latched, `promote` may run even while heads post.
+/// latches. Once `takeWindow` slots after the latest of the boundary's slot, the assignment's and the
+/// signer change's are all marked with no latch for it, anyone may `skip` the turn to the next member in
+/// its order, which the key holder hands the keys to, in a new generation and with no signer change.
+/// Once `heartbeatMisses + 1` slots after the later of the boundary's slot and the signer change's are
+/// all marked with no assignment of the turn latched, in a set of two or more members, `promote` may run
+/// even while heads post.
 /// @notice Every assignment of a turn, drawn, skipped to or promoted, is kept by its position with its
 /// releases and generations, and `turns` follows the latest.
 /// @dev Seeds come from `seedReceiver`, which the registry's timelock replaces when an Ethereum fork

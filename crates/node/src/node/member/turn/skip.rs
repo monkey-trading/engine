@@ -2,9 +2,10 @@
 //! after it lands, so with a reader of the latest agreed block (`handover::assigned`) a member:
 //! - takes a turn the latest block's skip names it for, from the operator holding the keys
 //!   (`handover::discovery`), binding the skip's assignment and sealing the keys in its generation;
-//! - does not take a turn it was skipped from, unless it already holds its keys, when it starts as
-//!   their holder and hands them to the member now named, as it does with keys it took under an
-//!   earlier assignment of the turn that a later skip moved past;
+//! - does not take a turn it was skipped from, and follows: a running holder hands its keys on, but
+//!   one the registry no longer names does not restart as a holder, as an incumbent past its boundary
+//!   does not (`check_rotation`), so keys it sealed stay sealed and the turn moves on by a skip or the
+//!   missed-head promotion;
 //! - takes back a drawn holding it handed to a skip's member once a reorg removes that skip;
 //! - follows the operator whose release signed the newest head when the one the registry names fails
 //!   a stint, as while a skipped member never comes up the incumbent still serves.
@@ -12,7 +13,6 @@
 //! A read that fails leaves the finalised schedule to decide, as without a reader: the holder admits
 //! only the member its own read names.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, ensure};
@@ -68,11 +68,10 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
 
     /// What this member does when the latest agreed block's skip or promotion moved `finalised`, the
     /// turn in effect at trusted time, past what the finalised schedule shows: it takes the turn a skip
-    /// names it for, and follows rather than takes one a reassignment moved past it; keys it already
-    /// holds for either, or for an earlier assignment of the turn a later skip moved past, it holds. A
-    /// promotion naming it is its standby side's to start. A drawn holding it handed to a skip's member
-    /// it takes back once a reorg removes the skip. `None` when no reassignment of that turn says
-    /// otherwise.
+    /// names it for, holding keys it already sealed for it, and follows one a reassignment moved past it,
+    /// keys or not. A promotion naming it is its standby side's to start. A drawn holding it handed to a
+    /// skip's member it takes back once a reorg removes the skip. `None` when no reassignment of that turn
+    /// says otherwise.
     pub(super) async fn skipped(&mut self, finalised: &ScheduledTurn) -> Option<Holding> {
         let cfg = self.cfg;
         let dir = &cfg.tee.sealing.as_ref()?.dir;
@@ -112,23 +111,11 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                 }
             });
         }
-        // Keys it took under an earlier assignment of the turn that a later skip moved past: it holds,
-        // starts and hands them to the member now named. Past a promotion its key is fenced out.
-        if assigned.release != own && assigned.reason == Reason::Skip && seals_any(dir, &self.release) {
-            let read = self.fallback.assignments.as_ref()?;
-            let superseded = read.superseded(&assigned, own).await.ok().flatten();
-            if superseded.is_some_and(|held| file_for(dir, &self.release, held.binding.generation).exists()) {
-                info!(turn = finalised.turn, "a later skip moved past the keys this member holds: handing them on");
-                return Some(Holding::Hold);
-            }
-        }
-        // Moved past in a turn it holds no keys for: it follows. Keys sealed for the turn make it the
-        // holder, which starts and hands them to the member now named.
-        let skipped_from = assigned.release != own
-            && finalised.release == own
-            && !file_for(dir, &self.release, finalised.generation).exists();
+        // Moved past: it follows, keys or not. The registry no longer names it, so a start as their holder
+        // would be refused; past a promotion its key is fenced out too.
+        let skipped_from = assigned.release != own && finalised.release == own;
         skipped_from.then(|| {
-            info!(turn = finalised.turn, "a skip passed this member before it took the turn: following");
+            debug!(turn = finalised.turn, "a reassignment moved past this member's turn: following");
             Holding::Follow(Some(finalised.clone()))
         })
     }
@@ -224,11 +211,4 @@ impl std::error::Error for AssignmentBehind {}
 /// Whether a failed take waits on the latest agreed block reaching its turn (`AssignmentBehind`).
 pub(super) fn behind(e: &anyhow::Error) -> bool {
     e.downcast_ref::<AssignmentBehind>().is_some()
-}
-
-/// Whether `dir` holds keys sealed for `release` in any generation.
-fn seals_any(dir: &Path, release: &crate::tee::sealing::Release) -> bool {
-    let prefix = format!("{}-", hex::encode(release.id()));
-    let names = std::fs::read_dir(dir).into_iter().flatten().flatten();
-    names.into_iter().any(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
 }

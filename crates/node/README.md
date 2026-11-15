@@ -915,9 +915,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   racing the boundary, the stopped holder's lookback and a reorged skip; `tests/entries.rs` holds the
   log-writing helpers the predecessor tests share
 - `src/handover/assigned.rs` — the turn in effect's current assignment at the latest block the custody
-  quorum agrees on (#596), with the release of the signer epoch's newest head, the turn's earlier
-  assignment naming a release, and the binding a handover's request carries and both sides read again
-  before each step;
+  quorum agrees on (#596), with the release of the signer epoch's newest head and whether a release
+  move revised it, and the binding a handover's request carries and both sides read again before each
+  step;
   `src/handover/assigned/tests.rs` reads it from a scripted block and holds the fake reader other
   tests use
 - `src/handover/discovery.rs` — where a turn's keys are: the operator whose release signed the newest

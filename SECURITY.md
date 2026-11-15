@@ -437,8 +437,8 @@ it with its first head under its assignment, which `LogHeads` latches, and once 
 slots (2 by default; the deployment's minimum exceeds the handover's switch budget plus one interval
 plus a head's inclusion, which the head tolerance bounds, at every interval the bounds allow) pass after
 the latest of the boundary's slot, the assignment's and the last signer change's with no latch,
-anyone skips the turn to the next listed member in its order other than the one whose release signed the
-signer epoch's newest head, which holds the keys, in a new generation with no signer change, never past
+anyone skips the turn to the next listed member in its order that has held no assignment of the turn,
+other than the one whose release signed the signer epoch's newest head, which holds the keys, in a new generation with no signer change, never past
 a promotion, whose member the missed heads pass, nor while the guardian has retired the signer, when no
 head can latch, and once `heartbeatMisses + 1` witnessed slots pass after the later of the boundary's slot
 and the last signer change with the turn's assignment unlatched, in a set of two or more members, anyone
@@ -460,11 +460,11 @@ it, the time before going to stakers; a member that took the keys and was then s
 until it hands them to the member now named, earning the operator's share only until the log mirrors the
 skip, and a holder whose skip a reorg removed
 hands them to the member the schedule names again; a skip's member with no copy of the log, or one
-restarting, reads the skip at its start the same way, before it is final, as does one whose keys, under
-a draw or an earlier skip, a later skip moved past, which starts to hand them on; a member that handed its drawn turn to a skip's member
-takes it back once a reorg removes the skip, while a skip's member restarting after a reorg removed its
-skip, which nothing on chain names any more, leaves its keys sealed until a later skip or a promotion
-moves the turn on; the incumbent stops by its own
+restarting, reads the skip at its start the same way, before it is final; a holder the registry no
+longer names, as one a later skip or a reorg moved past, does not restart as a holder, as an incumbent
+past its boundary does not: it follows, its keys stay sealed, and the turn moves on by a later skip or
+the missed-head promotion; a running member that handed its drawn turn to a skip's member takes it back
+once a reorg removes the skip; the incumbent stops by its own
 clock before a promotion on either path could pass, as below; once no position
 qualifies the order is exhausted, and the governance fallback (rotation off, then `installOperator`
 once the drawn turns end) applies, which takes at most the 10-minute bound plus the timelock delay,

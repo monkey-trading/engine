@@ -459,7 +459,8 @@ misses it is promoted at once.
   assignment, which `LogHeads` latches; post it as soon as the node holds the keys. Once `takeWindow`
   witnessed slots (`cast call $SCHEDULE 'takeWindow()'`, 2 by default) pass after the latest of the
   boundary's slot, the assignment's and the last signer change's with no latch, anyone's `skip()` names
-  the next listed member in the turn's order other than the one whose release signed the newest head
+  the next listed member in the turn's order that has held no assignment of the turn, other than the
+  one whose release signed the newest head
   (`cast call $LOG_HEADS 'headRelease(uint64)' <epoch>`), which holds the keys, in a new generation,
   with no signer change; an unwitnessed slot, as through a chain outage, restarts the window, a
   promotion's assignment is never skipped, and no skip is due while the guardian has retired the signer. The timelock sets the window within its deployment bounds while no turn
@@ -475,11 +476,11 @@ misses it is promoted at once.
   schedule names again. A member is found where its heads are newest, then among the turn's other
   assignments, then at the turn's source and earlier holders; a member following moves to the holder
   when the operator the registry names fails a stint. A skip's member with no copy of the log, or one
-  restarting, reads the skip at its start the same way, before it is final, as does one whose keys a
-  later skip moved past, which starts to hand them on; a member that handed its drawn turn to a skip's
-  member takes it back once a reorg removes the skip. A skip's member restarting after a reorg removed
-  its skip finds nothing naming its keys: leave them sealed, as a later skip or a promotion moves the
-  turn on. If no assignment of a turn is latched once `heartbeatMisses + 1` witnessed slots pass after
+  restarting, reads the skip at its start the same way, before it is final; a member that handed its
+  drawn turn to a skip's member takes it back once a reorg removes the skip. A holder the registry no
+  longer names, as one a later skip or a reorg moved past, does not restart as a holder, as an incumbent
+  past its boundary does not: it follows; leave its sealed keys, as a later skip or the missed-head
+  promotion moves the turn on. If no assignment of a turn is latched once `heartbeatMisses + 1` witnessed slots pass after
   the later of the boundary's slot and the last signer change, in a set of two or more members,
   `promote()` passes even while the incumbent posts heads, which bind its own earlier turn, naming the
   next qualified member, the incumbent's own standby key included; the incumbent stops by its own clock
