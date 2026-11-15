@@ -1,6 +1,9 @@
 //! The whole handover over loopback between two mock enclaves, against a vault whose current release
 //! the test sets and a node that answers the request to stop sequencing.
 
+mod assignment;
+mod entries;
+use entries::{checkpoint, command, publish};
 mod fold;
 mod secrets;
 mod stop;
@@ -30,7 +33,7 @@ use tokio::sync::broadcast;
 use crate::checkpoints::{CurrentRelease, Observation, VaultState, View};
 use crate::clock::SystemClock;
 use crate::handover::{Challenge, Kx, Published, take};
-use crate::log::{Checkpoint, CommandEntry, LogEntry, Offset};
+use crate::log::{Checkpoint, CommandEntry, LogEntry};
 use crate::sequencer::StreamMsg;
 use crate::tee::MockAttestor;
 use crate::tee::keys::KeySet;
@@ -81,6 +84,8 @@ struct Exchange {
     reached: Option<engine_core::types::Millis>,
     /// The successor's metrics, which count its replays of the whole log.
     metrics: crate::metrics::Metrics,
+    /// The turn's latest assignment, as the predecessor reads it: none until a test sets one.
+    assignments: Arc<crate::handover::assigned::tests::FakeAssignments>,
 }
 
 #[tokio::test]
@@ -286,6 +291,7 @@ impl Exchange {
         let (samples, samples_rx) = watch::channel(None);
         let stand_in = Box::new(MockSealer { launch_digest: RELEASE });
         let secrets = Arc::new(SecretStore::open(&dir, stand_in, PREDECESSOR_CONFIG).unwrap());
+        let assignments = Arc::new(crate::handover::assigned::tests::FakeAssignments::default());
         let predecessor = Predecessor {
             listener,
             domain: CheckpointDomain {
@@ -319,6 +325,7 @@ impl Exchange {
                 Some(_) => Default::default(),
                 None => super::tail::Evidence::running(engine_core::protocol::ProtocolVersion::LATEST),
             }),
+            assignments: Some(assignments.clone()),
         };
         let run = tokio::spawn(predecessor.run());
         let successor_log = successor.node.log_dir.clone();
@@ -341,6 +348,7 @@ impl Exchange {
             samples,
             reached: None,
             metrics: crate::metrics::Metrics::new(),
+            assignments,
         }
     }
 
@@ -366,6 +374,7 @@ impl Exchange {
             tail: None,
             reads,
             secrets_only: false,
+            binding: None,
             evidence,
         };
         (stream, report_data, message)
@@ -468,33 +477,4 @@ fn successor_config(name: &str) -> (NodeConfig, PathBuf) {
 /// The deployment `cfg` names.
 fn domain_of(cfg: &NodeConfig) -> CheckpointDomain {
     CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().unwrap() }
-}
-
-/// Publishes `entry` as the sequencer does.
-fn publish(tx: &broadcast::Sender<Arc<StreamMsg>>, entry: LogEntry) {
-    let seq = match &entry {
-        LogEntry::Command(command) => command.sequenced.seq,
-        LogEntry::Checkpoint(cp) => cp.seq,
-        LogEntry::Withdrawal(_) => 0,
-    };
-    let _ = tx.send(Arc::new(StreamMsg::new(Offset::start_of(seq), entry)));
-}
-
-fn command(seq: u64) -> CommandEntry {
-    CommandEntry {
-        sequenced: Sequenced { seq, ts: 1_000 + seq as i64, cmd: Command::Tick },
-        events: Some(Vec::new()),
-        seal: None,
-    }
-}
-
-fn checkpoint(seq: u64, root: &str) -> Checkpoint {
-    serde_json::from_value(serde_json::json!({
-        "seq": seq,
-        "root": root,
-        "signature": "0x",
-        "signer": "0x",
-        "domain": { "chain_id": 31337, "vault": "0x0000000000000000000000000000000000000000" },
-    }))
-    .unwrap()
 }

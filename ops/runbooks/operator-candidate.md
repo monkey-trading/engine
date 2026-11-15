@@ -411,7 +411,8 @@ misses it is promoted at once.
 - **What every member's node does between its turns.** It follows the operator, syncing its copy every
   200 ms, and answers on its registered handover endpoint: its copy's status, signed by its standby key,
   the copy's latest entries, and vouches for other candidates' standby keys. With `[liveness]` it also
-  witnesses each slot, promotes once `promotionDueAt()` passes, and relays the operator's signed heads
+  witnesses each slot, skips once `skipDueAt()` passes, promotes once `promotionDueAt()` passes, and
+  relays the operator's signed heads
   from its stream when the chain's head is older than two thirds of an interval. Fund
   `liveness.caller` apart from every relayer; `liveness_caller_unfunded` pages below
   `liveness.min_balance`.
@@ -454,6 +455,26 @@ misses it is promoted at once.
   otherwise sets the copy, the resealed keys and the record aside (`*.quarantined-<turn>-<position>`
   beside each), pages `promotion_reorged` again, and follows as a member with a new standby key. Keep
   the set-aside files for the owner.
+- **A turn its member does not take.** A member takes its turn with its first head under its
+  assignment, which `LogHeads` latches; post it as soon as the node holds the keys. Once `takeWindow`
+  witnessed slots (`cast call $SCHEDULE 'takeWindow()'`, 2 by default) pass after the later of the
+  boundary's slot and the assignment's with no latch, anyone's `skip()` names the next listed member in
+  the turn's order, in a new generation, with no signer change; an unwitnessed slot, as through a chain
+  outage, restarts the window. The timelock sets the window within its deployment bounds while no turn
+  names the operator (`setTakeWindow`); the deployment's minimum must exceed the switch budget plus one
+  interval plus a head's inclusion (`headTolerance`) at the shortest interval the bounds allow. Skips
+  act at sequencer confirmation: the member named takes the keys, and the key holder admits it, from the
+  turn's assignment at the custody quorum's latest agreed block, not finality, and the holder's log must
+  show the skip's set naming the member with seven days' notice. Whoever holds the keys hands them on:
+  the incumbent, or a member that took them late and was then skipped, which starts, sequences and hands
+  them to the member now named; a holder whose skip a reorg removed hands them to the member the
+  schedule names again. A member is found where its heads are newest, then among the turn's other
+  assignments, then at the turn's source and earlier holders; a member following moves to the holder
+  when the operator the registry names fails a stint. A member with no copy of the log takes a skip's
+  turn only once the skip is final. If no assignment of a turn of two or more members is latched once
+  `heartbeatMisses + 1` witnessed slots pass after the later of the boundary's slot and the last signer
+  change, `promote()` passes even while the incumbent posts heads, which bind its own earlier turn; the
+  incumbent stops by its own clock before that, as `promotionDueAt()` counts this path too.
 - **A replaced operator coming back.** The outgoing operator, restarted or still running, follows the
   promoted member. Its log may hold commands past the last head its signer epoch posted that no member
   received; once a final block shows that epoch ended, the node sets its log aside

@@ -85,7 +85,7 @@ async fn a_running_node_alerts_once_the_vault_names_another_release_or_generatio
     let current = vault.current.clone();
     let every = Duration::from_secs(60);
     let watch =
-        tokio::spawn(watch_release(vault, sealed_store("keys-watch-generation", sealed, 2), every, untrusted()));
+        tokio::spawn(watch_release(vault, sealed_store("keys-watch-generation", sealed, 2), every, untrusted(), None));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the release the vault names raised an alert");
 
@@ -125,7 +125,7 @@ async fn a_drawn_schedule_waits_for_trusted_time_before_the_vault_alone_decides(
     let every = Duration::from_secs(60);
     let (samples, samples_rx) = tokio::sync::watch::channel(None);
     let trusted = crate::trusted_time::TrustedClock::new(Arc::new(crate::clock::SystemClock), samples_rx, every);
-    let watch = tokio::spawn(watch_release(vault, sealed_store("keys-watch-untimed", sealed, 4), every, trusted));
+    let watch = tokio::spawn(watch_release(vault, sealed_store("keys-watch-untimed", sealed, 4), every, trusted, None));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "paged on the vault's release before trusted time");
     let after = boundary + TURN_HANDOVER_GRACE_MS;
@@ -166,7 +166,7 @@ async fn from_a_turns_boundary_the_turn_alone_names_a_release() {
         crate::trusted_time::Sample { at: std::time::Instant::now(), earliest_ms: boundary, latest_ms: boundary + 1 };
     let (samples, samples_rx) = tokio::sync::watch::channel(Some(sample));
     let trusted = crate::trusted_time::TrustedClock::new(clock, samples_rx, Duration::from_secs(1));
-    let watch = tokio::spawn(watch_release(vault, sealed_store("keys-watch-turn", sealed, 4), every, trusted));
+    let watch = tokio::spawn(watch_release(vault, sealed_store("keys-watch-turn", sealed, 4), every, trusted, None));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the turn's member was paged before finality named it");
     // The turn names another release: the vault's finalised one no longer counts, though nothing
@@ -210,7 +210,7 @@ async fn a_turn_naming_this_release_in_another_generation_pages_only_while_the_k
     let at = |ms| crate::trusted_time::Sample { at: std::time::Instant::now(), earliest_ms: ms, latest_ms: ms + 1 };
     let (samples, samples_rx) = tokio::sync::watch::channel(Some(at(boundary)));
     let trusted = || crate::trusted_time::TrustedClock::new(clock.clone(), samples_rx.clone(), Duration::from_secs(1));
-    let watch = tokio::spawn(watch_release(vault(), returning.clone(), every, trusted()));
+    let watch = tokio::spawn(watch_release(vault(), returning.clone(), every, trusted(), None));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "paged within the turn's handover grace");
     // The holder seals its keys in the turn's generation as it takes the turn: past the grace, nothing pages.
@@ -221,7 +221,7 @@ async fn a_turn_naming_this_release_in_another_generation_pages_only_while_the_k
     watch.abort();
 
     // Keys left in the earlier generation page past the grace.
-    let watch = tokio::spawn(watch_release(vault(), stale, every, trusted()));
+    let watch = tokio::spawn(watch_release(vault(), stale, every, trusted(), None));
     tokio::time::sleep(every).await;
     let alert = alerts.try_recv().expect("keys left in the earlier generation raise Critical past the grace");
     assert_eq!(alert["alert"].as_str(), "release_superseded");
@@ -236,7 +236,8 @@ async fn a_superseded_release_alerts_before_the_vault_folds_the_change() {
     *vault.synced.lock().unwrap() = Some(sealed.id());
     let current = vault.current.clone();
     let every = Duration::from_secs(60);
-    let watch = tokio::spawn(watch_release(vault, sealed_store("keys-watch-fold", sealed, 2), every, untrusted()));
+    let watch =
+        tokio::spawn(watch_release(vault, sealed_store("keys-watch-fold", sealed, 2), every, untrusted(), None));
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the release the vault names raised an alert");
 

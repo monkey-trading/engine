@@ -339,7 +339,10 @@ async fn serve_node(
         && let Some(vault) = crate::handover::vault_reader(cfg)?
     {
         let (store, every, trusted) = ((store.clone(), final_signer), keys::RELEASE_CHECK_EVERY, trusted());
-        tasks.spawn(async move { ("release", liveness::watch_release(vault, store, every, trusted).await) });
+        let assignments = crate::handover::assigned::for_config(cfg, "release_assignments")?;
+        tasks.spawn(async move {
+            ("release", liveness::watch_release(vault, store, every, trusted, assignments).await)
+        });
     }
     if let (Some(store), Some(vault)) = (turn_store, turn_vault) {
         let (release, every) = (store.release(), keys::RELEASE_CHECK_EVERY);

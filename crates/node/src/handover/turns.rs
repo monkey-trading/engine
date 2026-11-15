@@ -21,7 +21,7 @@ use crate::tee::sealing::{KeyStore, Release, Sealer};
 
 /// How many drawn turns back from its own a member that finds no source holding the keys looks: a
 /// week of members that never took their turns, past which the governance fallback applies.
-const SOURCE_LOOKBACK: usize = 7;
+pub(crate) const SOURCE_LOOKBACK: usize = 7;
 
 /// The generation in which the vault names `release` at `at` and trusted time `reached_ms`, a time
 /// true time has certainly reached, and the turn that names it when one does: the turn the finalised

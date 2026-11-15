@@ -300,6 +300,11 @@ an index: load only the rule whose hint matches the current action.
   (`node/member/standby/orphans.rs`), and once a promotion names it starts in process from its copy,
   fetching any gap of the promotion's prefixes from members, its checkpoints after the promotion's
   finality and a reorg of the promotion stopping it (`node/member/promoted.rs`, `node/liveness.rs`).
+  A down successor (#596): handovers bind the turn's assignment at the latest agreed block
+  (`handover/assigned.rs`), which the holder checks before its stop and before the keys go and the
+  member before it seals them (`handover/predecessor/assignment.rs`), a skip's member takes the turn
+  before the skip is final (`node/member/turn/skip.rs`), and the keys are sought where the newest
+  head's release runs first (`handover/discovery.rs`); the liveness caller also skips.
   Withdrawal authorizations carry EIP-712 data and an approval inclusion proof; custody's used nonce
   determines payment, and unpaid approvals are reissued on signer rotation or on their account's
   signed request, never on a schedule. It also has price feeds: live crypto
@@ -398,7 +403,11 @@ an index: load only the rule whose hint matches the current action.
   new epoch with no timelock (`promote`, `Vault.promoteSigner`), keeps every assignment and its release
   revisions (`assignmentOf`), and registers standby keys from the candidate with a vouch from the vault's
   signer or a promotable standby key (`registerStandby`, `promotable`); `promotionDueAt` is the earliest
-  time a promotion could pass.
+  time a promotion could pass. From #596 it skips a turn whose current assignment no head latched within
+  `takeWindow` marked slots to the next member in its order, in a new generation with no signer change
+  (`skip`, `skipDueAt`), and promotes past an incumbent that still beats once no assignment of a turn of
+  two or more members is latched within `heartbeatMisses + 1`; `LogHeads.headRelease(epoch)` names the
+  release of the epoch's newest head.
   `src/SeedSchedule.sol` fixes each daily operator turn's seed epoch
   (the beacon epoch holding the time two days before its draw deadline, which is a day before its 22:30 UTC boundary);
   `src/SeedRelay.sol` on Ethereum proves that epoch's RANDAO mix from an EIP-4788 beacon block root, its

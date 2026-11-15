@@ -388,7 +388,8 @@ the vault names the turn's release, in the generation the schedule fixed, from t
 transaction, and both enclaves of a handover accept the turn's member from the finalised schedule
 once their trusted time reaches the boundary, the turn the schedule names then being the only holding
 named, and the incumbent hands over only a turn its own log accepted, or, once it has stopped for a
-member whose transfer never confirmed, one the turns its log held at the stop show it will accept, so a host that holds an
+member whose transfer never confirmed, one the turns its log held at the stop show it will accept, for
+up to seven turns on, so a host that holds an
 enclave's Roughtime replies back can delay a handover but not bring it forward, and a turn drawn
 within a finality period of its boundary waits for finality, as does the handover after a promotion
 made within a finality period of the next boundary, the member keeping its copy meanwhile; a holder the schedule names again in a new
@@ -431,7 +432,27 @@ default) pass with no head of the signer epoch, anyone promotes the next qualifi
 order, and the vault moves its signer to that member's vouched standby key in a new signer epoch, with
 no timelock; detection takes 5 to 6 intervals after the last landed head (about 6 minutes at the
 defaults, at most 10 under the deployment bounds), each promotion adds the promoted member's start,
-and each member in the order that fails to start adds one more detection window; once no position
+and each member in the order that fails to start adds one more detection window; a turn's member takes
+it with its first head under its assignment, which `LogHeads` latches, and once `takeWindow` witnessed
+slots (2 by default; the deployment's minimum exceeds the handover's switch budget plus one interval
+plus a head's inclusion, which the head tolerance bounds, at every interval the bounds allow) pass after
+the later of the boundary's slot and the assignment's with no latch, anyone skips the turn to the next
+listed member in its order, in a new generation with no signer change, and once `heartbeatMisses + 1`
+witnessed slots pass after the later of the boundary's slot and the last signer change with the turn's
+assignment unlatched, in a set of two or more members, anyone may promote past the incumbent even while
+it posts heads, which bind its own earlier turn and latch nothing; an unwitnessed slot restarts both
+counts, so a chain outage across a boundary gives the member a fresh window; skips and promotions act at
+sequencer confirmation: the key holder admits, and the member named takes, the assignment the custody
+quorum's latest agreed block shows, bound to the signer epoch, the turn, the assignment's position and
+its generation, which the holder reads again before it stops and before the keys go, and the member
+before it seals them, so a reassignment in between leaves the keys with the holder, which serves the
+member then named; a skip's member is admitted once the holder's log shows the skip's set naming it with
+notice, before the log mirrors the skip at finality, and logs `TurnTaken` only once the mirror applies
+it, the time before going to stakers; a member that took the keys and was then skipped sequences on,
+earning nothing, until it hands them to the member now named, and a holder whose skip a reorg removed
+hands them to the member the schedule names again; a member with no copy of the log takes a skip's turn
+only once the skip is final; the incumbent stops by its own clock before a promotion on either path
+could pass, as below; once no position
 qualifies the order is exhausted, and the governance fallback (rotation off, then `installOperator`
 once the drawn turns end) applies, which takes at most the 10-minute bound plus the timelock delay,
 below the 14-day exit period; a promoted member starts at a block the custody quorum agrees on, before

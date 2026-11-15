@@ -92,7 +92,9 @@ impl Rig {
             confirmed: None,
             anchored: None,
             trusted: Some(trusted.clone()),
-            prefix_ring: Default::default(),
+            // The log's prefixes so far, as a start seeds them from its replay: a later holder's poster
+            // extends the head an earlier holder posted.
+            prefix_ring: log.ring(),
             stall_intervals: 2,
             heartbeat: Some(heartbeat),
         };
@@ -182,6 +184,13 @@ impl Rig {
 }
 
 impl Log {
+    /// Every command's cumulative prefix so far.
+    fn ring(&self) -> crate::log::PrefixRing {
+        let mut ring = crate::log::PrefixRing::default();
+        self.0.lock().unwrap().iter().for_each(|(seq, released)| ring.record(*seq, released.head.link));
+        ring
+    }
+
     /// Sequences `seq` on the operator; the other members' copies durably take it, with the operator's
     /// newest signed head from its stream.
     pub(super) fn extend(&self, rig: &Rig, members: &[Member], operator: usize, seq: u64) {

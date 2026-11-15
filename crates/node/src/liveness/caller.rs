@@ -3,6 +3,8 @@
 //! - witnesses the current slot once no witness has marked it (`OperatorSchedule.witness`);
 //! - promotes once the block time reaches `promotionDueAt` (`OperatorSchedule.promote`), naming the
 //!   next member in the turn's order;
+//! - skips the turn in effect's current assignment once the block time reaches `skipDueAt`
+//!   (`OperatorSchedule.skip`, #596), naming the next member in the turn's order;
 //! - relays the operator's newest signed head from its stream when the chain's head is older than two
 //!   thirds of an interval, so a head the operator's own relayer fails to post still counts for the
 //!   enclave that signed it.
@@ -35,7 +37,7 @@ use tokio::time::{MissedTickBehavior, interval, timeout};
 use tracing::{debug, info, warn};
 
 use crate::config::{CheckpointSection, LivenessSection, redact};
-use crate::liveness::chain::{LivenessDomain, View, promoteCall, view, witnessCall};
+use crate::liveness::chain::{LivenessDomain, View, promoteCall, skipCall, view, witnessCall};
 use crate::liveness::link::Copy;
 use crate::log_heads::{Head, SignedHead};
 use crate::standby_key::chain::StandbyChain;
@@ -50,6 +52,7 @@ const GAS_MARGIN_DIVISOR: u64 = 4;
 pub(crate) enum Call {
     Witness,
     Promote,
+    Skip,
     /// A signed head, relayed.
     Relay(Box<SignedHead>),
 }
@@ -229,6 +232,7 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
         let (to, data) = match call {
             Call::Witness => (self.domain.standby.schedule, witnessCall {}.abi_encode()),
             Call::Promote => (self.domain.standby.schedule, promoteCall {}.abi_encode()),
+            Call::Skip => (self.domain.standby.schedule, skipCall {}.abi_encode()),
             Call::Relay(signed) => match signed.head.calldata(&signed.signature) {
                 Ok(data) => (self.domain.log_heads, data),
                 Err(e) => {
@@ -313,7 +317,7 @@ impl crate::clock::Clock for Reached {
 /// The calls a read of `view` calls for at `now`, the caller's clock in Unix seconds, with `signed` the
 /// newest signed head the operator's stream carried, judging time by the later of `now` and the block's:
 /// none while no turn names the operator; a witness while the current slot is not the latest marked
-/// one; a promotion once that time reaches `promotionDueAt`; a relay while the chain's head of the
+/// one; a promotion once that time reaches `promotionDueAt`; a skip once it reaches `skipDueAt`; a relay while the chain's head of the
 /// epoch is older than two thirds of an interval and `signed` is newer. The latest mark counts only
 /// when it names the current slot itself: a mark made under an earlier interval names a slot in that
 /// interval's units, which no comparison of order can relate to this one.
@@ -328,6 +332,9 @@ pub(crate) fn calls(view: &View, signed: Option<SignedHead>, now: u64) -> Vec<Ca
     }
     if time >= view.due_at {
         calls.push(Call::Promote);
+    }
+    if time >= view.skip_due_at {
+        calls.push(Call::Skip);
     }
     let stale = view.head.posted_at.saturating_add(view.rule.interval * 2 / 3) <= time;
     if let Some(signed) =

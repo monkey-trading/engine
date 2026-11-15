@@ -38,6 +38,10 @@ pub(super) struct Request {
     /// Asks for the delivered secrets alone, with no stop: its quote binds that under its own tag.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) secrets_only: bool,
+    /// The turn's assignment the successor read and takes, which its quote binds
+    /// (`bound_report_data`) and the holder admits only while it reads the same (#596).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) binding: Option<super::assigned::Binding>,
     pub(super) evidence: Evidence,
 }
 

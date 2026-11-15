@@ -288,7 +288,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   against;
   `src/liveness/link/slots.rs` its places, per peer address (IPv6 by /64), with the oldest connection
   that has not asked giving its place up once all are taken; `src/liveness/link/tests.rs`
-- `src/liveness/caller.rs` — a member's liveness caller: witnesses, promotions and relayed heads from its
+- `src/liveness/caller.rs` — a member's liveness caller: witnesses, skips, promotions and relayed heads from its
   own account; `src/liveness/caller/tests.rs`
 - `src/liveness/fake.rs` — the fake chain the rule's tests set
 - `src/node/liveness.rs` — the operator's wiring of the rule, a promoted start's checkpoints after
@@ -393,7 +393,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   below what it had reached then; `src/node/member/turn/tests/` drives it against stand-in registry,
   operator, archive, heads and time, `take.rs` there its tries at the turn, a take that changed the
   copy rebuilding the replica, against `src/handover/stand_in.rs`, `episodes.rs` its alerts'
-  episodes, and `stop.rs` a shutdown during a replica's build
+  episodes, and `stop.rs` a shutdown during a replica's build; `src/node/member/turn/skip.rs` is the
+  member's turn under the latest agreed block's skips (#596): it takes a turn a skip names it for
+  before the skip is final, follows rather than takes one a skip or a promotion moved past it, asks
+  the operator whose head is newest first, and follows that operator every other failed stint;
+  `tests/skip.rs` there covers each
 - `src/node/secrets.rs` — this start's delivered secrets: opening the sealed bundle, asking a
   predecessor, holding for what the node cannot run without, setting the rest into the config and
   the alert routes, `secret_missing`, and the listener handed back to a member's own operator key
@@ -901,7 +905,18 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   its own writer cut falls back to the whole log once it sets the copy aside, and an older reader,
   following or with no copy, is refused before the stop; `src/handover/predecessor/tail.rs` holds
   the predecessor's checks on a request for the keys: the versions every successor reads, and a tail
-  request's tip, on its log and still retained
+  request's tip, on its log and still retained; `src/handover/predecessor/assignment.rs` holds its
+  checks against the latest agreed block's assignment (#596): the binding a request names, a skip's
+  member under the log's notice rule, read again after the stop, with `tests/assignment.rs` covering a
+  skip's take, refusals, and a skip or a promotion at each phase of a transfer
+- `src/handover/assigned.rs` — the turn in effect's current assignment at the latest block the custody
+  quorum agrees on (#596), with its latch and the release of the signer epoch's newest head, and the
+  binding a handover's request carries and both sides read again before each step;
+  `src/handover/assigned/tests.rs` reads it from a scripted block and holds the fake reader other
+  tests use
+- `src/handover/discovery.rs` — where a turn's keys are: the operator whose release signed the newest
+  head, the turn's other assigned members, then its source and earlier holders; its tests cover the
+  order
 - `src/handover/secrets.rs` — the new release's side of moving the delivered secrets with an
   approved upgrade, checked by the operator's signature; `src/handover/predecessor/secrets.rs` is
   the running release's, which refuses an election's successor; `src/handover/predecessor/tests/`'s

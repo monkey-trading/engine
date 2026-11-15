@@ -12,7 +12,7 @@ use tracing::{Instrument, info, info_span, warn};
 
 use crate::checkpoints::setup::EpochUnfinal;
 use crate::checkpoints::{CheckpointChain, ScheduledTurn, View};
-use crate::handover::tail::{Prepared, Taken, take_tail};
+use crate::handover::tail::{Taken, take_tail};
 use crate::history::HistoryPlan;
 use crate::history::marks::Retentions;
 use crate::history::marks::fold::MarkFold;
@@ -135,7 +135,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                     match self.take(&turn, replica, operator).instrument(span.clone()).await {
                         Ok((Taken { store, after, entries, bytes }, ready)) if self.cfg.snapshots.is_none() => {
                             info!(after, entries, bytes, generation = store.generation(), "the copy took the tail");
-                            revalidate(&turn)?;
+                            self.revalidate(&turn).await;
                             let (follower, stats, history, marks) =
                                 follower.take().expect("the follower took the tail");
                             let (replica, moved) =
@@ -215,7 +215,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             // The operator in effect changes at each turn's boundary.
             let number = turn.as_ref().map(|turn| turn.turn);
             if followed.as_ref().is_none_or(|(_, resolved_at)| *resolved_at != number) {
-                match crate::standby::resolve(self.cfg, &self.vault).await {
+                match self.resolve_following(turn.as_ref()).await {
                     Ok(resolved) => {
                         info!(operator = %resolved.origin, enclave = %resolved.enclave, turn = ?number, "following the operator in effect");
                         self.episodes.cleared(Step::ResolveOperator);
@@ -271,7 +271,9 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                         }
                         None => self.episodes.follow_failed(&operator.origin, &e),
                     }
-                    // A failed stint re-resolves the operator in effect.
+                    // A failed stint re-resolves the operator in effect, the other of the one the
+                    // registry names and the one whose head is newest (#596).
+                    self.follow_holder = !self.follow_holder;
                     followed = None;
                     tokio::time::sleep(STINT).await;
                 }
@@ -297,6 +299,11 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         };
         let dir = &self.cfg.tee.sealing.as_ref().context("a member seals its keys")?.dir;
         let moving = self.signer_moving(&at).await?;
+        if let Some(turn) = &turn
+            && let Some(holding) = self.skipped(turn, dir).await
+        {
+            return Ok(holding);
+        }
         match turn {
             // The generation a confirmed handover gave away is the successor's now.
             Some(turn)
@@ -413,9 +420,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         follower: &mut Follower,
         operator: Option<&Followed>,
     ) -> anyhow::Result<(Taken, Ready)> {
-        let at = self.vault.observe(View::Finalized, &[]).await?;
-        let sources = crate::handover::turns::sources(&self.vault, &at, turn).await?;
-        let mut prepared = Prepared::read(&self.vault, &self.release, Some(turn.boundary), None).await?;
+        let (sources, mut prepared) = self.prepare_take(turn).await?;
         let read = Ready::read(
             self.cfg,
             &self.start,
@@ -474,17 +479,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     }
 }
 
-/// The point between a confirmed tail handover and the first command the node sequences, where a
-/// later rule binds the handover to the signer epoch, the turn, its assignment and its generation.
-/// Nothing is checked here yet.
-/// Error cases:
-/// - none yet
-fn revalidate(turn: &ScheduledTurn) -> anyhow::Result<()> {
-    info!(turn = turn.turn, generation = turn.generation, "took the turn's keys and tail; starting from the replica");
-    Ok(())
-}
-
 mod episodes;
+mod skip;
 mod tries;
 
 pub(crate) use episodes::Episodes;

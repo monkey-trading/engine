@@ -73,8 +73,9 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// turn admitted is kept, so a successor retrying after the stop, when the log is final and the
     /// sequencer gone, is admitted under it. Once the sequencer is gone, the turns retained at the stop
     /// answer for any other turn: the log accepted it, or will when the successor continuing it mirrors
-    /// the assignment, as the turn has not ended by trusted time and the set it was drawn from names
-    /// its member with seven days' notice by its boundary.
+    /// the assignment, as the turn has not ended by trusted time, is at most `SOURCE_LOOKBACK` turns past
+    /// the last they know, and the set it was drawn from names its member with seven days' notice by its
+    /// boundary.
     /// Error cases:
     /// - the listener reads no log, the node is stopping with no turns retained, or the log has not
     ///   accepted the turn and, once stopped, would not
@@ -89,7 +90,9 @@ impl<C: CheckpointChain> Predecessor<C> {
                 Some(retained) => {
                     let ended = self.trusted.reached_ms().is_some_and(|reached| reached >= turn.boundary + DAY_MS);
                     logged(retained, number, key)
-                        || (!ended && retained.set_refusal(turn.set, turn.candidate, key, turn.boundary).is_none())
+                        || (!ended
+                            && super::assignment::within_lookback(retained, number)
+                            && retained.set_refusal(turn.set, turn.candidate, key, turn.boundary).is_none())
                 }
                 None => return Err(e),
             },

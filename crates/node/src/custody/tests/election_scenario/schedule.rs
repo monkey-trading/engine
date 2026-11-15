@@ -25,6 +25,14 @@ const MAXIMUMS: (u64, u64, u16, u16) = (120, 60, 9, 256);
 const SWITCH_BUDGET_SECS: u64 = 120;
 const BLOCK_MILLIS: u64 = 250;
 
+/// The least take window (#596) the bounds and `switch_budget` admit, as its minimum, its value and
+/// half its maximum: one slot past the minimum's first exceeds the budget plus the longest tolerance at
+/// the shortest interval.
+fn take_window(switch_budget: u64) -> (u16, u16, u16) {
+    let least = u16::try_from((switch_budget + MAXIMUMS.1) / MINIMUMS.0 + 2).expect("a take window in slots");
+    (least, least, 2 * least)
+}
+
 impl Chain {
     /// Deploys the LogHeads companion of the vault and the schedule over the seed `receiver`, and
     /// returns both.
@@ -43,7 +51,8 @@ impl Chain {
         let from = self.accounts[0];
         let log_heads =
             deploy(&self.provider, from, "LogHeads.sol/LogHeads.json", &(self.vault,).abi_encode_params()).await;
-        let args = (self.registry, receiver, log_heads, rule, MINIMUMS, MAXIMUMS, switch_budget, BLOCK_MILLIS);
+        let window = take_window(switch_budget);
+        let args = (self.registry, receiver, log_heads, rule, MINIMUMS, MAXIMUMS, window, switch_budget, BLOCK_MILLIS);
         let schedule =
             deploy(&self.provider, from, "OperatorSchedule.sol/OperatorSchedule.json", &args.abi_encode_params()).await;
         (schedule, log_heads)

@@ -19,11 +19,12 @@ use tracing::{Instrument, error, info, info_span, warn};
 
 use crate::checkpoints::{CheckpointChain, CheckpointRpc};
 use crate::config::{NodeConfig, TeeProvider};
+use crate::handover::assigned::Assignments;
 use crate::handover::evidence::{self, Peer, Quoting};
 use crate::handover::tail::{TailMiss, read_tail, send_tail, tail_report_data};
 use crate::handover::{
-    Challenge, Confirm, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, confirm_digest, confirmed_digest,
-    keys_report_data, receive, request_report_data, seal_keys, send, send_bytes, vault_reader,
+    Challenge, Confirm, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, bound_report_data, confirm_digest,
+    confirmed_digest, keys_report_data, receive, request_report_data, seal_keys, send, send_bytes, vault_reader,
 };
 use crate::log::{CheckpointDomain, Manifest, SegmentInfo};
 use crate::tee::keys::Head;
@@ -69,6 +70,8 @@ pub(crate) struct Predecessor<C = CheckpointRpc> {
     /// The log's protocol version and the last tip found on it, which answer a tail request once the
     /// sequencer is gone (`tail_after`).
     tail_evidence: std::sync::Mutex<tail::Evidence>,
+    /// The turn's latest assignment, with `[log_heads]`: what a successor's request must bind (#596).
+    assignments: Option<Arc<dyn Assignments>>,
 }
 
 /// How one connection ended.
@@ -121,6 +124,7 @@ impl Predecessor {
             logged: std::sync::Mutex::new(None),
             retained: std::sync::Mutex::new(None),
             tail_evidence: Default::default(),
+            assignments: crate::handover::assigned::for_config(cfg, "handover_assignments")?,
         }))
     }
 }
@@ -202,6 +206,10 @@ impl<C: CheckpointChain> Predecessor<C> {
             Some(tip) => tail_report_data(self.domain, &challenge, &public_key, &config_sha256, reads, tip),
             None => request_report_data(self.domain, &challenge, &public_key, &config_sha256, reads),
         };
+        let report_data = match &request.binding {
+            Some(binding) => bound_report_data(self.domain, &report_data, binding),
+            None => report_data,
+        };
         let release = match self.admit(&request, &report_data, config_sha256).await {
             Ok(release) => release,
             Err(e) => return Ok(refuse(&mut stream, e).await),
@@ -273,6 +281,11 @@ impl<C: CheckpointChain> Predecessor<C> {
                 head.insert(stopped?).clone()
             }
         };
+        // A skip or a promotion since the admission leaves the stopped release serving the member now
+        // named (#596).
+        if let Err(e) = self.revalidate(request.binding.as_ref(), &release).await {
+            return Ok(refuse(&mut stream, e).await);
+        }
         // The log past the successor's tip travels with the keys: the listings are bound inside
         // the ciphertext, and each segment's bytes are read, verified, and sent one at a time, so
         // the transfer holds at most one segment in memory. A listing-read failure must not end
@@ -328,7 +341,8 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// The successor's release, the measurement its quote proves and the config hash it binds,
     /// once its quote binds `report_data`, its policy and TCB are no weaker than this release's, and
     /// the vault names that release at finality, or the finalised schedule names it for the turn
-    /// trusted time has reached (`turns`) and this release's log accepted it.
+    /// trusted time has reached (`turns`) and this release's log accepted it, or the latest agreed
+    /// block's assignment does as `admit_turn` states.
     /// Error cases:
     /// - any of those checks fails, or the vault cannot be read
     async fn admit(
@@ -343,11 +357,7 @@ impl<C: CheckpointChain> Predecessor<C> {
         no_weaker(&self.store.platform(), &peer)?;
         let release = Release { launch_digest: peer.launch_digest, config_sha256 };
         let at = self.vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
-        let (_, turn) =
-            crate::handover::turns::named_generation(&self.vault, &at, &release, self.trusted.reached_ms()).await?;
-        if let Some(turn) = turn {
-            self.ensure_logged(&turn).await?;
-        }
+        self.admit_turn(request.binding.as_ref(), &release, &at).await?;
         Ok(release)
     }
 
@@ -469,6 +479,7 @@ fn unconfirmed(why: &str) -> Served {
     Served::Unconfirmed
 }
 
+mod assignment;
 mod checks;
 mod secrets;
 mod tail;

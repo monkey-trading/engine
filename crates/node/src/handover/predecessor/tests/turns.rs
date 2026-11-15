@@ -43,7 +43,7 @@ impl Logged {
 impl Exchange {
     /// The finalised schedule names the successor's release for `turn` under `key` from `boundary`,
     /// while the finalised vault still names the predecessor's release.
-    fn schedule_successor(&self, turn: u64, key: AccountId, boundary: i64) {
+    pub(super) fn schedule_successor(&self, turn: u64, key: AccountId, boundary: i64) {
         let running = Release { launch_digest: RELEASE, config_sha256: PREDECESSOR_CONFIG };
         *self.current.lock().unwrap() = CurrentRelease { id: running.id(), generation: GENERATION };
         *self.scheduled.lock().unwrap() = Some(ScheduledTurn {
@@ -68,7 +68,7 @@ impl Exchange {
     }
 
     /// Trusted time on both sides: the predecessor's sample and the successor's have reached `ms`.
-    fn reach(&mut self, ms: i64) {
+    pub(super) fn reach(&mut self, ms: i64) {
         let at = std::time::Instant::now();
         self.samples.send_replace(Some(Sample { at, earliest_ms: ms, latest_ms: ms + 1_000 }));
         self.reached = Some(ms);

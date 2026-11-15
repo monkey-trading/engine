@@ -25,12 +25,13 @@ contract LivenessInvariantTest is LivenessTest {
         _track();
 
         targetContract(address(this));
-        bytes4[] memory selectors = new bytes4[](5);
+        bytes4[] memory selectors = new bytes4[](6);
         selectors[0] = this.handleWarp.selector;
         selectors[1] = this.handleWitness.selector;
         selectors[2] = this.handleHead.selector;
         selectors[3] = this.handlePromote.selector;
         selectors[4] = this.handleLapse.selector;
+        selectors[5] = this.handleIncumbentHead.selector;
         targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
     }
 
@@ -46,23 +47,36 @@ contract LivenessInvariantTest is LivenessTest {
         lastDue[epoch] = dueAt;
     }
 
-    /// @dev `promotionDueAt` as its doc comment states it, read from the heads and marks on chain: with `s`
-    /// the later slot of the epoch's latest head and of the signer change, and `u` the latest unmarked slot
-    /// after `s` among the `misses` complete slots before the current one, `(max(s, u) + misses + 1) *
-    /// interval`.
-    function _modelDue() internal view returns (uint64) {
+    /// @dev `promotionDueAt` as its doc comment states it, read from the heads, latches and marks on
+    /// chain: the earlier of the missed-head count, from the later slot of the epoch's latest head and of
+    /// the signer change over `misses` slots, and, while the turn's current assignment is unlatched, the
+    /// untaken-turn count, from the later slot of the boundary and of the signer change over `misses + 1`.
+    function _modelDue() internal view returns (uint64 due) {
         (uint64 interval,, uint16 misses,) = schedule.liveness();
         (,,,, uint64 postedAt) = logHeads.heads(vault.signerEpoch());
-        uint64 latest = vault.signerSince() / interval;
+        uint64 changed = vault.signerSince() / interval;
+        uint64 latest = changed;
         if (postedAt / interval > latest) latest = postedAt / interval;
+        due = _modelCount(latest, misses, interval);
+        (uint64 at,,,,) = logHeads.latches(turn, schedule.turnOf(turn).position);
+        if (at != 0) return due;
+        uint64 since = schedule.boundary(turn) / interval;
+        if (changed > since) since = changed;
+        uint64 untaken = _modelCount(since, misses + 1, interval);
+        if (untaken < due) due = untaken;
+    }
+
+    /// @dev `(max(s, u) + count + 1) * interval`, with `u` the latest unmarked slot after `s` among the
+    /// `count` complete slots before the current one.
+    function _modelCount(uint64 s, uint64 count, uint64 interval) internal view returns (uint64) {
         uint64 current = uint64(block.timestamp) / interval;
-        uint64 last = latest;
-        for (uint64 slot = current - misses; slot < current; ++slot) {
+        uint64 last = s;
+        for (uint64 slot = current - count; slot < current; ++slot) {
             (uint64 at,) = schedule.marks(slot);
             bool marked = at != 0 && at / interval == slot;
-            if (slot > latest && !marked) last = slot;
+            if (slot > s && !marked) last = slot;
         }
-        return (last + misses + 1) * interval;
+        return (last + count + 1) * interval;
     }
 
     /// @dev The last second the turn names the operator.
@@ -123,6 +137,17 @@ contract LivenessInvariantTest is LivenessTest {
 
     function handleHead(bool held) external {
         _tryHead(held);
+        _track();
+    }
+
+    /// @dev A live head binding an earlier turn, as an incumbent past its turn posts: it resets the
+    /// missed-head count and latches nothing.
+    function handleIncumbentHead() external {
+        LogHeads.HeadV2 memory head = _nextHead();
+        (head.turn, head.position, head.generation) = (turn - 1, 0, 1);
+        try logHeads.postV2(head, _sign(head, _signerKey())) {
+            ++headsPosted;
+        } catch {}
         _track();
     }
 

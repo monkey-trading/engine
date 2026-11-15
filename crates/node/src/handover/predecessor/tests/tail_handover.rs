@@ -296,7 +296,7 @@ impl Tailed {
     /// What the successor reads before connecting: the vault naming the old key, and `posted`.
     fn prepared(&self, posted: Option<crate::log_heads::Head>) -> Prepared {
         let signer = AccountId(self.exchange.old.enclave_key().unwrap().address());
-        Prepared { generation: GENERATION, signer, posted }
+        Prepared { generation: GENERATION, signer, posted, bound: crate::handover::assigned::Bound::none() }
     }
 
     /// The head the predecessor's log holds at `seq`, as it would post it.
@@ -359,6 +359,7 @@ impl Exchange {
             tail: tip.cloned(),
             reads: reads.into(),
             secrets_only: false,
+            binding: None,
             evidence,
         };
         (stream, request)

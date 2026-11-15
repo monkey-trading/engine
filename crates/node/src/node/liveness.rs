@@ -180,11 +180,12 @@ pub(super) async fn watch_release(
     (store, promoted): (Arc<crate::tee::sealing::KeyStore>, Option<AccountId>),
     every: std::time::Duration,
     trusted: crate::trusted_time::TrustedClock,
+    assignments: Option<Arc<dyn crate::handover::assigned::Assignments>>,
 ) -> anyhow::Result<()> {
     if let Some(signer) = promoted {
         crate::checkpoints::setup::await_signer_final(&vault, signer, every).await;
     }
-    super::keys::watch_release(vault, store, every, trusted).await
+    super::keys::watch_release(vault, store, every, trusted, assignments).await
 }
 
 /// Spawns the operator's rule for the enclave at `key`, reading the sequencer's `released` heads, and

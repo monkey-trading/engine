@@ -68,6 +68,8 @@ use crate::log::CheckpointDomain;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::Release;
 
+pub(crate) mod assigned;
+pub(crate) mod discovery;
 pub(crate) mod evidence;
 pub(crate) use evidence::Evidence;
 pub(crate) mod hostname;
@@ -84,6 +86,8 @@ use messages::{Challenge, Confirm, Reply, Request};
 pub(crate) mod stand_in;
 mod successor;
 pub(crate) use successor::take;
+#[cfg(test)]
+pub(crate) use successor::take_with;
 pub(crate) mod tail;
 pub(crate) mod turns;
 
@@ -172,6 +176,26 @@ fn request_report_data(
     hash.update(config_sha256);
     hash.update((reads.len() as u64).to_be_bytes());
     hash.update(reads.as_bytes());
+    padded(hash.finalize().into())
+}
+
+/// A request's report data bound to the assignment it takes (#596): `report_data` hashed with the
+/// signer epoch, the turn, the assignment's position and its generation, under a tag of its own, so a
+/// host cannot carry a request read for one assignment to another.
+pub(crate) fn bound_report_data(
+    domain: CheckpointDomain,
+    report_data: &[u8; 64],
+    binding: &assigned::Binding,
+) -> [u8; 64] {
+    let mut hash = Sha256::new();
+    hash.update(b"engine.handover.binding.v1");
+    hash.update(domain.chain_id.to_be_bytes());
+    hash.update(domain.vault.0);
+    hash.update(report_data);
+    hash.update(binding.epoch.to_be_bytes());
+    hash.update(binding.turn.to_be_bytes());
+    hash.update(binding.position.to_be_bytes());
+    hash.update(binding.generation.to_be_bytes());
     padded(hash.finalize().into())
 }
 

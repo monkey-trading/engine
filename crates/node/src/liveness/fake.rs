@@ -11,7 +11,7 @@ use engine_core::types::AccountId;
 use crate::liveness::chain::{
     LivenessDomain, currentSetIdCall, headsCall, headsReturn, keyHolderCall, latestMarkCall, latestMarkReturn,
     livenessCall, livenessReturn, pendingSetIdCall, promotionDueAtCall, rotationStateCall, rotationStateReturn,
-    setOfCall, setOfReturn,
+    setOfCall, setOfReturn, skipDueAtCall,
 };
 use crate::standby_key::chain::{
     AgreedBlock, CandidateReturn, StandbyChain, StandbyDomain, TurnReturn, candidateOfCall, checkpointSignerCall,
@@ -42,6 +42,8 @@ pub(crate) struct ChainState {
     pub interval: u64,
     pub misses: u16,
     pub due_at: u64,
+    /// `skipDueAt`; `u64::MAX` by default, as once a head latched the assignment.
+    pub skip_due_at: u64,
     pub marked: (u64, u64),
     /// The turn in effect, its member and position; turn zero before any is drawn.
     pub turn: u64,
@@ -87,6 +89,7 @@ impl Default for ChainState {
             interval: 60,
             misses: 5,
             due_at: 1_800_000_300,
+            skip_due_at: u64::MAX,
             marked: (29_999_999, 99),
             turn: 20_400,
             named: (Address::repeat_byte(0xa1), 0),
@@ -185,6 +188,8 @@ fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8
         })
     } else if to == SCHEDULE && is::<promotionDueAtCall>(data) {
         promotionDueAtCall::abi_encode_returns(&chain.due_at)
+    } else if to == SCHEDULE && is::<skipDueAtCall>(data) {
+        skipDueAtCall::abi_encode_returns(&chain.skip_due_at)
     } else if to == SCHEDULE && is::<latestMarkCall>(data) {
         latestMarkCall::abi_encode_returns(&latestMarkReturn { slot: chain.marked.0, blockNumber: chain.marked.1 })
     } else if to == SCHEDULE && is::<turnAtCall>(data) {

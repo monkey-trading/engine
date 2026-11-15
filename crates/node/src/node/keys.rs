@@ -383,17 +383,14 @@ async fn named_release(vault: &impl CheckpointChain) -> anyhow::Result<CurrentRe
     vault.current_release(&finalized).await
 }
 
-/// Raises `release_superseded` (Critical) once the vault's current release at finality is no longer
-/// the release and generation `store`'s keys are sealed in, reading it every `every`: a restart would
-/// then find no keys to open, so they must be handed to the release the vault names before this node
-/// stops. The read does not wait for the vault's generation to fold
-/// the change: the running release is superseded from the block the change reads at finality, and
-/// the fold can lag that by anyone's `syncRelease`. From a daily turn's boundary by `trusted` time,
-/// the finalised schedule naming this release in the keys' generation for that turn names it too, as
-/// the vault does from then (`handover::turns`); a turn naming another release, or this one in another
-/// generation, pages only once `TURN_HANDOVER_GRACE_MS` has passed since its boundary, as the turn's
-/// member takes the keys from this node meanwhile, or this node seals them in the turn's generation as
-/// it takes the turn (`sequencer::turns`). A failed read is retried.
+/// Raises `release_superseded` (Critical) once the vault's current release at finality, read every `every`,
+/// is no longer the release and generation `store`'s keys are sealed in: a restart would find no keys to open,
+/// so they must go to the release named before this node stops, superseded from the block the change reads
+/// at finality, not from the vault's fold of it. From a daily turn's boundary by `trusted` time, the finalised
+/// schedule's turn names it instead (`handover::turns`), and so, with `assignments`, does the latest agreed
+/// block's assignment, as a skip's before it is final (#596); a turn naming another holding pages only once
+/// `TURN_HANDOVER_GRACE_MS` has passed since its boundary, as its member takes the keys or this node seals them
+/// in the turn's generation (`sequencer::turns`). A failed read is retried.
 /// Error cases:
 /// - none; it runs until the node stops
 pub(super) async fn watch_release(
@@ -401,6 +398,7 @@ pub(super) async fn watch_release(
     store: Arc<KeyStore>,
     every: Duration,
     trusted: crate::trusted_time::TrustedClock,
+    assignments: Option<Arc<dyn crate::handover::assigned::Assignments>>,
 ) -> anyhow::Result<()> {
     let (mut superseded, mut waiting) = (false, false);
     let mut tick = tokio::time::interval(every);
@@ -420,7 +418,9 @@ pub(super) async fn watch_release(
         if reached.is_none() && crate::handover::turns::finalised_drawn(&vault).await {
             continue;
         }
+        let latest = crate::handover::assigned::names_holding(assignments.as_deref(), sealed.id(), generation).await;
         let (named, handing_over) = match crate::handover::turns::names(&vault, &sealed, generation, reached).await {
+            _ if latest => (true, false),
             Some((named, boundary)) => {
                 (named, reached.is_some_and(|reached| reached < boundary.saturating_add(TURN_HANDOVER_GRACE_MS)))
             }

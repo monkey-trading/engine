@@ -22,6 +22,7 @@
 //! 6. a reorg: the promotion reverted away reads as unsettled while no block has passed its time, and
 //!    as gone once one has, as a promoted member's restart judges it.
 
+mod fallback;
 mod promoted;
 mod rig;
 
