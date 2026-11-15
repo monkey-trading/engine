@@ -1,7 +1,7 @@
 //! Passed normal changes (`engine_core::governance`): the node sequences `ApplyProposal` for each whose
 //! seven days' notice has run, ahead of the command it stamps then, so a change applies at the first
 //! stamp past its time but a benchmark snapshot's, which installs its rates before any catch-up. The
-//! engine refuses one before its time, so the node only chooses how soon. A passed activation of `V69`
+//! engine refuses one before its time, so the node only chooses how soon. A passed activation of `V70`
 //! is followed by the config's fault proof contract, as a start's activation is.
 
 use anyhow::bail;
@@ -19,7 +19,7 @@ impl Sequencer {
     /// Sequences `ApplyProposal` at `ts` for each passed change due by then, in the order mirrored,
     /// ahead of `next`, unless `next` is a benchmark snapshot or one is awaited: a change runs the
     /// catch-up a snapshot must precede, so it waits for the next command after the snapshot.
-    /// Then, once `V69` is in force, records the config's fault proof contract if the log has none.
+    /// Then, once `V70` is in force, records the config's fault proof contract if the log has none.
     /// Error cases:
     /// - as `stamp`
     /// - the engine keeps a change due after applying it, which would sequence it forever
@@ -44,7 +44,7 @@ impl Sequencer {
             }
         }
         if let Some(record) =
-            self.fault_proof_record().filter(|_| self.engine.protocol_version() >= ProtocolVersion::V69)
+            self.fault_proof_record().filter(|_| self.engine.protocol_version() >= ProtocolVersion::V70)
             && let Some(events) = self.stamp(ts, record)?
             && let Some(reason) = rejection(&events)
         {

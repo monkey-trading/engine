@@ -77,7 +77,7 @@ an index: load only the rule whose hint matches the current action.
   and no office past the first turn's application for the account in it before turns run), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
-  anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), from `V69` cut by a proven fault's haircut, which starts at the recorded penalty and falls linearly to nothing, the withheld part going to stakers (`operator_faults.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
+  anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), from `V70` cut by a proven fault's haircut, which starts at the recorded penalty and falls linearly to nothing, the withheld part going to stakers (`operator_faults.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks). It does no IO and uses no clocks,
@@ -197,9 +197,9 @@ an index: load only the rule whose hint matches the current action.
   decoded as the admin command their bytes are the canonical JSON of, once it is read to name the
   schedule, with `ApplyProposal` sequenced for a passed change once its seven days have run,
   `sequencer/governance.rs`, from V65 each staking frontier carrying the turn the registry's `rotationState()`
-  names the operator by, from V67 else the schedule's last drawn turn when it has yet to start, and a start refused on a log recording another vote contract; from V69
+  names the operator by, from V67 else the schedule's last drawn turn when it has yet to start, and a start refused on a log recording another vote contract; from V70
   the fault proof contract's proven faults, once it is read to name the vault, with the contract and
-  penalty the config names recorded once `V69` is in force, at a start or after a passed activation,
+  penalty the config names recorded once `V70` is in force, at a start or after a passed activation,
   and a start refused on a log recording others), the
   standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
   segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up,
@@ -461,7 +461,7 @@ an index: load only the rule whose hint matches the current action.
   a separate `engine admin ... sync-benchmarks --watch` worker signs daily snapshots and releases
   synchronization before startup catch-up and after trusted-time halts spanning unpaid rollovers.
   The optional `[custody.evm.staking.registry.fault_proof]` names the FaultProof contract and the
-  penalty (`initial_bps`, `decay`) the node records once `V69` is in force; it needs the schedule.
+  penalty (`initial_bps`, `decay`) the node records once `V70` is in force; it needs the schedule.
   The optional `[log_heads]` (#541) names the LogHeads contract, a dedicated funded relayer distinct
   from the checkpoint relayer, and the posting interval (an hour by default); it requires
   `[checkpoints]`, and with it the node refuses to start on a log the posted head does not hold;
@@ -663,7 +663,7 @@ an index: load only the rule whose hint matches the current action.
   start budget (printed), its first checkpoint once the promotion is final, its replacement standby key
   vouched for by its own signer key, A's authorization reissued and paid once, and its log replayed
   across the change of signer;
-  `dev-operator-faults.sh`, the operator faults scenario on Anvil, from `V69`: B's enclave, restarted
+  `dev-operator-faults.sh`, the operator faults scenario on Anvil, from `V70`: B's enclave, restarted
   by its host from an older copy of its log during B's turn, signs heads of two histories at one seq,
   anyone proves them to `FaultProof`, the next closes cut B's share by the decaying haircut, a later turn
   is paid whole, and a pair across a promotion's signer change proves nothing;

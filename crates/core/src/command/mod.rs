@@ -196,7 +196,7 @@ pub enum Command {
     /// From `V56`, the vote contract's `ProposalPassed` event, finalised, credited once under its chain
     /// reference. Boxed, as `SignedAdmin` is.
     PassProposal(Box<PassedProposal>),
-    /// From `V69`, the fault proof contract's `FaultProven` event, finalised, credited once under its
+    /// From `V70`, the fault proof contract's `FaultProven` event, finalised, credited once under its
     /// chain reference.
     ProveFault(ProvenFault),
     /// From `V56`, a passed normal change whose notice has run, which the node sequences with the
@@ -344,7 +344,7 @@ pub enum AdminCommand {
     /// From `V56`, records the vote contract the node mirrors and how long a fast-path restriction
     /// lasts. The node alone sequences it, from its config; a log records it once.
     SetGovernance(GovernanceConfig),
-    /// From `V69`, records the fault proof contract the node mirrors and the penalty a proven fault
+    /// From `V70`, records the fault proof contract the node mirrors and the penalty a proven fault
     /// carries. The node alone sequences it, from its config; a log records it once.
     SetFaultProof(FaultProofConfig),
 }

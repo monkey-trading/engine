@@ -176,7 +176,7 @@ pub struct Engine {
     /// force, and the baseline of each field one holds.
     #[serde(default, skip_serializing_if = "Governance::is_default")]
     pub(crate) governance: Governance,
-    /// From `V69`, the fault proof contract, its penalty, and each penalised member's haircut.
+    /// From `V70`, the fault proof contract, its penalty, and each penalised member's haircut.
     #[serde(default, skip_serializing_if = "OperatorFaults::is_default")]
     pub(crate) operator_faults: OperatorFaults,
     /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once

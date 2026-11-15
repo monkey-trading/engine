@@ -76,7 +76,7 @@ pub(super) struct Globals<'a> {
     pending_ceiling: &'a Option<PendingCeiling>,
     #[serde(skip_serializing_if = "HouseLoss::is_default")]
     house_loss: &'a HouseLoss,
-    /// From `V69`; omitted until the fault proof contract is recorded, so earlier roots stand.
+    /// From `V70`; omitted until the fault proof contract is recorded, so earlier roots stand.
     #[serde(skip_serializing_if = "OperatorFaults::is_default")]
     operator_faults: &'a OperatorFaults,
 }

@@ -16,7 +16,7 @@
 //! incumbent's time past its turn, are no one's. From `V53`, before any turn is in effect, the account
 //! in office holds it only until the first accepted turn applies.
 //!
-//! From `V69`, a proven fault's haircut withholds its integral from the member's time in office, and
+//! From `V70`, a proven fault's haircut withholds its integral from the member's time in office, and
 //! the close pays the member only the time it kept (`operator_faults`).
 
 use std::collections::BTreeMap;
@@ -57,7 +57,7 @@ impl Engine {
         };
         let Some((holder, until)) = holder else { return };
         let to = self.now.min(until);
-        // From `V69` a proven fault's haircut withholds its integral over the same time.
+        // From `V70` a proven fault's haircut withholds its integral over the same time.
         let withheld = self.withheld_in_office(holder, from, to);
         let Some(staking) = self.staking.as_mut() else { return };
         let office = staking.office.as_mut().expect("V50 counts time in office once staking is initialised");
@@ -72,7 +72,7 @@ impl Engine {
 
     /// From `V50`, `share` USDC base units split by the open epoch's time in office, in account order:
     /// `floor(share · served / counted)` each, leaving out the parts that round to nothing. Each part
-    /// comes with what a proven fault's haircut withheld from it: from `V69` an account the haircut
+    /// comes with what a proven fault's haircut withheld from it: from `V70` an account the haircut
     /// withheld `w` bps·ms from is paid `floor(share · (10,000 · served − w) / (10,000 · counted))`.
     pub(crate) fn split_by_time_in_office(&self, share: u128) -> Vec<(AccountId, u128, u128)> {
         let office = self.staking.as_ref().and_then(|staking| staking.office.as_ref());
@@ -115,7 +115,7 @@ impl Engine {
     }
 
     /// Starts counting time in office now, afresh: at `V50`'s activation, at staking's initialisation
-    /// under it, and at each close, which from `V69` also drops the haircuts withheld so far and those
+    /// under it, and at each close, which from `V70` also drops the haircuts withheld so far and those
     /// that have decayed to nothing.
     pub(crate) fn start_time_in_office(&mut self) {
         let since = self.now;

@@ -31,7 +31,7 @@
 //!   It credits the leaf of the candidate seated under the key in effect (`election`), which is also
 //!   that candidate's leaf as a staker, so the vault's claim and exit pay the operator as they pay
 //!   anyone. From `V50` the share is split among the operators by their time in office during the
-//!   open epoch (`office`), and from `V69` a proven fault's haircut withholds part of a member's
+//!   open epoch (`office`), and from `V70` a proven fault's haircut withholds part of a member's
 //!   (`operator_faults`), which stays with the stakers.
 //! - **Reconciliation.** Allocations reduce house cash before any USDC leaves the vault; the
 //!   vault's cumulative `distributionsPaid` explains the difference at the next checkpoint.

@@ -86,7 +86,7 @@ pub struct HouseState {
     /// starts, and the stress level the loss sets in every market.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub house_loss: Option<HouseLossReading>,
-    /// From `V69`, the recorded fault proof contract and penalty, and when each penalised member's
+    /// From `V70`, the recorded fault proof contract and penalty, and when each penalised member's
     /// haircut started decaying.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operator_faults: Option<OperatorFaults>,

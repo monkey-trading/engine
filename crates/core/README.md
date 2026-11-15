@@ -333,7 +333,7 @@ this crate and reproduce the signed state roots exactly.
   carries the log into that check their own version
 - `src/operator_bounds/mod.rs` — the V35 bounds: launch rates, rate notices and price-rule checks
 - `src/operator_bounds/rotation.rs` — the V35 operator rotation: a signed `RotateOperator` and its seven-day notice
-- `src/operator_faults.rs` — the V69 fault proof contract, the penalty, each member's haircut and what it withholds from the time in office
+- `src/operator_faults.rs` — the V70 fault proof contract, the penalty, each member's haircut and what it withholds from the time in office
 - `src/spread_tier.rs` — size spread bands: the `V52` unit in tenths of a bp beside the whole-bps
   encoding earlier listings keep, the class floors, and the band staircase; unit tests in
   `src/spread_tier/tests.rs`
@@ -437,7 +437,7 @@ this crate and reproduce the signed state roots exactly.
 - `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, the turn's time in office, and the set in effect, which V65's votes need
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
 - `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
-- `tests/operator_share/faults.rs` — `V69`: a proven fault's haircut on the member's share, its linear restoration, a fault mid-epoch, a restart, the haircut's range, a daily turn's member, refused mirrors, the recorded contract's bounds, and replay
+- `tests/operator_share/faults.rs` — `V70`: a proven fault's haircut on the member's share, its linear restoration, a fault mid-epoch, a restart, the haircut's range, a daily turn's member, refused mirrors, the recorded contract's bounds, and replay
 - `tests/operator_share/daily_turns.rs` — `V51`: a member earns from its `TurnTaken` to its turn's end, and no one before or after; from `V53`, the account before the first turn only until that turn applies
 - `tests/operator_install.rs` — `V48`: the timelock's installed operator: refusals, the seven-day log notice with no finalised frontier, replaced rotations, and the refused signed rotation
 - `tests/operator_share.rs` — `V47`: the operator's fifth of a distribution, with rotation on and off, an epoch that distributes nothing, a built-up sweep, an operator that also stakes, and the leaf's claim and exit proofs
@@ -1195,7 +1195,7 @@ at the command's stamp subtracts nothing. Its log is `v69.jsonl`, and its sessio
 Protocol V70 cuts a proven fault's member's operator share. `AdminCommand::SetFaultProof`, which only
 the node sequences from its config, records the fault proof contract and the penalty once, and
 `Command::ProveFault` mirrors the contract's finalised `FaultProven`, credited once like a registry
-event; one mirrored before V69 is in force or the contract is recorded is credited and refused
+event; one mirrored before V70 is in force or the contract is recorded is credited and refused
 (`operator_fault_refused`), so it holds no later mirror. The member's haircut restarts at the penalty from the mirror's stamp and falls linearly to
 nothing over its decay; each command credits the integral of the haircut over the member's time in
 office since the command before it, in bps·ms, rounded up, beside the time itself, and a close pays

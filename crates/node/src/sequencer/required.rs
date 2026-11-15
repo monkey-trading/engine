@@ -105,7 +105,7 @@ impl Sequencer {
 
     /// Records the config's client auth and operator and activates the latest protocol version,
     /// whichever the log lacks, from `V56` the config's vote contract, and the config's fault proof
-    /// contract, recorded once `V69` is in force, then checkpoints. While votes govern at the stamp,
+    /// contract, recorded once `V70` is in force, then checkpoints. While votes govern at the stamp,
     /// activation and the access policy wait for a passed vote instead (see `sequence_queued`). All run
     /// at the log's next seq, so earlier commands keep the rules they ran under, once trusted time admits
     /// a stamp (see `sequence_required`).
@@ -161,7 +161,7 @@ impl Sequencer {
         if let (Some(config), None) = (self.governance, self.engine.governance().config) {
             cmds.push(Command::Admin(AdminCommand::SetGovernance(config)));
         }
-        // So is the fault proof contract, which waits at the stamp for `V69` (see `sequence_queued`).
+        // So is the fault proof contract, which waits at the stamp for `V70` (see `sequence_queued`).
         cmds.extend(self.fault_proof_record());
         if cmds.is_empty() {
             return Ok(());
@@ -294,11 +294,11 @@ impl Sequencer {
                     info!(seq = self.next_seq, ?cmd, "votes govern, so this waits for a passed vote");
                     continue;
                 }
-                // The fault proof contract is recorded under `V69`, which a passed vote may activate
+                // The fault proof contract is recorded under `V70`, which a passed vote may activate
                 // later (see `apply_due_changes`).
                 let fault_proof = matches!(&cmd, Command::Admin(AdminCommand::SetFaultProof(_)));
-                if fault_proof && self.engine.protocol_version() < ProtocolVersion::V69 {
-                    info!(seq = self.next_seq, "the fault proof contract waits for V69");
+                if fault_proof && self.engine.protocol_version() < ProtocolVersion::V70 {
+                    info!(seq = self.next_seq, "the fault proof contract waits for V70");
                     continue;
                 }
                 let Some(events) = self.stamp(ts, cmd.clone())? else {

@@ -151,7 +151,7 @@ contract = "0x4444444444444444444444444444444444444444" # REPLACE
 # contract = "0x7777777777777777777777777777777777777777" # REPLACE
 # restriction_ttl = "24h" # OWNER: the restriction lifetime
 
-# The FaultProof over the vault, whose proven faults the watcher mirrors from protocol V69, and the
+# The FaultProof over the vault, whose proven faults the watcher mirrors from protocol V70, and the
 # haircut a proven fault puts on its member's operator share. The node records both in the log once,
 # so every member's release names the same. It needs the schedule above. #549 values the seat a
 # removal forfeits at one year of the member's share; a haircut from the whole share falling linearly

@@ -1,4 +1,4 @@
-//! The operator faults dev scenario, from `V69`, which `scripts/dev-operator-faults.sh` runs. On Anvil,
+//! The operator faults dev scenario, from `V70`, which `scripts/dev-operator-faults.sh` runs. On Anvil,
 //! A, B and C register with standby keys the vault's signer vouches for and delegate 50, 30 and 20
 //! thousand MONKEY, a close adopts them, and a turn is drawn for B. The node, the enclave holding the
 //! vault's signing key, takes B's turn; its host stops it, keeps a copy of its log, lets it sequence on,
@@ -116,7 +116,7 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
     let mut node = Node::start_posting_checkpoints(&chain, signing.clone()).await;
     let recorded = node.query(|e| e.operator_faults().config).await.expect("the node records the contract");
     assert_eq!((recorded.contract.0, recorded.penalty), (fault_proof.0.0, PENALTY));
-    println!("PASS: the node recorded the fault proof contract and its penalty at V69's activation");
+    println!("PASS: the node recorded the fault proof contract and its penalty at V70's activation");
 
     // A, B and C stake, register and delegate to themselves; the vault's signer vouches for a standby key
     // of each; the house holds the floor; a close adopts the three as the rotation set.

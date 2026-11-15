@@ -109,7 +109,7 @@ pub struct RegistryCustodySection {
     /// mirrored, and while rotation is on nothing changes the governed parameters.
     #[serde(default)]
     pub vote: Option<VoteCustodySection>,
-    /// The `FaultProof` contract over the vault, whose proven faults the watcher mirrors from `V69`, and
+    /// The `FaultProof` contract over the vault, whose proven faults the watcher mirrors from `V70`, and
     /// the penalty the node records with it. Absent, no fault is mirrored.
     #[serde(default)]
     pub fault_proof: Option<FaultProofCustodySection>,
@@ -153,7 +153,7 @@ impl VoteCustodySection {
     }
 }
 
-/// The fault proof contract the watcher mirrors, which the node records in the log once `V69` applies.
+/// The fault proof contract the watcher mirrors, which the node records in the log once `V70` applies.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FaultProofCustodySection {
@@ -175,7 +175,7 @@ pub struct PenaltySection {
 }
 
 impl FaultProofCustodySection {
-    /// What the node records in the log once `V69` applies, checked as the engine checks it, since a
+    /// What the node records in the log once `V70` applies, checked as the engine checks it, since a
     /// value it refused would stop the node at the record.
     /// Error cases:
     /// - the zero address
@@ -220,7 +220,7 @@ impl NodeConfig {
     }
 
     /// The fault proof contract and penalty `[custody.evm.staking.registry.fault_proof]` names, which
-    /// the node records once `V69` is in force; `None` without the section.
+    /// the node records once `V70` is in force; `None` without the section.
     /// Error cases:
     /// - as `FaultProofCustodySection::config`
     pub fn fault_proof(&self) -> anyhow::Result<Option<engine_core::operator_faults::FaultProofConfig>> {

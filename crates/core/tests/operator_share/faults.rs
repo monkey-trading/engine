@@ -1,4 +1,4 @@
-//! `V69`: a proven operator fault. The mirrored `FaultProven` gives its member a haircut that starts at
+//! `V70`: a proven operator fault. The mirrored `FaultProven` gives its member a haircut that starts at
 //! the recorded penalty and falls linearly to nothing over its decay; each stretch of the member's time
 //! in office after the mirror earns its part of the operator's share times `1 − h`, and the withheld
 //! part goes to stakers pro rata.
@@ -13,9 +13,9 @@ const CONTRACT: AccountId = AccountId([0xfa; 20]);
 /// Half the share at the fault, back to the whole over ten days.
 const PENALTY: Penalty = Penalty { initial_bps: 5_000, decay_ms: 10 * DAY_MS };
 
-/// `at` under `V69` with the fault proof contract recorded under `penalty` and rotation on.
+/// `at` under `V70` with the fault proof contract recorded under `penalty` and rotation on.
 fn penalised(excess: u128, penalty: Penalty) -> Harness {
-    let mut h = at(ProtocolVersion::V69, excess);
+    let mut h = at(ProtocolVersion::V70, excess);
     h.admin(AdminCommand::SetFaultProof(FaultProofConfig { contract: CONTRACT, penalty }));
     switch(&mut h, true);
     h
@@ -241,15 +241,15 @@ fn a_member_under_a_daily_turn_is_cut_from_its_turn_taken() {
 }
 
 #[test]
-fn a_fault_before_v69_or_its_contract_is_credited_and_refused_and_holds_nothing() {
+fn a_fault_before_v70_or_its_contract_is_credited_and_refused_and_holds_nothing() {
     let refused = |events: &[Event], reason: &str| {
         matches!(events.last(), Some(Event::OperatorFaultRefused { member, reason: r, .. })
             if *member == CANDIDATE && r.contains(reason))
     };
-    // Before `V69`, and under it before the contract is recorded: credited, so the watcher moves on,
+    // Before `V70`, and under it before the contract is recorded: credited, so the watcher moves on,
     // and nothing else changes.
     for (version, reason) in
-        [(ProtocolVersion::V63, "fault proofs need protocol"), (ProtocolVersion::V69, "no fault proof contract")]
+        [(ProtocolVersion::V63, "fault proofs need protocol"), (ProtocolVersion::V70, "no fault proof contract")]
     {
         let mut h = at(version, 1_000_000_000);
         let chain_ref = format!("0xfault:{}", h.log.len());
@@ -294,7 +294,7 @@ fn the_fault_proof_contract_is_recorded_once_within_its_bounds() {
     let rejected = |events: &[Event]| matches!(events.last(), Some(Event::AdminRejected { .. }));
     let mut h = at(ProtocolVersion::V63, 1_000_000_000);
     assert!(rejected(&record(&mut h, CONTRACT, PENALTY)));
-    let mut h = at(ProtocolVersion::V69, 1_000_000_000);
+    let mut h = at(ProtocolVersion::V70, 1_000_000_000);
     for penalty in [
         Penalty { initial_bps: 0, ..PENALTY },
         Penalty { initial_bps: 10_001, ..PENALTY },

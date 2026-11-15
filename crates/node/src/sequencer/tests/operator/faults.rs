@@ -1,5 +1,5 @@
-//! Operator faults from `V69`: the config's fault proof contract recorded once, a log recording
-//! another refused, and a passed activation of `V69` followed by the record.
+//! Operator faults from `V70`: the config's fault proof contract recorded once, a log recording
+//! another refused, and a passed activation of `V70` followed by the record.
 
 use super::*;
 
@@ -46,8 +46,8 @@ fn the_config_fault_proof_contract_is_recorded_once_and_another_is_refused() {
 }
 
 #[test]
-fn a_passed_activation_of_v69_is_followed_by_the_fault_proof_contract() {
-    // A log under the version before, with rotation on, so only a vote activates `V69`.
+fn a_passed_activation_of_v70_is_followed_by_the_fault_proof_contract() {
+    // A log under the version before, with rotation on, so only a vote activates `V70`.
     let dir = scratch_dir("faults-voted");
     let clock = Arc::new(TestClock::at(START));
     let mut seq = recover_penalising(&dir, clock.clone(), Some(config(5_000))).unwrap();
@@ -70,8 +70,8 @@ fn a_passed_activation_of_v69_is_followed_by_the_fault_proof_contract() {
     seq.sequence(switch).unwrap().expect("admitted");
     let recorded = seq.sequence(Command::Admin(AdminCommand::SetGovernance(governance()))).unwrap();
     assert_eq!(recorded.expect("admitted").last(), Some(&Event::AdminApplied));
-    assert_eq!(seq.engine.operator_faults().config, None, "nothing recorded before V69");
-    let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V69 };
+    assert_eq!(seq.engine.operator_faults().config, None, "nothing recorded before V70");
+    let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V70 };
     let passed = PassedProposal {
         proposal: 3,
         fast: false,
@@ -91,7 +91,7 @@ fn a_passed_activation_of_v69_is_followed_by_the_fault_proof_contract() {
     let applied = applied.expect("the activation is sequenced");
     let recorded = Command::Admin(AdminCommand::SetFaultProof(config(5_000)));
     assert_eq!(written[applied + 1..], [recorded, Command::Tick], "recorded after it, once");
-    assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V69);
+    assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V70);
     assert_eq!(seq.engine.operator_faults().config, Some(config(5_000)));
 }
 

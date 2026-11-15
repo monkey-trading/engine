@@ -260,7 +260,7 @@ pub fn every_event() -> Vec<Event> {
             member: account,
             turn: 20_754,
             position: 0,
-            reason: "fault proofs need protocol V69".into(),
+            reason: "fault proofs need protocol V70".into(),
         },
         Event::TurnTakenRejected { reason: "turn 20754 is not the turn in effect".into() },
         Event::ProposalScheduled { proposal: 1, applies_at: 1_793_604_800_000 },

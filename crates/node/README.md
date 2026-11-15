@@ -484,7 +484,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   log's own state with the vault's root, and a superseded key's checkpoint the vault never accepted
 - `src/sequencer/prefixes.rs` — the cumulative command prefix after each of the latest commands the
   sequencer applied, which a handover checks a successor's tip against
-- `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, signed, unsigned or voted, and the pending parameter and listing notices, which `GET /v1/house/state` answers from, with the mirrored votes, the house's loss over the trailing day, and from `V69` the recorded fault proof contract, its penalty and the haircuts in force
+- `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, signed, unsigned or voted, and the pending parameter and listing notices, which `GET /v1/house/state` answers from, with the mirrored votes, the house's loss over the trailing day, and from `V70` the recorded fault proof contract, its penalty and the haircuts in force
 - `src/sequencer/governance.rs` — the `ApplyProposal` this node sequences for each passed change whose seven days have run
 - `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, with a pending parameter or listing notice, from `V62` the house's loss, and after a restart
 - `src/sequencer/replay/authorities.rs` — accepted historical signers for checkpoints a retired key signed
@@ -588,7 +588,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   change's outcome found before the withdrawals its command pays, a refused due change alerting
   `proposal_rejected` though its command pays queued withdrawals, a voted relisting ending
   a retired benchmark's alerts, and a waiting ceiling adoption in `/v1/house/state`
-- `src/sequencer/tests/operator/faults.rs` — operator faults: the config's fault proof contract recorded once and another refused, and a passed activation of `V69` followed by the record
+- `src/sequencer/tests/operator/faults.rs` — operator faults: the config's fault proof contract recorded once and another refused, and a passed activation of `V70` followed by the record
 - `src/sequencer/tests/rotation.rs` — an operator rotation through the sequencer, and recovery after it
 - `src/sequencer/batch_tests.rs` — batching: a batch ends after `MAX_BATCH` requests of any kind
 - `src/sequencer/margin_tests.rs` — the margin and solvency dev scenario on the dev genesis (a
@@ -2692,7 +2692,7 @@ With `[custody.evm.staking.registry.fault_proof]`, the `FaultProof` over the vau
 is in force (`SetFaultProof`), at a start's activation or after a passed vote activates it, and refuses to start on a
 log that records another; the watcher mirrors the contract's `FaultProven` events, once a read at a
 window's end shows the contract names the configured vault, and the account history lists each
-`operator_share_withheld`. A fault the engine credits but refuses, mirrored before `V69` is in force or the
+`operator_share_withheld`. A fault the engine credits but refuses, mirrored before `V70` is in force or the
 contract is recorded, raises the `operator_fault_refused` Warning and holds no later mirror, and a recorded
 contract with no code at a window's end raises `fault_proof_undeployed`.
 `GET /v1/house/state` adds a `governance` section, the recorded contract, each change waiting with its

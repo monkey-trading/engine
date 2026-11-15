@@ -1,4 +1,4 @@
-//! The session's `V69` part: a proven operator fault. A vote activates `V69` and the node records the
+//! The session's `V70` part: a proven operator fault. A vote activates `V70` and the node records the
 //! fault proof contract; a turn for `V51`'s first member is drawn and taken, its proven fault is
 //! mirrored, and the epoch's close cuts the member's part of the operator's share by the haircut, the
 //! stakers taking what it withholds; the same fault mirrored again is refused.
@@ -25,18 +25,18 @@ const PAYER_SEED: u8 = 0x90;
 /// Half the share at the fault, back to the whole over ten days.
 const PENALTY: Penalty = Penalty { initial_bps: 5_000, decay_ms: 10 * DAY_MS };
 
-/// A vote activates `V69`, and the node records the contract. The first member's turn, drawn from the
+/// A vote activates `V70`, and the node records the contract. The first member's turn, drawn from the
 /// latest set naming it, is taken at its boundary; a fault proven an hour in restarts its haircut, and,
 /// with the house restocked, the epoch's close pays the member less than its time in office earned, the
 /// difference to stakers. A mirror under the same reference is refused.
 pub(crate) fn session(h: &mut Harness) {
-    let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V69 };
+    let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V70 };
     let events = pass(h, 90, false, Some(activate.clone()));
     assert!(matches!(events.last(), Some(Event::ProposalScheduled { .. })), "{events:?}");
     h.advance(NOTICE_MS);
     let events = h.cmd(Command::ApplyProposal(Box::new(VotedChange { proposal: 90, command: activate })));
     assert_eq!(events.last(), Some(&Event::AdminApplied), "{events:?}");
-    assert_eq!(h.engine.protocol_version(), ProtocolVersion::V69);
+    assert_eq!(h.engine.protocol_version(), ProtocolVersion::V70);
     h.admin(AdminCommand::SetFaultProof(FaultProofConfig { contract: AccountId([0xfa; 20]), penalty: PENALTY }));
 
     let (member, admin_key) = (MEMBERS[0], Client::new(MEMBER_SEEDS[0]).account);

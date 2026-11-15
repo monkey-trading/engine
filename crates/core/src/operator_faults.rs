@@ -1,4 +1,4 @@
-//! Penalties for provable operator faults, from `V69`.
+//! Penalties for provable operator faults, from `V70`.
 //!
 //! The fault proof contract (`contracts/src/FaultProof.sol`) proves that the enclave holding a daily
 //! turn's keys signed two histories: two `engine.log-head.v2` heads of one signer epoch, binding the
@@ -18,7 +18,7 @@
 //!   stays in the stakers' remainder, shared pro rata, and `OperatorShareWithheld` reports it.
 //!   Distributions already allocated are never touched, and time served before the mirror is not cut.
 //!
-//! A fault mirrored before `V69` is in force or the contract is recorded is credited and refused as
+//! A fault mirrored before `V70` is in force or the contract is recorded is credited and refused as
 //! `OperatorFaultRefused`, changing nothing else, so a proof landing while the activation waits on a
 //! vote holds no later mirror. A mirror that contradicts the log (before staking, a reference already
 //! credited, or no member named) is refused as `ElectionRejected`, as an election's is, and holds the
@@ -131,11 +131,11 @@ impl Engine {
 
     /// Records the fault proof contract and the penalty, once.
     /// Error cases:
-    /// - before `V69`, or once recorded
+    /// - before `V70`, or once recorded
     /// - a zero address, or a penalty outside its bounds (see `Penalty::validate`)
     pub(crate) fn set_fault_proof(&mut self, config: &FaultProofConfig) -> Result<(), String> {
-        if self.protocol_version < ProtocolVersion::V69 {
-            return Err(format!("fault proofs need protocol {:?}", ProtocolVersion::V69));
+        if self.protocol_version < ProtocolVersion::V70 {
+            return Err(format!("fault proofs need protocol {:?}", ProtocolVersion::V70));
         }
         if self.operator_faults.config.is_some() {
             return Err("the fault proof contract is already recorded".into());
@@ -149,7 +149,7 @@ impl Engine {
     }
 
     /// Mirrors the fault proof contract's `FaultProven` event: the member's haircut restarts at the
-    /// penalty from now, once `V69` is in force and the contract is recorded; before then the fault is
+    /// penalty from now, once `V70` is in force and the contract is recorded; before then the fault is
     /// credited and refused.
     pub(crate) fn prove_fault(&mut self, fault: &ProvenFault, events: &mut Vec<Event>) {
         let refusal = self
@@ -160,10 +160,10 @@ impl Engine {
             return;
         }
         self.credit_registry_mirror(&fault.chain_ref, fault.block);
-        let config = self.operator_faults.config.filter(|_| self.protocol_version >= ProtocolVersion::V69);
+        let config = self.operator_faults.config.filter(|_| self.protocol_version >= ProtocolVersion::V70);
         let Some(config) = config else {
-            let reason = if self.protocol_version < ProtocolVersion::V69 {
-                format!("fault proofs need protocol {:?}", ProtocolVersion::V69)
+            let reason = if self.protocol_version < ProtocolVersion::V70 {
+                format!("fault proofs need protocol {:?}", ProtocolVersion::V70)
             } else {
                 "no fault proof contract is recorded".into()
             };

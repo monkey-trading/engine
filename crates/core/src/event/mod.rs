@@ -285,7 +285,7 @@ pub enum Event {
         epoch: u64,
         amount: UsdcUnits,
     },
-    /// From `V69`, what a proven fault's haircut withheld from `account`'s part of the operator's share
+    /// From `V70`, what a proven fault's haircut withheld from `account`'s part of the operator's share
     /// of a closed epoch: `amount` USDC base units that went to stakers instead.
     OperatorShareWithheld {
         account: AccountId,
@@ -365,7 +365,7 @@ pub enum Event {
         admin_key: AccountId,
         reason: String,
     },
-    /// From `V69`, a fault the fault proof contract proved, mirrored: `member`'s enclave signed two heads
+    /// From `V70`, a fault the fault proof contract proved, mirrored: `member`'s enclave signed two heads
     /// of turn `turn`'s assignment at `position` under `signer_epoch` that disagree at `seq`. Its
     /// haircut restarts at the penalty and reaches nothing at `decays_until`.
     OperatorFaultProven {
@@ -376,7 +376,7 @@ pub enum Event {
         seq: u64,
         decays_until: Millis,
     },
-    /// A fault the fault proof contract proved, credited but refused before `V69` is in force or the
+    /// A fault the fault proof contract proved, credited but refused before `V70` is in force or the
     /// contract is recorded: it changes nothing else.
     OperatorFaultRefused {
         member: AccountId,

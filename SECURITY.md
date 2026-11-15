@@ -498,12 +498,12 @@ until the losing copy reads the conflicting posted head, or, if its host blocks 
 stop time it last computed, so one interval is not a bound on the overlap, and a host that rolls its
 member back within the unposted window, keeping the answering members from seeing what it signed, can
 make it sign a second history over at most that window, which is the member's fault and provable:
-from V69 anyone can submit two `engine.log-head.v2` heads signed under one signer epoch, binding the
+from V70 anyone can submit two `engine.log-head.v2` heads signed under one signer epoch, binding the
 same turn, position and release, that name different links at one seq to `FaultProof`, which checks
 both against that epoch's signer and the schedule's assignment, once per assignment, and the engine
 then cuts the assigned member's operator share by a haircut that starts at the recorded penalty and
 falls linearly to nothing over its decay, the withheld part going to stakers (a fault proven before
-V69 is in force or the contract is recorded is credited and cuts nothing); heads under different
+V70 is in force or the contract is recorded is credited and cuts nothing); heads under different
 signer epochs, such as the history a promotion discards, heads of different assignments, a second
 history whose heads never share a seq, an answered command left out of the published log, censorship
 and delay prove nothing, and no self-bond is slashed;
