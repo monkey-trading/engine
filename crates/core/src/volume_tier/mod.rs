@@ -17,10 +17,12 @@
 //! - **Bounds** (`bounds`). The table moves only after a seven-day notice, or by a vote while rotation
 //!   is on: the same number of tiers, thresholds and day divisors at or above launch, shares at or
 //!   below launch, and in every listed market each tier's spread at every notional from its launch
-//!   spread to twice it, against which a listing's spread bands are checked too.
+//!   spread to twice it, against which a listing's spread bands are checked too. From `V61` a ceiling
+//!   adoption's bound first listing is checked when it is adopted as well as when it is listed.
 //! - **Activation.** Parameters that name no table take `launch_volume_tiers`, and every account
 //!   starts at tier 0 with no counted volume; every position held then is pending for its first
-//!   `MIN_HOLD_MS`, as no record says which of its units were held that long. Activation is refused
+//!   `MIN_HOLD_MS`, as no record says which of its units were held that long. From `V61` the launch
+//!   table recorded is `launch_volume_tiers`, whatever table the parameters name. Activation is refused
 //!   over a listing outside a tier's bound, and a market's first listing is held to the same bound at
 //!   its own bands.
 

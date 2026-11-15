@@ -16,16 +16,20 @@ use crate::volume_tier::{AccountBands, VolumeTier, launch_volume_tiers, validate
 
 impl Engine {
     /// Checks an activation carrying the log to `V59` or later from before it takes up a table no more
-    /// generous than `launch_volume_tiers` (`within_launch_table`), so parameters set before `V59` cannot
-    /// make a launch table that later bounds measure from, and leaves every listed market within the
+    /// generous than `launch_volume_tiers` (`within_launch_table`), so parameters set before `V59` cannot,
+    /// from `V61`, make a launch table that later bounds measure from, and leaves every listed market within the
     /// tiered bound at that table: the parameters' table, or `launch_volume_tiers` for parameters that
-    /// name none. A listing a notice moved before `V59` can move a band bound so a tier's first band ends
-    /// past where it did at launch, which the activation would take up as charging more than twice that
-    /// tier's launch spread.
+    /// name none, measured from that table before `V61` and from `launch_volume_tiers` from it, and from
+    /// `V61` an activation crossing `V52` checks the bands it will convert and take as launch bands, and
+    /// every first listing an adoption binds. A
+    /// listing a notice moved before `V59` can move a band bound so a tier's first band ends past where
+    /// it did at launch, which the activation would take up as charging more than twice that tier's
+    /// launch spread.
     /// Error cases:
     /// - parameters naming a table more generous than `launch_volume_tiers`, or of another shape
     /// - a listed market whose bands at some tier of that table charge outside its launch spread to twice
     ///   it
+    /// - from `V61`, the same of the first listing a ceiling adoption binds for a market not yet listed
     pub(crate) fn check_volume_tier_activation(&self, version: ProtocolVersion) -> Result<(), String> {
         let Some(params) = self.params.as_ref().filter(|_| self.protocol_version < ProtocolVersion::V59) else {
             return Ok(());
@@ -37,13 +41,41 @@ impl Engine {
         tiered.convert_to_tiered();
         let table = &tiered.volume_tiers;
         within_launch_table(table, &launch_volume_tiers())?;
-        self.markets
-            .iter()
-            .try_for_each(|(id, market)| self.check_tiered_against(*id, &market.spec.spread_tiers, table, table))
+        // From `V61` the bounds measure from `launch_volume_tiers`, whatever table the parameters name, so a table
+        // set before `V59` is held to it too and not taken as its own baseline.
+        let launch = if version >= ProtocolVersion::V61 { launch_volume_tiers() } else { table.clone() };
+        // A market listed before `V52` has no launch bands until this activation converts its bands and
+        // takes them as such (`start_listing_bounds`), so from `V61` they are checked as it will.
+        let crossing = version >= ProtocolVersion::V61 && self.protocol_version < ProtocolVersion::V52;
+        self.markets.iter().try_for_each(|(id, market)| {
+            if !crossing {
+                return self.check_tiered_against(*id, &market.spec.spread_tiers, table, &launch);
+            }
+            let mut spec = market.spec.clone();
+            spec.convert_spread_tiers();
+            tiered_within(&spec.spread_tiers, &spec.spread_tiers, table, &launch)
+                .map_err(|reason| format!("market {id} at volume tier {reason}"))
+        })?;
+        if version < ProtocolVersion::V61 {
+            return Ok(());
+        }
+        // The first listing an adoption binds for a market not yet listed, applied or pending, must also
+        // meet the bound when it lists, as one adopted under `V61` is held to when adopted.
+        let pending = self.pending_ceiling.as_ref().and_then(|p| Some((p.market, p.listing.as_ref()?)));
+        // A pending adoption's listing replaces the applied one for its market once it applies, and until
+        // then no listing meets both, so only the pending one is checked (as `check_ceilings_cover` does).
+        let replaced = |id: &MarketId| pending.is_some_and(|(market, _)| market == *id);
+        let applied = self.operator_bounds.proposed_listings.iter().filter(|(id, _)| !replaced(id));
+        let applied = applied.map(|(id, spec)| (*id, spec));
+        applied.chain(pending).filter(|(id, _)| !self.markets.contains_key(id)).try_for_each(|(id, spec)| {
+            tiered_within(&spec.spread_tiers, &spec.spread_tiers, table, &launch)
+                .map_err(|reason| format!("market {id}'s bound first listing at volume tier {reason}"))
+        })
     }
 
     /// Starts volume tiers when `version` activates `V59` over the log: parameters that name no table
-    /// take `launch_volume_tiers`, and the table in force becomes the launch table. No account has
+    /// take `launch_volume_tiers`, and the table in force becomes the launch table, or from `V61`
+    /// `launch_volume_tiers` itself, which the table in force is no more generous than. No account has
     /// counted volume yet, so every account is at tier 0, and every held position is pending for its
     /// first `MIN_HOLD_MS` (`Engine::hold_held_positions`).
     pub(crate) fn start_volume_tiers(&mut self, version: ProtocolVersion) {
@@ -52,7 +84,8 @@ impl Engine {
         }
         let Some(params) = self.params.as_mut() else { return };
         params.convert_to_tiered();
-        self.operator_bounds.launch_volume_tiers = Some(params.volume_tiers.clone());
+        let launch = if version >= ProtocolVersion::V61 { launch_volume_tiers() } else { params.volume_tiers.clone() };
+        self.operator_bounds.launch_volume_tiers = Some(launch);
         self.hold_held_positions();
     }
 
@@ -197,6 +230,22 @@ impl Engine {
         };
         tiered_within(spread_tiers, spread_tiers, tiers, launch)
             .map_err(|reason| format!("market {market}'s first listing at volume tier {reason}"))
+    }
+
+    /// From `V61`, checks the first listing a ceiling adoption binds as `check_tiered_first_listing`
+    /// does, when the adoption is made, so it cannot commit a market to a listing refused when it applies.
+    /// The listing is checked again then, as the table can change between the two.
+    /// Error cases:
+    /// - see `Engine::check_tiered_first_listing`
+    pub(crate) fn check_adopted_tiered_listing(
+        &self,
+        market: MarketId,
+        spread_tiers: &[SpreadTier],
+    ) -> Result<(), String> {
+        if self.protocol_version < ProtocolVersion::V61 {
+            return Ok(());
+        }
+        self.check_tiered_first_listing(market, spread_tiers)
     }
 }
 

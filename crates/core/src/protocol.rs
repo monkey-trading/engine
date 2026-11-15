@@ -374,11 +374,19 @@ pub enum ProtocolVersion {
     /// listed market that names one, holding a gap it is in, or one starting within two hours, with
     /// no close-out.
     V60,
+    /// Volume tier fixes. An activation over parameters set before `V59` records `launch_volume_tiers` as
+    /// the launch table the table's bounds measure from, rather than the table those parameters name,
+    /// which it still takes up when no more generous, and checks every listing against it, and every
+    /// first listing an adoption binds (the pending one where it replaces an applied one). A close-spread ceiling adoption for a market not yet listed is held, when adopted, to the
+    /// volume tier bound its listing must meet when it applies. A closing lot joins the newest only
+    /// when its leg's matured and pending units cannot be told apart in the order the toxicity score
+    /// takes them: either leg empty, both only matured, or both only pending.
+    V61,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V60;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V61;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

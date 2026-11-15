@@ -190,7 +190,8 @@ impl Engine {
     /// - an effective time past the latest stamp
     /// - a listing before `V52`, or from `V52` one for a listed market, none for a market not yet
     ///   listed, or one that is for another market, fails `MarketSpec::validate` or
-    ///   `check_spread_tiers`, or from `V58` names no markout floor
+    ///   `check_spread_tiers`, from `V58` names no markout floor, or from `V61` has bands
+    ///   `Engine::check_tiered_first_listing` refuses
     /// - from `V52`, a value below the launch close charge of the listed market under the parameters
     ///   in force or those it launched under, or of the listing
     pub(crate) fn adopt_close_spread_ceiling(
@@ -256,6 +257,7 @@ impl Engine {
                 if self.protocol_version >= ProtocolVersion::V58 {
                     self.check_markout_floor(spec)?;
                 }
+                self.check_adopted_tiered_listing(market, &spec.spread_tiers)?;
                 spec
             }
         };

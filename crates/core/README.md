@@ -128,7 +128,10 @@ this crate and reproduce the signed state roots exactly.
   newest first and counts nothing for it, a close of matured notional counts once the round-trip
   horizon has passed, and a round trip counts nothing. The table moves only after a seven-day notice
   or by a vote, never more generously than at launch, with every market's spread at each tier from
-  that tier's launch spread to twice it
+  that tier's launch spread to twice it; from `V61` an activation over parameters set before `V59` takes
+  `launch_volume_tiers` as the launch table, a ceiling adoption's bound first listing is held to the
+  bounds when adopted, and a closing lot joins another only when the order of their units does not
+  matter
 - From protocol `V60`, a market's weekend margin (`src/weekend/`): a rate each margin band charges
   at least over the market's weekend gap, any closure of at least 40 hours; from two hours before
   the gap starts until the market reopens, risk added in any market and withdrawals meet it, and when
@@ -312,18 +315,19 @@ this crate and reproduce the signed state roots exactly.
   tier an account's window reaches, each account's spread bands with its best-price bound, and the
   account read's standing; unit tests in `src/volume_tier/tests.rs`
 - `src/volume_tier/book.rs` — each account's volume book: counted volume by day, the opening and
-  closing lots waiting to count, how a fill counts, and a split's scaling; unit tests in
-  `src/volume_tier/book/tests.rs`
+  closing lots waiting to count and, from V61, when two join, how a fill counts, and a split's
+  scaling; unit tests in `src/volume_tier/book/tests.rs`
 - `src/volume_tier/bounds.rs` — the bounds on the table, its notice, activation, and the tiered
   spread check on every table and listing change
 - `src/merkle/volume.rs` — the V59 volume leaves, kind 28, one per account's book
 - `tests/volume_tiers.rs` — the best-price bound at tier 0 and tier 1, counting after 60 s on the
   day of maturity, pending notional a close takes, a close's horizon, round trips both ways, the
   day cap, the 30-day window, close-outs, triggered orders, activation, splits, and the volume leaf
-  beside the exit's proofs
+  beside the exit's proofs, and V61's closing lots through `Engine::apply`
 - `tests/volume_tier_bounds.rs` — the table's notice, its launch bounds, a listing and a table held
-  together to each tier's launch spread, a raised threshold held at every tier below it, and the rules
-  before V59
+  together to each tier's launch spread, a raised threshold held at every tier below it, V61's launch
+  table at an activation (also across V52) and an adoption held to the tiers, and the rules before
+  V59
 - `tests/holding_fee.rs` — the fee at each hold, losses, adds, flips, close-outs, the margin check on
   a flip, close-all pieces, splits, activation, and what a close pays now
 - `tests/holding_fee_bounds.rs` — the bounds on the base fee and the curve, their notices, the
@@ -962,6 +966,21 @@ version reads, no notice names one, and no market keeps a gap, so earlier logs r
 activation starts each listed market that names one, holding a gap it is in, or one starting within
 two hours, to its reopening with no close-out, through a relisting, and a gap starting within two
 hours after one it entered the same way. Its session is in `examples/reference_log/v60.rs`.
+
+Protocol V61 fixes three volume tier rules. An activation that carries a log from before V59 records
+`launch_volume_tiers` as the launch table every later bound measures from, whatever table the
+parameters set before V59 name: such a table stays in force when no more generous, and every listing
+is checked against the launch table at activation (a market listed before V52 as the activation
+converts its bands and takes them as launch bands), as is the first listing each adoption binds for
+a market not yet listed, the pending one where it replaces an applied one, so a table set with no notice and no bound is no
+baseline for a later listing notice. A close-spread ceiling adoption for a market not yet listed is
+held, when it is adopted, to the volume tier bound its bound first listing must meet when it applies
+(`check_tiered_first_listing`), which the listing is still held to then, as the table can change
+between the two. A closing lot joins the newest one of its market, side, index and time only when the
+order of their units does not matter, with either leg empty, both holding only matured units or both
+only pending ones, so a reopening never restores units the score did not match. A log that activated
+V59 keeps the launch table it recorded. Its log is `v61.jsonl`, and its session is in
+`examples/reference_log/v61.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
