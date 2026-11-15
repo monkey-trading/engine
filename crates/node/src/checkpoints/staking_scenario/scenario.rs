@@ -275,6 +275,7 @@ impl Scenario {
             marks: crate::test_support::marks_reader(),
             stats: crate::test_support::stats(),
             emission_budget: Some(TokenUnits(DEV_PERIOD_BUDGET)),
+            staking_terms: None,
             payouts_enabled: true,
             collateral: None,
             listing: Default::default(),

@@ -11,7 +11,6 @@ use axum::http::Request as HttpRequest;
 use clap::Parser;
 use engine_core::auth::MAX_EXPIRY_AHEAD_MS;
 use engine_core::command::{AdminCommand, AdminRequest, Command};
-use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::Event;
 use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
@@ -35,6 +34,8 @@ use crate::tls::{TlsIdentity, serve};
 mod corporate;
 mod dev_scenario;
 mod election;
+mod launch_scenario;
+mod launch_values;
 mod notice;
 mod tls;
 
@@ -264,23 +265,6 @@ async fn engine_admin_fails_when_the_engine_rejects_the_command() {
     assert!(matches!(&logged[..], [(_, events)] if matches!(events[..], [Event::AdminRejected { .. }])));
 }
 
-#[tokio::test]
-async fn an_emission_schedule_must_have_the_period_budget_the_vaults_cap_was_derived_from() {
-    let mut node = Node::start("emission-budget").await;
-    node.state.emission_budget = Some(TokenUnits(1_000));
-    let init =
-        |budget| AdminCommand::InitEmissions(EmissionSchedule { start_ms: NOW, period_budget: TokenUnits(budget) });
-    let (status, body) =
-        node.post("/v1/admin", serde_json::to_value(node.sign(0, init(1_001), NOW + 60_000)).unwrap()).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body.to_string().contains("1001 differs from the vault's 1000"), "{body}");
-    assert!(admin_entries(&node.entries()).is_empty(), "a refused schedule stays out of the log");
-
-    let (status, events) =
-        node.post("/v1/admin", serde_json::to_value(node.sign(0, init(1_000), NOW + 60_000)).unwrap()).await;
-    assert_eq!((status, events), (StatusCode::OK, serde_json::json!([{ "type": "admin_applied" }])));
-}
-
 // ── Helpers ──
 
 /// A node API over a running sequencer on a fresh log, under the latest protocol with the dev
@@ -352,6 +336,7 @@ impl Node {
             marks: crate::test_support::marks_reader(),
             stats: crate::test_support::stats(),
             emission_budget: None,
+            staking_terms: None,
             collateral: None,
             listing: Default::default(),
             operators: None,

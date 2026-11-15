@@ -125,7 +125,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   and `GET /v1/accounts/{address}/emissions` serves an account's cumulative entitlement with its proof,
   at the checkpoint the vault accepted when one is retained, for the vault's `claimEmissions`; with `[checkpoints]`, the
   node reads the period budget the vault's MONKEY cap was derived from, refuses a schedule with any
-  other, and refuses to start on a log that records one
+  other, and refuses to start on a log that records one; with a staking contract configured, it reads
+  that contract's epoch and cooldown through the custody quorum and refuses an `InitStaking` that
+  differs, and `engine admin init-staking` refuses one before it signs
 - MONKEY staking from protocol `V25`: `engine admin init-staking` or a genesis `staking` entry
   records the liquidity floor, epoch length, start, and unstake cooldown once; each epoch the
   engine distributes house NAV above the floor to stakers pro-rata, from `V47` less a fifth to the
@@ -200,6 +202,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/admin/secrets.rs` — `engine admin deliver-secrets` and `secrets-status`: the quote checked
   against the release manifest before anything is encrypted, and the quoted receipt;
   `src/admin/secrets/tests.rs` runs the tool against the listener and against forgeries
+- `src/admin/staking.rs` — `engine admin init-staking`'s read of the staking contract's epoch and
+  cooldown through the config's custody providers, and its refusal before signing; its `staking/tests.rs`
+  runs it against a loopback JSON-RPC stand-in
 - `src/admin/tests.rs` — `engine admin` tests: key sources, commands, signing, and pins
 - `src/ct_watch/mod.rs` — `engine ct-watch`: the poll loop over the node's attestation and the logs
 - `src/ct_watch/config.rs` — the watcher's config: domain, node, logs, and alert routing
@@ -1120,6 +1125,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/mod.rs` — the custody providers (mock and EVM), the USDC-to-`Fixed` conversion,
   and `ContractQuorum`, the custody providers' agreed reads of a contract at one block of the custody
   credit tag
+- `src/custody/staking_terms.rs` — the staking contract's epoch and cooldown read through the custody
+  quorum, and the check of `InitStaking` against them that the admin route makes; its `tests.rs` covers the
+  read, the comparison and an unreadable contract
 - `src/custody/evm.rs` — the deposit watcher: the chain and token check, range reads from blocks
   proven to lead to the tagged final block, the completeness check, and stall alerts
 - `src/custody/evm/lifecycle.rs` — confirmed receipt reconciliation, principal finality and the replayed scan frontier
@@ -1154,6 +1162,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/admin_tests/delivery_authority.rs` — who a running node takes deliveries from: the key in
   effect by trusted time, and a named or installed successor's own
 - `src/api/admin_tests/election.rs` — the operator route and the admin route after an election, published keys included
+- `src/api/admin_tests/launch_values.rs` — the admin route's refusals of an emission budget or a staking epoch and cooldown that are not the contracts', and of `InitStaking` while the contract cannot be read
+- `src/api/admin_tests/launch_scenario.rs` — the launch values dev scenario on isolated Anvil: the contracts deploy from `ops/runbooks/production-deployment.toml` and the node's checks accept them
 - `src/api/admin_tests/notice.rs` — the V49 dev scenario: stress parameters and a market's markup refused with no notice and before its time, applied at it through `engine admin` and TLS, and replayed
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
   commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
@@ -1348,6 +1358,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `tests/replay.rs` — replays a log the node wrote before protocol versions, kept in
   `tests/fixtures/`, and checks that `engine replay` fails on a log it cannot verify
 - `tests/common/access.rs` — shared explicit signed declarations, screening and financial scenario inputs
+- `tests/production_deployment.rs` — loads `ops/runbooks/production-deployment.toml`, holds each value
+  to the owner's #436 decision and the contracts' constructor rules, and the deploy runbook's
+  `init-emissions` and `init-staking` commands to the file
 - `tests/production_node_template.rs` — loads `ops/runbooks/production-node.toml` assembled with the
   benchmark publishers and the production genesis, checks it holds what a production build requires
   but for the markets short of `min_sources` TLS venues, which it names, and that every placeholder
@@ -1491,6 +1504,11 @@ cargo build --release -p engine-node --features production
 # above the floor paying pro-rata in USDC, an unstake through the cooldown, and an epoch below the
 # floor paying nothing
 ./scripts/dev-monkey-staking.sh
+
+# Run the launch values scenario on isolated Anvil: the contracts deploy at the decided values in
+# ops/runbooks/production-deployment.toml, and the node's InitEmissions and InitStaking checks
+# accept them and refuse any other budget, epoch or cooldown
+./scripts/dev-launch-values.sh
 
 # Run the operator election scenario on isolated Anvil: amount delegations, an election by their
 # tallies mirrored through the custody quorum, and the elected key signing from its effective time

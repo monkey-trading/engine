@@ -9,6 +9,7 @@ mod benchmark_watch;
 mod command;
 mod input;
 mod secrets;
+mod staking;
 mod tls;
 
 pub use input::{HexKey, KeyEnv};
@@ -192,6 +193,8 @@ pub enum AdminAction {
     /// Record the MONKEY staking config, which a log takes once: epoch 0 starts at `--start`, no
     /// earlier than the node sequences the command, with the house NAV `--liquidity-floor`, epochs
     /// of `--epoch-ms` milliseconds, and the unstake `--cooldown-ms` the staking contract enforces.
+    /// Before it signs, it reads the contract's epoch and cooldown through the config's custody
+    /// providers and refuses values that are not the contract's; the node checks them again.
     InitStaking {
         /// When epoch 0 starts, in RFC 3339 (`2027-01-01T00:00:00Z`).
         #[arg(long)]
@@ -205,6 +208,10 @@ pub enum AdminAction {
         /// The unstake cooldown the staking contract enforces, in milliseconds.
         #[arg(long)]
         cooldown_ms: Millis,
+        /// A secrets bundle, as `deliver-secrets` takes it, whose keys fill the custody providers'
+        /// URLs for the read of the contract: needed when the config's providers name delivered keys.
+        #[arg(long)]
+        secrets_file: Option<PathBuf>,
     },
     /// Adopt a close-spread ceiling for a market (from V40): the most its closes may pay, whatever
     /// the parameters do. A new market's ceiling applies from `--effective-at`, at least seven days
@@ -271,6 +278,8 @@ pub async fn dispatch(args: AdminArgs, env: KeyEnv) -> anyhow::Result<()> {
 /// - `--pin` is missing
 /// - a spec or parameters file cannot be read, does not parse, or fails validation
 /// - the node cannot be reached in time, or refuses the request (see `call`)
+/// - a staking config whose epoch or cooldown is not the staking contract's, or that cannot be read
+///   (see `staking::check`)
 /// - the engine rejects the command
 /// - for the publisher worker, its alert routes or outbox cannot start, or stop
 pub async fn run(args: AdminArgs, env: KeyEnv) -> anyhow::Result<AdminRequest> {
@@ -341,7 +350,14 @@ async fn run_configured(
     if let AdminAction::SyncBenchmarks { watch } = args.action {
         return benchmark_feed::run(&cfg, &node, &key, &operator, clock, watch).await;
     }
+    let secrets_file = match &args.action {
+        AdminAction::InitStaking { secrets_file, .. } => secrets_file.clone(),
+        _ => None,
+    };
     let command = args.action.command()?;
+    if let AdminCommand::InitStaking(staking) = &command {
+        staking::check(cfg, secrets_file.as_deref(), staking).await?;
+    }
     let path = format!("/v1/accounts/{}/nonce", operator.address);
     let input::NonceView { next_nonce } = call(&node, Method::GET, &path, None).await?;
     let req = sign(&key, &operator, command, next_nonce, clock() + EXPIRES_IN_MS);

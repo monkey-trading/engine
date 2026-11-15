@@ -146,6 +146,9 @@ pub struct ApiState {
     /// The emission period budget the configured vault's MONKEY cap was derived from, which an
     /// emission schedule must match; `None` when the node reads no vault, as under mock custody.
     pub emission_budget: Option<TokenUnits>,
+    /// The configured staking contract's epoch and cooldown, which `InitStaking` must match; read
+    /// when it is sent. `None` when the node reads no staking contract, as under mock custody.
+    pub staking_terms: Option<crate::custody::StakingTerms>,
     /// The enclave key and deployment the API signs answers for.
     pub(crate) signing: Arc<Signing>,
 }

@@ -428,6 +428,7 @@ async fn serve_node(
         marks: marks_reader,
         stats,
         emission_budget,
+        staking_terms: crate::custody::StakingTerms::connect(&cfg.custody)?,
         collateral: served,
         listing: Default::default(),
         operators: ticker::start_operators(&cfg.custody, &cfg.api, &mut tasks)?,

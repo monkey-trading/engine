@@ -539,6 +539,9 @@ an index: load only the rule whose hint matches the current action.
   naming the range, and a second copy on the same key posting an overtaking head freezes sequencing;
   `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
+  `dev-launch-values.sh`, the launch values scenario on Anvil: the vault, token, timelock and staking
+  contract deploy from `ops/runbooks/production-deployment.toml`, and the node's `InitEmissions` and
+  `InitStaking` checks read them back and accept those values and no other budget, epoch or cooldown;
   `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
   `dev-parameter-votes.sh`, the parameter votes scenario on Anvil: a three-member set of 40:30:30 votes on
   `ParameterVote`, a margin raise passing with 70% applies seven warped days after it is logged while one with
@@ -637,7 +640,11 @@ an index: load only the rule whose hint matches the current action.
   `reference.md` holds the shared variables and checks, and `production-node.toml` is the production
   node config without `[genesis]`, assembled with `config/benchmark-publishers.toml` and
   `config/production-genesis.toml`, each placeholder or open decision marked `OWNER` or `REPLACE`,
-  with a test that it loads.
+  with a test that it loads. `production-deployment.toml` holds the launch deployment's one-time
+  inputs, the owner's #436 values: the timelock's delay, the vault's period budget, exit period,
+  claim window and staleness, `Staking`'s epoch and cooldown, the liquidity floor and the opening
+  day's start, with a test that holds each to the decision and the deploy runbook's `init-emissions`
+  and `init-staking` commands to the file.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
   production-build tests), the reference-log examples' tests, the reference-log replay and
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
@@ -731,6 +738,7 @@ Run from the repo root:
 - Property tests: `cargo test -p engine-core --test invariants`
 - Production genesis and its calendars: `cargo test -p engine-node --test production_genesis`
 - Production node template: `cargo test -p engine-node --test production_node_template`
+- Production deployment inputs: `cargo test -p engine-node --test production_deployment`
 - New protocol version's reference log:
   `cargo run -p engine-core --example reference_log -- crates/core/tests/reference/v<N>.jsonl`, then
   the node's from it: `cargo run -p engine-node --example reference_log --
@@ -868,6 +876,11 @@ Run from the repo root:
   the liquidity floor paying pro-rata in USDC against posted checkpoint roots, an unstake through
   the cooldown, and an epoch below the floor paying nothing; needs Anvil, Forge, and installed
   Soldeer dependencies)
+- Launch values dev scenario: `./scripts/dev-launch-values.sh` (the same requirements; deploys the
+  vault, its token, the timelock and the staking contract at the values in
+  `ops/runbooks/production-deployment.toml`, and posts `InitEmissions` and `InitStaking` to a node whose
+  checks read the contracts through the custody quorum: the decided values apply, a budget, epoch or
+  cooldown that differs is refused and stays out of the log)
 - Deliver secrets into an enclave as the operator: `cargo run -p engine-node -- admin --config <config>
   --key-file <key> deliver-secrets --to <host:port> --release <release.toml> --secrets-file <file>`
   (`secrets-status` reads what it attests it holds; `--allow-mock` for a dev node). Against anything

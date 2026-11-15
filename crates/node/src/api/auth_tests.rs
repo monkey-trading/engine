@@ -12,8 +12,7 @@ use engine_core::auth::{MAX_EXPIRY_AHEAD_MS, RequestAuth};
 use engine_core::command::{
     CancelAllRequest, CancelRequest, CloseAllRequest, Command, OrderKind, OrderRequest, WithdrawalRequest,
 };
-use engine_core::eip712;
-use engine_core::eip712::{Eip712Domain, cancel_hash, order_hash, withdrawal_hash};
+use engine_core::eip712::{self, Eip712Domain, cancel_hash, order_hash, withdrawal_hash};
 use engine_core::event::{Event, Reject};
 use engine_core::price::SourceQuote;
 use engine_core::types::{Millis, Side};
@@ -411,6 +410,7 @@ impl Node {
             marks: crate::test_support::marks_reader(),
             stats: crate::test_support::stats(),
             emission_budget: None,
+            staking_terms: None,
             collateral: None,
             listing: Default::default(),
             operators: None,

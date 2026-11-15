@@ -23,8 +23,7 @@ use tokio::task::JoinHandle;
 
 use super::T0_SECS;
 use super::chain::Chain;
-use crate::api::Signing;
-use crate::api::{ApiState, Feed, MAX_BACKFILLS, router};
+use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
 use crate::checkpoints::staking_scenario::access::Source;
 use crate::checkpoints::{CheckpointChain, View};
 use crate::clock::Clock;
@@ -352,6 +351,7 @@ impl Node {
             marks: crate::test_support::marks_reader(),
             stats,
             emission_budget: None,
+            staking_terms: None,
             payouts_enabled: post_checkpoints,
             collateral: None,
             listing: Default::default(),

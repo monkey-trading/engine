@@ -87,7 +87,7 @@ impl AdminAction {
             AdminAction::InitEmissions { start, period_budget } => {
                 AdminCommand::InitEmissions(EmissionSchedule { start_ms: start.timestamp_millis(), period_budget })
             }
-            AdminAction::InitStaking { start, liquidity_floor, epoch_ms, cooldown_ms } => {
+            AdminAction::InitStaking { start, liquidity_floor, epoch_ms, cooldown_ms, secrets_file: _ } => {
                 AdminCommand::InitStaking(engine_core::staking::StakingConfig {
                     liquidity_floor,
                     epoch_ms,

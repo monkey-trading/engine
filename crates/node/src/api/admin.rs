@@ -7,11 +7,12 @@ use engine_core::auth::Operator;
 use engine_core::command::{AdminCommand, AdminRequest, Command};
 use engine_core::event::Event;
 use tracing::field::display;
-use tracing::{Span, debug, info};
+use tracing::{Span, debug, info, warn};
 
 use crate::api::{ApiError, ApiResult, ApiState};
 use crate::checkpoints::emission_budget::check_budget;
 use crate::config::is_published_operator;
+use crate::custody::StakingTermsRefused;
 
 /// Sequences an admin command the operator signed and returns the events it produced, ending in
 /// `admin_applied` or `admin_rejected`. A request stays out of the log unless the operator may send
@@ -28,6 +29,8 @@ use crate::config::is_published_operator;
 ///   test key other than the configured one, as an election may name
 /// - an emission schedule whose period budget is not the one the configured vault's MONKEY cap was
 ///   derived from
+/// - a staking config whose epoch or cooldown is not the configured staking contract's, or, as
+///   unavailable, one made while the contract cannot be read
 /// - a nonce other than the operator's next
 /// - an expiry already past
 /// - the sequencer has stopped
@@ -88,6 +91,18 @@ async fn sequence_admin(s: &ApiState, req: AdminRequest, seen: &mut Option<u64>)
     {
         debug!("admin request refused: {reason}");
         return Err(ApiError::BadRequest(reason));
+    }
+    if let (AdminCommand::InitStaking(staking), Some(terms)) = (&req.command, &s.staking_terms)
+        && let Err(refused) = terms.check(staking).await
+    {
+        debug!("admin request refused: {refused}");
+        return Err(match refused {
+            StakingTermsRefused::Differs(reason) => ApiError::BadRequest(reason),
+            StakingTermsRefused::Unread(cause) => {
+                warn!("the staking contract's epoch and cooldown cannot be read: {cause:#}");
+                ApiError::Unavailable
+            }
+        });
     }
     let (next, last_sequenced, last_seq) =
         s.query(move |e| (e.next_request_nonce(operator.address), e.now(), e.last_seq())).await?;
