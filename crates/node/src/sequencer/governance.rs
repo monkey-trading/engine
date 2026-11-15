@@ -43,7 +43,8 @@ impl Sequencer {
                 bail!("the engine kept proposal {proposal} due after it was sequenced");
             }
         }
-        if let Some(record) = self.fault_proof_record().filter(|_| self.engine.protocol_version() >= ProtocolVersion::V69)
+        if let Some(record) =
+            self.fault_proof_record().filter(|_| self.engine.protocol_version() >= ProtocolVersion::V69)
             && let Some(events) = self.stamp(ts, record)?
             && let Some(reason) = rejection(&events)
         {

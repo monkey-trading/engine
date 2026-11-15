@@ -27,6 +27,15 @@ fn the_config_fault_proof_contract_is_recorded_once_and_another_is_refused() {
     activate(Some(config(5_000))).unwrap();
     let recorded = commands(&log_entries(&dir));
     assert_eq!(recorded.last(), Some(&Command::Admin(AdminCommand::SetFaultProof(config(5_000)))));
+    // `GET /v1/house/state` names the recorded contract and penalty.
+    let mut seq = recover_penalising(&dir, clock.clone(), Some(config(5_000))).unwrap();
+    let (reply, mut answer) = oneshot::channel();
+    seq.house.wait(reply);
+    seq.flush().unwrap();
+    let state = serde_json::to_value(answer.try_recv().expect("a flush answers the read")).unwrap();
+    let faults = &state["operator_faults"]["config"];
+    assert_eq!(faults["penalty"], serde_json::json!({ "initial_bps": 5_000, "decay_ms": 864_000_000 }), "{state}");
+    drop(seq);
     activate(Some(config(5_000))).unwrap();
     assert_eq!(commands(&log_entries(&dir)).len(), recorded.len(), "recorded once");
     for other in [Some(config(2_500)), None] {
@@ -53,7 +62,8 @@ fn a_passed_activation_of_v69_is_followed_by_the_fault_proof_contract() {
     });
     seq.genesis(&genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
-    let progress = Command::StakingProgress { block: 10, block_hash: B256::repeat_byte(1), block_time: Some(FRONTIER) };
+    let block_hash = B256::repeat_byte(1);
+    let progress = Command::StakingProgress { block: 10, block_hash, block_time: Some(FRONTIER), named_turn: None };
     seq.sequence(progress).unwrap().expect("admitted");
     let switch =
         Command::SwitchRotation { enabled: true, election_cancelled: false, block: 11, chain_ref: "0x01:0".into() };

@@ -109,7 +109,8 @@ impl Sequencer {
     /// activation and the access policy wait for a passed vote instead (see `sequence_queued`). All run
     /// at the log's next seq, so earlier commands keep the rules they ran under, once trusted time admits
     /// a stamp (see `sequence_required`).
-    /// `recover` has already refused a log that records another client auth, operator or vote contract.
+    /// `recover` has already refused a log that records another client auth, operator, vote contract or
+    /// fault proof contract.
     /// Error cases:
     /// - the engine rejects any of them
     /// - the log cannot be written

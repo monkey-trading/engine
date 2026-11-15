@@ -42,8 +42,11 @@ fn seated_epoch(h: &mut Harness) -> Millis {
     start
 }
 
+/// Amounts by account, in event order.
+type Parts = Vec<(AccountId, u128)>;
+
 /// The operator's parts among `events`, and what the haircut withheld from each.
-fn parts(events: &[Event]) -> (Vec<(AccountId, u128)>, Vec<(AccountId, u128)>) {
+fn parts(events: &[Event]) -> (Parts, Parts) {
     let pick = |withheld: bool| {
         events
             .iter()
@@ -144,6 +147,19 @@ fn a_second_fault_restarts_the_decay_at_the_penalty() {
     );
     assert_eq!(h.engine.haircut_bps(CANDIDATE, h.ts), 5_000);
     assert_eq!(h.engine.haircut_bps(CANDIDATE, h.ts + 10 * DAY_MS), 0);
+}
+
+#[test]
+fn time_before_a_second_fault_is_withheld_under_the_first_haircut() {
+    let mut h = penalised(1_000_000_000, PENALTY);
+    let start = seated_epoch(&mut h);
+    prove(&mut h, CANDIDATE, 7);
+    h.advance_to(start + 12 * HOUR_MS);
+    prove(&mut h, CANDIDATE, 12);
+    // Each half withholds 48.75% of itself, the first under the first haircut and the second under the
+    // restarted one: the candidate keeps 51.25% of the fifth.
+    let events = close(&mut h);
+    assert_eq!(parts(&events), (vec![(CANDIDATE, 102_500_000)], vec![(CANDIDATE, 97_500_000)]));
 }
 
 #[test]

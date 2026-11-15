@@ -2,7 +2,7 @@
 
 use anyhow::anyhow;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::custody::credit::query;
 use crate::custody::evm::{BlockRef, DepositWatcher, VaultReader};
@@ -171,14 +171,30 @@ impl<V: VaultReader> DepositWatcher<V> {
                 .await
                 .map_err(PollError::rpc)?;
             match crate::custody::registry::decode_fault_vault(&out).map_err(PollError::rpc)? {
-                None => info!(to, "the fault proof contract is not deployed at this window's end"),
+                // Once the log records the address, for good, an address with no code mirrors no fault,
+                // so it pages until the contract is deployed there; a window before the record, as in a
+                // catch-up over blocks before the deployment, is no fault of the address.
+                None => {
+                    if query(tx, |engine| engine.operator_faults().config.is_some()).await.map_err(PollError::Fatal)? {
+                        warn!(
+                            alert = "fault_proof_undeployed",
+                            contract = %fault_proof,
+                            "the recorded fault proof contract has no code at block {to}"
+                        );
+                    } else {
+                        info!(to, "the fault proof contract is not deployed at this window's end");
+                    }
+                }
                 Some(recorded) if recorded != self.cursor.vault => {
                     return Err(PollError::inconsistent(anyhow!(
                         "the fault proof contract {fault_proof} records vault {recorded}, not the configured {}",
                         self.cursor.vault
                     )));
                 }
-                Some(_) => self.fault_proof = Some((fault_proof, true)),
+                Some(_) => {
+                    info!(alert_resolved = "fault_proof_undeployed", contract = %fault_proof, "fault proof contract bound");
+                    self.fault_proof = Some((fault_proof, true));
+                }
             }
         }
         let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");

@@ -110,6 +110,21 @@ fn a_fault_proof_section_needs_a_schedule_a_contract_of_its_own_and_a_bounded_pe
     for other in [staking, registry, schedule, cfg.custody.vault.as_str()] {
         refused(section(&named, other, 10_000, "730d"), "fault_proof.contract must be the fault proof contract");
     }
+    refused(
+        section(&named, "0x0000000000000000000000000000000000000000", 10_000, "730d"),
+        "fault_proof.contract must be a nonzero address",
+    );
+    // `LogHeads` answers `vault()` as the fault proof contract does, so its address is refused here.
+    let heads = "0x00000000000000000000000000000000000000a9";
+    let with_heads = format!(
+        "{}\n[log_heads]\ncontract = '{heads}'\nrelayer = '0x00000000000000000000000000000000000000aa'\n",
+        section(&named, heads, 10_000, "730d")
+    );
+    let with_checkpoints = with_heads.replace(
+        "[log_heads]",
+        "[checkpoints]\nrpc_url = 'http://127.0.0.1:8547'\nrelayer = '0x00000000000000000000000000000000000000ab'\nretry_interval = '1s'\nrpc_timeout = '5s'\n\n[log_heads]",
+    );
+    refused(with_checkpoints, "fault_proof.contract must be the fault proof contract");
     for initial_bps in [0, 10_001] {
         refused(section(&named, fault_proof, initial_bps, "730d"), "penalty.initial_bps must be from 1 to 10000");
     }

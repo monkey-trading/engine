@@ -373,18 +373,9 @@ impl Engine {
         let usdc_excess = if excess.is_positive() { (excess.raw() / USDC_SCALE) as u128 } else { 0 };
         let mut allocated = 0u128;
         if usdc_excess > 0 && !self.staked.is_empty() {
-            let mut to_stakers = usdc_excess;
-            for (account, amount, withheld) in self.operator_shares(usdc_excess / OPERATOR_SHARE_DIVISOR) {
-                if amount > 0 {
-                    self.credit_distribution(account, amount);
-                    to_stakers -= amount;
-                    allocated += amount;
-                    events.push(Event::OperatorShareAllocated { account, epoch: closed, amount: UsdcUnits(amount) });
-                }
-                if withheld > 0 {
-                    events.push(Event::OperatorShareWithheld { account, epoch: closed, amount: UsdcUnits(withheld) });
-                }
-            }
+            // At most the share, a fifth of the excess.
+            allocated = self.credit_operator_shares(usdc_excess / OPERATOR_SHARE_DIVISOR, closed, events);
+            let to_stakers = usdc_excess - allocated;
             let stakes: Vec<(AccountId, u128)> =
                 self.staked.iter().map(|(account, staked)| (*account, staked.0)).collect();
             let total: U256 = stakes.iter().map(|(_, staked)| U256::from(*staked)).sum();

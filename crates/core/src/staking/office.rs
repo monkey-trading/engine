@@ -25,8 +25,10 @@ use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
 
 use crate::engine::Engine;
+use crate::event::Event;
 use crate::operator_faults::WHOLE_BPS;
 use crate::protocol::ProtocolVersion;
+use crate::staking::UsdcUnits;
 use crate::types::{AccountId, Millis};
 
 /// From `V50`, when the open distribution epoch began counting time in office, and each account's
@@ -93,6 +95,23 @@ impl Engine {
                 (whole > 0).then_some((*account, kept, whole - kept))
             })
             .collect()
+    }
+
+    /// Credits each part of the operator's share of the close of epoch `closed`, `share` USDC base units,
+    /// reporting what a proven fault's haircut withheld from it, and returns the total credited.
+    pub(crate) fn credit_operator_shares(&mut self, share: u128, closed: u64, events: &mut Vec<Event>) -> u128 {
+        let mut credited = 0;
+        for (account, amount, withheld) in self.operator_shares(share) {
+            if amount > 0 {
+                self.credit_distribution(account, amount);
+                credited += amount;
+                events.push(Event::OperatorShareAllocated { account, epoch: closed, amount: UsdcUnits(amount) });
+            }
+            if withheld > 0 {
+                events.push(Event::OperatorShareWithheld { account, epoch: closed, amount: UsdcUnits(withheld) });
+            }
+        }
+        credited
     }
 
     /// Starts counting time in office now, afresh: at `V50`'s activation, at staking's initialisation

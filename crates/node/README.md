@@ -484,7 +484,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   log's own state with the vault's root, and a superseded key's checkpoint the vault never accepted
 - `src/sequencer/prefixes.rs` — the cumulative command prefix after each of the latest commands the
   sequencer applied, which a handover checks a successor's tip against
-- `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, signed, unsigned or voted, and the pending parameter and listing notices, which `GET /v1/house/state` answers from, with the mirrored votes and the house's loss over the trailing day
+- `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, signed, unsigned or voted, and the pending parameter and listing notices, which `GET /v1/house/state` answers from, with the mirrored votes, the house's loss over the trailing day, and from `V69` the recorded fault proof contract, its penalty and the haircuts in force
 - `src/sequencer/governance.rs` — the `ApplyProposal` this node sequences for each passed change whose seven days have run
 - `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, with a pending parameter or listing notice, from `V62` the house's loss, and after a restart
 - `src/sequencer/replay/authorities.rs` — accepted historical signers for checkpoints a retired key signed
@@ -588,6 +588,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   change's outcome found before the withdrawals its command pays, a refused due change alerting
   `proposal_rejected` though its command pays queued withdrawals, a voted relisting ending
   a retired benchmark's alerts, and a waiting ceiling adoption in `/v1/house/state`
+- `src/sequencer/tests/operator/faults.rs` — operator faults: the config's fault proof contract recorded once and another refused, and a passed activation of `V69` followed by the record
 - `src/sequencer/tests/rotation.rs` — an operator rotation through the sequencer, and recovery after it
 - `src/sequencer/batch_tests.rs` — batching: a batch ends after `MAX_BATCH` requests of any kind
 - `src/sequencer/margin_tests.rs` — the margin and solvency dev scenario on the dev genesis (a
@@ -1203,6 +1204,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   admin route, GETs and POSTs, and `node/stamps.rs` the wall time of a seat's last command and its
   `TurnTaken`
 - `src/custody/tests/election_scenario/parameter_votes.rs` — the parameter votes dev scenario
+- `src/custody/tests/election_scenario/faults.rs` — the operator faults dev scenario (`scripts/dev-operator-faults.sh`)
 - `src/custody/tests/election_scenario/daily_turns.rs` — the daily rotation dev scenario
   `scripts/dev-daily-rotation.sh` runs: a rotation set of three following the operator in effect
   under load, five turns drawn from relayed seeds, and at each boundary the turn's key, the tail
@@ -1287,10 +1289,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/fakes/epochs.rs` — the fake chain's signer history and earlier epochs' log heads,
   answered as contract calls
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
-- `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, its schedule's rotation set and turn events, the vote contract's passed proposals, and the registry's `rotationState()` read, decoded for the staking mirror
+- `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, its schedule's rotation set and turn events, the vote contract's passed proposals, the fault proof contract's proven faults and its `vault()` read, and the registry's `rotationState()` read, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
 - `src/custody/tests/rpc/vote.rs` — passed proposals decoded only from the configured vote contract, with their canonical command or none, and a command not hashing to its event refused
 - `src/custody/tests/staking/vote.rs` — passed proposals mirrored only once the vote contract is read to name the configured schedule, and the registry's named turn, or from `V67` a drawn turn yet to start, reaching the engine with the frontier
+- `src/custody/tests/staking/faults.rs` — proven faults mirrored only once the fault proof contract is read to name the configured vault, and once
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, the staking contract's deployer checked against the configured registry, and the schedule checked against the one the registry and the config name and against the registry it records
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, the pending listing notices, and the latest checkpoint
 - `src/api/operator.rs` — `GET /v1/operator`: the registry's `api_hostname` for the operator in effect, the key in effect, its pending rotation, whether rotation is on, the last election, and from `V51` the rotation set in effect and the next with its time, today's and tomorrow's turns, and the turn history (`?before=&limit=`)
@@ -2690,7 +2693,8 @@ is in force (`SetFaultProof`), at a start's activation or after a passed vote ac
 log that records another; the watcher mirrors the contract's `FaultProven` events, once a read at a
 window's end shows the contract names the configured vault, and the account history lists each
 `operator_share_withheld`. A fault the engine credits but refuses, mirrored before `V69` is in force or the
-contract is recorded, raises the `operator_fault_refused` Warning and holds no later mirror.
+contract is recorded, raises the `operator_fault_refused` Warning and holds no later mirror, and a recorded
+contract with no code at a window's end raises `fault_proof_undeployed`.
 `GET /v1/house/state` adds a `governance` section, the recorded contract, each change waiting with its
 `applies_at`, each restriction in force with its `expires_at`, the baseline of each field one holds, and from `V65`
 when drawn turns name the operator (`turns_from`), and

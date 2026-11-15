@@ -563,6 +563,29 @@ before it must apply.
   has no range beyond each band's validation and closes out the positions it leaves short at once. `proposal_refused` means the engine
   refused the proposal for the reason in the message.
 
+## 8. Operator faults
+
+From protocol V69, a member whose enclave signs two histories during its turn, as one its host rolls
+back over the unposted window does, can be proven at fault. Anyone holding two of its
+`engine.log-head.v2` heads of one signer epoch that bind the same turn, position and release and name
+different links at one seq (the signed stream carries every head, and followers relay them) calls
+`FaultProof.prove(epoch, a, b)` with each head as `LogHeads.postV2` takes it, its signature and the
+index of the assignment's revision it binds (`cast call $SCHEDULE 'revisionOf(uint64,uint16,uint256)'`
+reads one), from any funded account;
+`FaultProven` names the member once per assignment. The engine then cuts that member's share of the
+operator's earnings by a haircut that starts at the recorded penalty and falls linearly to nothing over
+its decay, the withheld part going to stakers; `GET /v1/house/state`'s `operator_faults` section shows
+the penalty and when each haircut started, and the member's history lists each
+`operator_share_withheld`.
+
+- **Your config** names the same `[custody.evm.staking.registry.fault_proof]` contract and penalty as
+  every member's: the log records them once V69 is in force, and a node whose config names none or
+  others refuses to start on that log ("the log records fault proof contract"), so your turn would not
+  start.
+- **A fault proven before V69 is in force** is credited and cuts nothing (`operator_fault_refused`).
+- **Never restart your enclave from an older copy of its log during a turn**: a rollback within the
+  unposted window is the fault this proves, whatever the host meant by it.
+
 ## Open questions
 
 These are gaps in the contracts as written. Do not work around them on a live system; the owner
