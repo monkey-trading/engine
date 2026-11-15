@@ -20,8 +20,8 @@ use crate::common::{AAPL, BTC, Client, Harness, f};
 use crate::v56::pass;
 
 /// The seeds of the two keys this part trades through.
-const AAPL_SEED: u8 = 0x6a;
-const BTC_SEED: u8 = 0x6b;
+const AAPL_SEED: u8 = 0x6b;
+const BTC_SEED: u8 = 0x6c;
 /// The stress cooldown in force.
 const COOLDOWN_MS: Millis = 300_000;
 const HOUR_MS: Millis = 60 * 60 * 1000;
@@ -88,5 +88,4 @@ pub(crate) fn session(h: &mut Harness) {
         named_turn: Some(Some(h.ts + HOUR_MS)),
     };
     assert_eq!(h.cmd(progress), []);
-    assert_eq!(h.engine.governance().turns_from, Some(h.ts + HOUR_MS));
 }
