@@ -62,6 +62,11 @@ the node takes from it: 25 orders and 2 requests a second at tier 0, rising to 2
 so a wallet recycled for a fresh start begins at the lowest. A tier that falls cancels nothing: the
 orders already resting stay, and only a new order past the limit is refused.
 
+From V68 the higher tiers also pay less. Tiers 2 and 3 take 10% and 20% off the base profit fee, so a
+gain held past the hold curve pays 9% and 8% where tier 0 pays 10%, and the same share off a position's
+financing markup at each rollover; tiers 1 to 3 weigh their MONKEY emission losses 1.1, 1.25 and 1.5
+times. A higher tier never pays more than a lower one.
+
 Losing trades pay nothing. Winning trades pay a share of the profit they realise, which from protocol
 V55 falls with how long the position was held: the whole gain on a close within 10 seconds of the
 open, falling to the standard 10% at 15 minutes. Adding to a position moves its open time to the
@@ -158,7 +163,7 @@ curve at every hold, each after the same notice, so no hold pays less than at la
 volume tier table moves only after the same notice too, never more generously than at launch, and at
 every tier and size a spread stays between that tier's launch spread and twice it, and from V64 each
 tier's margin floor stays at or above launch's, and from V66 its order limit and request rate at or
-below launch's. From V60 a
+below launch's, and from V68 its fee discount, financing discount and emissions boost, each at or below launch's and never falling with the tier. From V60 a
 listed market's weekend margin also changes only after the same notice, or while rotation is on by a
 vote; the operator's calendar change may not shorten or remove a weekend closure starting within
 seven days, and while the market holds positions may not add or bring one forward within seven days
@@ -339,7 +344,7 @@ account out (the account's other positions held at their marks) and by profit. `
 gives the emission schedule and totals, the stake, and the distribution state, and
 `GET /v1/monkey/activity` pages the newest allocations, stakes and unstakes, and `GET /v1/monkey/distributions` the closed distribution epochs. `GET /v1/stats/series`
 serves bucketed series (NAV, cash, each market's long and short, the withdrawal queue, volume,
-MONKEY per dollar of realised loss, stake, allocation and distributions) at 1m, 1h and 1d, each
+MONKEY per unit of emission weight (a dollar of tier 0 loss), stake, allocation and distributions) at 1m, 1h and 1d, each
 answer stating where its data begins. A node holds these in memory and rebuilds them from the log
 at start, so nothing is stored for a host to alter; `[stats]`, `api.stats_interval` and `api.stats_light_interval` in the
 config set retention, bucketing and how often the accounts are scanned.

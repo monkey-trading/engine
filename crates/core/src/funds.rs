@@ -15,6 +15,7 @@ use crate::eip712::withdrawal_hash;
 use crate::engine::Engine;
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
+use crate::params::MAX_RATE_BPS;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId};
 use crate::withdrawal::{MIN_WITHDRAWAL, whole_usdc};
@@ -183,7 +184,8 @@ impl Engine {
     }
 
     /// One day of overnight financing on every open position. Longs pay benchmark + markup; shorts
-    /// receive benchmark - markup. From `V14` each benchmark with no rate is recorded with the markets
+    /// receive benchmark - markup, the markup less the account's tier's financing discount from `V68`,
+    /// the tier read at the rollover. From `V14` each benchmark with no rate is recorded with the markets
     /// that use it, which accrue nothing.
     fn charge_financing(&mut self, events: &mut Vec<Event>) {
         if self.protocol_version >= ProtocolVersion::V18 {
@@ -207,12 +209,18 @@ impl Engine {
                 }),
             );
         }
-        let charges: Vec<(AccountId, MarketId, Fixed)> = self
+        let engine = &*self;
+        let rollover = self.next_rollover.expect("charging a scheduled rollover");
+        let charges: Vec<(AccountId, MarketId, Fixed)> = engine
             .accounts
             .iter()
-            .flat_map(|(account, acct)| acct.positions.iter().map(move |(market, pos)| (*account, *market, *pos)))
-            .filter_map(|(account, market, pos)| {
-                self.daily_financing(market, pos).map(|amount| (account, market, amount))
+            .filter(|(_, acct)| !acct.positions.is_empty())
+            .flat_map(|(account, acct)| {
+                // From `V68` each account's markup falls by its tier's discount at the rollover.
+                let discount_bps = engine.financing_discount_bps(*account, rollover);
+                acct.positions.iter().filter_map(move |(market, pos)| {
+                    engine.daily_financing(*market, *pos, discount_bps).map(|amount| (*account, *market, amount))
+                })
             })
             .filter(|(_, _, amount)| !amount.is_zero())
             .collect();
@@ -227,8 +235,9 @@ impl Engine {
     /// has no mark to value it at, a failed split blocks it, or, from `V14`, its benchmark has no
     /// rate. Before `V14` a benchmark with no rate counts as zero. From `V5` the amount rounds up,
     /// so a charge rounds against the account and a credit toward zero; before `V5` it truncates. A market quoted in another
-    /// currency converts the amount to USD rounded up, the same way.
-    fn daily_financing(&self, market_id: MarketId, pos: Position) -> Option<Fixed> {
+    /// currency converts the amount to USD rounded up, the same way. From `V68` the markup is cut by
+    /// `discount_bps` of it, unless it is negative (`discount_bps` is zero before `V68`).
+    fn daily_financing(&self, market_id: MarketId, pos: Position, discount_bps: i64) -> Option<Fixed> {
         let market = self.markets.get(&market_id)?;
         if market.corporate_action_blocked {
             return None;
@@ -241,7 +250,7 @@ impl Engine {
                 .dated_benchmark(&financing.benchmark, date)
                 .map(|(_, rate)| rate)
                 .or_else(|| self.benchmarks.get(&financing.benchmark).map(|bps| Fixed::from_bps(*bps)))?;
-            let markup = Fixed::from_bps(financing.markup_bps);
+            let markup = discounted_markup(Fixed::from_bps(financing.markup_bps), discount_bps);
             let annual_rate = if pos.qty.is_positive() { rate + markup } else { markup - rate };
             let notional =
                 pos.qty.abs().mul_rounded(mark, if annual_rate >= Fixed::ZERO { Rounding::Up } else { Rounding::Down });
@@ -266,6 +275,12 @@ impl Engine {
         };
         Some(market.usd_at_mark(amount, Rounding::Up))
     }
+}
+
+/// `markup` less `discount_bps` of it, rounded up in the house's favour. A negative markup is left as
+/// listed, so a discount never makes an account pay more.
+fn discounted_markup(markup: Fixed, discount_bps: i64) -> Fixed {
+    markup.min(markup.mul_bps_rounded(MAX_RATE_BPS - discount_bps, Rounding::Up))
 }
 
 #[cfg(test)]
@@ -297,6 +312,21 @@ mod tests {
     }
 
     #[test]
+    fn a_discount_cuts_a_positive_markup_rounded_up_and_leaves_a_negative_one() {
+        let bps = Fixed::from_bps;
+        assert_eq!(discounted_markup(bps(250), 1_000), bps(225));
+        assert_eq!(discounted_markup(bps(250), 2_000), bps(200));
+        assert_eq!(discounted_markup(bps(250), 0), bps(250));
+        assert_eq!(discounted_markup(Fixed::ZERO, 2_000), Fixed::ZERO);
+        // A markup the discount cannot cut exactly rounds up, one unit above the exact cut.
+        assert_eq!(discounted_markup(Fixed::from_raw(7), 1_000), Fixed::from_raw(7));
+        assert_eq!(discounted_markup(Fixed::from_raw(15), 1_000), Fixed::from_raw(14));
+        assert_eq!(discounted_markup(Fixed::from_raw(11), 2_000), Fixed::from_raw(9));
+        assert_eq!(discounted_markup(bps(-50), 2_000), bps(-50));
+        assert_eq!(discounted_markup(Fixed::from_raw(-7), 1_000), Fixed::from_raw(-7));
+    }
+
+    #[test]
     fn financing_whose_notional_times_its_rate_passes_i128_is_charged_exactly() {
         // 1e16 units marked at 1e9 is 1e34 of raw notional: at 200% a year its raw product with the
         // rate, 2e38, is past `i128::MAX`, though a day's financing is near 5.5e22. Charges round up
@@ -321,7 +351,11 @@ mod tests {
             engine.markets.insert(1, market);
             engine.benchmarks.insert("SOFR".into(), benchmark_bps);
             let position = Position { qty: side.signed(Fixed::from_int(10_000_000_000_000_000)), entry: Fixed::ONE };
-            assert_eq!(engine.daily_financing(1, position), Some(daily.parse().unwrap()), "{side:?} {benchmark_bps}");
+            assert_eq!(
+                engine.daily_financing(1, position, 0),
+                Some(daily.parse().unwrap()),
+                "{side:?} {benchmark_bps}"
+            );
         }
     }
 }

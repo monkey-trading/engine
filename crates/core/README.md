@@ -161,6 +161,13 @@ this crate and reproduce the signed state roots exactly.
 - From protocol `V67`, a weekend close-out pays at least the stress level the house's loss sets, though
   its market, with no index, does not re-read its own level; and a staking frontier may name a drawn turn
   that has yet to start, so a turn refused before `V65` is seen from its boundary
+- From protocol `V68`, tier benefits (`src/volume_tier/benefits.rs`): a tier's fee discount takes a
+  share off the base profit fee, so a gain pays `max(base x (1 - d), C(hold))` rounded up to the bp
+  (`src/holding_fee`), read at the close; its financing discount cuts a position's markup at each
+  rollover (`src/funds.rs`), a negative markup left as listed; and its emissions boost grows an
+  account's weight after its emission debt by the share, read at the period's close
+  (`src/emissions.rs`). The benefits move only with the table, never above launch's and never falling
+  with the tier, so a higher tier never pays more fee than a lower one
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -349,6 +356,9 @@ this crate and reproduce the signed state roots exactly.
 - `src/volume_tier/limits.rs` — the V66 limits: a tier's resting-order limit and request rate, their
   shape and launch bound, the tier's limit an order is checked against, and the limits activation
   gives a table
+- `src/volume_tier/benefits.rs` — the V68 benefits: a tier's fee discount, financing discount and
+  emissions boost, their shape and launch bound, the tier's benefits read at a close, a rollover and a
+  period's close, and the benefits activation gives a table
 - `src/merkle/volume.rs` — the V59 volume leaves, kind 28, one per account's book
 - `tests/volume_tiers.rs` — the best-price bound at tier 0 and tier 1, counting after 60 s on the
   day of maturity, pending notional a close takes, a close's horizon, round trips both ways, the
@@ -363,6 +373,10 @@ this crate and reproduce the signed state roots exactly.
   read, and activation over resting orders
 - `tests/tier_limit_bounds.rs` — a table's limits held named, at or below launch's and never falling
   with the tier, a lower limit noticed, and the refusal of a limit before V66
+- `tests/tier_benefits.rs` — the fee a tier pays at a hold, the markup a rollover charges, the weight a
+  period's close shares, the account read, activation, and the same before V68
+- `tests/tier_benefit_bounds.rs` — a table's benefits held at or below launch's and never falling with
+  the tier, a smaller benefit noticed, and the refusal of a benefit before V68
 - `tests/earned_leverage.rs` — a fresh wallet's 20x, each tier's leverage up to the market's bands, a
   falling tier's open position, withdrawals and close-out, the weekend margin and the floor band by
   band, and activation over a held position
@@ -586,7 +600,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V67` parts (`v15.rs` to `v67.rs`)
+  `V15` to `V68` parts (`v15.rs` to `v68.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1136,6 +1150,23 @@ whose boundary is still ahead when V67 activates is not cleared by the first fro
 operator's governed commands are refused from the boundary without a further frontier. The node reads the
 schedule's `turnsRunUntil()` when no turn names the operator, and carries the last drawn turn's boundary
 if it is after the block. Its log is `v67.jsonl`, and its session is in `examples/reference_log/v67.rs`.
+
+Protocol V68 adds tier benefits (`src/volume_tier/benefits.rs`). Each tier of the parameters'
+`volume_tiers` table may name a `fee_discount_bps`, a `financing_discount_bps` and an
+`emissions_boost_bps`, each left out of the encoding while zero, in range (discounts 0 to 10000, boosts
+0 to 100000) and never falling with the tier. A realised gain pays the larger of its hold curve's fee
+and the base fee less its account's tier's discount, rounded up to the bp, with the tier read at the
+close; each rollover charges a position the benchmark plus its market's markup less the account's
+tier's financing discount, the tier read at the rollover, so a long pays the discounted markup and a
+short receives the benchmark less it; a negative markup is left as listed. An account's weight in an
+emission period, after the debt a write-off leaves, grows by its tier's boost, rounded down, at the
+period's close. The account read gives the tier's three values. The benefits move only with the table,
+by its notice or a vote, each at or below its launch value, and the ordering keeps a higher tier from
+paying more than a lower one. Before V68 a table may name none, so earlier logs replay unchanged;
+activation gives each tier of the table in force, and of the launch table that bounds it, its
+position's benefits (`ACTIVATION_FEE_DISCOUNTS_BPS` and `ACTIVATION_FINANCING_DISCOUNTS_BPS`: 0, 0,
+1000 and 2000, and `ACTIVATION_EMISSIONS_BOOSTS_BPS`: 0, 1000, 2500 and 5000). Its log is
+`v68.jsonl`, and its session is in `examples/reference_log/v68.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

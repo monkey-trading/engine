@@ -12,7 +12,7 @@ use crate::market::MarketSpec;
 use crate::protocol::ProtocolVersion;
 use crate::toxicity::{HORIZON_MS, ScoreTier, validate_score_tiers};
 use crate::types::Millis;
-use crate::volume_tier::{VolumeTier, names_limits, validate_volume_tiers};
+use crate::volume_tier::{VolumeTier, names_benefits, names_limits, validate_volume_tiers};
 
 /// The most any per-trade rate may be: 100%.
 pub(crate) const MAX_RATE_BPS: i64 = 10_000;
@@ -297,6 +297,7 @@ impl ProtocolParams {
     ///   `toxicity::HORIZON_MS`
     /// - from `V59`, no volume tiers
     /// - before `V66`, a volume tier naming a resting-order limit or a request rate
+    /// - before `V68`, a volume tier naming a fee discount, a financing discount or an emissions boost
     pub fn validate_for(&self, version: ProtocolVersion) -> Result<(), String> {
         self.validate()?;
         if version >= ProtocolVersion::V52
@@ -320,6 +321,9 @@ impl ProtocolParams {
         }
         if version < ProtocolVersion::V66 && names_limits(&self.volume_tiers) {
             return Err(format!("a tier limit needs protocol {:?}", ProtocolVersion::V66));
+        }
+        if version < ProtocolVersion::V68 && names_benefits(&self.volume_tiers) {
+            return Err(format!("a tier discount or boost needs protocol {:?}", ProtocolVersion::V68));
         }
         let mut triggers = self.stress_levels.iter().filter_map(|level| level.trigger.as_ref());
         if version >= ProtocolVersion::V13 {
@@ -434,4 +438,4 @@ fn is_default_max_resting_orders(cap: &usize) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -240,12 +240,16 @@ profit_fee_curve = [
 # From protocol V66 a tier's max_resting_orders is the orders an account rests at once, in place of
 # max_resting_orders above (D11), and its requests_per_second the signed requests a second the node
 # admits from it (D1); the node's bursts are set in [api.request_bursts].
+# From protocol V68 a tier's fee_discount_bps is the share of profit_fee_bps it takes off (the fee is
+# the larger of the hold curve's and the discounted base), financing_discount_bps the share of a
+# position's financing markup, and emissions_boost_bps the share added to an account's emission weight
+# (#614, D1): 10% and 20% at tiers 2 and 3, and 10%, 25% and 50% at tiers 1 to 3.
 # The table moves only after a seven-day notice, never more generously (D7).
 volume_tiers = [
   { threshold = "0", day_divisor = 1, best_price_share_bps = 2500, margin_floor_bps = 500, max_resting_orders = 25, requests_per_second = 2 },
-  { threshold = "1000000", day_divisor = 2, best_price_share_bps = 5000, margin_floor_bps = 200, max_resting_orders = 50, requests_per_second = 5 },
-  { threshold = "25000000", day_divisor = 5, best_price_share_bps = 10000, max_resting_orders = 100, requests_per_second = 10 },
-  { threshold = "250000000", day_divisor = 10, best_price_share_bps = 25000, max_resting_orders = 250, requests_per_second = 20 },
+  { threshold = "1000000", day_divisor = 2, best_price_share_bps = 5000, margin_floor_bps = 200, max_resting_orders = 50, requests_per_second = 5, emissions_boost_bps = 1000 },
+  { threshold = "25000000", day_divisor = 5, best_price_share_bps = 10000, max_resting_orders = 100, requests_per_second = 10, fee_discount_bps = 1000, financing_discount_bps = 1000, emissions_boost_bps = 2500 },
+  { threshold = "250000000", day_divisor = 10, best_price_share_bps = 25000, max_resting_orders = 250, requests_per_second = 20, fee_discount_bps = 2000, financing_discount_bps = 2000, emissions_boost_bps = 5000 },
 ]
 
 [genesis.params.rollover]

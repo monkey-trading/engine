@@ -25,7 +25,11 @@ an index: load only the rule whose hint matches the current action.
   `volume_tier/limits.rs`: a tier's resting-order limit replaces the parameters' cap, a new resting order past it
   refused as `TierOrderLimit` naming the tier while orders already resting stay, and its request rate is what the node
   admits a credited account's signed requests at, the limits moved only with the table and never above launch's,
-  `tests/tier_limits.rs`), from `V60` a market's weekend margin
+  `tests/tier_limits.rs`; from `V68` tier benefits in `volume_tier/benefits.rs`: a tier's fee discount takes a share
+  off the base profit fee (`max(base x (1 - d), C(hold))`, read at the close), its financing discount a share off a
+  position's markup at each scheduled rollover, and its emissions boost a share onto an account's weight at the period's
+  end, moved only with the table, never above launch's and never falling with the tier, `tests/tier_benefits.rs` and
+  `tests/tier_benefit_bounds.rs`), from `V60` a market's weekend margin
   (`weekend/`: each margin band at least its rate over the market's weekend gap, any closure of at
   least 40 hours found by `session/weekend.rs`; new risk in any market and withdrawals meet it from
   two hours before the gap until the market reopens, and an account below it is closed out at its
@@ -434,9 +438,11 @@ an index: load only the rule whose hint matches the current action.
   markout spread (#699), from `V59` the volume tier table (#614, D1), from `V60` the weekend margins of
   WTI, Japan 225, silver and US Tech 100 (#750), from `V62` level 2's house loss threshold of zero
   (`dev.toml` and `anvil.toml` carry a labelled $1M fixture), from `V64` its volume tiers' margin
-  floors (#614, D5), and from `V66` their resting-order limits and request rates (#614, D11 and D1; `dev.toml` and
+  floors (#614, D5), from `V66` their resting-order limits and request rates (#614, D11 and D1; `dev.toml` and
   `anvil.toml` name none, so a log started from them keeps resuming, and fresh dev nodes keep the parameters' cap
-  and `api.per_account` until a notice names them); a deployment's node sections complete it
+  and `api.per_account` until a notice names them), and from `V68` their fee and financing discounts and emissions
+  boosts (#614, D1; `dev.toml` and `anvil.toml` name none, so a log started from them has none, as no notice can
+  raise a benefit above launch's); a deployment's node sections complete it
   into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
@@ -545,6 +551,10 @@ an index: load only the rule whose hint matches the current action.
   refused the 26th naming tier 0, its next requests refused with 429 naming tier 0's rate, a wallet at tier 2
   resting 30 orders under its own rate, its tier falling thirty days on with the 30 orders left resting and a
   new one refused at 25, restart and replay;
+  `dev-volume-benefits.sh`, the V68 tier benefits on a dev node: a tier 2 and a tier 0 wallet each holding a winning
+  position 45 minutes and paying 9% and 10% of the gain, one over a rollover with the tier 2 wallet's markup a tenth
+  lower, one closed after 2 minutes at the curve's rate for both, and a loss in one MONKEY period weighed 1.25 times
+  for the tier 2 wallet, restart and replay;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
@@ -718,7 +728,7 @@ an index: load only the rule whose hint matches the current action.
   before, and a job that times out is cancelled rather than failed, so the run continues too.
   `gh run rerun --failed` re-runs the failed, cancelled, and unstarted jobs with `ci-passed`, so a
   re-run after a flake repeats everything the first failure cut short. The test job also runs the
-  corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage and tier limits dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
+  corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits and volume benefits dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
   their own job, `test-production`, which compiles a different feature set.
   `merge-approval.yaml` runs only on merge groups: its `merge-approved` job, the merge-group side of
   the required `merge-approved` check, runs `scripts/check-merge-approved.sh`, which follows the
@@ -885,6 +895,8 @@ Run from the repo root:
 - Earned leverage dev scenario: `./scripts/dev-earned-leverage.sh` (runs the isolated access-screened
   BTC trading and withdrawals through three tiers and thirty days, with the account read, on
   deterministic time, restart and public replay)
+- Volume benefits dev scenario: `./scripts/dev-volume-benefits.sh` (runs the isolated access-screened BTC
+  fee, financing and MONKEY emissions scenario at tiers 2 and 0 with deterministic time, restart and public replay)
 - Tier limits dev scenario: `./scripts/dev-tier-limits.sh` (runs the isolated access-screened BTC limit
   orders of a tier-0 and a tier-2 wallet, 429s, the account read and thirty days, on deterministic time,
   restart and public replay)

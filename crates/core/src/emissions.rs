@@ -14,6 +14,8 @@
 //!   loss weight pays the debt down before any of it earns weight again. A weight that is not
 //!   positive counts as zero, and so does any weight of an account whose cash is negative at the
 //!   period's cutoff, with no later backfill.
+//! - **Boost.** From `V68` an account's weight, after the emission debt, grows by its volume tier's
+//!   boost at the period's end (`volume_tier::benefits`), rounded down, before the budget is shared.
 //! - **Budget.** Period `n`'s budget is the initial budget halved, rounded down, once for each whole
 //!   26,280 periods before `n`; once it reaches zero it stays zero. The nominal maximum supply is
 //!   `2 · 26,280 ·` the initial budget, and every budget and allocation rounds below it.
@@ -37,6 +39,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::Fixed;
 use crate::engine::Engine;
 use crate::event::Event;
+use crate::params::MAX_RATE_BPS;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MAX_STAMP_MS, Millis};
 
@@ -315,6 +318,18 @@ impl Engine {
         earning
     }
 
+    /// `weight` grown by `account`'s tier's emissions boost at `period_end`, from `V68`: the boost's
+    /// share of it added, rounded down; before `V68`, or for no weight, `weight` itself.
+    fn boosted(&self, account: AccountId, weight: Fixed, period_end: Millis) -> Fixed {
+        if !weight.is_positive() {
+            return weight;
+        }
+        match self.emissions_boost_bps(account, period_end) {
+            0 => weight,
+            boost_bps => weight.mul_bps(MAX_RATE_BPS + boost_bps),
+        }
+    }
+
     /// Finalises the open period once the sequenced time has reached its end: allocates its budget
     /// to the accounts with weight at their cash now, cancels the remainder, and cancels every later
     /// period the time has passed with no command. Runs before anything else the command does.
@@ -332,6 +347,7 @@ impl Engine {
             // Weight forfeited for negative cash pays no debt, while a new write-off still adds to it.
             let weight = if negative_cash { Fixed::ZERO } else { result.weight(version) };
             let weight = if v32 { self.settle_emission_ledger(account, &result, weight) } else { weight };
+            let weight = self.boosted(account, weight, schedule.period_end(open));
             if weight.is_positive() {
                 weights.push((account, weight));
             }

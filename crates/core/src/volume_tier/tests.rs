@@ -125,6 +125,9 @@ fn tier(threshold: i64, day_divisor: i64, best_price_share_bps: i64) -> VolumeTi
         margin_floor_bps: 0,
         max_resting_orders: 0,
         requests_per_second: 0,
+        fee_discount_bps: 0,
+        financing_discount_bps: 0,
+        emissions_boost_bps: 0,
     }
 }
 
@@ -135,4 +138,46 @@ fn bands() -> Vec<SpreadTier> {
         SpreadTier::tenths(Some(usd(10_000_000)), 40),
         SpreadTier::tenths(None, 80),
     ]
+}
+
+#[test]
+fn the_boost_grows_the_weight_left_after_the_emission_debt() {
+    use crate::emissions::{EmissionLedger, EmissionSchedule, Emissions, PERIOD_MS, TokenUnits};
+    use crate::event::Event;
+    use crate::volume_tier::DayVolume;
+
+    // A tier 2 account (the day cap of $5M on five days reaches its $25M) lost 50 in period 0 and owes
+    // 10 of emission debt: the debt takes 10 of its 50, and the 40 left weighs 1.25 times, 50. Boosting
+    // first would weigh 62.5 and clear the debt with boosted dollars, leaving 52.5.
+    let account = AccountId([1; 20]);
+    let mut params = crate::params::tests::params();
+    params.volume_tiers = launch_volume_tiers();
+    params
+        .volume_tiers
+        .iter_mut()
+        .zip(ACTIVATION_EMISSIONS_BOOSTS_BPS)
+        .for_each(|(t, bps)| t.emissions_boost_bps = bps);
+    let schedule = EmissionSchedule { start_ms: 0, period_budget: TokenUnits(1_000_000) };
+    let emissions = Emissions { schedule, period: 0, entitled: TokenUnits(0), cancelled: TokenUnits(0) };
+    let mut engine = Engine {
+        protocol_version: ProtocolVersion::V68,
+        params: Some(params),
+        emissions: Some(emissions),
+        now: PERIOD_MS,
+        command_ms: PERIOD_MS,
+        ..Engine::default()
+    };
+    let days = (-4..=0).map(|day| DayVolume { day, volume: usd(5_000_000) });
+    engine.volumes.entry(account).or_default().days.extend(days);
+    assert_eq!(engine.volume_tier_at(account, PERIOD_MS), 2);
+    let result = engine.period_results.entry(account).or_default();
+    (result.realised, result.losses) = (usd(-50), usd(50));
+    *engine.emission_ledgers.entry(account).or_default() = EmissionLedger { earned: usd(0), debt: usd(10) };
+    let mut events = Vec::new();
+    engine.finalise_emissions(&mut events);
+    let weight = events.iter().find_map(|event| match event {
+        Event::EmissionAllocated { account: got, weight, .. } if *got == account => Some(*weight),
+        _ => None,
+    });
+    assert_eq!(weight, Some(usd(50)), "{events:?}");
 }

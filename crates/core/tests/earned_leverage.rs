@@ -246,6 +246,9 @@ fn tiers(version: ProtocolVersion) -> Vec<VolumeTier> {
             },
             max_resting_orders: 0,
             requests_per_second: 0,
+            fee_discount_bps: 0,
+            financing_discount_bps: 0,
+            emissions_boost_bps: 0,
         })
         .collect()
 }

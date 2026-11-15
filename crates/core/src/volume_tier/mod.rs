@@ -18,13 +18,15 @@
 //!   the account's initial requirement to at least the floor; close-outs read the market's bands.
 //! - **Request and order limits** (`limits`), from `V66`. A tier's resting-order limit caps the orders an
 //!   account rests at once, and its request rate is what the node admits the account's signed requests at.
+//! - **Benefits** (`benefits`), from `V68`. Tiers 2 and 3 take a share off the base profit fee and the
+//!   financing markup, and tiers 1 to 3 add a share to the account's emission weight.
 //! - **Bounds** (`bounds`). The table moves only after a seven-day notice, or by a vote while rotation
 //!   is on: the same number of tiers, thresholds and day divisors at or above launch, shares at or
 //!   below launch, from `V64` margin floors at or above launch, from `V66` limits and rates at or below
-//!   launch, and in every listed market each tier's
-//!   spread at every notional from its launch spread to twice it, against which a listing's spread
-//!   bands are checked too. From `V61` a ceiling adoption's bound first listing is checked when it is
-//!   adopted as well as when it is listed.
+//!   launch, from `V68` discounts and boosts at or below launch and never falling with the tier, and in
+//!   every listed market each tier's spread at every notional from its launch spread to twice it,
+//!   against which a listing's spread bands are checked too. From `V61` a ceiling adoption's bound
+//!   first listing is checked when it is adopted as well as when it is listed.
 //! - **Activation.** Parameters that name no table take `launch_volume_tiers`, and every account
 //!   starts at tier 0 with no counted volume; every position held then is pending for its first
 //!   `MIN_HOLD_MS`, as no record says which of its units were held that long. From `V61` the launch
@@ -46,6 +48,9 @@ use crate::types::{AccountId, MarketId, Millis};
 
 mod book;
 pub use book::{AccountVolume, ClosingLot, DayVolume, MAX_CLOSING_LOTS, MAX_OPENING_LOTS, OpeningLot};
+mod benefits;
+pub(crate) use benefits::names_benefits;
+pub use benefits::{ACTIVATION_EMISSIONS_BOOSTS_BPS, ACTIVATION_FEE_DISCOUNTS_BPS, ACTIVATION_FINANCING_DISCOUNTS_BPS};
 mod bounds;
 pub(crate) use bounds::spend_volume_tier_notice;
 mod leverage;
@@ -69,6 +74,11 @@ const MAX_SHARE_BPS: i64 = 100_000;
 /// The largest margin floor a tier may have: 100%.
 const MAX_MARGIN_FLOOR_BPS: i64 = 10_000;
 
+/// Whether a tier's value is its default, which the encoding leaves out.
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
 /// One volume tier: the counted volume that reaches it, how many days that takes, and its benefit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,12 +96,24 @@ pub struct VolumeTier {
     pub margin_floor_bps: i64,
     /// From `V66`, the resting orders an account at this tier may hold at once, replacing the
     /// parameters' cap (`limits`); zero for none named, and left out of the encoding then.
-    #[serde(default, skip_serializing_if = "limits::is_unnamed")]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub max_resting_orders: usize,
     /// From `V66`, the signed requests a second the node admits from an account at this tier
     /// (`limits`); zero for none named, and left out of the encoding then.
-    #[serde(default, skip_serializing_if = "limits::is_unnamed")]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub requests_per_second: u32,
+    /// From `V68`, the share of the base profit fee the tier takes off, in bps (`benefits`); zero for
+    /// none, and left out of the encoding then.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub fee_discount_bps: i64,
+    /// From `V68`, the share of a position's financing markup the tier takes off, in bps (`benefits`);
+    /// zero for none, and left out of the encoding then.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub financing_discount_bps: i64,
+    /// From `V68`, the share the tier adds to an account's emission weight, in bps (`benefits`): 2,500
+    /// weighs 1.25 times; zero for none, and left out of the encoding then.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub emissions_boost_bps: i64,
 }
 
 /// An account's volume as the account read gives it.
@@ -115,6 +137,15 @@ pub struct VolumeStanding {
     /// From `V66`, the signed requests a second the tier lets the node admit, where the table names one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requests_per_second: Option<u32>,
+    /// From `V68`, the share of the base profit fee the tier takes off, in bps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fee_discount_bps: Option<i64>,
+    /// From `V68`, the share of a position's financing markup the tier takes off, in bps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub financing_discount_bps: Option<i64>,
+    /// From `V68`, the share the tier adds to the account's emission weight, in bps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emissions_boost_bps: Option<i64>,
 }
 
 /// How far an account is towards one tier.
@@ -215,6 +246,9 @@ pub fn launch_volume_tiers() -> Vec<VolumeTier> {
             margin_floor_bps: 0,
             max_resting_orders: 0,
             requests_per_second: 0,
+            fee_discount_bps: 0,
+            financing_discount_bps: 0,
+            emissions_boost_bps: 0,
         })
         .collect()
 }
@@ -224,7 +258,8 @@ pub fn launch_volume_tiers() -> Vec<VolumeTier> {
 /// divisors from 1 to `WINDOW_DAYS`, shares from 1 to 100000 bps that never fall with the tier, and
 /// margin floors from 0 to 10000 bps that never rise with it, and resting-order limits and request rates
 /// that are named for every tier or none, in 1..=1000 and 1..=`MAX_REQUESTS_PER_SECOND`,
-/// and never fall with it.
+/// and never fall with it, and fee discounts, financing discounts and emissions boosts within their maxima
+/// that never fall with the tier either.
 /// Error cases:
 /// - more than `MAX_VOLUME_TIERS` tiers
 /// - a first tier with a threshold or a day divisor that needs anything
@@ -234,6 +269,8 @@ pub fn launch_volume_tiers() -> Vec<VolumeTier> {
 /// - a margin floor outside 0..=10000 bps, or one above the floor of the tier before it
 /// - a resting-order limit or request rate named for some tiers and not others, above its maximum, or
 ///   below that of the tier before it
+/// - a fee discount, financing discount or emissions boost above its maximum, or below that of the tier
+///   before it
 pub fn validate_volume_tiers(tiers: &[VolumeTier]) -> Result<(), String> {
     if tiers.len() > MAX_VOLUME_TIERS {
         return Err(format!("volume_tiers has more than {MAX_VOLUME_TIERS} tiers"));
@@ -259,7 +296,8 @@ pub fn validate_volume_tiers(tiers: &[VolumeTier]) -> Result<(), String> {
     {
         return Err(format!("margin_floor_bps must be in 0..={MAX_MARGIN_FLOOR_BPS} and never rise with the tier"));
     }
-    limits::validate_limits(tiers)
+    limits::validate_limits(tiers)?;
+    benefits::validate_benefits(tiers)
 }
 
 /// The UTC day of sequenced time `ms` falls on, counted from the epoch.
@@ -300,10 +338,17 @@ impl Engine {
     /// The volume tier `account` trades at now: from `V59`, the highest its counted volume reaches,
     /// and 0 before it.
     pub fn volume_tier(&self, account: AccountId) -> usize {
+        self.volume_tier_at(account, self.hold_clock_time())
+    }
+
+    /// The volume tier `account` trades at at sequenced time `at`, from the book as last changed: a lot
+    /// whose time came by `at` counts and a day before `at`'s window does not. For a boundary a command
+    /// catches up, which no fill of the account came between.
+    pub(crate) fn volume_tier_at(&self, account: AccountId, at: Millis) -> usize {
         let (Some(tiers), Some(volume)) = (self.volume_tiers_in_force(), self.volumes.get(&account)) else {
             return 0;
         };
-        tier_of(&volume.window(self.hold_clock_time()), tiers)
+        tier_of(&volume.window(at), tiers)
     }
 
     /// `account`'s volume book, as last changed: a lot whose time has come counts on its day when the
@@ -314,8 +359,13 @@ impl Engine {
 
     /// The tier of the table in force `account` trades at now, from `V59`; `None` before it.
     pub(crate) fn tier_in_force(&self, account: AccountId) -> Option<&VolumeTier> {
+        self.tier_in_force_at(account, self.hold_clock_time())
+    }
+
+    /// The tier of the table in force `account` trades at at `at` (`volume_tier_at`), from `V59`.
+    pub(crate) fn tier_in_force_at(&self, account: AccountId, at: Millis) -> Option<&VolumeTier> {
         // The tier is below the table's length, which `volume_tiers_in_force` keeps above zero.
-        self.volume_tiers_in_force().map(|table| &table[self.volume_tier(account)])
+        self.volume_tiers_in_force().map(|table| &table[self.volume_tier_at(account, at)])
     }
 
     /// The share of each market's first bound `account`'s first band ends at now, in bps: from `V59`
@@ -342,6 +392,7 @@ impl Engine {
             .collect();
         let share = tiers[tier].best_price_share_bps;
         let (max_resting_orders, requests_per_second) = self.tier_limits(tier);
+        let (fee_discount_bps, financing_discount_bps, emissions_boost_bps) = self.tier_benefits(tier);
         let best_price_bounds = self
             .markets
             .iter()
@@ -357,6 +408,9 @@ impl Engine {
             best_price_bounds,
             max_resting_orders,
             requests_per_second,
+            fee_discount_bps,
+            financing_discount_bps,
+            emissions_boost_bps,
         })
     }
 }

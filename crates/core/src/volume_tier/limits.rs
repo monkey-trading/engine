@@ -28,11 +28,6 @@ pub struct RequestLimit {
     pub per_second: u32,
 }
 
-/// Whether a limit is unnamed, which the encoding leaves out.
-pub(super) fn is_unnamed<T: Default + PartialEq>(limit: &T) -> bool {
-    *limit == T::default()
-}
-
 /// Whether any tier names a resting-order limit or a request rate.
 pub(crate) fn names_limits(tiers: &[VolumeTier]) -> bool {
     tiers.iter().any(|tier| tier.max_resting_orders != 0 || tier.requests_per_second != 0)

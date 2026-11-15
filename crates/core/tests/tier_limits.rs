@@ -159,6 +159,9 @@ fn activation_over_a_table_of_six_tiers_gives_those_past_the_fourth_the_last_val
             margin_floor_bps: 0,
             max_resting_orders: 0,
             requests_per_second: 0,
+            fee_discount_bps: 0,
+            financing_discount_bps: 0,
+            emissions_boost_bps: 0,
         })
         .collect();
     let mut h = genesis_with_tiers(V64, globex(vec![]), 0, 0, six);
@@ -189,6 +192,9 @@ fn tiers(named: bool) -> Vec<VolumeTier> {
             margin_floor_bps: 0,
             max_resting_orders: if named { ACTIVATION_MAX_RESTING_ORDERS[at] } else { 0 },
             requests_per_second: if named { ACTIVATION_REQUESTS_PER_SECOND[at] } else { 0 },
+            fee_discount_bps: 0,
+            financing_discount_bps: 0,
+            emissions_boost_bps: 0,
         })
         .collect()
 }
