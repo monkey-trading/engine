@@ -47,7 +47,7 @@ use crate::trusted_time::{Sample, TrustedClock};
 /// Commands between the checkpoints a scenario that posts them signs: few enough to reach one with
 /// a handful of ticks, and more than the custody watcher's progress after each post sequences, so
 /// the node goes quiet between a scenario's steps.
-const POSTED_CHECKPOINT_EVERY: u64 = 10;
+pub(super) const POSTED_CHECKPOINT_EVERY: u64 = 10;
 /// Commands per log segment, and between checkpoints, on a seat, which sequences under a load of
 /// orders: enough that neither sealing segments nor signing checkpoints is most of the work, for the
 /// seat or for the members following it.
@@ -152,8 +152,15 @@ impl Node {
     /// Stops this node and starts another over the same log, clock and screening source, recovering
     /// as a boot does: from the vault's posted checkpoint.
     pub(super) async fn restart(self, chain: &Chain) -> Self {
+        self.restart_with(chain, |_| {}).await
+    }
+
+    /// `restart`, running `host` on the log directory while no node holds it, as a host that copies
+    /// or replaces the files under a stopped enclave does.
+    pub(super) async fn restart_with(self, chain: &Chain, host: impl FnOnce(&std::path::Path)) -> Self {
         let (key, posting, dir, clock) = (self.key.clone(), self.posting, self.dir.clone(), self.clock.clone());
         let access = self.stop().await;
+        host(&dir);
         Self::launch(chain, key, posting, Some((dir, clock, access)), None).await
     }
 

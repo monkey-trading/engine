@@ -7,6 +7,7 @@
 
 mod chain;
 mod daily_turns;
+mod faults;
 mod liveness;
 mod node;
 mod operator_share;

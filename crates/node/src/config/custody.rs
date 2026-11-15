@@ -205,6 +205,17 @@ pub struct RpcProviderSection {
 }
 
 impl NodeConfig {
+    /// The fault proof contract and penalty `[custody.evm.staking.registry.fault_proof]` names, which
+    /// the node records once `V69` is in force; `None` without the section.
+    /// Error cases:
+    /// - as `FaultProofCustodySection::config`
+    pub fn fault_proof(&self) -> anyhow::Result<Option<engine_core::operator_faults::FaultProofConfig>> {
+        let evm = self.custody.evm.as_ref();
+        let section =
+            evm.and_then(|evm| evm.staking.as_ref()).and_then(|staking| staking.registry.fault_proof.as_ref());
+        section.map(FaultProofCustodySection::config).transpose()
+    }
+
     /// Checks the custody section against its provider, and that genesis credits house capital
     /// only under mock custody.
     /// Error cases:

@@ -104,12 +104,7 @@ impl ReplayedLog {
         {
             bail!("the configured access policy differs from the public log");
         }
-        if let Some(recorded) = engine.governance().config.filter(|recorded| cfg.governance != Some(*recorded)) {
-            bail!("the log records vote contract {recorded:?}, but the config names {:?}", cfg.governance);
-        }
-        if let Some(recorded) = engine.operator_faults().config.filter(|recorded| cfg.fault_proof != Some(*recorded)) {
-            bail!("the log records fault proof contract {recorded:?}, but the config names {:?}", cfg.fault_proof);
-        }
+        crate::sequencer::required::refuse_other_contracts(engine, cfg)?;
         // A registry the `V40` upgrade carried came from the config of the restart that upgraded
         // the log: the recorded genesis cannot be restated, so the carried entries are not part
         // of what the genesis comparison attests. For each ceiling the config names, the log may

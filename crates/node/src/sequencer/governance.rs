@@ -8,6 +8,7 @@ use anyhow::bail;
 use engine_core::command::Command;
 use engine_core::event::Event;
 use engine_core::governance::VotedChange;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::Millis;
 use tracing::{info, warn};
 
@@ -42,7 +43,7 @@ impl Sequencer {
                 bail!("the engine kept proposal {proposal} due after it was sequenced");
             }
         }
-        if let Some(record) = self.fault_proof_due(self.engine.protocol_version())
+        if let Some(record) = self.fault_proof_record().filter(|_| self.engine.protocol_version() >= ProtocolVersion::V69)
             && let Some(events) = self.stamp(ts, record)?
             && let Some(reason) = rejection(&events)
         {
