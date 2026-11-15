@@ -686,7 +686,7 @@ Run from the repo root:
   `./scripts/check-reference-logs.sh [base]` checks none changed since `base` (default
   `origin/main`)
 - Sequencer latency scenario (optimized dev profile, quiet CPU window):
-  `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture`
+  `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture --test-threads=1`
 - Property tests: `cargo test -p engine-core --test invariants`
 - Production genesis and its calendars: `cargo test -p engine-node --test production_genesis`
 - Production node template: `cargo test -p engine-node --test production_node_template`

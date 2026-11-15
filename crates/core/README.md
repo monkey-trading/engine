@@ -1025,7 +1025,7 @@ order-id priority, including limit orders whose spread prevents an immediate fil
 are excluded from serialization and state roots, and rebuilt from accounts after recovery. They
 apply to every historical protocol version without changing its events or roots.
 
-Run `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture`
+Run `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture --test-threads=1`
 in a quiet CPU window. The optimized dev profile benchmarks 100 samples per scenario; setup and
 index recovery are outside steady-state timings. It measures `Engine::apply`, including event
 allocation and drop, but excludes log I/O and checkpoint hashing, and signatures except in the
