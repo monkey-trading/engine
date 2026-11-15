@@ -133,7 +133,8 @@ fn position(h: &Harness) -> Option<Fixed> {
 #[test]
 fn a_voted_calendar_change_may_start_a_gap_within_seven_days_for_a_held_market() {
     // A closure from Wednesday 11 November at 10:00 to Saturday, which the calendar in force has the
-    // market open for: an operator's relisting of a held market is refused one, a vote is not.
+    // market open for. A held market's calendar may not start a gap within seven days by the
+    // operator's relisting, but a vote may.
     let (mut h, command) = held_aapl("20000", "248", |h| closed(h, "2026-11-11 10:00", "2026-11-14 10:00"));
     let events = apply(&mut h, 2, command);
     assert_eq!(events.last(), Some(&Event::AdminApplied), "{events:?}");
