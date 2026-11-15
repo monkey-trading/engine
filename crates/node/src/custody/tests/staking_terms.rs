@@ -9,7 +9,7 @@ use engine_core::staking::StakingConfig;
 use crate::custody::chain::BlockLink;
 use crate::custody::evm::{BlockRef, Finality, StakingEvent, VaultDeposit, VaultIdentity};
 use crate::custody::staking_terms::{ContractTerms, Refused, StakingTerms, check, cooldownCall, epochCall, read};
-use crate::custody::tests::fakes::FakeChain;
+use crate::custody::tests::fakes::{CHAIN_ID, FakeChain, USDC_TOKEN};
 use crate::custody::{Quorum, VaultReader};
 
 const DAY_MS: i64 = 86_400_000;
@@ -20,7 +20,7 @@ const CONTRACT: ContractTerms = ContractTerms { epoch_secs: 86_400, cooldown_sec
 #[derive(Clone)]
 struct Provider {
     chain: FakeChain,
-    terms: Option<(u64, u64)>,
+    terms: Option<(U256, U256)>,
 }
 
 impl VaultReader for Provider {
@@ -52,14 +52,19 @@ impl VaultReader for Provider {
         let Some((epoch, cooldown)) = self.terms else { return Ok(Bytes::new()) };
         let selector = &data[..4];
         if selector == epochCall::SELECTOR {
-            return Ok(epochCall::abi_encode_returns(&U256::from(epoch)).into());
+            return Ok(epochCall::abi_encode_returns(&epoch).into());
         }
         assert_eq!(selector, cooldownCall::SELECTOR, "only the epoch and the cooldown are read");
-        Ok(cooldownCall::abi_encode_returns(&U256::from(cooldown)).into())
+        Ok(cooldownCall::abi_encode_returns(&cooldown).into())
     }
 }
 
-fn quorum(terms: Option<(u64, u64)>) -> Quorum<Provider> {
+fn quorum(terms: Option<(U256, U256)>) -> Quorum<Provider> {
+    quorum_on(terms, None)
+}
+
+/// A quorum whose providers serve `identity`, the configured deployment's when `None`.
+fn quorum_on(terms: Option<(U256, U256)>, identity: Option<VaultIdentity>) -> Quorum<Provider> {
     let providers = (0..3)
         .map(|i| {
             let chain = FakeChain::default();
@@ -67,6 +72,7 @@ fn quorum(terms: Option<(u64, u64)>) -> Quorum<Provider> {
                 let mut state = chain.0.lock().unwrap();
                 state.head = 5;
                 state.final_block = Some(5);
+                state.identity = identity;
             }
             (format!("p{i}"), Provider { chain, terms })
         })
@@ -78,17 +84,37 @@ fn init(epoch_ms: i64, cooldown_ms: i64) -> StakingConfig {
     StakingConfig { liquidity_floor: Fixed::from_int(30_500_000), epoch_ms, start_ms: 0, cooldown_ms }
 }
 
+const CHAIN: (u64, Address) = (CHAIN_ID, USDC_TOKEN);
+
+fn secs(epoch: u64, cooldown: u64) -> Option<(U256, U256)> {
+    Some((U256::from(epoch), U256::from(cooldown)))
+}
+
 #[tokio::test]
 async fn the_quorums_read_decodes_the_contracts_epoch_and_cooldown() {
-    let held = read(&quorum(Some((86_400, 2_419_200))), Address::repeat_byte(1)).await.unwrap();
+    let held = read(&quorum(secs(86_400, 2_419_200)), Address::repeat_byte(1), CHAIN).await.unwrap();
     assert_eq!(held, CONTRACT);
 
     // An address with no staking contract answers nothing, and a value past a u64 does not fit.
-    let none = format!("{:#}", read(&quorum(None), Address::repeat_byte(1)).await.unwrap_err());
+    let none = format!("{:#}", read(&quorum(None), Address::repeat_byte(1), CHAIN).await.unwrap_err());
     assert!(none.contains("no staking contract"), "{none}");
-    let huge = read(&quorum(Some((u64::MAX, 1))), Address::repeat_byte(1)).await.unwrap();
-    assert_eq!(huge.epoch_secs, u64::MAX, "a u64 of seconds reads back; the check then refuses it as milliseconds");
-    assert!(check(huge, &init(DAY_MS, 1_000)).is_err());
+    let past = Some((U256::from(u64::MAX) + U256::from(1), U256::from(1)));
+    let huge = format!("{:#}", read(&quorum(past), Address::repeat_byte(1), CHAIN).await.unwrap_err());
+    assert!(huge.contains("epoch is huge"), "{huge}");
+    let top = read(&quorum(secs(u64::MAX, 1)), Address::repeat_byte(1), CHAIN).await.unwrap();
+    assert!(check(top, &init(DAY_MS, 1_000)).is_err(), "a u64 of seconds reads back, and is no milliseconds i64");
+}
+
+#[tokio::test]
+async fn providers_that_agree_on_another_chain_or_token_than_the_configured_ones_are_refused() {
+    let held = secs(86_400, 2_419_200);
+    let elsewhere = VaultIdentity { chain_id: CHAIN_ID + 1, token: Some(USDC_TOKEN) };
+    let other_token = VaultIdentity { chain_id: CHAIN_ID, token: Some(Address::repeat_byte(1)) };
+    for identity in [elsewhere, other_token] {
+        let refused =
+            format!("{:#}", read(&quorum_on(held, Some(identity)), Address::repeat_byte(1), CHAIN).await.unwrap_err());
+        assert!(refused.contains("not the configured chain"), "{refused}");
+    }
 }
 
 #[test]

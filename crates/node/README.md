@@ -127,7 +127,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   node reads the period budget the vault's MONKEY cap was derived from, refuses a schedule with any
   other, and refuses to start on a log that records one; with a staking contract configured, it reads
   that contract's epoch and cooldown through the custody quorum and refuses an `InitStaking` that
-  differs, and `engine admin init-staking` refuses one before it signs
+  differs, and a log or genesis that records one, and `engine admin init-staking` refuses one before it signs
 - MONKEY staking from protocol `V25`: `engine admin init-staking` or a genesis `staking` entry
   records the liquidity floor, epoch length, start, and unstake cooldown once; each epoch the
   engine distributes house NAV above the floor to stakers pro-rata, from `V47` less a fifth to the
@@ -1126,8 +1126,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   and `ContractQuorum`, the custody providers' agreed reads of a contract at one block of the custody
   credit tag
 - `src/custody/staking_terms.rs` — the staking contract's epoch and cooldown read through the custody
-  quorum, and the check of `InitStaking` against them that the admin route makes; its `tests.rs` covers the
-  read, the comparison and an unreadable contract
+  quorum, and the check of `InitStaking` against them that the admin route and startup make; its tests,
+  `src/custody/tests/staking_terms.rs`, cover the read, the comparison, the chain it must serve and an
+  unreadable contract
+- `src/node/preflight/staking_tests.rs` — startup refuses a log or genesis staking config the contract
+  does not hold, and an unreadable contract
 - `src/custody/evm.rs` — the deposit watcher: the chain and token check, range reads from blocks
   proven to lead to the tagged final block, the completeness check, and stall alerts
 - `src/custody/evm/lifecycle.rs` — confirmed receipt reconciliation, principal finality and the replayed scan frontier

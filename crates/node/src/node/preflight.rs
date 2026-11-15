@@ -1,10 +1,12 @@
 //! Persisted recovery starts only after the authenticated chain anchor passes.
 
 use engine_core::emissions::{Emissions, TokenUnits};
+use engine_core::staking::StakingConfig;
 use tracing::error;
 
 use crate::checkpoints::emission_budget::check_recorded;
 use crate::checkpoints::{CheckpointChain, Poster};
+use crate::custody::{StakingTerms, StakingTermsRefused};
 use crate::log::Checkpoint;
 
 /// Reads the emission period budget the vault's MONKEY cap was derived from, and refuses a log that
@@ -25,6 +27,38 @@ pub(super) async fn emission_preflight<R: CheckpointChain>(
     check_recorded(budget, recorded)
         .inspect_err(|e| error!(alert = "emission_budget_mismatch", "refusing to serve: {e:#}"))?;
     Ok(budget)
+}
+
+/// Refuses a log that records, or a config whose genesis would record, a staking config with another
+/// epoch or cooldown than the configured staking contract holds: the engine's epochs would close on a
+/// schedule the contract's cooldown does not cover, and neither side can change. Nothing is read
+/// without a staking contract to compare with or a config to compare. Runs before anything is
+/// written.
+/// Error cases:
+/// - the contract cannot be read (alert `checkpoint_startup_failed`)
+/// - the log's or the genesis's epoch or cooldown differs from the contract's (alert
+///   `staking_terms_mismatch`)
+pub(super) async fn staking_preflight(
+    terms: Option<&StakingTerms>,
+    recorded: Option<&StakingConfig>,
+    genesis: Option<&StakingConfig>,
+) -> anyhow::Result<()> {
+    let Some(terms) = terms else { return Ok(()) };
+    for (source, config) in [("the log", recorded), ("the config's genesis", genesis)] {
+        let Some(config) = config else { continue };
+        terms.check(config).await.map_err(|refused| {
+            match &refused {
+                StakingTermsRefused::Differs(_) => {
+                    error!(alert = "staking_terms_mismatch", "refusing to serve: {source}: {refused}");
+                }
+                StakingTermsRefused::Unread(_) => {
+                    error!(alert = "checkpoint_startup_failed", "refusing to serve: {source}: {refused}");
+                }
+            }
+            anyhow::anyhow!("{source}: {refused}")
+        })?;
+    }
+    Ok(())
 }
 
 /// Authorizes opening or repairing history only after custody rollback and signer checks.
@@ -81,6 +115,8 @@ pub(super) async fn authorize<R: CheckpointChain>(
 
 #[cfg(test)]
 mod emission_tests;
+#[cfg(test)]
+mod staking_tests;
 #[cfg(test)]
 mod tests;
 

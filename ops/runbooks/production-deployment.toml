@@ -1,11 +1,13 @@
 # The launch deployment's one-time inputs: the constructor values of the contracts and the values of
-# the operator's two initialisations. None of them can change once deployed or recorded, and the node
-# refuses a different budget, epoch or cooldown than the contracts hold. Decided by the owner on
+# the operator's two initialisations. The vault's and staking contract's values cannot change once
+# deployed, nor the initialisations once recorded (the timelock's delay can move through the timelock),
+# and the node refuses a different budget, epoch or cooldown than the contracts hold. Decided by the owner on
 # 2026-11-14 (#436). deploy-and-rollback.md uses them: section 2 for the contracts' constructors and
 # step 8 for `init-emissions` and `init-staking`. A test (`tests/production_deployment.rs`) holds each
 # value to the decision and the runbook's commands to this file.
 #
-# A value that waits on a decision carries a trailing `OWNER` marker. Set it and delete the marker.
+# A value that waits on a decision carries a trailing `OWNER` marker. Set it and delete the marker; for
+# `start`, also drop the marker check in `tests/production_deployment.rs` in the same change.
 
 # The deployment's single time origin: emissions' period 0 and staking's epoch 0 both start here, at
 # 00:00:00 UTC on the day restricted mainnet trading opens. Sign both initialisations before it, and

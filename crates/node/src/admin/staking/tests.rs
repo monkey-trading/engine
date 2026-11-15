@@ -16,7 +16,10 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
 use crate::admin::{AdminArgs, HexKey, KeyEnv, run_with_clock};
+use crate::config::NodeConfig;
 use crate::test_support::{ANVIL_CONFIG, scratch_dir};
+use engine_core::Fixed;
+use engine_core::staking::StakingConfig;
 
 // The stand-in contract's reads.
 sol! {
@@ -43,7 +46,7 @@ async fn a_cooldown_or_epoch_that_is_not_the_contracts_is_refused_before_anythin
         format!("https://127.0.0.1:{port}")
     };
     let rpc = rpc_stand_in(86_400, 2_419_200).await;
-    let config = config_for(&rpc, "chain");
+    let config = config_for(&rpc, "chain", false);
     let run = |epoch_ms: &str, cooldown_ms: &str| {
         let argv = [
             "engine",
@@ -78,11 +81,38 @@ async fn a_cooldown_or_epoch_that_is_not_the_contracts_is_refused_before_anythin
     assert!(sent.contains("127.0.0.1"), "the run reached for the node: {sent}");
 }
 
+fn staking_config(epoch_ms: i64, cooldown_ms: i64) -> StakingConfig {
+    StakingConfig { liquidity_floor: Fixed::from_int(30_500_000), epoch_ms, start_ms: 0, cooldown_ms }
+}
+
+#[tokio::test]
+async fn providers_that_name_delivered_keys_need_the_secrets_file_and_read_the_contract_with_it() {
+    let rpc = rpc_stand_in(86_400, 2_419_200).await;
+    let config = config_for(&rpc, "keyed", true);
+    let dir = config.parent().unwrap().to_owned();
+    let load = || NodeConfig::load(&config).unwrap();
+    let held = staking_config(86_400_000, 2_419_200_000);
+
+    let without = format!("{:#}", super::check(load(), None, &held).await.unwrap_err());
+    assert!(without.contains("need --secrets-file") && without.contains("key_a"), "{without}");
+    let bundle = dir.join("secrets.toml");
+    fs::write(&bundle, "version = 1\n[secrets]\nkey_a = \"ka\"\nkey_b = \"kb\"\nkey_c = \"kc\"\n").unwrap();
+    super::check(load(), Some(&bundle), &held).await.unwrap();
+    // With the keys, a value that is not the contract's is still refused.
+    let wrong = format!("{:#}", super::check(load(), Some(&bundle), &staking_config(1, 2)).await.unwrap_err());
+    assert!(wrong.contains("differs from the staking contract's"), "{wrong}");
+    // A bundle short of a key is no better than none, and is not told to pass the file it passed.
+    fs::write(&bundle, "version = 1\n[secrets]\nkey_a = \"ka\"\n").unwrap();
+    let short = format!("{:#}", super::check(load(), Some(&bundle), &held).await.unwrap_err());
+    assert!(short.contains("key_b") && !short.contains("need --secrets-file"), "{short}");
+}
+
 /// The Anvil config with its custody section replaced by three paths of the stand-in at `rpc` and a staking contract,
 /// written to a file named for `test`.
-fn config_for(rpc: &str, test: &str) -> std::path::PathBuf {
+fn config_for(rpc: &str, test: &str, keyed: bool) -> std::path::PathBuf {
     let dir = scratch_dir(&format!("init-staking-{test}"));
     fs::create_dir_all(&dir).unwrap();
+    let [key_a, key_b, key_c] = if keyed { ["/{key_a}", "/{key_b}", "/{key_c}"] } else { [""; 3] };
     let custody = format!(
         r#"[custody]
 provider = "evm"
@@ -91,9 +121,9 @@ vault = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
 
 [custody.evm]
 providers = [
-  {{ name = "a", rpc_url = "{rpc}/a" }},
-  {{ name = "b", rpc_url = "{rpc}/b" }},
-  {{ name = "c", rpc_url = "{rpc}/c" }},
+  {{ name = "a", rpc_url = "{rpc}/a{key_a}" }},
+  {{ name = "b", rpc_url = "{rpc}/b{key_b}" }},
+  {{ name = "c", rpc_url = "{rpc}/c{key_c}" }},
 ]
 usdc = "{USDC:#x}"
 finality_tag = "safe"
@@ -114,13 +144,26 @@ cursor_path = "{dir}/staking-cursor.json"
 [custody.evm.staking.registry]
 contract = "0x00000000000000000000000000000000000000ee"
 "#,
-        dir = dir.display()
+        dir = dir.display(),
     );
+    // Delivered keys need the listener that receives them.
+    let custody = if keyed {
+        format!(
+            "{custody}\n[tee.sealing]\ndir = \"{}/keys\"\n[tee.sealing.secrets]\nlisten = \"127.0.0.1:9472\"\n",
+            dir.display()
+        )
+    } else {
+        custody
+    };
     let path = dir.join("node.toml");
     let anvil = fs::read_to_string(ANVIL_CONFIG).unwrap();
     let (before, rest) = anvil.split_once("[custody]\n").expect("a custody section");
     let (_, after) = rest.split_once("\n[feeds]").expect("a feeds section after it");
-    fs::write(&path, format!("{before}{custody}\n[feeds]{after}")).unwrap();
+    let text = format!("{before}{custody}\n[feeds]{after}");
+    // A sealed key is not the published mock one.
+    let text =
+        if keyed { text.replace("use_published_mock_key = true", "use_published_mock_key = false") } else { text };
+    fs::write(&path, text).unwrap();
     path
 }
 

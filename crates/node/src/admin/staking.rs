@@ -23,8 +23,9 @@ pub(super) async fn check(mut cfg: NodeConfig, secrets: Option<&Path>, staking: 
     if let Some(file) = secrets {
         cfg.deliver_urls(&Bundle::from_file(file)?.secrets)?;
     }
-    let Some(terms) = StakingTerms::connect(&cfg.custody)
-        .context("reading the staking contract needs the custody providers' keys: pass --secrets-file")?
+    let hint = if secrets.is_some() { "" } else { "; providers that name delivered keys need --secrets-file" };
+    let Some(terms) =
+        StakingTerms::connect(&cfg.custody).with_context(|| format!("connecting to the custody providers{hint}"))?
     else {
         warn!("the config names no staking contract: the epoch and cooldown are not checked against one");
         return Ok(());

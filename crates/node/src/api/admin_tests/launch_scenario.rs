@@ -69,7 +69,8 @@ async fn dev_scenario_the_launch_values_deploy_and_the_nodes_initialisations_acc
     let accounts: Vec<Address> = provider.request("eth_accounts", ()).await.unwrap();
     let signer = crate::tee::EnclaveKey::generate();
 
-    // The deployment, as contracts/README.md describes it, from the inputs.
+    // The deployment from the inputs. `Staking` is deployed directly with the two values the registry's
+    // constructor passes it, to keep the scenario to the values under test.
     let usdc = deploy(&provider, accounts[0], "MockUSDC.sol/MockUSDC.json", &[]).await;
     let mut governance_args = U256::from(min_delay).to_be_bytes::<32>().to_vec();
     governance_args.extend_from_slice(&U256::from(0x80).to_be_bytes::<32>());

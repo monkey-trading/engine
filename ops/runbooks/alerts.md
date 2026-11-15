@@ -38,6 +38,7 @@ Most of these appear as `refusing to serve: <cause>`, after which the image powe
 | `log_recovery_failed` | Critical | The log fails recovery: a config that differs from what the log records, a bad signature or root, an unsealed command. See [restart-and-recovery.md](restart-and-recovery.md), "The node will not start". |
 | `history_recovery_failed` | Critical | The account history index cannot be opened or repaired. See [restart-and-recovery.md](restart-and-recovery.md), "Rebuild the derived stores". |
 | `marks_cache_failed` | Critical | The marks cache cannot be opened or activated. See [restart-and-recovery.md](restart-and-recovery.md), "Rebuild the derived stores". |
+| `staking_terms_mismatch` | Critical | The log's, or the config genesis's, staking epoch or cooldown differs from the staking contract's. See [restart-and-recovery.md](restart-and-recovery.md), "The node will not start". |
 | `emission_budget_mismatch` | Critical | The log's emission schedule differs from the vault's MONKEY cap. See [restart-and-recovery.md](restart-and-recovery.md), "The node will not start". |
 | `genesis_refused` | Critical | The config's genesis does not apply to this log. See [restart-and-recovery.md](restart-and-recovery.md), "The node will not start". |
 | `protocol_activation_failed` | Critical | The newest protocol version does not activate on this log. See [restart-and-recovery.md](restart-and-recovery.md), "The node will not start". |

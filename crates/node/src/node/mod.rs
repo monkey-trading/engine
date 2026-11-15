@@ -179,6 +179,10 @@ async fn serve_node(
         (None, None) => None,
     };
 
+    // Nor may the log or the genesis carry a staking config the staking contract does not hold.
+    let staking_terms = crate::custody::StakingTerms::connect(&cfg.custody)?;
+    preflight::staking_preflight(staking_terms.as_ref(), log.staking_config(), cfg.genesis.staking.as_ref()).await?;
+
     let vault: AccountId = cfg.custody.vault.parse().context("custody.vault")?;
     let client_auth = cfg.client_auth()?;
     let operator = cfg.operator()?;
@@ -428,7 +432,7 @@ async fn serve_node(
         marks: marks_reader,
         stats,
         emission_budget,
-        staking_terms: crate::custody::StakingTerms::connect(&cfg.custody)?,
+        staking_terms,
         collateral: served,
         listing: Default::default(),
         operators: ticker::start_operators(&cfg.custody, &cfg.api, &mut tasks)?,

@@ -12,9 +12,8 @@ use std::sync::Arc;
 use alloy::primitives::{Address, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use engine_core::staking::StakingConfig;
-use engine_core::types::Millis;
 use futures_util::future::BoxFuture;
 
 use super::{ContractQuorum, Quorum, VaultReader, read_final};
@@ -64,12 +63,14 @@ impl StakingTerms {
     /// Error cases:
     /// - fewer than three providers, or `custody.vault` or a provider's client does not parse or build
     pub fn connect(custody: &CustodySection) -> anyhow::Result<Option<Self>> {
-        let Some(staking) = custody.evm.as_ref().and_then(|evm| evm.staking.as_ref()) else { return Ok(None) };
+        let Some((evm, staking)) = custody.evm.as_ref().and_then(|evm| Some((evm, evm.staking.as_ref()?))) else {
+            return Ok(None);
+        };
         let quorum = Arc::new(ContractQuorum::connect(custody, "staking_terms")?);
-        let contract = staking.contract;
+        let (contract, chain) = (staking.contract, (custody.chain_id, evm.usdc));
         Ok(Some(Self::new(move || {
             let quorum = quorum.clone();
-            async move { read(&quorum.0, contract).await }
+            async move { read(&quorum.0, contract, chain).await }
         })))
     }
 
@@ -84,8 +85,17 @@ impl StakingTerms {
     /// A reader that answers `terms`, or fails when `None`.
     #[cfg(test)]
     pub(crate) fn fixed(terms: Option<(u64, u64)>) -> Self {
+        Self::counting(terms, Arc::default())
+    }
+
+    /// `fixed`, adding one to `reads` for each read of the contract it makes.
+    #[cfg(test)]
+    pub(crate) fn counting(terms: Option<(u64, u64)>, reads: Arc<std::sync::atomic::AtomicUsize>) -> Self {
         let terms = terms.map(|(epoch_secs, cooldown_secs)| ContractTerms { epoch_secs, cooldown_secs });
-        Self::new(move || async move { terms.context("the providers name no final block") })
+        Self::new(move || {
+            reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async move { terms.context("the providers name no final block") }
+        })
     }
 
     /// Whether `config` has the epoch and cooldown the contract holds.
@@ -98,11 +108,24 @@ impl StakingTerms {
     }
 }
 
-/// The contract's epoch and cooldown, read at one final block by a strict majority of providers.
+/// The contract's epoch and cooldown, read at one final block by a strict majority of providers that
+/// serve `chain`, the configured chain id and the vault's token.
 /// Error cases:
 /// - the providers lack an identity, finality, header or call quorum
+/// - the providers agree on another chain or token than the configured deployment's
 /// - the address holds no staking contract, or a value does not fit a `u64` of seconds
-pub(super) async fn read<R: VaultReader + Sync>(quorum: &Quorum<R>, staking: Address) -> anyhow::Result<ContractTerms> {
+pub(super) async fn read<R: VaultReader + Sync>(
+    quorum: &Quorum<R>,
+    staking: Address,
+    (chain_id, token): (u64, Address),
+) -> anyhow::Result<ContractTerms> {
+    let identity = quorum.identity().await?;
+    ensure!(
+        (identity.chain_id, identity.token) == (chain_id, Some(token)),
+        "the providers serve chain {} and token {:?}, not the configured chain {chain_id} and token {token}",
+        identity.chain_id,
+        identity.token
+    );
     let (_, answers) = read_final(quorum, staking, |_| {
         vec![
             ("staking_epoch", epochCall {}.abi_encode().into()),
@@ -130,7 +153,6 @@ pub(super) fn check(contract: ContractTerms, config: &StakingConfig) -> Result<(
         [("epoch", config.epoch_ms, contract.epoch_secs), ("cooldown", config.cooldown_ms, contract.cooldown_secs)]
     {
         if millis(held) != Some(set) {
-            let set: Millis = set;
             return Err(format!("{name} {set} ms differs from the staking contract's {held} s"));
         }
     }

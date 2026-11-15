@@ -3,6 +3,9 @@
 //! contract's. A refused command stays out of the log.
 
 use super::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use engine_core::Fixed;
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::staking::StakingConfig;
@@ -37,7 +40,8 @@ fn init_staking(epoch_ms: Millis, cooldown_ms: Millis) -> AdminCommand {
 #[tokio::test]
 async fn a_staking_config_must_have_the_epoch_and_cooldown_the_staking_contract_holds() {
     let mut node = Node::start_on("staking-terms", true).await;
-    node.state.staking_terms = Some(StakingTerms::fixed(Some(CONTRACT)));
+    let reads = Arc::new(AtomicUsize::new(0));
+    node.state.staking_terms = Some(StakingTerms::counting(Some(CONTRACT), reads.clone()));
     for (command, wrong) in [
         (init_staking(1_800_000, 2_419_200_000), "epoch 1800000 ms differs from the staking contract's 86400 s"),
         (init_staking(86_400_000, 86_400_000), "cooldown 86400000 ms differs from the staking contract's 2419200 s"),
@@ -50,6 +54,15 @@ async fn a_staking_config_must_have_the_epoch_and_cooldown_the_staking_contract_
 
     let (status, events) = send(&node, 0, init_staking(86_400_000, 2_419_200_000)).await;
     assert_eq!((status, events), (StatusCode::OK, serde_json::json!([{ "type": "admin_applied" }])));
+    assert_eq!(reads.load(Ordering::SeqCst), 3, "each fresh request read the contract once");
+
+    // The same signed request again, and one that has expired, are refused before any read of the chain.
+    let (status, body) = send(&node, 0, init_staking(86_400_000, 2_419_200_000)).await;
+    assert_ne!(status, StatusCode::OK, "{body}");
+    let expired = node.sign(1, init_staking(86_400_000, 2_419_200_000), NOW - 1);
+    let (status, body) = node.post("/v1/admin", serde_json::to_value(expired).unwrap()).await;
+    assert_ne!(status, StatusCode::OK, "{body}");
+    assert_eq!(reads.load(Ordering::SeqCst), 3, "a replayed or expired request costs the providers nothing");
 }
 
 #[tokio::test]

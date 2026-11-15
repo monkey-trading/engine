@@ -29,10 +29,10 @@ use crate::custody::StakingTermsRefused;
 ///   test key other than the configured one, as an election may name
 /// - an emission schedule whose period budget is not the one the configured vault's MONKEY cap was
 ///   derived from
-/// - a staking config whose epoch or cooldown is not the configured staking contract's, or, as
-///   unavailable, one made while the contract cannot be read
 /// - a nonce other than the operator's next
 /// - an expiry already past
+/// - a staking config whose epoch or cooldown is not the configured staking contract's, or, as
+///   unavailable, one made while the contract cannot be read (read only for a fresh request)
 /// - the sequencer has stopped
 pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminRequest>) -> ApiResult<Vec<Event>> {
     let mut seen = None;
@@ -92,6 +92,12 @@ async fn sequence_admin(s: &ApiState, req: AdminRequest, seen: &mut Option<u64>)
         debug!("admin request refused: {reason}");
         return Err(ApiError::BadRequest(reason));
     }
+    let (next, last_sequenced, last_seq) =
+        s.query(move |e| (e.next_request_nonce(operator.address), e.now(), e.last_seq())).await?;
+    *seen = last_seq;
+    s.check_fresh(&req.auth, next, last_sequenced)?;
+    // Only after the request is the operator's, unexpired and on its next nonce: a replay of a logged
+    // request is refused above without a read of the chain, whose providers custody shares.
     if let (AdminCommand::InitStaking(staking), Some(terms)) = (&req.command, &s.staking_terms)
         && let Err(refused) = terms.check(staking).await
     {
@@ -104,10 +110,6 @@ async fn sequence_admin(s: &ApiState, req: AdminRequest, seen: &mut Option<u64>)
             }
         });
     }
-    let (next, last_sequenced, last_seq) =
-        s.query(move |e| (e.next_request_nonce(operator.address), e.now(), e.last_seq())).await?;
-    *seen = last_seq;
-    s.check_fresh(&req.auth, next, last_sequenced)?;
     // As for an account's request: only one the node would sequence spends the operator's rate.
     s.limits.check_account(operator.address)?;
     let nonce = req.auth.nonce;
