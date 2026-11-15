@@ -12,6 +12,18 @@ use crate::test_support::scratch_dir;
 
 const MEMBER: AccountId = AccountId([0xb2; 20]);
 
+/// An entries question names any offset a peer chooses: the largest ones answer nothing rather than
+/// overflow, which would abort the node.
+#[test]
+fn an_entries_question_at_the_largest_offsets_answers_nothing() {
+    let copy = Copy::default();
+    for seq in 1..=3 {
+        copy.appended(Offset::start_of(seq), &tick(seq));
+    }
+    assert!(copy.entries_after(Offset { seq: 1, index: u32::MAX }).is_empty());
+    assert!(copy.entries_after(Offset { seq: u64::MAX, index: u32::MAX }).is_empty());
+}
+
 #[test]
 fn entries_answer_from_right_after_the_asked_entry_and_never_across_a_gap() {
     let copy = Copy::default();

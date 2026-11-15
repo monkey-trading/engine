@@ -240,6 +240,11 @@ async fn a_copy_lacking_the_vaults_checkpoint_entry_anchors_at_its_own_state_wit
         (held.seq, held.root.as_str(), held.signer.as_str()),
         (accepted.seq, accepted.root.as_str(), accepted.signer.as_str())
     );
+    // Kept past the retention window when the start keeps its seq, as a checkpoint entry is.
+    let mut kept = fed();
+    kept.keep(accepted.seq);
+    kept.capture_tip();
+    assert!(kept.kept_checkpoints.contains_key(&accepted.seq), "a kept seq's captured checkpoint is kept");
     let mut anchored = fed();
     anchored.capture_tip();
     anchored.anchor(vault(root), None).unwrap();

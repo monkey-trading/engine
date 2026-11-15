@@ -5,7 +5,7 @@
 //! build changes nothing the start relies on.
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -35,6 +35,9 @@ pub(crate) struct Follower {
     replica: LiveReplay,
     /// What a member's link answers from: the copy's durable head, latest entries and signed heads.
     link: Option<crate::liveness::link::Copy>,
+    /// The newest entries the copy held when it was opened, with their offsets, for the member link
+    /// to serve once one links the copy.
+    opened: VecDeque<(Offset, LogEntry)>,
 }
 
 impl Follower {
@@ -96,10 +99,21 @@ impl Follower {
             }
             replica
         };
+        let (mut opened, mut previous) = (VecDeque::new(), None);
         let (writer, copied, replica) =
             open_copy_replayed(dir, segment_commands.max(1), Chain::new(domain, enclave), fresh, |replica, entry| {
                 observe(entry)?;
                 replica.apply(entry)?;
+                let offset = offset_of(previous, entry)?;
+                // A retried build reads the copy again from its start.
+                if previous.is_some_and(|was| offset <= was) {
+                    opened.clear();
+                }
+                previous = Some(offset);
+                opened.push_back((offset, entry.clone()));
+                if opened.len() > crate::liveness::link::RECENT_ENTRIES {
+                    opened.pop_front();
+                }
                 if let (Some((seq, link)), LogEntry::Command(command)) = (posted, entry)
                     && command.sequenced.seq == seq
                 {
@@ -108,7 +122,7 @@ impl Follower {
                 Ok(())
             })
             .context("the copy does not replay")?;
-        Ok(Self { writer, copied, replica, link: None })
+        Ok(Self { writer, copied, replica, link: None, opened })
     }
 
     /// The replica.
@@ -225,9 +239,10 @@ impl Follower {
     }
 
     /// Records what the copy holds into `link` from here on, starting with the links the replica
-    /// retains and its head as durable.
+    /// retains, its head as durable, and the entries it held when it was opened, to serve.
     pub(crate) fn link_with(&mut self, link: crate::liveness::link::Copy) {
         link.rebuilt();
+        link.served(std::mem::take(&mut self.opened));
         for retained in self.replica.retained_links() {
             link.linked(retained.seq, retained.link, retained.sealer);
         }

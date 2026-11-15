@@ -140,6 +140,30 @@ async fn a_tail_goes_on_from_an_entry_past_the_tips_command() {
     assert_eq!(log_entries(&dir), log_entries(&operator), "the copy is not the operator's log");
 }
 
+/// A follower opened from its copy serves, once its member link links it, the entries it replayed: a
+/// restarted member answers a gap fetch from what it holds, not only from what arrives after.
+#[tokio::test]
+async fn a_reopened_follower_serves_the_entries_it_replayed() {
+    let dir = scratch_dir("replica-served");
+    crate::standby::tests::ticks(&dir, 4).await;
+    let mut follower =
+        Follower::open(&dir, SEGMENT_COMMANDS, DOMAIN, signer(), [signer()].into(), None, |_| {}).unwrap();
+    let copy = crate::liveness::link::Copy::default();
+    follower.link_with(copy.clone());
+    let mut previous = None;
+    let held: Vec<(Offset, LogEntry)> = log_entries(&dir)
+        .into_iter()
+        .map(|entry| {
+            let offset = offset_of(previous, &entry).unwrap();
+            previous = Some(offset);
+            (offset, entry)
+        })
+        .filter(|(offset, _)| *offset > Offset::start_of(1))
+        .collect();
+    assert!(!held.is_empty());
+    assert_eq!(copy.entries_after(Offset::start_of(1)), held, "the reopened copy serves what it holds");
+}
+
 // ── Helpers ──
 
 /// The test sequencer's enclave, which seals and signs its log.

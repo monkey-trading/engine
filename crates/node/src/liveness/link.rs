@@ -48,7 +48,7 @@ use crate::tee::sealing::Platform;
 use crate::trusted_time::TrustedClock;
 
 /// How many of the copy's latest entries a member keeps to answer `Entries` from.
-const RECENT_ENTRIES: usize = 16_384;
+pub(crate) const RECENT_ENTRIES: usize = 16_384;
 /// The most bytes of entries one answer carries, under the frame limit.
 const ENTRIES_BYTES: usize = 768 * 1024;
 /// How many signer epochs' newest heads a member keeps.
@@ -178,6 +178,16 @@ impl Copy {
         let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         state.recent.push_back((offset, entry.clone()));
         if state.recent.len() > RECENT_ENTRIES {
+            state.recent.pop_front();
+        }
+    }
+
+    /// Records `entries`, the newest a copy opened from disk holds with their offsets, oldest first, as
+    /// the entries it serves: a restarted member answers a gap fetch from what it holds.
+    pub(crate) fn served(&self, entries: impl IntoIterator<Item = (Offset, LogEntry)>) {
+        let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        state.recent.extend(entries);
+        while state.recent.len() > RECENT_ENTRIES {
             state.recent.pop_front();
         }
     }
@@ -316,7 +326,8 @@ impl Copy {
     pub(crate) fn entries_after(&self, after: Offset) -> Vec<(Offset, LogEntry)> {
         let state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(start) = state.recent.iter().position(|(offset, _)| *offset > after) else { return Vec::new() };
-        let next = [Offset { seq: after.seq, index: after.index + 1 }, Offset::start_of(after.seq + 1)];
+        // `after` is any peer's: the offsets right after it saturate rather than overflow.
+        let next = [after.next(), Offset::start_of(after.seq.saturating_add(1))];
         let joined = match start {
             0 => next.contains(&state.recent[0].0),
             _ => state.recent[start - 1].0 == after,

@@ -190,7 +190,8 @@ impl LiveReplay {
     /// holds no checkpoint entry there: the vault's latest checkpoint a promotion fixed may be one the
     /// outgoing key posted while no member received its entry (#595). It names the last command's
     /// sealer, the key that signed the vault's checkpoint if there is one, and the state root computed
-    /// now, so it anchors only a start whose vault checkpoint is at this seq with this root.
+    /// now, so it anchors only a start whose vault checkpoint is at this seq with this root, and is kept
+    /// past the retention window, as a checkpoint entry is, when `keep` names its seq.
     pub(crate) fn capture_tip(&mut self) {
         let (Some(seq), Some(signer)) = (self.last_seq(), self.replay.last_sealer()) else { return };
         if self.checkpoints.contains_key(&seq) {
@@ -199,6 +200,9 @@ impl LiveReplay {
         let root = B256::from(self.replay.engine.state_root());
         let checkpoint = crate::sequencer::replay::unheld::unheld(seq, root, signer, self.replay.domain);
         let engine = &self.replay.engine;
+        if self.keeping.contains(&seq) {
+            self.kept_checkpoints.entry(seq).or_insert_with(|| checkpoint.clone());
+        }
         let work = Work::capture(checkpoint, self.replay.accounting, engine);
         self.checkpoints.insert(seq, (work, engine.now()));
         if self.checkpoints.len() > RETAINED_CHECKPOINTS {
