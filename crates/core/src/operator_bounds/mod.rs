@@ -16,7 +16,9 @@
 //! From `V54` the toxicity score's tiers take the same notice, within ±50% of their launch values
 //! (`toxicity`). From `V55` the profit fee moves only up from its launch value, and a notice may name
 //! a new profit fee curve, at or above its launch curve at every hold (`holding_fee`). From `V59` a
-//! notice may name a new volume tier table, within its launch bounds (`volume_tier`).
+//! notice may name a new volume tier table, within its launch bounds (`volume_tier`). From `V62` new
+//! stress parameters keep each launch house loss threshold at its level or above, at most its launch
+//! value (`house_loss`).
 
 use std::collections::BTreeMap;
 
@@ -24,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::Engine;
 use crate::holding_fee::{CurvePoint, spend_curve_notice};
+use crate::house_loss::LossTrigger;
 use crate::listing_bounds::{LaunchBands, ListingNotice};
 use crate::market::MarketSpec;
 use crate::params::{MAX_RATE_BPS, ProtocolParams, StressLevel};
@@ -140,6 +143,10 @@ pub struct OperatorBounds {
     /// later table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_volume_tiers: Option<Vec<VolumeTier>>,
+    /// From `V62`, the house loss thresholds in force when parameters are first set under `V62` or
+    /// when it activates over them, which every later set of stress levels keeps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_loss_triggers: Option<Vec<LossTrigger>>,
 }
 
 impl OperatorBounds {
@@ -192,7 +199,8 @@ impl Engine {
     /// - before `V35`, or before parameters are set
     /// - a notice naming no rate, a rate outside its valid range or outside ±50% of its launch value
     /// - stress parameters before `V49`, or ones that, with the other parameters in force, fail
-    ///   `ProtocolParams::validate_for` or `ProtocolParams::check_closing_spread`
+    ///   `ProtocolParams::validate_for` or `ProtocolParams::check_closing_spread`, or from `V62` drop a
+    ///   launch house loss threshold (`Engine::check_loss_triggers_kept`)
     /// - score tiers `Engine::check_score_tier_notice` refuses
     /// - from `V55`, a profit fee below its launch value; a curve `Engine::check_curve_notice` refuses
     /// - a volume tier table `Engine::check_volume_tier_notice` refuses
@@ -213,6 +221,7 @@ impl Engine {
             };
             params.validate_for(self.protocol_version)?;
             params.check_closing_spread()?;
+            self.check_loss_triggers_kept(&stress.levels)?;
         }
         if let Some(tiers) = &notice.score_tiers {
             self.check_score_tier_notice(tiers)?;
@@ -314,6 +323,8 @@ impl Engine {
     ///   sequenced time
     /// - from `V49`, unless `voted`, changed stress parameters no notice names, or whose notice takes
     ///   effect later than the sequenced time
+    /// - from `V62`, changed stress levels that drop a launch house loss threshold
+    ///   (`Engine::check_loss_triggers_kept`)
     /// - from `V54`, changed score tiers `Engine::check_score_tier_change` refuses
     /// - a changed profit fee curve that fails `Engine::check_curve_change`
     /// - a changed volume tier table that fails `Engine::check_volume_tier_change`
@@ -355,6 +366,9 @@ impl Engine {
         self.check_curve_change(&params.profit_fee_curve, &current.profit_fee_curve, voted)?;
         self.check_volume_tier_change(params, current, voted)?;
         let stress = StressSettings::of(params);
+        if self.protocol_version >= ProtocolVersion::V62 && params.stress_levels != current.stress_levels {
+            self.check_loss_triggers_kept(&params.stress_levels)?;
+        }
         if self.protocol_version < ProtocolVersion::V49 || stress == StressSettings::of(current) || voted {
             return Ok(());
         }
@@ -375,6 +389,7 @@ impl Engine {
         self.record_launch_score_tiers();
         self.record_launch_curve();
         self.record_launch_volume_tiers();
+        self.record_launch_loss_triggers();
         let Some(before) = before else { return };
         let tiers = &params.toxicity.score_tiers;
         let spends_tiers = *tiers != before.toxicity.score_tiers;

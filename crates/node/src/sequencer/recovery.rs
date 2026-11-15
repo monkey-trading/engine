@@ -360,6 +360,7 @@ impl Sequencer {
             access_policy: cfg.access_policy,
             close_spread_ceilings,
             deficit: DeficitAlert::default(),
+            loss: LossAlert::default(),
             benchmark_alerts: BenchmarkAlerts::default(),
             access_alerts,
             operator: cfg.operator,

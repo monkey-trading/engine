@@ -219,6 +219,7 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         | Event::MarketClosed { .. }
         | Event::MarketRolled { .. }
         | Event::StressChanged { .. }
+        | Event::HouseLossChanged { .. }
         | Event::PricesRejected { .. }
         | Event::AdminApplied
         | Event::AdminRejected { .. }

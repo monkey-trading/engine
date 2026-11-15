@@ -415,6 +415,7 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::MarketClosed { .. }
         | Event::MarketRolled { .. }
         | Event::StressChanged { .. }
+        | Event::HouseLossChanged { .. }
         | Event::PricesRejected { .. }
         | Event::AdminApplied
         | Event::AdminRejected { .. }
