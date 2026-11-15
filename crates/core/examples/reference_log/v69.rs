@@ -4,7 +4,8 @@
 //! hours later makes and that also runs the rollover: the client's BTC lot, bought half a minute before
 //! the gap, matures after the close-out's boundary and the close-out's own count falls after it, so the
 //! rollover's tier leaves both out. The session's launch table gives tier 1 no financing discount, so the
-//! tier-2 case the rule changes is pinned by `tests/tier_catch_up.rs`.
+//! tier-2 case the rule changes is pinned by `tests/tier_catch_up.rs`; this log pins the early counts the
+//! volume leaf keeps.
 
 use engine_core::command::{AdminCommand, Command};
 use engine_core::event::Event;

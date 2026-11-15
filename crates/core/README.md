@@ -171,7 +171,7 @@ this crate and reproduce the signed state roots exactly.
 - From protocol `V69`, a rollover reads an account's tier from the volume that had counted by its own
   time, however many fills of the account the same catch-up makes first: a fill settles the volume book to
   the command's stamp, and the tier read at an earlier boundary leaves out each lot, and each close-out's
-  count, whose time came after it (`EarlyCount`, `src/volume_tier/book.rs`)
+  count, whose time came after it (`AccountVolume::early`, `src/volume_tier/book.rs`)
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -382,8 +382,8 @@ this crate and reproduce the signed state roots exactly.
 - `tests/tier_benefit_bounds.rs` — a table's benefits held at or below launch's and never falling with
   the tier, a smaller benefit noticed, and the refusal of a benefit before V68
 - `tests/tier_catch_up.rs` — a rollover and a weekend close-out in one catch-up: the rollover's tier leaves
-  out opening volume that matures, and closing volume whose horizon ends, after the rollover, and the same
-  scenario before V69
+  out opening volume that matures, and closing volume whose horizon ends, after the rollover, a
+  catch-up deferred across commands, and the same scenario before V69
 - `tests/earned_leverage.rs` — a fresh wallet's 20x, each tier's leverage up to the market's bands, a
   falling tier's open position, withdrawals and close-out, the weekend margin and the floor band by
   band, and activation over a held position
@@ -1180,10 +1180,11 @@ command that catches up several boundaries makes the account's fills in order, a
 account's volume book to the command's stamp, so a later boundary of the catch-up read volume that had not
 matured, or whose round-trip horizon had not ended, at its own time, and charged a tier's financing
 discount early. From V69 a settlement while the clock stands at an earlier boundary notes each lot it
-counts after that boundary, and a close-out's own count, in a command-scoped list that is not state
-(`Engine::early_counts`), and the tier read at the boundary leaves them out; a lot due exactly at the
-boundary counts. The list is cleared with every command, and a read at the command's stamp subtracts
-nothing. Its log is `v69.jsonl`, and its session is in `examples/reference_log/v69.rs`.
+counts after that boundary, and a close-out's own count, in the account's volume book (`early`, encoded in
+its leaf while any are kept), and the tier read at the boundary leaves them out; a lot due exactly at the
+boundary counts. The notes are dropped when the book next settles past their time, so they also hold across
+the commands of a catch-up that was deferred past `MAX_CATCH_UP_BOUNDARIES`, and across a snapshot. A read
+at the command's stamp subtracts nothing. Its log is `v69.jsonl`, and its session is in `examples/reference_log/v69.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

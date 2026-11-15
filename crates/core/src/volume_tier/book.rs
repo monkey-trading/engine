@@ -43,6 +43,10 @@ pub struct AccountVolume {
     /// Matured notional closed within the round-trip horizon, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub closing: Vec<ClosingLot>,
+    /// From `V69`, the lots counted ahead of a catch-up's boundary that its later boundaries still read
+    /// without; dropped when the book next settles past their time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub early: Vec<EarlyCount>,
 }
 
 /// The volume counted on one UTC day.
@@ -85,13 +89,15 @@ pub struct ClosingLot {
     pub notional: Fixed,
 }
 
-/// A lot a settlement counted on its day though its time came after the sequenced time a tier is read at:
-/// the day it counted on, its notional, and the time it was due to count.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct EarlyCount {
-    pub(crate) due: Millis,
-    pub(crate) day: i64,
-    pub(crate) notional: Fixed,
+/// From `V69`, a lot a settlement counted on its day though its time came after the boundary a catch-up
+/// had rewound the clock to, kept until the catch-up has passed its time so the tier read at an earlier
+/// boundary leaves it out (`without_early`): the time it was due to count, its day and its notional.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EarlyCount {
+    pub due: Millis,
+    pub day: i64,
+    pub notional: Fixed,
 }
 
 impl ClosingLot {
@@ -104,15 +110,18 @@ impl ClosingLot {
 impl AccountVolume {
     /// Whether the book holds nothing, so its leaf is removed.
     fn is_empty(&self) -> bool {
-        self.days.is_empty() && self.opening.is_empty() && self.closing.is_empty()
+        self.days.is_empty() && self.opening.is_empty() && self.closing.is_empty() && self.early.is_empty()
     }
 
     /// Counts every lot whose time has come by `now` on its day, and drops the days before the window
     /// that ends on `keep_from`'s day (`now`, or from `V68` the boundary a catch-up walks when that is
-    /// earlier, so a fill there keeps the days a later boundary's tier still reads). Returns, when
-    /// `after` is named, each lot it counted whose time came after `after`: from `V69` the boundary a
-    /// catch-up has rewound to, whose tier must not read them.
-    fn settle(&mut self, now: Millis, keep_from: Millis, after: Option<Millis>) -> Vec<EarlyCount> {
+    /// earlier, so a fill there keeps the days a later boundary's tier still reads). When `after` is named,
+    /// from `V69` the boundary a catch-up has rewound to, the book first drops the early counts whose time
+    /// has come by it, then notes each lot it counts whose time comes after it.
+    fn settle(&mut self, now: Millis, keep_from: Millis, after: Option<Millis>) {
+        if let Some(after) = after {
+            self.early.retain(|lot| lot.due > after);
+        }
         let mut early = Vec::new();
         let mut counted = |days: &mut Vec<DayVolume>, due: Millis, day: i64, notional: Fixed| {
             count(days, day, notional);
@@ -131,9 +140,9 @@ impl AccountVolume {
         for lot in self.closing.drain(..due) {
             counted(&mut self.days, lot.counts_at(), day_of(lot.closed_at), lot.notional);
         }
+        self.early.extend(early);
         let first = day_of(keep_from) - (WINDOW_DAYS as i64 - 1);
         self.days.retain(|day| day.day >= first);
-        early
     }
 
     /// The volume counted on each day of the window that ends on `now`'s day, oldest first, every lot
@@ -290,10 +299,7 @@ impl Engine {
         let ordered = self.protocol_version >= ProtocolVersion::V61;
         let after = self.settles_ahead_of_boundary().then_some(self.now);
         let volume = self.volumes.entry(exec.account).or_default();
-        let early = volume.settle(now, keep_from, after);
-        if !early.is_empty() {
-            self.early_counts.entry(exec.account).or_default().extend(early);
-        }
+        volume.settle(now, keep_from, after);
         let matured = closing - volume.consume_opening(exec.market, closing);
         let leg = closing - closed_matched;
         if exec.liquidation {
@@ -301,8 +307,7 @@ impl Engine {
             count(&mut volume.days, day_of(now), usd(matured));
             // It counts at the command's stamp, after the boundary a catch-up is at.
             if after.is_some_and(|after| now > after) && usd(matured).is_positive() {
-                let lot = EarlyCount { due: now, day: day_of(now), notional: usd(matured) };
-                self.early_counts.entry(exec.account).or_default().push(lot);
+                volume.early.push(EarlyCount { due: now, day: day_of(now), notional: usd(matured) });
             }
         } else if leg.is_positive() || matured.is_positive() {
             let (market, side, index, notional) = (exec.market, exec.side, mark.index, usd(matured));
@@ -367,10 +372,7 @@ impl Engine {
         let keep_from = self.volume_keep_from(now);
         let after = self.settles_ahead_of_boundary().then_some(self.now);
         let volume = self.volumes.get_mut(&account).expect("checked above");
-        let early = volume.settle(now, keep_from, after);
-        if !early.is_empty() {
-            self.early_counts.entry(account).or_default().extend(early);
-        }
+        volume.settle(now, keep_from, after);
         let Some(lots) = volume.opening.get_mut(&market) else { return };
         // A lot is at most its position, whose scaled quantity the split checked is in range.
         lots.iter_mut().for_each(|lot| lot.qty = Fixed::from_raw(lot.qty.raw() * i128::from(new) / i128::from(old)));

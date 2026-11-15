@@ -52,6 +52,22 @@ fn a_rollover_reads_no_closing_volume_inside_the_horizon_at_it() {
 }
 
 #[test]
+fn a_catch_up_deferred_across_commands_keeps_the_early_counts_for_the_rollovers_it_still_owes() {
+    // The wallet's close-out counts $52,000 on the stamp's day, which alone reaches tier 2 at $50,000. A
+    // stamp an hour after the 367th rollover defers the first catch-up command at that rollover, whose own
+    // tier a second command reads on the same day.
+    let (mut h, wallet, close) = setup(V69, Volume::Closing, 50_000);
+    let stamp = close + 366 * 24 * 60 * 60 * SECOND_MS + 60 * 60 * SECOND_MS;
+    h.advance_to(stamp);
+    let first = h.cmd(Command::Tick);
+    assert!(first.iter().any(|event| matches!(event, Event::CatchUpDeferred { .. })), "{first:?}");
+    assert!(fills(&first).iter().any(|fill| fill.liquidation && fill.market == OIL), "{first:?}");
+    let second = h.cmd(Command::Tick);
+    assert_eq!(financing(&second, &wallet, BTC), undiscounted(&h, "0.1"));
+    assert_eq!(h.engine.volume_tier(wallet.account), 2);
+}
+
+#[test]
 fn before_v69_the_rollover_reads_the_volume_the_settlement_counted() {
     for volume in [Volume::Opening, Volume::Closing] {
         let (events, wallet, h) = catch_up(V68, volume);
@@ -65,8 +81,21 @@ fn before_v69_the_rollover_reads_the_volume_the_settlement_counted() {
 /// 22:00 UTC, and a `Tick` at 22:00:40 that catches up the close and the rollover. Returns that command's
 /// events.
 fn catch_up(version: ProtocolVersion, volume: Volume) -> (Vec<Event>, Client, Harness) {
-    let params =
-        ProtocolParams { volume_tiers: tiers(), profit_fee_curve: DEFAULT_PROFIT_FEE_CURVE.to_vec(), ..v54_params() };
+    let (mut h, wallet, close) = setup(version, volume, 100_000);
+    h.advance_to(close + 40 * SECOND_MS);
+    let events = h.cmd(Command::Tick);
+    assert!(fills(&events).iter().any(|fill| fill.liquidation && fill.market == OIL), "{events:?}");
+    (events, wallet, h)
+}
+
+/// The scenario up to the last price before the weekend gap starts at the returned time, with a table
+/// whose tier 2 needs `tier_two` USD.
+fn setup(version: ProtocolVersion, volume: Volume, tier_two: i64) -> (Harness, Client, i64) {
+    let params = ProtocolParams {
+        volume_tiers: tiers(tier_two),
+        profit_fee_curve: DEFAULT_PROFIT_FEE_CURVE.to_vec(),
+        ..v54_params()
+    };
     let mut h = genesis_with_params(version, globex(vec![]), OIL_WEEKEND_BPS, 0, params);
     // Friday 6 November 2026, 16:00 in Chicago: 22:00 UTC, when the weekend gap starts and a rollover is due.
     let close = chicago(2026, 11, 6, 16, 0);
@@ -87,7 +116,9 @@ fn catch_up(version: ProtocolVersion, volume: Volume) -> (Vec<Event>, Client, Ha
     only_fill(&trade(&mut h, &wallet, OIL, Side::Buy, "1000", "70"));
     h.advance_to(close - 3 * hour + minute);
     h.price(BTC, "100000");
-    assert_eq!(h.engine.volume_tier(wallet.account), 1);
+    // The oil lot's $70,000 and the earlier fills reach tier 1, and tier 2 where it needs no more than that.
+    let before = if tier_two <= 70_100 { 2 } else { 1 };
+    assert_eq!(h.engine.volume_tier(wallet.account), before);
     match volume {
         Volume::Opening => {
             h.advance_to(close - 30 * SECOND_MS);
@@ -103,11 +134,8 @@ fn catch_up(version: ProtocolVersion, volume: Volume) -> (Vec<Event>, Client, Ha
     // An adverse oil price leaves the wallet below its weekend margin.
     h.advance_to(close - SECOND_MS);
     h.price(OIL, if matches!(volume, Volume::Opening) { "57" } else { "52" });
-    assert_eq!(h.engine.volume_tier(wallet.account), 1, "the volume has not counted yet");
-    h.advance_to(close + 40 * SECOND_MS);
-    let events = h.cmd(Command::Tick);
-    assert!(fills(&events).iter().any(|fill| fill.liquidation && fill.market == OIL), "{events:?}");
-    (events, wallet, h)
+    assert_eq!(h.engine.volume_tier(wallet.account), before, "the volume has not counted yet");
+    (h, wallet, close)
 }
 
 /// A long of `qty` BTC's financing at the listed markup and the 4.30% benchmark, rounded up as the engine does.
@@ -134,8 +162,8 @@ fn financing(events: &[Event], client: &Client, market: MarketId) -> Fixed {
 
 /// A table whose tier 1 needs $1 of counted volume in a day and tier 2 $100,000, each with the benefits
 /// the `V68` activation gives its position.
-fn tiers() -> Vec<VolumeTier> {
-    [(0, 2_500), (1, 5_000), (100_000, 10_000), (10_000_000, 25_000)]
+fn tiers(tier_two: i64) -> Vec<VolumeTier> {
+    [(0, 2_500), (1, 5_000), (tier_two, 10_000), (10_000_000, 25_000)]
         .into_iter()
         .enumerate()
         .map(|(at, (usd, best_price_share_bps))| VolumeTier {

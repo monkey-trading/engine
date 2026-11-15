@@ -256,9 +256,9 @@ fn from_v69_a_split_in_a_catch_up_names_the_lots_it_counts_after_its_boundary() 
         let opening = vec![opening(NOON + 30_000, "3", "300")];
         engine.volumes.entry(account).or_default().opening.insert(1, opening);
         engine.scale_volume_lots(account, 1, 2, 1);
-        let early = engine.early_counts.get(&account).cloned();
+        let early = engine.volumes.get(&account).map(|volume| volume.early.clone()).unwrap_or_default();
         let lot = EarlyCount { due: NOON + 30_000, day: 100, notional: usd("300") };
-        assert_eq!(early, named.then(|| vec![lot]), "{version:?}");
+        assert_eq!(early, if named { vec![lot] } else { vec![] }, "{version:?}");
     }
 }
 
@@ -293,14 +293,29 @@ fn a_settlement_names_the_lots_it_counts_after_the_boundary_it_is_told() {
     volume.push_opening(1, opening(NOON, "1", "100"));
     volume.push_opening(2, opening(NOON + 30_000, "1", "200"));
     volume.push_closing(closing(3, Side::Sell, "300", NOON - HORIZON_MS + 3_000, ["1", "1", "300"]), true);
-    let early = volume.settle(NOON + 40_000, NOON, Some(NOON));
+    volume.settle(NOON + 40_000, NOON, Some(NOON));
     let due = |due: Millis, notional: &str| EarlyCount { due, day: 100, notional: usd(notional) };
-    assert_eq!(early, [due(NOON + 30_000, "200"), due(NOON + 3_000, "300")]);
+    assert_eq!(volume.early, [due(NOON + 30_000, "200"), due(NOON + 3_000, "300")]);
     assert_eq!(volume.days, [DayVolume { day: 100, volume: usd("600") }]);
     // With no boundary named it names none.
     let mut volume = AccountVolume::default();
     volume.push_opening(1, opening(NOON + 30_000, "1", "200"));
-    assert!(volume.settle(NOON + 40_000, NOON, None).is_empty());
+    volume.settle(NOON + 40_000, NOON, None);
+    assert!(volume.early.is_empty());
+}
+
+#[test]
+fn a_settlement_drops_the_early_counts_whose_time_has_come_by_its_boundary() {
+    let early = vec![
+        EarlyCount { due: NOON, day: 100, notional: usd("1") },
+        EarlyCount { due: NOON + 1, day: 100, notional: usd("2") },
+    ];
+    let mut volume = AccountVolume { early, ..AccountVolume::default() };
+    volume.settle(NOON + 40_000, NOON, Some(NOON));
+    assert_eq!(volume.early, [EarlyCount { due: NOON + 1, day: 100, notional: usd("2") }]);
+    // Named no boundary, as before `V69`, it keeps them.
+    volume.settle(NOON + 40_000, NOON, None);
+    assert_eq!(volume.early.len(), 1);
 }
 
 #[test]
@@ -308,7 +323,8 @@ fn a_window_without_the_early_lots_keeps_those_due_by_its_time() {
     let mut volume = AccountVolume::default();
     volume.push_opening(1, opening(NOON + 30_000, "1", "200"));
     volume.push_opening(2, opening(NOON, "1", "100"));
-    let early = volume.settle(NOON + 40_000, NOON, Some(NOON - 1));
+    volume.settle(NOON + 40_000, NOON, Some(NOON - 1));
+    let early = volume.early.clone();
     let at = |at: Millis| {
         let mut window = volume.window(at);
         AccountVolume::without_early(&mut window, at, &early);

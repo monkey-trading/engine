@@ -47,8 +47,7 @@ use crate::spread_tier::SpreadTier;
 use crate::types::{AccountId, MarketId, Millis};
 
 mod book;
-pub(crate) use book::EarlyCount;
-pub use book::{AccountVolume, ClosingLot, DayVolume, MAX_CLOSING_LOTS, MAX_OPENING_LOTS, OpeningLot};
+pub use book::{AccountVolume, ClosingLot, DayVolume, EarlyCount, MAX_CLOSING_LOTS, MAX_OPENING_LOTS, OpeningLot};
 mod benefits;
 pub(crate) use benefits::names_benefits;
 pub use benefits::{ACTIVATION_EMISSIONS_BOOSTS_BPS, ACTIVATION_FEE_DISCOUNTS_BPS, ACTIVATION_FINANCING_DISCOUNTS_BPS};
@@ -351,10 +350,8 @@ impl Engine {
             return 0;
         };
         let mut window = volume.window(at);
-        // From `V69` a settlement the command made at a later time has counted lots whose time was after `at`.
-        if let Some(early) = self.early_counts.get(&account) {
-            AccountVolume::without_early(&mut window, at, early);
-        }
+        // From `V69` a settlement in this catch-up may have counted lots whose time was after `at`.
+        AccountVolume::without_early(&mut window, at, &volume.early);
         tier_of(&window, tiers)
     }
 
