@@ -149,6 +149,28 @@ fn a_production_build_refuses_fresh_account_budgets_above_its_values_at_load() {
     load("shared = { per_minute = 60, burst = 120 }\nper_client = { per_minute = 12, burst = 6 }").unwrap();
 }
 
+// A production build refuses request bursts above 5 seconds at load, not only when the check is
+// called, and names the bucket.
+#[cfg(feature = "production")]
+#[test]
+fn a_production_build_refuses_request_bursts_above_its_value_at_load() {
+    let dir = crate::test_support::scratch_dir("production-request-bursts");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("node.toml");
+    let load = |account: i64, session_key: i64| {
+        let mut cfg: toml::Table = toml::from_str(&real_providers()).unwrap();
+        let bursts = format!("account = {account}\nsession_key = {session_key}");
+        cfg["api"]["request_bursts"] = toml::from_str::<toml::Table>(&bursts).unwrap().into();
+        std::fs::write(&path, format!("{}{ACME}", toml::to_string(&cfg).unwrap())).unwrap();
+        NodeConfig::load(&path)
+    };
+    for (account, session_key, key) in [(6, 5, "account"), (5, 6, "session_key")] {
+        let err = format!("{:#}", load(account, session_key).unwrap_err());
+        assert!(err.contains(&format!("api.request_bursts.{key} at most 5 seconds")), "{key}: {err}");
+    }
+    load(5, 5).unwrap();
+}
+
 // A secret the environment would supply is refused at load, for every field that can name one.
 #[cfg(feature = "production")]
 #[test]
