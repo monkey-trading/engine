@@ -18,8 +18,11 @@
 //!   stays in the stakers' remainder, shared pro rata, and `OperatorShareWithheld` reports it.
 //!   Distributions already allocated are never touched, and time served before the mirror is not cut.
 //!
-//! A mirror that contradicts the log (before `V69` or staking, a reference already credited, or no
-//! recorded contract) is refused as `ElectionRejected`, as an election's is, and holds the watcher.
+//! A fault mirrored before `V69` is in force or the contract is recorded is credited and refused as
+//! `OperatorFaultRefused`, changing nothing else, so a proof landing while the activation waits on a
+//! vote holds no later mirror. A mirror that contradicts the log (before staking, a reference already
+//! credited, or no member named) is refused as `ElectionRejected`, as an election's is, and holds the
+//! watcher.
 
 use std::collections::BTreeMap;
 
@@ -146,27 +149,29 @@ impl Engine {
     }
 
     /// Mirrors the fault proof contract's `FaultProven` event: the member's haircut restarts at the
-    /// penalty from now.
+    /// penalty from now, once `V69` is in force and the contract is recorded; before then the fault is
+    /// credited and refused.
     pub(crate) fn prove_fault(&mut self, fault: &ProvenFault, events: &mut Vec<Event>) {
-        let refusal = if self.protocol_version < ProtocolVersion::V69 {
-            Some(format!("fault proofs need protocol {:?}", ProtocolVersion::V69))
-        } else {
-            self.registry_mirror_refusal(&fault.chain_ref).or_else(|| {
-                if self.operator_faults.config.is_none() {
-                    Some("no fault proof contract is recorded".into())
-                } else if fault.member == AccountId([0; 20]) {
-                    Some("a fault names no member".into())
-                } else {
-                    None
-                }
-            })
-        };
+        let refusal = self
+            .registry_mirror_refusal(&fault.chain_ref)
+            .or_else(|| (fault.member == AccountId([0; 20])).then(|| "a fault names no member".to_owned()));
         if let Some(reason) = refusal {
             events.push(Event::ElectionRejected { chain_ref: fault.chain_ref.clone(), reason });
             return;
         }
         self.credit_registry_mirror(&fault.chain_ref, fault.block);
-        let decay_ms = self.operator_faults.config.expect("checked above").penalty.decay_ms;
+        let config = self.operator_faults.config.filter(|_| self.protocol_version >= ProtocolVersion::V69);
+        let Some(config) = config else {
+            let reason = if self.protocol_version < ProtocolVersion::V69 {
+                format!("fault proofs need protocol {:?}", ProtocolVersion::V69)
+            } else {
+                "no fault proof contract is recorded".into()
+            };
+            let (member, turn, position) = (fault.member, fault.turn, fault.position);
+            events.push(Event::OperatorFaultRefused { member, turn, position, reason });
+            return;
+        };
+        let decay_ms = config.penalty.decay_ms;
         self.operator_faults.haircuts.insert(fault.member, self.now);
         events.push(Event::OperatorFaultProven {
             member: fault.member,

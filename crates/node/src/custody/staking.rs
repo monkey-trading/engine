@@ -379,6 +379,7 @@ async fn mirror_one(tx: &mpsc::Sender<Request>, event: StakingEvent) -> Result<(
                 info!(proposal, fast, "passed proposal mirrored");
             }
             StakingEventKind::FaultProven { member, turn, position, signer_epoch, seq } => {
+                // A fault the engine credits but refuses (`operator_fault_refused`) is not a disagreement.
                 info!(%member, turn, position, signer_epoch, seq, "proven operator fault mirrored");
             }
         }

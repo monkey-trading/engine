@@ -27,6 +27,14 @@ contract FaultProof {
     /// @notice The vault whose signer history and registry the proofs are checked against.
     Vault public immutable vault;
 
+    /// @notice One head of a proof: the head, its signature, and the index of the assignment's revision
+    /// whose release and generation it binds.
+    struct Evidence {
+        LogHeads.HeadV2 head;
+        bytes signature;
+        uint256 revision;
+    }
+
     /// @notice Whether a fault has been proven for turn `turn`'s assignment at `position`.
     mapping(uint64 turn => mapping(uint16 position => bool)) public proven;
 
@@ -51,49 +59,43 @@ contract FaultProof {
     /// position and release (`DifferentAssignment`), the assignment is not yet proven (`AlreadyProven`),
     /// both signatures recover the vault's signer of `epoch` (`InvalidSigner`), the vault's registry
     /// names a schedule (`NoSchedule`) that assigned the position (`NoAssignment`), and each head's
-    /// release and generation are a revision of that assignment (`ReleaseNotAssigned`).
-    function prove(
-        uint64 epoch,
-        LogHeads.HeadV2 calldata a,
-        bytes calldata signatureA,
-        LogHeads.HeadV2 calldata b,
-        bytes calldata signatureB
-    ) external returns (address member) {
-        if (a.seq != b.seq || a.link == b.link) revert NotConflicting();
-        if (a.turn != b.turn || a.position != b.position || a.release != b.release) revert DifferentAssignment();
-        if (proven[a.turn][a.position]) revert AlreadyProven(a.turn, a.position);
+    /// release and generation are the assignment's revision its evidence names (`ReleaseNotAssigned`).
+    function prove(uint64 epoch, Evidence calldata a, Evidence calldata b) external returns (address member) {
+        LogHeads.HeadV2 calldata x = a.head;
+        LogHeads.HeadV2 calldata y = b.head;
+        if (x.seq != y.seq || x.link == y.link) revert NotConflicting();
+        if (x.turn != y.turn || x.position != y.position || x.release != y.release) revert DifferentAssignment();
+        if (proven[x.turn][x.position]) revert AlreadyProven(x.turn, x.position);
         address signer = vault.signerAtEpoch(epoch);
-        if (ECDSA.recover(_digest(epoch, a), signatureA) != signer) revert InvalidSigner();
-        if (ECDSA.recover(_digest(epoch, b), signatureB) != signer) revert InvalidSigner();
+        if (ECDSA.recover(_digest(epoch, x), a.signature) != signer) revert InvalidSigner();
+        if (ECDSA.recover(_digest(epoch, y), b.signature) != signer) revert InvalidSigner();
         member = _member(a, b);
-        proven[a.turn][a.position] = true;
-        emit FaultProven(member, a.turn, a.position, epoch, a.seq);
+        proven[x.turn][x.position] = true;
+        emit FaultProven(member, x.turn, x.position, epoch, x.seq);
     }
 
-    /// @dev The member of the heads' assignment, once each head's release and generation are among
-    /// its revisions.
-    function _member(LogHeads.HeadV2 calldata a, LogHeads.HeadV2 calldata b) private view returns (address) {
+    /// @dev The member of the heads' assignment, once each head's release and generation are the
+    /// revision its evidence names.
+    function _member(Evidence calldata a, Evidence calldata b) private view returns (address member) {
         OperatorRegistry registry = vault.registry();
         if (address(registry) == address(0)) revert NoSchedule();
         OperatorSchedule schedule = registry.schedule();
         if (address(schedule) == address(0)) revert NoSchedule();
-        (OperatorSchedule.Assignment memory assignment, OperatorSchedule.Revision[] memory revisions) =
-            schedule.assignmentOf(a.turn, a.position);
-        if (assignment.candidate == address(0)) revert NoAssignment(a.turn, a.position);
-        _checkRevision(revisions, a.release, a.generation);
-        _checkRevision(revisions, b.release, b.generation);
-        return assignment.candidate;
+        member = _checkRevision(schedule, a);
+        _checkRevision(schedule, b);
     }
 
-    /// @dev Reverts unless `release` under `generation` is one of `revisions`.
-    function _checkRevision(OperatorSchedule.Revision[] memory revisions, bytes32 release, uint64 generation)
-        private
-        pure
-    {
-        for (uint256 i = 0; i < revisions.length; ++i) {
-            if (revisions[i].release == release && revisions[i].generation == generation) return;
+    /// @dev The assignment's member, once `evidence`'s head binds the release and generation of the
+    /// revision it names; generations count from one, so a revision past the last never matches.
+    function _checkRevision(OperatorSchedule schedule, Evidence calldata evidence) private view returns (address) {
+        LogHeads.HeadV2 calldata head = evidence.head;
+        (address candidate, OperatorSchedule.Revision memory revision) =
+            schedule.revisionOf(head.turn, head.position, evidence.revision);
+        if (candidate == address(0)) revert NoAssignment(head.turn, head.position);
+        if (revision.generation == 0 || revision.release != head.release || revision.generation != head.generation) {
+            revert ReleaseNotAssigned(head.release, head.generation);
         }
-        revert ReleaseNotAssigned(release, generation);
+        return candidate;
     }
 
     /// @dev The `engine.log-head.v2` digest of `head` under `epoch`, as `LogHeads` computes it for the

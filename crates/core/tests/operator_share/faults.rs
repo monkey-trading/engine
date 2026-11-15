@@ -168,16 +168,15 @@ fn the_haircut_scales_the_part_it_covers_from_none_to_all() {
 
 #[test]
 fn a_haircut_that_withholds_the_whole_part_allocates_the_member_nothing() {
-    let mut h = penalised(1_000_000_000, Penalty { initial_bps: 10_000, decay_ms: MAX_DECAY_MS });
+    // A fifth of 200 units over one day of a ten-year decay from the whole share: the kept part,
+    // under 0.014% of it, rounds to nothing, so the close allocates the candidate nothing.
+    let mut h = penalised(1_000, Penalty { initial_bps: 10_000, decay_ms: MAX_DECAY_MS });
     seated_epoch(&mut h);
     prove(&mut h, CANDIDATE, 7);
     let events = close(&mut h);
-    let (allocated_parts, withheld) = parts(&events);
-    // Over one day of a ten-year decay the haircut stays above 99.97%: the candidate keeps under 0.03%.
-    let [(_, kept)] = allocated_parts[..] else { panic!("one part: {events:?}") };
-    assert!(kept < 60_000, "{kept}");
-    assert_eq!(withheld, vec![(CANDIDATE, 200_000_000 - kept)]);
-    assert_eq!(allocated(&events), UsdcUnits(1_000_000_000));
+    assert_eq!(parts(&events), (vec![], vec![(CANDIDATE, 200)]), "{events:?}");
+    assert_eq!((leaf(&h, CANDIDATE), leaf(&h, STAKER_A)), (0, 1_000));
+    assert_eq!(allocated(&events), UsdcUnits(1_000));
 }
 
 #[test]
@@ -226,21 +225,33 @@ fn a_member_under_a_daily_turn_is_cut_from_its_turn_taken() {
 }
 
 #[test]
-fn a_mirror_the_log_contradicts_is_refused_and_credits_nothing() {
-    let refused = |events: &[Event], reason: &str| matches!(events.last(), Some(Event::ElectionRejected { reason: r, .. }) if r.contains(reason));
-    // Before `V69`.
-    let mut h = at(ProtocolVersion::V63, 1_000_000_000);
-    let events = prove(&mut h, CANDIDATE, 7);
-    assert!(refused(&events, "fault proofs need protocol"), "{events:?}");
-    // No contract recorded.
-    let mut h = at(ProtocolVersion::V69, 1_000_000_000);
-    let events = prove(&mut h, CANDIDATE, 7);
-    assert!(refused(&events, "no fault proof contract"), "{events:?}");
+fn a_fault_before_v69_or_its_contract_is_credited_and_refused_and_holds_nothing() {
+    let refused = |events: &[Event], reason: &str| {
+        matches!(events.last(), Some(Event::OperatorFaultRefused { member, reason: r, .. })
+            if *member == CANDIDATE && r.contains(reason))
+    };
+    // Before `V69`, and under it before the contract is recorded: credited, so the watcher moves on,
+    // and nothing else changes.
+    for (version, reason) in
+        [(ProtocolVersion::V63, "fault proofs need protocol"), (ProtocolVersion::V69, "no fault proof contract")]
+    {
+        let mut h = at(version, 1_000_000_000);
+        let chain_ref = format!("0xfault:{}", h.log.len());
+        let events = prove(&mut h, CANDIDATE, 7);
+        assert!(refused(&events, reason), "{version:?}: {events:?}");
+        assert!(h.engine.is_staking_credited(&chain_ref), "{version:?}");
+        assert!(h.engine.operator_faults().haircuts.is_empty(), "{version:?}");
+    }
+}
+
+#[test]
+fn a_mirror_the_log_contradicts_is_rejected_and_credits_nothing() {
+    let rejected = |events: &[Event], reason: &str| matches!(events.last(), Some(Event::ElectionRejected { reason: r, .. }) if r.contains(reason));
     // A zero member, and a reference already credited.
     let mut h = penalised(1_000_000_000, PENALTY);
     let zero_ref = format!("0xfault:{}", h.log.len());
     let events = prove(&mut h, AccountId([0; 20]), 7);
-    assert!(refused(&events, "names no member"), "{events:?}");
+    assert!(rejected(&events, "names no member"), "{events:?}");
     assert!(!h.engine.is_staking_credited(&zero_ref));
     let fault = |chain_ref: &str| ProvenFault {
         member: CANDIDATE,
@@ -255,8 +266,8 @@ fn a_mirror_the_log_contradicts_is_refused_and_credits_nothing() {
     let since = h.engine.operator_faults().haircuts[&CANDIDATE];
     h.advance(DAY_MS);
     let events = h.cmd(Command::ProveFault(fault("0xonce:1")));
-    assert!(refused(&events, "already mirrored"), "{events:?}");
-    assert_eq!(h.engine.operator_faults().haircuts[&CANDIDATE], since, "a refused mirror restarts nothing");
+    assert!(rejected(&events, "already mirrored"), "{events:?}");
+    assert_eq!(h.engine.operator_faults().haircuts[&CANDIDATE], since, "a rejected mirror restarts nothing");
 }
 
 #[test]

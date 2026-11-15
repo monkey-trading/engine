@@ -383,6 +383,9 @@ impl Metrics {
             Event::ProposalRefused { .. } => {
                 rejection("proposal_refused", "other");
             }
+            Event::OperatorFaultRefused { .. } => {
+                rejection("operator_fault_refused", "other");
+            }
             Event::CustodyDepositRejected { reason, .. } => {
                 rejection("custody_deposit_rejected", deposit_reject_kind(reason));
             }

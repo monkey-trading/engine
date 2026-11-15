@@ -413,8 +413,9 @@ an index: load only the rule whose hint matches the current action.
   release of the epoch's newest head.
   `src/FaultProof.sol` (from #597) takes two `engine.log-head.v2` heads of one signer epoch, turn,
   position and release that name different links at one seq, checks both against that epoch's signer
-  (`signerAtEpoch`) and the schedule's assignment and its releases, and emits `FaultProven` naming the
-  member once per assignment, so a promotion's new epoch pairs with nothing before it.
+  (`signerAtEpoch`) and the assignment's revision each names (`OperatorSchedule.revisionOf`, one read
+  per head), and emits `FaultProven` naming the member once per assignment, so a promotion's new
+  epoch pairs with nothing before it.
   `src/SeedSchedule.sol` fixes each daily operator turn's seed epoch
   (the beacon epoch holding the time two days before its draw deadline, which is a day before its 22:30 UTC boundary);
   `src/SeedRelay.sol` on Ethereum proves that epoch's RANDAO mix from an EIP-4788 beacon block root, its

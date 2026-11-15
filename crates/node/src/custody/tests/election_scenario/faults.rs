@@ -32,7 +32,12 @@ use super::operator_share::{FLOOR_UNITS, next_epoch};
 use super::{CONFIG_HASH, DIGEST_A, DIGEST_B, FINALITY_MARGIN_SECS, T0_SECS, address, monkey};
 use crate::checkpoints::scenario::deploy;
 use crate::clock::Clock;
-use crate::log_heads::{Head, HeadV2, Hold};
+use crate::config::NodeConfig;
+use crate::liveness::Released;
+use crate::liveness::operator::Signing;
+use crate::log::CheckpointDomain;
+use crate::log_heads::v2::{Assignment, Inputs, next};
+use crate::log_heads::{Head, HeadV2, HeadsChain, HeadsRpc, Hold};
 use crate::tee::EnclaveKey;
 use crate::tee::sealing::Release;
 
@@ -56,7 +61,8 @@ sol! {
     function checkpointSigner() external view returns (address);
     function witness() external returns (bool);
     function promote() external returns (uint64, uint16);
-    function prove(uint64 epoch, ProvenHead a, bytes signatureA, ProvenHead b, bytes signatureB) external returns (address);
+    struct Evidence { ProvenHead head; bytes signature; uint256 revision; }
+    function prove(uint64 epoch, Evidence a, Evidence b) external returns (address);
     event FaultProven(address indexed member, uint64 indexed turn, uint16 position, uint64 signerEpoch, uint64 seq);
     error InvalidSigner();
 }
@@ -97,7 +103,7 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
         &(chain.accounts[9], 1_606_824_023u64).abi_encode_params(),
     )
     .await;
-    let (schedule, _) = chain.deploy_schedule_with(receiver, RULE, 60).await;
+    let (schedule, log_heads) = chain.deploy_schedule_with(receiver, RULE, 60).await;
     chain.schedule = Some(schedule);
     let fault_proof = deploy(
         &chain.provider,
@@ -182,34 +188,18 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
     assert_ne!(link_a, link_b, "the two histories differ at seq {seq}");
     println!("PASS: restarted from an older copy, the enclave sequenced two histories through seq {seq}");
 
-    // 3. The enclave's key signs a head of each at that seq, binding B's assignment; anyone proves it.
+    // 3. The enclave signs a head of each at that seq as its log-head poster does: the turn read from
+    //    the chain through the custody quorum binds B's assignment, since its keys are sealed in that
+    //    assignment's release and generation. Anyone proves the pair.
     let epoch = chain.view(chain.vault, signerEpochCall {}).await;
-    let signed_at = u64::try_from(node.clock.now_ms()).unwrap();
-    let head = |link, stamp| HeadV2 {
-        head: Head { seq, link },
-        parent: None,
-        turn,
-        position: assignment.position,
-        release: releases[1],
-        generation: assignment.generation,
-        stamp,
-        signed_at,
-        hold: Hold::Live,
-        confirmer: Address::ZERO,
-        block_number: 0,
-        block_hash: B256::ZERO,
-    };
-    let (a, other) = (head(link_a, stamp_a), head(link_b, stamp_b));
-    let sign = |head: &HeadV2, key: &EnclaveKey, epoch: u64| -> Bytes {
-        key.sign_digest(head.digest(31337, chain.vault, epoch)).parse().unwrap()
-    };
-    let call = proveCall {
-        epoch,
-        a: abi(&a),
-        signatureA: sign(&a, &signing, epoch),
-        b: abi(&other),
-        signatureB: sign(&other, &signing, epoch),
-    };
+    let heads = heads_rpc(&chain, log_heads, &node.dir.with_extension("heads"));
+    let keys = (releases[1], assignment.generation);
+    let reached = node.clock.now_ms();
+    let enclave = |link, stamp| Released { head: Head { seq, link }, stamp };
+    let a = enclave_head(&heads, keys, enclave(link_a, stamp_a), reached, (&signing, chain.vault, epoch)).await;
+    let other = enclave_head(&heads, keys, enclave(link_b, stamp_b), reached, (&signing, chain.vault, epoch)).await;
+    assert_eq!((a.0.turn, a.0.position, a.0.release), (turn, assignment.position, releases[1]));
+    let call = proveCall { epoch, a: evidence(&a, 0), b: evidence(&other, 0) };
     let receipt = chain.send(chain.accounts[7], fault_proof, call.abi_encode()).await;
     let proven = receipt.inner.logs().iter().find_map(|log| FaultProven::decode_log(&log.inner).ok());
     assert_eq!(proven.map(|log| (log.member, log.turn, log.seq)), Some((members[1], turn, seq)));
@@ -259,6 +249,10 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
     // 6. A promotion moves the vault's signer to a standby key in a new epoch; a head the new key signs,
     //    naming B's assignment of the later turn at a seq the old key signed, pairs with it under neither
     //    epoch.
+    // B's enclave's head of the later turn, read while the turn names it.
+    let released = Released { head: Head { seq, link: link_a }, stamp: stamp_a };
+    let later_keys = (releases[1], assignment.generation);
+    let a = enclave_head(&heads, later_keys, released, node.clock.now_ms(), (&signing, chain.vault, epoch)).await;
     let start = chain.latest_timestamp().await;
     let slot = RULE.0;
     for k in 1..=u64::from(RULE.2) {
@@ -271,21 +265,12 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
     assert_eq!(promoted, epoch + 1);
     let installed = chain.view(chain.vault, checkpointSignerCall {}).await;
     let key = standbys.iter().find(|key| Address::from(key.address()) == installed).expect("a vouched standby key");
-    let later_head = |link| HeadV2 {
-        turn: later,
-        position: assignment.position,
-        generation: assignment.generation,
-        ..head(link, stamp_b)
-    };
-    let (a, discarded) = (later_head(link_a), later_head(keccak256(b"the promoted member's history")));
+    // The same head over another history, signed by the promoted standby key under the new epoch.
+    let mut discarded = a.0;
+    discarded.head.link = keccak256(b"the promoted member's history");
+    let discarded = (discarded, key.sign_digest(discarded.digest(31337, chain.vault, promoted)).parse().unwrap());
     for under in [epoch, promoted] {
-        let call = proveCall {
-            epoch: under,
-            a: abi(&a),
-            signatureA: sign(&a, &signing, epoch),
-            b: abi(&discarded),
-            signatureB: sign(&discarded, key, promoted),
-        };
+        let call = proveCall { epoch: under, a: evidence(&a, 0), b: evidence(&discarded, 0) };
         let reverted = chain.reverted(chain.accounts[7], fault_proof, call.abi_encode()).await;
         assert_eq!(reverted.as_ref(), InvalidSigner {}.abi_encode().as_slice(), "under epoch {under}");
     }
@@ -368,6 +353,58 @@ fn copy_dir(from: &Path, to: &Path) {
             std::fs::copy(entry.path(), target).unwrap();
         }
     }
+}
+
+/// The custody quorum's reads of the turn naming the operator, as the log-head poster makes them.
+fn heads_rpc(chain: &Chain, log_heads: Address, dir: &Path) -> HeadsRpc {
+    std::fs::create_dir_all(dir).unwrap();
+    let anvil = std::fs::read_to_string(crate::test_support::ANVIL_CONFIG).unwrap();
+    let mut cfg: NodeConfig = toml::from_str(&format!(
+        "{anvil}\n[checkpoints]\nrpc_url = \"{}\"\nrelayer = \"{:#x}\"\nretry_interval = \"1s\"\nrpc_timeout = \"5s\"\n\n\
+         [log_heads]\ncontract = \"{log_heads:#x}\"\nrelayer = \"{:#x}\"\ninterval = \"1h\"\n",
+        chain.url, chain.accounts[8], chain.accounts[5]
+    ))
+    .unwrap();
+    cfg.custody = super::node::custody_section(chain, dir, cfg.custody);
+    cfg.custody.vault = format!("{:#x}", chain.vault);
+    let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: AccountId(chain.vault.into()) };
+    let quorum = Arc::new(crate::custody::heads_reader(&cfg.custody).unwrap());
+    HeadsRpc::new(cfg.checkpoints.as_ref().unwrap(), cfg.log_heads.as_ref().unwrap(), domain, dir, quorum).unwrap()
+}
+
+/// The v2 head the enclave signs for `released`, built and signed as its log-head poster builds and
+/// signs one: the turn naming the operator read from the chain, the assignment bound when `keys`, the
+/// release and generation the enclave's keys are sealed in, are that turn's, the head from both, and
+/// its digest under `epoch` of `vault` signed by `key`.
+async fn enclave_head(
+    heads: &HeadsRpc,
+    keys: (B256, u64),
+    released: Released,
+    reached: Millis,
+    (key, vault, epoch): (&EnclaveKey, Address, u64),
+) -> (HeadV2, Bytes) {
+    // As the poster does: the signer epoch's posted head, the parent a head extends (none here),
+    // then the turn read at the block it was agreed at.
+    let (posted_epoch, parent) = heads.posted().await.unwrap();
+    assert_eq!(posted_epoch, epoch);
+    let turn = heads.turn().await.unwrap().expect("a turn names the operator");
+    let bound = Assignment::held(&turn, Some(keys));
+    let inputs = Inputs {
+        signing: Signing::Tip,
+        tip: released,
+        hold: Hold::Live,
+        parent,
+        reached: Some(reached),
+        last_signed: 0,
+    };
+    let head = next(&turn, bound, Some(keys), inputs).expect("a head to sign");
+    let signature = key.sign_digest(head.digest(31337, vault, epoch)).parse().unwrap();
+    (head, signature)
+}
+
+/// A signed head as `prove` takes it, naming the assignment's revision at `revision`.
+fn evidence((head, signature): &(HeadV2, Bytes), revision: u64) -> Evidence {
+    Evidence { head: abi(head), signature: signature.clone(), revision: U256::from(revision) }
 }
 
 /// `head` as `prove` takes it.

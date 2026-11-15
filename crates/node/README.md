@@ -2687,9 +2687,10 @@ naming it, the frontier carries the boundary of the last turn the registry's sch
 With `[custody.evm.staking.registry.fault_proof]`, the `FaultProof` over the vault and its `penalty` (`initial_bps`,
 1 to 10,000, and `decay`, whole milliseconds up to 3650 days), the node records both in the log once protocol `V70`
 is in force (`SetFaultProof`), at a start's activation or after a passed vote activates it, and refuses to start on a
-log that records another; the watcher mirrors the contract's `FaultProven` events from `V70`, once a read at a
+log that records another; the watcher mirrors the contract's `FaultProven` events, once a read at a
 window's end shows the contract names the configured vault, and the account history lists each
-`operator_share_withheld`.
+`operator_share_withheld`. A fault the engine credits but refuses, mirrored before `V69` is in force or the
+contract is recorded, raises the `operator_fault_refused` Warning and holds no later mirror.
 `GET /v1/house/state` adds a `governance` section, the recorded contract, each change waiting with its
 `applies_at`, each restriction in force with its `expires_at`, the baseline of each field one holds, and from `V65`
 when drawn turns name the operator (`turns_from`), and

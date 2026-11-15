@@ -502,7 +502,8 @@ from V69 anyone can submit two `engine.log-head.v2` heads signed under one signe
 same turn, position and release, that name different links at one seq to `FaultProof`, which checks
 both against that epoch's signer and the schedule's assignment, once per assignment, and the engine
 then cuts the assigned member's operator share by a haircut that starts at the recorded penalty and
-falls linearly to nothing over its decay, the withheld part going to stakers; heads under different
+falls linearly to nothing over its decay, the withheld part going to stakers (a fault proven before
+V69 is in force or the contract is recorded is credited and cuts nothing); heads under different
 signer epochs, such as the history a promotion discards, heads of different assignments, a second
 history whose heads never share a seq, an answered command left out of the published log, censorship
 and delay prove nothing, and no self-bond is slashed;

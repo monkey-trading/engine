@@ -439,6 +439,7 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::ProposalRefused { .. }
         | Event::RestrictionLapsed { .. }
         | Event::OperatorFaultProven { .. }
+        | Event::OperatorFaultRefused { .. }
         | Event::CatchUpDeferred { .. } => None,
     }
 }

@@ -376,6 +376,14 @@ pub enum Event {
         seq: u64,
         decays_until: Millis,
     },
+    /// A fault the fault proof contract proved, credited but refused before `V69` is in force or the
+    /// contract is recorded: it changes nothing else.
+    OperatorFaultRefused {
+        member: AccountId,
+        turn: u64,
+        position: u16,
+        reason: String,
+    },
     /// From `V51`, the turn's member started sequencing it, in an enclave running `release`.
     TurnTaken {
         turn: u64,

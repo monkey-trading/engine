@@ -5,6 +5,7 @@ import {ECDSA} from "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
 
 import {FaultProof} from "../src/FaultProof.sol";
 import {LogHeads} from "../src/LogHeads.sol";
+import {OperatorSchedule} from "../src/OperatorSchedule.sol";
 import {Vault} from "../src/Vault.sol";
 import {LivenessTest} from "./helpers/LivenessTest.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
@@ -33,7 +34,7 @@ contract FaultProofTest is LivenessTest {
 
     function _prove(LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) internal returns (address) {
         vm.prank(anyone);
-        return faults.prove(vault.signerEpoch(), a, _sign(a, _signerKey()), b, _sign(b, _signerKey()));
+        return faults.prove(vault.signerEpoch(), _ev(a, _sign(a, _signerKey())), _ev(b, _sign(b, _signerKey())));
     }
 
     function _expectRevert(bytes memory reason, LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) internal {
@@ -41,7 +42,7 @@ contract FaultProofTest is LivenessTest {
         bytes memory sigB = _sign(b, _signerKey());
         uint64 epoch = vault.signerEpoch();
         vm.expectRevert(reason);
-        faults.prove(epoch, a, sigA, b, sigB);
+        faults.prove(epoch, _ev(a, sigA), _ev(b, sigB));
     }
 
     function test_TwoHeadsDisagreeingAtOneSeqNameTheTurnsMemberOnce() public {
@@ -97,6 +98,52 @@ contract FaultProofTest is LivenessTest {
         _expectRevert(abi.encodeWithSelector(FaultProof.ReleaseNotAssigned.selector, b.release, b.generation), a, b);
     }
 
+    function test_ARevisionIndexPastTheLastOrOfAnotherGenerationProvesNothing() public {
+        (LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) = _conflict();
+        bytes memory sigA = _sign(a, _signerKey());
+        bytes memory sigB = _sign(b, _signerKey());
+        uint64 epoch = vault.signerEpoch();
+        bytes memory refused = abi.encodeWithSelector(FaultProof.ReleaseNotAssigned.selector, b.release, b.generation);
+        vm.expectRevert(refused);
+        faults.prove(epoch, _ev(a, sigA), FaultProof.Evidence(b, sigB, 1));
+        // A release move adds a revision in a new generation; a head of the first names index 0, not 1.
+        vm.prank(alice);
+        registry.setRelease(_digest(1), CONFIG);
+        (, OperatorSchedule.Revision[] memory revisions) = schedule.assignmentOf(turn, a.position);
+        assertEq(revisions.length, 2);
+        vm.expectRevert(refused);
+        faults.prove(epoch, _ev(a, sigA), FaultProof.Evidence(b, sigB, 1));
+    }
+
+    function test_ARevisionPastTheLastMatchesNoHead() public {
+        // Past the last revision the schedule answers zeros, which even a head of no release cannot match.
+        (LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) = _conflict();
+        (a.release, a.generation, b.release, b.generation) = (bytes32(0), 0, bytes32(0), 0);
+        FaultProof.Evidence memory first = FaultProof.Evidence(a, _sign(a, _signerKey()), 9);
+        FaultProof.Evidence memory second = FaultProof.Evidence(b, _sign(b, _signerKey()), 9);
+        uint64 epoch = vault.signerEpoch();
+        vm.expectRevert(abi.encodeWithSelector(FaultProof.ReleaseNotAssigned.selector, bytes32(0), uint64(0)));
+        faults.prove(epoch, first, second);
+    }
+
+    function test_AProofCostsTheSameHoweverManyRevisionsTheMemberAdds() public {
+        // The member moves to its own release again and again, each move a revision of the turn.
+        for (uint256 i = 0; i < 300; ++i) {
+            vm.prank(alice);
+            registry.setRelease(_digest(1), CONFIG);
+        }
+        (LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) = _conflict();
+        (, OperatorSchedule.Revision[] memory revisions) = schedule.assignmentOf(turn, a.position);
+        assertEq(revisions.length, 301);
+        assertEq(revisions[300].generation, a.generation);
+        bytes memory sigA = _sign(a, _signerKey());
+        bytes memory sigB = _sign(b, _signerKey());
+        uint64 epoch = vault.signerEpoch();
+        uint256 before = gasleft();
+        faults.prove(epoch, FaultProof.Evidence(a, sigA, 300), FaultProof.Evidence(b, sigB, 300));
+        assertLt(before - gasleft(), 150_000, "a proof reads one revision per head");
+    }
+
     function test_AnUnassignedPositionProvesNothing() public {
         (LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) = _conflict();
         (a.position, b.position) = (9, 9);
@@ -109,13 +156,13 @@ contract FaultProofTest is LivenessTest {
         bytes memory sigA = _sign(a, _signerKey());
         bytes memory forged = _sign(b, uint256(keccak256("not the enclave")));
         vm.expectRevert(FaultProof.InvalidSigner.selector);
-        faults.prove(epoch, a, sigA, b, forged);
+        faults.prove(epoch, _ev(a, sigA), _ev(b, forged));
         // Both signed by the epoch's key, but claimed for an epoch the digest does not bind.
         bytes memory sigB = _sign(b, _signerKey());
         vm.expectRevert(FaultProof.InvalidSigner.selector);
-        faults.prove(epoch + 1, a, sigA, b, sigB);
+        faults.prove(epoch + 1, _ev(a, sigA), _ev(b, sigB));
         vm.expectRevert(abi.encodeWithSelector(ECDSA.ECDSAInvalidSignatureLength.selector, uint256(3)));
-        faults.prove(epoch, a, hex"010203", b, sigB);
+        faults.prove(epoch, _ev(a, hex"010203"), _ev(b, sigB));
     }
 
     function test_APairAcrossAPromotionsSignerChangeProvesNothing() public {
@@ -138,15 +185,15 @@ contract FaultProofTest is LivenessTest {
         bytes memory sigBefore = _signAt(before, outgoingKey, outgoing);
         bytes memory sigAfter = _signAt(after_, _signerKey(), promotedEpoch);
         vm.expectRevert(FaultProof.DifferentAssignment.selector);
-        faults.prove(outgoing, before, sigBefore, after_, sigAfter);
+        faults.prove(outgoing, _ev(before, sigBefore), _ev(after_, sigAfter));
         after_.position = before.position;
         after_.release = before.release;
         after_.generation = before.generation;
         sigAfter = _signAt(after_, _signerKey(), promotedEpoch);
         vm.expectRevert(FaultProof.InvalidSigner.selector);
-        faults.prove(outgoing, before, sigBefore, after_, sigAfter);
+        faults.prove(outgoing, _ev(before, sigBefore), _ev(after_, sigAfter));
         vm.expectRevert(FaultProof.InvalidSigner.selector);
-        faults.prove(promotedEpoch, before, sigBefore, after_, sigAfter);
+        faults.prove(promotedEpoch, _ev(before, sigBefore), _ev(after_, sigAfter));
     }
 
     function test_TheOutgoingEpochsFaultStaysProvableAfterAPromotion() public {
@@ -158,7 +205,7 @@ contract FaultProofTest is LivenessTest {
         _post(a);
         _lapse();
         schedule.promote();
-        assertEq(faults.prove(outgoing, a, sigA, b, sigB), alice);
+        assertEq(faults.prove(outgoing, _ev(a, sigA), _ev(b, sigB)), alice);
     }
 
     function test_NoScheduleProvesNothing() public {
@@ -170,7 +217,7 @@ contract FaultProofTest is LivenessTest {
         bytes memory sigA = _signAt(a, _signerKey(), 1, address(bare));
         bytes memory sigB = _signAt(b, _signerKey(), 1, address(bare));
         vm.expectRevert(FaultProof.NoSchedule.selector);
-        unbound.prove(1, a, sigA, b, sigB);
+        unbound.prove(1, _ev(a, sigA), _ev(b, sigB));
     }
 
     function testFuzz_OnlyAConflictAtOneSeqOfOneAssignmentProves(
@@ -193,6 +240,15 @@ contract FaultProofTest is LivenessTest {
         } else {
             assertEq(_prove(a, b), alice);
         }
+    }
+
+    /// @dev `head` with `signature`, naming the assignment's first revision, a draw's.
+    function _ev(LogHeads.HeadV2 memory head, bytes memory signature)
+        internal
+        pure
+        returns (FaultProof.Evidence memory)
+    {
+        return FaultProof.Evidence(head, signature, 0);
     }
 
     /// @dev `head` signed by `key` under `epoch` of this test's vault.

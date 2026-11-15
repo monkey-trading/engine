@@ -1195,7 +1195,8 @@ at the command's stamp subtracts nothing. Its log is `v69.jsonl`, and its sessio
 Protocol V70 cuts a proven fault's member's operator share. `AdminCommand::SetFaultProof`, which only
 the node sequences from its config, records the fault proof contract and the penalty once, and
 `Command::ProveFault` mirrors the contract's finalised `FaultProven`, credited once like a registry
-event. The member's haircut restarts at the penalty from the mirror's stamp and falls linearly to
+event; one mirrored before V69 is in force or the contract is recorded is credited and refused
+(`operator_fault_refused`), so it holds no later mirror. The member's haircut restarts at the penalty from the mirror's stamp and falls linearly to
 nothing over its decay; each command credits the integral of the haircut over the member's time in
 office since the command before it, in bps·ms, rounded up, beside the time itself, and a close pays
 the member `floor(share · (10,000 · served − withheld) / (10,000 · counted))` with

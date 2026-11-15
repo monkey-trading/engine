@@ -256,6 +256,12 @@ pub fn every_event() -> Vec<Event> {
             seq: 42,
             decays_until: 1_793_864_000_000,
         },
+        Event::OperatorFaultRefused {
+            member: account,
+            turn: 20_754,
+            position: 0,
+            reason: "fault proofs need protocol V69".into(),
+        },
         Event::TurnTakenRejected { reason: "turn 20754 is not the turn in effect".into() },
         Event::ProposalScheduled { proposal: 1, applies_at: 1_793_604_800_000 },
         Event::RestrictionApplied { proposal: 2, expires_at: 1_793_086_400_000 },
@@ -316,6 +322,7 @@ pub fn every_event() -> Vec<Event> {
             | Event::OperatorShareAllocated { .. }
             | Event::OperatorShareWithheld { .. }
             | Event::OperatorFaultProven { .. }
+            | Event::OperatorFaultRefused { .. }
             | Event::DistributionEpochClosed { .. }
             | Event::DistributionEpochsSkipped { .. }
             | Event::RotationSwitched { .. }

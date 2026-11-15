@@ -233,6 +233,10 @@ pub(super) fn alert_on(event: &Event) {
         Event::TurnTakenRejected { reason } => {
             warn!(alert = "turn_take_refused", "this node's TurnTaken was refused: {reason}");
         }
+        // A fault proven before the engine's penalty rules are in force cuts no share.
+        Event::OperatorFaultRefused { member, turn, position, reason } => {
+            warn!(alert = "operator_fault_refused", %member, turn, position, "a proven fault cuts nothing: {reason}");
+        }
         // A passed proposal the rules refuse changes nothing: the members' vote did not take effect.
         Event::ProposalRefused { proposal, reason } => {
             warn!(alert = "proposal_refused", proposal, "a passed proposal changes nothing: {reason}");

@@ -103,8 +103,7 @@ pub struct Sequencer {
     outbox: Vec<Arc<StreamMsg>>,
     clock: Arc<dyn Clock>,
     time: TimeGate,
-    /// Commands the engine must accept, waiting for a stamp trusted time admits, each group with
-    /// what it is for.
+    /// Commands the engine must accept, waiting for a stamp trusted time admits, each group with what it is for.
     required: Vec<(&'static str, Vec<Command>)>,
     client_auth: ClientAuth,
     access_policy: Option<engine_core::access::AccessPolicy>,
