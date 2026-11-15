@@ -151,6 +151,9 @@ checking it alone can miss a fractional-basis-point excess: a ceiling must bound
   shows. V62 adds a house-loss trigger to stress level 2, which raises the level earlier and changes no
   level's spread, so the floor's widest stress minimum reads as before. These are in the pinned inventory,
   and no result moved when it was re-pinned.
+  V64 adds each volume tier's margin floor to the parameters. It raises the initial requirement of a
+  position being opened and changes no close's spread or close-out level, so the sweep's given positions read
+  as before. The floors are in the pinned inventory, and no result moved when it was re-pinned.
 - No historical calibration guarantees future outcomes. A market with too thin a sample, or no bootstrap
   interval, is blocked and takes no value from another market; none is blocked in this sample.
 

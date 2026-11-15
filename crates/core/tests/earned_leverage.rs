@@ -3,8 +3,8 @@
 //! at most 20x, tier 1 at most 50x and the tiers above at the market's own bands; it admits fills that
 //! add risk and withdrawals, while close-outs read the market's bands, so a falling tier closes nothing
 //! out; a weekend margin and the floor charge the larger of the two band by band, and a weekend gap
-//! closes out at the market's bands alone; and the activation gives a log's table its floors. The
-//! floors' bounds are in `volume_tier_bounds.rs`.
+//! closes out at the market's bands alone; and the activation gives a log's table its floors, as a fresh
+//! log's genesis names them. The floors' bounds over a log's tables are in `volume_tier_bounds.rs`.
 
 mod common;
 
@@ -16,6 +16,7 @@ use engine_core::Fixed;
 use engine_core::command::{AdminCommand, Command};
 use engine_core::engine::MarginStanding;
 use engine_core::event::{Event, Reject};
+use engine_core::operator_bounds::{NOTICE_MS, ParamsNotice};
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::Side;
 use engine_core::volume_tier::{ACTIVATION_MARGIN_FLOORS_BPS, DAY_MS, MIN_HOLD_MS, VolumeTier, day_of};
@@ -187,7 +188,46 @@ fn activation_gives_the_table_its_floors_and_closes_no_held_position_out() {
     only_fill(&trade(&mut h, &a, GOLD, Side::Buy, "100", "2000"));
 }
 
+#[test]
+fn a_genesis_that_names_the_floors_binds_later_tables_to_them() {
+    // A fresh log activates `V64` before its genesis, which names tier 0's 5% and tier 1's 2%: the
+    // first parameters set record them as the launch table, with no activation over parameters.
+    let (mut h, _) = genesis(V64);
+    let floors = |tiers: &[VolumeTier]| tiers.iter().map(|tier| tier.margin_floor_bps).collect::<Vec<_>>();
+    assert_eq!(floors(h.engine.operator_bounds().launch_volume_tiers.as_deref().unwrap()), [500, 200, 0, 0]);
+    let due = h.ts + NOTICE_MS;
+    let announce = |h: &mut Harness, change: Change| {
+        let mut volume_tiers = h.engine.params().unwrap().volume_tiers.clone();
+        change(&mut volume_tiers);
+        h.operate(AdminCommand::AnnounceParams(ParamsNotice {
+            profit_fee_bps: None,
+            closeout_level_bps: None,
+            stress: None,
+            score_tiers: None,
+            profit_fee_curve: None,
+            volume_tiers: Some(volume_tiers),
+            effective_at: due,
+        }))
+    };
+    let cases: [(Change, &str); 2] = [
+        (
+            |t| t.iter_mut().for_each(|tier| tier.margin_floor_bps = 0),
+            "volume tier 0's margin_floor_bps 0 is below its launch value 500",
+        ),
+        (|t| t[1].margin_floor_bps = 199, "volume tier 1's margin_floor_bps 199 is below its launch value 200"),
+    ];
+    for (change, reason) in cases {
+        let events = announce(&mut h, change);
+        assert!(matches!(events.last(), Some(Event::AdminRejected { reason: r }) if r.contains(reason)), "{events:?}");
+    }
+    let events = announce(&mut h, |t| t[0].margin_floor_bps = 600);
+    assert_eq!(events.last(), Some(&Event::AdminApplied), "{events:?}");
+}
+
 // ── Helpers ──
+
+/// An edit of a tier table.
+type Change = fn(&mut Vec<VolumeTier>);
 
 /// A table whose tiers a few fills reach, each in a day: $100k counted reaches tier 1 and $400k tier
 /// 2, with the launch shares and, from `V64`, the activation floors.
