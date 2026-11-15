@@ -103,11 +103,14 @@ pub fn genesis_with(
     genesis_with_params(version, schedule, oil_weekend_bps, gold_weekend_bps, params)
 }
 
-// From `V59` the parameters name a volume tier table, as a fresh node's config does.
+/// The launch volume tier table for `version` from `V59`, as a fresh node's config names it, and
+/// none before.
 fn launch_tiers_from_v59(version: ProtocolVersion) -> Vec<VolumeTier> {
     if version >= ProtocolVersion::V59 { launch_volume_tiers() } else { vec![] }
 }
 
+/// The genesis log `genesis_at` and its variants share: client auth, the operator, the activation of
+/// `version`, `params` as given, and the markets and house capital the harness starts from.
 pub fn genesis_with_params(
     version: ProtocolVersion,
     schedule: Schedule,

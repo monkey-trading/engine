@@ -930,8 +930,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/api_tests.rs` — the `[api]` heartbeat, quote and stats scan intervals' defaults and minimums, and the fresh-account budgets' check
 - `src/config/mock_key_tests.rs` — published mock-only signer opt-in and hardware refusal regressions
 - `src/config/custody_tests.rs` — independent provider configuration checks
-- `src/config/production_tests.rs` — the config file's hash, a production build's refusal of fresh-account budgets above its values, and its refusal of
-  mock providers
+- `src/config/production_tests.rs` — the config file's hash, a production build's refusal of fresh-account budgets and request bursts above its values, and its
+  refusal of mock providers
 - `src/config/tls.rs` — the `[api.tls.acme]` section, and a production build's refusal of an API with
   only its self-signed certificate
 - `src/config/tls_tests.rs` — `[api.tls.acme]` parsing and validation, the production refusal of fresh-account budgets above its values at load, and the production refusal
@@ -1392,7 +1392,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   checks the launch values and quote currencies, and steps it through weeks with holidays and early
   closes (`main.rs`); checks each market reaches every divergence stress level with screened house
   funding (`divergence.rs`); checks each market's spread bands are the calibrated tiers in tenths of
-  a bp (`spreads.rs`);
+  a bp (`spreads.rs`); checks the launch exposure-cap floors and level-1 utilisation from a zero
+  house, each market admitting a trade up to its floor, the total floor and no market above stress
+  level 0 (`caps.rs`);
   and recomputes each futures market's roll times from its exchange's calendar and rolls the engine
   through them (`futures.rs`)
 

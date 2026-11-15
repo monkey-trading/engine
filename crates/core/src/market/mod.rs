@@ -212,7 +212,9 @@ impl MarketSpec {
     /// The most leverage a position in the market can take or approach with each margin band charged
     /// at least `floor_bps`, rounded down: a position's notional over its margin, rounded as a
     /// requirement is, peaks where the average rate up to its notional is lowest, at a band's end or,
-    /// past the last band's start, at that band's rate as the notional grows.
+    /// past the last band's start, at that band's rate as the notional grows. It reads the band ends
+    /// and the last band's limit alone, so for a band end finer than the requirement's resolution
+    /// ($0.00001) a position's own rounding can differ from it by up to one step of that resolution.
     pub fn max_leverage(&self, floor_bps: i64) -> Fixed {
         // A validated listing has at least one band, the last unbounded, each at 1 bps or more, and
         // positive band ends, so no margin here is zero.

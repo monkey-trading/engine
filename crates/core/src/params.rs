@@ -59,8 +59,9 @@ pub struct ProtocolParams {
     /// negative house NAV is. Zero means none, and is left out of the encoding.
     #[serde(default, skip_serializing_if = "Fixed::is_zero")]
     pub house_total_cap_floor: Fixed,
-    /// Most resting orders one account may hold at once, across every market, from `V14`. Left out of
-    /// the encoding at its default, so parameters that name none keep the roots they had.
+    /// Most resting orders one account may hold at once, across every market, from `V14`; from `V66` a
+    /// volume tier's own limit replaces it for an account at that tier, where the table names one. Left
+    /// out of the encoding at its default, so parameters that name none keep the roots they had.
     #[serde(default = "default_max_resting_orders", skip_serializing_if = "is_default_max_resting_orders")]
     pub max_resting_orders: usize,
     /// From `V55`, the hold curve the profit fee falls along (`holding_fee`): a realised gain pays the

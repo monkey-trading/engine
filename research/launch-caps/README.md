@@ -5,12 +5,13 @@
 This study measures the launch exposure-cap floors and the level-1 utilisation trigger at the
 pricing that ships: #623's spread tiers in tenths of a bp, each fill through its bands at its tier's
 best-price size, the owner's 10 s fee curve and D5's tier leverage, at tier 0 and at tier 3, the
-ends of the volume-tier range, on the genesis's 34 launch markets. It changes no genesis value; the
-owner decided (#614, decision D8) and F11 (#696) applied it, with the floors rounded to three figures.
+ends of the volume-tier range, on the genesis's 34 launch markets. The owner
+decided its result (#614, decision D8) and F11 (#696) applied it to the genesis, with the floors
+rounded to three figures.
 
-**Proposed for the owner:**
+**Proposed, and now the genesis's values:**
 
-| Genesis value | Today | Proposed |
+| Genesis value | Before F11 | Proposed |
 |---|---|---|
 | `house_cap_floor`, per market | none (every cap is zero at zero NAV) | BTC-USD $31.6M; ETH-USD, US500, US100 $17.8M; the other FX, index and commodity markets $10M; SOL-USD $5.62M; each share $3.16M |
 | Their sum | $0 | $244M |
@@ -27,10 +28,10 @@ owner decided (#614, decision D8) and F11 (#696) applied it, with the floors rou
   where its own refusals end at tier 3, refusing 0.1% to 0.3% of directional notional over 90 days
   (no market over 0.4%) and 0.2% to 2.4% in launch week. $1M a market refuses 29% to 38% of
   launch-week notional.
-- **The total floor does not bind** down to 25% of the market floors' sum, $61M, the smallest share
-  tested.
+- **The total floor did not bind** at any share of the market floors' sum tested, down to 25%
+  ($61M), the smallest.
 - **Level 1 at 8000** is the lowest utilisation level that fires in under 2% of open hours at both
-  ends at those floors (1.47% at tier 3); the genesis's 7000 fires in 2.65%.
+  ends at those floors (1.47% at tier 3); the earlier 7000 fires in 2.65%.
 - **On the target client's flow** the spread income is a third, and at the proposed floors NAV
   falls below zero in 3% of paths within the first hours (lowest NAV at its 1st percentile -$115k
   to -$462k) while house cash stays within 1% (0.95% at worst). Small floors ($100k to $3M a market)
@@ -61,7 +62,7 @@ the pair pays at the gap, does. At tier 1's 50x only WTI's weekends pay.
    launch-week notional.
 2. **Whether to seed the house.** About $0.5M to $1M of opening capital removes the target flow's
    early dip at the proposed floors; floors cannot.
-3. **Level-1 utilisation at 8000**, from today's 7000, at those floors.
+3. **Level-1 utilisation at 8000**, from the earlier 7000, at those floors.
 4. **Weekend margin on gap-prone markets.** Pairs held over weekends at the market's own leverage
    pay on WTI, Japan 225, silver and US Tech 100, and no floor limits them. They stop paying at a
    weekend margin of 7.5% on WTI, 1.5% on Japan 225 and silver, and 1% on US Tech 100; tier 0's 20x
@@ -189,8 +190,8 @@ study's floor grid's values, which the owner may round:
   markets no floor at all, so they refuse every order until house NAV builds their share cap, and
   leaves WTI refusing 2.6% over 90 days. $1M a market, the cap study's choice without spreads
   (#662), refuses 29% to 38% of launch-week notional.
-- **Before #696 the genesis set no floor,** so every cap is zero at zero NAV, no opening trade fills, and
-  utilisation reads full on every market.
+- **Before #696 the genesis set no floor,** so every cap is zero at zero NAV, no opening trade
+  fills, and utilisation reads full on every market.
 
 **The total floor does not bind.** At the proposed market floors, a total floor of 25% of their
 sum ($61M) to 100% ($244M) leaves every measure where it was at tier 0, and at tier 3 raises
@@ -256,7 +257,7 @@ stays at 9500, the last widening before refusals start. A level must pass at bot
 |---|---|---|
 | 5000 | 0.36% (0.7%) | 6.93% (11.7%) |
 | 6000 | 0.08% (0.1%) | 4.38% (7.5%) |
-| 7000, genesis | 0.01% (0.0%) | 2.65% (4.7%) |
+| 7000, before F11 | 0.01% (0.0%) | 2.65% (4.7%) |
 | 7500 | 0.00% (0.0%) | 2.00% (3.6%) |
 | **8000, proposed** | **0.00% (0.0%)** | **1.47% (2.7%)** |
 | 8500 | 0.00% (0.0%) | 1.02% (1.9%) |
@@ -264,7 +265,7 @@ stays at 9500, the last widening before refusals start. A level must pass at bot
 | 9500, level 2 | 0.00% (0.0%) | 0.22% (0.4%) |
 
 - **Level 1 at 8000.** At the proposed floors tier 0's lower leverage leaves every cap nearly empty,
-  and tier 3 passes from 8000; the genesis's 7000 fires in 2.65% of tier 3's open hours. BTC-USD,
+  and tier 3 passes from 8000; the earlier 7000 fires in 2.65% of tier 3's open hours. BTC-USD,
   which carries most of the flow, is the market that fills its cap. Without spreads no level below
   9500 passed at 100x (#662); larger floors, not pricing, make the difference.
 - **Smaller floors fire constantly.** At $1M a market level 1 at 8000 fires in 6.1% of tier 0's

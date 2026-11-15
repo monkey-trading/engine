@@ -197,7 +197,7 @@ this crate and reproduce the signed state roots exactly.
   shares of the widest listed bound
 - From protocol `V14`, a market whose benchmark has no rate accrues no financing, and each rollover
   records the benchmarks that have none; once any benchmark has a rate, a listing that names one
-  without is refused; each account rests at most `max_resting_orders` orders, a resting order that
+  without is refused; each account rests at most `max_resting_orders` orders (from `V66`, its tier's limit where the table names one), a resting order that
   may add risk meets its market's minimum notional at its own price, and placing one checks only
   that order against the live price
 - From protocol `V15`, a resting order that can only reduce the account's existing position in its

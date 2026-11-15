@@ -270,7 +270,8 @@ house_total_cap_floor = "2000000"
 # A fast move counts within this trailing window, and up to a tenth of it further back.
 stress_move_window_ms = 60000
 stress_cooldown_ms = 300000
-# Most orders one account may rest at once, across every market: 1 to 1000.
+# Most orders an account may rest at once, across every market: 1 to 1000. From V66 a volume
+# tier's own limit replaces it where the table names one.
 max_resting_orders = 100
 # From protocol V55 a realised gain pays the larger of profit_fee_bps and this
 # curve's fee at the hold of the slice it closes (hold_ms from the position's

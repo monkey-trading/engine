@@ -8,11 +8,11 @@ use super::*;
 use engine_core::access::AccessPolicy;
 use engine_core::governance::{GovernanceConfig, PassedProposal, command_hash};
 use engine_core::market::{MarketSpec, Tier};
+use engine_core::types::Side;
 
 use crate::sequencer::governance::admin_outcome;
 use crate::sequencer::margin_tests::{BTC, captured, fund, market_order, prices, sequenced, withdrawal};
 use crate::test_support::{TRADER, access};
-use engine_core::types::Side;
 
 const VOTE: AccountId = AccountId([0x5f; 20]);
 

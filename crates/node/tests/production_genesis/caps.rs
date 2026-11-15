@@ -186,8 +186,9 @@ impl LaunchNode {
         }
     }
 
-    /// A market buy from the trader that quotes twice the index, so the slippage guard, which compares
-    /// against the quote, never stops a fill at a stress level's wider spread: its fill, or the refusal.
+    /// A market buy from the trader that quotes twice the index, so the slippage guard, which
+    /// compares against the quote, never stops a fill at a stress level's wider spread: its fill, or
+    /// the refusal.
     fn buy(&mut self, market: &MarketSpec, qty: Fixed) -> Result<Fill, Reject> {
         let kind = OrderKind::Market { quoted: Fixed::from_int(MID * 2), max_slippage_bps: None };
         let request = OrderRequest {
