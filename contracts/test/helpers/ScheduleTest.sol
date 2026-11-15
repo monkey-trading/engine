@@ -45,7 +45,7 @@ abstract contract ScheduleTest is RegistryTest {
 
     /// @dev A schedule for the current registry and receiver, with log heads for the current vault and
     /// the test heartbeat rule.
-    function _newSchedule() internal returns (OperatorSchedule) {
+    function _newSchedule() internal virtual returns (OperatorSchedule) {
         return new OperatorSchedule(
             registry,
             receiver,
@@ -53,6 +53,7 @@ abstract contract ScheduleTest is RegistryTest {
             _liveness(),
             _livenessMinimums(),
             _livenessMaximums(),
+            _fitting(_livenessMinimums(), _livenessMaximums(), SWITCH_BUDGET),
             SWITCH_BUDGET,
             BLOCK_MILLIS
         );
@@ -69,6 +70,17 @@ abstract contract ScheduleTest is RegistryTest {
 
     function _livenessMaximums() internal pure returns (OperatorSchedule.Liveness memory) {
         return OperatorSchedule.Liveness(120, 60, 9, 256);
+    }
+
+    /// @dev The least take window that bounds `lo` and `hi` and switch budget `budget` admit, as its
+    /// minimum, its value and half its maximum.
+    function _fitting(OperatorSchedule.Liveness memory lo, OperatorSchedule.Liveness memory hi, uint64 budget)
+        internal
+        pure
+        returns (OperatorSchedule.TakeWindow memory)
+    {
+        uint16 least = uint16((budget + hi.headTolerance) / lo.heartbeatInterval + 2);
+        return OperatorSchedule.TakeWindow(least, least, 2 * least);
     }
 
     /// @dev Registers a candidate as the registry helper does, then a fresh standby key for it.
