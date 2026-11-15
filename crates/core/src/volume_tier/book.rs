@@ -99,8 +99,9 @@ impl AccountVolume {
     }
 
     /// Counts every lot whose time has come by `now` on its day, and drops the days before the window
-    /// that ends on `now`'s day.
-    fn settle(&mut self, now: Millis) {
+    /// that ends on `keep_from`'s day (`now`, or from `V68` the boundary a catch-up walks when that is
+    /// earlier, so a fill there keeps the days a later boundary's tier still reads).
+    fn settle(&mut self, now: Millis, keep_from: Millis) {
         for lots in self.opening.values_mut() {
             let matured = lots.partition_point(|lot| lot.matures_at <= now);
             for lot in lots.drain(..matured) {
@@ -112,7 +113,7 @@ impl AccountVolume {
         for lot in self.closing.drain(..due) {
             count(&mut self.days, day_of(lot.closed_at), lot.notional);
         }
-        let first = day_of(now) - (WINDOW_DAYS as i64 - 1);
+        let first = day_of(keep_from) - (WINDOW_DAYS as i64 - 1);
         self.days.retain(|day| day.day >= first);
     }
 
@@ -249,6 +250,7 @@ impl Engine {
             return;
         }
         let now = self.hold_clock_time();
+        let keep_from = self.volume_keep_from(now);
         let currency = self.markets[&exec.market].spec.quote_currency;
         let usd = |qty: Fixed| currency.to_usd(qty.mul(mark.price), mark.fx, Rounding::Down);
         let closes = !mark.held.is_zero() && mark.held.signum() != exec.side.sign();
@@ -256,7 +258,7 @@ impl Engine {
         let opening = mark.qty - closing;
         let ordered = self.protocol_version >= ProtocolVersion::V61;
         let volume = self.volumes.entry(exec.account).or_default();
-        volume.settle(now);
+        volume.settle(now, keep_from);
         let matured = closing - volume.consume_opening(exec.market, closing);
         let leg = closing - closed_matched;
         if exec.liquidation {
@@ -301,6 +303,13 @@ impl Engine {
         }
     }
 
+    /// The time a settling book keeps its days from: `now`, the command's stamp, before `V68`; from it the
+    /// sequenced time, which a catch-up rewinds to the boundary it walks, so a fill at one boundary never
+    /// drops a day a later boundary's financing tier reads (`Engine::volume_tier_at`).
+    fn volume_keep_from(&self, now: Millis) -> Millis {
+        if self.protocol_version >= ProtocolVersion::V68 { self.now } else { now }
+    }
+
     /// Scales `account`'s opening lots in `market` by a split of `old` units into `new`, each rounded
     /// toward zero as the position is, so they never exceed it; their notional keeps its value. The book
     /// first counts every lot whose time has come, so a matured lot rounded to nothing still counts.
@@ -309,8 +318,9 @@ impl Engine {
             return;
         }
         let now = self.hold_clock_time();
+        let keep_from = self.volume_keep_from(now);
         let volume = self.volumes.get_mut(&account).expect("checked above");
-        volume.settle(now);
+        volume.settle(now, keep_from);
         let Some(lots) = volume.opening.get_mut(&market) else { return };
         // A lot is at most its position, whose scaled quantity the split checked is in range.
         lots.iter_mut().for_each(|lot| lot.qty = Fixed::from_raw(lot.qty.raw() * i128::from(new) / i128::from(old)));

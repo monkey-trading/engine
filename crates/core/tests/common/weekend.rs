@@ -87,7 +87,7 @@ pub fn genesis_with_tiers(
     volume_tiers: Vec<VolumeTier>,
 ) -> Harness {
     let params = ProtocolParams { volume_tiers, ..v54_params() };
-    genesis_params(version, schedule, oil_weekend_bps, gold_weekend_bps, params)
+    genesis_with_params(version, schedule, oil_weekend_bps, gold_weekend_bps, params)
 }
 
 /// `genesis_at` with `params` as the parameters, in the form `V54` takes, and the launch volume tier
@@ -100,7 +100,7 @@ pub fn genesis_with(
     params: ProtocolParams,
 ) -> Harness {
     let params = ProtocolParams { volume_tiers: launch_tiers_from_v59(version), ..params };
-    genesis_params(version, schedule, oil_weekend_bps, gold_weekend_bps, params)
+    genesis_with_params(version, schedule, oil_weekend_bps, gold_weekend_bps, params)
 }
 
 // From `V59` the parameters name a volume tier table, as a fresh node's config does.
@@ -108,7 +108,7 @@ fn launch_tiers_from_v59(version: ProtocolVersion) -> Vec<VolumeTier> {
     if version >= ProtocolVersion::V59 { launch_volume_tiers() } else { vec![] }
 }
 
-fn genesis_params(
+pub fn genesis_with_params(
     version: ProtocolVersion,
     schedule: Schedule,
     oil_weekend_bps: i64,

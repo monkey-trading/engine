@@ -433,11 +433,22 @@ pub enum ProtocolVersion {
     /// with no index to re-read its level from (`V62` leaves it at the level it last set) pays the
     /// loss trigger's level too. Its spread still clamps to the market's close-spread ceiling.
     V67,
+    /// Tier benefits (`volume_tier`): a volume tier may carry a fee discount, a financing discount and an
+    /// emissions boost. A realised gain pays the larger of its hold curve's fee and the base fee less its
+    /// tier's discount at the close, rounded up to the bp; each rollover charges a position the markup
+    /// less its account's tier's discount, a negative markup as listed; and an account's weight in an
+    /// emission period, after its emission debt, grows by its tier's boost at the period's close before
+    /// the budget is shared. The benefits move only with the table, by a seven-day notice or a vote, none
+    /// above launch's and none falling with the tier, so a higher tier never pays more fee than a lower
+    /// one. Activation gives each tier of the table in force, and of its launch table, its position's
+    /// benefits: fee and financing discounts of 0, 0, 10% and 20%, and boosts of 0, 10%, 25% and 50%;
+    /// before it a table may name none.
+    V68,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V67;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V68;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

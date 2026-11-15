@@ -204,6 +204,9 @@ every tier or none, stays at or below its launch value and never falls with the 
 order past its account's tier limit is refused while orders already resting stay, and the node admits
 a credited account's signed requests at its tier's rate, so a limit raised past launch's, or an order
 rested past a tier's limit, is in scope.
+From protocol V68 each tier's fee discount, financing discount and emissions boost stays at or below its launch
+value and never falls with the tier, so a notice or vote cannot make a higher tier pay more fee than a lower one or
+raise a benefit past launch's; a fee or financing charge below what the tier's launch discount allows is in scope.
 From protocol V60 a listed market's weekend margin changes only after a seven-day notice, or
 while rotation is on by a vote, the operator's calendar change does not shorten or remove a weekend
 closure starting within seven days, nor add or bring forward a held market's closure within seven
@@ -444,7 +447,7 @@ at most 30 minutes), V59's volume tier bounds (the launch tiers, no threshold or
 launch, no best-price share above it, and each tier's spread from its launch spread to twice it), V62's
 (each launch house loss threshold kept at its level or above, at most its launch value), V64's (each
 margin floor at or above launch's), V66's (each order limit and request rate named and at or below
-launch's) and each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
+launch's), V68's (each fee discount, financing discount and emissions boost at or below launch's) and each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
 can set the other parameters to any valid value after seven days' notice, and a normal change applies only over the
 parameters or market it passed on; a fast-path proposal applies at once but only as a restriction that
 moves fields toward lower risk and lapses at the recorded lifetime, at most seven days, and its margin

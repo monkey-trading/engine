@@ -62,7 +62,8 @@ pub(crate) enum Unit {
     Monkey,
     /// USDC base units.
     Usdc,
-    /// MONKEY base units per USD of realised loss, with nine decimals.
+    /// MONKEY base units per unit of emission weight (from `V68` the loss grown by its tier's boost), with
+    /// nine decimals.
     MonkeyPerUsd,
 }
 

@@ -564,6 +564,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   last price when the gap starts beside a long that holds the margin, a withdrawal held to it over the
   gap, the normal margin at the reopen, a calendar change refused that would narrow the gap and a
   weekend margin change refused without notice over TLS, replay and a restart
+- `src/api/access_tests/volume_benefits.rs` — the `V68` dev scenario: a tier 2 and a tier 0 wallet each
+  holding a winning position 45 minutes and paying 9% and 10% of the gain, one over a rollover with the
+  tier 2 wallet's markup a tenth lower, one closed after 2 minutes at the curve's rate for both, a loss in
+  one MONKEY period weighed 1.25 times for the tier 2 wallet, replay and a restart
 - `src/api/access_tests/tier_limits.rs` — the `V66` dev scenario: a fresh wallet resting 25 orders and
   refused the 26th naming tier 0, its next requests refused with 429 naming tier 0's rate, a wallet at
   tier 2 resting 30 orders under its own rate, the tier falling thirty days on with the 30 orders
@@ -2363,7 +2367,8 @@ market, 50 at tier 1 and 100 above). From `V66`, `volume` also gives the tier's 
 and `requests_per_second` where the table names them: the orders the account may rest, a new one past
 which is refused as `tier_order_limit` naming the tier, and the signed requests a second the node takes
 from the account and its session keys, beyond which a request gets 429 with `Retry-After` and a body
-naming the `tier` and its `requests_per_second`. A tier naming no rate leaves `api.per_account`, which
+naming the `tier` and its `requests_per_second`. From `V68`, `volume` also gives the tier's
+`fee_discount_bps`, `financing_discount_bps` and `emissions_boost_bps`. A tier naming no rate leaves `api.per_account`, which
 also holds accounts never credited, the operator and an account's payout reissue requests.
 `GET /v1/markets` gives each market's `weekend_margin_bps` (left out when none) and, for a market
 with one, `weekend_margin`: `{"weekend_margin_bps", "from", "close", "reopen"}` for its next or
@@ -2479,7 +2484,8 @@ above the launch curve at every hold, as the profit fee stays at or above its la
 `V59` with `--volume-tiers-from <params.toml>` the notice for its `volume_tiers`, which keeps the
 launch tiers, no threshold or day divisor below launch and no share above it, from `V64` no margin
 floor below launch or above the tier before it, and from `V66` no `max_resting_orders` or
-`requests_per_second` unnamed, above launch or below the tier before it; `announce-markup <market> <bps>
+`requests_per_second` unnamed, above launch or below the tier before it, and from `V68` no `fee_discount_bps`,
+`financing_discount_bps` or `emissions_boost_bps` above launch or below the tier before it; `announce-markup <market> <bps>
 --effective-at <time>` gives the notice a listed market's markup change needs before an
 `upsert-market` carries it. From `V52`, `announce-listing <market>` with `--spreads-from` and
 `--margins-from` (TOML market specs whose bands it names) and `--markup-bps` gives the notice a listed

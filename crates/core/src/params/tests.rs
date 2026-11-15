@@ -13,7 +13,7 @@ fn utc_ms(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> Millis {
     Utc.with_ymd_and_hms(y, mo, d, h, mi, 0).unwrap().timestamp_millis()
 }
 
-fn params() -> ProtocolParams {
+pub(crate) fn params() -> ProtocolParams {
     ProtocolParams {
         profit_fee_bps: 1_000,
         closeout_level_bps: 5_000,

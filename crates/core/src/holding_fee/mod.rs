@@ -20,6 +20,10 @@
 //! each held position the open time `activation - the curve's last hold`, so its next close pays the
 //! base. `V57`'s activation keeps every open time.
 //!
+//! From `V68` the base the curve is compared with falls by the account's tier's fee discount at the
+//! close (`volume_tier::benefits`): `max(base x (1 - d), C(hold))`, the discounted base rounded up to the
+//! bp, so a hold the curve prices above every tier's discounted base pays the curve whatever the tier.
+//!
 //! The operator moves the base only from its launch value up to +50%, and the curve only to one at or
 //! above the launch curve at every hold, reaching at most 30 minutes, each after a seven-day notice
 //! (`operator_bounds`), so no hold pays less than at launch.
@@ -79,18 +83,31 @@ pub struct CloseFee {
 
 impl Engine {
     /// The hold of `account`'s position in `market` and the fee rate a close of it pays now: from
-    /// `V55` the time since its open time and `max(base, C(hold))`, and before `V55`, or with no
-    /// position, no hold and the base.
+    /// `V55` the time since its open time and `max(base, C(hold))`, with the base less `account`'s
+    /// tier's fee discount from `V68`; before `V55`, or with no position, no hold and the base.
     pub(crate) fn close_fee_terms(&self, account: AccountId, market: MarketId) -> (Option<Millis>, i64) {
+        let (hold, fee_bps, _) = self.close_fee_parts(account, market);
+        (hold, fee_bps)
+    }
+
+    /// `close_fee_terms` with the discounted base it compared the curve with, read once.
+    fn close_fee_parts(&self, account: AccountId, market: MarketId) -> (Option<Millis>, i64, i64) {
         let params = self.params.as_ref().expect("callers check params are set");
         let held = self.accounts.get(&account).filter(|acct| !acct.position(market).qty.is_zero());
         let Some(acct) = held.filter(|_| self.protocol_version >= ProtocolVersion::V55) else {
-            return (None, params.profit_fee_bps);
+            return (None, params.profit_fee_bps, params.profit_fee_bps);
         };
         // Activation, opening and every flip set the open time of a position they leave held.
         let opened_at = acct.opened_at.get(&market).expect("from V55 every position holds an open time");
         let hold = self.hold_clock_time() - opened_at;
-        (Some(hold), fee_at(params.profit_fee_bps, &params.profit_fee_curve, hold))
+        let base = self.discounted_base(account, params.profit_fee_bps);
+        (Some(hold), fee_at(base, &params.profit_fee_curve, hold), base)
+    }
+
+    /// The base profit fee `account` pays past the curve now: `base` less its tier's fee discount
+    /// (`discounted_base_bps`), which is none before `V68`.
+    fn discounted_base(&self, account: AccountId, base: i64) -> i64 {
+        discounted_base_bps(base, self.fee_discount_bps(account))
     }
 
     /// The time a hold runs to and an open time is set at: the command's own stamp, also while a
@@ -117,13 +134,13 @@ impl Engine {
         if launch.is_empty() { last_hold(&params.profit_fee_curve) } else { last_hold(launch) }
     }
 
-    /// What closing `account`'s position in `market` would pay now, from `V55`; `None` with no
-    /// position, or before `V55`.
+    /// What closing `account`'s position in `market` would pay now, at its tier now, from `V55`; `None`
+    /// with no position, or before `V55`.
     pub fn close_fee(&self, account: AccountId, market: MarketId) -> Option<CloseFee> {
-        let (Some(hold), fee_bps) = self.close_fee_terms(account, market) else { return None };
+        let (Some(hold), fee_bps, base) = self.close_fee_parts(account, market) else { return None };
         let params = self.params.as_ref().expect("a position needs params");
         let opened_at = self.hold_clock_time() - hold;
-        let falls = next_fall(params.profit_fee_bps, &params.profit_fee_curve, hold);
+        let falls = next_fall(base, &params.profit_fee_curve, hold);
         Some(CloseFee { opened_at, fee_bps, falls_at: falls.map(|after| opened_at + after) })
     }
 
@@ -281,6 +298,13 @@ pub(crate) fn spend_curve_notice(notice: &mut ParamsNotice, before: &[CurvePoint
 /// The hold at and past which `curve` charges nothing: its last point's, or zero for an empty curve.
 pub(crate) fn last_hold(curve: &[CurvePoint]) -> Millis {
     curve.last().map_or(0, |point| point.hold_ms)
+}
+
+/// `base` less `discount_bps` of it, rounded up to the bp so a discount never takes more than it names.
+/// `discount_bps` is within 0..=10000 and `base` is not negative, as parameters validate.
+pub fn discounted_base_bps(base: i64, discount_bps: i64) -> i64 {
+    let kept = i128::from(base) * i128::from(MAX_RATE_BPS - discount_bps);
+    i64::try_from(ceil_div(kept, i128::from(MAX_RATE_BPS))).expect("at most the base")
 }
 
 /// The fee rate on a gain held `hold_ms`: the larger of `base` and `curve`'s fee there.

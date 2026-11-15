@@ -15,9 +15,24 @@ fn an_opening_lot_counts_on_the_day_it_matures_and_not_before() {
     assert_eq!(volume.pending(opened + MIN_HOLD_MS - 1), usd("200"));
     let at = opened + MIN_HOLD_MS;
     assert_eq!((volume.window(at)[WINDOW_DAYS - 1], volume.pending(at)), (usd("200"), Fixed::ZERO));
-    volume.settle(at);
+    volume.settle(at, at);
     assert_eq!(volume.days, [DayVolume { day: 101, volume: usd("200") }]);
     assert!(volume.opening.is_empty());
+}
+
+#[test]
+fn settling_keeps_the_days_of_the_window_that_ends_where_it_is_told_to_keep_from() {
+    let mut volume = AccountVolume::default();
+    volume.days.push(DayVolume { day: 100, volume: usd("500") });
+    volume.days.push(DayVolume { day: 125, volume: usd("7") });
+    // Settling at day 131 drops day 100 from the window of day 130 onwards, but a catch-up still at day
+    // 129's boundary keeps it, so the tier at that boundary still reads it.
+    let at = 131 * DAY_MS;
+    let mut kept = volume.clone();
+    kept.settle(at, 129 * DAY_MS);
+    assert_eq!(kept.window(129 * DAY_MS)[0], usd("500"));
+    volume.settle(at, at);
+    assert!(volume.days.iter().all(|day| day.day != 100));
 }
 
 #[test]
@@ -26,7 +41,7 @@ fn a_closing_lot_counts_on_its_closing_day_once_the_horizon_has_passed() {
     let closed_at = 101 * DAY_MS - 1_000;
     volume.push_closing(closing(1, Side::Sell, "100", closed_at, ["1", "1", "100"]), true);
     assert_eq!(volume.pending(closed_at + HORIZON_MS - 1), usd("100"));
-    volume.settle(closed_at + HORIZON_MS);
+    volume.settle(closed_at + HORIZON_MS, closed_at + HORIZON_MS);
     assert_eq!(volume.days, [DayVolume { day: 100, volume: usd("100") }]);
     assert!(volume.closing.is_empty());
 }
@@ -36,7 +51,7 @@ fn a_lot_that_counts_nothing_adds_no_day() {
     let mut volume = AccountVolume::default();
     volume.push_opening(1, opening(NOON, "1", "0"));
     volume.push_closing(closing(1, Side::Sell, "100", NOON, ["1", "0", "0"]), true);
-    volume.settle(NOON + HORIZON_MS);
+    volume.settle(NOON + HORIZON_MS, NOON + HORIZON_MS);
     assert_eq!((volume.days.len(), volume.opening.len(), volume.closing.len()), (0, 0, 0));
 }
 
@@ -48,7 +63,7 @@ fn settling_drops_the_days_before_the_window() {
     }
     let now = 100 * DAY_MS;
     assert_eq!(volume.window(now).iter().copied().sum::<Fixed>(), usd("2"));
-    volume.settle(now);
+    volume.settle(now, now);
     assert_eq!(volume.days.iter().map(|day| day.day).collect::<Vec<_>>(), [71, 99]);
 }
 
@@ -108,7 +123,7 @@ fn closes_at_one_index_and_time_join_and_past_the_cap_the_oldest_counts_nothing(
         volume.push_closing(closing(1, Side::Sell, "100", NOON + at, ["1", "1", "1"]), true);
     }
     assert_eq!((volume.closing.len(), volume.closing[0].closed_at), (MAX_CLOSING_LOTS, NOON + 1));
-    volume.settle(NOON + MAX_CLOSING_LOTS as i64 + HORIZON_MS);
+    volume.settle(NOON + MAX_CLOSING_LOTS as i64 + HORIZON_MS, NOON + MAX_CLOSING_LOTS as i64 + HORIZON_MS);
     assert_eq!(volume.days, [DayVolume { day: 100, volume: usd(&MAX_CLOSING_LOTS.to_string()) }]);
 }
 

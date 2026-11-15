@@ -133,9 +133,17 @@ fn the_production_genesis_applies_the_launch_decisions() {
     let orders: Vec<usize> = production.params.volume_tiers.iter().map(|tier| tier.max_resting_orders).collect();
     let rates: Vec<u32> = production.params.volume_tiers.iter().map(|tier| tier.requests_per_second).collect();
     assert_eq!((orders, rates), (vec![25, 50, 100, 250], vec![2, 5, 10, 20]));
+    // D1's fee and financing discounts and emissions boosts (#614).
+    let column = |read: fn(&engine_core::volume_tier::VolumeTier) -> i64| -> Vec<i64> {
+        production.params.volume_tiers.iter().map(read).collect()
+    };
+    assert_eq!(column(|tier| tier.fee_discount_bps), [0, 0, 1_000, 2_000]);
+    assert_eq!(column(|tier| tier.financing_discount_bps), [0, 0, 1_000, 2_000]);
+    assert_eq!(column(|tier| tier.emissions_boost_bps), [0, 1_000, 2_500, 5_000]);
     let mut volume_tiers = production.params.volume_tiers.clone();
     for tier in &mut volume_tiers {
         (tier.margin_floor_bps, tier.max_resting_orders, tier.requests_per_second) = (0, 0, 0);
+        (tier.fee_discount_bps, tier.financing_discount_bps, tier.emissions_boost_bps) = (0, 0, 0);
     }
     assert_eq!(
         ProtocolParams {
