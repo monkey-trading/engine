@@ -158,6 +158,58 @@ fn the_registrys_rotation_state_decodes_as_the_named_turns_boundary() {
     assert!(decode_named_turn(&alloy::primitives::Bytes::from_static(b"no")).is_err());
 }
 
+#[tokio::test]
+async fn a_failing_upcoming_turn_read_stalls_the_poll_with_no_frontier_until_it_succeeds() {
+    use super::super::fakes::schedule::TurnsRunUntilFault::{Refused, Undecodable};
+    // The upcoming turn's end: a day plus ten minutes, so its boundary is 600 s, after the window.
+    type Fault = fn(&mut ChainState);
+    let cases: [(&str, Fault); 4] = [
+        // The poll's binding check reads the schedule first; the turn lookup's read is the second.
+        ("schedule", |state| state.schedule.named_reads_answered = Some(1)),
+        ("refused", |state| state.schedule.turns_run_until_fault = Some(Refused)),
+        ("undecodable", |state| state.schedule.turns_run_until_fault = Some(Undecodable)),
+        ("under-a-day", |state| state.schedule.turns_run_until = 60),
+    ];
+    for (name, fail) in cases {
+        let dir = scratch(&format!("vote-upcoming-fails-{name}"));
+        let node = governed_node(&dir).await;
+        let chains = vote_chains(Some(SCHEDULE));
+        for chain in &chains {
+            let mut state = chain.0.lock().unwrap();
+            state.schedule.turns_run_until = 86_400 + 600;
+            fail(&mut state);
+        }
+        let mut watcher = vote_watcher(&chains, &dir);
+        let error = watcher.poll(&node.tx).await.unwrap_err();
+        assert!(matches!(error, PollError::Stalled(Stall::Rpc(_))), "{name}: {error:?}");
+        assert!(progress_turns(&dir).is_empty(), "{name}: a frontier reached the log");
+        assert!(node.read(|e| e.staking().and_then(|staking| staking.completed_through)).await.is_none(), "{name}");
+        assert!(!dir.join("staking-cursor.json").exists(), "{name}: the cursor moved");
+        // The read recovers: the retry reaches the engine with the upcoming boundary.
+        for chain in &chains {
+            let mut state = chain.0.lock().unwrap();
+            state.schedule.named_reads_answered = None;
+            state.schedule.turns_run_until_fault = None;
+            state.schedule.turns_run_until = 86_400 + 600;
+        }
+        watcher.poll(&node.tx).await.unwrap();
+        assert_eq!(progress_turns(&dir), [Some(Some(600_000))], "{name}");
+        assert_eq!(node.read(|e| e.governance().turns_from).await, Some(600_000), "{name}");
+        node.stop().await;
+    }
+}
+
+#[test]
+fn the_schedules_last_drawn_turn_decodes_as_its_boundary() {
+    use crate::custody::registry::{decode_last_drawn_turn, turnsRunUntilCall};
+    let answer = |until: u64| -> alloy::primitives::Bytes { turnsRunUntilCall::abi_encode_returns(&until).into() };
+    assert_eq!(decode_last_drawn_turn(&answer(0)).unwrap(), None, "no turn drawn");
+    assert_eq!(decode_last_drawn_turn(&answer(86_400 + 60)).unwrap(), Some(60_000));
+    assert!(decode_last_drawn_turn(&answer(60)).is_err(), "a turn that ends within its first day");
+    assert!(decode_last_drawn_turn(&answer(u64::MAX)).is_err(), "an end past i64 milliseconds");
+    assert!(decode_last_drawn_turn(&alloy::primitives::Bytes::from_static(b"no")).is_err());
+}
+
 /// The registry turn state each staking frontier in the log in `dir` carried, in order.
 fn progress_turns(dir: &Path) -> Vec<Option<Option<engine_core::types::Millis>>> {
     crate::test_support::log_entries(&dir.join("log"))
