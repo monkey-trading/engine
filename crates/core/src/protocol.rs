@@ -395,11 +395,17 @@ pub enum ProtocolVersion {
     /// where the parameters have a level 2 and name none, and takes the thresholds in force as
     /// launch's.
     V62,
+    /// An activation that carries the log from before this version to it ends every market's open
+    /// markout-spread interval, since the activation command sampled under the earlier rules, which
+    /// before `V58` did not check the moments a market's quotes aged out (and `V58`'s own activation
+    /// sampled under the rules before it), so a lapse since the last grid point may be unseen and the
+    /// change across it would count.
+    V63,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V62;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V63;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

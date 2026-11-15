@@ -242,11 +242,51 @@ fn a_change_across_a_relisting_that_unpriced_the_market_counts_nothing() {
     assert_eq!(h.engine.markout_spread_bps(BTC), Some(f("0.5")));
 }
 
+/// BTC listed with five venues quoting it, each quote fresh for 6 s, within a 25 bps bound, and a
+/// 0.5 bp floor, on a log at `V54`.
+fn expiry_listing() -> MarketSpec {
+    let price_rules = PriceRules { max_age_ms: 6_000, max_divergence_bps: 25, min_sources: 2 };
+    floored(MarketSpec { price_rules, ..crypto(BTC, "BTC-USD") }, "0.5")
+}
+
+/// Stores, 500 ms before a grid point past the trailing hour of the setup's own prices, the five
+/// venues' quotes and returns the grid point, so the change to the next one is the only change the
+/// markout spread can hold. At the grid point two venues quote 100 and three 100.2602, 25 bps apart
+/// about the median. One high ages out 1 s on. With `index_survives` the other quotes stay fresh to
+/// the next grid point, so that expiry leaves the index valid and the next grid point's is 13 bps lower.
+/// Otherwise another high ages out at 1.2 s, which leaves the median at 100 and the spread at 26 bps,
+/// and a low at 1.4 s brings it back to 25, and venues b and d stay fresh to the next grid point,
+/// where the index is again 13 bps lower.
+fn quote_through_expiries(h: &mut Harness, index_survives: bool) -> i64 {
+    let grid = h.ts.div_euclid(GRID_MS) * GRID_MS + WINDOW_MS + 4 * GRID_MS;
+    h.advance_to(grid - 500);
+    let fresh = h.ts;
+    let (a, e) = if index_survives { (fresh, fresh) } else { (grid - 4_601, grid - 4_801) };
+    let venues = [
+        ("a", "100", a),
+        ("b", "100", fresh),
+        ("c", "100.2602", grid - 5_001),
+        ("d", "100.2602", fresh),
+        ("e", "100.2602", e),
+    ];
+    let quotes = venues.iter().map(|(source, mid, ts)| quote(source, mid, *ts)).collect();
+    h.cmd(Command::Prices { market: BTC, quotes });
+    grid
+}
+
+/// Ticks at each offset from `grid`, then past the next grid point, and returns BTC's markout spread.
+fn spread_after_ticks(h: &mut Harness, grid: i64, between: &[i64]) -> Fixed {
+    for offset in between {
+        h.advance_to(grid + offset);
+        h.cmd(Command::Tick);
+    }
+    h.advance_to(grid + GRID_MS + 100);
+    h.cmd(Command::Tick);
+    h.engine.markout_spread_bps(BTC).expect("floored")
+}
+
 #[test]
 fn from_v58_a_change_across_an_index_quote_expiry_alone_ends_and_brings_back_counts_nothing() {
-    // Five venues quote BTC, each quote fresh for 6 s, within a 25 bps bound.
-    let price_rules = PriceRules { max_age_ms: 6_000, max_divergence_bps: 25, min_sources: 2 };
-    let listing = floored(MarketSpec { price_rules, ..crypto(BTC, "BTC-USD") }, "0.5");
     // (version, the offsets from the grid point of the commands before the next one): none, so one
     // command samples both; one after the lapse, which samples the first; and one before the lapse,
     // which samples the first, then one after it that crosses no grid point.
@@ -257,38 +297,84 @@ fn from_v58_a_change_across_an_index_quote_expiry_alone_ends_and_brings_back_cou
         (ProtocolVersion::V58, &[500, 2_000]),
     ];
     for (version, between) in cases {
-        let (mut h, _) = relisted_v54([listing.clone()]);
+        let (mut h, _) = relisted_v54([expiry_listing()]);
         if version > ProtocolVersion::V54 {
             h.admin(AdminCommand::ActivateProtocol { version });
         }
-        // Past the trailing hour of the setup's own prices, so this is the only change it can hold.
-        let grid = h.ts.div_euclid(GRID_MS) * GRID_MS + WINDOW_MS + 4 * GRID_MS;
-        h.advance_to(grid - 500);
-        // At the grid point two venues quote 100 and three 100.2602, 25 bps apart about the median.
-        // One high ages out 1 s on and leaves it valid, another at 1.2 s leaves the median at 100 and
-        // the spread at 26 bps, and a low at 1.4 s brings it back to 25. Venues b and d stay fresh to
-        // the next grid point, where the index is 13 bps lower.
-        let quotes = [
-            ("a", "100", grid - 4_601),
-            ("b", "100", h.ts),
-            ("c", "100.2602", grid - 5_001),
-            ("d", "100.2602", h.ts),
-            ("e", "100.2602", grid - 4_801),
-        ];
-        let quotes = quotes.iter().map(|(source, mid, ts)| quote(source, mid, *ts)).collect();
-        h.cmd(Command::Prices { market: BTC, quotes });
-        for offset in between {
-            h.advance_to(grid + offset);
-            h.cmd(Command::Tick);
-        }
-        h.advance_to(grid + GRID_MS + 100);
-        h.cmd(Command::Tick);
-        let spread = h.engine.markout_spread_bps(BTC).expect("floored");
+        let grid = quote_through_expiries(&mut h, false);
+        let spread = spread_after_ticks(&mut h, grid, between);
         if version < ProtocolVersion::V58 {
             assert!(spread > f("12.9"), "{version:?}: {spread}");
         } else {
             assert_eq!(spread, f("0.5"), "commands between at {between:?}");
         }
+    }
+}
+
+#[test]
+fn from_v58_a_change_across_a_quote_expiry_that_leaves_the_index_valid_still_counts() {
+    // The same offsets as above: a quote expiry that leaves the index valid is a moment checked at each of
+    // them, and the change from 100.2602 to 100.1301 counts in every case.
+    for version in [ProtocolVersion::V54, ProtocolVersion::V58, ProtocolVersion::V63] {
+        for between in [&[][..], &[2_000], &[500, 2_000]] {
+            let (mut h, _) = relisted_v54([expiry_listing()]);
+            if version > ProtocolVersion::V54 {
+                h.admin(AdminCommand::ActivateProtocol { version });
+            }
+            let grid = quote_through_expiries(&mut h, true);
+            let spread = spread_after_ticks(&mut h, grid, between);
+            assert!(spread > f("12.9"), "{version:?} with commands between at {between:?}: {spread}");
+        }
+    }
+}
+
+/// A log at `start` with BTC's quotes through their expiries (`index_survives` as in
+/// `quote_through_expiries`), which activates each of `versions` at 2 s past the grid point, in order,
+/// and returns BTC's markout spread past the next grid point.
+fn spread_after_activations(start: ProtocolVersion, index_survives: bool, versions: &[ProtocolVersion]) -> Fixed {
+    let (mut h, _) = relisted_v54([expiry_listing()]);
+    if start > ProtocolVersion::V54 {
+        h.admin(AdminCommand::ActivateProtocol { version: start });
+    }
+    let grid = quote_through_expiries(&mut h, index_survives);
+    h.advance_to(grid + 2_000);
+    for version in versions {
+        h.admin(AdminCommand::ActivateProtocol { version: *version });
+    }
+    spread_after_ticks(&mut h, grid, &[])
+}
+
+#[test]
+fn an_activation_to_v63_ends_an_interval_a_lapse_since_its_grid_point_would_have_ended() {
+    // The activation samples the grid point under the earlier rules, which before V58 check no lapse,
+    // and the next command checks lapses only from the activation's time; the lapse at 1.2 s falls between.
+    // From V57 the same holds of V58's own activation, which V63's follows at the same time.
+    let cases: [(ProtocolVersion, &[ProtocolVersion]); 3] = [
+        (ProtocolVersion::V54, &[ProtocolVersion::V63]),
+        (ProtocolVersion::V57, &[ProtocolVersion::V63]),
+        (ProtocolVersion::V57, &[ProtocolVersion::V58, ProtocolVersion::V63]),
+    ];
+    for (start, versions) in cases {
+        let spread = spread_after_activations(start, false, versions);
+        assert_eq!(spread, f("0.5"), "from {start:?} through {versions:?}");
+    }
+}
+
+#[test]
+fn an_activation_to_v63_ends_an_interval_from_v58_too() {
+    // No quote expiry ends the index, and V58 checked every lapse, but V63 ends every open interval
+    // it is activated over, so the change to the next grid point counts nothing.
+    let spread = spread_after_activations(ProtocolVersion::V58, true, &[ProtocolVersion::V63]);
+    assert_eq!(spread, f("0.5"));
+}
+
+#[test]
+fn an_activation_to_a_version_before_v63_keeps_an_open_interval() {
+    // Under the rules before V58 the lapses go unchecked, and an activation to V58 or V61 leaves the
+    // interval open as it always did, so the change to the next grid point counts.
+    for version in [ProtocolVersion::V58, ProtocolVersion::V61] {
+        let spread = spread_after_activations(ProtocolVersion::V57, false, &[version]);
+        assert!(spread > f("12.9"), "to {version:?}: {spread}");
     }
 }
 

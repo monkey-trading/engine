@@ -11,10 +11,11 @@
 //! relisting of it within the interval, the commands that change what prices it. Between them its
 //! quotes only age. From `V58` a change also needs an index at each moment within the interval at
 //! which one of the market's quotes aged out, since where three or more venues quote, ageing alone can
-//! end its index and bring it back; before `V58` those moments are not checked. Each counted change
-//! is kept, as its square in bps of the earlier index, for the trailing hour. A split needs a venue
-//! close before its ex-date open, so no change spans it, and the changes kept are relative, so a
-//! split leaves the history as it is.
+//! end its index and bring it back; before `V58` those moments are not checked, so an activation
+//! from before `V63` to it or later ends every open interval. Each counted change is kept, as its
+//! square in bps of the earlier index, for the trailing hour. A split needs a venue close before its
+//! ex-date open, so no change spans it, and the changes kept are relative, so a split leaves the
+//! history as it is.
 
 use std::collections::VecDeque;
 
@@ -160,6 +161,22 @@ impl Engine {
         spread.squares.extend(added);
         while spread.squares.front().is_some_and(|(at, _)| *at < end - WINDOW) {
             spread.squares.pop_front();
+        }
+    }
+
+    /// When an activation carries the log from before `V63` to `version` at or past it, ends every
+    /// market's open interval: the activation command sampled under the earlier rules, and any rules
+    /// before `V58` did not check the moments a market's quotes aged out, so a lapse since the last grid
+    /// point may be unseen. A log that activated `V58` in the same stretch between two grid points
+    /// carries the same blind spot, so this ends them whatever the earlier version.
+    pub(crate) fn end_open_markout_intervals(&mut self, version: ProtocolVersion) {
+        if self.protocol_version >= ProtocolVersion::V63 || version < ProtocolVersion::V63 {
+            return;
+        }
+        let open: Vec<MarketId> =
+            self.markout_spreads.iter().filter(|(_, spread)| spread.last.is_some()).map(|(id, _)| *id).collect();
+        for id in open {
+            self.markout_spreads.get_mut(&id).expect("selected above").last = None;
         }
     }
 

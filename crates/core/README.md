@@ -470,7 +470,8 @@ this crate and reproduce the signed state roots exactly.
 - `tests/toxicity_score.rs` — `V54`: the add-on from 20 scored fills, an edgeless account at the
   best price, markouts from the fill's index, decay, close-outs left unmarked, a venue gap at the due
   time, and the markout spread's grid, window, floor, and closed and unpriced intervals, from `V58`
-  an index quote expiry alone ends and brings back, with the shared harness in
+  an index quote expiry alone ends and brings back and one that leaves the index valid does not, and
+  an activation to `V63` ends an open interval and one to `V58` keeps it, with the shared harness in
   `tests/common/toxicity.rs`
 - `tests/toxicity_round_trips.rs` — `V54` round trips: a fill closed in parts, adds closed by one,
   partial and flipping matches, a close and its reopening, another index or the horizon past,
@@ -1026,6 +1027,16 @@ nothing, nothing records the window, and the state encodes as before, so earlier
 unchanged. Activation keeps a threshold named before it, gives level 2's trigger one of zero where
 the parameters have a level 2 and name none, and takes the thresholds in force as launch's. Its
 session is in `examples/reference_log/v62.rs`.
+
+Protocol V63 ends every market's open markout-spread interval when an activation carries a log from
+before V63 to it. The activation command samples under the earlier rules, which before V58 check no
+quote expiry, and V58's own activation samples under the rules before it, so a lapse by quote expiry
+between the last grid point and the activation can be unseen and the change across it would count;
+the activation drops each open interval instead, and the next grid point opens it again. An
+activation to a version before V63 keeps them as before. Its log is `v63.jsonl`, and its
+session, which activates V63 over an open interval no lapse touched and shows the change across it
+counting nothing, is in
+`examples/reference_log/v63.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

@@ -12,6 +12,7 @@ impl Engine {
         self.carry_kept_notices(version);
         self.start_toxicity_score(version);
         self.floor_bound_listings(version);
+        self.end_open_markout_intervals(version);
         self.start_hold_clocks(version);
         self.start_volume_tiers(version);
         self.start_weekend_closes(version);
