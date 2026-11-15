@@ -42,7 +42,7 @@ an index: load only the rule whose hint matches the current action.
   activation gives a listing with no floor its asset class's; `tests/toxicity_*.rs`), from `V62` a stress trigger on the
   house's marked loss to its clients over the trailing day (`house_loss/`: NAV less net capital moved in, one result per
   15-minute slot, every market at the level whose threshold the loss is above, each launch threshold kept by notice and
-  by vote, `tests/house_loss.rs`, `tests/house_loss_accounting.rs` and `tests/house_loss_bounds.rs`), signed client
+  by vote, `tests/house_loss.rs`, `tests/house_loss_accounting.rs` and `tests/house_loss_bounds.rs`; from `V67` a weekend close-out pays at least the level the loss sets, `tests/house_loss_weekend.rs`), signed client
   requests (EIP-712, per-account
   nonces, and expiries, and from `V41` session keys: one account-signed registration authorises a
   short-lived in-browser key to place and cancel orders on its own nonce sequence, in
@@ -192,7 +192,7 @@ an index: load only the rule whose hint matches the current action.
   decoded as the admin command their bytes are the canonical JSON of, once it is read to name the
   schedule, with `ApplyProposal` sequenced for a passed change once its seven days have run,
   `sequencer/governance.rs`, from V65 each staking frontier carrying the turn the registry's `rotationState()`
-  names the operator by, and a start refused on a log recording another vote contract), the
+  names the operator by, from V67 else the schedule's last drawn turn when it has yet to start, and a start refused on a log recording another vote contract), the
   standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
   segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up,
   taking only entries whose command seals continue the copy and raising `operator_log_rollback`, with

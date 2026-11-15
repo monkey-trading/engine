@@ -1,13 +1,16 @@
 //! The bounds on `V62`'s house loss trigger, through `Engine::apply`: a stress notice or the
 //! operator's parameters keep each launch threshold at its level or above, at most its launch value,
 //! after the seven-day notice; a lower threshold applies, and fires at once over an idle house; and
-//! a threshold named before `V62` reads nothing until its activation keeps it. The votes' bound is in
-//! `parameter_votes/house_loss.rs`.
+//! a threshold named before `V62` reads nothing until its activation keeps it; and a fresh log, which
+//! activates `V62` before its first parameters, records those parameters' thresholds as launch's. The
+//! votes' bound is in `parameter_votes/house_loss.rs`.
 
 mod common;
 
-use common::house_loss::{harness, level, loss};
+use common::house_loss::{harness, level, level_two, loss};
 use common::session_keys::funded_at;
+use common::toxicity::v54_params;
+use common::weekend::{genesis_with, globex};
 use common::{BTC, Harness, f};
 use engine_core::Fixed;
 use engine_core::command::AdminCommand;
@@ -101,6 +104,27 @@ fn before_v62_a_threshold_reads_nothing_and_activation_keeps_it() {
         p.stress_levels[1].trigger.as_mut().expect("set above").house_loss = Some(beyond);
         assert_eq!(p.validate(), Err("stress level out of range".into()));
     }
+}
+
+#[test]
+fn a_fresh_log_records_its_first_parameters_thresholds_as_launchs_and_keeps_them() {
+    // The log activates `V62` before any parameters, so its activation finds no threshold to record.
+    let mut params = v54_params();
+    let trigger = Some(StressTrigger { house_loss: Some(f("1000")), ..StressTrigger::default() });
+    params.stress_levels.push(StressLevel { trigger, ..level_two() });
+    let mut h = genesis_with(ProtocolVersion::V62, globex(vec![]), 0, 0, params);
+    let launch = vec![LossTrigger { level: 2, house_loss: f("1000") }];
+    assert_eq!(h.engine.operator_bounds().launch_loss_triggers, Some(launch));
+    let kept = "the stress levels keep a house loss trigger at level 2 or above, at most its launch threshold 1000";
+    let due = h.ts + NOTICE_MS;
+    let dropped = with_threshold(&h, 2, None);
+    assert_eq!(refused(&h.operate(AdminCommand::SetParams(dropped.clone()))), kept);
+    assert_eq!(refused(&h.operate(stress_notice(&dropped, due))), kept);
+    let raised = with_threshold(&h, 2, Some(f("1001")));
+    assert_eq!(refused(&h.operate(stress_notice(&raised, due))), kept);
+    // A lower threshold keeps the launch one, and a notice for it stands.
+    let lowered = with_threshold(&h, 2, Some(f("999")));
+    assert_eq!(h.operate(stress_notice(&lowered, due)).last(), Some(&Event::AdminApplied));
 }
 
 // ── Helpers ──

@@ -57,14 +57,63 @@ async fn the_turn_the_registry_names_the_operator_by_reaches_the_engine_with_the
     let chains = vote_chains(Some(SCHEDULE));
     // Blocks are twelve seconds apart: the turn started with block 1, before the window's end.
     for chain in &chains {
-        chain.0.lock().unwrap().schedule.named_turn_until = Some(86_400 + 12);
+        let mut state = chain.0.lock().unwrap();
+        state.schedule.named_turn_until = Some(86_400 + 12);
+        // A later turn the schedule has drawn is not the one that names the operator now.
+        state.schedule.turns_run_until = 2 * 86_400 + 600;
     }
     vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
     assert_eq!(node.read(|e| e.governance().turns_from).await, Some(12_000));
+    assert_eq!(progress_turns(&dir), [Some(Some(12_000))]);
     // Read at the frontier the engine records, and only there.
     let frontier = node.read(|e| e.staking().and_then(|staking| staking.completed_through)).await.expect("progress");
     let reads = chains[0].0.lock().unwrap().schedule.turn_reads.clone();
     assert_eq!(reads, [BlockRef { number: frontier.block, hash: frontier.block_hash }]);
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_drawn_turn_yet_to_start_reaches_the_engine_when_none_names_the_operator() {
+    // Blocks are twelve seconds apart and the window ends at block 10, at 120 s.
+    let boundary_s = 600;
+    let dir = scratch("vote-upcoming-turn");
+    let node = governed_node(&dir).await;
+    let chains = vote_chains(Some(SCHEDULE));
+    chains.iter().for_each(|chain| chain.0.lock().unwrap().schedule.turns_run_until = 86_400 + boundary_s);
+    vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
+    assert_eq!(progress_turns(&dir), [Some(Some(600_000))]);
+    assert_eq!(node.read(|e| e.governance().turns_from).await, Some(600_000));
+    node.stop().await;
+    // A last drawn turn that began before the block is not upcoming: the registry would name it.
+    let dir = scratch("vote-started-turn");
+    let node = governed_node(&dir).await;
+    let chains = vote_chains(Some(SCHEDULE));
+    chains.iter().for_each(|chain| chain.0.lock().unwrap().schedule.turns_run_until = 86_400 + 12);
+    vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
+    assert_eq!(progress_turns(&dir), [Some(None)]);
+    node.stop().await;
+    // The registry names a schedule, or none: a registry with none draws no turn from the schedule.
+    let dir = scratch("vote-upcoming-turn-unnamed");
+    let node = governed_node(&dir).await;
+    let chains = vote_chains(Some(SCHEDULE));
+    for chain in &chains {
+        let mut state = chain.0.lock().unwrap();
+        state.schedule.turns_run_until = 86_400 + boundary_s;
+        state.schedule.named = Address::ZERO;
+    }
+    vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
+    assert_eq!(progress_turns(&dir), [Some(None)]);
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn before_v67_no_frontier_carries_a_drawn_turn_yet_to_start() {
+    let dir = scratch("vote-upcoming-turn-v65");
+    let node = governed_node_at(&dir, ProtocolVersion::V65).await;
+    let chains = vote_chains(Some(SCHEDULE));
+    chains.iter().for_each(|chain| chain.0.lock().unwrap().schedule.turns_run_until = 86_400 + 600);
+    vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
+    assert_eq!(progress_turns(&dir), [Some(None)]);
     node.stop().await;
 }
 

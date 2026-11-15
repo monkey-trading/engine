@@ -75,9 +75,7 @@ pub fn genesis_at(
     oil_weekend_bps: i64,
     gold_weekend_bps: i64,
 ) -> Harness {
-    // From `V59` the parameters name a volume tier table, as a fresh node's config does.
-    let volume_tiers = if version >= ProtocolVersion::V59 { launch_volume_tiers() } else { vec![] };
-    genesis_with_tiers(version, schedule, oil_weekend_bps, gold_weekend_bps, volume_tiers)
+    genesis_with_tiers(version, schedule, oil_weekend_bps, gold_weekend_bps, launch_tiers_from_v59(version))
 }
 
 /// `genesis_at` with the parameters naming `volume_tiers`.
@@ -88,11 +86,40 @@ pub fn genesis_with_tiers(
     gold_weekend_bps: i64,
     volume_tiers: Vec<VolumeTier>,
 ) -> Harness {
+    let params = ProtocolParams { volume_tiers, ..v54_params() };
+    genesis_params(version, schedule, oil_weekend_bps, gold_weekend_bps, params)
+}
+
+/// `genesis_at` with `params` as the parameters, in the form `V54` takes, and the launch volume tier
+/// table from `V59`.
+pub fn genesis_with(
+    version: ProtocolVersion,
+    schedule: Schedule,
+    oil_weekend_bps: i64,
+    gold_weekend_bps: i64,
+    params: ProtocolParams,
+) -> Harness {
+    let params = ProtocolParams { volume_tiers: launch_tiers_from_v59(version), ..params };
+    genesis_params(version, schedule, oil_weekend_bps, gold_weekend_bps, params)
+}
+
+// From `V59` the parameters name a volume tier table, as a fresh node's config does.
+fn launch_tiers_from_v59(version: ProtocolVersion) -> Vec<VolumeTier> {
+    if version >= ProtocolVersion::V59 { launch_volume_tiers() } else { vec![] }
+}
+
+fn genesis_params(
+    version: ProtocolVersion,
+    schedule: Schedule,
+    oil_weekend_bps: i64,
+    gold_weekend_bps: i64,
+    params: ProtocolParams,
+) -> Harness {
     let mut h = Harness::empty();
     h.admin(AdminCommand::SetClientAuth(ClientAuth::Eip712 { chain_id: CHAIN_ID, vault: VAULT }));
     h.admin(AdminCommand::SetOperator(operator()));
     h.admin(AdminCommand::ActivateProtocol { version });
-    h.admin(AdminCommand::SetParams(ProtocolParams { volume_tiers, ..v54_params() }));
+    h.admin(AdminCommand::SetParams(params));
     h.admin(AdminCommand::SetBenchmarkRate { benchmark: "SOFR".into(), annual_bps: 430 });
     for (id, symbol, class, schedule, margin) in [
         (BTC, "BTC-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000),

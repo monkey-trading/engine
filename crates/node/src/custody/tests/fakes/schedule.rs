@@ -11,6 +11,7 @@ use crate::custody::tests::fakes::{ChainState, REGISTRY};
 alloy::sol! {
     function schedule() external view returns (address);
     function rotationState() external view returns (bool enabled, bytes32 release, uint64 generation, uint64 until);
+    function turnsRunUntil() external view returns (uint64);
 }
 
 /// What the fake chain answers for the schedule binding reads.
@@ -26,13 +27,16 @@ pub(in crate::custody::tests) struct Schedule {
     /// When the turn the registry's `rotationState()` names the operator by ends, in seconds; `None`,
     /// the default, while no turn names it.
     pub(in crate::custody::tests) named_turn_until: Option<u64>,
+    /// When the last turn the schedule drew ends, in seconds, as its `turnsRunUntil()` answers; zero,
+    /// the default, before any is drawn.
+    pub(in crate::custody::tests) turns_run_until: u64,
     /// The block of each `rotationState()` read, in order.
     pub(in crate::custody::tests) turn_reads: Vec<BlockRef>,
 }
 
 impl ChainState {
-    /// A contract call's answer: a vote contract's schedule, the registry's rotation state, or the
-    /// vault's and the log heads' epochs.
+    /// A contract call's answer: a vote contract's schedule, the registry's rotation state, the
+    /// schedule's last drawn turn, or the vault's and the log heads' epochs.
     /// Error cases:
     /// - any call `Epochs::answer` refuses
     pub(super) fn answer_call(&mut self, at: BlockRef, to: Address, data: &[u8]) -> anyhow::Result<Bytes> {
@@ -51,6 +55,10 @@ impl ChainState {
                     until: until.unwrap_or_default(),
                 };
                 Ok(rotationStateCall::abi_encode_returns(&state).into())
+            }
+            _ if to == self.schedule.named && data == turnsRunUntilCall {}.abi_encode() => {
+                anyhow::ensure!(self.hash_at(at.number) == at.hash, "block {} is not canonical", at.hash);
+                Ok(turnsRunUntilCall::abi_encode_returns(&self.schedule.turns_run_until).into())
             }
             _ => self.epochs.answer(at, to, data),
         }

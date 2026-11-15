@@ -213,8 +213,8 @@ that market at its last price, so a weekend margin change past those bounds, or 
 the closure below it, is in scope. From protocol V62 every market rises to the stress level the house loss
 trigger names once the house has lost money to its clients over the trailing day, its NAV less net
 capital moved in, and the stress levels keep that trigger at its launch level or above with a
-threshold no higher than launch's, so a fill below that level while the house is behind on the day,
-or a change past that bound, is in scope. The trigger caps how fast the house loses, not what a fast
+threshold no higher than launch's, so a fill below that level while the house is behind on the day (from
+V67 a weekend close-out too), or a change past that bound, is in scope. The trigger caps how fast the house loses, not what a fast
 client takes from the house's income: `research/loss-rate-trigger` gives the bound and the classes it
 leaves open. With `[checkpoints]` configured, startup verifies the replayed log
 against the latest posted vault commitment at custody finality and refuses a shorter or conflicting log before serving or opening
@@ -428,7 +428,9 @@ so from rotation's start until the first set takes effect, and while an empty se
 operator keeps its bounded commands, and a drawn turn keeps votes governing from its boundary until an
 installation; a turn the engine refused before V65 left no boundary, so each mirrored staking frontier
 carries the registry's turn state at that finalised block, read through the custody quorum, and from
-V65's activation until the first such frontier a log holding rotation sets counts rotation as on; a
+V65's activation until the first such frontier a log holding rotation sets counts rotation as on, and from
+V67 a frontier also carries a drawn turn that has yet to start, so a refused turn whose boundary is still ahead
+is not unseen from its boundary; a
 voted access policy that a
 member's config does not name stops that member's node from starting on the log, so every member
 moves to a release whose config names it before it is proposed, as for a command a release added; the

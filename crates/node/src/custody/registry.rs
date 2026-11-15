@@ -49,6 +49,7 @@ sol! {
     );
     function schedule() external view returns (address);
     function rotationState() external view returns (bool enabled, bytes32 release, uint64 generation, uint64 until);
+    function turnsRunUntil() external view returns (uint64);
 }
 
 /// The topics of the registry events the engine mirrors.
@@ -212,6 +213,26 @@ pub(super) fn decode_named_turn(out: &alloy::primitives::Bytes) -> anyhow::Resul
     }
     let since = state.until.checked_sub(86_400).and_then(millis);
     since.map(Some).with_context(|| format!("the named turn's end {} is out of range", state.until))
+}
+
+/// The call that reads the schedule's `turnsRunUntil()`: when the last drawn turn ends, zero before any.
+pub(super) fn turns_run_until_call() -> alloy::primitives::Bytes {
+    turnsRunUntilCall {}.abi_encode().into()
+}
+
+/// The boundary, in milliseconds, of the last turn the schedule has drawn, a day before the end its
+/// `turnsRunUntil()` answer `out` gives; `None` before any is drawn.
+/// Error cases:
+/// - data that does not decode, or a turn end before a day or past `i64` milliseconds
+pub(super) fn decode_last_drawn_turn(
+    out: &alloy::primitives::Bytes,
+) -> anyhow::Result<Option<engine_core::types::Millis>> {
+    let until = turnsRunUntilCall::abi_decode_returns(out).context("decoding the schedule's turn end")?;
+    if until == 0 {
+        return Ok(None);
+    }
+    let since = until.checked_sub(86_400).and_then(millis);
+    since.map(Some).with_context(|| format!("the last drawn turn's end {until} is out of range"))
 }
 
 /// `seconds` as milliseconds, if they fit `i64`.

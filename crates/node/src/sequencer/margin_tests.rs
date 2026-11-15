@@ -16,7 +16,7 @@ use crate::clock::test_clock::TestClock;
 use crate::config::Genesis;
 use crate::test_support::{access, dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 
-const BTC: MarketId = 1;
+pub(super) const BTC: MarketId = 1;
 const ETH: MarketId = 2;
 /// Tue 20 Oct 2026 10:00 New York.
 const START: Millis = 1_792_504_800_000;
@@ -160,12 +160,12 @@ fn recover_at(
 }
 
 /// The events `cmd` produced; panics if trusted time refused its stamp.
-fn sequenced(seq: &mut Sequencer, cmd: Command) -> Vec<Event> {
+pub(super) fn sequenced(seq: &mut Sequencer, cmd: Command) -> Vec<Event> {
     seq.sequence(cmd).unwrap().expect("trusted time admits the stamp")
 }
 
 /// What `f` returns, and the log lines it wrote.
-fn captured<T>(f: impl FnOnce() -> T) -> (T, String) {
+pub(super) fn captured<T>(f: impl FnOnce() -> T) -> (T, String) {
     let lines = Lines::default();
     let subscriber = tracing_subscriber::fmt().with_writer(lines.clone()).with_ansi(false).finish();
     let out = tracing::subscriber::with_default(subscriber, f);
@@ -205,14 +205,21 @@ fn fixed(s: &str) -> Fixed {
 }
 
 /// Two venues quoting `mid` for `market`, stamped `ts`.
-fn prices(market: MarketId, mid: &str, ts: Millis) -> Command {
+pub(super) fn prices(market: MarketId, mid: &str, ts: Millis) -> Command {
     let quotes =
         ["venue-a", "venue-b"].map(|source| SourceQuote { source: source.into(), mid: fixed(mid), ts, contract: None });
     Command::Prices { market, quotes: quotes.to_vec() }
 }
 
 /// A signed, screened market order under the current protocol.
-fn market_order(seq: &mut Sequencer, seed: u8, market: MarketId, side: Side, qty: &str, quoted: &str) -> Vec<Event> {
+pub(super) fn market_order(
+    seq: &mut Sequencer,
+    seed: u8,
+    market: MarketId,
+    side: Side,
+    qty: &str,
+    quoted: &str,
+) -> Vec<Event> {
     let request = OrderRequest {
         account: access::account(seed),
         client_id: 1,
@@ -228,13 +235,13 @@ fn market_order(seq: &mut Sequencer, seed: u8, market: MarketId, side: Side, qty
 }
 
 /// A signed, screened withdrawal of `amount`.
-fn withdrawal(seq: &mut Sequencer, seed: u8, amount: &str) -> Vec<Event> {
+pub(super) fn withdrawal(seq: &mut Sequencer, seed: u8, amount: &str) -> Vec<Event> {
     let cmd = access::withdrawal(&seq.engine, seed, fixed(amount), true);
     sequenced(seq, cmd)
 }
 
 /// Declares eligibility before the scenario's first credited deposit.
-fn fund(seq: &mut Sequencer, seed: u8, amount: i64, reference: &str) {
+pub(super) fn fund(seq: &mut Sequencer, seed: u8, amount: i64, reference: &str) {
     let declaration = access::declaration(&seq.engine, seed);
     assert!(matches!(sequenced(seq, declaration).as_slice(), [Event::EligibilityAttested { .. }]));
     let account = access::account(seed);

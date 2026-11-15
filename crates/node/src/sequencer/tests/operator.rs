@@ -319,6 +319,25 @@ fn staked_log(name: &str, frontier: Option<Millis>) -> (PathBuf, Arc<TestClock>)
 
 /// `staked_log`, recording the access policy `policy`, if any.
 fn staked_log_under(name: &str, frontier: Option<Millis>, policy: Option<AccessPolicy>) -> (PathBuf, Arc<TestClock>) {
+    staked_log_with(name, frontier, policy, |_| {})
+}
+
+/// `staked_log_under`, with the house starting with no capital.
+fn staked_log_without_capital(
+    name: &str,
+    frontier: Option<Millis>,
+    policy: Option<AccessPolicy>,
+) -> (PathBuf, Arc<TestClock>) {
+    staked_log_with(name, frontier, policy, |genesis| genesis.house_capital = Fixed::ZERO)
+}
+
+/// `staked_log_under`, with `change` applied to the dev genesis.
+fn staked_log_with(
+    name: &str,
+    frontier: Option<Millis>,
+    policy: Option<AccessPolicy>,
+    change: impl FnOnce(&mut crate::config::Genesis),
+) -> (PathBuf, Arc<TestClock>) {
     let dir = scratch_dir(name);
     let clock = Arc::new(TestClock::at(START));
     let recorded = dev_config().operator().unwrap();
@@ -326,6 +345,7 @@ fn staked_log_under(name: &str, frontier: Option<Millis>, policy: Option<AccessP
     seq.activate_protocol().unwrap();
     let mut genesis = dev_config().genesis;
     genesis.benchmarks.clear();
+    change(&mut genesis);
     genesis.staking = Some(StakingConfig {
         liquidity_floor: Fixed::from_int(1),
         epoch_ms: 86_400_000,

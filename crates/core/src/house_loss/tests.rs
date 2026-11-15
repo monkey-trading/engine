@@ -2,7 +2,10 @@
 //! is in `tests/house_loss.rs`.
 
 use super::*;
-use crate::params::StressTrigger;
+use crate::engine::MarketState;
+use crate::params::{
+    DEFAULT_MAX_RESTING_ORDERS, NotionalWeighting, ProtocolParams, Rollover, StressTrigger, ToxicityParams,
+};
 
 /// A slot boundary.
 const T0: Millis = 2_000_000 * SLOT_MS;
@@ -124,6 +127,32 @@ fn the_loss_level_is_the_highest_level_whose_threshold_the_loss_is_above() {
     );
 }
 
+#[test]
+fn a_close_out_reads_the_loss_at_the_nav_now_and_never_pays_below_its_market() {
+    let mut engine = opened(T0 + 5_000, 100);
+    engine.protocol_version = ProtocolVersion::V67;
+    engine.params = Some(params(vec![level(None), level(None), level(Some(0))]));
+    engine.markets.insert(1, market());
+    let mut events = Vec::new();
+    engine.record_house_loss(usd(100), &mut events);
+    assert_eq!((engine.house_loss_level(), engine.close_out_stress_level(1)), (0, 0));
+    // The house falls behind with no command since: the level recorded is still 0, and the loss at the
+    // NAV now sets level 2.
+    engine.house_cash = usd(90);
+    assert_eq!((engine.house_loss_level(), engine.close_out_stress_level(1)), (0, 2));
+    // Once a command records it and the house is ahead again, the recorded level is 2 and the fresh one 0.
+    engine.record_house_loss(usd(90), &mut events);
+    engine.house_cash = usd(100);
+    assert_eq!((engine.house_loss_level(), engine.close_out_stress_level(1)), (2, 0));
+    // A market above the loss's level keeps its own, and under `V62` the loss reaches no close-out.
+    engine.markets.get_mut(&1).expect("listed").stress.level = 1;
+    assert_eq!(engine.close_out_stress_level(1), 1);
+    engine.house_cash = usd(90);
+    engine.markets.get_mut(&1).expect("listed").stress.level = 0;
+    engine.protocol_version = ProtocolVersion::V62;
+    assert_eq!(engine.close_out_stress_level(1), 0);
+}
+
 // ── Helpers ──
 
 /// An engine under `V62` at `now`, whose window opened there with the house holding `nav`.
@@ -153,4 +182,40 @@ fn level(house_loss: Option<i64>) -> StressLevel {
         min_spread_bps: 0,
         trigger: house_loss.map(|loss| StressTrigger { house_loss: Some(usd(loss)), ..StressTrigger::default() }),
     }
+}
+
+fn params(stress_levels: Vec<StressLevel>) -> ProtocolParams {
+    ProtocolParams {
+        profit_fee_bps: 1_000,
+        closeout_level_bps: 5_000,
+        house_total_cap_bps: 20_000,
+        stress_levels,
+        stress_move_window_ms: 60_000,
+        stress_cooldown_ms: 0,
+        toxicity: ToxicityParams {
+            horizon_ms: 1_000,
+            ewma_weight_bps: 5_000,
+            notional: Some(NotionalWeighting { prior: usd(10_000), memory: usd(10_000_000) }),
+            tiers: vec![],
+            score_tiers: vec![],
+        },
+        rollover: Rollover { tz: chrono_tz::Europe::London, hour: 22, minute: 0 },
+        house_total_cap_floor: Fixed::ZERO,
+        max_resting_orders: DEFAULT_MAX_RESTING_ORDERS,
+        profit_fee_curve: vec![],
+        volume_tiers: vec![],
+    }
+}
+
+/// A listed market with no mark and no position, so it adds nothing to house NAV.
+fn market() -> MarketState {
+    let spec = serde_json::from_value(serde_json::json!({
+        "id": 1, "symbol": "BIG", "asset_class": "crypto", "schedule": { "kind": "always_open" },
+        "margin_tiers": [{ "bps": 1_000 }], "spread_tiers": [{ "bps": 0 }],
+        "price_rules": { "max_age_ms": 1_000, "max_divergence_bps": 50, "min_sources": 2 },
+        "max_slippage_bps": 20, "house_cap_bps": 5_000,
+        "financing": { "benchmark": "SOFR", "markup_bps": 0, "day_basis": 365 },
+    }))
+    .expect("a valid listing");
+    MarketState::new(spec)
 }
