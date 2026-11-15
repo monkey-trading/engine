@@ -44,19 +44,24 @@ pub(super) async fn staking_preflight(
     genesis: Option<&StakingConfig>,
 ) -> anyhow::Result<()> {
     let Some(terms) = terms else { return Ok(()) };
-    for (source, config) in [("the log", recorded), ("the config's genesis", genesis)] {
-        let Some(config) = config else { continue };
-        terms.check(config).await.map_err(|refused| {
-            match &refused {
-                StakingTermsRefused::Differs(_) => {
-                    error!(alert = "staking_terms_mismatch", "refusing to serve: {source}: {refused}");
-                }
-                StakingTermsRefused::Unread(_) => {
-                    error!(alert = "checkpoint_startup_failed", "refusing to serve: {source}: {refused}");
-                }
+    let sources = [("the log", recorded), ("the config's genesis", genesis)];
+    let Some((first, _)) = sources.iter().find(|(_, config)| config.is_some()) else { return Ok(()) };
+    let refuse = |source: &str, refused: StakingTermsRefused| {
+        match &refused {
+            StakingTermsRefused::Differs(_) => {
+                error!(alert = "staking_terms_mismatch", "refusing to serve: {source}: {refused}");
             }
-            anyhow::anyhow!("{source}: {refused}")
-        })?;
+            StakingTermsRefused::Unread(_) => {
+                error!(alert = "checkpoint_startup_failed", "refusing to serve: {source}: {refused}");
+            }
+        }
+        anyhow::anyhow!("{source}: {refused}")
+    };
+    // One read of the contract, so both configs are compared with the values of one admitted quorum.
+    let held = terms.read().await.map_err(|refused| refuse(first, refused))?;
+    for (source, config) in sources {
+        let Some(config) = config else { continue };
+        held.check(config).map_err(|refused| refuse(source, refused))?;
     }
     Ok(())
 }

@@ -17,7 +17,8 @@ use engine_core::staking::StakingConfig;
 use futures_util::future::BoxFuture;
 
 use crate::config::CustodySection;
-use crate::custody::{ContractQuorum, Quorum, VaultReader, read_final};
+use crate::custody::evm::{VaultIdentity, VaultReader};
+use crate::custody::{ContractQuorum, Quorum, read_final_on};
 
 // The staking contract's immutables, as `contracts/src/Staking.sol` declares them.
 sol! {
@@ -27,9 +28,18 @@ sol! {
 
 /// The epoch and cooldown the staking contract holds, in seconds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ContractTerms {
+pub struct ContractTerms {
     pub(super) epoch_secs: u64,
     pub(super) cooldown_secs: u64,
+}
+
+impl ContractTerms {
+    /// Whether `config` has these epoch and cooldown.
+    /// Error cases:
+    /// - the epoch or cooldown differs (see `check`)
+    pub fn check(self, config: &StakingConfig) -> Result<(), Refused> {
+        check(self, config).map_err(Refused::Differs)
+    }
 }
 
 /// Why `InitStaking` may not go on.
@@ -101,16 +111,20 @@ impl StakingTerms {
         })
     }
 
+    /// The epoch and cooldown the contract holds, from one read.
+    /// Error cases:
+    /// - the contract cannot be read
+    pub async fn read(&self) -> Result<ContractTerms, Refused> {
+        let _one_at_a_time = self.gate.lock().await;
+        (self.read)().await.map_err(Refused::Unread)
+    }
+
     /// Whether `config` has the epoch and cooldown the contract holds.
     /// Error cases:
     /// - the contract cannot be read
     /// - the epoch or cooldown differs from the contract's (see `check`)
     pub async fn check(&self, config: &StakingConfig) -> Result<(), Refused> {
-        let terms = {
-            let _one_at_a_time = self.gate.lock().await;
-            (self.read)().await.map_err(Refused::Unread)?
-        };
-        check(terms, config).map_err(Refused::Differs)
+        self.read().await?.check(config)
     }
 }
 
@@ -125,14 +139,16 @@ pub(super) async fn read<R: VaultReader + Sync>(
     staking: Address,
     (chain_id, token): (u64, Address),
 ) -> anyhow::Result<ContractTerms> {
-    let identity = quorum.identity().await?;
-    ensure!(
-        (identity.chain_id, identity.token) == (chain_id, Some(token)),
-        "the providers serve chain {} and token {:?}, not the configured chain {chain_id} and token {token}",
-        identity.chain_id,
-        identity.token
-    );
-    let (_, answers) = read_final(quorum, staking, |_| {
+    let admit = |identity: &VaultIdentity| {
+        ensure!(
+            (identity.chain_id, identity.token) == (chain_id, Some(token)),
+            "the providers serve chain {} and token {:?}, not the configured chain {chain_id} and token {token}",
+            identity.chain_id,
+            identity.token
+        );
+        Ok(())
+    };
+    let (_, answers) = read_final_on(quorum, staking, admit, |_| {
         vec![
             ("staking_epoch", epochCall {}.abi_encode().into()),
             ("staking_cooldown", cooldownCall {}.abi_encode().into()),

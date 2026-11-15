@@ -40,7 +40,7 @@ async fn startup_refuses_a_staking_config_the_contract_does_not_hold_and_an_unre
     assert_eq!(reads.load(Ordering::SeqCst), 0);
     // The contract's own values, in the log and in the genesis, pass.
     staking_preflight(Some(&held), Some(&right), Some(&right)).await.unwrap();
-    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "both configs are compared with one read");
     assert!(alerts.try_recv().is_err(), "matching values raise nothing");
 
     // A log whose cooldown differs, and a genesis whose epoch differs, each name where it was found.

@@ -142,8 +142,7 @@ impl ContractQuorum {
     }
 }
 
-/// `ContractQuorum::read` over any quorum. The calls run at the block the finality tag names, and the
-/// time is read from the header of that same block: a header with another hash is refused.
+/// `ContractQuorum::read` over any quorum.
 /// Error cases:
 /// - see `ContractQuorum::read`
 async fn read_final<R: crate::custody::evm::VaultReader + Sync>(
@@ -151,7 +150,22 @@ async fn read_final<R: crate::custody::evm::VaultReader + Sync>(
     to: Address,
     calls: impl FnOnce(u64) -> Vec<(&'static str, Bytes)>,
 ) -> anyhow::Result<(u64, Vec<Bytes>)> {
-    quorum.identity().await?;
+    read_final_on(quorum, to, |_| Ok(()), calls).await
+}
+
+/// `read_final` for a read that is bound to an identity: `admit` sees the identity the one vote that
+/// admits the providers agreed on, before any other read, so the providers that answer the calls are
+/// the ones whose chain and token it checked.
+/// Error cases:
+/// - `admit` refuses the identity
+/// - see `ContractQuorum::read`
+async fn read_final_on<R: crate::custody::evm::VaultReader + Sync>(
+    quorum: &Quorum<R>,
+    to: Address,
+    admit: impl FnOnce(&crate::custody::evm::VaultIdentity) -> anyhow::Result<()>,
+    calls: impl FnOnce(u64) -> Vec<(&'static str, Bytes)>,
+) -> anyhow::Result<(u64, Vec<Bytes>)> {
+    admit(&quorum.identity().await?)?;
     let block = quorum.finality().await?.tagged.context("custody providers name no final block")?;
     let header = quorum.headers(block.number, block.number).await?;
     let time = header.first().filter(|link| link.hash == block.hash).context("the final block's header")?.timestamp;

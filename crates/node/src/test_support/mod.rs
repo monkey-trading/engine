@@ -5,10 +5,12 @@ mod alerts;
 mod events;
 mod readers;
 mod scratch;
+mod staking_rpc;
 pub use alerts::{capture_alerts, capture_alerts_and_resolutions};
 pub use events::every_event;
 pub use readers::{marks_reader, stats};
 pub use scratch::{keep_scratch, scratch_dir, scratch_path};
+pub use staking_rpc::staking_rpc;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
