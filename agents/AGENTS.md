@@ -631,12 +631,14 @@ an index: load only the rule whose hint matches the current action.
   `dev-liveness.sh`, the minute-scale liveness scenario (#595) on Anvil with a chain-backed `ArbSys`
   stand-in and trusted time on the chain's clock: the real head poster, liveness rule, member links and
   liveness callers; v2 heads at confirmed seqs and the turn's latch, relayed heads with the operator's
-  relayer silenced, held heads through a trusted-time halt, the operator's stop through a paused chain,
+  relayer silenced, held heads through a benchmark-sync hold and a trusted-time halt in which no enclave
+  gets a sample past the grace, the operator's stop through a paused chain,
   and a failed operator's fence before the promotion that moves the vault's signer to the next member's
   standby key; then the promotion on real nodes, the node binary's own start for A, B and C on a chain
   running on true time: A killed under load, the next member promoted, its first fill within its
-  start budget (printed), its first checkpoint once the promotion is final, A's authorization
-  reissued and paid once, and its log replayed across the change of signer;
+  start budget (printed), its first checkpoint once the promotion is final, its replacement standby key
+  vouched for by its own signer key, A's authorization reissued and paid once, and its log replayed
+  across the change of signer;
   `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
   contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
   relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped
