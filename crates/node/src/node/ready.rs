@@ -1,6 +1,6 @@
 //! What a member's start reads before it connects for its turn's tail (#593): its sealed
 //! certificate, the registry's rotation switch, the checkpoint setup at the vault's finalized checkpoint with its anchor checked
-//! against the replica, the MONKEY emission budget, the posted log heads, the generation the turn's
+//! against the replica, the MONKEY emission budget and the staking config's match with the staking contract, the posted log heads, the generation the turn's
 //! keys are sealed in, and a trusted time sample. The start after the confirmation reads none of
 //! them again, so nothing between the handover and the member's first command reads the chain or
 //! samples time; only the revalidation point sits between them.
@@ -80,6 +80,8 @@ impl Ready {
     /// - the checkpoint setup fails, the replica does not retain the vault's finalized checkpoint, or
     ///   the vault does not authenticate it (see `Poster::startup`)
     /// - the emission budget cannot be read or differs from the log's (see `emission_preflight`)
+    ///   or, with a staking contract configured, the replica's or the genesis's staking config cannot be
+    ///   checked against it or differs (see `staking_preflight`)
     /// - the posted log heads cannot be read, or no trusted time sample can be taken
     pub(crate) async fn read(
         cfg: &NodeConfig,
@@ -106,6 +108,13 @@ impl Ready {
             }
             None => None,
         };
+        // Read here, before the member connects, so the start after the confirmation reads no more.
+        crate::node::preflight::staking_preflight(
+            crate::custody::StakingTerms::connect(&cfg.custody)?.as_ref(),
+            replica.engine().staking().map(|staking| &staking.config),
+            cfg.genesis.staking.as_ref(),
+        )
+        .await?;
         let heads = crate::log_heads::setup::read_heads(cfg, signer).await?;
         let generations = BTreeMap::from([(turn.turn, generation)]);
         let sample = sample.await.context("taking the trusted time sample the start stamps under")?;

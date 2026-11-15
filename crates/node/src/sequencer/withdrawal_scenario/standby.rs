@@ -347,7 +347,8 @@ pub(super) fn rotation_and_staking(
         "liquidity_floor": "1000000",
         "epoch_ms": 30 * 60 * 1000,
         "start_ms": staking_start,
-        "cooldown_ms": 60 * 60 * 1000,
+        // The cooldown the registry deployed its staking contract with, which the node checks.
+        "cooldown_ms": crate::test_support::DEV_EXIT_SCHEDULE.1 * 1000,
     });
     if rotation {
         let (contract, relayer) = chain.log_heads;

@@ -78,8 +78,14 @@ Nothing here touches a live system.
 ## 2. First deployment
 
 Prerequisites, each done and checked before step 1 of this list: the contracts deployed and wired
-(`contracts/README.md`, "Governance and deployment"), with the vault's signer a placeholder and its
-`registry` and the registry's `vault` set; the host (bare-metal AMD SEV-SNP); DNS for the API
+(`contracts/README.md`, "Governance and deployment") with the constructor values in
+[production-deployment.toml](production-deployment.toml) (the timelock's `min_delay`; the vault's
+`period_budget`, `exit_period`, `claim_window` and `stale_after`; the registry's staking `cooldown` and
+`epoch`, which deploy `Staking`), with the vault's signer a placeholder and its
+`registry` and the registry's `vault` set. Check each against the chain: `cast call $VAULT
+'exitPeriod()(uint64)'`, `'claimWindow()(uint64)'` and `'staleAfter()(uint64)'`, `cast call $TIMELOCK
+'getMinDelay()(uint256)'`, and `cast call $STAKING 'epoch()(uint256)'` and `'cooldown()(uint256)'`, where
+`$STAKING` is `custody.evm.staking.contract`; the host (bare-metal AMD SEV-SNP); DNS for the API
 domain and a CAA record ([certificate-renewal-failure.md](certificate-renewal-failure.md), "Before
 the first certificate"); a Critical alert receiver; and the companion processes in section 5 planned.
 
@@ -140,16 +146,33 @@ the first certificate"); a Critical alert receiver; and the companion processes 
    `cast call $VAULT 'latestSeq()(uint64)'` rises, and `engine_withdrawals_paused` is `0`.
    `engine_withdrawals_paused 1` before the first reconciliation is normal; see
    [withdrawal-stalls.md](withdrawal-stalls.md) if it stays.
-8. **One-time initialisation**, each only once per log, with values the owner has decided (#436):
+8. **One-time initialisation**, each only once per log, with the values the owner decided (#436),
+   which [production-deployment.toml](production-deployment.toml) holds. `$START` is its `start`: 00:00:00
+   UTC on the day restricted mainnet trading opens, the origin of both emission period 0 and staking
+   epoch 0. Sign both before it, and never again: the schedule is never reset. The same file's
+   `[vault]` and `[staking]` values are what the contracts were deployed with.
 
    ```sh
-   $ENGINE admin --config node.toml --node $API --pin $PIN init-emissions --start <RFC 3339 time> --period-budget <base units>
-   $ENGINE admin --config node.toml --node $API --pin $PIN init-staking --start <RFC 3339 time> --liquidity-floor <USD> --epoch-ms <ms> --cooldown-ms <ms>
+   START=2027-01-01T00:00:00Z   # production-deployment.toml: start
+   $ENGINE admin --config node.toml --node $API --pin $PIN init-emissions --start $START --period-budget 100000000000000000000000
+   $ENGINE admin --config node.toml --node $API --pin $PIN init-staking --start $START --liquidity-floor 30500000 --epoch-ms 86400000 --cooldown-ms 2419200000 --secrets-file secrets.toml
    ```
 
-   **Changes the live system.** Each needs the owner's approval of the exact values. The period
-   budget must equal the one the vault's MONKEY cap was derived from; the node refuses another
-   (`emission_budget_mismatch`). The staking cooldown and epoch must equal the staking contract's.
+   **Changes the live system.** Each needs the owner's approval of the exact command, its values
+   included, and a `$START` that is the opening day's midnight UTC. No agent runs these.
+   - `init-emissions`: the budget is 100,000 MONKEY a period (10^23 base units, maximum supply
+     5,256,000,000 MONKEY) and must equal the vault's: the node refuses another
+     (`emission_budget_mismatch`).
+   - `init-staking`: the epoch is one day and the cooldown 28 days, the staking contract's own
+     `epoch()` and `cooldown()` in milliseconds, and the floor is $30.5M. The tool reads the contract
+     through the config's custody providers and refuses a different value before it signs; the node
+     reads it again and refuses it before it sequences the command. `--secrets-file` is the bundle
+     delivered at step 2 ([key-recovery.md](key-recovery.md), "Secrets"), whose keys fill the providers'
+     URLs for that read. A refusal names both values: fix the command, never the contract.
+   Check: `curl -sf $API/v1/monkey | jq '{e: .emissions, s: .staking, d: .distribution}'` shows
+   `start_ms` at `$START`, `period_budget` `100000000000000000000000`, `cooldown_ms` `2419200000`,
+   `epoch_ms` `86400000` and `liquidity_floor` `30500000`. A second run of either command is
+   rejected by the engine.
 9. **House capital** enters only by a vault deposit to the house (`depositToHouse`). **Changes the
    live system.** Needs the owner's approval of the amount. The production genesis sets no house cap
    floors: until the owner sets them, no opening trade is admitted. That is the owner's decision

@@ -94,11 +94,17 @@ async fn a_member_starts_from_its_replica_without_reading_the_chain_or_sampling_
         }) => {}
     }
     assert_eq!(metrics.full_replays.get(), 0, "the start replayed the log");
-    let next = log_entries(&log).into_iter().find_map(|entry| match entry {
-        LogEntry::Command(command) if command.sequenced.seq == last + 1 => Some(command),
-        _ => None,
-    });
-    assert!(next.is_some(), "the first command does not follow the replica's last");
+    let follows = |log: &std::path::Path| {
+        log_entries(log)
+            .into_iter()
+            .any(|entry| matches!(entry, LogEntry::Command(command) if command.sequenced.seq == last + 1))
+    };
+    crate::test_support::wait_for("the first command in the log", async {
+        while !follows(&log) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
 }
 
 /// The sealed certificate opens before anything is read from the chain, so a store the host altered
@@ -138,6 +144,37 @@ async fn a_certificate_store_that_does_not_open_refuses_before_the_member_connec
     let read = Ready::read(&cfg, &start, &Metrics::new(), signer, follower.replica(), (&turn, 0), sample).await;
     let err = read.err().expect("a start whose certificate does not open read on");
     assert!(format!("{err:#}").contains("has format 2"), "{err:#}");
+}
+
+/// A start that is not a member's reads the staking contract the config names before it serves, and
+/// refuses a genesis staking config it cannot check: here the contract's providers are unreachable.
+#[tokio::test]
+async fn a_start_that_is_not_a_members_checks_its_genesis_staking_config_against_the_contract() {
+    let data = scratch_dir("ready-staking-start");
+    let log = data.join("log");
+    let mut cfg = unreachable(&data, &log);
+    cfg.tee.use_published_mock_key = true;
+    cfg.tee.sealing = None;
+    cfg.checkpoints = None;
+    let metrics = Arc::new(Metrics::new());
+    let (_layer, alerts) = crate::alerts::channel(crate::alerts::Routes::default(), metrics.clone());
+    let mut routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await.unwrap();
+    let delivered = Delivered {
+        values: Default::default(),
+        version: None,
+        answered: None,
+        chain_read_keyed: false,
+        listener: None,
+        authority: None,
+        store: None,
+    };
+    let keys = crate::node::KeyStart::default();
+    let mut chain_read = false;
+    let serving =
+        crate::node::serve_node(&cfg, metrics, &mut routing, None, &keys, &delivered, &mut chain_read, None, None);
+    let outcome = tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the start refused, not served");
+    let Err(err) = outcome else { panic!("a start whose staking contract cannot be read served") };
+    assert!(format!("{err:#}").contains("the config's genesis: cannot read the staking contract"), "{err:#}");
 }
 
 // ── Helpers ──
@@ -197,7 +234,22 @@ fn unreachable(data: &std::path::Path, log: &std::path::Path) -> NodeConfig {
         .map(|n| toml::from_str::<RpcProviderSection>(&format!("name = 'dead-{n}'\nrpc_url = '{DEAD}'")).unwrap())
         .collect();
     evm.cursor_path = data.join("custody.json");
-    evm.staking = None;
+    // The staking contract nothing answers for, and a genesis that records a config for it: a member's
+    // start must not read it, since its replica was checked against it before it connected.
+    evm.staking = Some(
+        toml::from_str(
+            "contract = '0x00000000000000000000000000000000000000dd'\ncursor_path = 'staking.json'\n\
+             [registry]\ncontract = '0x00000000000000000000000000000000000000ee'",
+        )
+        .unwrap(),
+    );
+    evm.staking.as_mut().unwrap().cursor_path = data.join("staking.json");
+    cfg.genesis.staking = Some(engine_core::staking::StakingConfig {
+        liquidity_floor: Fixed::from_int(1_000),
+        epoch_ms: 86_400_000,
+        start_ms: crate::clock::now_ms() + 30 * 86_400_000,
+        cooldown_ms: 2_419_200_000,
+    });
     cfg.custody.provider = CustodyProvider::Evm;
     cfg.custody.evm = Some(evm);
     cfg.checkpoints = Some(

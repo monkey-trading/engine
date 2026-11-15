@@ -120,7 +120,6 @@ async fn the_certificate_key_is_the_attested_one() {
     assert_eq!(bundle[73..105], presented, "bundle bytes 73..105 are the presented key's hash");
     assert_eq!(served["tls_public_key_sha256"], format!("0x{}", hex::encode(presented)));
     assert!(served["quote"].as_str().unwrap().ends_with(&hex::encode(&report_data)));
-
     // A client pinned to the attested key connects; one pinned to another key does not.
     node.connect(V4).await.unwrap();
     let wrong = node.connect_with(V4, Some([0; 32]), Arc::default()).await;
@@ -356,6 +355,7 @@ impl TestNode {
             marks: crate::test_support::marks_reader(),
             stats: crate::test_support::stats(),
             emission_budget: None,
+            staking_terms: None,
             collateral: None,
             listing: Default::default(),
             operators: None,

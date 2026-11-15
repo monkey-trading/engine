@@ -23,6 +23,7 @@ other runbooks call.
 | Run the seed relayer, or `seed_missing`, `seed_relay_failed`, `seed_relayer_unfunded` or `seed_relayer_balance_unreadable` fires | [seed-relay.md](seed-relay.md) |
 | Find what an alert means and which runbook answers it | [alerts.md](alerts.md) |
 | Write the node's config | [production-node.toml](production-node.toml) |
+| Deploy the contracts, and initialise emissions and staking | [production-deployment.toml](production-deployment.toml), [deploy-and-rollback.md](deploy-and-rollback.md) |
 
 ## How the steps are marked
 
@@ -50,8 +51,9 @@ runbook that depends on one says so where it does:
 - **No staging environment exists.** The deploy and rollback procedures have been checked against
   the pieces that run locally, not end to end.
 - **The values marked `OWNER` in [production-node.toml](production-node.toml)** wait on decisions:
-  the vault's and staking contract's launch values (#436),
-  the vendor accounts and the access source.
+  the vendor accounts and the access source. The vault's and staking contract's launch values are
+  decided: [production-deployment.toml](production-deployment.toml) holds them, and only the opening
+  day waits on the owner.
 - **A production build refuses the template's feeds** until every futures and share market has
   `min_sources` venues reached over TLS: #673 lists which markets fall short and the options.
 

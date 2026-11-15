@@ -359,6 +359,8 @@ jobs:
         run: ./scripts/dev-monkey-emissions.sh
       - name: Run the MONKEY staking dev scenario
         run: ./scripts/dev-monkey-staking.sh
+      - name: Run the launch values dev scenario
+        run: ./scripts/dev-launch-values.sh
       - name: Run the operator election dev scenario
         run: ./scripts/dev-operator-election.sh
       - name: Run the staking reads dev scenario

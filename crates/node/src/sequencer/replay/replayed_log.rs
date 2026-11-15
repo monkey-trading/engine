@@ -93,4 +93,9 @@ impl ReplayedLog {
     pub(crate) fn prefix_ring(&self) -> crate::log::PrefixRing {
         self.replayed.prefix_ring.clone()
     }
+
+    /// The staking config the replayed log records, if it initialised staking.
+    pub(crate) fn staking_config(&self) -> Option<&engine_core::staking::StakingConfig> {
+        self.replayed.engine.staking().map(|staking| &staking.config)
+    }
 }

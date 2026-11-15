@@ -390,6 +390,7 @@ impl Node {
             marks: crate::test_support::marks_reader(),
             stats: crate::test_support::stats(),
             emission_budget: None,
+            staking_terms: None,
             collateral: None,
             listing: Default::default(),
             operators: None,

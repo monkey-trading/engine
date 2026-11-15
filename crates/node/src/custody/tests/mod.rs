@@ -24,6 +24,7 @@ mod quorum;
 mod quorum_diagnostics;
 mod rpc;
 mod staking;
+mod staking_terms;
 mod user_agent;
 
 #[test]
