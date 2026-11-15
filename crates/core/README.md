@@ -1106,6 +1106,7 @@ then. Activation takes the earliest boundary of an accepted turn in effect or wa
 log holds rotation sets counts rotation as on until the first frontier carries the registry's state.
 Earlier logs keep V56's rule and encoding, and a frontier carries no turn before V65, so they replay
 unchanged. Its session is in `examples/reference_log/v65.rs`.
+
 Protocol V66 adds request and order limits (`src/volume_tier/limits.rs`). Each tier of the
 parameters' `volume_tiers` table may name a `max_resting_orders` and a `requests_per_second`, each
 left out of the encoding while zero and named for every tier or none, in 1 to 1000 and never falling
