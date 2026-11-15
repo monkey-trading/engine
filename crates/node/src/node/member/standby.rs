@@ -23,7 +23,7 @@ use tracing::{info, warn};
 use crate::config::NodeConfig;
 use crate::custody::StandbyReader;
 use crate::handover::evidence::Quoting;
-use crate::liveness::caller::{Caller, Endpoint};
+use crate::liveness::caller::{Caller, Endpoint, Reached};
 use crate::liveness::chain::{LivenessDomain, Member as SetMember, candidate_of, members, promotable};
 use crate::liveness::link::{Asking, Copy, Reply, Request, Server, Tcp, describe};
 use crate::log_check::answer::Answering;
@@ -211,7 +211,7 @@ impl Standby {
                 standby: self.keys.clone(),
                 provider: cfg.tee.provider,
                 platform,
-                trusted: TrustedClock::new(clock, samples, cfg.time.max_drift),
+                trusted: TrustedClock::new(clock, samples.clone(), cfg.time.max_drift),
                 chain: StandbyReader::connect_named(&cfg.custody, log_heads.contract, "member_link")?,
                 domain: self.domain,
                 answering: self.answering.clone(),
@@ -226,7 +226,11 @@ impl Standby {
                 copy: self.copy.clone(),
                 min_balance: liveness.min_balance,
                 poll: crate::liveness::caller::POLL,
-                clock: Arc::new(crate::clock::SystemClock),
+                clock: Arc::new(Reached(TrustedClock::new(
+                    Arc::new(crate::clock::SystemClock),
+                    samples,
+                    cfg.time.max_drift,
+                ))),
             };
             self.tasks.spawn(async move {
                 if let Err(e) = caller.run().await {

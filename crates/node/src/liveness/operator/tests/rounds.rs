@@ -255,3 +255,48 @@ async fn a_waiting_checkpoint_takes_the_first_status_that_reaches_it_not_the_slo
     assert!(waited.elapsed() < Duration::from_millis(500), "the checkpoint waited {:?}", waited.elapsed());
     rig.task.abort();
 }
+
+/// Before the start check passes, a round takes every member's answer, though a checkpoint waits and
+/// a quicker member's status covers it: the slower member's longer copy refuses the start.
+#[tokio::test(start_paused = true)]
+async fn a_start_check_weighs_every_answer_though_a_checkpoint_waits() {
+    let rig = Rig::spawn(10);
+    let slow = Arc::new(EnclaveKey::generate());
+    rig.chain.set(|chain| {
+        chain.members.push((Address::repeat_byte(0xc4), "member:2".into(), Address::from(slow.address())));
+    });
+    let ahead =
+        Status { epoch: 1, durable: Some(Head { seq: 12, link: link(12) }), sealer: AccountId([0; 20]), seen: None };
+    rig.members.0.lock().unwrap().insert("member:2".into(), (AccountId([0xc4; 20]), slow, Some(ahead)));
+    rig.members.1.lock().unwrap().insert("member:2".into(), Duration::from_millis(2_900));
+    rig.gate.want(10);
+    rig.answer(Some(10));
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert!(!rig.gate.start_checked(), "the start check passed on the first covering answer alone");
+    rig.task.abort();
+}
+
+/// The log's unconfirmed run starts at the first command released past the newest confirmation, though
+/// that command and later ones are released while a round waits on a slow member: the stamp bound counts
+/// from it, not from the tip the round next sees.
+#[tokio::test(start_paused = true)]
+async fn a_slow_round_does_not_move_the_unconfirmed_runs_start_later() {
+    let rig = Rig::spawn(10);
+    rig.answer(Some(10));
+    settle().await;
+    assert!(rig.gate.sequences() && rig.gate.confirmed() == 10);
+    rig.members.1.lock().unwrap().insert("member:1".into(), Duration::from_millis(2_900));
+    // Past the round in flight, so the next waits on the member while both commands are released.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let first = u64::try_from(TRUE_MS).unwrap() + 1_000;
+    for (seq, stamp) in [(11, first), (12, first + 30_000)] {
+        rig.prefixes.lock().unwrap().insert(seq, link(seq));
+        rig._released.send_replace(Released { head: Head { seq, link: link(seq) }, stamp });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    let first = i64::try_from(first).unwrap();
+    assert!(rig.gate.admits(first + 60_000), "within an interval of the first unconfirmed command");
+    assert!(!rig.gate.admits(first + 60_001), "the bound counts from the first unconfirmed command");
+    rig.task.abort();
+}

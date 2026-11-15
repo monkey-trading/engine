@@ -13,8 +13,8 @@ use anyhow::{Context, ensure};
 use engine_core::eip712::B256;
 use engine_core::types::AccountId;
 
-use super::chain::{Chain, Step};
-use super::follow::{ReplicaRefused, follow};
+use super::chain::{Chain, Step, rollback_of};
+use super::follow::{ReplicaRefused, follow, follow_until};
 use super::open_copy_replayed;
 use super::operator::Followed;
 use crate::config::NodeConfig;
@@ -24,6 +24,9 @@ use crate::log_check::answer::CheckedHeads;
 use crate::sequencer::ReplayedLog;
 use crate::sequencer::replay::LiveReplay;
 use crate::stats::Stats;
+
+/// How long `follow_during` waits before following again after a stint the operator ended.
+const FOLLOW_PAUSE: Duration = Duration::from_millis(100);
 
 /// A follower's copy, open for appends, its seal chain, and its replica.
 pub(crate) struct Follower {
@@ -152,6 +155,63 @@ impl Follower {
         self.replica.admit(followed.enclave);
         let link = self.link.as_ref();
         follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica), link).await
+    }
+
+    /// Follows `followed` while `work` runs, a stint at a time for at most `budget` in all, so what the
+    /// operator seals meanwhile reaches the copy and its member link: an incumbent whose handover's
+    /// final checkpoint waits for a member to confirm its seq can take this member's confirmation.
+    /// Returns `work`'s output, and why the following stopped early: the replica refused an entry
+    /// (`ReplicaRefused`, after which the follower must be opened again), or the operator's log no
+    /// longer extends the copy.
+    pub(crate) async fn follow_during<T>(
+        &mut self,
+        cfg: &NodeConfig,
+        followed: &Followed,
+        budget: Duration,
+        work: impl Future<Output = T>,
+    ) -> (T, anyhow::Result<()>) {
+        let (ended, until) = tokio::sync::watch::channel(false);
+        let work = async move {
+            let output = work.await;
+            ended.send_replace(true);
+            output
+        };
+        let following = async {
+            let started = tokio::time::Instant::now();
+            loop {
+                let left = budget.saturating_sub(started.elapsed());
+                if *until.borrow() || left.is_zero() {
+                    return Ok(());
+                }
+                self.copied.admit(followed.enclave);
+                self.replica.admit(followed.enclave);
+                let (stint, link) = ((left, Some(until.clone())), self.link.as_ref());
+                match follow_until(
+                    &mut self.writer,
+                    &mut self.copied,
+                    cfg,
+                    followed,
+                    stint,
+                    Some(&mut self.replica),
+                    link,
+                )
+                .await
+                {
+                    Err(e) if e.downcast_ref::<ReplicaRefused>().is_some() || rollback_of(&e).is_some() => {
+                        return Err(e);
+                    }
+                    Err(e) => tracing::debug!("following while waiting failed, following again: {e:#}"),
+                    Ok(_) => {}
+                }
+                // A stream the operator ends at once must not make this a spin.
+                let mut paused = until.clone();
+                tokio::select! {
+                    () = tokio::time::sleep(FOLLOW_PAUSE) => {}
+                    _ = paused.wait_for(|ended| *ended) => {}
+                }
+            }
+        };
+        tokio::join!(work, following)
     }
 
     /// The offset of the copy's last entry, `None` for an empty copy.

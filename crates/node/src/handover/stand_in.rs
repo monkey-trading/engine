@@ -27,6 +27,8 @@ pub(crate) enum Answer {
     Tail(Vec<u8>),
     /// The tip refused before the stop, for this reason.
     Missed(TailMiss),
+    /// The answer given once the test releases it, as a predecessor's whose stop waits.
+    Held(Arc<tokio::sync::Notify>, Box<Answer>),
 }
 
 /// Serves the requests on `listener` until aborted, for `domain`, handing `keys` over: each in turn
@@ -61,13 +63,20 @@ async fn respond(
     let challenge = [0x5c; 32];
     send(stream, &Challenge { nonce: hex::encode(challenge) }).await?;
     let request: Request = receive(stream).await?;
+    let mut answer = answer;
+    while let Some(Answer::Held(held, then)) = answer {
+        held.notified().await;
+        answer = Some(*then);
+    }
     let tail = match answer {
         Some(Answer::Tail(tail)) => tail,
         Some(Answer::Missed(miss)) => {
             return send(stream, &Reply::Missed { reason: format!("the stand-in refuses the tip: {miss:?}"), miss })
                 .await;
         }
-        None => return send(stream, &Reply::Refused { reason: "the stand-in's script has ended".into() }).await,
+        Some(Answer::Held(..)) | None => {
+            return send(stream, &Reply::Refused { reason: "the stand-in's script has ended".into() }).await;
+        }
     };
     let tip = request.tail.clone().ok_or_else(|| anyhow::anyhow!("the request names no tip"))?;
     let public_key = hex::decode(&request.public_key)?;

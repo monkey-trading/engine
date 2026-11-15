@@ -189,6 +189,25 @@ async fn a_confirmation_from_another_set_signs_no_head() {
     drive.stop().await;
 }
 
+/// A one-member set's exemption signs at the tip only under its own signer epoch and set: once the turn
+/// in effect is drawn from another set the rule has not read, the tip signs no head.
+#[tokio::test(start_paused = true)]
+async fn a_tip_from_another_set_signs_no_head() {
+    let chain = FakeChain::new(None);
+    chain.name_turn(turn(GENERATION));
+    chain.change_turn(|turn| turn.set = 2);
+    let drive = spawn(chain.clone(), Some((RELEASE, GENERATION)));
+    drive.release(5);
+    drive.signing.send_replace(Signing::Tip(Some((1, 1))));
+    drive.clock.advance(Duration::from_secs(1));
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert!(chain.posts_v2().is_empty(), "set 1's exemption signed the tip for a turn of set 2");
+    drive.signing.send_replace(Signing::Tip(Some((1, 2))));
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert_eq!(chain.posts_v2().last().map(|(_, head)| head.confirmer), Some(Address::ZERO), "set 2's tip");
+    drive.stop().await;
+}
+
 /// A node whose start check has not passed stays stopped, heads included: with a member's
 /// confirmation, through a hold on newer blocks, no head goes out until the check passes.
 #[tokio::test(start_paused = true)]

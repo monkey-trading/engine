@@ -10,6 +10,9 @@
 //! It judges time by the later of the latest block's and its own clock's: a chain with no
 //! transactions makes no blocks, so its latest block time can stand still while slots pass, and the
 //! caller's own witness is what moves it. The chain checks every call at its own block time either way.
+//! Its own clock is trusted time's lower bound (`Reached`), never the host's: a witness of a slot the
+//! chain has marked does nothing yet does not revert, so a host clock ahead of the chain would pay for
+//! one at every poll.
 //!
 //! Each call is estimated first, so one the chain would refuse (a promotion not yet due, a head no
 //! longer fresh) costs nothing. A balance below `[liveness] min_balance` raises
@@ -84,7 +87,8 @@ pub(crate) struct Caller<C, S> {
     pub min_balance: U256,
     /// How often it reads the chain: `POLL`.
     pub poll: Duration,
-    /// The caller's own clock, which it judges slots by when it is ahead of the latest block.
+    /// The caller's own clock, which it judges slots by when it is ahead of the latest block: `Reached`
+    /// over the member's trusted time.
     pub clock: std::sync::Arc<dyn crate::clock::Clock>,
 }
 
@@ -281,6 +285,20 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
                 }
             }
         }
+    }
+}
+
+/// Trusted time's lower bound, a time true time has certainly reached, as a clock's wall time: zero
+/// before the first sample, so the caller judges by the block alone until one comes.
+pub(crate) struct Reached(pub crate::trusted_time::TrustedClock);
+
+impl crate::clock::Clock for Reached {
+    fn now_ms(&self) -> engine_core::types::Millis {
+        self.0.reached_ms().unwrap_or(0)
+    }
+
+    fn instant(&self) -> std::time::Instant {
+        std::time::Instant::now()
     }
 }
 

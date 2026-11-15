@@ -55,13 +55,27 @@ impl std::error::Error for ReplicaRefused {}
 /// - the connection fails, a frame fails verification, or the copy cannot be written
 /// - the operator's log no longer extends the copy (a `Rollback`); nothing more is appended
 /// - the replica refuses an entry (`ReplicaRefused`), which the copy then does not take
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn follow(
     writer: &mut LogWriter,
     copied: &mut Chain,
     cfg: &NodeConfig,
     followed: &Followed,
     budget: Duration,
+    replica: Option<&mut LiveReplay>,
+    link: Option<&Copy>,
+) -> anyhow::Result<Option<Offset>> {
+    follow_until(writer, copied, cfg, followed, (budget, None), replica, link).await
+}
+
+/// One follow stint, as `follow`, that also ends once `until`, if any, turns true or closes.
+/// Error cases:
+/// - as `follow`
+pub(super) async fn follow_until(
+    writer: &mut LogWriter,
+    copied: &mut Chain,
+    cfg: &NodeConfig,
+    followed: &Followed,
+    (budget, until): (Duration, Option<tokio::sync::watch::Receiver<bool>>),
     mut replica: Option<&mut LiveReplay>,
     link: Option<&Copy>,
 ) -> anyhow::Result<Option<Offset>> {
@@ -87,7 +101,18 @@ pub(super) async fn follow(
         },
         engine_wire::Connection::new(challenge, &path_and_query),
     );
-    let deadline = sleep(budget);
+    let deadline = async move {
+        let ended = async {
+            match until {
+                Some(mut until) => _ = until.wait_for(|ended| *ended).await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            () = sleep(budget) => {}
+            () = ended => {}
+        }
+    };
     pin_mut!(deadline);
     copied.begin();
     // The last command the copy appended in this stint, with the cumulative prefix after it: what a

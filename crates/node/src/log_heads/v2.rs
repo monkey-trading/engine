@@ -192,9 +192,12 @@ pub(crate) fn next(
 ) -> Option<HeadV2> {
     let at = match inputs.signing {
         Signing::Nothing => return None,
-        Signing::Tip => Signable { released: inputs.tip, confirmer: Address::ZERO, scope: None },
-        // A confirmation counts only under the epoch and set it was given in: across a change of set,
-        // a former member's is no anchor the turn's members can be promoted from.
+        // The tip and a confirmation count only under the epoch and set they were given in: across a
+        // change of set, neither is an anchor the turn's members can be promoted from.
+        Signing::Tip(scope) if scope == Some((inputs.epoch, turn.set)) => {
+            Signable { released: inputs.tip, confirmer: Address::ZERO, scope }
+        }
+        Signing::Tip(_) => return None,
         Signing::Confirmed(signable) if signable.scope.is_none_or(|scope| scope == (inputs.epoch, turn.set)) => {
             signable
         }

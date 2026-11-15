@@ -74,6 +74,23 @@ fn a_witness_follows_the_current_slot_across_an_interval_change_and_a_quiet_chai
     assert_eq!(calls(&view, None, view.time + 30), vec![Call::Promote], "due by the caller's clock");
 }
 
+/// The caller's clock is trusted time's lower bound, never the host's: a host an hour ahead of the
+/// chain sends no witness for the slot the chain marked, which would do nothing and cost gas.
+#[test]
+fn a_host_clock_ahead_of_the_chain_sends_no_witness() {
+    use crate::clock::Clock as _;
+    let mut view = view(ChainState::default());
+    view.marked_slot = view.time / 60;
+    let block_ms = i64::try_from(view.time).unwrap() * 1000;
+    let host = Arc::new(crate::clock::test_clock::TestClock::at(block_ms + 3_600_000));
+    let sample = crate::trusted_time::Sample { at: host.instant(), earliest_ms: block_ms, latest_ms: block_ms + 1_000 };
+    let (_samples, receiver) = tokio::sync::watch::channel(Some(sample));
+    let reached = Reached(crate::trusted_time::TrustedClock::new(host, receiver, Duration::from_secs(5)));
+    let now = u64::try_from(reached.now_ms() / 1000).unwrap();
+    assert_eq!(now, view.time, "the caller's time is the sample's lower bound, not the host's");
+    assert!(calls(&view, None, now).is_empty(), "a witness for a slot the chain marked");
+}
+
 #[test]
 fn a_read_calls_for_a_relay_once_the_chains_head_is_stale_and_a_newer_one_was_signed() {
     let mut view = view(ChainState { head: (7, 1_000, 1_800_000_000 - 39), ..Default::default() });

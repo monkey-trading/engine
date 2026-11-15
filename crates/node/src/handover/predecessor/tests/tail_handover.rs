@@ -314,7 +314,7 @@ impl Tailed {
             &sealer,
             &MockAttestor,
             prepared,
-            &mut self.follower,
+            (&mut self.follower, None),
         )
         .await
     }

@@ -222,7 +222,7 @@ async fn with_no_turn_naming_the_operator_the_gate_opens_and_heads_go_at_the_tip
     settle().await;
     assert!(rig.gate.sequences() && rig.gate.signs());
     assert_eq!(rig.gate.confirmed(), u64::MAX, "no checkpoint waits");
-    assert_eq!(*rig.signing.borrow(), Signing::Tip);
+    assert_eq!(*rig.signing.borrow(), Signing::Tip(None));
     rig.task.abort();
 }
 

@@ -402,7 +402,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
 
     /// Takes `turn` from the first of its sources that hands the keys over with the tail past the
     /// follower's tip, caught up once more from `operator`, the incumbent it followed, if any, after
-    /// the start's reads. Everything the start reads from the chain is read before connecting, and the
+    /// the start's reads, and following it while each source stops. Everything the start reads from the chain is read before connecting, and the
     /// trusted time sample that admits its first stamps is taken last (`Ready`): from the confirmation
     /// on, nothing reads the chain or samples time.
     /// Error cases:
@@ -444,7 +444,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             info!(turn = turn.turn, predecessor = %source.handover_endpoint, "taking this member's turn with the tail");
             let (sealer, attestor) = (self.sealer.as_ref(), self.attestor.as_ref());
             let endpoint = &source.handover_endpoint;
-            match take_tail(self.cfg, endpoint, sealer, attestor, &prepared, follower).await {
+            match take_tail(self.cfg, endpoint, sealer, attestor, &prepared, (follower, operator)).await {
                 Ok(taken) => return Ok((taken, ready)),
                 Err(e) => {
                     page_refusal(turn, &e);

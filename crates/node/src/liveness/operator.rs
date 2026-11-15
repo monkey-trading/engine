@@ -52,8 +52,6 @@ pub(super) const FENCE_TICK: Duration = if cfg!(test) { Duration::from_millis(10
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 /// How often a set's members are read again.
 const MEMBERS_EVERY: Duration = Duration::from_secs(60);
-/// How many released heads' stamps the operator keeps for the confirmations it matches.
-const STAMPS: usize = 16_384;
 /// How soon the operator asks again while a checkpoint waits for a confirmation.
 const HURRY: Duration = Duration::from_millis(25);
 
@@ -63,8 +61,10 @@ pub(crate) enum Signing {
     /// Nothing yet: no read has said whether the rule applies, or no member confirmed a head.
     #[default]
     Nothing,
-    /// The log's tip: the rule does not apply, or the set has no other member.
-    Tip,
+    /// The log's tip: the rule does not apply, or the set has no other member, whose signer epoch and
+    /// set it names (`None` with no turn naming the operator): a head is signed at the tip only under
+    /// that read's turn, so a change of set the rule has not read signs nothing unconfirmed.
+    Tip(Option<(u64, u32)>),
     /// The newest seq a member confirmed.
     Confirmed(Signable),
 }
@@ -99,7 +99,7 @@ pub(super) type Holders = BTreeMap<AccountId, Option<AccountId>>;
 
 /// What the rounds carry from one to the next: the released heads' stamps, the newest confirmation and
 /// the standby keys' holders.
-type Rounds<'a> = (&'a mut BTreeMap<u64, Released>, &'a mut Option<(Scope, Signable)>, &'a mut Holders);
+type Rounds<'a> = (&'a mut Stamps, &'a mut Option<(Scope, Signable)>, &'a mut Holders);
 
 /// One read of the chain at the latest agreed block.
 enum Read {
@@ -151,7 +151,8 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         let _abort = AbortOnDrop(fencing);
         let mut poll = interval(self.poll);
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let mut stamps: BTreeMap<u64, Released> = BTreeMap::new();
+        let (mut stamps, sampling) = Stamps::sample(self.released.clone());
+        let _sampling = AbortOnDrop(sampling);
         let mut set: Option<(SetId, tokio::time::Instant, Vec<Member>)> = None;
         let mut confirmed: Option<(Scope, Signable)> = None;
         let mut applied: Option<Applied> = None;
@@ -166,11 +167,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             if self.released.has_changed().is_err() {
                 return Ok(());
             }
-            let tip = *self.released.borrow_and_update();
-            stamps.insert(tip.head.seq, tip);
-            while stamps.len() > STAMPS {
-                stamps.pop_first();
-            }
+            stamps.with(*self.released.borrow_and_update());
             // It asks the last read's members at once: a chain read first would add to the pause.
             if let Some(current) = applied.as_ref().filter(|_| woken) {
                 self.round(current, (&mut stamps, &mut confirmed, &mut holders), &mut episodes).await;
@@ -205,7 +202,8 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                     }
                     self.named(&state, signer);
                     applied = None;
-                    self.exempt(&mut lock(&state), unturned(first_turnable(time, None)));
+                    let turnable = first_turnable(time, None);
+                    self.exempt(&mut lock(&state), (turnable, unturned(turnable)), None);
                     continue;
                 }
                 Read::Scheduled { schedule, view, listed, turnable } => (schedule, *view, listed, turnable),
@@ -225,7 +223,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             self.named(&state, view.signer);
             let Some((named, listed)) = view.named.filter(|_| view.turn_names_operator()).zip(listed) else {
                 applied = None;
-                self.exempt(&mut lock(&state), unturned(turnable));
+                self.exempt(&mut lock(&state), (turnable, unturned(turnable)), None);
                 continue;
             };
             // The members' age counts from when they were read, not from each reuse.
@@ -240,7 +238,8 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                 // No member can be promoted before the boundary, nor past it before `E`: slots may be
                 // witnessed already, so the next turn's count can pass from the later of the two.
                 applied = None;
-                self.exempt(&mut lock(&state), next_boundary(view.time).max(view.due_at));
+                let boundary = next_boundary(view.time);
+                self.exempt(&mut lock(&state), (boundary, boundary.max(view.due_at)), Some((view.epoch, named.set)));
                 continue;
             }
             let scope = (view.epoch, schedule, named.set);
@@ -318,8 +317,6 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         let hurried = tokio::time::Instant::now();
         while self.gate.waiting().is_some() && hurried.elapsed() < self.poll {
             tokio::time::sleep(HURRY).await;
-            let tip = *self.released.borrow();
-            stamps.insert(tip.head.seq, tip);
             let assessment = self.ask((view.epoch, scope.1), others.clone(), holders).await;
             self.take(&assessment, (view, *scope), stamps, confirmed, episodes);
         }
@@ -331,11 +328,13 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         &self,
         assessment: &Assessment,
         (view, scope): (&View, Scope),
-        stamps: &BTreeMap<u64, Released>,
+        stamps: &mut Stamps,
         confirmed: &mut Option<(Scope, Signable)>,
         episodes: &mut Episodes,
     ) {
         let tip = *self.released.borrow();
+        // Every head the sequencer released since the last round, sampled as it came.
+        let stamps = stamps.with(tip);
         // An empty log holds nothing to confirm: at genesis it starts unconfirmed once a member answers,
         // an empty copy's included, and its first commands are what the members then confirm.
         let genesis = tip.head.link == B256::ZERO;
@@ -401,14 +400,17 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         }
     }
 
-    /// A read under which no promotion can pass before `until` seconds: every part of the gate opens
-    /// but the fence, which holds off until then, and the poster signs at the tip.
-    fn exempt(&self, state: &mut FenceState, until: u64) {
+    /// A read under which no promotion can pass before `until` seconds, and no other set can apply
+    /// before `holds`, the next boundary a turn could start at: every part of the gate opens but the
+    /// fence, which holds off until `until`, checkpoints pass unconfirmed only until `holds`, and the
+    /// poster signs at the tip under `scope`, the read's signer epoch and set.
+    fn exempt(&self, state: &mut FenceState, (holds, until): (u64, u64), scope: Option<(u64, u32)>) {
         state.applies = Some(false);
         state.fence.exempt(until);
         self.deadline(&state.fence);
-        self.gate.exempt();
-        self.signing.send_if_modified(|signing| std::mem::replace(signing, Signing::Tip) != Signing::Tip);
+        self.gate.exempt(holds.saturating_mul(1000));
+        let tip = Signing::Tip(scope);
+        self.signing.send_if_modified(|signing| std::mem::replace(signing, tip) != tip);
     }
 
     /// The vault's registry and schedule at the latest agreed block, the view under them, and, while
@@ -487,6 +489,8 @@ pub(crate) use assess::assess;
 mod fencing;
 mod limits;
 use limits::{lagging, refused, unturned};
+mod stamps;
+use stamps::Stamps;
 mod statuses;
 
 #[cfg(test)]

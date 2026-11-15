@@ -79,6 +79,9 @@ struct GateState {
     deadline: AtomicU64,
     /// The trusted clock the deadline is read against, which the operator's rule sets once.
     clock: std::sync::OnceLock<crate::trusted_time::TrustedClock>,
+    /// While a read exempts the log, the time in milliseconds from which another set may apply, past
+    /// which no checkpoint passes unconfirmed until a fresh read exempts it again; `u64::MAX` with none.
+    exempt_until: AtomicU64,
 }
 
 /// The newest head the sequencer released: its seq and cumulative prefix, and the stamp at it.
@@ -140,6 +143,7 @@ impl Default for GateState {
             replaced: tokio::sync::watch::channel(false).0,
             deadline: AtomicU64::new(u64::MAX),
             clock: std::sync::OnceLock::new(),
+            exempt_until: AtomicU64::new(u64::MAX),
         }
     }
 }
@@ -160,6 +164,7 @@ impl Gate {
             replaced: tokio::sync::watch::channel(false).0,
             deadline: AtomicU64::new(u64::MAX),
             clock: std::sync::OnceLock::new(),
+            exempt_until: AtomicU64::new(u64::MAX),
         };
         Self(Arc::new(state))
     }
@@ -175,10 +180,16 @@ impl Gate {
     /// be read; false with no deadline recorded.
     fn past_deadline(&self) -> bool {
         let due = self.0.deadline.load(Ordering::SeqCst);
-        let Some(clock) = self.0.clock.get().filter(|_| due != u64::MAX) else { return false };
         let delta = u64::try_from(DELTA.as_millis()).expect("DELTA fits in milliseconds");
+        due != u64::MAX && self.reached(due.saturating_sub(delta))
+    }
+
+    /// Whether the enclave's upper bound on true time has reached `at_ms`, or cannot be read; false
+    /// before the rule set the clock.
+    fn reached(&self, at_ms: u64) -> bool {
+        let Some(clock) = self.0.clock.get() else { return false };
         let upper = clock.upper_bound_ms(MAX_SLOW_PPM).and_then(|upper| u64::try_from(upper).ok());
-        upper.is_none_or(|upper| upper.saturating_add(delta) >= due)
+        upper.is_none_or(|upper| upper >= at_ms)
     }
 
     /// Latches that the vault names another key than this enclave's, which ends the node's run: a
@@ -192,9 +203,15 @@ impl Gate {
         self.0.replaced.subscribe()
     }
 
-    /// The newest seq another member confirmed holding: a checkpoint is signed at no later seq.
+    /// The newest seq another member confirmed holding: a checkpoint is signed at no later seq. An
+    /// exempt read's lets any seq pass only until another set may apply, and none past it.
     pub(crate) fn confirmed(&self) -> u64 {
-        self.0.confirmed.load(Ordering::SeqCst)
+        let confirmed = self.0.confirmed.load(Ordering::SeqCst);
+        let until = self.0.exempt_until.load(Ordering::SeqCst);
+        match confirmed == u64::MAX && until != u64::MAX && self.reached(until) {
+            true => 0,
+            false => confirmed,
+        }
     }
 
     /// Records the newest confirmed seq.
@@ -274,8 +291,9 @@ impl Gate {
     }
 
     /// Opens every part but the fence, which the fence tick keeps: a read under which the rule does
-    /// not apply.
-    pub(crate) fn exempt(&self) {
+    /// not apply, until `until_ms`, from which another set may apply (see `confirmed`).
+    pub(crate) fn exempt(&self, until_ms: u64) {
+        self.0.exempt_until.store(until_ms, Ordering::SeqCst);
         self.checked(true);
         self.lag(false);
         self.confirm(u64::MAX);

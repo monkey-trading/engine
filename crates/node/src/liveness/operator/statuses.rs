@@ -20,9 +20,11 @@ use crate::standby_key::chain::StandbyChain;
 
 impl<C: StandbyChain, A: Asking> Operator<C, A> {
     /// Asks each of `others` for its status under signer epoch `epoch`, and weighs the verified
-    /// answers against this log. While a checkpoint waits for a confirmation, the round ends at the
-    /// first status that reaches it, or, should one start to wait mid-round, at once: a slower
-    /// member's answer lands in a later round rather than hold the stamps up. A member that held an
+    /// answers against this log. While a checkpoint waits for a confirmation, once the start check
+    /// passed, the round ends at the first status that reaches it, or, should one start to wait
+    /// mid-round, at once: a slower member's answer lands in a later round rather than hold the stamps
+    /// up. Before the start check passes, the round takes every answer, so one member's covering status
+    /// hides no other's longer or conflicting copy from the check. A member that held an
     /// assignment of the turn reports, as its own cut-off tail, only a durable head sealed by its own
     /// standby key, or by a key no candidate registered (the turn's keys), by `schedule`'s holders,
     /// cached in `holders`; a tail it followed from another member's promoted key counts, as does any,
@@ -43,8 +45,9 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             let mut asked: FuturesUnordered<_> =
                 others.iter().map(|member| self.status(member.clone(), request.clone(), nonce, epoch)).collect();
             let mut statuses: Vec<(AccountId, Status)> = Vec::new();
+            let hurried = || self.gate.waiting().filter(|_| self.gate.start_checked());
             loop {
-                let wanted = self.gate.waiting();
+                let wanted = hurried();
                 tokio::select! {
                     answered = asked.next() => match answered {
                         None => break,
@@ -59,7 +62,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                         }
                     },
                     () = self.gate.woken(), if wanted.is_none() => {
-                        if self.gate.waiting().is_some() {
+                        if hurried().is_some() {
                             break;
                         }
                     }

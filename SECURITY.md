@@ -454,10 +454,12 @@ custody quorum lasting about `heartbeatMisses` intervals, resuming on its first 
 read showing no promotion can pass keeps it running without a newer read only until 15 s before the
 later of the next turn boundary and `promotionDueAt` for a set with no other member, and until 15 s
 after the first boundary a drawn turn could start at, a day after the earliest rotation set takes
-effect (eight days on at least with none in effect or waiting), with no turn naming it or no schedule; a signer the guardian retired ends no run, but its heads no longer land, so the operator
-fences once `promotionDueAt` nears, since a signer the timelock installs could be promoted past soon
-after; two
-copies of one key, which only a host keeping or restoring a sealed copy can run, can serve together
+effect (eight days on at least with none in effect or waiting), with no turn naming it or no
+schedule, and such a read lets checkpoints pass unconfirmed, and heads go at the tip of its own set's
+turn only, until that boundary, from which another set may apply; a signer the guardian retired ends
+no run, but its heads no longer land and `promotionDueAt` goes on counting the retired epoch's
+deadline, so the operator fences once it nears (a signer the timelock then installs starts a new
+epoch with a fresh count); two copies of one key, which only a host keeping or restoring a sealed copy can run, can serve together
 until the losing copy reads the conflicting posted head, or, if its host blocks its reads, until the
 stop time it last computed, so one interval is not a bound on the overlap, and a host that rolls its
 member back within the unposted window, keeping the answering members from seeing what it signed, can

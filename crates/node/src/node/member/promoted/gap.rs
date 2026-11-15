@@ -50,7 +50,8 @@ impl std::error::Error for TailRefused {}
 
 /// Fetches what the members of `promotion`'s turn's set hold past the copy, the member whose enclave
 /// confirmed the outgoing epoch's head first, as the operator's stream named it; then, while the copy
-/// still lacks a prefix the promotion fixed, what the outgoing `operator`'s archive holds; before
+/// still lacks a prefix the promotion fixed, what the outgoing `operator`'s archive holds, and what the
+/// members hold past that, the recent entries they keep going on from its completed segments; before
 /// `deadline`, asking no source in `refused`. Returns the first source whose entries the copy refused,
 /// after which the follower must be opened again.
 pub(super) async fn fetch(
@@ -87,7 +88,17 @@ pub(super) async fn fetch(
     let archive_due = !refused.contains(&Source::Archive) && missing(follower.replica(), promotion).is_some();
     if let Some(operator) = operator.filter(|_| archive_due) {
         match tokio::time::timeout_at(deadline, archive(follower, operator)).await {
-            Ok(Ok(taken)) => info!(taken, "took the gap from the outgoing operator's archive"),
+            Ok(Ok(taken)) => {
+                info!(taken, "took the gap from the outgoing operator's archive");
+                // The archive serves completed segments: the members' recent entries go on from there.
+                if taken > 0 && missing(follower.replica(), promotion).is_some() {
+                    let (taken, refusal) = from_members(&Tcp, &members, follower, deadline).await;
+                    info!(taken, "asked the turn's members again past the archive");
+                    if let Some(member) = refusal {
+                        return Some(Source::Member(member));
+                    }
+                }
+            }
             Ok(Err(e)) if e.downcast_ref::<TailRefused>().is_some() => {
                 warn!("the copy refused the outgoing operator's archive: {e:#}");
                 return Some(Source::Archive);

@@ -9,7 +9,32 @@ async fn a_set_with_no_other_member_is_exempt() {
     rig.chain.set(|chain| chain.members.retain(|(candidate, ..)| *candidate == Address::repeat_byte(OPERATOR)));
     settle().await;
     assert!(rig.gate.sequences());
-    assert_eq!(*rig.signing.borrow(), Signing::Tip);
+    assert!(matches!(*rig.signing.borrow(), Signing::Tip(Some((1, _)))), "at the tip, under its epoch and set");
+    rig.task.abort();
+}
+
+/// A one-member set's read lets checkpoints pass unconfirmed only until the next boundary, from which
+/// another set may apply: past it, with no read since, a checkpoint waits for a confirmation though `E`
+/// still holds the fence open.
+#[tokio::test(start_paused = true)]
+async fn an_exempt_read_passes_checkpoints_only_until_another_set_may_apply() {
+    let rig = Rig::spawn(10);
+    rig.chain.set(|chain| {
+        chain.members.retain(|(candidate, ..)| *candidate == Address::repeat_byte(OPERATOR));
+        chain.due_at = next_boundary(chain.time) + 600;
+    });
+    settle().await;
+    assert_eq!(rig.gate.confirmed(), u64::MAX, "exempt: no checkpoint waits");
+    rig.chain.set(|chain| chain.down = true);
+    // The upper bound reaches the boundary, 52,200 s on, after about 52,171 s, and `E` less DELTA after
+    // about 52,756 s.
+    rig.clock.advance(Duration::from_secs(52_150));
+    settle().await;
+    assert_eq!(rig.gate.confirmed(), u64::MAX, "before the boundary");
+    rig.clock.advance(Duration::from_secs(100));
+    settle().await;
+    assert!(rig.gate.signs(), "E still holds the fence open");
+    assert_eq!(rig.gate.confirmed(), 0, "past the boundary a checkpoint waits for a confirmation");
     rig.task.abort();
 }
 
@@ -47,7 +72,7 @@ async fn an_exempt_read_holds_only_until_the_next_turn_boundary() {
         rig.chain.set(exempting);
         settle().await;
         assert!(rig.gate.sequences() && rig.gate.signs(), "{case}: exempt");
-        assert_eq!(*rig.signing.borrow(), Signing::Tip, "{case}");
+        assert!(matches!(*rig.signing.borrow(), Signing::Tip(_)), "{case}");
         rig.chain.set(|chain| chain.down = true);
         // The upper bound is 3 s past true time at the sample, and runs 500 ppm fast after it: with
         // the boundary 52,200 s on, it reaches the boundary less DELTA after about 52,156 s.
