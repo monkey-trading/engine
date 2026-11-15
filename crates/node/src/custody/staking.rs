@@ -214,8 +214,8 @@ impl StakingCursor {
 /// schedule has been read to name the registry, and its third whether a configured vote contract has
 /// been read to name the schedule: a schedule or vote event before then stalls the same way. With
 /// `turns`, the bound registry, the progress from `V65` carries the registry's turn state at `to`: the
-/// boundary of the drawn turn naming the operator, or none. A failed event read halves `range`; a
-/// completed chunk lets it grow back.
+/// boundary of the drawn turn naming the operator, from `V66` else that of a drawn turn yet to start, or
+/// none. A failed event read halves `range`; a completed chunk lets it grow back.
 /// Error cases:
 /// - stalled: a read fails, an event is on an unproven block, an event arrives before the
 ///   registry binding is verified, or the engine refuses a mirror
@@ -298,7 +298,11 @@ pub(super) async fn mirror<V: VaultReader>(
         let block_time =
             if version >= ProtocolVersion::V37 { Some(block_time(reader, to, block_hash).await?) } else { None };
         let named_turn = match turns.filter(|_| version >= ProtocolVersion::V65) {
-            Some(registry) => Some(named_turn(reader, registry, to, block_hash).await?),
+            Some(registry) => {
+                // From V66 a drawn turn that has yet to start counts, as the engine accepts it.
+                let upcoming = block_time.filter(|_| version >= ProtocolVersion::V66);
+                Some(named_turn(reader, registry, to, block_hash, upcoming).await?)
+            }
             None => None,
         };
         let progress = Command::StakingProgress { block: to, block_hash, block_time, named_turn };
@@ -386,17 +390,33 @@ async fn block_time<V: VaultReader>(reader: &V, to: u64, hash: B256) -> Result<M
 }
 
 /// The boundary of the drawn turn `registry` names the operator by in proven block `to`, if one does.
+/// With none, and `upcoming` the block's time, the boundary of the last turn its schedule has drawn if
+/// that is after the block, a turn the registry will name from then.
 /// Error cases:
-/// - stalled: the read fails, or its answer does not decode
+/// - stalled: a read fails, or its answer does not decode
 async fn named_turn<V: VaultReader>(
     reader: &V,
     registry: alloy::primitives::Address,
     to: u64,
     hash: B256,
+    upcoming: Option<Millis>,
 ) -> Result<Option<Millis>, PollError> {
+    use crate::custody::registry::{decode_last_drawn_turn, decode_named_turn, rotation_state_call};
     let at = crate::custody::evm::BlockRef { number: to, hash };
-    let out = reader.contract_call(at, registry, crate::custody::registry::rotation_state_call()).await;
-    crate::custody::registry::decode_named_turn(&out.map_err(PollError::rpc)?).map_err(PollError::rpc)
+    let out = reader.contract_call(at, registry, rotation_state_call()).await.map_err(PollError::rpc)?;
+    let named = decode_named_turn(&out).map_err(PollError::rpc)?;
+    let Some(time) = upcoming.filter(|_| named.is_none()) else {
+        return Ok(named);
+    };
+    let schedule = reader.registry_schedule(at).await.map_err(PollError::rpc)?;
+    if schedule.is_zero() {
+        return Ok(None);
+    }
+    let out = reader
+        .contract_call(at, schedule, crate::custody::registry::turns_run_until_call())
+        .await
+        .map_err(PollError::rpc)?;
+    Ok(decode_last_drawn_turn(&out).map_err(PollError::rpc)?.filter(|last| *last > time))
 }
 
 /// MONKEY base units as the engine's `TokenUnits`, refusing amounts past u128.

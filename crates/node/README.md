@@ -501,7 +501,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/tests/operator/governance.rs` — parameter votes: the config's vote contract recorded
   once and another refused at recovery, a passed change applied at the first stamp past its notice and
   behind a benchmark snapshot, the access policy a start leaves to a vote, decided at its stamp, a
-  change's outcome found before the withdrawals its command pays, a voted relisting ending
+  change's outcome found before the withdrawals its command pays, a refused due change alerting
+  `proposal_rejected` though its command pays queued withdrawals, a voted relisting ending
   a retired benchmark's alerts, and a waiting ceiling adoption in `/v1/house/state`
 - `src/sequencer/tests/rotation.rs` — an operator rotation through the sequencer, and recovery after it
 - `src/sequencer/batch_tests.rs` — batching: a batch ends after `MAX_BATCH` requests of any kind
@@ -1166,7 +1167,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, its schedule's rotation set and turn events, the vote contract's passed proposals, and the registry's `rotationState()` read, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
 - `src/custody/tests/rpc/vote.rs` — passed proposals decoded only from the configured vote contract, with their canonical command or none, and a command not hashing to its event refused
-- `src/custody/tests/staking/vote.rs` — passed proposals mirrored only once the vote contract is read to name the configured schedule, and the registry's named turn reaching the engine with the frontier
+- `src/custody/tests/staking/vote.rs` — passed proposals mirrored only once the vote contract is read to name the configured schedule, and the registry's named turn, or from `V66` a drawn turn yet to start, reaching the engine with the frontier
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, the staking contract's deployer checked against the configured registry, and the schedule checked against the one the registry and the config name and against the registry it records
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, the pending listing notices, and the latest checkpoint
 - `src/api/operator.rs` — `GET /v1/operator`: the registry's `api_hostname` for the operator in effect, the key in effect, its pending rotation, whether rotation is on, the last election, and from `V51` the rotation set in effect and the next with its time, today's and tomorrow's turns, and the turn history (`?before=&limit=`)
@@ -1180,6 +1181,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/admin_tests/election.rs` — the operator route and the admin route after an election, published keys included
 - `src/api/admin_tests/launch_values.rs` — the admin route's refusals of an emission budget or a staking epoch and cooldown that are not the contracts', and of `InitStaking` while the contract cannot be read
 - `src/api/admin_tests/launch_scenario.rs` — the launch values dev scenario on isolated Anvil: the contracts deploy from `ops/runbooks/production-deployment.toml` and the node's checks accept them
+- `src/api/admin_tests/queued_payouts.rs` — `engine admin` failing on a refused command whose answer carries the withdrawals the queue pays after the outcome
 - `src/api/admin_tests/notice.rs` — the V49 dev scenario: stress parameters and a market's markup refused with no notice and before its time, applied at it through `engine admin` and TLS, and replayed
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
   commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
@@ -2549,7 +2551,9 @@ JSON of, and the sequencer sequences `ApplyProposal` for a passed normal change 
 days. While votes govern at the stamp they would take, the node skips its own protocol activation and access
 policy, which wait for a vote; from `V65` votes govern only while a rotation set with members is in effect, and
 each staking frontier the watcher sequences carries the turn the registry's `rotationState()` names the operator by
-at that block, or none, read through the custody quorum once the registry is bound.
+at that block, or none, read through the custody quorum once the registry is bound; from `V66`, with no turn
+naming it, the frontier carries the boundary of the last turn the registry's schedule has drawn
+(`turnsRunUntil()`) when it is after the block.
 `GET /v1/house/state` adds a `governance` section, the recorded contract, each change waiting with its
 `applies_at`, each restriction in force with its `expires_at`, the baseline of each field one holds, and from `V65`
 when drawn turns name the operator (`turns_from`), and

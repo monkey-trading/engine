@@ -3,7 +3,8 @@
 //! threshold back at zero, so every market steps down to level 0 while the house is not behind. A
 //! client's AAPL long cannot be held over the weekend; a second client's BTC long gains until the house
 //! is behind on the day, which raises BTC to level 2 while AAPL, whose quote has gone stale, stays at
-//! level 0; when the gap starts the close-out fills at AAPL's mark at level 2's spread.
+//! level 0; when the gap starts the close-out fills at AAPL's mark at level 2's spread. A staking
+//! frontier then names a drawn turn that has yet to start.
 
 use engine_core::Fixed;
 use engine_core::command::{AdminCommand, Command};
@@ -78,4 +79,14 @@ pub(crate) fn session(h: &mut Harness) {
     let level_two = h.engine.params().expect("set").stress_levels[2].min_spread_bps;
     assert!(closed.spread_bps >= level_two, "{closed:?}");
     assert_eq!(h.engine.markets()[&AAPL].stress.level, 0);
+
+    // The registry has drawn a turn that begins an hour on: the frontier names it before its boundary.
+    let progress = Command::StakingProgress {
+        block: 66_000_000,
+        block_hash: alloy_primitives::B256::repeat_byte(66),
+        block_time: Some(h.ts),
+        named_turn: Some(Some(h.ts + HOUR_MS)),
+    };
+    assert_eq!(h.cmd(progress), []);
+    assert_eq!(h.engine.governance().turns_from, Some(h.ts + HOUR_MS));
 }

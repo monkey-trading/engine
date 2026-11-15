@@ -428,7 +428,9 @@ so from rotation's start until the first set takes effect, and while an empty se
 operator keeps its bounded commands, and a drawn turn keeps votes governing from its boundary until an
 installation; a turn the engine refused before V65 left no boundary, so each mirrored staking frontier
 carries the registry's turn state at that finalised block, read through the custody quorum, and from
-V65's activation until the first such frontier a log holding rotation sets counts rotation as on; a
+V65's activation until the first such frontier a log holding rotation sets counts rotation as on, and from
+V66 a frontier also carries a drawn turn that has yet to start, so a refused turn whose boundary is still ahead
+is not unseen from its boundary; a
 voted access policy that a
 member's config does not name stops that member's node from starting on the log, so every member
 moves to a release whose config names it before it is proposed, as for a command a release added; the

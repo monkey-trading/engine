@@ -10,7 +10,9 @@ use engine_core::governance::{GovernanceConfig, PassedProposal, command_hash};
 use engine_core::market::{MarketSpec, Tier};
 
 use crate::sequencer::governance::admin_outcome;
-use crate::test_support::TRADER;
+use crate::sequencer::margin_tests::{BTC, captured, fund, market_order, prices, sequenced, withdrawal};
+use crate::test_support::{TRADER, access};
+use engine_core::types::Side;
 
 const VOTE: AccountId = AccountId([0x5f; 20]);
 
@@ -82,6 +84,74 @@ fn a_passed_changes_outcome_is_found_before_the_withdrawals_its_command_pays() {
         assert_eq!(admin_outcome(&events), Some(&outcome));
     }
     assert_eq!(admin_outcome(&paid), None);
+}
+
+#[test]
+fn a_refused_due_change_alerts_though_its_command_pays_queued_withdrawals() {
+    // A house with no capital owes its trader about 900. The trader withdraws every deposited dollar,
+    // then queues forty requests of 10 that wait for cash, which the house pays in: each command pays
+    // sixteen, so the payment, the proposal's passing and the change's own command pay 16, 16 and 8.
+    let (dir, clock) = staked_log_without_capital("vote-refused-pays", Some(FRONTIER), Some(access::policy()));
+    let mut seq = recover_governed(&dir, clock.clone(), Some(config(3_600_000)), Some(access::policy())).unwrap();
+    seq.activate_protocol().unwrap();
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    rotation_on(&mut seq);
+    let now = clock.now_ms();
+    fund(&mut seq, 1, 20_000, "dep-1");
+    sequenced(&mut seq, prices(BTC, "100000", now));
+    let events = market_order(&mut seq, 1, BTC, Side::Buy, "1", "100000");
+    assert!(events.iter().any(|e| matches!(e, Event::Fill(_))), "{events:?}");
+    // Held past the profit fee curve's last hold, the gain pays only the base fee.
+    clock.advance(Duration::from_millis(900_000));
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    sequenced(&mut seq, prices(BTC, "101000", clock.now_ms()));
+    let events = market_order(&mut seq, 1, BTC, Side::Sell, "1", "101000");
+    assert!(events.iter().any(|e| matches!(e, Event::Fill(_))), "{events:?}");
+    let events = withdrawal(&mut seq, 1, "20000");
+    assert!(events.iter().any(|e| matches!(e, Event::WithdrawalApproved { .. })), "{events:?}");
+    for _ in 0..40 {
+        let events = withdrawal(&mut seq, 1, "10");
+        assert!(matches!(&events[..], [Event::WithdrawalQueued { .. }]), "{events:?}");
+    }
+    let payer = Some(access::account(1));
+    let capital = access::funding(&seq.engine, None, payer, Fixed::from_int(400), "0xhouse-in:1");
+    let events = sequenced(&mut seq, capital);
+    assert_eq!(events.iter().filter(|e| matches!(e, Event::WithdrawalApproved { .. })).count(), 16, "{events:?}");
+
+    // Twice the launch profit fee passes and fails its range when it applies.
+    let mut params = seq.engine.baseline_params().expect("set");
+    params.profit_fee_bps *= 2;
+    let doubled = AdminCommand::SetParams(params);
+    let passed = PassedProposal {
+        proposal: 9,
+        fast: false,
+        command_hash: command_hash(&doubled),
+        command: Some(doubled),
+        block: 12,
+        chain_ref: "0x09:0".into(),
+    };
+    let events = sequenced(&mut seq, Command::PassProposal(Box::new(passed)));
+    // Its own command pays sixteen more, leaving eight for the change's.
+    assert_eq!(events.iter().filter(|e| matches!(e, Event::WithdrawalApproved { .. })).count(), 16, "{events:?}");
+    let applies_at = events.iter().find_map(|e| match e {
+        Event::ProposalScheduled { applies_at, .. } => Some(*applies_at),
+        _ => None,
+    });
+    let applies_at = applies_at.expect("scheduled");
+    clock.advance(Duration::from_millis((applies_at - clock.now_ms()) as u64));
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    let (_, logs) = captured(|| sequenced(&mut seq, Command::Tick));
+    assert_eq!(logs.matches(r#"alert="proposal_rejected""#).count(), 1, "{logs}");
+    let applied = log_entries_flushed(&mut seq, &dir)
+        .into_iter()
+        .find_map(|entry| match entry {
+            crate::log::LogEntry::Command(c) if matches!(c.sequenced.cmd, Command::ApplyProposal(_)) => c.events,
+            _ => None,
+        })
+        .expect("the change is sequenced");
+    let outcome = applied.iter().position(|e| matches!(e, Event::AdminRejected { .. })).expect("refused");
+    let paid = applied[outcome + 1..].iter().filter(|e| matches!(e, Event::WithdrawalApproved { .. })).count();
+    assert_eq!(paid, 8, "the withdrawals follow the outcome: {applied:?}");
 }
 
 /// What the sequencer answers `GET /v1/house/state` with now, once the batch is flushed.

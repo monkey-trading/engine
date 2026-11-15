@@ -211,7 +211,8 @@ impl Engine {
     /// Records a fully verified finalized staking range after all its events have applied, from
     /// `V37` the block's time, which never moves back, and from `V65` the registry's turn state at that
     /// block: the boundary of the drawn turn naming the operator, which a turn refused before `V65` left
-    /// no other record of, or none, either of which resolves what `V65`'s activation could not see.
+    /// no other record of, or none, which resolves what `V65`'s activation could not see; from `V66` a
+    /// drawn turn not yet started, up to a day after the block's time, may be named.
     pub(crate) fn staking_progress(
         &mut self,
         block: u64,
@@ -227,7 +228,7 @@ impl Engine {
             && block_time.is_none_or(|time| self.protocol_version >= ProtocolVersion::V37 && Some(time) >= reached)
             && named_turn.is_none_or(|turn| {
                 self.protocol_version >= ProtocolVersion::V65
-                    && turn.is_none_or(|since| block_time.is_some_and(|time| (0..=time).contains(&since)))
+                    && turn.is_none_or(|since| self.turn_names_at(since, block_time))
             })
             && self.staking.as_ref().is_some_and(|staking| {
                 staking.mirrored_through.is_none_or(|through| block >= through)

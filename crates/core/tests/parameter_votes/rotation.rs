@@ -155,6 +155,62 @@ fn the_registry_names_a_turn_refused_before_v56_at_the_next_frontier() {
 }
 
 #[test]
+fn a_frontier_names_a_refused_turn_not_yet_started_from_v66() {
+    // The turn's boundary is a day past the block, as the day it is drawn.
+    let (mut h, begins) = refused_turn_ahead(ProtocolVersion::V66);
+    assert!(begins - h.ts <= DAY_MS);
+    rejected(&h.operate(house_cap(&h, ETH, -1)), "only a passed vote changes this");
+    let (block, block_hash) = (h.log.len() as u64, B256::repeat_byte(0x57));
+    // Not a turn more than a day past the block.
+    let events = h.cmd(Command::StakingProgress {
+        block,
+        block_hash,
+        block_time: Some(begins - DAY_MS - 1),
+        named_turn: Some(Some(begins)),
+    });
+    assert!(
+        matches!(events.last(), Some(Event::AdminRejected { reason }) if reason.contains("frontier")),
+        "{events:?}"
+    );
+    assert_eq!(frontier(&mut h, Some(Some(begins))), []);
+    assert_eq!((h.engine.governance().turns_from, h.engine.governance().turns_drawn), (Some(begins), false));
+    // Until its boundary the operator governs; from it, with no further frontier, a vote does.
+    h.advance_to(begins - 1);
+    assert_eq!(h.operate(house_cap(&h, ETH, -1)).last(), Some(&Event::AdminApplied));
+    h.advance_to(begins);
+    rejected(&h.operate(house_cap(&h, ETH, -2)), "only a passed vote changes this");
+}
+
+#[test]
+fn before_v66_a_frontier_cannot_name_a_turn_after_its_block() {
+    let (mut h, begins) = refused_turn_ahead(ProtocolVersion::V65);
+    let events = frontier(&mut h, Some(Some(begins)));
+    assert!(
+        matches!(events.last(), Some(Event::AdminRejected { reason }) if reason.contains("frontier")),
+        "{events:?}"
+    );
+    assert!(h.engine.governance().turns_drawn);
+}
+
+/// Under `V55` a set is mirrored too late for its first turn, which is credited and refused when drawn
+/// a day before its boundary, and the switch turns off there; then `version` and the vote contract.
+/// The harness, at the draw, and the turn's boundary.
+fn refused_turn_ahead(version: ProtocolVersion) -> (Harness, Millis) {
+    let mut h = voting(ProtocolVersion::V55, TTL);
+    let now = h.ts;
+    adopt_set(&mut h, 1, now);
+    switch_rotation(&mut h, true);
+    let turn = next_turn(&h);
+    let begins = boundary(turn).expect("in range");
+    h.advance_to(begins - DAY_MS);
+    assert!(matches!(draw(&mut h, turn, 1).last(), Some(Event::TurnRefused { .. })));
+    switch_rotation(&mut h, false);
+    h.admin(AdminCommand::ActivateProtocol { version });
+    h.admin(AdminCommand::SetGovernance(GovernanceConfig { vote: VOTE, restriction_ttl_ms: TTL }));
+    (h, begins)
+}
+
+#[test]
 fn a_frontier_naming_no_turn_ends_what_the_activation_could_not_see() {
     // Under `V55` a set is adopted and the switch turns on and off before any draw, then `V65`.
     let mut h = voting(ProtocolVersion::V55, TTL);

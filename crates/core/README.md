@@ -159,7 +159,8 @@ this crate and reproduce the signed state roots exactly.
   node admits the account's signed requests at (`Engine::request_limit`). The limits move only with
   the table, never above launch's and never falling with the tier
 - From protocol `V67`, a weekend close-out pays at least the stress level the house's loss sets, though
-  its market, with no index, does not re-read its own level
+  its market, with no index, does not re-read its own level; and a staking frontier may name a drawn turn
+  that has yet to start, so a turn refused before `V65` is seen from its boundary
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -402,7 +403,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/parameter_votes/listing.rs` — `V56`: a voted relisting held to the listing bounds without a notice, the operator's listing notice refused while rotation is on, the size multiplier and close charge floors on voted changes, and a relisting under a margin restriction measured from the baseline
 - `tests/parameter_votes/toxicity.rs` — `V56`: a voted score tier change held to ±50% of launch without a notice, and a voted relisting keeping its markout floor
 - `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch; from `V57` a voted extension lending an add no more than the launch curve's last hold
-- `tests/parameter_votes/rotation.rs` — `V65`: votes governing only while a rotation set with members is in effect, a drawn turn naming the operator from its boundary, an activation taking the turns the log holds and counting rotation as on until a frontier carries the registry's turn state, a frontier naming a turn refused before `V56` or none, and a proposal the registry passes showing a turn the engine has not seen
+- `tests/parameter_votes/rotation.rs` — `V65`: votes governing only while a rotation set with members is in effect, a drawn turn naming the operator from its boundary, an activation taking the turns the log holds and counting rotation as on until a frontier carries the registry's turn state, a frontier naming a turn refused before `V56` or none, from `V67` a frontier naming a drawn turn yet to start, and a proposal the registry passes showing a turn the engine has not seen
 - `tests/parameter_votes/volume_tiers.rs` — `V59` activated by a vote, a voted volume tier table held to its launch bounds without a notice, a voted relisting held at every tier, and from `V64` a voted table's margin floors held at or above launch, and from `V66` a voted table's limits held at or below launch
 - `tests/parameter_votes/weekend.rs` — `V60`: a voted weekend margin with no listing notice, held to its listing's range, the operator's weekend margin notice refused while rotation is on, the fast path refusing to move it, and a fast-path margin raise past it
 - `tests/parameter_votes/house_loss.rs` — `V62`: a voted change to the house loss threshold, refused above launch's or off its level, applied below it, with no notice
@@ -1113,7 +1114,12 @@ and the level the house's loss sets at the house NAV then, which `Engine::close_
 without recording it: the market's level, its cooldown and its events stay as its other triggers left
 them, so a market that is above the loss's level is not lowered, and one the loss has since cleared keeps
 its own level until it prices again. A pure close's spread still clamps to the market's close-spread
-ceiling. Its log is `v66.jsonl`, and its session is in `examples/reference_log/v66.rs`.
+ceiling. V67 also lets a staking frontier name a turn the registry has drawn and not yet started, with a
+boundary up to a day after the block's time (V65 and V66 accept none after it), so a turn refused before V65
+whose boundary is still ahead when V67 activates is not cleared by the first frontier before it: the
+operator's governed commands are refused from the boundary without a further frontier. The node reads the
+schedule's `turnsRunUntil()` when no turn names the operator, and carries the last drawn turn's boundary
+if it is after the block. Its log is `v67.jsonl`, and its session is in `examples/reference_log/v67.rs`.
 
 Protocol V66 adds request and order limits (`src/volume_tier/limits.rs`). Each tier of the
 parameters' `volume_tiers` table may name a `max_resting_orders` and a `requests_per_second`, each
