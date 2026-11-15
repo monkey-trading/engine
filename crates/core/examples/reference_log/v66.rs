@@ -1,4 +1,4 @@
-//! The session's `V67` part: request and order limits. A vote activates the version, which gives the
+//! The session's `V66` part: request and order limits. A vote activates the version, which gives the
 //! table's tiers resting-order limits of 25, 50, 100 and 250 and request rates of 2, 5, 10 and 20; a
 //! fresh wallet rests 25 orders and the 26th is refused naming tier 0, and a voted table that raises
 //! tier 0's limit above launch's is refused.
@@ -19,10 +19,10 @@ use crate::v56::pass;
 /// The seed of the wallet this part trades through.
 const CLIENT_SEED: u8 = 0x7b;
 
-/// `V67` activates by vote. A fresh wallet rests 25 buy limits in EUR-USD, and a 26th is refused as
+/// `V66` activates by vote. A fresh wallet rests 25 buy limits in EUR-USD, and a 26th is refused as
 /// tier 0's limit; a voted table that raises tier 0's limit to 26 is refused.
 pub(crate) fn session(h: &mut Harness) {
-    let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V67 };
+    let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V66 };
     scheduled(&pass(h, 80, false, Some(activate.clone())));
     h.advance(NOTICE_MS);
     applied(&apply(h, 80, activate));

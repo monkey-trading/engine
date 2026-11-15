@@ -105,7 +105,7 @@ fn a_genesis_that_names_the_floors_binds_a_voted_table_to_them() {
 #[test]
 fn a_voted_table_keeps_each_limit_named_and_at_or_below_launch() {
     let mut h = governed_priced_from_the_first_dollar();
-    let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V67 };
+    let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V66 };
     pass(&mut h, 1, false, activate.clone());
     h.advance(NOTICE_MS);
     assert_eq!(apply(&mut h, 1, activate).last(), Some(&Event::AdminApplied));

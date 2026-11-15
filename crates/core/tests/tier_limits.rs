@@ -1,8 +1,8 @@
-//! `V67`'s request and order limits, through `Engine::apply`: an account rests at most its volume tier's
+//! `V66`'s request and order limits, through `Engine::apply`: an account rests at most its volume tier's
 //! limit, in place of the parameters' cap, and a new resting order past it is refused naming the tier
 //! while orders already resting when the tier falls stay; the tier's request rate is what the node
 //! admits the account's signed requests at; a table naming no limit leaves the parameters' cap; and the
-//! activation gives a log's table its limits by position. Before `V67` a table may name none. The
+//! activation gives a log's table its limits by position. Before `V66` a table may name none. The
 //! limits' bounds are in `tier_limit_bounds.rs`.
 
 mod common;
@@ -23,11 +23,11 @@ use engine_core::volume_tier::{
 };
 
 const V64: ProtocolVersion = ProtocolVersion::V64;
-const V67: ProtocolVersion = ProtocolVersion::V67;
+const V66: ProtocolVersion = ProtocolVersion::V66;
 
 #[test]
 fn a_fresh_wallet_rests_twenty_five_orders_and_the_next_is_refused_naming_its_tier() {
-    let (mut h, a) = genesis(V67, true);
+    let (mut h, a) = genesis(V66, true);
     let b = client(&mut h, 2, "10000");
     for _ in 0..25 {
         accepted(&bid(&mut h, &a));
@@ -45,7 +45,7 @@ fn a_fresh_wallet_rests_twenty_five_orders_and_the_next_is_refused_naming_its_ti
 
 #[test]
 fn each_tier_rests_up_to_its_own_limit() {
-    let (mut h, a) = genesis(V67, true);
+    let (mut h, a) = genesis(V66, true);
     reach_tier_one(&mut h, &a);
     assert_eq!(h.engine.volume_tier(a.account), 1);
     for _ in 0..50 {
@@ -75,7 +75,7 @@ fn each_tier_rests_up_to_its_own_limit() {
 
 #[test]
 fn orders_resting_when_the_tier_falls_stay_and_only_a_new_one_is_refused() {
-    let (mut h, a) = genesis(V67, true);
+    let (mut h, a) = genesis(V66, true);
     reach_tier_one(&mut h, &a);
     let ids: Vec<OrderId> = (0..30).map(|_| accepted(&bid(&mut h, &a))).collect();
     // Thirty days on the counted volume has left the window, and tier 0's limit is 25.
@@ -91,7 +91,7 @@ fn orders_resting_when_the_tier_falls_stay_and_only_a_new_one_is_refused() {
 
 #[test]
 fn a_table_naming_no_limit_leaves_the_parameters_cap_and_the_nodes_rate() {
-    let (mut h, a) = genesis(V67, false);
+    let (mut h, a) = genesis(V66, false);
     assert!(h.engine.params().unwrap().volume_tiers.iter().all(|tier| tier.max_resting_orders == 0));
     for _ in 0..DEFAULT_MAX_RESTING_ORDERS {
         accepted(&bid(&mut h, &a));
@@ -103,7 +103,7 @@ fn a_table_naming_no_limit_leaves_the_parameters_cap_and_the_nodes_rate() {
 }
 
 #[test]
-fn before_v67_the_parameters_cap_applies_and_a_table_may_name_no_limit() {
+fn before_v66_the_parameters_cap_applies_and_a_table_may_name_no_limit() {
     let (mut h, a) = genesis(V64, false);
     for _ in 0..DEFAULT_MAX_RESTING_ORDERS {
         accepted(&bid(&mut h, &a));
@@ -114,12 +114,12 @@ fn before_v67_the_parameters_cap_applies_and_a_table_may_name_no_limit() {
     assert_eq!((standing.max_resting_orders, standing.requests_per_second), (None, None));
     let named = ProtocolParams { volume_tiers: tiers(true), ..h.engine.params().unwrap().clone() };
     let events = h.operate(AdminCommand::SetParams(named));
-    assert!(matches!(events.last(), Some(Event::AdminRejected { reason }) if reason.contains("needs protocol V67")));
+    assert!(matches!(events.last(), Some(Event::AdminRejected { reason }) if reason.contains("needs protocol V66")));
 }
 
 #[test]
 fn the_request_rate_and_the_account_read_follow_the_tier() {
-    let (mut h, a) = genesis(V67, true);
+    let (mut h, a) = genesis(V66, true);
     assert_eq!(h.engine.request_limit(a.account), Some(RequestLimit { tier: 0, per_second: 2 }));
     let standing = h.engine.volume_standing(a.account).unwrap();
     assert_eq!((standing.max_resting_orders, standing.requests_per_second), (Some(25), Some(2)));
@@ -135,7 +135,7 @@ fn activation_gives_unnamed_limits_by_position_and_leaves_resting_orders() {
     for _ in 0..30 {
         accepted(&bid(&mut h, &a));
     }
-    h.admin(AdminCommand::ActivateProtocol { version: V67 });
+    h.admin(AdminCommand::ActivateProtocol { version: V66 });
     let orders = |tiers: &[VolumeTier]| tiers.iter().map(|tier| tier.max_resting_orders).collect::<Vec<_>>();
     let rates = |tiers: &[VolumeTier]| tiers.iter().map(|tier| tier.requests_per_second).collect::<Vec<_>>();
     let launch = h.engine.operator_bounds().launch_volume_tiers.clone().unwrap();

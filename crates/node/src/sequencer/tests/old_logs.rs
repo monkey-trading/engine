@@ -27,7 +27,7 @@ fn an_existing_v1_log_activates_at_its_next_seq_and_still_verifies() {
     // Activation also turns its absolute divergence triggers of 15 and 20 bps into 60% and 80% of its
     // widest bound, 25 bps: the shares the dev config takes; its toxicity into `V54`'s form; the default
     // curve; gives level 2 a house loss threshold of zero; gives volume tiers 0 and 1 `V64`'s
-    // margin floors; and gives every tier `V67`'s resting-order limit and request rate.
+    // margin floors; and gives every tier `V66`'s resting-order limit and request rate.
     carried.toxicity.notional = Some(weighting);
     carried.share_divergence_triggers(25);
     carried.convert_to_score();

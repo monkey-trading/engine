@@ -16,11 +16,11 @@
 //!   bound, rounded down, and at most the second bound. No tier changes a spread rate.
 //! - **Earned leverage** (`leverage`), from `V64`. A tier's margin floor raises each margin band of
 //!   the account's initial requirement to at least the floor; close-outs read the market's bands.
-//! - **Request and order limits** (`limits`), from `V67`. A tier's resting-order limit caps the orders an
+//! - **Request and order limits** (`limits`), from `V66`. A tier's resting-order limit caps the orders an
 //!   account rests at once, and its request rate is what the node admits the account's signed requests at.
 //! - **Bounds** (`bounds`). The table moves only after a seven-day notice, or by a vote while rotation
 //!   is on: the same number of tiers, thresholds and day divisors at or above launch, shares at or
-//!   below launch, from `V64` margin floors at or above launch, from `V67` limits and rates at or below
+//!   below launch, from `V64` margin floors at or above launch, from `V66` limits and rates at or below
 //!   launch, and in every listed market each tier's
 //!   spread at every notional from its launch spread to twice it, against which a listing's spread
 //!   bands are checked too. From `V61` a ceiling adoption's bound first listing is checked when it is
@@ -84,11 +84,11 @@ pub struct VolumeTier {
     /// bps (`leverage`); zero for none, and left out of the encoding then.
     #[serde(default, skip_serializing_if = "is_zero_bps")]
     pub margin_floor_bps: i64,
-    /// From `V67`, the resting orders an account at this tier may hold at once, replacing the
+    /// From `V66`, the resting orders an account at this tier may hold at once, replacing the
     /// parameters' cap (`limits`); zero for none named, and left out of the encoding then.
     #[serde(default, skip_serializing_if = "limits::is_unnamed")]
     pub max_resting_orders: usize,
-    /// From `V67`, the signed requests a second the node admits from an account at this tier
+    /// From `V66`, the signed requests a second the node admits from an account at this tier
     /// (`limits`); zero for none named, and left out of the encoding then.
     #[serde(default, skip_serializing_if = "limits::is_unnamed")]
     pub requests_per_second: u32,
@@ -109,10 +109,10 @@ pub struct VolumeStanding {
     /// Where each market's first spread band ends for the account, in USD; a market with a single
     /// band is left out.
     pub best_price_bounds: BTreeMap<MarketId, Fixed>,
-    /// From `V67`, the resting orders the tier lets the account hold, where the table names a limit.
+    /// From `V66`, the resting orders the tier lets the account hold, where the table names a limit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_resting_orders: Option<usize>,
-    /// From `V67`, the signed requests a second the tier lets the node admit, where the table names one.
+    /// From `V66`, the signed requests a second the tier lets the node admit, where the table names one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requests_per_second: Option<u32>,
 }

@@ -1,4 +1,4 @@
-//! Request and order limits, from `V67`: a volume tier's resting-order limit caps the orders an account
+//! Request and order limits, from `V66`: a volume tier's resting-order limit caps the orders an account
 //! rests at once, in place of the parameters' cap, and its request rate is what the node admits the
 //! account's signed requests at (`Engine::request_limit`). A fresh wallet starts at tier 0's, so
 //! recycling wallets forfeits the higher tiers' limits. A limit never cancels: orders already resting
@@ -12,9 +12,9 @@ use crate::protocol::ProtocolVersion;
 use crate::types::AccountId;
 use crate::volume_tier::VolumeTier;
 
-/// The resting-order limits `V67`'s activation gives a table that names none, by tier.
+/// The resting-order limits `V66`'s activation gives a table that names none, by tier.
 pub const ACTIVATION_MAX_RESTING_ORDERS: [usize; 4] = [25, 50, 100, 250];
-/// The request rates, a second, `V67`'s activation gives a table that names none, by tier.
+/// The request rates, a second, `V66`'s activation gives a table that names none, by tier.
 pub const ACTIVATION_REQUESTS_PER_SECOND: [u32; 4] = [2, 5, 10, 20];
 /// The highest request rate a tier may name.
 pub const MAX_REQUESTS_PER_SECOND: u32 = 1_000;
@@ -92,10 +92,10 @@ pub(super) fn within_launch_limits(tiers: &[VolumeTier], launch: &[VolumeTier]) 
 }
 
 impl Engine {
-    /// The resting orders and request rate tier `tier` of the table in force names: from `V67`, each
-    /// where it is not zero. `None` for each before `V67`, with no table, or where the tier names none.
+    /// The resting orders and request rate tier `tier` of the table in force names: from `V66`, each
+    /// where it is not zero. `None` for each before `V66`, with no table, or where the tier names none.
     pub(super) fn tier_limits(&self, tier: usize) -> (Option<usize>, Option<u32>) {
-        let named = self.volume_tiers_in_force().filter(|_| self.protocol_version >= ProtocolVersion::V67);
+        let named = self.volume_tiers_in_force().filter(|_| self.protocol_version >= ProtocolVersion::V66);
         let Some(tier) = named.map(|tiers| &tiers[tier]) else { return (None, None) };
         (
             Some(tier.max_resting_orders).filter(|max| *max != 0),
@@ -118,12 +118,12 @@ impl Engine {
         self.tier_limits(tier).1.map(|per_second| RequestLimit { tier, per_second })
     }
 
-    /// Starts tier limits when `version` activates `V67` over the log: each tier of the table in force,
+    /// Starts tier limits when `version` activates `V66` over the log: each tier of the table in force,
     /// and of the launch table that bounds it, that names no limit takes its position's
     /// (`ACTIVATION_MAX_RESTING_ORDERS`, `ACTIVATION_REQUESTS_PER_SECOND`), and keeps one it names. Orders
     /// already resting stay.
     pub(crate) fn start_tier_limits(&mut self, version: ProtocolVersion) {
-        if self.protocol_version >= ProtocolVersion::V67 || version < ProtocolVersion::V67 {
+        if self.protocol_version >= ProtocolVersion::V66 || version < ProtocolVersion::V66 {
             return;
         }
         if let Some(params) = self.params.as_mut() {

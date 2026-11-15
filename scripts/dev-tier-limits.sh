@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Request and order limits, from protocol V67, on a dev node through the signed order route and the
+# Request and order limits, from protocol V66, on a dev node through the signed order route and the
 # account read, on deterministic time with isolated temporary state: a fresh wallet rests 25 orders
 # and the 26th is refused naming tier 0; its next request and ten signed orders after it get 429
 # naming tier 0's 2 requests a second; a wallet that has reached tier 2 sends the same requests and

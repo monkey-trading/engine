@@ -49,7 +49,7 @@ impl ApiState {
     /// - the request is signed and the engine has never credited `account`
     /// - the request is signed with a nonce other than the account's next
     /// - the request is signed with an expiry already past by the clock or the last sequenced time
-    /// - the account, or its session keys, are over their rate: from `V67`, for a credited account
+    /// - the account, or its session keys, are over their rate: from `V66`, for a credited account
     ///   whose tier names one, its tier's (`TierLimited`)
     /// - the sequencer has stopped
     pub(super) async fn authorise(
@@ -265,7 +265,7 @@ impl ApiState {
     }
 
     /// The request rate `account`'s volume tier admits, read on the stats worker's copy of the engine
-    /// (`read`): `None` before `V67` or where the tier names none.
+    /// (`read`): `None` before `V66` or where the tier names none.
     /// Error cases:
     /// - the sequencer has stopped
     async fn request_limit(&self, account: AccountId) -> Result<Option<RequestLimit>, ApiError> {

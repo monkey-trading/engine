@@ -68,7 +68,7 @@ pub enum Reject {
     TooManyOrders {
         max: usize,
     },
-    /// From `V67`, a limit or stop order from an account that already rests `max`, the resting-order
+    /// From `V66`, a limit or stop order from an account that already rests `max`, the resting-order
     /// limit of its volume tier `tier`.
     TierOrderLimit {
         tier: usize,

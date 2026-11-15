@@ -59,7 +59,7 @@ pub struct ApiLimits<C: Clock = DefaultClock> {
     /// the per-account rate, separate from the account's own, so keys cannot multiply its
     /// allowance and a flooding key cannot starve the wallet's requests.
     session_accounts: KeyedLimiter<AccountId, C>,
-    /// From `V67`, the buckets of a credited account whose tier names a request rate, in place of the
+    /// From `V66`, the buckets of a credited account whose tier names a request rate, in place of the
     /// two above: its own, and its session keys' together.
     tier_accounts: TierBuckets<C>,
     tier_session_accounts: TierBuckets<C>,

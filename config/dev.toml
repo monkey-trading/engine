@@ -93,7 +93,7 @@ per_client = { per_minute = 600, burst = 20 }
 
 # Seconds of its tier's request rate each of a credited account's buckets holds at once: the
 # account's own, and its session keys' together. The rate is the tier's (`volume_tiers`, from
-# protocol V67). A production build refuses more than 5 seconds.
+# protocol V66). A production build refuses more than 5 seconds.
 [api.request_bursts]
 account = 2
 session_key = 2

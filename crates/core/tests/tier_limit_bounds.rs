@@ -1,7 +1,7 @@
-//! The operator's bounds on `V67`'s request and order limits, through `Engine::apply`: a table keeps
+//! The operator's bounds on `V66`'s request and order limits, through `Engine::apply`: a table keeps
 //! each tier's resting-order limit and request rate named and at or below launch's, never falling
 //! with the tier, and moves only as a seven-day notice names it. A voted table is held to the same
-//! (`parameter_votes/volume_tiers.rs`). Before `V67` a table may name no limit.
+//! (`parameter_votes/volume_tiers.rs`). Before `V66` a table may name no limit.
 
 mod common;
 
@@ -16,11 +16,11 @@ use engine_core::types::Millis;
 use engine_core::volume_tier::{ACTIVATION_MAX_RESTING_ORDERS, ACTIVATION_REQUESTS_PER_SECOND, VolumeTier};
 
 const V64: ProtocolVersion = ProtocolVersion::V64;
-const V67: ProtocolVersion = ProtocolVersion::V67;
+const V66: ProtocolVersion = ProtocolVersion::V66;
 
 #[test]
 fn a_table_naming_a_limit_above_launch_or_none_or_one_that_falls_is_refused() {
-    let (mut h, _, _) = funded_at(V67);
+    let (mut h, _, _) = funded_at(V66);
     let in_force = h.engine.params().unwrap().volume_tiers.clone();
     let due = h.ts + NOTICE_MS;
     let cases: [(Change, &str); 7] = [
@@ -53,7 +53,7 @@ fn a_table_naming_a_limit_above_launch_or_none_or_one_that_falls_is_refused() {
 
 #[test]
 fn a_lower_limit_is_noticed_and_applies_from_its_time() {
-    let (mut h, _, _) = funded_at(V67);
+    let (mut h, _, _) = funded_at(V66);
     let in_force = h.engine.params().unwrap().volume_tiers.clone();
     assert_eq!(in_force.iter().map(|tier| tier.max_resting_orders).collect::<Vec<_>>(), ACTIVATION_MAX_RESTING_ORDERS);
     assert_eq!(
@@ -80,11 +80,11 @@ fn a_lower_limit_is_noticed_and_applies_from_its_time() {
 }
 
 #[test]
-fn before_v67_a_table_naming_limits_is_refused_whether_noticed_or_set() {
+fn before_v66_a_table_naming_limits_is_refused_whether_noticed_or_set() {
     let (mut h, _, _) = funded_at(V64);
     let mut named = h.engine.params().unwrap().volume_tiers.clone();
     named.iter_mut().zip(ACTIVATION_MAX_RESTING_ORDERS).for_each(|(tier, limit)| tier.max_resting_orders = limit);
-    let reason = "a tier limit needs protocol V67";
+    let reason = "a tier limit needs protocol V66";
     assert!(refused(&h.operate(notice(named.clone(), h.ts + NOTICE_MS))).contains(reason));
     assert!(refused(&h.operate(AdminCommand::SetParams(params(&h, named)))).contains(reason));
     let mut rates = h.engine.params().unwrap().volume_tiers.clone();

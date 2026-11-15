@@ -32,7 +32,7 @@ pub struct ApiSection {
     /// may send, which ends its stream when larger.
     pub max_body_bytes: NonZeroUsize,
     /// Requests from one client, and requests that act for one account; excess requests get 429. From
-    /// protocol `V67` a credited account whose volume tier names a request rate is held to that rate
+    /// protocol `V66` a credited account whose volume tier names a request rate is held to that rate
     /// instead (`request_bursts`), and `per_account` holds the rest: accounts never credited, the
     /// operator's requests, payout reissue requests, and tiers that name no rate.
     pub per_ip: RateLimit,

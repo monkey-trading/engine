@@ -427,12 +427,12 @@ pub enum ProtocolVersion {
     /// falling with the tier. Activation gives each tier of the table in force, and of its launch table,
     /// that names none a limit by position: 25, 50, 100 and 250 orders, and 2, 5, 10 and 20 requests a
     /// second; before it a table may name none.
-    V67,
+    V66,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V67;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V66;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

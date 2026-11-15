@@ -21,7 +21,7 @@ an index: load only the rule whose hint matches the current action.
   launch, with each tier's spread from its launch spread to twice it, and from `V61` measured from the launch table at an activation, a ceiling adoption's bound first listing held to it when adopted, and a closing lot joining another only when the order of their units does not matter; from `V64` earned leverage in
   `volume_tier/leverage.rs`: a tier's margin floor raises each margin band of the initial requirement
   that new risk and withdrawals meet, band by band with the weekend margin, while close-outs read the
-  market's bands, the floors moved only with the table and never below launch's, `tests/earned_leverage.rs`; from `V67` request and order limits in
+  market's bands, the floors moved only with the table and never below launch's, `tests/earned_leverage.rs`; from `V66` request and order limits in
   `volume_tier/limits.rs`: a tier's resting-order limit replaces the parameters' cap, a new resting order past it
   refused as `TierOrderLimit` naming the tier while orders already resting stay, and its request rate is what the node
   admits a credited account's signed requests at, the limits moved only with the table and never above launch's,
@@ -123,7 +123,7 @@ an index: load only the rule whose hint matches the current action.
   replay`, `engine exit-proof` (`exit.rs`: the exit's proofs and vault calls from a published log),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
-  `/v1/session-keys` registration and revocation a session key trades under (from `V41`), admission before a first deposit (`api/state.rs`: a never-credited account may declare, then manage its session keys, each within the fresh-account budgets in `limits/`, set by `[api.fresh_accounts]` apart from `api.per_ip` and `api.per_account` and capped in a production build (`config/fresh_accounts.rs`), with a declaration from an account with a pending deposit exempt from both, and nothing else; declarations hold at most half the API's screening slots), from `V67` a credited account's per-account and session-key buckets at its volume tier's request rate, read from the API's engine copy (`ApiState::read`), the bursts set in `[api.request_bursts]` as seconds of that rate and capped in a production build (`config/request_bursts.rs`), and a 429 naming the tier and its rate (`limits/`), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
+  `/v1/session-keys` registration and revocation a session key trades under (from `V41`), admission before a first deposit (`api/state.rs`: a never-credited account may declare, then manage its session keys, each within the fresh-account budgets in `limits/`, set by `[api.fresh_accounts]` apart from `api.per_ip` and `api.per_account` and capped in a production build (`config/fresh_accounts.rs`), with a declaration from an account with a pending deposit exempt from both, and nothing else; declarations hold at most half the API's screening slots), from `V66` a credited account's per-account and session-key buckets at its volume tier's request rate, read from the API's engine copy (`ApiState::read`), the bursts set in `[api.request_bursts]` as seconds of that rate and capped in a production build (`config/request_bursts.rs`), and a 429 naming the tier and its rate (`limits/`), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps, and with `[api.tls.acme]` a public CA certificate for that
   key, obtained and renewed over ACME TLS-ALPN-01 answered on the API's listener, in `tls/acme/`,
   which a restart or the member's next daily turn under the same key serves again from the member's
@@ -434,7 +434,7 @@ an index: load only the rule whose hint matches the current action.
   markout spread (#699), from `V59` the volume tier table (#614, D1), from `V60` the weekend margins of
   WTI, Japan 225, silver and US Tech 100 (#750), from `V62` level 2's house loss threshold of zero
   (`dev.toml` and `anvil.toml` carry a labelled $1M fixture), from `V64` its volume tiers' margin
-  floors (#614, D5), and from `V67` their resting-order limits and request rates (#614, D11 and D1; `dev.toml` and
+  floors (#614, D5), and from `V66` their resting-order limits and request rates (#614, D11 and D1; `dev.toml` and
   `anvil.toml` name none, so a log started from them keeps resuming, and fresh dev nodes keep the parameters' cap
   and `api.per_account` until a notice names them); a deployment's node sections complete it
   into a config. Every section
@@ -541,7 +541,7 @@ an index: load only the rule whose hint matches the current action.
   tier falling thirty days on with the short left open, a withdrawal stopped at the initial
   requirement, the close-out at BTC's own bands, the account read's requirements, withdrawable cash
   and leverage, restart and replay;
-  `dev-tier-limits.sh`, the V67 request and order limits on a dev node: a fresh wallet resting 25 orders and
+  `dev-tier-limits.sh`, the V66 request and order limits on a dev node: a fresh wallet resting 25 orders and
   refused the 26th naming tier 0, its next requests refused with 429 naming tier 0's rate, a wallet at tier 2
   resting 30 orders under its own rate, its tier falling thirty days on with the 30 orders left resting and a
   new one refused at 25, restart and replay;

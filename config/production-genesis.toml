@@ -237,7 +237,7 @@ profit_fee_curve = [
 # withdrawals must leave; close-outs read the market's bands alone (#614, D5):
 # 5% at tier 0 (20x), 2% at tier 1 (50x), and none above, where BTC-USD and
 # ETH-USD reach their own 1% (100x, D4).
-# From protocol V67 a tier's max_resting_orders is the orders an account rests at once, in place of
+# From protocol V66 a tier's max_resting_orders is the orders an account rests at once, in place of
 # max_resting_orders above (D11), and its requests_per_second the signed requests a second the node
 # admits from it (D1); the node's bursts are set in [api.request_bursts].
 # The table moves only after a seven-day notice, never more generously (D7).

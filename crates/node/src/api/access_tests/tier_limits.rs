@@ -1,4 +1,4 @@
-//! The `V67` dev scenario: a tier's limits cap the orders a wallet rests and the signed requests the
+//! The `V66` dev scenario: a tier's limits cap the orders a wallet rests and the signed requests the
 //! node admits from it, through the signed order route and the account read on deterministic time. The
 //! node's tier table is dev's with the production genesis's limits (25, 50, 100 and 250 resting orders,
 //! 2, 5, 10 and 20 requests a second) and thresholds a few fills reach in a day, and an account's

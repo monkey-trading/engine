@@ -563,7 +563,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   last price when the gap starts beside a long that holds the margin, a withdrawal held to it over the
   gap, the normal margin at the reopen, a calendar change refused that would narrow the gap and a
   weekend margin change refused without notice over TLS, replay and a restart
-- `src/api/access_tests/tier_limits.rs` — the `V67` dev scenario: a fresh wallet resting 25 orders and
+- `src/api/access_tests/tier_limits.rs` — the `V66` dev scenario: a fresh wallet resting 25 orders and
   refused the 26th naming tier 0, its next requests refused with 429 naming tier 0's rate, a wallet at
   tier 2 resting 30 orders under its own rate, the tier falling thirty days on with the 30 orders
   left resting and a new one refused at 25, the account read, replay and a restart
@@ -893,7 +893,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/tls/tests/proxy.rs` — the PROXY protocol header: the client it names, the trusted ranges, and every refusal
 - `src/tls/tests/stream.rs` — the stream end to end over TLS: the subscriber and message caps
 - `src/limits/mod.rs` — request rate limits, connection caps, the stream subscriber cap, and the allowed browser origins
-- `src/limits/tier.rs` — from `V67`, a credited account's buckets at its tier's request rate: one limiter for each rate a tier may name, made when first used, with a burst of `api.request_bursts` seconds of it
+- `src/limits/tier.rs` — from `V66`, a credited account's buckets at its tier's request rate: one limiter for each rate a tier may name, made when first used, with a burst of `api.request_bursts` seconds of it
 - `src/limits/tests.rs` — the limiters' buckets, caps, and alert throttle
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
 - `src/config/stats.rs` — the `[stats]` section: retention, activity length, position-map buckets
@@ -2303,7 +2303,7 @@ access holds) off the sequencer's thread: it applies a batch's commands once the
 view queues behind them, so a view shows each command whose reply its caller has had and nothing a crash could
 take back, and a scan in progress delays views, not prices. House and dashboard views, which read the record
 a batch ahead of the copy, proofs, quote reads and the checks that admit a signed request stay on the
-sequencer, and their answers wait for the log to hold the seq they read; the one exception is, from `V67`, the
+sequencer, and their answers wait for the log to hold the seq they read; the one exception is, from `V66`, the
 request rate a credited account's signed request is counted at, which the copy gives, so that read waits
 behind the copy's applies and scans (and, with no worker, for the log to hold the batch it reads). The result is installed by the next command or read
 after it finishes,
@@ -2357,7 +2357,7 @@ changes (a weekend gap's start closes out below `weekend_margins`' `required` in
 `withdrawable` is the cash a withdrawal may take now, the engine's own check; and `max_leverage`,
 keyed by every listed market, is the most leverage a position opened now can take or approach in the
 market's margin bands at the same floors (at the production genesis's floors, 20 at tier 0 on a 1%
-market, 50 at tier 1 and 100 above). From `V67`, `volume` also gives the tier's `max_resting_orders`
+market, 50 at tier 1 and 100 above). From `V66`, `volume` also gives the tier's `max_resting_orders`
 and `requests_per_second` where the table names them: the orders the account may rest, a new one past
 which is refused as `tier_order_limit` naming the tier, and the signed requests a second the node takes
 from the account and its session keys, beyond which a request gets 429 with `Retry-After` and a body
@@ -2476,7 +2476,7 @@ window and cooldown that a `set-params` carrying that file applies, and from `V5
 above the launch curve at every hold, as the profit fee stays at or above its launch value, and from
 `V59` with `--volume-tiers-from <params.toml>` the notice for its `volume_tiers`, which keeps the
 launch tiers, no threshold or day divisor below launch and no share above it, from `V64` no margin
-floor below launch or above the tier before it, and from `V67` no `max_resting_orders` or
+floor below launch or above the tier before it, and from `V66` no `max_resting_orders` or
 `requests_per_second` unnamed, above launch or below the tier before it; `announce-markup <market> <bps>
 --effective-at <time>` gives the notice a listed market's markup change needs before an
 `upsert-market` carries it. From `V52`, `announce-listing <market>` with `--spreads-from` and

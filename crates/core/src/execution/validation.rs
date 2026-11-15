@@ -18,7 +18,7 @@ impl Engine {
     /// - a qty, quoted price, or trigger price at or below zero or above `Fixed::MAX_INPUT`
     /// - an account that has never been credited
     /// - from `V14`, a limit or stop order from an account already resting the parameters' cap, from
-    ///   `V67` its volume tier's limit where the table names one, or
+    ///   `V66` its volume tier's limit where the table names one, or
     ///   one whose notional at its own price, in USD at that price in a market that converts at its
     ///   own index and at its FX market's last mark in any other, is below the market's minimum, or
     ///   whose FX market has no mark yet; a reduce-only order is never checked, and from `V15`
