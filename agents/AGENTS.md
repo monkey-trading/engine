@@ -42,7 +42,7 @@ an index: load only the rule whose hint matches the current action.
   activation gives a listing with no floor its asset class's; `tests/toxicity_*.rs`), from `V62` a stress trigger on the
   house's marked loss to its clients over the trailing day (`house_loss/`: NAV less net capital moved in, one result per
   15-minute slot, every market at the level whose threshold the loss is above, each launch threshold kept by notice and
-  by vote, `tests/house_loss.rs`, `tests/house_loss_accounting.rs` and `tests/house_loss_bounds.rs`), signed client
+  by vote, `tests/house_loss.rs`, `tests/house_loss_accounting.rs` and `tests/house_loss_bounds.rs`; from `V66` a weekend close-out pays at least the level the loss sets, `tests/house_loss_weekend.rs`), signed client
   requests (EIP-712, per-account
   nonces, and expiries, and from `V41` session keys: one account-signed registration authorises a
   short-lived in-browser key to place and cancel orders on its own nonce sequence, in

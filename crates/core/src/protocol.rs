@@ -428,11 +428,16 @@ pub enum ProtocolVersion {
     /// that names none a limit by position: 25, 50, 100 and 250 orders, and 2, 5, 10 and 20 requests a
     /// second; before it a table may name none.
     V66,
+    /// A weekend close-out fills at its market's mark at the stress level the house's loss sets now if
+    /// that is higher than the market's own level, which it neither lowers nor changes, so a market
+    /// with no index to re-read its level from (`V62` leaves it at the level it last set) pays the
+    /// loss trigger's level too. Its spread still clamps to the market's close-spread ceiling.
+    V67,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V66;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V67;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

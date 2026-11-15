@@ -196,13 +196,15 @@ impl Engine {
 
     /// Prices a close-out's fill at index `mid`, converting to USD at `fx`, and books it: from `V60`
     /// a weekend close-out fills at its market's mark once the market has shut, where its own
-    /// index no longer prices.
+    /// index no longer prices; from `V66` at the market's level or the one the house's loss sets now,
+    /// whichever is higher.
     /// Error cases:
     /// - as `price_at`
     pub(crate) fn execute_at(&mut self, exec: Exec, mid: Fixed, fx: Option<Fixed>) -> Result<Fill, Reject> {
         // A close-out only reduces, so it passes no risk check.
         assert!(exec.liquidation && exec.reduce_only, "only a close-out fills at a price it is given");
-        let priced = self.price_at(&exec, mid, fx, self.best_price_share(exec.account))?;
+        let level = self.close_out_stress_level(exec.market);
+        let priced = self.price_at(&exec, mid, fx, level, self.best_price_share(exec.account))?;
         Ok(self.book(&exec, priced))
     }
 
@@ -289,14 +291,21 @@ impl Engine {
         }
         let mid = market.index(self.now).map_err(|error| Reject::NoPrice { error })?.mid;
         let fx = self.live_fx(exec.market)?;
-        self.price_at(exec, mid, fx, share)
+        self.price_at(exec, mid, fx, market.stress.level, share)
     }
 
-    /// The price for a fill at index `mid`, converting to USD at `fx`, and the slice of it that adds
-    /// risk, as `price` gives it at the live index.
+    /// The price for a fill at index `mid`, converting to USD at `fx`, at stress level `level`, and the
+    /// slice of it that adds risk, as `price` gives it at the live index.
     /// Error cases:
     /// - as `price`, but for the market's session and prices
-    fn price_at(&self, exec: &Exec, mid: Fixed, fx: Option<Fixed>, share: Option<i64>) -> Result<Priced, Reject> {
+    fn price_at(
+        &self,
+        exec: &Exec,
+        mid: Fixed,
+        fx: Option<Fixed>,
+        level: usize,
+        share: Option<i64>,
+    ) -> Result<Priced, Reject> {
         let params = self.params.as_ref().expect("callers check params are set");
         let market = &self.markets[&exec.market];
         let currency = market.spec.quote_currency;
@@ -322,7 +331,7 @@ impl Engine {
             return Err(Reject::InvalidOrder { reason: "below minimum order notional".into() });
         }
 
-        let stress = &params.stress_levels[market.stress.level];
+        let stress = &params.stress_levels[level];
         let bands = AccountBands::at(&market.spec.spread_tiers, share);
         let toxicity_bps = if exec.liquidation { 0 } else { self.toxicity_add_on_bps(exec.account) };
         // From `V52` the slice that closes the position pays the size spread too.

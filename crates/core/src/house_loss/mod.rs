@@ -21,7 +21,9 @@
 //! A stress level's trigger may name a loss threshold (`StressTrigger::house_loss`), met when the
 //! loss is above it. It applies in every market: the stress readings take the loss before every fill
 //! and after every command (`stress`), and a market's level steps down from it after the cooldown,
-//! as from any other trigger. Its bounds are in `bounds`.
+//! as from any other trigger. A market with no index to read it from keeps its level, and from `V66` a
+//! close-out filling at the market's mark pays the higher of that and the level the loss sets then
+//! (`Engine::close_out_stress_level`). Its bounds are in `bounds`.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -185,6 +187,19 @@ impl Engine {
     /// Notes that `market` took a fresh mark, which has the dividends paid since its last one.
     pub(crate) fn note_fresh_mark(&mut self, market: MarketId) {
         self.house_loss.unpriced_dividends.remove(&market);
+    }
+
+    /// The stress level a close-out filling at its market's mark pays, which no index re-reads: the
+    /// market's level, and from `V66` at least the level the house's loss sets at the NAV now. Nothing
+    /// is recorded, so the market's level, its cooldown and its events are as another trigger left them.
+    pub(crate) fn close_out_stress_level(&self, market: MarketId) -> usize {
+        let level = self.markets[&market].stress.level;
+        match self.params.as_ref() {
+            Some(params) if self.protocol_version >= ProtocolVersion::V66 => {
+                level.max(loss_level(&params.stress_levels, self.house_loss_at(self.house_nav())))
+            }
+            _ => level,
+        }
     }
 
     /// From `V62`, the stress level the house's loss set after the last command.

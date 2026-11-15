@@ -112,7 +112,8 @@ impl Engine {
     /// exposure at that index in USD at the live FX index, and its cap at house NAV `nav`, then its
     /// effective level. The index mid joins the move window. A raised automatic level steps down
     /// only after the cooldown. A market that is closed, or has no index or no live FX index, keeps
-    /// its level, since nothing fills there. From `V62` the readings include the house's loss at `nav`.
+    /// its level, since nothing fills there but a weekend close-out, which from `V66` pays at least the level the
+    /// house's loss sets (`close_out_stress_level`). From `V62` the readings include the house's loss at `nav`.
     pub(crate) fn refresh_stress(&mut self, market_id: MarketId, nav: Fixed, events: &mut Vec<Event>) {
         let now = self.now;
         let global_floor = self.global_stress_floor.max(self.governance.stress_floor(market_id));

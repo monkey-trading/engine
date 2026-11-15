@@ -213,8 +213,8 @@ that market at its last price, so a weekend margin change past those bounds, or 
 the closure below it, is in scope. From protocol V62 every market rises to the stress level the house loss
 trigger names once the house has lost money to its clients over the trailing day, its NAV less net
 capital moved in, and the stress levels keep that trigger at its launch level or above with a
-threshold no higher than launch's, so a fill below that level while the house is behind on the day,
-or a change past that bound, is in scope. The trigger caps how fast the house loses, not what a fast
+threshold no higher than launch's, so a fill below that level while the house is behind on the day (from
+V66 a weekend close-out too), or a change past that bound, is in scope. The trigger caps how fast the house loses, not what a fast
 client takes from the house's income: `research/loss-rate-trigger` gives the bound and the classes it
 leaves open. With `[checkpoints]` configured, startup verifies the replayed log
 against the latest posted vault commitment at custody finality and refuses a shorter or conflicting log before serving or opening

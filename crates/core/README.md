@@ -158,6 +158,8 @@ this crate and reproduce the signed state roots exactly.
   `TierOrderLimit` naming the tier while orders already resting stay, and its request rate is what the
   node admits the account's signed requests at (`Engine::request_limit`). The limits move only with
   the table, never above launch's and never falling with the tier
+- From protocol `V67`, a weekend close-out pays at least the stress level the house's loss sets, though
+  its market, with no index, does not re-read its own level
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -441,7 +443,10 @@ this crate and reproduce the signed state roots exactly.
 - `tests/house_loss_accounting.rs` — what the loss leaves out: a vault receipt for the house credited
   and reversed, a distribution, and a cash dividend paid before its market reprices
 - `tests/house_loss_bounds.rs` — the trigger's bounds under a stress notice and the operator's
-  parameters, a lower threshold after its notice, and refusal before `V62`
+  parameters, a lower threshold after its notice, refusal before `V62`, and a fresh log's first
+  parameters recorded as launch's
+- `tests/house_loss_weekend.rs` — `V66`: a weekend close-out on a market with no index pays the level
+  the house's loss sets, never less than the market's own level, within its ceiling, and changes no level
 - `src/access/mod.rs` — signed eligibility, source policy and bounded public screening types
 - `src/access/engine.rs` — deterministic screening, declarations and uncredited custody holds
 - `src/auth.rs` — client auth, the operator record, request signatures and nonces, and the checks
@@ -1100,6 +1105,15 @@ then. Activation takes the earliest boundary of an accepted turn in effect or wa
 log holds rotation sets counts rotation as on until the first frontier carries the registry's state.
 Earlier logs keep V56's rule and encoding, and a frontier carries no turn before V65, so they replay
 unchanged. Its session is in `examples/reference_log/v65.rs`.
+Protocol V67 prices a weekend close-out at the stress level the house's loss sets when that is above
+the market's own. A close-out fills at its market's mark once the market has shut, where no index
+re-reads its level, so under V62 it paid the level its market last set, and a loss level that changed
+while the market had no live index never reached it. From V66 it pays the higher of the market's level
+and the level the house's loss sets at the house NAV then, which `Engine::close_out_stress_level` reads
+without recording it: the market's level, its cooldown and its events stay as its other triggers left
+them, so a market that is above the loss's level is not lowered, and one the loss has since cleared keeps
+its own level until it prices again. A pure close's spread still clamps to the market's close-spread
+ceiling. Its log is `v66.jsonl`, and its session is in `examples/reference_log/v66.rs`.
 
 Protocol V66 adds request and order limits (`src/volume_tier/limits.rs`). Each tier of the
 parameters' `volume_tiers` table may name a `max_resting_orders` and a `requests_per_second`, each
