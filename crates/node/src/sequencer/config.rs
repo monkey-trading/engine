@@ -60,6 +60,9 @@ pub struct SequencerConfig<'a> {
     /// With sealed keys, the generation each `TurnTaken` waits for them to be sealed in; `None` takes
     /// each turn as it applies.
     pub(crate) turn_sealing: Option<crate::sequencer::turns::TurnSealing>,
+    /// With sealed keys under rotation, the boundary's log check's release, sealing and due checks;
+    /// `None` keeps no verified head across a restart and asks for no check.
+    pub(crate) log_check: Option<crate::sequencer::LogCheckSetup>,
     /// The vote contract and restriction lifetime the config names, which the node records once `V56`
     /// applies (see `Sequencer::activate_protocol`); a log that records others is refused.
     pub(crate) governance: Option<engine_core::governance::GovernanceConfig>,

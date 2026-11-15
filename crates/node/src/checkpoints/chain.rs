@@ -274,4 +274,14 @@ pub(crate) trait CheckpointChain: Send + Sync {
         let _ = (at, now_ms);
         Ok(None)
     }
+
+    /// The distinct members of drawn turn `turn`'s order, from its first position on, each with what
+    /// its candidacy registered, at the already pinned finalized observation: whom the operator's node
+    /// asks for the boundary's log check, in that order. Empty when the turn was not drawn.
+    /// Error cases: the observation is not finalized and pinned, or the chain cannot be read; a chain
+    /// with no schedule cannot answer
+    async fn turn_order(&self, at: &Observation, turn: u64) -> anyhow::Result<Vec<HandoverSource>> {
+        let _ = (at, turn);
+        anyhow::bail!("this checkpoint chain reads no schedule")
+    }
 }

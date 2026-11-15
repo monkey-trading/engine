@@ -34,18 +34,26 @@ pub(super) struct Members {
     load: watch::Sender<Option<ApiState>>,
     /// What the load got done.
     pub(super) done: Arc<load::Load>,
+    /// Each member's wait, by index, then the load's.
     tasks: Vec<JoinHandle<()>>,
+    /// What starts a member's wait again.
+    again: Again,
 }
+
+/// What starts a member's wait again: the members with their configs, the clock, and where a wait hands
+/// its start.
+type Again = (Vec<(Member, &'static NodeConfig)>, Arc<TestClock>, mpsc::Sender<(usize, Box<Start>)>);
 
 impl Members {
     /// Starts each member's wait for its turns on `clock`: all but `holder`'s from boot, `holder`'s
     /// once it first hands its turn over. The load runs on `holder`'s node.
     pub(super) fn start(chain: &Chain, members: &[Member], holder: &Holder, clock: &Arc<TestClock>) -> Self {
         let (taken_tx, taken) = mpsc::channel(1);
-        let (mut resume, mut metrics, mut tasks) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut resume, mut metrics, mut tasks, mut again) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (index, member) in members.iter().enumerate() {
             let (notify, counted) = (Arc::new(Notify::new()), Arc::new(Metrics::new()));
             let cfg: &'static NodeConfig = Box::leak(Box::new(member.config(chain)));
+            again.push((member.clone(), cfg));
             let (member, clock, shared) = (member.clone(), clock.clone(), (taken_tx.clone(), notify.clone()));
             let from_boot = index != holder.member;
             let follows = counted.clone();
@@ -58,7 +66,24 @@ impl Members {
         let (load, holding) = watch::channel(Some(holder.node.state.clone()));
         let (done, generating) = load::generate(holding, AccountId(chain.vault.into()), clock.clone());
         tasks.push(generating);
-        Self { taken, resume, metrics, load, done, tasks }
+        let again = (again, clock.clone(), taken_tx);
+        Self { taken, resume, metrics, load, done, tasks, again }
+    }
+
+    /// Stops `member`'s wait while it follows: its replica and its log check answers go with it.
+    pub(super) fn pause(&self, member: usize) {
+        self.tasks[member].abort();
+    }
+
+    /// Starts `member`'s wait again from boot, as a restarted member's node does: it opens its copy
+    /// and follows the operator in effect.
+    pub(super) fn restart(&mut self, member: usize) {
+        let ((waiting, cfg), clock) = (self.again.0[member].clone(), self.again.1.clone());
+        let shared = (self.again.2.clone(), self.resume[member].clone());
+        let counted = self.metrics[member].clone();
+        self.tasks[member] = tokio::task::spawn_local(async move {
+            waiting.follow(cfg, member, clock, counted, shared, true).await;
+        });
     }
 
     /// Puts the load on `holder`'s node.

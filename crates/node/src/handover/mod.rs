@@ -73,7 +73,7 @@ pub(crate) use evidence::Evidence;
 pub(crate) mod hostname;
 pub(crate) use hostname::check_operator_hostname;
 mod predecessor;
-pub(crate) use predecessor::{DrainReply, Predecessor};
+pub(crate) use predecessor::{DrainReply, Predecessor, no_weaker};
 mod published;
 pub(crate) use published::Published;
 pub(crate) mod secrets;

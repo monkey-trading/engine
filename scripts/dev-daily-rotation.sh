@@ -16,9 +16,14 @@
 # in the switch, whose window, the wall time from the incumbent's last command to the member's
 # TurnTaken, it prints and holds to a budget; that the member's first command is TurnTaken and the
 # time in office follows it; and that /v1/operator shows the rotation sets, today's and tomorrow's
-# turns, and every assignment with its TurnTaken. A stream client follows each holder at its
-# hostname, resuming from its seq against the same enclave address, and the last member's log replays
-# to its roots. Last, governance turns rotation off and, once the last turn ends, installs that turn's
+# turns, and every assignment with its TurnTaken. The holders post checkpoints. A withdrawal
+# approved during A's turn waits for the next boundary's log check, though the vault holds its
+# checkpoint, and pays through the vault only once B's handover has verified A's log; a second,
+# approved during B's turn, waits for the boundary B holds on through, where a verification from B's
+# own release is refused and, with A first in the turn's order and C stopped, the check stays due
+# until C follows again and verifies it, releasing the withdrawal with no handover. A stream client
+# follows each holder at its hostname, resuming from its seq against the same enclave address, and
+# the last member's log replays to its roots. Last, governance turns rotation off and, once the last turn ends, installs that turn's
 # own candidate under another release, after which the finalized schedule names no turn. It runs no
 # ACME; tls::acme::tests::sealed checks that a member's next turn reuses its certificate.
 # Needs Anvil, Forge, Python 3, Cargo, and installed Soldeer dependencies. No external RPC or keys are used.

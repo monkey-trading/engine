@@ -36,7 +36,8 @@ use crate::test_support::{dev_config, scratch_dir};
 use crate::trusted_time::Sample;
 
 /// A registered candidate: its admin key, which its node's config names as the operator key, the
-/// release it runs, its handover listener and API, and the directories its node keeps across holdings.
+/// release it runs, its handover listener and API, the account its checkpoint posts are sent from, and
+/// the directories its node keeps across holdings.
 #[derive(Clone)]
 pub(super) struct Member {
     pub(super) name: &'static str,
@@ -46,18 +47,28 @@ pub(super) struct Member {
     pub(super) endpoint: String,
     pub(super) api: SocketAddr,
     pub(super) dir: PathBuf,
+    /// Its own, so no member's pending post holds another's, and the same whether its node holds a
+    /// turn or takes one, since a take reads the submission its last holding left.
+    pub(super) relayer: Address,
     keys: PathBuf,
 }
 
 impl Member {
-    /// `name`, as `candidate` with the admin key `key` running `digest`, on free handover and API ports.
-    pub(super) fn new(name: &'static str, candidate: Address, key: [u8; 32], digest: [u8; 48]) -> Self {
+    /// `name`, as `candidate` with the admin key `key` running `digest`, posting from `relayer`, on free
+    /// handover and API ports.
+    pub(super) fn new(
+        name: &'static str,
+        candidate: Address,
+        (key, digest): ([u8; 32], [u8; 48]),
+        relayer: Address,
+    ) -> Self {
         let free = || std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
         Self {
             name,
             candidate,
             key: SigningKey::from_slice(&key).unwrap(),
             digest,
+            relayer,
             endpoint: free().to_string(),
             api: free(),
             dir: scratch_dir(&format!("daily-turns-{name}")),
@@ -111,7 +122,7 @@ impl Member {
         cfg.checkpoints = Some(
             toml::from_str(&format!(
                 "rpc_url = {:?}\nrelayer = '{:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'",
-                chain.url, chain.accounts[9]
+                chain.url, self.relayer
             ))
             .unwrap(),
         );
@@ -137,7 +148,7 @@ impl Member {
         let sealer = Box::new(MockSealer { launch_digest: self.digest });
         let mut waiting = Waiting::on_clock(cfg, metrics, sealer, OnClock(clock));
         loop {
-            match waiting.until_turn().await.expect("a member's wait for its turn") {
+            match waiting.until_turn_answering().await.expect("a member's wait for its turn") {
                 Turn::Replica(start) => {
                     taken.send((index, start)).await.unwrap();
                     resume.notified().await;
@@ -191,11 +202,12 @@ impl Holder {
         (store, source): (KeyStore, Option<Source>),
         clock: Arc<TestClock>,
     ) -> Self {
-        let holding = &members[member];
+        let (holding, store) = (&members[member], Arc::new(store));
         let key = Arc::new(store.keys().enclave_key().unwrap());
-        let seat = Seat { operator: holding.operator(), release: B256::from(store.release().id()), api: holding.api };
-        let node =
-            Node::start_seated(chain, key, (seat, Arc::new(Metrics::new())), holding.dir.clone(), clock, source).await;
+        let release = B256::from(store.release().id());
+        let seat = Seat { operator: holding.operator(), release, api: holding.api, relayer: holding.relayer };
+        let seated = (seat, Arc::new(Metrics::new()), store.clone());
+        let node = Node::start_seated(chain, key, seated, holding.dir.clone(), clock, source).await;
         Self::listen(chain, holding, member, store, node).await
     }
 
@@ -210,16 +222,17 @@ impl Holder {
     ) -> (Self, Moved) {
         let holding = &members[member];
         let Start { replica, store, moved, .. } = *start;
+        let store = Arc::new(store);
         let key = Arc::new(store.keys().enclave_key().unwrap());
-        let seat = Seat { operator: holding.operator(), release: B256::from(store.release().id()), api: holding.api };
-        let node =
-            Node::start_from_replica(chain, key, (seat, metrics), (holding.dir.clone(), clock), replica, source).await;
+        let release = B256::from(store.release().id());
+        let seat = Seat { operator: holding.operator(), release, api: holding.api, relayer: holding.relayer };
+        let seated = (seat, metrics, store.clone());
+        let node = Node::start_from_replica(chain, key, seated, (holding.dir.clone(), clock), replica, source).await;
         (Self::listen(chain, holding, member, store, node).await, moved)
     }
 
     /// Binds `holding`'s handover listener over `node` with the keys in `store`.
-    async fn listen(chain: &Chain, holding: &Member, member: usize, store: KeyStore, node: Node) -> Self {
-        let store = Arc::new(store);
+    async fn listen(chain: &Chain, holding: &Member, member: usize, store: Arc<KeyStore>, node: Node) -> Self {
         let key = Arc::new(store.keys().enclave_key().unwrap());
         let signing = node.handover.as_ref().expect("a seated node follows its stream").1.clone();
         let (drain, drains) = mpsc::channel(1);

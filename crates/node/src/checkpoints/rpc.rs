@@ -356,6 +356,10 @@ impl CheckpointChain for CheckpointRpc {
         self.read_scheduled_turn(at, now_ms).await
     }
 
+    async fn turn_order(&self, at: &Observation, turn: u64) -> anyhow::Result<Vec<HandoverSource>> {
+        self.read_turn_order(at, turn).await
+    }
+
     fn reads_release_fold(&self) -> bool {
         true
     }

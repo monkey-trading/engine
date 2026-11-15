@@ -425,21 +425,22 @@ impl<C: CheckpointChain> Predecessor<C> {
     }
 }
 
-/// Requires the successor to run under the same guest policy as this release, since the launch
-/// measurement does not cover the policy and one that allowed debugging would expose the keys, and,
-/// on hardware, at a TCB no lower than this platform's committed one.
+/// Requires a peer, a successor or a member verifying the log, to run under the same guest policy as
+/// this release, since the launch measurement does not cover the policy and one that allowed
+/// debugging would expose the keys or its replay, and, on hardware, at a TCB no lower than this
+/// platform's committed one.
 /// Error cases:
 /// - the policy differs, or the TCB is below the floor
-fn no_weaker(own: &Platform, peer: &Peer) -> anyhow::Result<()> {
+pub(crate) fn no_weaker(own: &Platform, peer: &Peer) -> anyhow::Result<()> {
     ensure!(
         peer.policy == own.policy,
-        "the successor's guest policy {:#x} differs from this release's {:#x}",
+        "the peer's guest policy {:#x} differs from this release's {:#x}",
         peer.policy,
         own.policy
     );
     if let Some(tcb) = peer.tcb {
         let floor = Tcb::from_packed(own.tcb);
-        ensure!(tcb.meets(floor), "the successor's TCB {tcb:?} is below this platform's committed {floor:?}");
+        ensure!(tcb.meets(floor), "the peer's TCB {tcb:?} is below this platform's committed {floor:?}");
     }
     Ok(())
 }

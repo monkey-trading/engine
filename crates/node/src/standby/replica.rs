@@ -20,6 +20,7 @@ use super::operator::Followed;
 use crate::config::NodeConfig;
 use crate::history::marks::fold::MarkFold;
 use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, LogWriter, Offset, offset_of};
+use crate::log_check::answer::CheckedHeads;
 use crate::sequencer::ReplayedLog;
 use crate::sequencer::replay::LiveReplay;
 use crate::stats::Stats;
@@ -52,12 +53,13 @@ impl Follower {
             observe(entry);
             Ok(())
         };
-        Self::open_pinned(dir, segment_commands, domain, enclave, signers, (stats, None), None, observe)
+        Self::open_pinned(dir, segment_commands, domain, enclave, signers, (stats, None, None), None, observe)
     }
 
     /// `open`, pinning the posted log head `posted` as the replay passes it (see `LiveReplay::pin`),
-    /// so a replica built long after that head still holds it, and with `marks`, folding each mark
-    /// the replica applies, from the build on, into it; an `observe` that fails ends the build.
+    /// so a replica built long after that head still holds it, with `marks`, folding each mark the
+    /// replica applies, from the build on, into it, and with `checked`, recording each checkpoint it
+    /// verifies there (`LiveReplay::record_checked_with`); an `observe` that fails ends the build.
     /// Error cases:
     /// - see `open`, or `observe` fails
     #[allow(clippy::too_many_arguments)]
@@ -67,7 +69,7 @@ impl Follower {
         domain: CheckpointDomain,
         enclave: AccountId,
         signers: BTreeSet<AccountId>,
-        (stats, marks): (Option<Stats>, Option<Rc<RefCell<MarkFold>>>),
+        (stats, marks, checked): (Option<Stats>, Option<Rc<RefCell<MarkFold>>>, Option<CheckedHeads>),
         posted: Option<(u64, B256)>,
         mut observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
@@ -75,6 +77,9 @@ impl Follower {
             let mut replica = LiveReplay::new(domain, signers.clone());
             if let Some(stats) = &stats {
                 replica.record_stats_with(stats.clone());
+            }
+            if let Some(checked) = &checked {
+                replica.record_checked_with(checked.clone());
             }
             if let Some(marks) = &marks {
                 // A retried build folds the same marks again, which leaves every bucket as it was.

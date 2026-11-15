@@ -198,6 +198,7 @@ pub fn fake_sequencer() -> (mpsc::Sender<Request>, mpsc::Receiver<Request>) {
                     Some(Request::CheckpointStatus { .. }) => unreachable!("no checkpoint worker in this test"),
                     Some(Request::WatchBenchmarkSchedule(_)) => unreachable!("only the API watches benchmark schedules"),
                     Some(Request::HouseState(_)) => unreachable!("only the API reads the house state"),
+                    Some(Request::LogChecked { .. }) => unreachable!("only the operator's log check gives one"),
                     Some(Request::ReissueWithdrawal { .. }) => unreachable!("only the API asks for a reissue"),
                     Some(
                         Request::AccountPayouts { .. }

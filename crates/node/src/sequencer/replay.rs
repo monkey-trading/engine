@@ -27,6 +27,10 @@ pub struct Replayed {
     pub(crate) command_prefix: [u8; 32],
     /// The replay-authenticated prefix ring the log-head poster adopts against.
     pub(crate) prefix_ring: crate::log::PrefixRing,
+    /// The log's `TurnTaken` commands and every checkpoint's root, which the boundary's log check
+    /// attributes ranges by and restores its verified head against.
+    pub(crate) takings: crate::log_check::Takings,
+    pub(crate) checkpoint_roots: BTreeMap<u64, engine_core::eip712::B256>,
     pub checkpoints: u64,
     pub(crate) recovery_work: Vec<crate::checkpoints::Work>,
     pub(crate) recovery_anchor_work: Option<crate::checkpoints::Work>,
@@ -119,6 +123,7 @@ pub(super) struct Replay {
     attested: Option<BTreeSet<AccountId>>,
     checkpoint_signers: BTreeSet<AccountId>,
     payout_checkpoints: BTreeMap<u64, engine_core::eip712::B256>,
+    takings: crate::log_check::Takings,
     authorities: BTreeMap<u64, crate::checkpoints::AcceptedCheckpoint>,
     signer_epochs: BTreeMap<u64, AccountId>,
     payout_order: Vec<((AccountId, u64), usize)>,
@@ -229,6 +234,7 @@ impl Replay {
                 }
                 self.legacy_approvals.observe(engine, &c.sequenced, &events, c.events.is_some());
                 self.access_alerts.observe(engine, &c.sequenced.cmd, &events);
+                self.takings.command(seq, &events);
                 for (index, event) in events.iter().enumerate() {
                     if let Event::WithdrawalApproved { account, nonce, .. } = event
                         && engine.withdrawal_approval(*account, *nonce).is_some()
@@ -448,6 +454,8 @@ impl Replay {
             ts_at: self.captured_ts,
             anchor_ts: self.recovery_anchor_ts,
             prefix_ring: self.prefix_ring,
+            takings: self.takings,
+            checkpoint_roots: self.payout_checkpoints,
         }
     }
 }

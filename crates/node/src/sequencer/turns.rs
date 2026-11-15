@@ -112,7 +112,10 @@ impl Sequencer {
             Some(Event::TurnTaken { .. }) => info!(turn = turn.turn, position = turn.position, ts, "took the turn"),
             other => warn!(turn = turn.turn, "the engine did not record this node's turn: {other:?}"),
         }
-        Ok(())
+        match self.engine.last_seq() {
+            Some(seq) if !events.is_empty() => self.log_check_taken(seq, &events),
+            _ => Ok(()),
+        }
     }
 }
 

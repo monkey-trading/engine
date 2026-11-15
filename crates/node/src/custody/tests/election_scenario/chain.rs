@@ -349,6 +349,15 @@ impl Chain {
         self.provider.request::<_, U64>("eth_blockNumber", ()).await.unwrap().to()
     }
 
+    /// Turns Anvil's mining of each transaction as it arrives off, or back on with a block for those
+    /// that waited: while it is off the chain mines only the blocks the scenario asks for.
+    pub(super) async fn automine(&self, on: bool) {
+        self.rpc("evm_setAutomine", json!([on])).await;
+        if on {
+            self.rpc("anvil_mine", json!(["0x1"])).await;
+        }
+    }
+
     /// Mines the two blocks after the head, which Anvil's finalized block then reaches on a chain
     /// started with `start_with_trailing_finality`.
     pub(super) async fn finalize(&self) {

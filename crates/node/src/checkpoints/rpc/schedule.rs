@@ -25,6 +25,13 @@ sol! {
     }
     function turnAt(uint64 timestamp) external view returns (uint64 turn, TurnReturn memory);
     function rotationState() external view returns (bool enabled, bytes32 release, uint64 generation, uint64 until);
+    function turnOf(uint64 turn) external view returns (TurnReturn memory);
+    function setOf(uint32 setId)
+        external
+        view
+        returns (uint64 epoch, uint64 effectiveAt, address[] memory candidates, uint256[] memory weights);
+    function memberAt(uint32 setId, bytes32 seed, uint64 turn, uint16 position) external view returns (address);
+    function MAX_DRAW_POSITIONS() external view returns (uint16);
 }
 
 impl CheckpointRpc {
@@ -84,6 +91,49 @@ impl CheckpointRpc {
             set: drawn.setId,
             source,
         }))
+    }
+
+    /// See `CheckpointChain::turn_order`: the schedule's `memberAt` for each position a draw can reach,
+    /// its weighted positions and then its scan, stopping once every member of the set appeared.
+    /// Error cases:
+    /// - the observation is not finalized and pinned, or a call or its decoding fails
+    pub(super) async fn read_turn_order(&self, at: &Observation, turn: u64) -> anyhow::Result<Vec<HandoverSource>> {
+        ensure!(at.view == View::Finalized, "the schedule requires a finalized observation");
+        let evidence = at.lifecycle.as_ref().context("the schedule requires a pinned canonical observation")?;
+        let block = BlockId::hash_canonical(evidence.block_hash);
+        let vault = Address::from(self.domain.vault.0);
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), block).await?)?;
+        ensure!(!registry.is_zero(), "the vault follows no operator registry");
+        let schedule =
+            scheduleCall::abi_decode_returns(&self.call(registry, scheduleCall {}.abi_encode(), block).await?)?;
+        ensure!(!schedule.is_zero(), "the registry names no schedule");
+        let drawn =
+            turnOfCall::abi_decode_returns(&self.call(schedule, turnOfCall { turn }.abi_encode(), block).await?)
+                .context("decoding the schedule's turn")?;
+        if drawn.candidate.is_zero() {
+            return Ok(Vec::new());
+        }
+        let raw = self.call(schedule, setOfCall { setId: drawn.setId }.abi_encode(), block).await?;
+        let members = setOfCall::abi_decode_returns(&raw).context("decoding the schedule's set")?.candidates.len();
+        let raw = self.call(schedule, MAX_DRAW_POSITIONSCall {}.abi_encode(), block).await?;
+        let weighted = MAX_DRAW_POSITIONSCall::abi_decode_returns(&raw).context("decoding the draw's positions")?;
+        let mut order: Vec<Address> = Vec::new();
+        for position in 0..weighted.saturating_add(u16::try_from(members).unwrap_or(u16::MAX)) {
+            if order.len() == members {
+                break;
+            }
+            let call = memberAtCall { setId: drawn.setId, seed: drawn.seed, turn, position };
+            let member = memberAtCall::abi_decode_returns(&self.call(schedule, call.abi_encode(), block).await?)
+                .context("decoding the schedule's member")?;
+            if !order.contains(&member) {
+                order.push(member);
+            }
+        }
+        let mut sources = Vec::with_capacity(order.len());
+        for member in order {
+            sources.push(self.handover_source_of(registry, member, block).await?);
+        }
+        Ok(sources)
     }
 
     /// `candidate`'s registration at `block`.
