@@ -423,7 +423,7 @@ an index: load only the rule whose hint matches the current action.
   `production-genesis.toml` is the production `[genesis]` section alone: the launch markets with
   their venue calendars, each calendar's sources and unpublished gaps, their quote currencies, the
   futures contracts the index and commodity markets roll through with the roll rules, the
-  launch margins and fees, from `V52` each market's spread bands in tenths of a bp (#623's tiers,
+  launch margins and fees, every market's exposure-cap floor and the total floor with level 1 of the stress levels at 80% utilisation (#696, from #500's `research/launch-caps`), from `V52` each market's spread bands in tenths of a bp (#623's tiers,
   with FX and index first bands pending the owner's confirmation), from `V40` each market's
   close-spread ceiling (#147's calibrated values, recomputed for `V52`'s floor and `V54`'s score
   tiers), from `V54` the toxicity score's tiers and each market's markout floor, its year's

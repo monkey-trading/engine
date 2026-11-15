@@ -174,9 +174,9 @@ the first certificate"); a Critical alert receiver; and the companion processes 
    `epoch_ms` `86400000` and `liquidity_floor` `30500000`. A second run of either command is
    rejected by the engine.
 9. **House capital** enters only by a vault deposit to the house (`depositToHouse`). **Changes the
-   live system.** Needs the owner's approval of the amount. The production genesis sets no house cap
-   floors: until the owner sets them, no opening trade is admitted. That is the owner's decision
-   before launch, not a fault.
+   live system.** Needs the owner's approval of the amount; the launch decision is none (#614).
+   The production genesis sets every launch market's house cap floor and a $61M total floor (#696),
+   so trading opens from a zero house.
 
 ## 3. Upgrade to a new release
 
