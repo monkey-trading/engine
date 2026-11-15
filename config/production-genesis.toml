@@ -86,8 +86,8 @@
 #   results/proposal.toml), rounded to three figures: BTC-USD $31.6M; ETH-USD,
 #   US500 and US100 $17.8M; EUR-USD, GBP-USD, USD-JPY, AUD-USD, US30, JP225,
 #   XAU-USD, XAG-USD and WTI $10M; SOL-USD $5.62M; each share $3.16M, $244M in
-#   all, under a total floor of $61M, a quarter of that sum, which the study
-#   finds does not bind. They cover every market in this genesis, the shares
+#   all, under a total floor of $61M, a quarter of that sum, the smallest share the
+#   study tested without it binding. They cover every market in this genesis, the shares
 #   included. Level 1 of the stress levels fires at 80% of a market's cap, the
 #   lowest share that fires in under 2% of open hours at both ends of the
 #   volume tiers (the study's utilisation levels); level 2 stays at 95%. The
@@ -205,7 +205,8 @@ house_total_cap_floor = "61000000"
 # A fast move counts within this trailing window, and up to a tenth of it further back.
 stress_move_window_ms = 60000
 stress_cooldown_ms = 300000
-# Most orders one account may rest at once, across every market: 1 to 1000.
+# Most orders an account may rest at once, across every market: 1 to 1000. From V66 a volume
+# tier's own limit replaces it where the table names one.
 max_resting_orders = 100
 # From protocol V55 a realised gain pays the larger of profit_fee_bps and this
 # curve's fee at the hold of the slice it closes (hold_ms from the position's

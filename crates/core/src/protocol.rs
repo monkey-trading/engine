@@ -431,7 +431,9 @@ pub enum ProtocolVersion {
     /// A weekend close-out fills at its market's mark at the stress level the house's loss sets now if
     /// that is higher than the market's own level, which it neither lowers nor changes, so a market
     /// with no index to re-read its level from (`V62` leaves it at the level it last set) pays the
-    /// loss trigger's level too. Its spread still clamps to the market's close-spread ceiling.
+    /// loss trigger's level too. Its spread still clamps to the market's close-spread ceiling. A mirrored
+    /// staking frontier may name a drawn turn that has not started, up to a day after the block's time,
+    /// where `V65` named only a turn begun by then.
     V67,
     /// Tier benefits (`volume_tier`): a volume tier may carry a fee discount, a financing discount and an
     /// emissions boost. A realised gain pays the larger of its hold curve's fee and the base fee less its

@@ -133,7 +133,8 @@ pub enum Command {
     /// From `V27`, the last fully verified finalized staking block, including empty ranges; from
     /// `V37` with its block time in milliseconds, which an elected key waits for; from `V65`, once the
     /// node reads it, the registry's turn state at that block: the boundary in milliseconds of the
-    /// drawn turn naming the operator, or `null` when none does (`Governance::turns_from`).
+    /// drawn turn naming the operator, or `null` when none does (`Governance::turns_from`); from `V67`
+    /// that turn may begin up to a day after the block's time, as one drawn and not yet started.
     StakingProgress {
         block: u64,
         block_hash: B256,
