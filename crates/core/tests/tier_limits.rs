@@ -19,7 +19,7 @@ use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{OrderId, Side};
 use engine_core::volume_tier::{
     ACTIVATION_MAX_RESTING_ORDERS, ACTIVATION_REQUESTS_PER_SECOND, DAY_MS, MIN_HOLD_MS, RequestLimit, VolumeTier,
-    day_of,
+    day_of, validate_volume_tiers,
 };
 
 const V64: ProtocolVersion = ProtocolVersion::V64;
@@ -147,6 +147,31 @@ fn activation_gives_unnamed_limits_by_position_and_leaves_resting_orders() {
     assert_eq!(h.engine.accounts()[&a.account].orders.len(), 30);
     assert_eq!(rejection(&bid(&mut h, &a)), &Reject::TierOrderLimit { tier: 0, max: 25 });
     assert_eq!(h.engine.request_limit(a.account), Some(RequestLimit { tier: 0, per_second: 2 }));
+}
+
+#[test]
+fn activation_over_a_table_of_six_tiers_gives_those_past_the_fourth_the_last_value() {
+    let six: Vec<VolumeTier> = (0..6)
+        .map(|at| VolumeTier {
+            threshold: Fixed::from_int(if at == 0 { 0 } else { 100_000 * at }),
+            day_divisor: 1,
+            best_price_share_bps: 2_500 + 1_000 * at,
+            margin_floor_bps: 0,
+            max_resting_orders: 0,
+            requests_per_second: 0,
+        })
+        .collect();
+    let mut h = genesis_with_tiers(V64, globex(vec![]), 0, 0, six);
+    h.admin(AdminCommand::ActivateProtocol { version: V66 });
+    let launch = h.engine.operator_bounds().launch_volume_tiers.clone().unwrap();
+    for tiers in [&h.engine.params().unwrap().volume_tiers, &launch] {
+        assert_eq!(tiers.len(), 6);
+        let orders: Vec<usize> = tiers.iter().map(|tier| tier.max_resting_orders).collect();
+        let rates: Vec<u32> = tiers.iter().map(|tier| tier.requests_per_second).collect();
+        assert_eq!(orders, [25, 50, 100, 250, 250, 250]);
+        assert_eq!(rates, [2, 5, 10, 20, 20, 20]);
+        assert_eq!(validate_volume_tiers(tiers), Ok(()));
+    }
 }
 
 // ── Helpers ──

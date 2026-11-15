@@ -14,7 +14,7 @@
 use std::num::NonZeroU32;
 
 use engine_core::types::MarketId;
-use engine_core::volume_tier::{DAY_MS, MIN_HOLD_MS, day_of};
+use engine_core::volume_tier::{DAY_MS, MIN_HOLD_MS, RequestLimit, day_of};
 
 use super::earned_leverage::{wait, wait_until};
 use super::session_keys::{registration, session_order};
@@ -185,6 +185,59 @@ async fn a_wallets_session_keys_are_held_to_its_tiers_rate_in_a_bucket_apart_fro
     let (status, body) = bid(&node, &account).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
     assert_eq!(body["tier"], 0);
+}
+
+/// The rate a request is held to is read on the stats worker's copy of the engine, not on the
+/// sequencer: a worker started over the engine while a wallet is at tier 0 never sees it reach tier 2
+/// (nothing feeds it), so its requests, and its session keys', are held to tier 0's rate where a read
+/// on the sequencer would give tier 2's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_requests_tier_rate_is_read_on_the_stats_workers_copy() {
+    // At tier 0's 2 a second the account's bucket holds 26 requests and its keys' 4; at tier 2's 10 a
+    // second, 130 and 20.
+    let (mut node, _) = tier_node("tier-limits-worker-copy", 13, 2).await;
+    let (account, session) = (key(0x87), key(9));
+    let wallet = eip712::address(account.verifying_key());
+    node.onboard(&account).await;
+    price(&node, BTC, "100000").await;
+    let (status, events) = node.post("/v1/session-keys", registration(&account, &session, 1, NOW + 3_600_000)).await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    // The worker's copy is taken now, at tier 0.
+    let stats = crate::test_support::stats();
+    let worker = stats.clone();
+    node.state.query(move |engine| worker.scan_in_background(engine)).await.unwrap();
+    node.state.stats = stats;
+    node.app = router(node.state.clone()).layer(Extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9)))));
+    // The sequencer's engine then reaches tier 2, which the copy never sees.
+    fill_event(&node, &account, BTC, Side::Sell, "4.9", "100000").await;
+    wait(&node, MIN_HOLD_MS as u64).await;
+    price(&node, BTC, "100000").await;
+    let limit = node.state.query(move |engine| engine.request_limit(wallet)).await.unwrap();
+    assert_eq!(limit, Some(RequestLimit { tier: 2, per_second: 10 }));
+
+    // The keys' bucket takes the copy's 4 requests, and the fifth gets 429 naming tier 0.
+    let mut refused = None;
+    for nonce in 0..8 {
+        let (status, body) = node.post("/v1/orders", session_order(&account, &session, nonce)).await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            refused = Some((nonce, body));
+            break;
+        }
+        assert_eq!(status, StatusCode::OK, "{nonce}: {body}");
+    }
+    let tier_zero = json!({ "error": "rate limited", "tier": 0, "requests_per_second": 2 });
+    assert_eq!(refused, Some((4, tier_zero.clone())));
+    // So does the account's own bucket, within its 26 less the requests spent above.
+    let mut refused = None;
+    for _ in 0..30 {
+        let (status, body) = bid(&node, &account).await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            refused = Some(body);
+            break;
+        }
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    assert_eq!(refused, Some(tier_zero));
 }
 
 /// A node whose tier table is dev's with the production genesis's limits and thresholds a few fills
