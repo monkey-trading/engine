@@ -260,6 +260,9 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                     self.gate.confirm(0);
                 }
                 fencing.applies = Some(true);
+                // The set's confirmations let checkpoints pass only until the next boundary, unless a
+                // read at or past it names that set again.
+                self.gate.holds_until(next_boundary(view.time).saturating_mul(1000));
                 fencing.fence.read(view.due_at, view.signer, self.key);
                 self.deadline(&fencing.fence);
                 fencing.refused = refused(view.rule, self.tick);

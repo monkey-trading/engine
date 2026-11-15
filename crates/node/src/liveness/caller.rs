@@ -27,8 +27,9 @@ use alloy::primitives::{Address, B256, U64, U256};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol_types::SolCall;
-use alloy::transports::http::reqwest::Client;
 use alloy::transports::http::reqwest::redirect::Policy;
+use alloy::transports::http::reqwest::{Certificate, Client};
+use anyhow::Context as _;
 use futures_util::future::BoxFuture;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 use tracing::{debug, info, warn};
@@ -93,13 +94,20 @@ pub(crate) struct Caller<C, S> {
 }
 
 impl Endpoint {
-    /// Builds the client without accessing the network.
+    /// Builds the client without accessing the network, trusting the binary's built-in TLS roots.
     /// Error cases:
-    /// - the URL or the client cannot be built
+    /// - the URL, the roots or the client cannot be built
     pub(crate) fn new(checkpoints: &CheckpointSection, cfg: &LivenessSection, chain_id: u64) -> anyhow::Result<Self> {
         let url = checkpoints.rpc_url.expose()?;
+        // The enclave image holds no system certificate store: the roots are the binary's own.
+        let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .map(|cert| Certificate::from_der(cert))
+            .collect::<Result<Vec<_>, _>>()
+            .context("loading the built-in TLS roots")?;
         let http = Client::builder()
             .user_agent(concat!("engine-liveness/", env!("CARGO_PKG_VERSION")))
+            .tls_certs_only(roots)
             // A redirect would leave the origin the attested config fixes, carrying the key with it.
             .redirect(Policy::none())
             .build()?;

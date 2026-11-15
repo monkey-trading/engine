@@ -38,6 +38,28 @@ async fn an_exempt_read_passes_checkpoints_only_until_another_set_may_apply() {
     rig.task.abort();
 }
 
+/// A set's confirmation lets checkpoints pass only until the next boundary, from which another set may
+/// apply: past it, with no read since, a checkpoint waits though the last read's member still confirms
+/// and `E` holds the fence open.
+#[tokio::test(start_paused = true)]
+async fn a_confirmation_passes_checkpoints_only_until_another_set_may_apply() {
+    let rig = Rig::spawn(10);
+    rig.chain.set(|chain| chain.due_at = next_boundary(chain.time) + 600);
+    rig.answer(Some(10));
+    settle().await;
+    assert_eq!(rig.gate.confirmed(), 10);
+    rig.chain.set(|chain| chain.down = true);
+    // The upper bound reaches the boundary, 52,200 s on, after about 52,171 s.
+    rig.clock.advance(Duration::from_secs(52_150));
+    settle().await;
+    assert_eq!(rig.gate.confirmed(), 10, "before the boundary");
+    rig.clock.advance(Duration::from_secs(100));
+    settle().await;
+    assert!(rig.gate.signs(), "E still holds the fence open");
+    assert_eq!(rig.gate.confirmed(), 0, "past the boundary the last read's confirmation passes no checkpoint");
+    rig.task.abort();
+}
+
 /// Every read under which no promotion can pass holds the gate open only until the next turn boundary
 /// past its block, or `E` past it: past that, with no newer read, the fence closes and pages; a fresh
 /// read reopens it.

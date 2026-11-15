@@ -79,9 +79,10 @@ struct GateState {
     deadline: AtomicU64,
     /// The trusted clock the deadline is read against, which the operator's rule sets once.
     clock: std::sync::OnceLock<crate::trusted_time::TrustedClock>,
-    /// While a read exempts the log, the time in milliseconds from which another set may apply, past
-    /// which no checkpoint passes unconfirmed until a fresh read exempts it again; `u64::MAX` with none.
-    exempt_until: AtomicU64,
+    /// The time in milliseconds from which another set than the last read's may apply, past which no
+    /// checkpoint passes on that read's confirmation or exemption until a fresh read renews it;
+    /// `u64::MAX` with none.
+    holds_until: AtomicU64,
 }
 
 /// The newest head the sequencer released: its seq and cumulative prefix, and the stamp at it.
@@ -143,7 +144,7 @@ impl Default for GateState {
             replaced: tokio::sync::watch::channel(false).0,
             deadline: AtomicU64::new(u64::MAX),
             clock: std::sync::OnceLock::new(),
-            exempt_until: AtomicU64::new(u64::MAX),
+            holds_until: AtomicU64::new(u64::MAX),
         }
     }
 }
@@ -164,7 +165,7 @@ impl Gate {
             replaced: tokio::sync::watch::channel(false).0,
             deadline: AtomicU64::new(u64::MAX),
             clock: std::sync::OnceLock::new(),
-            exempt_until: AtomicU64::new(u64::MAX),
+            holds_until: AtomicU64::new(u64::MAX),
         };
         Self(Arc::new(state))
     }
@@ -203,15 +204,21 @@ impl Gate {
         self.0.replaced.subscribe()
     }
 
-    /// The newest seq another member confirmed holding: a checkpoint is signed at no later seq. An
-    /// exempt read's lets any seq pass only until another set may apply, and none past it.
+    /// The newest seq another member of the last read's set confirmed holding, or any under an exempt
+    /// read: a checkpoint is signed at no later seq. Either stands only until another set may apply
+    /// (`holds_until`), and none past it until a fresh read renews it.
     pub(crate) fn confirmed(&self) -> u64 {
-        let confirmed = self.0.confirmed.load(Ordering::SeqCst);
-        let until = self.0.exempt_until.load(Ordering::SeqCst);
-        match confirmed == u64::MAX && until != u64::MAX && self.reached(until) {
+        let until = self.0.holds_until.load(Ordering::SeqCst);
+        match until != u64::MAX && self.reached(until) {
             true => 0,
-            false => confirmed,
+            false => self.0.confirmed.load(Ordering::SeqCst),
         }
+    }
+
+    /// Records `until_ms`, from which another set than the read's may apply: the confirmations taken
+    /// under that read let checkpoints pass only until then.
+    pub(crate) fn holds_until(&self, until_ms: u64) {
+        self.0.holds_until.store(until_ms, Ordering::SeqCst);
     }
 
     /// Records the newest confirmed seq.
@@ -293,7 +300,7 @@ impl Gate {
     /// Opens every part but the fence, which the fence tick keeps: a read under which the rule does
     /// not apply, until `until_ms`, from which another set may apply (see `confirmed`).
     pub(crate) fn exempt(&self, until_ms: u64) {
-        self.0.exempt_until.store(until_ms, Ordering::SeqCst);
+        self.holds_until(until_ms);
         self.checked(true);
         self.lag(false);
         self.confirm(u64::MAX);
