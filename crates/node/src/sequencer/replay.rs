@@ -7,79 +7,14 @@ use anyhow::{Context, bail, ensure};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::{AccountId, MarketId, Millis};
+use engine_core::types::{AccountId, Millis};
 use engine_core::{Engine, Fixed};
 
+use crate::checkpoints::Work;
 use crate::checkpoints::accounting::Accounting;
 use crate::log::{self, CheckpointDomain, LogEntry};
 use crate::sequencer::{GenesisProgress, SignedWithdrawal};
 use crate::snapshot::RecoveryBase;
-
-/// The result of replaying a log.
-pub struct Replayed {
-    /// Successful legacy EVM credits, derived from verified commands, never a host cursor.
-    pub legacy_deposits: BTreeMap<String, LegacyDeposit>,
-    pub(crate) legacy_approvals: crate::sequencer::legacy::Approvals,
-    pub(crate) origin: crate::sequencer::origin::Origin,
-    pub engine: Engine,
-    pub(crate) accounting: Accounting,
-    pub commands: u64,
-    pub(crate) command_prefix: [u8; 32],
-    /// The replay-authenticated prefix ring the log-head poster adopts against.
-    pub(crate) prefix_ring: crate::log::PrefixRing,
-    /// The log's `TurnTaken` commands and every checkpoint's root, which the boundary's log check
-    /// attributes ranges by and restores its verified head against.
-    pub(crate) takings: crate::log_check::Takings,
-    pub(crate) checkpoint_roots: BTreeMap<u64, engine_core::eip712::B256>,
-    pub checkpoints: u64,
-    pub(crate) recovery_work: Vec<crate::checkpoints::Work>,
-    pub(crate) recovery_anchor_work: Option<crate::checkpoints::Work>,
-    pub(crate) last_signed_checkpoint: Option<crate::log::Checkpoint>,
-    /// Where `last_signed_checkpoint` sits in the log.
-    pub(crate) last_checkpoint_offset: Option<log::Offset>,
-    /// The seq of the latest applied `SetParams`, if the replay saw one or its snapshot carried one.
-    pub(crate) params_seq: Option<u64>,
-    pub(crate) recovery_base: Option<RecoveryBase>,
-    /// Withdrawals the last command approved that the log ends before signing, as a crash between
-    /// a command's entry and its withdrawal entry leaves: `(account, amount, nonce)`.
-    pub unsigned: Vec<(AccountId, Fixed, u64)>,
-    /// Durable approvals the engine holds that no withdrawal entry has signed. Only a no-gate node
-    /// leaves these: a crash can sit between the approval's checkpoint sync and its signature sync.
-    pub unreleased: Vec<engine_core::withdrawal::WithdrawalApproval>,
-    /// Each protocol version the log activated, with the seq it took effect at.
-    pub activations: Vec<(ProtocolVersion, u64)>,
-    /// How far the log got through genesis.
-    pub genesis: GenesisProgress,
-    /// Sequenced time of the command the last checkpoint covers.
-    pub last_checkpoint_ts: Option<Millis>,
-    /// Approvals whose custody checkpoints precede their signature release.
-    pub deferred: Vec<(u64, AccountId, Fixed, u64)>,
-    /// Cumulative approved amount; the public log alone cannot establish which nonces custody paid.
-    pub unpaid: Fixed,
-    /// Named checkpoint signers, for comparison with independently trusted attestations.
-    pub checkpoint_signers: BTreeSet<AccountId>,
-    /// Every approval with its event index, in FIFO order.
-    pub(crate) payout_order: Vec<((AccountId, u64), usize)>,
-    /// The latest authorization each signed approval holds. A recovery from a checkpoint snapshot
-    /// sees only the suffix after it.
-    pub(crate) authorized: BTreeMap<(AccountId, u64), SignedWithdrawal>,
-    pub(crate) requires_checkpoint_gate: bool,
-    /// Whether the log ends inside an access-source failure episode.
-    pub(crate) access_failed: bool,
-    /// The last mark sampled per market, so the recovered sequencer continues change-only
-    /// reporting exactly where the replay left off. Empty without a marks sink.
-    pub last_marks: BTreeMap<MarketId, Fixed>,
-    /// The cumulative command-prefix digest the replay captured at the posted head's seq, for the
-    /// startup check. Checkpoints do not reset it, so a posted head binds every command's sealed
-    /// bytes, not only the state since the last checkpoint.
-    pub link_at: Option<engine_core::eip712::B256>,
-    /// The sequenced time of the command at the posted head's seq: where the stall alarm starts.
-    pub ts_at: Option<Millis>,
-    /// The sequenced time of the command the vault-finalized checkpoint covers, where the replay or
-    /// its snapshot reached it, or, with `[log_heads]`, the snapshot's prefix pass did for one under
-    /// its base with no head posted: the stall alarm's anchor while no head of this key is posted.
-    pub anchor_ts: Option<Millis>,
-}
 
 /// Re-applies a log entry by entry, as it is read, and checks every checkpoint root, logged event,
 /// and signed withdrawal against what the open-source engine produces. The same code serves crash
@@ -103,8 +38,8 @@ pub(super) struct Replay {
     recovery_anchor: Option<crate::log::Checkpoint>,
     /// The sequenced time of the command the vault-finalized checkpoint covers.
     recovery_anchor_ts: Option<Millis>,
-    recovery_anchor_work: Option<crate::checkpoints::Work>,
-    recovery_work: Vec<crate::checkpoints::Work>,
+    recovery_anchor_work: Option<Work>,
+    recovery_work: Vec<Work>,
     activations: Vec<(ProtocolVersion, u64)>,
     /// Withdrawals the last command approved that no withdrawal entry has matched yet. Entries
     /// written before events were logged have no withdrawal entries. Once a command carries its
@@ -126,6 +61,8 @@ pub(super) struct Replay {
     takings: crate::log_check::Takings,
     authorities: BTreeMap<u64, crate::checkpoints::AcceptedCheckpoint>,
     signer_epochs: BTreeMap<u64, AccountId>,
+    /// What a promotion's copy needs noted as it replays (see `unheld`).
+    unheld: unheld::Noted,
     payout_order: Vec<((AccountId, u64), usize)>,
     requires_checkpoint_gate: bool,
     access_alerts: crate::sequencer::access::AccessAlerts,
@@ -168,6 +105,16 @@ impl Replay {
         let origin = crate::sequencer::origin::Origin::with_attested(domain, attested.clone());
         Self { attested: Some(attested), domain, trusted_signer: None, origin, ..Self::default() }
     }
+    /// Adds `signer` to the attested signers, for checkpoints, typed withdrawals and command seals
+    /// alike: a key the vault named after the set was read (#595's promotion), which the caller
+    /// authenticated. No effect on a replay pinned to one authority.
+    pub(crate) fn admit(&mut self, signer: AccountId) {
+        if let Some(attested) = self.attested.as_mut() {
+            attested.insert(signer);
+            self.origin.admit(signer);
+        }
+    }
+
     /// Retains only the authenticated outstanding tail after the independently finalized anchor.
     pub(super) fn with_recovery(
         domain: Option<CheckpointDomain>,
@@ -199,6 +146,7 @@ impl Replay {
     /// - a checkpoint for a seq other than the last applied
     /// - a checkpoint root that differs from the replayed state
     pub(super) fn apply(&mut self, entry: &LogEntry) -> anyhow::Result<()> {
+        self.before(entry);
         let engine = &mut self.engine;
         self.last_offset = log::offset_of(self.last_offset, entry).ok();
         match entry {
@@ -363,20 +311,18 @@ impl Replay {
                         cp.seq
                     );
                 }
-                if self.trusted_signer.is_some_and(|trusted| trusted != signer) {
-                    self.authorities
-                        .get(&cp.seq)
-                        .context("checkpoint signer differs from trusted recovery authority")?
-                        .verify(cp)?;
+                if self.trusted_signer.is_some_and(|trusted| trusted != signer)
+                    && self.superseded_checkpoint(cp, signer, checkpoint_domain)?
+                {
+                    return Ok(());
                 }
                 self.checkpoint_signers.insert(signer);
                 if self.recovery_origin.is_some_and(|parent| {
                     parent.has_checkpoint && parent.seq == cp.seq && parent.root.to_string() == cp.root
                 }) {
                     self.recovery_anchor = Some(cp.clone());
-                    self.recovery_anchor_ts = Some(engine.now());
-                    self.recovery_anchor_work =
-                        Some(crate::checkpoints::Work::capture(cp.clone(), self.accounting, engine));
+                    self.recovery_anchor_ts = Some(self.engine.now());
+                    self.recovery_anchor_work = Some(Work::capture(cp.clone(), self.accounting, &self.engine));
                 }
                 self.checkpoints += 1;
                 if let Some(parent) = self.recovery_parent
@@ -384,7 +330,7 @@ impl Replay {
                     && (!parent.has_checkpoint || cp.seq > parent.seq)
                 {
                     ensure!(cp.parent == Some(parent), "outstanding checkpoint has a divergent signed parent");
-                    self.recovery_work.push(crate::checkpoints::Work::capture(cp.clone(), self.accounting, engine));
+                    self.recovery_work.push(Work::capture(cp.clone(), self.accounting, &self.engine));
                     self.recovery_parent = Some(crate::log::CheckpointParent {
                         has_checkpoint: true,
                         seq: cp.seq,
@@ -400,14 +346,15 @@ impl Replay {
                 self.last_checkpoint_offset = self.last_offset;
                 self.genesis.checkpoint();
                 // The checkpoint covers the last command applied, whose stamp is the engine's time.
-                self.last_checkpoint_ts = Some(engine.now());
+                self.last_checkpoint_ts = Some(self.engine.now());
             }
         }
         Ok(())
     }
 
     /// What the entries applied so far replay to.
-    pub(super) fn finish(self) -> Replayed {
+    pub(super) fn finish(mut self) -> Replayed {
+        self.anchor_unheld();
         let recovery_base = match self.recovery_origin {
             None => Some(RecoveryBase::Ungated),
             Some(parent) if !parent.has_checkpoint => Some(RecoveryBase::Genesis),
@@ -483,11 +430,14 @@ mod live;
 pub(crate) use live::LiveReplay;
 mod marks;
 mod paths;
+mod replayed;
+pub use replayed::Replayed;
 mod replayed_log;
 pub use replayed_log::ReplayedLog;
 mod signed;
 mod snapshot;
 mod stats;
+mod unheld;
 use signed::ensure_signed;
 
 #[cfg(test)]

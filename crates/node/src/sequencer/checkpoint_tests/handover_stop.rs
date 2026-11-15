@@ -146,6 +146,7 @@ fn refused(gate: HandoverGate, what: &str) -> anyhow::Error {
     match gate {
         HandoverGate::Refused(reason) => reason,
         HandoverGate::Admitted => panic!("{what}: the stop was admitted"),
+        HandoverGate::Waiting => panic!("{what}: the stop waits for a confirmation"),
     }
 }
 

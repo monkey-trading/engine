@@ -280,9 +280,20 @@ pub(super) fn certificates(cfg: &NodeConfig, start: &KeyStart) -> anyhow::Result
 /// what the vault accepted, so the unposted tail goes before recovery opens the log. A
 /// `takeover.json` marker makes the cut resumable: a crash mid-cut is repaired on the next start.
 /// Error cases:
-/// - the chain or log cannot be read, or the cut cannot complete
+/// - a promotion's record names this key, the chain or log cannot be read, or the cut cannot complete
 pub(super) async fn cut_to_finalized_anchor(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::Result<()> {
     use crate::checkpoints::{CheckpointChain, View};
+    // A promoted member's copy keeps every command the promotion fixed: it resumes from the copy
+    // (`member::promoted`), and no start cuts it back to the anchor.
+    if let Some(sealing) = &cfg.tee.sealing
+        && crate::node::member::promoted::Record::load(&sealing.dir)?
+            .is_some_and(|record| record.key == AccountId(key.address()))
+    {
+        bail!(
+            "a promotion made this key the vault's signer from this copy (promotion.json): it resumes from the \
+             copy as a member, never cut back to the vault's anchor"
+        );
+    }
     let Some(chain) = crate::handover::vault_reader(cfg)? else { return Ok(()) };
     let dir = cfg.node.log_dir.as_path();
     let marker = dir.join("takeover.json");
@@ -404,6 +415,11 @@ pub(super) async fn watch_release(
             }
         };
         let reached = trusted.reached_ms();
+        // Before trusted time a drawn schedule's turn cannot be judged, and the vault's release alone
+        // still names the drawn member's after a promotion moved the turn on: it waits for a sample.
+        if reached.is_none() && crate::handover::turns::finalised_drawn(&vault).await {
+            continue;
+        }
         let (named, handing_over) = match crate::handover::turns::names(&vault, &sealed, generation, reached).await {
             Some((named, boundary)) => {
                 (named, reached.is_some_and(|reached| reached < boundary.saturating_add(TURN_HANDOVER_GRACE_MS)))

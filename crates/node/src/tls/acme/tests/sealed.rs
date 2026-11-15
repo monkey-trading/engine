@@ -212,14 +212,14 @@ async fn a_restored_certificate_past_its_renewal_point_renews_at_once_and_alerts
 // ── Helpers ──
 
 /// A member's sealed keys and certificate store, and the directory both are sealed in.
-struct Member {
+pub(super) struct Member {
     keys: Arc<KeyStore>,
-    certificates: Arc<CertificateStore>,
-    dir: PathBuf,
+    pub(super) certificates: Arc<CertificateStore>,
+    pub(super) dir: PathBuf,
 }
 
 /// Fresh keys and an empty certificate store, sealed with the mock stand-in.
-fn sealed_store(name: &str) -> Member {
+pub(super) fn sealed_store(name: &str) -> Member {
     let (dir, sealer) = (scratch_dir(name), MockSealer { launch_digest: [0x33; 48] });
     let keys = Arc::new(KeyStore::create(&dir, &sealer, [0xc1; 32], 1, KeySet::generate().unwrap()).unwrap());
     Member { keys, certificates: open_certificates(&dir), dir }
@@ -227,7 +227,7 @@ fn sealed_store(name: &str) -> Member {
 
 /// The member's next turn: `keys`, as the handover delivers them, sealed in a later generation, and
 /// its certificate store opened again.
-fn next_turn(member: &Member, keys: KeySet) -> Member {
+pub(super) fn next_turn(member: &Member, keys: KeySet) -> Member {
     let sealer = MockSealer { launch_digest: [0x33; 48] };
     let generation = member.keys.generation() + 7;
     let keys = Arc::new(KeyStore::create(&member.dir, &sealer, [0xc1; 32], generation, keys).unwrap());
@@ -241,7 +241,7 @@ fn open_certificates(dir: &Path) -> Arc<CertificateStore> {
 }
 
 /// The chain the member's store holds for `task`'s domain, key, and directory.
-fn stored(member: &Member, task: &CertificateTask<FakeCa>) -> Option<Vec<CertificateDer<'static>>> {
+pub(super) fn stored(member: &Member, task: &CertificateTask<FakeCa>) -> Option<Vec<CertificateDer<'static>>> {
     member.certificates.chain_for(&task.domain, &task.key.public_key_sha256(), &task.directory_url).unwrap()
 }
 
@@ -254,7 +254,7 @@ fn trusted_at(now_ms: i64) -> TrustedClock {
 
 /// A certificate task for `domain` over the member's TLS key, keeping its account and certificate
 /// in the member's stores, as a start configures it.
-fn sealed_task(ca: &FakeCa, member: &Member, domain: &str) -> CertificateTask<FakeCa> {
+pub(super) fn sealed_task(ca: &FakeCa, member: &Member, domain: &str) -> CertificateTask<FakeCa> {
     sealed_task_at(ca, member, domain, "https://ca.test/dir")
 }
 
@@ -271,7 +271,7 @@ fn sealed_task_at(ca: &FakeCa, member: &Member, domain: &str, directory_url: &st
         key: tls.key,
         not_after: FloatGauge::default(),
         pending: Gauge::default(),
-        sealed: Some(Sealed { store: member.keys.clone(), certificates: member.certificates.clone(), trusted }),
+        sealed: Some(Sealed { store: Some(member.keys.clone()), certificates: member.certificates.clone(), trusted }),
         restored: None,
     };
     task.restored = task.restore();

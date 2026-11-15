@@ -30,6 +30,8 @@ pub(crate) struct Follower {
     writer: LogWriter,
     copied: Chain,
     replica: LiveReplay,
+    /// What a member's link answers from: the copy's durable head, latest entries and signed heads.
+    link: Option<crate::liveness::link::Copy>,
 }
 
 impl Follower {
@@ -53,13 +55,14 @@ impl Follower {
             observe(entry);
             Ok(())
         };
-        Self::open_pinned(dir, segment_commands, domain, enclave, signers, (stats, None, None), None, observe)
+        Self::open_pinned(dir, segment_commands, domain, enclave, signers, (stats, None, None), (None, &[]), observe)
     }
 
     /// `open`, pinning the posted log head `posted` as the replay passes it (see `LiveReplay::pin`),
-    /// so a replica built long after that head still holds it, with `marks`, folding each mark the
-    /// replica applies, from the build on, into it, and with `checked`, recording each checkpoint it
-    /// verifies there (`LiveReplay::record_checked_with`); an `observe` that fails ends the build.
+    /// so a replica built long after that head still holds it, keeping the links and checkpoints at
+    /// the seqs `keep` names (see `LiveReplay::keep`), with `marks`, folding each mark the replica
+    /// applies, from the build on, into it, and with `checked`, recording each checkpoint it verifies
+    /// there (`LiveReplay::record_checked_with`); an `observe` that fails ends the build.
     /// Error cases:
     /// - see `open`, or `observe` fails
     #[allow(clippy::too_many_arguments)]
@@ -70,11 +73,12 @@ impl Follower {
         enclave: AccountId,
         signers: BTreeSet<AccountId>,
         (stats, marks, checked): (Option<Stats>, Option<Rc<RefCell<MarkFold>>>, Option<CheckedHeads>),
-        posted: Option<(u64, B256)>,
+        (posted, keep): (Option<(u64, B256)>, &[u64]),
         mut observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
         let fresh = || {
             let mut replica = LiveReplay::new(domain, signers.clone());
+            keep.iter().for_each(|seq| replica.keep(*seq));
             if let Some(stats) = &stats {
                 replica.record_stats_with(stats.clone());
             }
@@ -101,12 +105,18 @@ impl Follower {
                 Ok(())
             })
             .context("the copy does not replay")?;
-        Ok(Self { writer, copied, replica })
+        Ok(Self { writer, copied, replica, link: None })
     }
 
     /// The replica.
     pub(crate) fn replica(&self) -> &LiveReplay {
         &self.replica
+    }
+
+    /// Records the replica's anchor work at its tip when the copy holds no checkpoint entry there (see
+    /// `LiveReplay::capture_tip`).
+    pub(crate) fn capture_tip(&mut self) {
+        self.replica.capture_tip();
     }
 
     /// The seq of the copy's last command, and the cumulative prefix after it: the tip a tail
@@ -136,8 +146,30 @@ impl Follower {
         followed: &Followed,
         budget: Duration,
     ) -> anyhow::Result<Option<Offset>> {
+        // The followed enclave is the vault's signer at the latest block: a promotion's standby key
+        // signs from its promotion's block, before the set this replica was built with names it.
         self.copied.admit(followed.enclave);
-        follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica)).await
+        self.replica.admit(followed.enclave);
+        let link = self.link.as_ref();
+        follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica), link).await
+    }
+
+    /// Whether a member link records what the copy holds.
+    pub(crate) fn linked(&self) -> bool {
+        self.link.is_some()
+    }
+
+    /// Records what the copy holds into `link` from here on, starting with the links the replica
+    /// retains and its head as durable.
+    pub(crate) fn link_with(&mut self, link: crate::liveness::link::Copy) {
+        link.rebuilt();
+        for retained in self.replica.retained_links() {
+            link.linked(retained.seq, retained.link);
+        }
+        if let Some((seq, head)) = self.tip() {
+            link.durable(crate::log_heads::Head { seq, link: head }, self.replica.tip_sealer());
+        }
+        self.link = Some(link);
     }
 
     /// Takes a handover's tail: the JSON lines in `bytes`, the entries the predecessor's log holds
@@ -173,6 +205,19 @@ impl Follower {
     /// - the write or sync fails
     pub(crate) fn sync(&mut self) -> anyhow::Result<()> {
         self.writer.sync().context("syncing the copy")
+    }
+
+    /// The copy as a recovered log under the standby key a promotion installed (see
+    /// `LiveReplay::into_promoted_log`).
+    /// Error cases:
+    /// - see `LiveReplay::into_promoted_log`
+    pub(crate) fn into_promoted_log(
+        self,
+        parent: Option<CheckpointParent>,
+        signer: AccountId,
+        posted: Option<u64>,
+    ) -> anyhow::Result<ReplayedLog> {
+        self.replica.into_promoted_log(self.writer, parent, signer, posted)
     }
 
     /// The copy as a recovered log, its writer open at its end (see `LiveReplay::into_log`).

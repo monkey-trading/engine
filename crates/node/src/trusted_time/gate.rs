@@ -52,10 +52,21 @@ pub struct TimeGate {
 /// The host clock, read only while the gate would admit a stamp of it: within `max_drift` of every
 /// time the latest trusted time sample allows, with that sample no older than `NO_SAMPLE_GRACE`. The
 /// API signs answers with it.
+#[derive(Clone)]
 pub struct TrustedClock {
     clock: Arc<dyn Clock>,
     samples: watch::Receiver<Option<Sample>>,
     max_drift_ms: Millis,
+}
+
+impl std::fmt::Debug for TrustedClock {
+    /// The drift bound and the latest sample, without the clock.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TrustedClock")
+            .field("max_drift_ms", &self.max_drift_ms)
+            .field("sample", &*self.samples.borrow())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Halt {
@@ -111,6 +122,12 @@ impl TimeGate {
         host_ms.max(last_ts).max(self.pace.floor(now).min(admitted))
     }
 
+    /// Whether trusted time halts sequencing: the host clock is beyond the drift bound, or no sample
+    /// has come within the grace. A start waiting for its first sample is no halt.
+    pub(crate) fn halted(&self) -> bool {
+        matches!(self.halted, Some(Halt::Drift | Halt::NoSample))
+    }
+
     /// Replaces the latest sample.
     pub fn update(&mut self, sample: Sample) {
         self.sample = Some(sample);
@@ -125,6 +142,16 @@ impl TimeGate {
     /// `now`. Raises a Critical alert when sequencing halts, or halts for another reason, and logs
     /// when it resumes.
     pub fn admit(&mut self, host_ms: Millis, ts: Millis, now: Instant) -> bool {
+        let admitted = self.observe(host_ms, ts, now);
+        if admitted {
+            self.pace.stamped(host_ms, ts, now);
+        }
+        admitted
+    }
+
+    /// `admit`, for a stamp something else refuses first, as the liveness rule's gate does: the halt
+    /// is recorded, and paged, as trusted time shows it now, and nothing is stamped.
+    pub fn observe(&mut self, host_ms: Millis, ts: Millis, now: Instant) -> bool {
         let refusal = self.check(host_ms, ts, now);
         let halt = refusal.map(Refusal::halt);
         // A halt that ends, or gives way to another, resolves the alert it raised.
@@ -152,9 +179,6 @@ impl TimeGate {
             }
         }
         self.halted = halt;
-        if refusal.is_none() {
-            self.pace.stamped(host_ms, ts, now);
-        }
         refusal.is_none()
     }
 
@@ -217,6 +241,24 @@ impl TrustedClock {
         let elapsed = self.clock.instant().saturating_duration_since(sample.at);
         Some(sample.latest_ms.saturating_add(ceil_millis(elapsed)))
     }
+
+    /// The latest sample's upper bound moved on by the monotonic time since, widened for a monotonic
+    /// clock running up to `slow_ppm` parts per million slow against true time and rounded up; `None`
+    /// before the first sample. A bound true time has certainly not passed, whatever the host shows,
+    /// for a stop that must come before a deadline.
+    pub fn upper_bound_ms(&self, slow_ppm: u64) -> Option<Millis> {
+        let sample = (*self.samples.borrow())?;
+        let elapsed = self.clock.instant().saturating_duration_since(sample.at);
+        Some(sample.latest_ms.saturating_add(widened_millis(elapsed, slow_ppm)))
+    }
+}
+
+/// `elapsed` on a clock up to `slow_ppm` parts per million slow, as true time, in whole milliseconds
+/// rounded up.
+fn widened_millis(elapsed: Duration, slow_ppm: u64) -> Millis {
+    let rate = 1_000_000u128.saturating_sub(u128::from(slow_ppm)).max(1);
+    let nanos = elapsed.as_nanos().saturating_mul(1_000_000).div_ceil(rate);
+    Millis::try_from(nanos.div_ceil(1_000_000)).unwrap_or(Millis::MAX)
 }
 
 /// Why `ts`, stamped from `host_ms`, may not be logged at `now` under `sample`, if it may not: the

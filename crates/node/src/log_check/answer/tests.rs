@@ -12,7 +12,7 @@ use crate::tee::{EnclaveKey, MockAttestor};
 use crate::test_support::dev_config;
 
 const DIGEST: [u8; 48] = [0x33; 48];
-const TURN: u64 = 20_755;
+pub(crate) const TURN: u64 = 20_755;
 
 #[tokio::test]
 async fn a_member_attests_only_the_checkpoint_its_replica_verified_in_that_turn() {
@@ -142,7 +142,7 @@ async fn connect(listen: SocketAddr) -> TcpStream {
 }
 
 /// A member's answers from `checked`, quoting under the mock TEE as `DIGEST`, on a free endpoint.
-fn answering(checked: CheckedHeads) -> Answering {
+pub(crate) fn answering(checked: CheckedHeads) -> Answering {
     let mut cfg = dev_config();
     let listen = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
     cfg.tee.sealing = Some(toml::from_str(&format!("dir = '/nonexistent'\n[handover]\nlisten = '{listen}'")).unwrap());
@@ -151,12 +151,12 @@ fn answering(checked: CheckedHeads) -> Answering {
 }
 
 /// The statement of `head` at `TURN`'s boundary, position 1.
-fn statement(head: VerifiedHead) -> Statement {
+pub(crate) fn statement(head: VerifiedHead) -> Statement {
     Statement { signer_epoch: 1, boundary: boundary(TURN), turn: TURN, position: 1, set: 1, head }
 }
 
 /// The operator's question of `statement` under `nonce`, signed by the operator enclave's key.
-fn ask(nonce: &[u8; 32], statement: Statement) -> Ask {
+pub(crate) fn ask(nonce: &[u8; 32], statement: Statement) -> Ask {
     Ask { nonce: hex::encode(nonce), statement, signature: signed_by(&EnclaveKey::test_key(), nonce, &statement) }
 }
 
@@ -172,12 +172,12 @@ fn domain() -> CheckpointDomain {
 }
 
 /// The operator enclave whose key signed the checkpoints, and signs the questions.
-fn operator() -> AccountId {
+pub(crate) fn operator() -> AccountId {
     AccountId(EnclaveKey::test_key().address())
 }
 
 /// A checkpoint at `seq`.
-fn head(seq: u64) -> VerifiedHead {
+pub(crate) fn head(seq: u64) -> VerifiedHead {
     VerifiedHead { seq, link: B256::repeat_byte(seq as u8), root: B256::repeat_byte(!(seq as u8)) }
 }
 

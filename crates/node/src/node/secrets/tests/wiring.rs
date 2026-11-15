@@ -62,7 +62,7 @@ async fn a_started_node_takes_deliveries_from_the_key_its_log_records_not_the_co
     let metrics = Arc::new(Metrics::new());
     let (_alert_layer, alerts) = crate::alerts::channel(crate::alerts::Routes::default(), metrics.clone());
     let telemetry = Telemetry { metrics, alerts, pages_critical: false };
-    let running = crate::node::run_with_cpu(cfg, telemetry, None, start());
+    let running = Box::pin(crate::node::run_with_cpu(cfg, telemetry, None, start()));
     tokio::pin!(running);
 
     // Until the start has handed the listener's authority to the log, the config's key still

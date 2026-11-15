@@ -5,9 +5,13 @@ use engine_core::staking::StakingConfig;
 use tracing::error;
 
 use crate::checkpoints::emission_budget::check_recorded;
+use crate::checkpoints::setup::Setup;
 use crate::checkpoints::{CheckpointChain, Poster};
+use crate::config::NodeConfig;
 use crate::custody::{StakingTerms, StakingTermsRefused};
 use crate::log::Checkpoint;
+use crate::node::ready::Ready;
+use crate::sequencer::ReplayedLog;
 
 /// Reads the emission period budget the vault's MONKEY cap was derived from, and refuses a log that
 /// records another: entitlements past the cap could never be claimed. Runs before anything is
@@ -64,6 +68,33 @@ pub(super) async fn staking_preflight(
         held.check(config).map_err(|refused| refuse(source, refused))?;
     }
     Ok(())
+}
+
+/// The emission period budget and the staking terms the API checks emission schedules and
+/// `InitStaking` against, after refusing a `log` or genesis that records others. A member's start made
+/// those checks before it connected (`ready`), and reads nothing now.
+/// Error cases:
+/// - the staking contract's reader cannot be built (see `StakingTerms::connect`)
+/// - see `emission_preflight` and `staking_preflight`
+pub(super) async fn chain_terms(
+    cfg: &NodeConfig,
+    ready: Option<&Ready>,
+    setup: Option<&Setup>,
+    log: &ReplayedLog,
+) -> anyhow::Result<(Option<TokenUnits>, Option<StakingTerms>)> {
+    // The API also refuses an emission schedule with another budget than the vault's.
+    let emission_budget = match (ready, setup) {
+        (Some(ready), _) => ready.emission_budget,
+        (None, Some(setup)) => Some(emission_preflight(&setup.poster, log.emissions()).await?),
+        (None, None) => None,
+    };
+    // Nor may the log or the genesis carry a staking config the staking contract does not hold: a
+    // member's start made that check before it connected (`ready`), and reads nothing now.
+    let staking_terms = StakingTerms::connect(&cfg.custody)?;
+    if ready.is_none() {
+        staking_preflight(staking_terms.as_ref(), log.staking_config(), cfg.genesis.staking.as_ref()).await?;
+    }
+    Ok((emission_budget, staking_terms))
 }
 
 /// Authorizes opening or repairing history only after custody rollback and signer checks.

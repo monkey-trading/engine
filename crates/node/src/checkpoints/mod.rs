@@ -22,7 +22,9 @@ use std::time::Duration;
 
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
+use engine_core::eip712::B256;
 use engine_core::staking::UsdcUnits;
+use engine_core::types::AccountId;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
@@ -219,10 +221,42 @@ impl<R: CheckpointChain> Poster<R> {
         if let Some((seq, root)) = &state.checkpoint {
             let cp = anchor.context("log is shorter than the latest posted checkpoint")?;
             ensure!(cp.seq == *seq && cp.root == *root, "log differs from the latest posted checkpoint at seq {seq}");
-            signature::verify_domain(cp, self.domain)?;
+            // An anchor the log holds no entry for carries no signature (#595): the vault's record of
+            // the checkpoint authenticates it below, as it does a signed one.
+            match cp.signature.is_empty() {
+                true => ensure!(cp.domain.is_none_or(|domain| domain == self.domain), "checkpoint domain mismatch"),
+                false => signature::verify_domain(cp, self.domain)?,
+            }
             let accepted = self.chain.accepted_checkpoints(&at, &[*seq]).await?;
             ensure!(accepted.len() == 1, "vault did not authenticate the posted checkpoint");
             accepted[0].verify(cp)?;
+        }
+        Ok(())
+    }
+
+    /// `startup` for a promoted member, at the latest block, which names its key before the promotion
+    /// is final and where the vault's historical authority is not read: the vault's latest checkpoint
+    /// must be `anchor`, and that either the checkpoint the promotion fixed, `fixed` (seq and root),
+    /// which the promotion's assignment authenticates, or one this key signed.
+    /// Error cases:
+    /// - reading fails, the vault names another signer, or the anchor is missing, differs from the
+    ///   vault's latest, or is neither the promotion's nor signed by this key
+    pub(crate) async fn startup_promoted(&self, anchor: Option<&Checkpoint>, fixed: (u64, B256)) -> anyhow::Result<()> {
+        let at = self.chain.observe(View::Latest, &[]).await?;
+        at.validate(&[])?;
+        let state = &at.state;
+        ensure!(state.signer == self.signer, "vault signer differs from this enclave; signer recovery is required");
+        if let Some((seq, root)) = &state.checkpoint {
+            let cp = anchor.context("log is shorter than the latest posted checkpoint")?;
+            ensure!(cp.seq == *seq && cp.root == *root, "log differs from the latest posted checkpoint at seq {seq}");
+            if cp.signer.parse::<AccountId>()? == self.signer {
+                signature::verify_domain(cp, self.domain)?;
+            } else {
+                ensure!(
+                    (cp.seq, cp.root.parse::<B256>()?) == fixed,
+                    "the vault's latest checkpoint at seq {seq} is neither the promotion's nor this key's"
+                );
+            }
         }
         Ok(())
     }

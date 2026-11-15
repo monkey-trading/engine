@@ -27,6 +27,11 @@ pub(crate) fn seed_epoch(turn: u64, genesis: u64) -> Option<u64> {
     Some(elapsed / SECONDS_PER_EPOCH)
 }
 
+/// The first turn boundary after `now`: from it a drawn turn may name the operator.
+pub(crate) fn next_boundary(now: u64) -> u64 {
+    now.saturating_add(DAY - BOUNDARY_OFFSET) / DAY * DAY + BOUNDARY_OFFSET
+}
+
 /// The latest turn whose draw deadline is at or before `now`.
 pub(crate) fn last_final_turn(now: u64) -> u64 {
     now.saturating_add(DRAW_LEAD - BOUNDARY_OFFSET) / DAY
@@ -35,6 +40,15 @@ pub(crate) fn last_final_turn(now: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_next_boundary_is_the_first_22_30_utc_after_now() {
+        let boundary = 20_763 * DAY + BOUNDARY_OFFSET;
+        assert_eq!(next_boundary(boundary - 1), boundary);
+        assert_eq!(next_boundary(boundary), boundary + DAY);
+        assert_eq!(next_boundary(boundary + DAY - 1), boundary + DAY);
+        assert_eq!(next_boundary(0), BOUNDARY_OFFSET);
+    }
 
     /// The values `SeedReceiver.t.sol` checks for mainnet's genesis time.
     #[test]

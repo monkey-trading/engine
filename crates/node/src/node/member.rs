@@ -28,6 +28,9 @@ use crate::tee::clock::GuestClock;
 use crate::tee::sealing::{Release, Sealer};
 use crate::trusted_time::Sample;
 
+mod prepare;
+pub(crate) mod promoted;
+pub(crate) mod standby;
 pub(crate) mod turn;
 
 /// How a node's run ended.
@@ -37,6 +40,10 @@ pub(super) enum Ended {
     Stopped,
     /// A successor confirmed the handover of its keys.
     HandedOver(Handed),
+    /// The vault named another key than its enclave's, as a promotion does (#595): the generation it
+    /// held is no longer its to hold in this process, and a member follows again, or starts as the
+    /// operator if the promoted key is its own standby key.
+    Replaced(Handed),
 }
 
 /// What a confirmed handover gave away: the generation the keys were sealed in, and the time trusted
@@ -95,8 +102,8 @@ pub(super) fn before_whole_log_take(cfg: &NodeConfig, start: &KeyStart) -> anyho
 }
 
 /// Runs the node, and, for a member, follows between its holdings: each `wait` gives the turn the
-/// next `serve` starts from, and a run a successor's confirmation ended goes back to `wait`, so the
-/// incumbent follows its successor. Both learn what the last confirmed handover gave away. A node
+/// next `serve` starts from, and a run a successor's confirmation or a replacement ended goes back to
+/// `wait`, so the incumbent follows its successor. Both learn what the last such end gave away. A node
 /// that is no member serves once.
 /// Error cases:
 /// - `wait` or `serve` fails
@@ -120,7 +127,11 @@ pub(super) async fn run_turns(
                 info!(generation = ?gave.generation, reached = ?gave.reached, "handed the keys over: following the successor");
                 handed = Some(gave);
             }
-            Ended::HandedOver(_) | Ended::Stopped => return Ok(()),
+            Ended::Replaced(gave) if member => {
+                info!(generation = ?gave.generation, reached = ?gave.reached, "the vault names another key: following again");
+                handed = Some(gave);
+            }
+            Ended::HandedOver(_) | Ended::Replaced(_) | Ended::Stopped => return Ok(()),
         }
     }
 }
@@ -280,11 +291,13 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
     }
 
     /// `until_turn`, answering the operator's log checks on the handover endpoint meanwhile
-    /// (`log_check::answer`); the endpoint is free again once it returns.
+    /// (`log_check::answer`); the endpoint is free again once it returns. Where the liveness rule's
+    /// standby side runs, its member link holds the endpoint and answers them (`liveness::link`).
     /// Error cases:
     /// - see `until_turn`
     pub(crate) async fn until_turn_answering(&mut self) -> anyhow::Result<Turn> {
-        let Some(answering) = self.answering.clone() else { return self.until_turn().await };
+        let answering = self.answering.clone().filter(|_| !standby::applies(self.cfg));
+        let Some(answering) = answering else { return self.until_turn().await };
         tokio::select! {
             turn = self.until_turn() => turn,
             never = answering.run() => match never {},

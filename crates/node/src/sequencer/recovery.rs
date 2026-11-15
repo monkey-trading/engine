@@ -80,13 +80,11 @@ impl ReplayedLog {
         let rotated = engine.operator_bounds().rotations > 0;
         let same_domain =
             |recorded: &Operator| (recorded.chain_id, recorded.vault) == (cfg.operator.chain_id, cfg.operator.vault);
-        // A promoted or elected standby's config names the key its pending rotation moves to, while
-        // the log still records the incumbent: the pending rotation's key, on this deployment,
-        // identifies this node as the successor.
-        // So does a daily turn the log assigned to the config's key, before or after it applies.
+        // The config's key is the successor's, on this deployment, when a pending rotation (a promoted or elected
+        // standby's), a daily turn assigned to it (before or after it applies) or a promotion names it.
         let turns = engine.daily_turns();
-        let turn_member =
-            turns.assigned.values().chain(&turns.in_effect).any(|turn| turn.admin_key == cfg.operator.address);
+        let turn_member = cfg.promoted_operator == Some(cfg.operator.address)
+            || turns.assigned.values().chain(&turns.in_effect).any(|turn| turn.admin_key == cfg.operator.address);
         let named_successor = (turn_member
             || engine.operator_bounds().rotation.is_some_and(|rotation| rotation.address == cfg.operator.address))
             && match engine.operator() {
@@ -259,6 +257,7 @@ impl Sequencer {
             observe(&entry);
             replay.apply(&entry)
         })?;
+        replay.ensure_superseded_continued()?;
         Ok(ReplayedLog {
             log: log.into(),
             replayed: replay.finish(),
@@ -401,6 +400,8 @@ impl Sequencer {
             after_sync: Vec::new(),
             house: house::Latest::recovered(last_checkpoint_offset.zip(last_signed_checkpoint.clone())),
             log_heads: cfg.log_heads,
+            checkpoint_waits: None,
+            handover_waits: None,
         };
         sequencer.marks.take_recovered(replayed_last_marks);
         {

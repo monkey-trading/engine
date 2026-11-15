@@ -101,7 +101,7 @@ impl Sequencer {
         if turn.admin_key != self.operator.address || taken {
             return Ok(());
         }
-        if self.frozen() {
+        if self.stopped() {
             return Ok(());
         }
         if self.turn_sealing.as_mut().is_some_and(|sealing| !sealing.sealed_for(turn.turn, ts)) {

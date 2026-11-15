@@ -27,6 +27,7 @@ mod shutdown;
 use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
 mod handover;
 mod keys;
+mod liveness;
 pub(crate) mod log_check;
 mod marks;
 pub(crate) mod member;
@@ -57,7 +58,7 @@ use crate::telemetry::Telemetry;
 use crate::tls::acme::{CertificateTask, Sealed};
 use crate::tls::serve;
 use crate::{custody::Custody, monitor, trusted_time, verify::Relay};
-use preflight::{authorize, emission_preflight};
+use preflight::authorize;
 
 /// How long a start that failed with a delivered key in play stays up for its repair.
 const FAILED_START_HOLD: Duration = if cfg!(test) { Duration::from_secs(5) } else { Duration::from_secs(300) };
@@ -168,26 +169,17 @@ async fn serve_node(
     let replica = replica.zip(ready.as_ref());
     let Recovered { mut log, history: history_plan, pending: log_heads_pending, anchor, stats } =
         recovery::recover(cfg, &key, checkpoint_setup.as_ref(), &marks, replica, &metrics).await?;
-    log_check::after_handover(store.as_deref(), cfg.operator()?.address, &log)
+    let promoted = ready.as_ref().and_then(|ready| ready.promoted);
+    log_check::after_start(store.as_deref(), cfg.operator()?.address, &log, promoted.map(|p| p.checkpoint_seq))
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // Refuses a log the on-chain posted head does not hold (Critical `log_rollback` names the range).
-    let log_heads_setup = crate::log_heads::setup::startup(log_heads_pending, &log)?;
+    let mut log_heads_setup = crate::log_heads::setup::startup(log_heads_pending, &log)?;
+    let liveness = liveness::prepare(cfg, log_heads_setup.as_mut(), store.as_ref());
     log.prove_legacy_withdrawals(&cfg.custody)
         .await
-        .inspect_err(|e| error!(alert = "legacy_withdrawal_unproven", "refusing writable recovery: {e:#}"))?; // The API also refuses an emission schedule with another budget than the vault's.
-    let emission_budget = match (&ready, &checkpoint_setup) {
-        (Some(ready), _) => ready.emission_budget,
-        (None, Some(setup)) => Some(emission_preflight(&setup.poster, log.emissions()).await?),
-        (None, None) => None,
-    };
-
-    // Nor may the log or the genesis carry a staking config the staking contract does not hold: a
-    // member's start made that check before it connected (`ready`), and reads nothing now.
-    let staking_terms = crate::custody::StakingTerms::connect(&cfg.custody)?;
-    if ready.is_none() {
-        preflight::staking_preflight(staking_terms.as_ref(), log.staking_config(), cfg.genesis.staking.as_ref())
-            .await?;
-    }
+        .inspect_err(|e| error!(alert = "legacy_withdrawal_unproven", "refusing writable recovery: {e:#}"))?;
+    let (emission_budget, staking_terms) =
+        preflight::chain_terms(cfg, ready.as_ref(), checkpoint_setup.as_ref(), &log).await?;
 
     let vault: AccountId = cfg.custody.vault.parse().context("custody.vault")?;
     let client_auth = cfg.client_auth()?;
@@ -228,6 +220,8 @@ async fn serve_node(
         history_sealing: None,
         checkpoint_signing: Some(signing_tx),
         registry_operator,
+        // A promoted start runs only for a promotion naming the candidate of the config's admin key.
+        promoted_operator: promoted.map(|_| operator.address),
         log_heads: None,
         turn_release: turn_store.as_ref().map(|store| engine_core::eip712::B256::from(store.release().id())),
         turn_sealing: turn_store
@@ -308,21 +302,22 @@ async fn serve_node(
     let catch_up = crate::history::marks::run::CatchUp { prior, folded };
     let marks_task = marks::task(marks_store, tx.downgrade(), marks_backfill, marks_sources, marks_live, catch_up);
     let recovery = seq.take_recovery_checkpoints();
+    let from_seq = seq.last_seq().map_or(1, |seq| seq.saturating_add(1));
     let sequencer = crate::sequencer_thread::Worker::start(seq.run(rx), cpu)?;
     let mut tasks: JoinSet<TaskResult> = JoinSet::new();
     tasks.spawn(marks_task);
     let (samples, samples_rx) = watch::channel(sample);
     let trusted = || trusted_time::TrustedClock::new(clock.clone(), samples_rx.clone(), cfg.time.max_drift);
-    if let Some(setup) = checkpoint_setup {
-        let checkpoint_tx = tx.clone();
-        tasks.spawn(async move {
-            ("checkpoints", setup.poster.run_with_approvals(setup.rx, checkpoint_tx, recovery, setup.approvals).await)
-        });
-    }
+    let final_signer = promoted.map(|_| AccountId(key.address()));
+    liveness::spawn_checkpoints(&mut tasks, checkpoint_setup, &tx, recovery, final_signer);
+    let released = log_heads_setup.as_ref().map(|setup| setup.released.subscribe());
     if let Some(setup) = log_heads_setup {
         tasks.spawn(setup.spawn(tx.clone(), trusted()));
     }
     log_check::spawn(cfg, &mut tasks, (log_check_due, turn_store.as_ref()), &key, &tx, trusted())?;
+    let started = liveness::Started { promoted, from_seq, key: &key, store: store.as_deref(), keys: start };
+    let serving = liveness::start(cfg, (liveness, released), started, &tx, trusted(), &mut tasks)?;
+    let replacement = serving.replacement();
 
     // A successor's request stops sequencing through `drain_rx`, once the vault approves it; the
     // stop itself goes to the sequencer as a final-checkpoint request, which refuses while the
@@ -381,8 +376,7 @@ async fn serve_node(
     let sources = feeds::configured_sources(&cfg.feeds);
     price_feeds::spawn(&mut tasks, cfg.feeds.clone(), delivered, &tx)?;
 
-    let sealed =
-        store.clone().zip(certificates).map(|(store, certificates)| Sealed { store, certificates, trusted: trusted() });
+    let sealed = certificates.map(|certificates| Sealed { store: store.clone(), certificates, trusted: trusted() });
     let trusted_clock = trusted();
     // What trusted time had reached once a successor confirms, which the member never falls below.
     let handover_clock = trusted();
@@ -419,6 +413,7 @@ async fn serve_node(
     let certificates = CertificateTask::configured(&cfg.api, tls.key, &metrics, sealed)?;
     let listener = TcpListener::bind(cfg.node.listen).await.with_context(|| format!("binding {}", cfg.node.listen))?;
     let limits = Arc::new(ApiLimits::new(&cfg.api));
+    let signing = Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval, trusted_clock);
     let app = router(ApiState {
         protocol: engine_core::protocol::ProtocolVersion::LATEST,
         tx,
@@ -443,7 +438,7 @@ async fn serve_node(
         listing: Default::default(),
         operators: ticker::start_operators(&cfg.custody, &cfg.api, &mut tasks)?,
         operator_hostname,
-        signing: Arc::new(Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval, trusted_clock)),
+        signing: Arc::new(serving.signing(signing)),
     });
     info!(listen = %listener.local_addr()?, "api up over TLS");
     // After the bind, so the CA's validation connections find the listener.
@@ -462,11 +457,12 @@ async fn serve_node(
             sequencer,
             handover,
             handing_over,
+            replaced: false,
             outcome: Ok(()),
         },
         routing,
-        &mut drain_rx,
-        &handover_stop_tx,
+        (&mut drain_rx, &handover_stop_tx),
+        replacement,
     )
     .await;
     // The sequencer's drain waits for every request sender to drop: this one is spent.
@@ -480,15 +476,16 @@ async fn serve_node(
         finish_history(supervised.history_task, history_stopper).await;
     }
     let outcome = supervised.outcome;
+    let gave =
+        Handed { generation: store.as_ref().map(|store| store.generation()), reached: handover_clock.reached_ms() };
     match supervised.handing_over {
         Some(reply) => {
             let _ = reply.send(published.final_head());
-            let gave = Handed {
-                generation: store.as_ref().map(|store| store.generation()),
-                reached: handover_clock.reached_ms(),
-            };
-            handed_over(supervised.handover).await.map(|()| Ended::HandedOver(gave))
+            handed_over(supervised.handover).await?;
+            liveness::forget(cfg, store.as_deref());
+            Ok(Ended::HandedOver(gave))
         }
+        None if supervised.replaced => outcome.map(|()| Ended::Replaced(gave)),
         None => outcome.map(|()| Ended::Stopped),
     }
 }

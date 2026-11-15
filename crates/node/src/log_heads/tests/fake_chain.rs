@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::log_heads::{Head, HeadsChain, PostOutcome};
+use crate::log_heads::{Head, HeadV2, HeadsChain, Hold, PostOutcome, TurnHeads};
 
 #[derive(Default)]
 struct FakeState {
@@ -28,6 +28,10 @@ struct FakeState {
     /// Accept sends but hold them back from the chain: the endpoint acknowledges, and the quorum
     /// still sees the older head until the test includes them.
     hold: bool,
+    /// While set, a turn names the operator: what `turn` answers, its stored signing time and bound
+    /// block following the v2 heads posted.
+    turn: Option<TurnHeads>,
+    posts_v2: Vec<(u64, HeadV2)>,
 }
 
 /// A chain whose posted head, epoch, and read failures the test drives. `post` enforces the
@@ -102,6 +106,21 @@ impl FakeChain {
         state.posted = Some(posted);
     }
 
+    /// A turn names the operator from now on, as `turn` reads it.
+    pub(super) fn name_turn(&self, turn: TurnHeads) {
+        self.0.lock().unwrap().turn = Some(turn);
+    }
+
+    /// Changes what the turn read answers.
+    pub(super) fn change_turn(&self, change: impl FnOnce(&mut TurnHeads)) {
+        change(self.0.lock().unwrap().turn.as_mut().expect("a turn is named"));
+    }
+
+    /// The v2 heads posted, with their epochs.
+    pub(super) fn posts_v2(&self) -> Vec<(u64, HeadV2)> {
+        self.0.lock().unwrap().posts_v2.clone()
+    }
+
     /// The reorg removes the epoch's head entirely: the quorum sees an empty epoch.
     pub(super) fn clear_posted(&self) {
         self.0.lock().unwrap().posted = None;
@@ -154,6 +173,36 @@ impl HeadsChain for FakeChain {
             state.posted = Some(head);
             state.posted_epoch = epoch;
         }
+        Ok(PostOutcome::Accepted)
+    }
+
+    async fn turn(&self) -> anyhow::Result<Option<TurnHeads>> {
+        Ok(self.0.lock().unwrap().turn)
+    }
+
+    async fn post_v2(&self, epoch: u64, head: &HeadV2, _signature: &str) -> anyhow::Result<PostOutcome> {
+        let mut state = self.0.lock().unwrap();
+        let turn = state.turn.ok_or_else(|| anyhow::anyhow!("UseV1"))?;
+        let held = head.hold != Hold::Live;
+        // `LogHeads.postV2`'s rules: the parent is the held head, the seq newer (a held head may repeat
+        // it), a live head newer in signing time, a held head's block newer than the bound one.
+        if state.posted_epoch == epoch
+            && let Some(stored) = state.posted
+        {
+            anyhow::ensure!(head.parent == Some(stored), "NotParent");
+            anyhow::ensure!(head.head.seq > stored.seq || (held && head.head == stored), "NotNewer");
+        }
+        if held {
+            anyhow::ensure!(head.block_number > turn.bound_block, "BlockNotNewer");
+            anyhow::ensure!(head.block_number >= turn.marked_block, "BlockBeforeMark");
+        } else {
+            anyhow::ensure!(head.signed_at > turn.signed_at, "SigningTimeNotNewer");
+        }
+        state.posts_v2.push((epoch, *head));
+        state.posted = Some(head.head);
+        state.posted_epoch = epoch;
+        let turn = state.turn.as_mut().expect("checked above");
+        (turn.signed_at, turn.bound_block) = (head.signed_at, if held { head.block_number } else { 0 });
         Ok(PostOutcome::Accepted)
     }
 }

@@ -390,7 +390,8 @@ once their trusted time reaches the boundary, the turn the schedule names then b
 named, and the incumbent hands over only a turn its own log accepted, or, once it has stopped for a
 member whose transfer never confirmed, one the turns its log held at the stop show it will accept, so a host that holds an
 enclave's Roughtime replies back can delay a handover but not bring it forward, and a turn drawn
-within a finality period of its boundary waits for finality; a holder the schedule names again in a new
+within a finality period of its boundary waits for finality, as does the handover after a promotion
+made within a finality period of the next boundary, the member keeping its copy meanwhile; a holder the schedule names again in a new
 generation, after a turn nobody took, seals its live keys in that generation on its sequencing thread
 before it logs `TurnTaken`, so no copy is sealed after it has stopped for a handover; the member earns the operator's share only from
 its enclave's `TurnTaken` to the end of its turn, an incumbent past its turn earns nothing, and from
@@ -399,8 +400,9 @@ boundary or its mirror when later;
 while rotation is on and a turn is in effect whose set names two or more members, the enclave signs a
 withdrawal only for an approval at or below the head of the log the last boundary's check verified, a
 check being another member's verification of the log through a checkpoint: at a handover the
-successor's own replay of the log through the checkpoint it was handed, unless the successor's member
-sequenced part of the range, as after its own upgrade, and at a boundary its holder holds on through an
+successor's own replay of the log through the checkpoint it was handed, and at a promotion the promoted
+member's replay through the vault's checkpoint the promotion fixed, unless that member sequenced part
+of the range, as after its own upgrade, and at a boundary its holder holds on through an
 attested verification, bound to the boundary, the turn assignment and the vault's signer epoch, from a
 member of the turn's order that sequenced none of the commands since the last verified head under any
 release, nor runs a release that did, as the log's `TurnTaken` commands record, asked first to last in
@@ -416,13 +418,55 @@ do not answer, hold payouts until one answers or the next handover (`log_check_p
 boundary whose turn nobody drew logs no `TurnTaken`, so approvals wait for the next drawn turn, and a
 start from a snapshot past the verified head cannot say who sequenced the range, so it asks no one and
 pages `log_check_unattributable` until a full replay or a handover; commands other than withdrawals
-stay exposed to a branch the host withholds for one heartbeat interval once members confirm the
-operator's log heads, which is not built yet, and until then for as long as the log-head rollback bound
-above allows; with a one-member set, rotation off, or no turn in effect, only the posted roots gate
+stay exposed to a branch the host withholds for at most one heartbeat interval past the newest seq
+another member confirmed, as below; with a one-member set, rotation off, or no turn in effect, only the posted roots gate
 payouts;
-promotion over turns, which is the liveness rule's, is not built yet, so a failed member holds its
-turn until the next boundary and the governance fallback (rotation off and `installOperator` once the
-drawn turns end) applies; from V56, while rotation is on, the governed parameters, listings,
+while a turn names the operator and its set has another member, the operator's enclave posts an
+`engine.log-head.v2` head at least twice per heartbeat interval (60 s by default) as its heartbeat, and
+signs a head or a checkpoint only at a seq another member's enclave confirmed holding, so it runs, and
+checkpoints, only while another member confirms its log, and stops taking commands while its log runs
+more than one interval past the newest confirmation; once `heartbeatMisses` witnessed slots (5 by
+default) pass with no head of the signer epoch, anyone promotes the next qualified member in the turn's
+order, and the vault moves its signer to that member's vouched standby key in a new signer epoch, with
+no timelock; detection takes 5 to 6 intervals after the last landed head (about 6 minutes at the
+defaults, at most 10 under the deployment bounds), each promotion adds the promoted member's start,
+and each member in the order that fails to start adds one more detection window; once no position
+qualifies the order is exhausted, and the governance fallback (rotation off, then `installOperator`
+once the drawn turns end) applies, which takes at most the 10-minute bound plus the timelock delay,
+below the 14-day exit period; a promoted member starts at a block the custody quorum agrees on, before
+finality, so an Arbitrum reorg of that block can remove its promotion after it traded, which stops it
+and pages `promotion_reorged`; it resumes only if a final block records the same promotion with the
+same commitments, and otherwise sets aside what it sequenced and the key; a promoted member serves,
+from its first answer, the public certificate its standby TLS key obtained while it followed (its API
+listener answers the CA's TLS-ALPN-01 validation then), so clients and following members verify it
+against public roots; the outgoing operator, once it returns as a member, sets aside the commands its
+key sealed past the last head its signer epoch posted, once a final block shows that epoch ended, and
+rebuilds its copy from the operator in effect (`superseded_tail_set_aside`); with two or more members, a
+checkpoint is the log entry after its seq, so the operator stamps nothing past a checkpoint until
+another member confirms that seq, a pause of about one stream delivery, one sync and one round trip;
+the old operator stops by its own clock
+before the earliest promotion could pass, assuming Arbitrum's block timestamps lead true time by no
+more than 10 s and its monotonic clock runs no more than 500 ppm slow, and it stops whenever its reads
+cannot rule out a promotion within the 15 s margin, as through an Arbitrum sequencer outage or a lost
+custody quorum lasting about `heartbeatMisses` intervals, resuming on its first read after one, and a
+read showing no promotion can pass keeps it running without a newer read only until 15 s before the
+next turn boundary for a set with no other member, and until 15 s after it with no turn naming it or
+no schedule; a signer the guardian retired ends no run, but its heads no longer land, so the operator
+fences once `promotionDueAt` nears, since a signer the timelock installs could be promoted past soon
+after; two
+copies of one key, which only a host keeping or restoring a sealed copy can run, can serve together
+until the losing copy reads the conflicting posted head, or, if its host blocks its reads, until the
+stop time it last computed, so one interval is not a bound on the overlap, and a host that rolls its
+member back within the unposted window, keeping the answering members from seeing what it signed, can
+make it sign a second history over at most that window, which #597 penalises as the member's fault;
+a heartbeat proves that the enclave sequences, not that clients are served; a host can keep its own
+turn halted with held heads, through a benchmark-sync hold or a trusted-time halt, until the turn
+ends, and a held head names the newest seq another member confirmed, not the log's tip (the project
+owner's decision: a trusted-time halt stops the signed stream, so a tip no member received by then
+could never be confirmed, and requiring it would promote a member through every such halt), so it can trail the log's tip by
+the commands no member received before the hold, at most one interval's worth, which stay exposed as
+any unconfirmed command is, while a hold stamps nothing past them; a standby key's registration is sent by the candidate's own account, so a candidate that does
+not send it is not promotable; from V56, while rotation is on, the governed parameters, listings,
 close-spread adoptions, the access policy and protocol activation change only by a proposal the
 rotation set passes with more than two thirds of its snapshotted weight on the vote contract, which
 the engine mirrors from finalised events, so the operator's own commands for them are refused; from

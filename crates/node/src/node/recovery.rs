@@ -49,7 +49,8 @@ pub(super) async fn recover(
     let posted_seq = setup.and_then(|setup| setup.posted_seq);
     if let Some((replica, ready)) = replica {
         let parent = setup.map(|setup| setup.parent);
-        let (log, pending) = from_replica(cfg, key, parent, replica.follower, ready.heads)?;
+        let promoted = ready.promoted.is_some();
+        let (log, pending) = from_replica(cfg, key, parent, replica.follower, (ready.heads, promoted))?;
         let anchor = ready.anchor.clone();
         return Ok(Recovered { log, history: replica.history, pending, anchor, stats: replica.stats });
     }
@@ -75,11 +76,16 @@ pub(super) async fn recover(
     if log.snapshot_seq.is_none() {
         metrics.full_replays.inc();
     }
+    // A vault checkpoint the log holds no entry for anchors as the replay found it (#595).
+    let unheld = log.replayed.recovery_anchor_work.as_ref().map(|work| &work.checkpoint);
+    let anchor = anchor.or_else(|| unheld.filter(|checkpoint| Some(checkpoint.seq) == posted_seq).cloned());
     Ok(Recovered { log, history, pending, anchor, stats })
 }
 
 /// A member's replica as the recovered log, finished at the vault's finalized checkpoint `parent`
-/// under this node's key, with the posted log heads `heads` the member read before it connected.
+/// under this node's key, with the posted log heads `heads` the member read before it connected; a
+/// promoted member's (`promoted`) under the standby key the promotion installed, which has signed no
+/// checkpoint yet.
 /// Nothing replays or reads the chain. The marks cache keeps the log-derived rows it holds from this
 /// member's earlier holdings, extended by the sequencer's live reports from here.
 /// Error cases:
@@ -90,13 +96,16 @@ fn from_replica(
     key: &Arc<EnclaveKey>,
     parent: Option<crate::log::CheckpointParent>,
     follower: crate::standby::Follower,
-    heads: Option<StartupHeads>,
+    (heads, promoted): (Option<StartupHeads>, bool),
 ) -> anyhow::Result<(ReplayedLog, Option<Pending>)> {
     let pending = heads.map(|heads| crate::log_heads::setup::pending(cfg, key, heads)).transpose()?;
     let posted = pending.as_ref().and_then(Pending::posted).map(|head| head.seq);
-    let log = follower
-        .into_log(parent, AccountId(key.address()), posted)
-        .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
+    let signer = AccountId(key.address());
+    let log = match promoted {
+        true => follower.into_promoted_log(parent, signer, posted),
+        false => follower.into_log(parent, signer, posted),
+    };
+    let log = log.inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     Ok((log, pending))
 }
 

@@ -125,6 +125,39 @@ async fn a_signed_stream_closes_rather_than_frame_while_trusted_time_does_not_bo
     assert_eq!(next_text_or_end(&mut ws).await, None);
 }
 
+/// A connection that asks for heads gets them, bare through a trusted-time halt, and keeps them coming;
+/// one that does not gets none, and closes at the halt as any signed connection does.
+#[tokio::test]
+async fn an_operators_heads_go_out_bare_and_keep_the_connection_through_a_trusted_time_halt() {
+    let dir = scratch_dir("signed-bare-heads");
+    let node = TestSequencer::start_legacy(&dir, 16);
+    let clock = Arc::new(TestClock::default());
+    let (_samples, latest) = watch::channel(None);
+    let time = TrustedClock::new(clock.clone(), latest, dev_config().time.max_drift);
+    let (heads, heads_rx) = watch::channel(Some(held(7)));
+    let cfg = dev_config();
+    let mut state = state(&node, &dir, &cfg.api);
+    let (key, vault) = (Arc::new(EnclaveKey::test_key()), cfg.custody.vault.parse().unwrap());
+    let signing = Signing::new(key, cfg.custody.chain_id, vault, Duration::from_millis(50), time);
+    let vault_signer = watch::channel(None).1;
+    state.signing = Arc::new(signing.with_liveness(crate::liveness::Gate::default(), heads_rx, vault_signer));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let mut plain = connect(addr, &format!("signed=1&challenge={CHALLENGE}")).await;
+    assert_eq!(next_text_or_end(&mut plain).await, None, "no heads asked for: the halt closes it");
+    let mut ws = connect(addr, &format!("signed=1&heads=1&challenge={CHALLENGE}")).await;
+    let first: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
+    assert_eq!((first["type"].as_str(), first.get("sig")), (Some("log_head"), None), "a bare head: {first}");
+    assert_eq!(first["head"]["head"]["seq"], 7);
+    // Heartbeats fall due and are skipped, not closing the connection: the next head still arrives.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    heads.send_replace(Some(held(8)));
+    let next: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
+    assert_eq!((next["type"].as_str(), next["head"]["head"]["seq"].as_u64()), (Some("log_head"), Some(8)));
+}
+
 #[tokio::test]
 async fn the_stream_refuses_a_signed_flag_other_than_1_or_a_missing_or_malformed_challenge() {
     let dir = scratch_dir("signed-params");
@@ -138,6 +171,8 @@ async fn the_stream_refuses_a_signed_flag_other_than_1_or_a_missing_or_malformed
         format!("challenge={CHALLENGE}"),
         format!("signed=1&challenge={}", &CHALLENGE[1..]),
         format!("signed=1&challenge=0x{}", &CHALLENGE[2..]),
+        "heads=1".to_owned(),
+        format!("signed=1&heads=2&challenge={CHALLENGE}"),
     ] {
         let err = connect_async(format!("ws://{addr}/v1/stream?{query}")).await.err().unwrap();
         let tokio_tungstenite::tungstenite::Error::Http(response) = err else { panic!("{query}: {err}") };
@@ -146,6 +181,26 @@ async fn the_stream_refuses_a_signed_flag_other_than_1_or_a_missing_or_malformed
 }
 
 // ── Helpers ──
+
+/// A held head at `seq`, signed under epoch 1.
+fn held(seq: u64) -> crate::log_heads::SignedHead {
+    use crate::log_heads::{Head, HeadV2, Hold};
+    let head = HeadV2 {
+        head: Head { seq, link: alloy::primitives::B256::repeat_byte(7) },
+        parent: None,
+        turn: 1,
+        position: 0,
+        release: alloy::primitives::B256::ZERO,
+        generation: 1,
+        stamp: 0,
+        signed_at: 1_000,
+        hold: Hold::TimeHalt,
+        confirmer: alloy::primitives::Address::ZERO,
+        block_number: 10,
+        block_hash: alloy::primitives::B256::repeat_byte(1),
+    };
+    crate::log_heads::SignedHead { epoch: 1, head, signature: format!("0x{}", "11".repeat(65)) }
+}
 
 /// Serves the API for `node` on a free local port, with signed heartbeats every `heartbeat`.
 async fn serve(node: &TestSequencer, dir: &std::path::Path, heartbeat: Duration) -> SocketAddr {

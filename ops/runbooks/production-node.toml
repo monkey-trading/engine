@@ -172,6 +172,13 @@ contract = "0x7777777777777777777777777777777777777777" # REPLACE: the LogHeads 
 relayer = "0x8888888888888888888888888888888888888888" # REPLACE: funded by the checkpoint endpoint
 interval = "1h" # OWNER: the truncation window is the interval plus chain inclusion
 
+[liveness]
+# This member's liveness caller: it witnesses missed heartbeat slots, promotes the next member once
+# the rule allows, and relays signed heads when the operator's own posts fail. Its account, funded
+# by the checkpoint endpoint, must differ from the checkpoint, log-head and seed relayers.
+caller = "0xcccccccccccccccccccccccccccccccccccccccc" # REPLACE: funded by the checkpoint endpoint
+min_balance = "0.01" # OWNER: liveness_caller_unfunded fires below it
+
 [seed_relay]
 # Proves each daily operator turn's RANDAO seed on Ethereum and relays it to the receiver on
 # Arbitrum, which it reads through the custody providers (ops/runbooks/seed-relay.md). Every

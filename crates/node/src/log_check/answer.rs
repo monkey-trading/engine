@@ -184,14 +184,22 @@ impl Answering {
     /// - the question does not arrive in time or does not parse, or the answer cannot be sent
     async fn serve(&self, mut stream: TcpStream) -> anyhow::Result<()> {
         let ask: Ask = timeout(QUESTION_TIMEOUT, receive(&mut stream)).await.context("no question in time")??;
-        let answer = self.answer(&ask).await;
+        self.respond(&mut stream, &ask).await
+    }
+
+    /// Sends this member's answer to `ask`, read from `stream`: here, or by the member link, which
+    /// answers on the same endpoint when the liveness rule runs (`liveness::link`).
+    /// Error cases:
+    /// - the answer cannot be sent
+    pub(crate) async fn respond(&self, stream: &mut TcpStream, ask: &Ask) -> anyhow::Result<()> {
+        let answer = self.answer(ask).await;
         match &answer {
             Answer::Verified { .. } => {
                 info!(seq = ask.statement.head.seq, turn = ask.statement.turn, "verified the log for the operator")
             }
             Answer::Refused { reason } => warn!(seq = ask.statement.head.seq, "refused a log check: {reason}"),
         }
-        send(&mut stream, &answer).await
+        send(stream, &answer).await
     }
 
     /// This member's answer to `ask`: its quote over the statement once the question is signed by the
@@ -270,4 +278,4 @@ impl Answering {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

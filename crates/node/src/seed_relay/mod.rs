@@ -31,7 +31,7 @@ mod beacon;
 mod chains;
 mod ethereum;
 mod header;
-mod schedule;
+pub(crate) mod schedule;
 mod settle;
 mod ssz;
 pub mod state;

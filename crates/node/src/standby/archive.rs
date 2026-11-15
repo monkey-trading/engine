@@ -158,7 +158,7 @@ pub(crate) async fn fetch_manifest(archive: &reqwest::Client, origins: &[String]
 /// A fetched segment must match its listing's size and hash.
 /// Error cases:
 /// - the bytes differ from the listing (`ArchiveIntegrity`)
-pub(super) fn check_listing(listed: &SegmentInfo, bytes: &[u8]) -> anyhow::Result<()> {
+pub(crate) fn check_listing(listed: &SegmentInfo, bytes: &[u8]) -> anyhow::Result<()> {
     if bytes.len() as u64 != listed.bytes || sha256(bytes) != listed.sha256 {
         return Err(ArchiveIntegrity(format!("archive segment {} differs from its listing", listed.file)).into());
     }
@@ -183,7 +183,7 @@ fn sync_dir(dir: &std::path::Path) -> anyhow::Result<()> {
 /// One archive GET from the first mirror that answers, bounded in bytes and time end to end.
 /// Error cases:
 /// - every origin fails, the body stalls past the deadline, or the body exceeds the bound
-async fn fetch_archive_bytes(
+pub(crate) async fn fetch_archive_bytes(
     archive: &reqwest::Client,
     origins: &[String],
     file: &str,

@@ -109,6 +109,15 @@ pub(crate) async fn drawn(vault: &impl CheckpointChain, at: &Observation) -> any
     Ok(vault.scheduled_turn(at, engine_core::types::MAX_STAMP_MS).await?.is_some())
 }
 
+/// Whether the vault's finalised schedule has drawn a turn; `false` when it cannot be read.
+pub(crate) async fn finalised_drawn(vault: &impl CheckpointChain) -> bool {
+    let read = async {
+        let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+        drawn(vault, &at).await
+    };
+    read.await.unwrap_or(false)
+}
+
 /// Whether the turn the finalised schedule names at trusted time `reached_ms` holds `sealed` in
 /// `generation`, and that turn's boundary; `None` when no turn names anyone, or the schedule cannot
 /// be read, so the vault's own release decides.
@@ -132,9 +141,11 @@ pub(crate) async fn names(
 }
 
 /// The operators a member of `turn` may take the keys from, in the order it tries them: the turn's
-/// source, the operator the registry named when the turn was drawn, then each earlier drawn turn's
-/// source, up to `SOURCE_LOOKBACK` turns back, since a member that never took its turn leaves the
-/// keys with the one before it. Each distinct operator with a handover endpoint, never the member.
+/// source, the operator the registry named when the turn was drawn, then, for each earlier drawn turn
+/// up to `SOURCE_LOOKBACK` turns back, the member of its latest assignment, which a promotion may have
+/// moved after this turn was drawn (#595), and its source, since a member that never took its turn
+/// leaves the keys with the one before it. Each distinct operator with a handover endpoint, never the
+/// member.
 /// Error cases:
 /// - the schedule cannot be read
 pub(crate) async fn sources(
@@ -144,15 +155,22 @@ pub(crate) async fn sources(
 ) -> anyhow::Result<Vec<HandoverSource>> {
     let mut sources: Vec<HandoverSource> = Vec::new();
     let mut drawn = Some(turn.clone());
+    let mut earlier = false;
     for _ in 0..=SOURCE_LOOKBACK {
         let Some(this) = drawn.take() else { break };
-        if let Some(source) = this.source.as_ref().filter(|source| {
-            source.candidate != turn.candidate
+        let holder = match earlier {
+            true => vault.handover_source_at(at, this.candidate).await.context("reading the registry")?,
+            false => None,
+        };
+        for source in holder.iter().chain(this.source.as_ref()) {
+            if source.candidate != turn.candidate
                 && !source.handover_endpoint.is_empty()
                 && sources.iter().all(|listed| listed.candidate != source.candidate)
-        }) {
-            sources.push(source.clone());
+            {
+                sources.push(source.clone());
+            }
         }
+        earlier = true;
         drawn = vault.scheduled_turn(at, this.boundary - 1).await.context("reading the operator schedule")?;
     }
     Ok(sources)

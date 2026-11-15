@@ -27,6 +27,19 @@ fn a_pending_send_waits_out_an_in_memory_bound_only() {
 }
 
 #[test]
+fn a_pending_heartbeat_waits_one_heartbeat_interval_and_a_v1_head_twice_the_posting_interval() {
+    let dir = crate::test_support::scratch_dir("log-head-pending-heartbeat");
+    std::fs::create_dir_all(&dir).unwrap();
+    let rpc = crate::log_heads::tests::heads_rpc("http://127.0.0.1:1", &dir);
+    let sent_at = std::time::Instant::now().checked_sub(Duration::from_secs(90)).unwrap();
+    *rpc.pending_since.lock().unwrap() = Some(sent_at);
+    assert!(!rpc.pending_action(true), "no turn read yet: the posting interval bounds it");
+    *rpc.heartbeat.lock().unwrap() = Some(Duration::from_secs(60));
+    assert!(rpc.pending_action(true), "a heartbeat pending past one interval reconciles");
+    assert!(!rpc.pending_action(false), "a v1 head still waits twice the posting interval");
+}
+
+#[test]
 fn a_reconciliation_rebroadcasts_the_reserved_heads_bytes() {
     // A pending reserved head and a newer released head (seq 9): the rebroadcast carries the
     // reserved head's call at the reserved nonce — never the newer head at the old nonce.

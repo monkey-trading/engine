@@ -37,6 +37,19 @@ impl Sequencer {
             return None;
         }
         let (host_ms, now) = (self.clock.now_ms(), self.clock.instant());
+        let ts = self.time.stamp(host_ms, self.last_ts, now);
+        // The liveness rule's gate: fenced by the enclave's own clock, before the start check, while
+        // the log runs a heartbeat interval past the newest confirmation, while a checkpoint waits
+        // for one, or for a stamp more than one interval past the newest confirmed seq's, nothing is
+        // stamped (`liveness`). Trusted time is still read, so the hold the heads are signed under is
+        // the one it shows now, whatever stops the stamp.
+        if self.log_heads.as_ref().is_some_and(|publisher| !publisher.gate.admits(ts))
+            || self.checkpoint_waits.is_some()
+        {
+            self.time.observe(host_ms, ts, now);
+            self.publish_hold();
+            return None;
+        }
         if let Some(not_after) = quote {
             if now > not_after {
                 debug!("venue quote reached the sequencer past its delay bound: dropped");
@@ -49,8 +62,8 @@ impl Sequencer {
                 return None;
             }
         }
-        let ts = self.time.stamp(host_ms, self.last_ts, now);
         let admitted = self.time.admit(host_ms, ts, now);
+        self.publish_hold();
         self.note_benchmark_time_admission(admitted, ts);
         if admitted {
             self.admit_benchmark_schedule(ts);

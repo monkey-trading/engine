@@ -49,6 +49,8 @@ pub(crate) use crate::custody::rpc::VaultRpc;
 pub use staking_terms::{Refused as StakingTermsRefused, StakingTerms};
 mod sizing;
 mod stall;
+pub(crate) mod standby_keys;
+pub(crate) use standby_keys::{QuorumBlock, StandbyReader};
 mod watchdog;
 use crate::sequencer::{Request, SignedWithdrawal};
 

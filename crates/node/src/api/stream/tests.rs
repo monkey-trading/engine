@@ -290,7 +290,7 @@ async fn a_quiet_signed_subscriber_gets_a_heartbeat_at_once_and_then_exactly_eac
     let time = trusted(Arc::new(TestClock::default()));
     let signing = Signing::new(Arc::new(EnclaveKey::test_key()), 31337, AccountId([0; 20]), interval, time);
     let connection = Connection::new([7; 32], "/v1/stream?signed=1&challenge=07");
-    let framing = Framing::new(Arc::new(signing), connection, watch::channel(Manifest::default()).1);
+    let framing = Framing::new(Arc::new(signing), connection, watch::channel(Manifest::default()).1, false);
     let mut subscriber = Subscriber::default();
     let started = Instant::now();
     let _open = timeout(

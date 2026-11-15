@@ -276,13 +276,27 @@ impl Chain {
         endpoint: &str,
         api_hostname: &str,
     ) {
+        self.register_release_at(candidate, admin_key, bond, (digest, CONFIG_HASH), endpoint, api_hostname).await;
+    }
+
+    /// `register_serving_at`, running the release of `digest` and a config file hashing to
+    /// `config_hash`.
+    pub(super) async fn register_release_at(
+        &self,
+        candidate: Address,
+        admin_key: &k256::ecdsa::SigningKey,
+        bond: U256,
+        (digest, config_hash): ([u8; 48], [u8; 32]),
+        endpoint: &str,
+        api_hostname: &str,
+    ) {
         let admin = Address::from(engine_core::eip712::address(admin_key.verifying_key()).0);
         let registration = Registration {
             adminKey: admin,
             enclave: admin,
             bond,
             launchDigest: Bytes::from(digest.to_vec()),
-            configHash: CONFIG_HASH.into(),
+            configHash: config_hash.into(),
             apiHostname: api_hostname.into(),
             handoverEndpoint: endpoint.into(),
         };
@@ -298,8 +312,13 @@ impl Chain {
 
     /// Has the timelock approve `candidate` running the release `digest`.
     pub(super) fn approval(&self, candidate: Address, digest: [u8; 48]) -> Vec<u8> {
+        self.approval_of(candidate, digest, CONFIG_HASH)
+    }
+
+    /// `approval`, of the release whose config file hashes to `config_hash`.
+    pub(super) fn approval_of(&self, candidate: Address, digest: [u8; 48], config_hash: [u8; 32]) -> Vec<u8> {
         let digest = Bytes::from(digest.to_vec());
-        setReleaseApprovalCall { candidate, launchDigest: digest, configHash: CONFIG_HASH.into(), approved: true }
+        setReleaseApprovalCall { candidate, launchDigest: digest, configHash: config_hash.into(), approved: true }
             .abi_encode()
     }
 
@@ -406,7 +425,12 @@ impl Chain {
     }
 
     /// One Anvil control RPC, asserted to succeed.
-    async fn rpc(&self, method: &str, params: Value) {
+    pub(super) async fn rpc(&self, method: &str, params: Value) {
+        self.rpc_result(method, params).await;
+    }
+
+    /// One Anvil control RPC, asserted to succeed, and its result.
+    pub(super) async fn rpc_result(&self, method: &str, params: Value) -> Value {
         let response: Value = reqwest::Client::new()
             .post(&self.url)
             .json(&json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
@@ -417,12 +441,13 @@ impl Chain {
             .await
             .unwrap();
         assert!(response.get("error").is_none(), "{method}: {response}");
+        response["result"].clone()
     }
 }
 
 /// Three local proxies to the same Anvil, for the custody quorum; production uses independent
 /// operators.
-async fn proxies(target: &str) -> (Vec<Anvil>, Vec<String>) {
+pub(super) async fn proxies(target: &str) -> (Vec<Anvil>, Vec<String>) {
     let mut children = Vec::new();
     let mut urls = Vec::new();
     for _ in 0..3 {

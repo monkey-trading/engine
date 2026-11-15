@@ -269,7 +269,7 @@ vault_epoch() { cast call "$vault" "signerEpoch()(uint64)" --rpc-url "$rpc"; }
 # The newest head the LogHeads contract holds for the vault's current signer epoch: seq on the
 # first line, the cumulative command-prefix digest on the second. The vault's first signer epoch
 # is 1 (0 is reserved).
-posted_head() { cast call "$logheads" "heads(uint64)(uint64,bytes32)" "$(vault_epoch)" --rpc-url "$rpc"; }
+posted_head() { cast call "$logheads" "heads(uint64)(uint64,bytes32,uint64,uint64,uint64)" "$(vault_epoch)" --rpc-url "$rpc"; }
 posted_seq() { posted_head | head -n 1 | tr -d '[:space:]'; }
 # The greatest seq the log on disk holds.
 last_log_seq() { jq -s 'map(.seq) | max' "$work"/log/[0-9]*.jsonl; }
@@ -354,7 +354,7 @@ ours="$(last_log_seq)"
 junk_link="0x$(printf '11%.0s' $(seq 1 32))"
 junk_seq=$((ours + 1000))
 parent_seq="$(posted_seq)"
-parent_link="$(posted_head | tail -n 1 | tr -d '[:space:]')"
+parent_link="$(posted_head | sed -n 2p | tr -d '[:space:]')"
 data="$(python3 "$work/log_head_digest.py" 31337 "$vault" "$(vault_epoch)" "$junk_seq" "$junk_link" "$parent_seq" "$parent_link")"
 digest="$(cast keccak "$data")"
 signature="$(cast wallet sign --no-hash --private-key "$mock_key" "$digest")"

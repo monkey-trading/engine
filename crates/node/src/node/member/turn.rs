@@ -7,15 +7,17 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use engine_core::types::Millis;
+use engine_core::types::{AccountId, Millis};
 use tracing::{Instrument, info, info_span, warn};
 
+use crate::checkpoints::setup::EpochUnfinal;
 use crate::checkpoints::{CheckpointChain, ScheduledTurn, View};
 use crate::handover::tail::{Prepared, Taken, take_tail};
 use crate::history::HistoryPlan;
 use crate::history::marks::Retentions;
 use crate::history::marks::fold::MarkFold;
 use crate::log::{CheckpointDomain, MANIFEST};
+use crate::node::member::standby::{Kept, Standby};
 use crate::node::member::{Member, PostedHead, Replica, Sampling, Turn};
 use crate::node::ready::{Moved, Ready, Start};
 use crate::standby::{Followed, Follower, ReplicaRefused};
@@ -45,7 +47,7 @@ const RETRY_PAUSE: Duration = if cfg!(test) { Duration::from_millis(100) } else 
 
 /// A member's copy opened with its replica, and what was built beside it: the dashboard record, the
 /// history index's check, and the marks the replica folded.
-type Opened = (Follower, Stats, HistoryPlan, Rc<RefCell<MarkFold>>);
+pub(super) type Opened = (Follower, Stats, HistoryPlan, Rc<RefCell<MarkFold>>);
 
 /// What a member does now.
 enum Holding {
@@ -65,10 +67,34 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// Error cases:
     /// - none past a configuration error: failed reads, stints and handovers are retried
     pub(crate) async fn until_turn(&mut self) -> anyhow::Result<Turn> {
+        let mut standby = None;
+        let turn = self.follow_until_turn(&mut standby).await;
+        // The member link frees the handover endpoint before the node binds it.
+        if let Some(standby) = standby {
+            standby.stop().await;
+        }
+        turn
+    }
+
+    /// `until_turn`, with the member's standby side (`standby`) opened beside the following, and
+    /// started as the operator when a promotion makes its standby key the vault's signer (`promoted`).
+    /// Error cases:
+    /// - as `until_turn`
+    async fn follow_until_turn(&mut self, standby: &mut Option<Standby>) -> anyhow::Result<Turn> {
         let mut follower: Option<Opened> = None;
         let mut followed: Option<(Followed, Option<u64>)> = None;
         let (mut refusals, mut failing_since) = (0, None::<Instant>);
         loop {
+            match self.keep_standby(standby, &mut follower, followed.as_ref().map(|(operator, _)| operator)).await {
+                Ok(Kept::Start(start)) => return Ok(Turn::Replica(start)),
+                Ok(Kept::Wait) => {
+                    tokio::time::sleep(RETRY_PAUSE).await;
+                    continue;
+                }
+                Ok(Kept::Follow) => {}
+                Err(e) if e.downcast_ref::<Stopping>().is_some() => return Ok(Turn::Stop),
+                Err(e) => warn!("the promoted member did not start: {e:#}"),
+            }
             let holding = self.holding().await;
             match &holding {
                 Ok(_) => self.episodes.cleared(Step::ReadTurn),
@@ -119,6 +145,24 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                         Ok((Taken { store, .. }, _)) => {
                             info!(generation = store.generation(), "the node recovers the log it took from disk");
                             return Ok(Turn::Hold);
+                        }
+                        Err(e) if e.downcast_ref::<EpochUnfinal>().is_some() => {
+                            // A promotion just before the boundary: the turn waits for it to be final, as
+                            // a turn drawn within a finality period does, its copy kept and followed.
+                            span.in_scope(|| {
+                                info!(turn = turn.turn, "waiting for the vault's signer epoch to be final")
+                            });
+                            failing_since = None;
+                            if let Some(((replica, ..), (operator, _))) = follower.as_mut().zip(followed.as_ref())
+                                && let Err(e) = replica.stint(self.cfg, operator, STINT).await
+                            {
+                                warn!("following while the signer epoch is not final failed: {e:#}");
+                                if damaged(&e) {
+                                    follower = None;
+                                }
+                            }
+                            tokio::time::sleep(RETRY_PAUSE).await;
+                            continue;
                         }
                         Err(e) => {
                             // A take that reached its sources paged each one's failure there.
@@ -205,6 +249,9 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             match replica.stint(self.cfg, operator, STINT).await {
                 Ok(_) => {
                     self.episodes.followed();
+                    if let Some(resolved) = self.moved_on(operator.enclave).await {
+                        followed = Some((resolved, number));
+                    }
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
                 Err(e) if e.downcast_ref::<ReplicaRefused>().is_some() => {
@@ -215,6 +262,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                 Err(e) => {
                     let coming_up = self.coming_up(boundary).await;
                     match crate::standby::rollback_evidence(&e) {
+                        Some(_) if Box::pin(self.set_aside_tail(replica, operator.enclave)).await => follower = None,
                         Some(evidence) => self.episodes.rolled_back(&operator.origin, &evidence),
                         // The turn's member serves only once it has taken the keys: a failure within
                         // `COMING_UP` of the boundary is expected, and pages only once that has passed.
@@ -282,7 +330,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// it had reached when it last handed its keys over.
     /// Error cases:
     /// - no trusted time sample can be taken
-    async fn reached(&mut self) -> anyhow::Result<Millis> {
+    pub(super) async fn reached(&mut self) -> anyhow::Result<Millis> {
         if self.sample.is_none_or(|sample| sample.at.elapsed() > SAMPLE_FOR) {
             self.sample = Some(self.time.sample().await?);
         }
@@ -298,15 +346,33 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// Error cases:
     /// - the archive, the vault, the history index or the copy cannot be read, or the copy does not
     ///   replay
-    async fn open(&self, operator: Option<&Followed>) -> anyhow::Result<Opened> {
+    pub(super) async fn open(&self, operator: Option<&Followed>) -> anyhow::Result<Opened> {
+        self.open_admitting(operator, None, &[]).await
+    }
+
+    /// `open`, with `admitted` among the signers the copy replays under: the key a standing promotion
+    /// made the vault's signer, whose seals and checkpoints the copy holds before finality names it;
+    /// the links and checkpoints at `keep` are kept past retention.
+    /// Error cases:
+    /// - as `open`
+    pub(super) async fn open_admitting(
+        &self,
+        operator: Option<&Followed>,
+        admitted: Option<AccountId>,
+        keep: &[u64],
+    ) -> anyhow::Result<Opened> {
         let dir = self.cfg.node.log_dir.as_path();
         if let Some(operator) = operator.filter(|_| !dir.join(MANIFEST).exists()) {
             let archive = crate::standby::archive::archive_client(operator.danger_accept_invalid_certs)?;
             crate::standby::archive::bootstrap_archive(&archive, &operator.origins(), dir).await?;
         }
         let at = self.vault.observe(View::Finalized, &[]).await?;
-        let signers = crate::handover::vault_signers(&self.vault, &at).await?;
+        let mut signers = crate::handover::vault_signers(&self.vault, &at).await?;
+        let final_epoch = at.lifecycle.as_ref().map_or(1, |lifecycle| lifecycle.signer_epoch);
+        signers.extend(Box::pin(crate::node::member::standby::named_since(self.cfg, final_epoch)).await?);
         let enclave = operator.map_or(at.state.signer, |operator| operator.enclave);
+        signers.insert(enclave);
+        signers.extend(admitted);
         let domain = CheckpointDomain { chain_id: self.cfg.custody.chain_id, vault: self.cfg.custody.vault.parse()? };
         let (stats, mut history) = (Stats::new(self.cfg)?, HistoryPlan::for_member(&self.cfg.history)?);
         // The posted head is pinned as the replay passes it, so a rebuilt replica still holds it.
@@ -320,7 +386,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let segment_commands = self.cfg.node.segment_commands;
         let kept = (Some(stats.clone()), Some(marks.clone()), Some(self.checked.clone()));
         let stopping = &self.stopping;
-        let follower = Follower::open_pinned(dir, segment_commands, domain, enclave, signers, kept, posted, |entry| {
+        let pins = (posted, keep);
+        let follower = Follower::open_pinned(dir, segment_commands, domain, enclave, signers, kept, pins, |entry| {
             anyhow::ensure!(!stopping.load(Ordering::Acquire), Stopping);
             history.observe(entry);
             Ok(())
@@ -328,32 +395,6 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         self.metrics.full_replays.inc();
         info!(seq = ?follower.replica().last_seq(), elapsed = ?started.elapsed(), "built the replica from the copy");
         Ok((follower, stats, history, marks))
-    }
-
-    /// Keeps the latest posted log head as one the replica holds, once it has passed it; a head the
-    /// copy contradicts pages Critical `operator_log_rollback`, and one that cannot be read, or that
-    /// the replica passed without keeping, pages `member_follow_blocked` once it persists.
-    async fn pin_posted(&mut self, follower: &mut Follower) {
-        let Some(heads) = &self.heads else { return };
-        let head = match heads.posted_head().await {
-            Ok(head) => head,
-            Err(e) => return self.episodes.blocked(Step::ReadPostedHead, &e.context("reading the posted log head")),
-        };
-        self.episodes.cleared(Step::ReadPostedHead);
-        let Some(head) = head else { return self.episodes.posted_held() };
-        match follower.pin(head.seq, head.link) {
-            Some(true) => {
-                self.episodes.posted_held();
-                self.episodes.cleared(Step::PinPostedHead);
-            }
-            Some(false) => self.episodes.posted_contradicts(head.seq, head.link.to_string()),
-            None if follower.replica().last_seq().is_some_and(|last| last >= head.seq) => {
-                let e =
-                    anyhow::anyhow!("the replica passed the posted log head at seq {} without keeping it", head.seq);
-                self.episodes.blocked(Step::PinPostedHead, &e);
-            }
-            None => {}
-        }
     }
 
     /// Takes `turn` from the first of its sources that hands the keys over with the tail past the
@@ -430,19 +471,6 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     }
 }
 
-/// A replica's build ended by a shutdown signal (`Member::wait`).
-#[derive(Debug)]
-struct Stopping;
-
-impl std::fmt::Display for Stopping {
-    /// What happened.
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("the node is shutting down")
-    }
-}
-
-impl std::error::Error for Stopping {}
-
 /// The point between a confirmed tail handover and the first command the node sequences, where a
 /// later rule binds the handover to the signer epoch, the turn, its assignment and its generation.
 /// Nothing is checked here yet.
@@ -458,6 +486,7 @@ mod tries;
 
 pub(crate) use episodes::Episodes;
 use episodes::Step;
+pub(in crate::node::member) use tries::Stopping;
 pub(crate) use tries::set_copy_aside;
 use tries::{SourcesFailed, catch_up, damaged, page_refusal, refused};
 
