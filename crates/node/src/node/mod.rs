@@ -233,14 +233,7 @@ async fn serve_node(
             .filter(|_| turn_vault.is_some())
             .map(|store| TurnSealing::new(store, generations)),
         log_check: log_check_setup,
-        governance: cfg
-            .custody
-            .evm
-            .as_ref()
-            .and_then(|evm| evm.staking.as_ref())
-            .and_then(|staking| staking.registry.vote.as_ref())
-            .map(crate::config::VoteCustodySection::governance)
-            .transpose()?,
+        governance: cfg.governance()?,
         fault_proof: cfg.fault_proof()?,
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())

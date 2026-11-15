@@ -210,6 +210,15 @@ pub struct RpcProviderSection {
 }
 
 impl NodeConfig {
+    /// The vote contract and restriction lifetime `[custody.evm.staking.registry.vote]` names, which the
+    /// node records once `V56` applies; `None` without the section.
+    /// Error cases:
+    /// - as `VoteCustodySection::governance`
+    pub fn governance(&self) -> anyhow::Result<Option<engine_core::governance::GovernanceConfig>> {
+        let staking = self.custody.evm.as_ref().and_then(|evm| evm.staking.as_ref());
+        staking.and_then(|staking| staking.registry.vote.as_ref()).map(VoteCustodySection::governance).transpose()
+    }
+
     /// The fault proof contract and penalty `[custody.evm.staking.registry.fault_proof]` names, which
     /// the node records once `V69` is in force; `None` without the section.
     /// Error cases:
