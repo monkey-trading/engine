@@ -453,6 +453,11 @@ pub enum ProtocolVersion {
     /// notional, a close-out's own count included) until the catch-up has passed its time, and the tier
     /// read at an earlier boundary leaves them out. The volume leaf encodes them while any are kept.
     V69,
+    /// A fault the fault proof contract proves, two signed log heads of one turn's assignment that
+    /// disagree at one seq, cuts its member's operator share by a haircut that starts at the recorded
+    /// penalty and falls linearly to nothing over its decay; the withheld part goes to stakers
+    /// (`operator_faults`).
+    V70,
 }
 
 impl ProtocolVersion {

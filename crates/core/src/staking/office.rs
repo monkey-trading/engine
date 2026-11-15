@@ -15,6 +15,9 @@
 //! `TurnTaken` to the end of its turn (`turns`), so the time before a member takes its turn, and an
 //! incumbent's time past its turn, are no one's. From `V53`, before any turn is in effect, the account
 //! in office holds it only until the first accepted turn applies.
+//!
+//! From `V69`, a proven fault's haircut withholds its integral from the member's time in office, and
+//! the close pays the member only the time it kept (`operator_faults`).
 
 use std::collections::BTreeMap;
 
@@ -22,6 +25,7 @@ use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
 
 use crate::engine::Engine;
+use crate::operator_faults::WHOLE_BPS;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, Millis};
 
@@ -49,38 +53,57 @@ impl Engine {
             Some(turn) => turn,
             None => self.operator_share_account().map(|account| (account, self.first_turn_applies_at())),
         };
-        let (Some((holder, until)), Some(staking)) = (holder, self.staking.as_mut()) else { return };
+        let Some((holder, until)) = holder else { return };
+        let to = self.now.min(until);
+        // From `V69` a proven fault's haircut withholds its integral over the same time.
+        let withheld = self.withheld_in_office(holder, from, to);
+        let Some(staking) = self.staking.as_mut() else { return };
         let office = staking.office.as_mut().expect("V50 counts time in office once staking is initialised");
-        let served = self.now.min(until) - from;
+        let served = to - from;
         if served > 0 {
             *office.served.entry(holder).or_default() += served;
+        }
+        if withheld > 0 {
+            *self.operator_faults.withheld.entry(holder).or_default() += withheld;
         }
     }
 
     /// From `V50`, `share` USDC base units split by the open epoch's time in office, in account order:
-    /// `floor(share · served / counted)` each, leaving out the parts that round to nothing.
-    pub(crate) fn split_by_time_in_office(&self, share: u128) -> Vec<(AccountId, u128)> {
+    /// `floor(share · served / counted)` each, leaving out the parts that round to nothing. Each part
+    /// comes with what a proven fault's haircut withheld from it: from `V69` an account the haircut
+    /// withheld `w` bps·ms from is paid `floor(share · (10,000 · served − w) / (10,000 · counted))`.
+    pub(crate) fn split_by_time_in_office(&self, share: u128) -> Vec<(AccountId, u128, u128)> {
         let office = self.staking.as_ref().and_then(|staking| staking.office.as_ref());
         let office = office.expect("V50 counts time in office once staking is initialised");
         // Positive whenever anyone served: every credit lies between `since` and now.
         let counted = U256::from((self.now - office.since) as u128);
+        let whole_bps = U256::from(WHOLE_BPS as u128);
         office
             .served
             .iter()
             .filter_map(|(account, served)| {
+                let served = U256::from(*served as u128);
                 // At most `share`, as no account served longer than the epoch counted.
-                let amount: u128 = (U256::from(share) * U256::from(*served as u128) / counted).to();
-                (amount > 0).then_some((*account, amount))
+                let whole: u128 = (U256::from(share) * served / counted).to();
+                // A haircut withholds at most 10,000 bps of each millisecond, so at most `whole`.
+                let kept = self.operator_faults.withheld.get(account).map_or(whole, |withheld| {
+                    let kept_bps_ms = (served * whole_bps).saturating_sub(U256::from(*withheld as u128));
+                    (U256::from(share) * kept_bps_ms / (counted * whole_bps)).to()
+                });
+                (whole > 0).then_some((*account, kept, whole - kept))
             })
             .collect()
     }
 
     /// Starts counting time in office now, afresh: at `V50`'s activation, at staking's initialisation
-    /// under it, and at each close.
+    /// under it, and at each close, which from `V69` also drops the haircuts withheld so far and those
+    /// that have decayed to nothing.
     pub(crate) fn start_time_in_office(&mut self) {
         let since = self.now;
         if let Some(staking) = self.staking.as_mut() {
             staking.office = Some(TimeInOffice { since, served: BTreeMap::new() });
         }
+        self.operator_faults.withheld.clear();
+        self.drop_spent_haircuts();
     }
 }

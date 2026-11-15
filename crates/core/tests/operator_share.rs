@@ -334,3 +334,6 @@ mod time_in_office;
 
 #[path = "operator_share/daily_turns.rs"]
 mod daily_turns;
+
+#[path = "operator_share/faults.rs"]
+mod faults;

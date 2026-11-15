@@ -19,6 +19,7 @@ use crate::governance::{GovernanceConfig, PassedProposal, VotedChange};
 use crate::listing_bounds::ListingNotice;
 use crate::market::MarketSpec;
 use crate::operator_bounds::ParamsNotice;
+use crate::operator_faults::{FaultProofConfig, ProvenFault};
 use crate::params::{NotionalWeighting, ProtocolParams};
 use crate::price::SourceQuote;
 use crate::protocol::ProtocolVersion;
@@ -195,6 +196,9 @@ pub enum Command {
     /// From `V56`, the vote contract's `ProposalPassed` event, finalised, credited once under its chain
     /// reference. Boxed, as `SignedAdmin` is.
     PassProposal(Box<PassedProposal>),
+    /// From `V69`, the fault proof contract's `FaultProven` event, finalised, credited once under its
+    /// chain reference.
+    ProveFault(ProvenFault),
     /// From `V56`, a passed normal change whose notice has run, which the node sequences with the
     /// command it waits with; its outcome is an admin command's.
     ApplyProposal(Box<VotedChange>),
@@ -340,6 +344,9 @@ pub enum AdminCommand {
     /// From `V56`, records the vote contract the node mirrors and how long a fast-path restriction
     /// lasts. The node alone sequences it, from its config; a log records it once.
     SetGovernance(GovernanceConfig),
+    /// From `V69`, records the fault proof contract the node mirrors and the penalty a proven fault
+    /// carries. The node alone sequences it, from its config; a log records it once.
+    SetFaultProof(FaultProofConfig),
 }
 
 /// An admin command with the operator's signature, nonce, and expiry, as `engine admin` signs and

@@ -31,7 +31,8 @@
 //!   It credits the leaf of the candidate seated under the key in effect (`election`), which is also
 //!   that candidate's leaf as a staker, so the vault's claim and exit pay the operator as they pay
 //!   anyone. From `V50` the share is split among the operators by their time in office during the
-//!   open epoch (`office`).
+//!   open epoch (`office`), and from `V69` a proven fault's haircut withholds part of a member's
+//!   (`operator_faults`), which stays with the stakers.
 //! - **Reconciliation.** Allocations reduce house cash before any USDC leaves the vault; the
 //!   vault's cumulative `distributionsPaid` explains the difference at the next checkpoint.
 
@@ -373,11 +374,16 @@ impl Engine {
         let mut allocated = 0u128;
         if usdc_excess > 0 && !self.staked.is_empty() {
             let mut to_stakers = usdc_excess;
-            for (account, amount) in self.operator_shares(usdc_excess / OPERATOR_SHARE_DIVISOR) {
-                self.credit_distribution(account, amount);
-                to_stakers -= amount;
-                allocated += amount;
-                events.push(Event::OperatorShareAllocated { account, epoch: closed, amount: UsdcUnits(amount) });
+            for (account, amount, withheld) in self.operator_shares(usdc_excess / OPERATOR_SHARE_DIVISOR) {
+                if amount > 0 {
+                    self.credit_distribution(account, amount);
+                    to_stakers -= amount;
+                    allocated += amount;
+                    events.push(Event::OperatorShareAllocated { account, epoch: closed, amount: UsdcUnits(amount) });
+                }
+                if withheld > 0 {
+                    events.push(Event::OperatorShareWithheld { account, epoch: closed, amount: UsdcUnits(withheld) });
+                }
             }
             let stakes: Vec<(AccountId, u128)> =
                 self.staked.iter().map(|(account, staked)| (*account, staked.0)).collect();
@@ -417,13 +423,14 @@ impl Engine {
 }
 
 impl Engine {
-    /// The operator's share of a close, `share` USDC base units, by recipient: from `V50` split by the
-    /// open epoch's time in office, and from `V47` all to the account in office while rotation is on.
-    fn operator_shares(&self, share: u128) -> Vec<(AccountId, u128)> {
+    /// The operator's share of a close, `share` USDC base units, by recipient, with what a proven fault's
+    /// haircut withheld from each part: from `V50` split by the open epoch's time in office, and from
+    /// `V47` all to the account in office while rotation is on.
+    fn operator_shares(&self, share: u128) -> Vec<(AccountId, u128, u128)> {
         if self.protocol_version >= ProtocolVersion::V50 {
             return self.split_by_time_in_office(share);
         }
-        self.operator_share_account().filter(|_| share > 0).map(|account| (account, share)).into_iter().collect()
+        self.operator_share_account().filter(|_| share > 0).map(|account| (account, share, 0)).into_iter().collect()
     }
 
     /// Adds `amount` to `account`'s cumulative distribution.
