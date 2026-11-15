@@ -69,4 +69,7 @@ pub struct SequencerConfig<'a> {
     /// The vote contract and restriction lifetime the config names, which the node records once `V56`
     /// applies (see `Sequencer::activate_protocol`); a log that records others is refused.
     pub(crate) governance: Option<engine_core::governance::GovernanceConfig>,
+    /// The fault proof contract and penalty the config names, which the node records once `V69` is in
+    /// force (see `Sequencer::activate_protocol`); a log that records others is refused.
+    pub(crate) fault_proof: Option<engine_core::operator_faults::FaultProofConfig>,
 }

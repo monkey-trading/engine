@@ -399,6 +399,7 @@ fn recover_installed_under(
     Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(16).0, mpsc::unbounded_channel().0)
 }
 
+mod faults;
 mod governance;
 mod hold;
 mod turn_log;

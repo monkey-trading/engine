@@ -2377,8 +2377,8 @@ one event `type`: `deposited`, `deposit_rejected`, `custody_deposit_changed`,
 index that reads at most `limit + 1` entries, and at most 16 pages are read at once. Until the index
 has taken every command the log held when the node started, the route answers 503 (`history is
 catching up with the log`). History is public, like the log.
-`emission_allocated`, `staked`, `unstaked`, `staking_rejected`, `distribution_allocated`, or
-`operator_share_allocated`.
+`emission_allocated`, `staked`, `unstaked`, `staking_rejected`, `distribution_allocated`,
+`operator_share_allocated`, or `operator_share_withheld`.
 `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
 `emission_allocated`, `eligibility_attested`, `eligibility_rejected`, `deposit_pending`, or
 `deposit_held`. `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
@@ -2684,6 +2684,12 @@ each staking frontier the watcher sequences carries the turn the registry's `rot
 at that block, or none, read through the custody quorum once the registry is bound; from `V67`, with no turn
 naming it, the frontier carries the boundary of the last turn the registry's schedule has drawn
 (`turnsRunUntil()`) when it is after the block.
+With `[custody.evm.staking.registry.fault_proof]`, the `FaultProof` over the vault and its `penalty` (`initial_bps`,
+1 to 10,000, and `decay`, whole milliseconds up to 3650 days), the node records both in the log once protocol `V70`
+is in force (`SetFaultProof`), at a start's activation or after a passed vote activates it, and refuses to start on a
+log that records another; the watcher mirrors the contract's `FaultProven` events from `V70`, once a read at a
+window's end shows the contract names the configured vault, and the account history lists each
+`operator_share_withheld`.
 `GET /v1/house/state` adds a `governance` section, the recorded contract, each change waiting with its
 `applies_at`, each restriction in force with its `expires_at`, the baseline of each field one holds, and from `V65`
 when drawn turns name the operator (`turns_from`), and

@@ -151,6 +151,15 @@ contract = "0x4444444444444444444444444444444444444444" # REPLACE
 # contract = "0x7777777777777777777777777777777777777777" # REPLACE
 # restriction_ttl = "24h" # OWNER: the restriction lifetime
 
+# The FaultProof over the vault, whose proven faults the watcher mirrors from protocol V69, and the
+# haircut a proven fault puts on its member's operator share. The node records both in the log once,
+# so every member's release names the same. It needs the schedule above. #549 values the seat a
+# removal forfeits at one year of the member's share; a haircut from the whole share falling linearly
+# to nothing over two years withholds the same.
+# [custody.evm.staking.registry.fault_proof]
+# contract = "0x8888888888888888888888888888888888888888" # REPLACE
+# penalty = { initial_bps = 10000, decay = "730d" } # OWNER: confirm the haircut and its decay
+
 [checkpoints]
 # A separate endpoint from the custody providers. It signs and funds the relayer's transactions,
 # so it must support eth_sendTransaction and hold a funded relayer dedicated to this log.

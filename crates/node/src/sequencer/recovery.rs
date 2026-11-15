@@ -107,6 +107,9 @@ impl ReplayedLog {
         if let Some(recorded) = engine.governance().config.filter(|recorded| cfg.governance != Some(*recorded)) {
             bail!("the log records vote contract {recorded:?}, but the config names {:?}", cfg.governance);
         }
+        if let Some(recorded) = engine.operator_faults().config.filter(|recorded| cfg.fault_proof != Some(*recorded)) {
+            bail!("the log records fault proof contract {recorded:?}, but the config names {:?}", cfg.fault_proof);
+        }
         // A registry the `V40` upgrade carried came from the config of the restart that upgraded
         // the log: the recorded genesis cannot be restated, so the carried entries are not part
         // of what the genesis comparison attests. For each ceiling the config names, the log may
@@ -368,6 +371,7 @@ impl Sequencer {
             turn_sealing: cfg.turn_sealing,
             log_check,
             governance: cfg.governance,
+            fault_proof: cfg.fault_proof,
             metrics: cfg.metrics,
             claims: Default::default(),
             gate: cfg.checkpoints.map(|sink| {

@@ -198,6 +198,7 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         Event::StakingRejected { .. } => "staking_rejected",
         Event::DistributionAllocated { .. } => "distribution_allocated",
         Event::OperatorShareAllocated { .. } => "operator_share_allocated",
+        Event::OperatorShareWithheld { .. } => "operator_share_withheld",
         Event::EligibilityAttested { .. } => "eligibility_attested",
         Event::EligibilityRejected { .. } => "eligibility_rejected",
         Event::DepositPending { .. } => "deposit_pending",
@@ -240,6 +241,7 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         | Event::RestrictionApplied { .. }
         | Event::ProposalRefused { .. }
         | Event::RestrictionLapsed { .. }
+        | Event::OperatorFaultProven { .. }
         | Event::CatchUpDeferred { .. } => bail!("event is not an account-history kind"),
     };
     kind_id(kind)

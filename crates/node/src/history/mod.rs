@@ -48,7 +48,7 @@ use crate::sequencer::StreamBody;
 
 /// The `type` of every event that names an account: what the `kind` filter accepts. A kind's
 /// position is its authenticated history storage tag, so new kinds are only ever appended.
-pub const KINDS: [&str; 30] = [
+pub const KINDS: [&str; 31] = [
     "deposited",
     "deposit_rejected",
     "withdrawal_approved",
@@ -79,6 +79,7 @@ pub const KINDS: [&str; 30] = [
     "session_key_revoked",
     "session_key_rejected",
     "operator_share_allocated",
+    "operator_share_withheld",
 ];
 /// The SQLite file of the index, in `history.dir`; SQLite keeps its `-wal` and `-shm` files beside it.
 pub const INDEX_FILE: &str = "history.sqlite";
@@ -392,6 +393,7 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::StakingRejected { account, .. }
         | Event::DistributionAllocated { account, .. }
         | Event::OperatorShareAllocated { account, .. }
+        | Event::OperatorShareWithheld { account, .. }
         | Event::SessionKeyRegistered { account, .. }
         | Event::SessionKeyRevoked { account, .. }
         | Event::SessionKeyRejected { account, .. } => Some(*account),
@@ -436,6 +438,7 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::RestrictionApplied { .. }
         | Event::ProposalRefused { .. }
         | Event::RestrictionLapsed { .. }
+        | Event::OperatorFaultProven { .. }
         | Event::CatchUpDeferred { .. } => None,
     }
 }

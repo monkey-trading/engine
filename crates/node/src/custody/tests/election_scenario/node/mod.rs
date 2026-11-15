@@ -228,6 +228,7 @@ impl Node {
             log_check: seat.and(store.clone()).map(|store| LogCheckSetup { store, due }),
             approval_registry: post_checkpoints.then(|| approvals.clone()),
             governance: setup::governance(chain),
+            fault_proof: setup::fault_proof(chain),
             metrics: metrics.clone(),
             ..sequencer_config(&dir, manifest_tx)
         };

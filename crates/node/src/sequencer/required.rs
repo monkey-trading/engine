@@ -104,7 +104,8 @@ impl Sequencer {
     }
 
     /// Records the config's client auth and operator and activates the latest protocol version,
-    /// whichever the log lacks, and from `V56` the config's vote contract, then checkpoints. While
+    /// whichever the log lacks, from `V56` the config's vote contract, and from `V69` its fault proof
+    /// contract, then checkpoints. While
     /// votes govern at the stamp, activation and the access policy wait for a passed vote instead (see
     /// `sequence_queued`). All run at the log's next seq, so earlier commands keep the rules they ran
     /// under, once trusted time admits a stamp (see `sequence_required`).
@@ -159,11 +160,22 @@ impl Sequencer {
         if let (Some(config), None) = (self.governance, self.engine.governance().config) {
             cmds.push(Command::Admin(AdminCommand::SetGovernance(config)));
         }
+        // So is the fault proof contract, recorded once `V69` is in force or activates here.
+        let in_force = cmds.iter().find_map(activated_version).unwrap_or_default().max(self.engine.protocol_version());
+        cmds.extend(self.fault_proof_due(in_force));
         if cmds.is_empty() {
             return Ok(());
         }
         info!(version = ?ProtocolVersion::LATEST, seq = self.next_seq, "activating protocol");
         self.sequence_required("protocol activation", cmds)
+    }
+
+    /// `SetFaultProof` with the config's fault proof contract and penalty, while the log records none and
+    /// `version`, the version in force once the commands before it apply, is `V69` or later.
+    pub(super) fn fault_proof_due(&self, version: ProtocolVersion) -> Option<Command> {
+        let unrecorded = self.engine.operator_faults().config.is_none();
+        let config = self.fault_proof.filter(|_| unrecorded && version >= ProtocolVersion::V69)?;
+        Some(Command::Admin(AdminCommand::SetFaultProof(config)))
     }
 
     /// As `activate_protocol`, activating `version` instead of the latest, for tests of earlier rules.
@@ -301,6 +313,16 @@ impl Sequencer {
             }
         }
         Ok(())
+    }
+}
+
+/// The version `cmd` activates, if it activates one.
+fn activated_version(cmd: &Command) -> Option<ProtocolVersion> {
+    match cmd {
+        Command::Admin(
+            AdminCommand::ActivateProtocol { version } | AdminCommand::ActivateCustodyFinality { version, .. },
+        ) => Some(*version),
+        _ => None,
     }
 }
 

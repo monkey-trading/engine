@@ -128,6 +128,7 @@ pub struct Sequencer {
     /// The boundary's log check, which `release_payouts` gates signatures on.
     log_check: log_check::LogCheck,
     governance: Option<engine_core::governance::GovernanceConfig>,
+    fault_proof: Option<engine_core::operator_faults::FaultProofConfig>,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
     claims: claims::Claims,

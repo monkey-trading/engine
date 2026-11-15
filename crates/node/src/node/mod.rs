@@ -241,6 +241,14 @@ async fn serve_node(
             .and_then(|staking| staking.registry.vote.as_ref())
             .map(crate::config::VoteCustodySection::governance)
             .transpose()?,
+        fault_proof: cfg
+            .custody
+            .evm
+            .as_ref()
+            .and_then(|evm| evm.staking.as_ref())
+            .and_then(|staking| staking.registry.fault_proof.as_ref())
+            .map(crate::config::FaultProofCustodySection::config)
+            .transpose()?,
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())
         .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?

@@ -15,6 +15,7 @@ use engine_core::election::{RegistryElection, RegistryInstallation};
 use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
 use engine_core::governance::PassedProposal;
+use engine_core::operator_faults::ProvenFault;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::turns::{RegistryRotationSet, RegistryTurn, SetMember, TurnReason};
 use engine_core::types::{AccountId, Millis};
@@ -30,7 +31,7 @@ use crate::custody::stall::{PollError, Stall};
 use crate::sequencer::Request;
 /// One mirrorable event: from the staking contract, a stake or an unstake the cooldown has passed;
 /// from the operator registry, a rotation switch or an election; from its schedule, a set or a turn;
-/// from the vote contract, a passed proposal.
+/// from the vote contract, a passed proposal; from the fault proof contract, a proven fault.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StakingEvent {
     pub block: u64,
@@ -62,6 +63,9 @@ pub enum StakingEventKind {
     /// The vote contract passed `proposal`, whose command bytes hash to `command_hash` and are the
     /// canonical JSON of `command`, or of no admin command when it is `None`.
     ProposalPassed { proposal: u64, fast: bool, command_hash: B256, command: Option<Box<AdminCommand>> },
+    /// The fault proof contract proved that `member`'s enclave signed two heads of `turn`'s assignment
+    /// at `position` under `signer_epoch` that disagree at `seq`.
+    FaultProven { member: AccountId, turn: u64, position: u16, signer_epoch: u64, seq: u64 },
 }
 
 impl StakingEvent {
@@ -123,6 +127,9 @@ impl StakingEvent {
                     block,
                     chain_ref,
                 }))
+            }
+            StakingEventKind::FaultProven { member, turn, position, signer_epoch, seq } => {
+                Command::ProveFault(ProvenFault { member, turn, position, signer_epoch, seq, block, chain_ref })
             }
         }
     }
@@ -210,12 +217,13 @@ impl StakingCursor {
 /// `bound` is whether the poll has verified the configured registry as the staking contract's
 /// deployer: while it is false the poll read no staking code at `to`, and since the registry
 /// deploys the staking contract atomically no event can legitimately exist in the window, so any
-/// event is a contradiction that stalls rather than mirrors. Its second half is whether a configured
-/// schedule has been read to name the registry, and its third whether a configured vote contract has
-/// been read to name the schedule: a schedule or vote event before then stalls the same way. With
-/// `turns`, the bound registry, the progress from `V65` carries the registry's turn state at `to`: the
-/// boundary of the drawn turn naming the operator, from `V67` else that of a drawn turn yet to start, or
-/// none. A failed event read halves `range`; a completed chunk lets it grow back.
+/// event is a contradiction that stalls rather than mirrors. Its second part is whether a configured
+/// schedule has been read to name the registry, its third whether a configured vote contract has been
+/// read to name the schedule, and its fourth whether a configured fault proof contract has been read to
+/// name the vault: a schedule, vote or fault event before then stalls the same way. With `turns`, the
+/// bound registry, the progress from `V65` carries the registry's turn state at `to`: the boundary of
+/// the drawn turn naming the operator, from `V67` else that of a drawn turn yet to start, or none. A
+/// failed event read halves `range`; a completed chunk lets it grow back.
 /// Error cases:
 /// - stalled: a read fails, an event is on an unproven block, an event arrives before the
 ///   registry binding is verified, or the engine refuses a mirror
@@ -229,7 +237,7 @@ pub(super) async fn mirror<V: VaultReader>(
     range: &mut AdaptiveSize,
     window: std::ops::RangeInclusive<u64>,
     hashes: &std::collections::BTreeMap<u64, B256>,
-    (bound, schedule_bound, vote_bound): (bool, bool, bool),
+    (bound, schedule_bound, vote_bound, fault_bound): (bool, bool, bool, bool),
     turns: Option<alloy::primitives::Address>,
 ) -> Result<(), PollError> {
     let (from, to) = (*window.start(), *window.end());
@@ -287,6 +295,11 @@ pub(super) async fn mirror<V: VaultReader>(
     if !vote_bound && events.iter().any(|event| matches!(event.kind, StakingEventKind::ProposalPassed { .. })) {
         return Err(PollError::inconsistent(anyhow!(
             "the window names vote events, but the vote contract has not been read to name the schedule"
+        )));
+    }
+    if !fault_bound && events.iter().any(|event| matches!(event.kind, StakingEventKind::FaultProven { .. })) {
+        return Err(PollError::inconsistent(anyhow!(
+            "the window names a proven fault, but the fault proof contract has not been read to name the vault"
         )));
     }
     for event in events {
@@ -364,6 +377,9 @@ async fn mirror_one(tx: &mpsc::Sender<Request>, event: StakingEvent) -> Result<(
             StakingEventKind::ProposalPassed { proposal, fast, .. } => {
                 // A proposal the engine credits but refuses (`proposal_refused`) is not a disagreement.
                 info!(proposal, fast, "passed proposal mirrored");
+            }
+            StakingEventKind::FaultProven { member, turn, position, signer_epoch, seq } => {
+                info!(%member, turn, position, signer_epoch, seq, "proven operator fault mirrored");
             }
         }
         Ok(())
