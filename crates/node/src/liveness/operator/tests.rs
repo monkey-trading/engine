@@ -37,10 +37,14 @@ type Answering = (AccountId, Arc<EnclaveKey>, Option<Status>);
 
 /// Members that answer their status as a test sets it, by endpoint.
 #[derive(Clone, Default)]
-struct Members(Arc<Mutex<BTreeMap<String, Answering>>>);
+struct Members(Arc<Mutex<BTreeMap<String, Answering>>>, Arc<Mutex<BTreeMap<String, Duration>>>);
 
 impl Asking for Members {
     async fn ask(&self, endpoint: &str, request: &Request) -> anyhow::Result<Reply> {
+        let delay = self.1.lock().unwrap().get(endpoint).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         let (member, key, status) = self.0.lock().unwrap().get(endpoint).cloned().context("unreachable")?;
         let Request::Status { epoch, nonce } = request else { anyhow::bail!("only statuses") };
         let status = Status { epoch: *epoch, ..status.context("the copy is not durable")? };
@@ -77,7 +81,7 @@ fn the_rule_refuses_a_window_within_the_stop_margin_and_a_ticker_slower_than_hal
 fn the_log_lags_once_it_runs_an_interval_of_sequenced_time_unconfirmed() {
     let rule = Rule { interval: 60, tolerance: 30, misses: 5, blocks: 200 };
     let released = |stamp| Released { head: Head::default(), stamp };
-    let confirmed = Signable { released: released(1_000_000), confirmer: Address::ZERO };
+    let confirmed = Signable { released: released(1_000_000), confirmer: Address::ZERO, scope: None };
     assert!(!lagging(released(1_060_000), Some(confirmed), Some(1_000_000), rule));
     assert!(lagging(released(1_060_001), Some(confirmed), Some(1_000_000), rule));
     assert!(lagging(released(1_000_000), None, None, rule), "no confirmation at all");

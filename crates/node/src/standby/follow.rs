@@ -168,7 +168,8 @@ pub(super) async fn follow(
                 if let Some(replica) = replica.as_deref_mut() {
                     replica.apply(&entry).map_err(|e| e.context(ReplicaRefused))?;
                     if let (Some(copy), LogEntry::Command(command)) = (link, &entry) {
-                        copy.linked(command.sequenced.seq, replica.head_link());
+                        let sealer = command.seal.as_ref().map(|seal| seal.signer);
+                        copy.linked(command.sequenced.seq, replica.head_link(), sealer);
                     }
                 }
                 writer.append(&entry).context("appending a stream entry to the copy")?;

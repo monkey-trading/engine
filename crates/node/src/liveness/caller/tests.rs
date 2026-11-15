@@ -24,10 +24,13 @@ struct Sent {
     balance: Arc<Mutex<U256>>,
     /// Estimates refused: the chain would refuse every call.
     refused: Arc<Mutex<bool>>,
+    /// The endpoint fails every request, as one down or not signing for the caller does.
+    down: Arc<Mutex<bool>>,
 }
 
 impl Sending for Sent {
     async fn send(&self, to: Address, data: Vec<u8>) -> anyhow::Result<Option<B256>> {
+        anyhow::ensure!(!*self.down.lock().unwrap(), "liveness RPC failed: connection refused");
         if *self.refused.lock().unwrap() {
             return Ok(None);
         }
@@ -36,6 +39,7 @@ impl Sending for Sent {
     }
 
     async fn balance(&self) -> anyhow::Result<U256> {
+        anyhow::ensure!(!*self.down.lock().unwrap(), "liveness RPC failed: connection refused");
         Ok(*self.balance.lock().unwrap())
     }
 }
@@ -136,6 +140,36 @@ async fn a_caller_below_its_minimum_balance_pages_once_until_funded() {
     assert_eq!(unfunded, 1, "{raised:?}");
 }
 
+/// A caller whose endpoint fails, as one down or not signing for its account does, pages
+/// `liveness_caller_send_failed` once for the episode, unfunded or not, and resolves it once a call goes
+/// through again.
+#[tokio::test(start_paused = true)]
+async fn a_caller_whose_endpoint_fails_pages_once_until_a_call_goes_through() {
+    let (_guard, mut alerts, mut resolutions) = crate::test_support::capture_alerts_and_resolutions();
+    let chain = Arc::new(FakeChain::new(ChainState::default()));
+    let sent = Sent { down: Arc::new(Mutex::new(true)), ..Default::default() };
+    let caller = Caller {
+        chain,
+        sending: sent.clone(),
+        domain: DOMAIN,
+        copy: Copy::default(),
+        min_balance: U256::ZERO,
+        poll: TEST_POLL,
+        clock: Arc::new(crate::clock::test_clock::TestClock::at(0)),
+    };
+    let task = tokio::spawn(caller.run());
+    tokio::time::sleep(TEST_POLL * 3).await;
+    *sent.down.lock().unwrap() = false;
+    tokio::time::sleep(TEST_POLL * 2).await;
+    task.abort();
+    let raised: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok()).collect();
+    let failed = raised.iter().filter(|alert| alert["alert"] == "liveness_caller_send_failed").count();
+    assert_eq!(failed, 1, "{raised:?}");
+    assert!(!sent.calls.lock().unwrap().is_empty(), "no call went through once the endpoint came back");
+    let resolved: Vec<_> = std::iter::from_fn(|| resolutions.try_recv().ok()).collect();
+    assert!(resolved.iter().any(|alert| alert["alert_resolved"] == "liveness_caller_send_failed"), "{resolved:?}");
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_call_the_chain_would_refuse_is_not_sent() {
     let chain = Arc::new(FakeChain::new(ChainState { due_at: 1_800_000_000, ..Default::default() }));
@@ -162,7 +196,7 @@ async fn a_head_on_chain_at_another_link_than_the_copy_holds_stops_its_confirmat
     let chain = Arc::new(FakeChain::new(ChainState { epoch: 1, head: (4, 1_000, 0), ..Default::default() }));
     let copy = Copy::default();
     let held = Head { seq: 4, link: B256::repeat_byte(0xee) };
-    copy.linked(held.seq, held.link);
+    copy.linked(held.seq, held.link, None);
     copy.durable(held, None);
     assert!(copy.status(1).is_ok(), "the copy confirms before the read");
     let caller = Caller {

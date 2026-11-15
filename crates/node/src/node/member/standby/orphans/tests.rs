@@ -42,7 +42,7 @@ fn a_tail_is_orphaned_only_once_a_final_block_well_past_it_names_its_key_in_no_e
 }
 
 /// A tail is superseded only when the newest epoch naming its key has ended at the final block and the
-/// copy runs past that epoch's last head on the same history.
+/// copy runs past that epoch's last head on the same history, or that epoch posted none.
 #[test]
 fn a_tail_is_superseded_only_past_the_last_head_of_its_keys_ended_epoch() {
     let (outgoing, promoted) = (AccountId([0xa1; 20]), AccountId([0xb2; 20]));
@@ -61,7 +61,7 @@ fn a_tail_is_superseded_only_past_the_last_head_of_its_keys_ended_epoch() {
         ("a copy ending at the head", (40, link), Some(link), 40, false),
         ("a copy short of the head", (40, link), None, 39, false),
         ("another history at the head", (40, link), Some(other), 45, false),
-        ("an epoch that posted no head", (0, B256::ZERO), None, 45, false),
+        ("an epoch that posted no head", (0, B256::ZERO), None, 45, true),
     ];
     for (case, head, held, last_seq, expected) in cases {
         assert_eq!(superseded(head, held, last_seq), expected, "{case}");
@@ -70,8 +70,8 @@ fn a_tail_is_superseded_only_past_the_last_head_of_its_keys_ended_epoch() {
 
 /// A failed operator whose last commands reached no member, restarted as a member under the member
 /// promoted in its place, finds its copy's tail superseded once a final block shows its epoch ended
-/// with an earlier head, and sets the copy aside; before that, or with the copy at that head, or on
-/// another history there, it keeps it.
+/// with an earlier head, or with none, and sets the copy aside; before that, or with the copy at that
+/// head, or on another history there, it keeps it.
 #[tokio::test]
 async fn a_returning_operators_tail_past_its_epochs_last_head_is_set_aside() {
     let dir = scratch_dir("orphans-superseded");
@@ -109,7 +109,8 @@ async fn a_returning_operators_tail_past_its_epochs_last_head_is_set_aside() {
     let forked = FinalBlock { heads: [(1, (posted.seq, B256::repeat_byte(0xee)))].into(), ..promoted_final.clone() };
     assert_eq!(tail(forked).await, None, "a copy on another history than the epoch's head");
     let unposted = FinalBlock { heads: BTreeMap::new(), ..promoted_final.clone() };
-    assert_eq!(tail(unposted).await, None, "an epoch that posted no head");
+    let none_posted = Some(Tail::Superseded { epoch: 1, head_seq: 0 });
+    assert_eq!(tail(unposted).await, none_posted, "an epoch that posted no head bound none of its commands");
     let seen = read_final(&promoted_final, (VAULT, LOG_HEADS), outgoing).await.unwrap();
     assert_eq!(tail_of(&seen, replica, outgoing), None, "the followed enclave's own tail");
     let removed = FinalBlock {

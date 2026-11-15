@@ -14,20 +14,28 @@ use crate::test_support::{SEGMENT_COMMANDS, TestSequencer, log_entries, scratch_
 /// The deployment the test sequencer seals and signs for.
 const DOMAIN: CheckpointDomain = CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };
 
-/// Members by endpoint: the entries one gives past the offset it is asked after, or `None` for one that
-/// never answers.
-struct Members(BTreeMap<String, Option<(Offset, Vec<LogEntry>)>>);
+/// Members by endpoint: the log one holds, each entry at its offset, of which it gives every entry past
+/// the offset it is asked after, or `None` for one that never answers.
+struct Members(BTreeMap<String, Option<Vec<(Offset, LogEntry)>>>);
 
 impl Asking for Members {
     async fn ask(&self, endpoint: &str, request: &Request) -> anyhow::Result<Reply> {
         let Request::Entries { after } = request else { anyhow::bail!("only entries") };
         match self.0.get(endpoint).cloned().flatten() {
-            Some((from, entries)) if from == *after => {
-                Ok(Reply::Entries { entries: entries.into_iter().map(|entry| (*after, entry)).collect() })
-            }
-            Some(_) => Ok(Reply::Entries { entries: Vec::new() }),
+            Some(entries) => Ok(Reply::Entries { entries: entries.into_iter().filter(|(at, _)| at > after).collect() }),
             None => std::future::pending().await,
         }
+    }
+}
+
+/// A member that gives at most one entry an answer: the first of its log past the offset it is asked
+/// after.
+struct Paging(Vec<(Offset, LogEntry)>);
+
+impl Asking for Paging {
+    async fn ask(&self, _: &str, request: &Request) -> anyhow::Result<Reply> {
+        let Request::Entries { after } = request else { anyhow::bail!("only entries") };
+        Ok(Reply::Entries { entries: self.0.iter().filter(|(at, _)| at > after).take(1).cloned().collect() })
     }
 }
 
@@ -38,11 +46,6 @@ async fn the_gap_fetch_asks_every_member_at_once_and_stops_at_its_deadline() {
     copy_dir(&full, &copy);
     ticks(&full, 3).await;
     let mut follower = open(&copy);
-    let tip = follower.replica().last_seq().unwrap();
-    // What a member answers: every entry after the command at the copy's tip, as `Entries` gives it.
-    let mut past = log_entries(&full);
-    let at = past.iter().position(|entry| matches!(entry, LogEntry::Command(c) if c.sequenced.seq == tip)).unwrap();
-    let past = past.split_off(at + 1);
     // The logs are written: from here the test's clock runs only as the fetch waits.
     tokio::time::pause();
     let member = |byte: u8, endpoint: &str| SetMember {
@@ -56,7 +59,7 @@ async fn the_gap_fetch_asks_every_member_at_once_and_stops_at_its_deadline() {
     let asking = Members(BTreeMap::from([
         ("silent:1".into(), None),
         ("silent:2".into(), None),
-        ("giving:1".into(), Some((Offset::start_of(tip), past))),
+        ("giving:1".into(), Some(with_offsets(&full))),
     ]));
     let started = Instant::now();
     let (taken, refused) = from_members(&asking, &members, &mut follower, started + BUDGET).await;
@@ -87,12 +90,6 @@ async fn a_member_whose_entries_the_copy_refuses_is_named_and_passed_over() {
     ticks(&full, 4).await;
     copy_dir(&full, &copy);
     ticks(&full, 3).await;
-    let tip = open(&copy).replica().last_seq().unwrap();
-    let past = |dir: &std::path::Path| {
-        let mut entries = log_entries(dir);
-        let at = entries.iter().position(|entry| matches!(entry, LogEntry::Command(c) if c.sequenced.seq == tip));
-        entries.split_off(at.expect("the log holds the copy's tip") + 1)
-    };
     // Another log's entries at the same seqs: their seals chain onto another history than the copy's.
     ticks(&other, 7).await;
     let member = |byte: u8, endpoint: &str| SetMember {
@@ -104,8 +101,8 @@ async fn a_member_whose_entries_the_copy_refuses_is_named_and_passed_over() {
     };
     let members = [member(1, "forged:1"), member(2, "giving:1")];
     let asking = Members(BTreeMap::from([
-        ("forged:1".into(), Some((Offset::start_of(tip), past(&other)))),
-        ("giving:1".into(), Some((Offset::start_of(tip), past(&full)))),
+        ("forged:1".into(), Some(with_offsets(&other))),
+        ("giving:1".into(), Some(with_offsets(&full))),
     ]));
     let deadline = Instant::now() + BUDGET;
     let (taken, refused) = from_members(&asking, &members, &mut open(&copy), deadline).await;
@@ -113,6 +110,35 @@ async fn a_member_whose_entries_the_copy_refuses_is_named_and_passed_over() {
     let mut reopened = open(&copy);
     assert_eq!(from_members(&asking, &members[1..], &mut reopened, deadline).await.1, None);
     assert_eq!(reopened.replica().last_seq(), open(&full).replica().last_seq(), "the next member gave the gap");
+}
+
+/// A member that gives one entry an answer still gives the whole gap, one page a round: each round asks
+/// from the copy's last entry, so a page that ended among the entries after a command is not asked for
+/// again.
+#[tokio::test]
+async fn a_gap_given_one_entry_a_page_is_taken_page_by_page() {
+    let (full, copy) = (scratch_dir("gap-paged-full"), scratch_dir("gap-paged-copy"));
+    ticks(&full, 4).await;
+    copy_dir(&full, &copy);
+    ticks(&full, 3).await;
+    let mut follower = open(&copy);
+    let head = follower.head().expect("the copy holds entries");
+    let entries = with_offsets(&full);
+    assert!(
+        entries.iter().any(|(at, entry)| *at > head && !matches!(entry, LogEntry::Command(_))),
+        "the gap holds an entry past a command"
+    );
+    let member = SetMember {
+        candidate: AccountId([1; 20]),
+        endpoint: "paging:1".into(),
+        standby: None,
+        admin_key: AccountId([1; 20]),
+        held: false,
+    };
+    let (taken, refused) = from_members(&Paging(entries), &[member], &mut follower, Instant::now() + BUDGET).await;
+    assert!(taken > 1 && refused.is_none(), "taken {taken}, refused {refused:?}");
+    drop(follower);
+    assert_eq!(log_entries(&copy), log_entries(&full), "the copy took the whole gap");
 }
 
 // ── Helpers ──
@@ -124,6 +150,22 @@ async fn ticks(dir: &std::path::Path, count: usize) {
         node.submit(Command::Tick).await;
     }
     node.stop().await;
+}
+
+/// The log in `dir`, each entry at its offset: a command starts its seq, and each entry after it takes
+/// the next index.
+fn with_offsets(dir: &std::path::Path) -> Vec<(Offset, LogEntry)> {
+    let mut at = Offset::start_of(0);
+    log_entries(dir)
+        .into_iter()
+        .map(|entry| {
+            at = match &entry {
+                LogEntry::Command(command) => Offset::start_of(command.sequenced.seq),
+                _ => at.next(),
+            };
+            (at, entry)
+        })
+        .collect()
 }
 
 /// The copy in `dir`, as a follower of the test sequencer's key opens it.

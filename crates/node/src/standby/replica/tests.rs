@@ -76,7 +76,7 @@ async fn a_tail_extends_the_copy_and_the_replica_after_the_tip() {
     let held = log_entries(&dir).len();
     let tail = lines_after(&operator, tip);
 
-    let taken = follower.take_tail(tip, &tail).unwrap();
+    let taken = follower.take_tail(Offset::start_of(tip), &tail).unwrap();
     let expected = log_entries(&operator);
     assert_eq!(taken as usize, expected.len() - held, "the copy did not take exactly the entries it lacked");
     drop(follower);
@@ -90,8 +90,54 @@ async fn a_tail_extends_the_copy_and_the_replica_after_the_tip() {
         Follower::open(&copy, SEGMENT_COMMANDS, DOMAIN, signer(), [signer()].into(), None, |_| {}).unwrap();
     let (tip, _) = follower.tip().unwrap();
     let forged = String::from_utf8(lines_after(&operator, tip)).unwrap().replacen("\"ts\":", "\"ts\":1", 1);
-    let err = follower.take_tail(tip, forged.as_bytes()).expect_err("a forged entry extended the copy");
+    let err =
+        follower.take_tail(Offset::start_of(tip), forged.as_bytes()).expect_err("a forged entry extended the copy");
     assert!(crate::standby::rollback_of(&err).is_some(), "{err:#}");
+}
+
+/// A tail taken in pages goes on from the copy's last entry, even one past its tip's command, as a gap
+/// fetch's next page does when the last ended among the entries that follow a command: it extends the
+/// copy exactly as one page would.
+#[tokio::test]
+async fn a_tail_goes_on_from_an_entry_past_the_tips_command() {
+    let operator = scratch_dir("replica-tail-pages-operator");
+    crate::standby::tests::ticks(&operator, 6).await;
+    let dir = scratch_dir("replica-tail-pages-copy");
+    crate::standby::tests::copy_log(&operator, &dir);
+    crate::standby::tests::ticks(&operator, 9).await;
+    let mut follower =
+        Follower::open(&dir, SEGMENT_COMMANDS, DOMAIN, signer(), [signer()].into(), None, |_| {}).unwrap();
+    let (tip, _) = follower.tip().unwrap();
+    // The first page ends at the first entry past a command: a checkpoint.
+    let mut previous = None;
+    let offsets: Vec<(Offset, LogEntry)> = log_entries(&operator)
+        .into_iter()
+        .map(|entry| {
+            let offset = offset_of(previous, &entry).unwrap();
+            previous = Some(offset);
+            (offset, entry)
+        })
+        .collect();
+    let split = offsets
+        .iter()
+        .find(|(offset, entry)| *offset > Offset::start_of(tip) && !matches!(entry, LogEntry::Command(_)))
+        .map(|(offset, _)| *offset)
+        .expect("a checkpoint past the tip");
+    let page = |from: Offset, through: Offset| {
+        let mut bytes = Vec::new();
+        for (_, entry) in offsets.iter().filter(|(offset, _)| *offset > from && *offset <= through) {
+            bytes.extend(serde_json::to_vec(entry).unwrap());
+            bytes.push(b'\n');
+        }
+        bytes
+    };
+    follower.take_tail(Offset::start_of(tip), &page(Offset::start_of(tip), split)).unwrap();
+    assert_eq!(follower.head(), Some(split), "the first page ended past a command");
+    let last = offsets.last().unwrap().0;
+    let taken = follower.take_tail(split, &page(split, last)).unwrap();
+    assert!(taken > 0, "the next page took nothing");
+    drop(follower);
+    assert_eq!(log_entries(&dir), log_entries(&operator), "the copy is not the operator's log");
 }
 
 // ── Helpers ──

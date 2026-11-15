@@ -1,8 +1,9 @@
 //! A member's copy whose tail the operator in effect's log refuses as a rollback, when a final block
 //! shows no log will ever extend it: an orphaned promotion's tail (commands a promoted key sealed
 //! under a promotion a reorg removed), or a superseded one (commands an ended signer epoch's key
-//! sealed past the head that epoch posted last, which the promotion that ended it fixed and the
-//! successor's log holds: a failed operator's unconfirmed tail, restarted as a member). The member
+//! sealed past the head that epoch posted last, or any it sealed when it posted none, which the
+//! promotion that ended it fixed with the vault's checkpoint and the successor's log holds: a failed
+//! operator's unconfirmed tail, restarted as a member). The member
 //! sets the copy aside as evidence and rebuilds it from that operator's archive.
 
 use std::ffi::OsString;
@@ -55,9 +56,10 @@ fn ended_epoch(sealer: AccountId, latest: u64, epochs: &[(u64, AccountId)]) -> O
 /// Whether a copy ending at `last_seq`, holding the prefix `held` at the seq of `head`, the head an
 /// ended epoch posted last, runs past that head on its history: `LogHeads` takes no head of an epoch
 /// once it has ended, and a promotion fixes this one, so nothing past it binds a successor. An epoch
-/// that posted no head fixes nothing to check the copy against, so its tail is kept.
+/// that posted no head bound nothing past the vault's checkpoint its promotion fixed, which the
+/// successor's log holds: any tail it sealed is superseded.
 fn superseded((head_seq, head_link): (u64, B256), held: Option<B256>, last_seq: u64) -> bool {
-    head_seq > 0 && last_seq > head_seq && held == Some(head_link)
+    head_seq == 0 || (last_seq > head_seq && held == Some(head_link))
 }
 
 /// What a final block shows of the vault's recent signers, and of the last head of the epoch a copy's

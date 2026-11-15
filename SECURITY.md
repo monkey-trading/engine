@@ -441,8 +441,9 @@ same commitments, and otherwise sets aside what it sequenced and the key; a prom
 from its first answer, the public certificate its standby TLS key obtained while it followed (its API
 listener answers the CA's TLS-ALPN-01 validation then), so clients and following members verify it
 against public roots; the outgoing operator, once it returns as a member, sets aside the commands its
-key sealed past the last head its signer epoch posted, once a final block shows that epoch ended, and
-rebuilds its copy from the operator in effect (`superseded_tail_set_aside`); with two or more members, a
+key sealed past the last head its signer epoch posted, or all of them when it posted none, once a final
+block shows that epoch ended, and rebuilds its copy from the operator in effect
+(`superseded_tail_set_aside`); with two or more members, a
 checkpoint is the log entry after its seq, so the operator stamps nothing past a checkpoint until
 another member confirms that seq, a pause of about one stream delivery, one sync and one round trip;
 the old operator stops by its own clock

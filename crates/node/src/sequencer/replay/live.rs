@@ -21,12 +21,13 @@ const RETAINED_CHECKPOINTS: usize = 4096;
 /// How many of the latest commands' cumulative prefixes a replica retains.
 pub(crate) const RETAINED_LINKS: usize = 1 << 16;
 
-/// A command's cumulative command-prefix digest and its sequenced time.
+/// A command's cumulative command-prefix digest, its sequenced time, and the key that sealed it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Link {
     pub seq: u64,
     pub link: B256,
     pub ts: Millis,
+    pub sealer: Option<AccountId>,
 }
 
 /// A replay of a follower's copy that takes each entry the copy takes.
@@ -116,6 +117,7 @@ impl LiveReplay {
                     seq: command.sequenced.seq,
                     link: B256::from(self.replay.command_prefix),
                     ts: command.sequenced.ts,
+                    sealer: command.seal.as_ref().map(|seal| seal.signer),
                 };
                 self.links.push_back(link);
                 if self.keeping.contains(&link.seq) {

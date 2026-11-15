@@ -182,6 +182,19 @@ async fn a_successor_waits_for_a_signer_epoch_not_final_yet() {
     assert!(at_finality(&chain, signer).await.is_ok(), "a final epoch still waits");
 }
 
+/// A promoted start's view is the latest one, which historical authority refuses: it authenticates its
+/// journal's earlier work, and reads the registry's operator, at a finalized view of its own.
+#[tokio::test(start_paused = true)]
+async fn a_promoted_start_reads_historical_authority_at_finality() {
+    let chain = LaggingChain::new(AccountId([0xaa; 20]), 0);
+    let latest = chain.observe(View::Latest, &[]).await.unwrap();
+    assert_eq!(authority(&chain, Start::Promoted, &latest).await.unwrap().view, View::Finalized);
+    let finalized = chain.observe(View::Finalized, &[]).await.unwrap();
+    for start in [Start::Quiescent, Start::Successor] {
+        assert_eq!(authority(&chain, start, &finalized).await.unwrap().view, View::Finalized, "{start:?}");
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn startup_refuses_a_vault_whose_guardian_retired_its_signer() {
     let chain = LaggingChain::new(AccountId([0; 20]), 0);

@@ -394,6 +394,7 @@ impl HeadsChain for HeadsRpc {
             block_number: view.number,
             block_hash: view.hash,
             marked_block: view.marked_block,
+            set: named.set,
         }))
     }
 

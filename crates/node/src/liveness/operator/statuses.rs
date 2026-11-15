@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use alloy::primitives::{Address, B256};
 use engine_core::types::AccountId;
-use futures_util::future::{BoxFuture, join_all};
+use futures_util::StreamExt;
+use futures_util::future::BoxFuture;
+use futures_util::stream::FuturesUnordered;
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::sync::oneshot;
 use tracing::{debug, warn};
@@ -18,10 +20,13 @@ use crate::standby_key::chain::StandbyChain;
 
 impl<C: StandbyChain, A: Asking> Operator<C, A> {
     /// Asks each of `others` for its status under signer epoch `epoch`, and weighs the verified
-    /// answers against this log. A member that held an assignment of the turn reports, as its own
-    /// cut-off tail, only a durable head sealed by its own standby key, or by a key no candidate
-    /// registered (the turn's keys), by `schedule`'s holders, cached in `holders`; a tail it followed
-    /// from another member's promoted key counts, as does any, while its holder cannot be read.
+    /// answers against this log. While a checkpoint waits for a confirmation, the round ends at the
+    /// first status that reaches it, or, should one start to wait mid-round, at once: a slower
+    /// member's answer lands in a later round rather than hold the stamps up. A member that held an
+    /// assignment of the turn reports, as its own cut-off tail, only a durable head sealed by its own
+    /// standby key, or by a key no candidate registered (the turn's keys), by `schedule`'s holders,
+    /// cached in `holders`; a tail it followed from another member's promoted key counts, as does any,
+    /// while its holder cannot be read.
     pub(super) fn ask<'a>(
         &'a self,
         (epoch, schedule): (u64, Address),
@@ -35,11 +40,31 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                 return Assessment::default();
             }
             let request = Request::Status { epoch, nonce: B256::from(nonce) };
-            let mut asked = Vec::with_capacity(others.len());
-            for member in &others {
-                asked.push(self.status(member.clone(), request.clone(), nonce, epoch));
+            let mut asked: FuturesUnordered<_> =
+                others.iter().map(|member| self.status(member.clone(), request.clone(), nonce, epoch)).collect();
+            let mut statuses: Vec<(AccountId, Status)> = Vec::new();
+            loop {
+                let wanted = self.gate.waiting();
+                tokio::select! {
+                    answered = asked.next() => match answered {
+                        None => break,
+                        Some(None) => {}
+                        Some(Some(status)) => {
+                            let reaches = |wanted| status.1.durable.is_some_and(|head| head.seq >= wanted);
+                            let covers = wanted.is_some_and(reaches);
+                            statuses.push(status);
+                            if covers {
+                                break;
+                            }
+                        }
+                    },
+                    () = self.gate.woken(), if wanted.is_none() => {
+                        if self.gate.waiting().is_some() {
+                            break;
+                        }
+                    }
+                }
             }
-            let statuses: Vec<(AccountId, Status)> = join_all(asked).await.into_iter().flatten().collect();
             let tip = self.released.borrow().head;
             let mut seqs: Vec<u64> = Vec::new();
             for (_, status) in &statuses {

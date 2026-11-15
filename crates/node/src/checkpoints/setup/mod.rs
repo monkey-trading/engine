@@ -219,6 +219,17 @@ enum Start {
     Promoted,
 }
 
+/// The finalized view a start authenticates its journal's earlier work against and reads the
+/// registry's operator at: `state`, or a promoted start's own read, its `state` being the latest view.
+/// Error cases:
+/// - the read fails
+async fn authority<C: CheckpointChain>(chain: &C, start: Start, state: &Observation) -> anyhow::Result<Observation> {
+    match start {
+        Start::Promoted => chain.observe(View::Finalized, &[]).await,
+        Start::Quiescent | Start::Successor => Ok(state.clone()),
+    }
+}
+
 /// `connect` for `signer`, at the view `start` reads: a restart must not sign from a finalized parent
 /// while its own latest inclusion is pending.
 async fn connect_with(
@@ -243,12 +254,9 @@ async fn connect_with(
         Start::Successor => at_finality(&chain, signer).await?,
         Start::Promoted => at_latest(&chain, signer).await?,
     };
-    chain.authenticate_reservation(&state).await?;
-    // The registry's operator is read at finality: a promoted start's latest view is not finalized.
-    let registry_operator = match start {
-        Start::Promoted => chain.registry_operator_at(&chain.observe(View::Finalized, &[]).await?).await?,
-        Start::Quiescent | Start::Successor => chain.registry_operator_at(&state).await?,
-    };
+    let finalized = authority(&chain, start, &state).await?;
+    chain.authenticate_reservation(&finalized).await?;
+    let registry_operator = chain.registry_operator_at(&finalized).await?;
     let parent = match &state.state.checkpoint {
         Some((seq, root)) => crate::log::CheckpointParent { has_checkpoint: true, seq: *seq, root: root.parse()? },
         None => Default::default(),

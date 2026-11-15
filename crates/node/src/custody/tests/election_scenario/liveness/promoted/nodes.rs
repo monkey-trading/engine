@@ -15,6 +15,7 @@ use sha2::Digest as _;
 use tokio::time::{sleep, timeout};
 
 use crate::custody::tests::election_scenario::chain::Chain;
+use crate::custody::tests::election_scenario::{COOLDOWN_SECS, DISTRIBUTION_EPOCH_SECS};
 use crate::sequencer::withdrawal_scenario::client::Client;
 use crate::sequencer::withdrawal_scenario::node::ChildProcess;
 use crate::sequencer::withdrawal_scenario::services::Services;
@@ -216,11 +217,12 @@ fn write_config(
     cfg["feeds"]["mock_mids"] = serde_json::Value::Array(Vec::new());
     cfg["feeds"]["interval"] = "80ms".into();
     one_market(&mut cfg["genesis"])?;
+    // The epoch and cooldown the registry deployed its staking contract with, which the node checks.
     cfg["genesis"]["staking"] = json!({
         "liquidity_floor": "1000000",
-        "epoch_ms": 30 * 60 * 1000,
+        "epoch_ms": DISTRIBUTION_EPOCH_SECS * 1000,
         "start_ms": staking_start_ms,
-        "cooldown_ms": 60 * 60 * 1000,
+        "cooldown_ms": COOLDOWN_SECS * 1000,
     });
     let table = cfg.as_object_mut().context("config table")?;
     table.insert(

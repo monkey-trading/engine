@@ -118,10 +118,10 @@ impl Chain {
         self.repeat = Some(0);
     }
 
-    /// Starts a handover's tail, which follows the copy's last command: it repeats the entries
-    /// after that command the copy holds before anything new.
-    pub(super) fn begin_after_command(&mut self) {
-        self.repeat = Some(1);
+    /// Starts a tail that follows the copy's entry at `after`, its last command or a later entry at
+    /// that seq: it repeats the entries past `after` the copy holds before anything new.
+    pub(super) fn begin_after(&mut self, after: Offset) {
+        self.repeat = self.tail.iter().position(|(offset, _)| *offset > after);
     }
 
     /// Admits `enclave`, the vault's signer, as one that may seal the copy's next commands: a

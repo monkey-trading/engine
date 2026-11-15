@@ -110,6 +110,8 @@ pub(crate) struct TurnHeads {
     pub block_hash: B256,
     /// The block that marked the latest marked slot, which a held head's block may not be older than.
     pub marked_block: u64,
+    /// The rotation set the turn in effect was drawn from.
+    pub set: u32,
 }
 
 /// Reads the release and generation this enclave's keys are sealed in now: a running holder's keys move
@@ -156,6 +158,8 @@ pub(crate) struct Inputs {
     pub reached: Option<i64>,
     /// The newest signing time of a head this process signed.
     pub last_signed: u64,
+    /// The vault's signer epoch the head is signed under.
+    pub epoch: u64,
 }
 
 impl Assignment {
@@ -188,8 +192,13 @@ pub(crate) fn next(
 ) -> Option<HeadV2> {
     let at = match inputs.signing {
         Signing::Nothing => return None,
-        Signing::Tip => Signable { released: inputs.tip, confirmer: Address::ZERO },
-        Signing::Confirmed(signable) => signable,
+        Signing::Tip => Signable { released: inputs.tip, confirmer: Address::ZERO, scope: None },
+        // A confirmation counts only under the epoch and set it was given in: across a change of set,
+        // a former member's is no anchor the turn's members can be promoted from.
+        Signing::Confirmed(signable) if signable.scope.is_none_or(|scope| scope == (inputs.epoch, turn.set)) => {
+            signable
+        }
+        Signing::Confirmed(_) => return None,
     };
     let signed_at = u64::try_from(inputs.reached?).ok()?;
     let head = at.released.head;

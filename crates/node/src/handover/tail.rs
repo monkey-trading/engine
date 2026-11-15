@@ -316,7 +316,8 @@ pub(crate) async fn take_tail(
     ensure!(tails.is_empty(), "the predecessor sent whole segments for a tail request");
     ensure!(listing.after == tip.seq, "the predecessor's tail follows seq {}, not the tip {}", listing.after, tip.seq);
     let bytes = receive_tail(&mut stream, &listing).await?;
-    let entries = follower.take_tail(tip.seq, &bytes).map_err(|e| e.context(CopyChanged))?;
+    let after = crate::log::Offset::start_of(tip.seq);
+    let entries = follower.take_tail(after, &bytes).map_err(|e| e.context(CopyChanged))?;
     ensure_tail_head(follower, &head, prepared.posted).map_err(|e| e.context(CopyChanged))?;
     info!(entries, bytes = listing.bytes, after = tip.seq, head_seq = head.seq, "took the tail past the copy's tip");
     let store = KeyStore::create(&sealing.dir, sealer, cfg.file_sha256, prepared.generation, keys)?;

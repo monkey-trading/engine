@@ -131,10 +131,12 @@ impl Sending for Endpoint {
         let tx = TransactionRequest { chain_id: Some(self.chain_id), ..tx };
         let estimate: U64 = match self.deadline(self.client.request("eth_estimateGas", (tx.clone(),))).await {
             Ok(estimate) => estimate,
-            Err(e) => {
+            // Only a revert is the chain refusing the call; a transport or endpoint failure is not.
+            Err(e) if format!("{e:#}").to_ascii_lowercase().contains("revert") => {
                 debug!("the call would be refused: {e:#}");
                 return Ok(None);
             }
+            Err(e) => return Err(e.context("estimating the liveness call's gas")),
         };
         let estimate: u64 = estimate.to();
         let tx = TransactionRequest { gas: Some(estimate.saturating_add(estimate / GAS_MARGIN_DIVISOR)), ..tx };
@@ -153,7 +155,7 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
     pub(crate) async fn run(self) -> anyhow::Result<()> {
         let mut poll = interval(self.poll);
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let (mut read_failed, mut unfunded) = (false, false);
+        let (mut read_failed, mut unfunded, mut failing) = (false, false, false);
         loop {
             poll.tick().await;
             let read: BoxFuture<'_, anyhow::Result<View>> =
@@ -202,14 +204,16 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
                 "the liveness caller read the chain"
             );
             for call in decided {
-                self.send(&call, &mut unfunded).await;
+                self.send(&call, (&mut unfunded, &mut failing)).await;
             }
-            self.check_balance(&mut unfunded).await;
+            self.check_balance(&mut unfunded, &mut failing).await;
         }
     }
 
-    /// Sends `call`, logging what happened.
-    async fn send(&self, call: &Call, unfunded: &mut bool) {
+    /// Sends `call`, logging what happened: a send that fails for funds pages `liveness_caller_unfunded`,
+    /// and any other failure `liveness_caller_send_failed`, once per episode, which a call the endpoint
+    /// estimates resolves.
+    async fn send(&self, call: &Call, (unfunded, failing): (&mut bool, &mut bool)) {
         let (to, data) = match call {
             Call::Witness => (self.domain.standby.schedule, witnessCall {}.abi_encode()),
             Call::Promote => (self.domain.standby.schedule, promoteCall {}.abi_encode()),
@@ -221,25 +225,35 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
                 }
             },
         };
-        match self.sending.send(to, data).await {
+        let sent = self.sending.send(to, data).await;
+        if sent.is_ok() && std::mem::take(failing) {
+            info!(alert_resolved = "liveness_caller_send_failed", "the liveness caller's endpoint answers again");
+        }
+        match sent {
             Ok(Some(hash)) => info!(?call, %hash, "liveness call sent"),
             Ok(None) => debug!(?call, "the chain would refuse the liveness call: not sent"),
             Err(e) => {
                 let message = format!("{e:#}");
-                if message.contains("insufficient funds") && !std::mem::replace(unfunded, true) {
+                if message.contains("insufficient funds") {
+                    if !std::mem::replace(unfunded, true) {
+                        warn!(
+                            alert = "liveness_caller_unfunded",
+                            "the liveness caller cannot pay for its calls: {message}"
+                        );
+                    }
+                } else if !std::mem::replace(failing, true) {
                     warn!(
-                        alert = "liveness_caller_unfunded",
-                        "the liveness caller cannot pay for its calls: {message}"
+                        alert = "liveness_caller_send_failed",
+                        "the liveness caller cannot estimate or send its calls ({call:?}): {message}"
                     );
-                } else {
-                    warn!(?call, "sending a liveness call failed: {message}");
                 }
             }
         }
     }
 
-    /// Warns while the caller's balance is below the minimum, once per episode.
-    async fn check_balance(&self, unfunded: &mut bool) {
+    /// Warns while the caller's balance is below the minimum, once per episode; an unreadable balance is
+    /// part of the `liveness_caller_send_failed` episode.
+    async fn check_balance(&self, unfunded: &mut bool, failing: &mut bool) {
         match self.sending.balance().await {
             Ok(balance) if balance < self.min_balance => {
                 if !std::mem::replace(unfunded, true) {
@@ -261,7 +275,11 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
                     );
                 }
             }
-            Err(e) => debug!("the liveness caller's balance is unreadable: {e:#}"),
+            Err(e) => {
+                if !std::mem::replace(failing, true) {
+                    warn!(alert = "liveness_caller_send_failed", "the liveness caller's balance is unreadable: {e:#}");
+                }
+            }
         }
     }
 }

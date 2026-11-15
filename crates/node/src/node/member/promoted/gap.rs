@@ -111,8 +111,10 @@ pub(super) async fn from_members(
 ) -> (u64, Option<AccountId>) {
     let mut taken = 0;
     for _ in 0..ROUNDS {
-        let Some(tip) = follower.replica().last_seq() else { return (taken, None) };
-        let request = Request::Entries { after: Offset::start_of(tip) };
+        // From the copy's last entry, past its tip's command when a page ended among the entries
+        // that follow it, so the next page goes on from there.
+        let Some(after) = follower.head() else { return (taken, None) };
+        let request = Request::Entries { after };
         let by = deadline.min(Instant::now() + ASK);
         let answers =
             join_all(members.iter().map(|member| tokio::time::timeout_at(by, asking.ask(&member.endpoint, &request))))
@@ -122,7 +124,7 @@ pub(super) async fn from_members(
             let entries = match answer {
                 Ok(Ok(Reply::Entries { entries })) if !entries.is_empty() => entries,
                 Ok(Ok(other)) => {
-                    info!(member = %member.candidate, "the member has no entries past seq {tip}: {}", describe(&other));
+                    info!(member = %member.candidate, "the member has no entries past {after}: {}", describe(&other));
                     continue;
                 }
                 Ok(Err(e)) => {
@@ -147,9 +149,9 @@ pub(super) async fn from_members(
                     }
                 }
             }
-            match follower.take_tail(tip, &lines) {
+            match follower.take_tail(after, &lines) {
                 Ok(count) if count > 0 => {
-                    info!(member = %member.candidate, taken = count, after = tip, "took the gap from a member");
+                    info!(member = %member.candidate, taken = count, %after, "took the gap from a member");
                     (taken, progressed) = (taken + count, true);
                     break;
                 }
@@ -199,7 +201,7 @@ async fn archive(follower: &mut Follower, operator: &crate::standby::Followed) -
         }
     }
     anyhow::ensure!(!lines.is_empty(), "the archive holds nothing past seq {tip}");
-    follower.take_tail(tip, &lines).map_err(|e| e.context(TailRefused))
+    follower.take_tail(Offset::start_of(tip), &lines).map_err(|e| e.context(TailRefused))
 }
 
 #[cfg(test)]

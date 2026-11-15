@@ -115,7 +115,10 @@ impl Replay {
         let mut origin = crate::sequencer::origin::Origin::new(Some(domain), trusted_signer);
         origin.link = crate::log::command_seal::checkpoint_link(&checkpoint)?;
         let requires_checkpoint_gate = checkpoint.parent.is_some();
-        Ok(Self {
+        // The base's prefix is authenticated with the snapshot: with no command after it, a member's
+        // status at the base's seq still has a prefix to match.
+        let base = (checkpoint.seq, engine_core::eip712::B256::from(context.command_prefix));
+        let mut replay = Self {
             legacy_deposits: BTreeMap::new(),
             legacy_approvals: crate::sequencer::legacy::Approvals::default(),
             engine,
@@ -145,6 +148,8 @@ impl Replay {
             origin,
             requires_checkpoint_gate,
             ..Self::default()
-        })
+        };
+        replay.prefix_ring.record(base.0, base.1);
+        Ok(replay)
     }
 }

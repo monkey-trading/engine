@@ -159,10 +159,10 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         let mut episodes = Episodes::default();
         loop {
             // A checkpoint that waits for a confirmation wakes the rule at once.
-            tokio::select! {
-                _ = poll.tick() => {}
-                () = self.gate.woken() => {}
-            }
+            let woken = tokio::select! {
+                _ = poll.tick() => false,
+                () = self.gate.woken() => true,
+            };
             if self.released.has_changed().is_err() {
                 return Ok(());
             }
@@ -170,6 +170,11 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             stamps.insert(tip.head.seq, tip);
             while stamps.len() > STAMPS {
                 stamps.pop_first();
+            }
+            // It asks the last read's members at once: a chain read first would add to the pause.
+            if let Some(current) = applied.as_ref().filter(|_| woken) {
+                self.round(current, (&mut stamps, &mut confirmed, &mut holders), &mut episodes).await;
+                continue;
             }
             let cached = set
                 .as_ref()
@@ -311,7 +316,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         let assessment = self.ask((view.epoch, scope.1), others.clone(), holders).await;
         self.take(&assessment, (view, *scope), stamps, confirmed, episodes);
         let hurried = tokio::time::Instant::now();
-        while self.gate.wanted() > self.gate.confirmed() && hurried.elapsed() < self.poll {
+        while self.gate.waiting().is_some() && hurried.elapsed() < self.poll {
             tokio::time::sleep(HURRY).await;
             let tip = *self.released.borrow();
             stamps.insert(tip.head.seq, tip);
@@ -348,7 +353,9 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             if let Some((_, released)) = stamps.range(..=seq).next_back()
                 && confirmed.is_none_or(|(was, at)| was != scope || at.released.head.seq < released.head.seq)
             {
-                *confirmed = Some((scope, Signable { released: *released, confirmer: Address::from(member.0) }));
+                let confirmer = Address::from(member.0);
+                let signable = Signable { released: *released, confirmer, scope: Some((scope.0, scope.2)) };
+                *confirmed = Some((scope, signable));
             }
         }
         let current = confirmed.filter(|(was, _)| *was == scope).map(|(_, signable)| signable);

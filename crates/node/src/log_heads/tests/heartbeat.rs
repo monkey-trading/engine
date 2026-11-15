@@ -167,6 +167,28 @@ async fn through_a_hold_held_heads_repeat_the_confirmed_tip_on_newer_blocks() {
     drive.stop().await;
 }
 
+/// A confirmation counts only under the signer epoch and rotation set it was given in: once the turn in
+/// effect is drawn from another set, a former member's confirmation signs no head until a member of
+/// the new set confirms.
+#[tokio::test(start_paused = true)]
+async fn a_confirmation_from_another_set_signs_no_head() {
+    let chain = FakeChain::new(None);
+    chain.name_turn(turn(GENERATION));
+    chain.change_turn(|turn| turn.set = 2);
+    let drive = spawn(chain.clone(), Some((RELEASE, GENERATION)));
+    drive.release(5);
+    drive.confirm(5, 0xc1);
+    drive.clock.advance(Duration::from_secs(1));
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert!(chain.posts_v2().is_empty(), "set 1's confirmation signed a head for a turn of set 2");
+    let released = Released { head: at(5), stamp: stamp(5) };
+    let confirmer = Address::repeat_byte(0xc2);
+    drive.signing.send_replace(Signing::Confirmed(Signable { released, confirmer, scope: Some((1, 2)) }));
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert_eq!(chain.posts_v2().last().map(|(_, head)| head.confirmer), Some(confirmer), "set 2's member's");
+    drive.stop().await;
+}
+
 /// A node whose start check has not passed stays stopped, heads included: with a member's
 /// confirmation, through a hold on newer blocks, no head goes out until the check passes.
 #[tokio::test(start_paused = true)]
@@ -287,7 +309,8 @@ impl Drive {
     /// A member at `member` (its address bytes) confirmed `seq`.
     fn confirm(&self, seq: u64, member: u8) {
         let released = Released { head: at(seq), stamp: stamp(seq) };
-        self.signing.send_replace(Signing::Confirmed(Signable { released, confirmer: Address::repeat_byte(member) }));
+        let confirmer = Address::repeat_byte(member);
+        self.signing.send_replace(Signing::Confirmed(Signable { released, confirmer, scope: Some((1, 1)) }));
     }
 
     /// How the poster ended within `within`, its inputs kept open meanwhile; `None` if it ran on.
@@ -376,6 +399,7 @@ fn turn(generation: u64) -> TurnHeads {
         block_number: 100,
         block_hash: B256::repeat_byte(0xb1),
         marked_block: 90,
+        set: 1,
     }
 }
 

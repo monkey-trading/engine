@@ -154,6 +154,11 @@ impl Follower {
         follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica), link).await
     }
 
+    /// The offset of the copy's last entry, `None` for an empty copy.
+    pub(crate) fn head(&self) -> Option<Offset> {
+        self.copied.head()
+    }
+
     /// Whether a member link records what the copy holds.
     pub(crate) fn linked(&self) -> bool {
         self.link.is_some()
@@ -164,7 +169,7 @@ impl Follower {
     pub(crate) fn link_with(&mut self, link: crate::liveness::link::Copy) {
         link.rebuilt();
         for retained in self.replica.retained_links() {
-            link.linked(retained.seq, retained.link);
+            link.linked(retained.seq, retained.link, retained.sealer);
         }
         if let Some((seq, head)) = self.tip() {
             link.durable(crate::log_heads::Head { seq, link: head }, self.replica.tip_sealer());
@@ -172,18 +177,19 @@ impl Follower {
         self.link = Some(link);
     }
 
-    /// Takes a handover's tail: the JSON lines in `bytes`, the entries the predecessor's log holds
-    /// after the command at `after`, the copy's tip. Each entry the copy already holds must repeat
-    /// it exactly; each later one must extend the copy's seal chain, and the replica must apply it
-    /// before the copy takes it. Returns how many entries the copy took; the copy is synced.
+    /// Takes a tail: the JSON lines in `bytes`, the entries another log holds after the entry at
+    /// `after`, the copy's tip command or an entry past it at that seq. Each entry the copy already
+    /// holds must repeat it exactly; each later one must extend the copy's seal chain, and the replica
+    /// must apply it before the copy takes it. Returns how many entries the copy took; the copy is
+    /// synced.
     /// Error cases:
-    /// - `after` is not the copy's tip, a line does not parse, an entry repeats the copy's
+    /// - `after` is not at the copy's tip, a line does not parse, an entry repeats the copy's
     ///   differently or does not extend it, or the replica refuses one (`ReplicaRefused`)
     /// - the copy cannot be written or synced
-    pub(crate) fn take_tail(&mut self, after: u64, bytes: &[u8]) -> anyhow::Result<u64> {
-        ensure!(self.replica.last_seq() == Some(after), "the tail follows seq {after}, not the copy's tip");
-        self.copied.begin_after_command();
-        let mut previous = Some(Offset::start_of(after));
+    pub(crate) fn take_tail(&mut self, after: Offset, bytes: &[u8]) -> anyhow::Result<u64> {
+        ensure!(self.replica.last_seq() == Some(after.seq), "the tail follows {after}, not the copy's tip");
+        self.copied.begin_after(after);
+        let mut previous = Some(after);
         let mut taken = 0;
         for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
             let entry: LogEntry = serde_json::from_slice(line).context("a tail line is not a log entry")?;

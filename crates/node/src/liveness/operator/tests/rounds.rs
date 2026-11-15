@@ -221,3 +221,37 @@ async fn the_returning_incumbent_sequences_beside_the_silent_orphaned_holder() {
     assert!(rig.gate.sequences() && rig.gate.confirmed() == 10, "the rebuilt holder's confirmation");
     rig.task.abort();
 }
+
+/// A checkpoint that waits for a confirmation takes the first member's status that reaches it, however
+/// slowly another member answers, and its wake asks at once: the pause is about one round trip, not
+/// the slowest member's answer.
+#[tokio::test(start_paused = true)]
+async fn a_waiting_checkpoint_takes_the_first_status_that_reaches_it_not_the_slowest() {
+    let rig = Rig::spawn(10);
+    let slow = Arc::new(EnclaveKey::generate());
+    rig.chain.set(|chain| {
+        chain.members.push((Address::repeat_byte(0xc4), "member:2".into(), Address::from(slow.address())));
+    });
+    let behind =
+        Status { epoch: 1, durable: Some(Head { seq: 10, link: link(10) }), sealer: AccountId([0; 20]), seen: None };
+    rig.members.0.lock().unwrap().insert("member:2".into(), (AccountId([0xc4; 20]), slow, Some(behind)));
+    rig.members.1.lock().unwrap().insert("member:2".into(), Duration::from_millis(2_900));
+    rig.answer(Some(10));
+    crate::test_support::wait_for("the start check", async {
+        while !rig.gate.sequences() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    // The tip moves to 11, which the quick member's copy holds; a checkpoint at 11 starts to wait.
+    rig.prefixes.lock().unwrap().insert(11, link(11));
+    rig._released.send_replace(Released { head: Head { seq: 11, link: link(11) }, stamp: 6 });
+    rig.answer(Some(11));
+    let waited = tokio::time::Instant::now();
+    rig.gate.want(11);
+    while rig.gate.confirmed() < 11 {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(waited.elapsed() < Duration::from_millis(500), "the checkpoint waited {:?}", waited.elapsed());
+    rig.task.abort();
+}

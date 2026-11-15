@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
-use tracing::{Instrument, debug, error, info, info_span, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::config::TeeProvider;
 use crate::handover::{receive, send};
@@ -124,14 +124,20 @@ struct CopyState {
     recent: VecDeque<(Offset, LogEntry)>,
     /// The newest signed head the operator's stream carried, which the liveness caller relays.
     signed: Option<SignedHead>,
-    /// The cumulative prefix after each of the copy's latest commands, by seq.
-    links: BTreeMap<u64, B256>,
+    /// The cumulative prefix after each of the copy's latest commands, by seq, and the key that sealed
+    /// the command, if known.
+    links: BTreeMap<u64, (B256, Option<AccountId>)>,
     /// Heads seen past the copy's latest command, by seq and signer epoch: checked as the copy reaches
     /// them.
     ahead: BTreeMap<(u64, SignerEpoch), B256>,
-    /// The signer epochs under which the copy holds another link than a head it saw, with the first
-    /// such seq: the member confirms nothing under them.
+    /// The signer epochs under which the copy holds another link than a head it saw, the copy's command
+    /// there sealed by the head's own key, or two heads differ, with the first such seq: a second history
+    /// on that key; the member confirms nothing under them.
     conflicted: BTreeMap<SignerEpoch, u64>,
+    /// The signer epochs under which a head differs from a link of the copy that another key sealed, or
+    /// one of unknown sealer, as a returning operator's own tail beside its successor's heads, with the
+    /// first such seq: the member confirms nothing under them until a rebuilt copy drops them.
+    diverged: BTreeMap<SignerEpoch, u64>,
     /// The enclave the copy follows: the heads it sees, on the stream or the chain, are of its epochs.
     following: Option<AccountId>,
 }
@@ -182,26 +188,27 @@ impl Copy {
         (state.durable, state.sealer) = (Some(head), sealer);
     }
 
-    /// Records the copy's cumulative prefix `link` after the command at `seq`, and checks every head
-    /// seen at that seq against it.
-    pub(crate) fn linked(&self, seq: u64, link: B256) {
+    /// Records the copy's cumulative prefix `link` after the command at `seq`, which `sealer` sealed,
+    /// and checks every head seen at that seq against it.
+    pub(crate) fn linked(&self, seq: u64, link: B256, sealer: Option<AccountId>) {
         let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        state.links.insert(seq, link);
+        state.links.insert(seq, (link, sealer));
         while state.links.len() > RECENT_ENTRIES {
             state.links.pop_first();
         }
         while let Some(entry) = state.ahead.first_entry().filter(|entry| entry.key().0 <= seq) {
             let ((at, epoch), seen) = entry.remove_entry();
-            if state.links.get(&at).is_some_and(|held| *held != seen) {
-                state.conflict(epoch, at);
+            if state.links.get(&at).is_some_and(|(held, _)| *held != seen) {
+                state.mismatch(epoch, at);
             }
         }
     }
 
-    /// Clears the links and entries of a copy set aside: a rebuilt copy records its own. Conflicts
-    /// stand.
+    /// Clears the links and entries of a copy set aside, and its divergence from heads it saw: a
+    /// rebuilt copy records its own. Conflicts stand.
     pub(crate) fn rebuilt(&self) {
         let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        state.diverged.clear();
         state.links.clear();
         state.ahead.clear();
         state.recent.clear();
@@ -236,8 +243,8 @@ impl Copy {
         while state.seen.len() > SEEN_EPOCHS {
             state.seen.pop_first();
         }
-        match state.links.get(&head.seq).copied() {
-            Some(held) if held != head.link => state.conflict(epoch, head.seq),
+        match state.links.get(&head.seq).map(|(held, _)| *held) {
+            Some(held) if held != head.link => state.mismatch(epoch, head.seq),
             Some(_) => {}
             None if state.links.last_key_value().is_none_or(|(last, _)| head.seq > *last) => {
                 state.ahead.entry((head.seq, epoch)).or_insert(head.link);
@@ -249,11 +256,13 @@ impl Copy {
         }
     }
 
-    /// The first seq at which the copy holds another link than a head of `epoch` it saw, if any.
+    /// The first seq at which the copy holds another link than a head of `epoch` it saw, if any, and
+    /// whether that is a conflict rather than the copy's own divergence.
     #[cfg(test)]
     pub(crate) fn conflicted(&self, epoch: u64) -> Option<u64> {
         let state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        state.conflicted.get(&state.under(epoch)).copied()
+        let under = state.under(epoch);
+        state.conflicted.get(&under).or(state.diverged.get(&under)).copied()
     }
 
     /// Records a signed head the operator's stream carried, keeping the newest.
@@ -280,7 +289,7 @@ impl Copy {
     pub(crate) fn status(&self, epoch: u64) -> anyhow::Result<Status> {
         let state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let (epoch, key) = state.under(epoch);
-        if let Some(seq) = state.conflicted.get(&(epoch, key)) {
+        if let Some(seq) = state.conflicted.get(&(epoch, key)).or(state.diverged.get(&(epoch, key))) {
             bail!("the copy holds another link at seq {seq} than a head of signer epoch {epoch}: it confirms nothing");
         }
         Ok(Status {
@@ -316,33 +325,6 @@ impl Copy {
             })
             .cloned()
             .collect()
-    }
-}
-
-impl CopyState {
-    /// Signer epoch `epoch` of the enclave the copy follows.
-    fn under(&self, epoch: u64) -> SignerEpoch {
-        (epoch, self.following.unwrap_or(AccountId([0; 20])))
-    }
-
-    /// Records that the copy holds another link at `seq` than a head of `epoch` it saw: a second
-    /// history under the key that signed the head. Critical once per epoch.
-    fn conflict(&mut self, epoch: SignerEpoch, seq: u64) {
-        if let std::collections::btree_map::Entry::Vacant(first) = self.conflicted.entry(epoch) {
-            first.insert(seq);
-            let (epoch, key) = epoch;
-            error!(
-                alert = "liveness_member_conflict",
-                epoch,
-                %key,
-                seq,
-                "this member's copy holds another link at seq {seq} than a signed head of signer epoch {epoch}: a \
-                 second history on the operator's key; this member confirms nothing under that epoch"
-            );
-        }
-        while self.conflicted.len() > SEEN_EPOCHS {
-            self.conflicted.pop_first();
-        }
     }
 }
 
@@ -475,6 +457,7 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
 }
 
 mod ask;
+mod state;
 pub(crate) use ask::{Asking, Tcp, describe, verified_status};
 mod slots;
 

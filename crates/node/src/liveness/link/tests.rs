@@ -57,7 +57,7 @@ fn a_rebuilt_copy_serves_nothing_old_and_evidence_is_kept_per_key() {
     assert!(copy.entries_after(Offset::start_of(6)).is_empty(), "the set-aside copy's entries were served");
     let (first, second) = (AccountId([0x51; 20]), AccountId([0x52; 20]));
     copy.follows(first);
-    copy.linked(5, B256::repeat_byte(0xaa));
+    copy.linked(5, B256::repeat_byte(0xaa), Some(first));
     copy.saw(2, Head { seq: 5, link: B256::repeat_byte(0xbb) });
     copy.saw(2, head(12));
     copy.signed_head(signed(2, 12));
@@ -77,14 +77,48 @@ fn a_rebuilt_copy_serves_nothing_old_and_evidence_is_kept_per_key() {
     assert_eq!(copy.signed().map(|held| held.epoch), Some(1), "a lower epoch in effect again was not taken");
 }
 
+/// A returning operator's own tail, sealed by its key, differs from its successor's heads: that is the
+/// copy's divergence, not a second history on the successor's key, so once the copy is set aside and
+/// rebuilt from the successor it confirms the successor's epoch; a link the head's own key sealed is a
+/// conflict that a rebuild keeps.
+#[test]
+fn a_returning_operators_own_tail_diverges_until_the_copy_is_rebuilt() {
+    let (outgoing, successor) = (AccountId([0x51; 20]), AccountId([0x52; 20]));
+    let tail = |seq: u64| Head { seq, link: B256::repeat_byte(0xee) };
+    let copy = Copy::default();
+    copy.follows(successor);
+    for seq in 5..=7 {
+        copy.linked(seq, tail(seq).link, Some(outgoing));
+    }
+    copy.durable(tail(7), Some(outgoing));
+    copy.saw(2, head(6));
+    assert!(copy.status(2).is_err(), "the tail beside the successor's head confirmed it");
+    copy.rebuilt();
+    for seq in 5..=7 {
+        copy.linked(seq, head(seq).link, Some(successor));
+    }
+    copy.durable(head(7), Some(successor));
+    assert_eq!(copy.status(2).expect("the rebuilt copy confirms").durable, Some(head(7)));
+    copy.linked(8, tail(8).link, Some(successor));
+    copy.saw(2, head(8));
+    copy.rebuilt();
+    assert!(copy.status(2).is_err(), "a link the head's own key sealed is a second history a rebuild keeps");
+}
+
 #[test]
 fn a_copy_confirms_nothing_under_an_epoch_whose_head_conflicts_with_its_links_now_or_later() {
     let forked = |seq: u64| Head { seq, link: B256::repeat_byte(0xee) };
-    for (name, before) in [("a head seen at a seq the copy holds", true), ("a head seen ahead of the copy", false)] {
+    let key = AccountId([0x51; 20]);
+    let copy_of = || {
         let copy = Copy::default();
+        copy.follows(key);
+        copy
+    };
+    for (name, before) in [("a head seen at a seq the copy holds", true), ("a head seen ahead of the copy", false)] {
+        let copy = copy_of();
         let take = |copy: &Copy| {
             for seq in 1..=10 {
-                copy.linked(seq, head(seq).link);
+                copy.linked(seq, head(seq).link, Some(key));
             }
             copy.durable(head(10), None);
         };
@@ -105,15 +139,15 @@ fn a_copy_confirms_nothing_under_an_epoch_whose_head_conflicts_with_its_links_no
         copy.rebuilt();
         assert!(copy.status(2).is_err(), "{name}: a rebuilt copy keeps the conflict");
     }
-    let copy = Copy::default();
-    copy.linked(5, head(5).link);
+    let copy = copy_of();
+    copy.linked(5, head(5).link, Some(key));
     copy.saw(1, forked(3));
     assert_eq!(copy.conflicted(1), None, "a seq older than the links retained is not judged");
     // Two heads of one epoch at one seq with other links are two histories, though a newer head moved
     // the epoch's newest on before the second came and the copy then holds the second's branch; another
     // epoch's head at that seq is not judged by them.
-    let copy = Copy::default();
-    copy.linked(5, head(5).link);
+    let copy = copy_of();
+    copy.linked(5, head(5).link, Some(key));
     copy.saw(2, head(7));
     copy.saw(2, head(8));
     copy.saw(3, forked(7));
@@ -121,7 +155,7 @@ fn a_copy_confirms_nothing_under_an_epoch_whose_head_conflicts_with_its_links_no
     assert_eq!(copy.conflicted(2), Some(7), "the conflicting heads ahead of the copy were not latched");
     assert_eq!(copy.conflicted(3), None, "another epoch's head at the seq was judged");
     for seq in 6..=8 {
-        copy.linked(seq, forked(seq).link);
+        copy.linked(seq, forked(seq).link, Some(key));
     }
     copy.durable(forked(8), None);
     let refused = copy.status(2).unwrap_err();

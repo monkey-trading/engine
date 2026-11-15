@@ -96,6 +96,9 @@ pub(crate) struct Signable {
     pub released: Released,
     /// The member whose enclave confirmed it; zero with no other member in the turn's set.
     pub confirmer: Address,
+    /// The signer epoch and rotation set the confirmation was given under; `None` for the tip with no
+    /// other member to ask.
+    pub scope: Option<(u64, u32)>,
 }
 
 /// The vault's signer epoch and the key it names, at the latest block the rule read: a client takes
@@ -209,6 +212,12 @@ impl Gate {
     /// The seq of the newest checkpoint that waited for a confirmation.
     pub(crate) fn wanted(&self) -> u64 {
         self.0.wanted.load(Ordering::SeqCst)
+    }
+
+    /// The seq a checkpoint waits for a confirmation of, while one does.
+    pub(crate) fn waiting(&self) -> Option<u64> {
+        let wanted = self.wanted();
+        (wanted > self.confirmed()).then_some(wanted)
     }
 
     /// Resolves when a checkpoint starts to wait (`want`), or at once when one started since the last
