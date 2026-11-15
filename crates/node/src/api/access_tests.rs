@@ -12,6 +12,7 @@ mod reissue;
 mod session_keys;
 mod source;
 mod spreads;
+mod tier_limits;
 mod volume_tiers;
 mod weekend_margin;
 

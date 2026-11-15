@@ -28,7 +28,7 @@ use webpki::EndEntityCert;
 
 use crate::api::{ApiState, MAX_BACKFILLS, router};
 use crate::clock::SystemClock;
-use crate::config::{Budget, FreshAccountBudgets, RateLimit};
+use crate::config::{Budget, FreshAccountBudgets, RateLimit, RequestBursts};
 use crate::history::Reader;
 use crate::limits::ApiLimits;
 use crate::log::Manifest;
@@ -409,6 +409,7 @@ impl TestNode {
 
 /// An `[api]` section with generous limits, for a test to tighten the one it checks.
 fn api() -> ApiSection {
+    let budget = Budget { per_minute: NonZeroU32::MIN, burst: NonZeroU32::new(5000).unwrap() };
     ApiSection {
         max_connections: NonZeroUsize::new(64).unwrap(),
         max_connections_per_ip: NonZeroUsize::new(64).unwrap(),
@@ -429,10 +430,8 @@ fn api() -> ApiSection {
         allowed_origins: Vec::new(),
         tls: None,
         proxy_protocol: None,
-        fresh_accounts: FreshAccountBudgets {
-            shared: Budget { per_minute: NonZeroU32::new(1).unwrap(), burst: NonZeroU32::new(5000).unwrap() },
-            per_client: Budget { per_minute: NonZeroU32::new(1).unwrap(), burst: NonZeroU32::new(5000).unwrap() },
-        },
+        fresh_accounts: FreshAccountBudgets { shared: budget, per_client: budget },
+        request_bursts: RequestBursts { account: NonZeroU32::MIN, session_key: NonZeroU32::MIN },
     }
 }
 

@@ -12,7 +12,8 @@ use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
 use crate::spread_tier::SpreadTier;
 use crate::types::MarketId;
-use crate::volume_tier::{AccountBands, VolumeTier, launch_volume_tiers, validate_volume_tiers};
+use crate::volume_tier::limits::within_launch_limits;
+use crate::volume_tier::{AccountBands, VolumeTier, launch_volume_tiers, names_limits, validate_volume_tiers};
 
 impl Engine {
     /// Checks an activation carrying the log to `V59` or later from before it takes up a table no more
@@ -78,7 +79,8 @@ impl Engine {
     /// `launch_volume_tiers` itself, which the table in force is no more generous than. No account has
     /// counted volume yet, so every account is at tier 0, and every held position is pending for its
     /// first `MIN_HOLD_MS` (`Engine::hold_held_positions`). Their margin floors start when `version`
-    /// activates `V64` (`Engine::start_margin_floors`).
+    /// activates `V64` (`Engine::start_margin_floors`), and their request and order limits when it
+    /// activates `V66` (`Engine::start_tier_limits`).
     pub(crate) fn start_volume_tiers(&mut self, version: ProtocolVersion) {
         if self.protocol_version < ProtocolVersion::V59
             && version >= ProtocolVersion::V59
@@ -91,6 +93,7 @@ impl Engine {
             self.hold_held_positions();
         }
         self.start_margin_floors(version);
+        self.start_tier_limits(version);
     }
 
     /// From `V59`, records the table in force as the launch table with the first parameters set under
@@ -106,7 +109,7 @@ impl Engine {
     /// Checks the table a notice names, if any: its shape (`validate_volume_tiers`) and its bound
     /// (`check_volume_tier_bound`).
     /// Error cases:
-    /// - before `V59`
+    /// - before `V59`, or before `V66` a table naming a resting-order limit or a request rate
     /// - a table `validate_volume_tiers` or `check_volume_tier_bound` refuses
     pub(crate) fn check_volume_tier_notice(&self, tiers: Option<&[VolumeTier]>) -> Result<(), String> {
         let Some(tiers) = tiers else { return Ok(()) };
@@ -114,6 +117,9 @@ impl Engine {
             return Err(format!("a volume tier table needs protocol {:?}", ProtocolVersion::V59));
         }
         validate_volume_tiers(tiers)?;
+        if self.protocol_version < ProtocolVersion::V66 && names_limits(tiers) {
+            return Err(format!("a tier limit needs protocol {:?}", ProtocolVersion::V66));
+        }
         self.check_volume_tier_bound(tiers)
     }
 
@@ -150,12 +156,14 @@ impl Engine {
     }
 
     /// Checks `tiers` against the launch table and the listings in force: as many tiers as at launch,
-    /// each threshold and day divisor at or above its launch value and each share at or below it, and
-    /// every listed market's bands within their launch spread at every tier (`check_tiered_spreads`),
-    /// and, at a tier needing more than at launch, within it at every tier below.
+    /// each threshold and day divisor at or above its launch value and each share at or below it, from
+    /// `V66` each limit and rate named and at or below its launch value, and every listed market's bands
+    /// within their launch spread at every tier (`check_tiered_spreads`), and, at a tier needing more
+    /// than at launch, within it at every tier below.
     /// Error cases:
     /// - another number of tiers than at launch
     /// - a threshold or day divisor below its launch value, or a share above it
+    /// - from `V66`, a resting-order limit or request rate unnamed or above its launch value
     /// - a listed market whose bands at some tier charge outside that tier's launch spread to twice it
     /// - a raised tier whose launch spread a tier below it charges more than twice, at some notional
     fn check_volume_tier_bound(&self, tiers: &[VolumeTier]) -> Result<(), String> {
@@ -166,6 +174,9 @@ impl Engine {
             .as_deref()
             .expect("the launch volume tiers are recorded with parameters");
         within_launch_table(tiers, launch)?;
+        if self.protocol_version >= ProtocolVersion::V66 {
+            within_launch_limits(tiers, launch)?;
+        }
         self.markets
             .iter()
             .try_for_each(|(id, market)| self.check_tiered_spreads(*id, &market.spec.spread_tiers, tiers))

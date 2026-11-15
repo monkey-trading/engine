@@ -57,6 +57,11 @@ ETH-USD. The tier's margin floor raises the initial requirement that new risk an
 leave, never the level an account is closed out at, so a tier that falls closes nothing out; it only
 stops new risk and withdrawals until the account is back above the requirement.
 
+From V66 the tier also sets how many orders an account rests and how many signed requests a second
+the node takes from it: 25 orders and 2 requests a second at tier 0, rising to 250 and 20 at tier 3,
+so a wallet recycled for a fresh start begins at the lowest. A tier that falls cancels nothing: the
+orders already resting stay, and only a new order past the limit is refused.
+
 Losing trades pay nothing. Winning trades pay a share of the profit they realise, which from protocol
 V55 falls with how long the position was held: the whole gain on a close within 10 seconds of the
 open, falling to the standard 10% at 15 minutes. Adding to a position moves its open time to the
@@ -152,7 +157,8 @@ value, to at most half again, and the fee that short holds pay only to a curve a
 curve at every hold, each after the same notice, so no hold pays less than at launch. From V59 the
 volume tier table moves only after the same notice too, never more generously than at launch, and at
 every tier and size a spread stays between that tier's launch spread and twice it, and from V64 each
-tier's margin floor stays at or above launch's. From V60 a
+tier's margin floor stays at or above launch's, and from V66 its order limit and request rate at or
+below launch's. From V60 a
 listed market's weekend margin also changes only after the same notice, or while rotation is on by a
 vote; the operator's calendar change may not shorten or remove a weekend closure starting within
 seven days, and while the market holds positions may not add or bring one forward within seven days

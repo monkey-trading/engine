@@ -101,3 +101,25 @@ fn a_genesis_that_names_the_floors_binds_a_voted_table_to_them() {
     assert_eq!(apply(&mut h, 2, raised).last(), Some(&Event::AdminApplied));
     assert_eq!(h.engine.params().expect("set").volume_tiers[0].margin_floor_bps, 600);
 }
+
+#[test]
+fn a_voted_table_keeps_each_limit_named_and_at_or_below_launch() {
+    let mut h = governed_priced_from_the_first_dollar();
+    let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V66 };
+    pass(&mut h, 1, false, activate.clone());
+    h.advance(NOTICE_MS);
+    assert_eq!(apply(&mut h, 1, activate).last(), Some(&Event::AdminApplied));
+    let raised = with_params(&h, |params| params.volume_tiers[3].max_resting_orders = 251);
+    let faster = with_params(&h, |params| params.volume_tiers[0].requests_per_second = 3);
+    let unnamed = with_params(&h, |params| params.volume_tiers.iter_mut().for_each(|t| t.max_resting_orders = 0));
+    let lower = with_params(&h, |params| params.volume_tiers[3].max_resting_orders = 200);
+    for (proposal, command) in [(2, raised.clone()), (3, faster.clone()), (4, unnamed.clone()), (5, lower.clone())] {
+        assert!(matches!(pass(&mut h, proposal, false, command).last(), Some(Event::ProposalScheduled { .. })));
+    }
+    h.advance(NOTICE_MS);
+    rejected(&apply(&mut h, 2, raised), "volume tier 3's max_resting_orders 251 must be named and at most its launch");
+    rejected(&apply(&mut h, 3, faster), "volume tier 0's requests_per_second 3 must be named and at most its launch");
+    rejected(&apply(&mut h, 4, unnamed), "max_resting_orders 0 must be named");
+    assert_eq!(apply(&mut h, 5, lower).last(), Some(&Event::AdminApplied));
+    assert_eq!(h.engine.params().expect("set").volume_tiers[3].max_resting_orders, 200);
+}

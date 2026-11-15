@@ -153,6 +153,11 @@ this crate and reproduce the signed state roots exactly.
   most 50x and tiers 2 and 3 at the market's own bands; fills that add risk and withdrawals meet it,
   while close-outs read the market's bands, so a falling tier closes nothing out. The floors move only
   with the table, never below launch's and never rising with the tier
+- From protocol `V66`, request and order limits (`src/volume_tier/limits.rs`): a volume tier's
+  resting-order limit replaces the parameters' cap, a new resting order past it refused as
+  `TierOrderLimit` naming the tier while orders already resting stay, and its request rate is what the
+  node admits the account's signed requests at (`Engine::request_limit`). The limits move only with
+  the table, never above launch's and never falling with the tier
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -338,6 +343,9 @@ this crate and reproduce the signed state roots exactly.
   spread check on every table and listing change
 - `src/volume_tier/leverage.rs` — the V64 margin floors: the floor a tier sets on the initial
   requirement, and the floors activation gives a table
+- `src/volume_tier/limits.rs` — the V66 limits: a tier's resting-order limit and request rate, their
+  shape and launch bound, the tier's limit an order is checked against, and the limits activation
+  gives a table
 - `src/merkle/volume.rs` — the V59 volume leaves, kind 28, one per account's book
 - `tests/volume_tiers.rs` — the best-price bound at tier 0 and tier 1, counting after 60 s on the
   day of maturity, pending notional a close takes, a close's horizon, round trips both ways, the
@@ -346,7 +354,12 @@ this crate and reproduce the signed state roots exactly.
 - `tests/volume_tier_bounds.rs` — the table's notice, its launch bounds, a listing and a table held
   together to each tier's launch spread, a raised threshold held at every tier below it, V61's launch
   table at an activation (also across V52) and an adoption held to the tiers, the margin floors'
-  launch bound, and the rules before V59 and V64
+  launch bound, the limits' launch bound, and the rules before V59 and V64
+- `tests/tier_limits.rs` — a fresh wallet's 25 resting orders and the refusal naming its tier, each tier's
+  limit, a falling tier's orders staying, a table naming no limit, the request rate and the account
+  read, and activation over resting orders
+- `tests/tier_limit_bounds.rs` — a table's limits held named, at or below launch's and never falling
+  with the tier, a lower limit noticed, and the refusal of a limit before V66
 - `tests/earned_leverage.rs` — a fresh wallet's 20x, each tier's leverage up to the market's bands, a
   falling tier's open position, withdrawals and close-out, the weekend margin and the floor band by
   band, and activation over a held position
@@ -388,7 +401,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/parameter_votes/toxicity.rs` — `V56`: a voted score tier change held to ±50% of launch without a notice, and a voted relisting keeping its markout floor
 - `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch; from `V57` a voted extension lending an add no more than the launch curve's last hold
 - `tests/parameter_votes/rotation.rs` — `V65`: votes governing only while a rotation set with members is in effect, a drawn turn naming the operator from its boundary, an activation taking the turns the log holds and counting rotation as on until a frontier carries the registry's turn state, a frontier naming a turn refused before `V56` or none, and a proposal the registry passes showing a turn the engine has not seen
-- `tests/parameter_votes/volume_tiers.rs` — `V59` activated by a vote, a voted volume tier table held to its launch bounds without a notice, a voted relisting held at every tier, and from `V64` a voted table's margin floors held at or above launch
+- `tests/parameter_votes/volume_tiers.rs` — `V59` activated by a vote, a voted volume tier table held to its launch bounds without a notice, a voted relisting held at every tier, and from `V64` a voted table's margin floors held at or above launch, and from `V66` a voted table's limits held at or below launch
 - `tests/parameter_votes/weekend.rs` — `V60`: a voted weekend margin with no listing notice, held to its listing's range, the operator's weekend margin notice refused while rotation is on, the fast path refusing to move it, and a fast-path margin raise past it
 - `tests/parameter_votes/house_loss.rs` — `V62`: a voted change to the house loss threshold, refused above launch's or off its level, applied below it, with no notice
 - `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, the turn's time in office, and the set in effect, which V65's votes need
@@ -567,7 +580,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V64` parts (`v15.rs` to `v64.rs`)
+  `V15` to `V66` parts (`v15.rs` to `v66.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1087,6 +1100,21 @@ then. Activation takes the earliest boundary of an accepted turn in effect or wa
 log holds rotation sets counts rotation as on until the first frontier carries the registry's state.
 Earlier logs keep V56's rule and encoding, and a frontier carries no turn before V65, so they replay
 unchanged. Its session is in `examples/reference_log/v65.rs`.
+
+Protocol V66 adds request and order limits (`src/volume_tier/limits.rs`). Each tier of the
+parameters' `volume_tiers` table may name a `max_resting_orders` and a `requests_per_second`, each
+left out of the encoding while zero and named for every tier or none, in 1 to 1000 and never falling
+with the tier. An account with a table in force rests at most its tier's `max_resting_orders` in place
+of the parameters' cap, and a new limit or stop order past it is refused as `Reject::TierOrderLimit`,
+naming the tier and its limit; orders already resting when the tier falls stay, since a limit only
+refuses a new one. A tier that names none leaves the parameters' cap. The tier's `requests_per_second`
+is what the node holds a credited account's signed requests to (`Engine::request_limit`, read from the
+API's engine copy), and the account read gives both. The limits move only with the table, by its
+notice or a vote, each named and at or below its launch value. Before V66 a table may name none, so
+earlier logs replay unchanged; activation gives each tier of the table in force, and of the launch
+table that bounds it, that names none a limit by position (`ACTIVATION_MAX_RESTING_ORDERS`: 25, 50,
+100 and 250, and `ACTIVATION_REQUESTS_PER_SECOND`: 2, 5, 10 and 20), and leaves every order already
+resting. Its log is `v66.jsonl`, and its session is in `examples/reference_log/v66.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

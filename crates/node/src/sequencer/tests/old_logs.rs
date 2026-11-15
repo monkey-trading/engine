@@ -26,8 +26,8 @@ fn an_existing_v1_log_activates_at_its_next_seq_and_still_verifies() {
     assert_eq!(replayed.activations, [(ProtocolVersion::LATEST, 67)]);
     // Activation also turns its absolute divergence triggers of 15 and 20 bps into 60% and 80% of its
     // widest bound, 25 bps: the shares the dev config takes; its toxicity into `V54`'s form; the default
-    // curve; gives level 2 a house loss threshold of zero; and gives volume tiers 0 and 1 `V64`'s
-    // margin floors.
+    // curve; gives level 2 a house loss threshold of zero; gives volume tiers 0 and 1 `V64`'s
+    // margin floors; and gives every tier `V66`'s resting-order limit and request rate.
     carried.toxicity.notional = Some(weighting);
     carried.share_divergence_triggers(25);
     carried.convert_to_score();
@@ -35,6 +35,10 @@ fn an_existing_v1_log_activates_at_its_next_seq_and_still_verifies() {
     carried.convert_to_tiered();
     for (tier, floor) in carried.volume_tiers.iter_mut().zip(engine_core::volume_tier::ACTIVATION_MARGIN_FLOORS_BPS) {
         tier.margin_floor_bps = floor;
+    }
+    for (at, tier) in carried.volume_tiers.iter_mut().enumerate() {
+        tier.max_resting_orders = engine_core::volume_tier::ACTIVATION_MAX_RESTING_ORDERS[at];
+        tier.requests_per_second = engine_core::volume_tier::ACTIVATION_REQUESTS_PER_SECOND[at];
     }
     carried.stress_levels[2].trigger.get_or_insert_with(Default::default).house_loss = Some(Fixed::ZERO);
     assert_eq!(replayed.engine.params(), Some(&carried));

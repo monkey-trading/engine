@@ -16,9 +16,12 @@
 //!   bound, rounded down, and at most the second bound. No tier changes a spread rate.
 //! - **Earned leverage** (`leverage`), from `V64`. A tier's margin floor raises each margin band of
 //!   the account's initial requirement to at least the floor; close-outs read the market's bands.
+//! - **Request and order limits** (`limits`), from `V66`. A tier's resting-order limit caps the orders an
+//!   account rests at once, and its request rate is what the node admits the account's signed requests at.
 //! - **Bounds** (`bounds`). The table moves only after a seven-day notice, or by a vote while rotation
 //!   is on: the same number of tiers, thresholds and day divisors at or above launch, shares at or
-//!   below launch, from `V64` margin floors at or above launch, and in every listed market each tier's
+//!   below launch, from `V64` margin floors at or above launch, from `V66` limits and rates at or below
+//!   launch, and in every listed market each tier's
 //!   spread at every notional from its launch spread to twice it, against which a listing's spread
 //!   bands are checked too. From `V61` a ceiling adoption's bound first listing is checked when it is
 //!   adopted as well as when it is listed.
@@ -47,6 +50,11 @@ mod bounds;
 pub(crate) use bounds::spend_volume_tier_notice;
 mod leverage;
 pub use leverage::ACTIVATION_MARGIN_FLOORS_BPS;
+mod limits;
+pub(crate) use limits::names_limits;
+pub use limits::{
+    ACTIVATION_MAX_RESTING_ORDERS, ACTIVATION_REQUESTS_PER_SECOND, MAX_REQUESTS_PER_SECOND, RequestLimit,
+};
 
 /// How long opening notional is held before it counts: 60 s of sequenced time.
 pub const MIN_HOLD_MS: Millis = 60_000;
@@ -76,6 +84,14 @@ pub struct VolumeTier {
     /// bps (`leverage`); zero for none, and left out of the encoding then.
     #[serde(default, skip_serializing_if = "is_zero_bps")]
     pub margin_floor_bps: i64,
+    /// From `V66`, the resting orders an account at this tier may hold at once, replacing the
+    /// parameters' cap (`limits`); zero for none named, and left out of the encoding then.
+    #[serde(default, skip_serializing_if = "limits::is_unnamed")]
+    pub max_resting_orders: usize,
+    /// From `V66`, the signed requests a second the node admits from an account at this tier
+    /// (`limits`); zero for none named, and left out of the encoding then.
+    #[serde(default, skip_serializing_if = "limits::is_unnamed")]
+    pub requests_per_second: u32,
 }
 
 /// An account's volume as the account read gives it.
@@ -93,6 +109,12 @@ pub struct VolumeStanding {
     /// Where each market's first spread band ends for the account, in USD; a market with a single
     /// band is left out.
     pub best_price_bounds: BTreeMap<MarketId, Fixed>,
+    /// From `V66`, the resting orders the tier lets the account hold, where the table names a limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_resting_orders: Option<usize>,
+    /// From `V66`, the signed requests a second the tier lets the node admit, where the table names one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requests_per_second: Option<u32>,
 }
 
 /// How far an account is towards one tier.
@@ -191,6 +213,8 @@ pub fn launch_volume_tiers() -> Vec<VolumeTier> {
             day_divisor,
             best_price_share_bps,
             margin_floor_bps: 0,
+            max_resting_orders: 0,
+            requests_per_second: 0,
         })
         .collect()
 }
@@ -198,7 +222,9 @@ pub fn launch_volume_tiers() -> Vec<VolumeTier> {
 /// Checks a tier table: none, or at most `MAX_VOLUME_TIERS` tiers, the first needing nothing (a zero
 /// threshold and a day divisor of 1), thresholds strictly ascending up to `Fixed::MAX_INPUT`, day
 /// divisors from 1 to `WINDOW_DAYS`, shares from 1 to 100000 bps that never fall with the tier, and
-/// margin floors from 0 to 10000 bps that never rise with it.
+/// margin floors from 0 to 10000 bps that never rise with it, and resting-order limits and request rates
+/// that are named for every tier or none, in 1..=1000 and 1..=`MAX_REQUESTS_PER_SECOND`,
+/// and never fall with it.
 /// Error cases:
 /// - more than `MAX_VOLUME_TIERS` tiers
 /// - a first tier with a threshold or a day divisor that needs anything
@@ -206,6 +232,8 @@ pub fn launch_volume_tiers() -> Vec<VolumeTier> {
 /// - a day divisor outside 1..=30, past which the window could never reach the tier
 /// - a share outside 1..=100000 bps, or one below the share of the tier before it
 /// - a margin floor outside 0..=10000 bps, or one above the floor of the tier before it
+/// - a resting-order limit or request rate named for some tiers and not others, above its maximum, or
+///   below that of the tier before it
 pub fn validate_volume_tiers(tiers: &[VolumeTier]) -> Result<(), String> {
     if tiers.len() > MAX_VOLUME_TIERS {
         return Err(format!("volume_tiers has more than {MAX_VOLUME_TIERS} tiers"));
@@ -231,7 +259,7 @@ pub fn validate_volume_tiers(tiers: &[VolumeTier]) -> Result<(), String> {
     {
         return Err(format!("margin_floor_bps must be in 0..={MAX_MARGIN_FLOOR_BPS} and never rise with the tier"));
     }
-    Ok(())
+    limits::validate_limits(tiers)
 }
 
 /// The UTC day of sequenced time `ms` falls on, counted from the epoch.
@@ -313,6 +341,7 @@ impl Engine {
             })
             .collect();
         let share = tiers[tier].best_price_share_bps;
+        let (max_resting_orders, requests_per_second) = self.tier_limits(tier);
         let best_price_bounds = self
             .markets
             .iter()
@@ -326,6 +355,8 @@ impl Engine {
             pending: volume.pending(now),
             progress,
             best_price_bounds,
+            max_resting_orders,
+            requests_per_second,
         })
     }
 }

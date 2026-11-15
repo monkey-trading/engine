@@ -76,6 +76,32 @@ fn a_production_build_refuses_fresh_account_budgets_above_its_values() {
 }
 
 #[test]
+fn a_production_build_refuses_request_bursts_above_its_value() {
+    let dev = std::fs::read_to_string(DEV).unwrap();
+    let load = |text: &str| toml::from_str::<NodeConfig>(text).unwrap();
+    // The dev config's two seconds pass in either build.
+    let cfg = load(&dev);
+    cfg.api.refuse_dev_request_bursts(false).unwrap();
+    cfg.api.refuse_dev_request_bursts(true).unwrap();
+    for (key, from) in [("account", "\naccount = 2"), ("session_key", "\nsession_key = 2")] {
+        let seconds = |seconds: u32| load(&dev.replace(from, &format!("\n{key} = {seconds}")));
+        seconds(5).api.refuse_dev_request_bursts(true).unwrap();
+        seconds(6).api.refuse_dev_request_bursts(false).unwrap();
+        let err = seconds(6).api.refuse_dev_request_bursts(true).unwrap_err().to_string();
+        assert!(err.contains(&format!("api.request_bursts.{key} at most 5 seconds")), "{key}: {err}");
+    }
+    // Both buckets are named, with at least a second, and nothing else is.
+    for text in [
+        dev.replace("[api.request_bursts]", "[api.bursts]"),
+        dev.replace("\naccount = 2", "\naccount = 0"),
+        dev.replace("\nsession_key = 2", ""),
+        dev.replace("\nsession_key = 2", "\nsession_key = 2\nburst = 2"),
+    ] {
+        assert!(toml::from_str::<NodeConfig>(&text).is_err());
+    }
+}
+
+#[test]
 fn a_dev_build_accepts_mock_providers() {
     let cfg: NodeConfig = toml::from_str(&std::fs::read_to_string(DEV).unwrap()).unwrap();
     cfg.refuse_mocks(false).unwrap();

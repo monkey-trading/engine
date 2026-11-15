@@ -151,12 +151,12 @@ async fn withdraw(node: &Node, client: &SigningKey, amount: i64) -> Value {
 }
 
 /// Moves the node's time forward by `ms`, with the screening source observing at the new time.
-async fn wait(node: &Node, ms: u64) {
+pub(super) async fn wait(node: &Node, ms: u64) {
     node.move_time(ms).await;
     node.source.lock().unwrap().observed_at = node.clock.now_ms();
 }
 
 /// Moves the node's time forward to `ts`.
-async fn wait_until(node: &Node, ts: i64) {
+pub(super) async fn wait_until(node: &Node, ts: i64) {
     wait(node, u64::try_from(ts - node.clock.now_ms()).expect("forward")).await;
 }

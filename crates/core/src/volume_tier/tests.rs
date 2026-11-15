@@ -118,7 +118,14 @@ fn usd_raw(raw: i128) -> Fixed {
 }
 
 fn tier(threshold: i64, day_divisor: i64, best_price_share_bps: i64) -> VolumeTier {
-    VolumeTier { threshold: usd(threshold), day_divisor, best_price_share_bps, margin_floor_bps: 0 }
+    VolumeTier {
+        threshold: usd(threshold),
+        day_divisor,
+        best_price_share_bps,
+        margin_floor_bps: 0,
+        max_resting_orders: 0,
+        requests_per_second: 0,
+    }
 }
 
 /// BTC-USD's bands in the dev genesis: 2bp to $2M, 4bp to $10M and 8bp above.

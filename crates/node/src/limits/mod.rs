@@ -22,6 +22,7 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use engine_core::types::AccountId;
+use engine_core::volume_tier::RequestLimit;
 use governor::clock::{Clock, DefaultClock};
 use governor::middleware::NoOpMiddleware;
 use governor::state::keyed::DashMapStateStore;
@@ -33,6 +34,9 @@ use tracing::{debug, warn};
 
 use crate::api::ApiError;
 use crate::config::{ApiSection, Budget, RateLimit};
+
+mod tier;
+use tier::TierBuckets;
 
 /// How often the rate limiters forget clients and accounts whose buckets have refilled.
 const RETAIN_EVERY: Duration = Duration::from_secs(10);
@@ -55,6 +59,10 @@ pub struct ApiLimits<C: Clock = DefaultClock> {
     /// the per-account rate, separate from the account's own, so keys cannot multiply its
     /// allowance and a flooding key cannot starve the wallet's requests.
     session_accounts: KeyedLimiter<AccountId, C>,
+    /// From `V66`, the buckets of a credited account whose tier names a request rate, in place of the
+    /// two above: its own, and its session keys' together.
+    tier_accounts: TierBuckets<C>,
+    tier_session_accounts: TierBuckets<C>,
     /// The fresh-account budgets (`api.fresh_accounts`): all clients' shared budget, each client's
     /// share of it, and the rate of a paid account's declarations.
     initial_accounts: KeyedLimiter<(), C>,
@@ -127,9 +135,23 @@ impl ApiLimits {
 
 impl<C: Clock + Clone> ApiLimits<C> {
     /// Limits from the `[api]` config on `clock`, each configured rate made a bucket by `quota`.
-    pub(crate) fn with_quota(cfg: &ApiSection, quota: impl Fn(RateLimit) -> Quota, clock: C) -> Self {
+    pub(crate) fn with_quota(
+        cfg: &ApiSection,
+        quota: impl Fn(RateLimit) -> Quota + Send + Sync + 'static,
+        clock: C,
+    ) -> Self {
         let fresh = cfg.fresh_accounts;
+        let shared: Arc<dyn Fn(RateLimit) -> Quota + Send + Sync> = Arc::new(quota);
+        let quota = &*shared;
+        let bursts = cfg.request_bursts;
         Self {
+            tier_accounts: TierBuckets::new("tier_account", bursts.account, shared.clone(), clock.clone()),
+            tier_session_accounts: TierBuckets::new(
+                "tier_session_account",
+                bursts.session_key,
+                shared.clone(),
+                clock.clone(),
+            ),
             per_ip: RateLimiter::dashmap_with_clock(quota(cfg.per_ip), clock.clone()),
             per_account: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
             session_accounts: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
@@ -192,6 +214,32 @@ impl<C: Clock + Clone> ApiLimits<C> {
         check(&self.per_account, &account, "account")
     }
 
+    /// Counts one request that acts for `account`, whose tier names `limit` as its request rate:
+    /// against the account's bucket at that rate, or with no `limit` as `check_account` does.
+    /// Error cases:
+    /// - the account is over its rate: `TierLimited` naming the tier and its rate, or `RateLimited`
+    ///   without a `limit`, with the wait until it may act again
+    pub fn check_account_at(&self, account: AccountId, limit: Option<RequestLimit>) -> Result<(), ApiError> {
+        match limit {
+            Some(limit) => self.tier_accounts.check(account, limit),
+            None => self.check_account(account),
+        }
+    }
+
+    /// `check_account_at` for a session-key request, against the account's session bucket.
+    /// Error cases:
+    /// - as `check_account_at`
+    pub(crate) fn check_session_account_at(
+        &self,
+        account: AccountId,
+        limit: Option<RequestLimit>,
+    ) -> Result<(), ApiError> {
+        match limit {
+            Some(limit) => self.tier_session_accounts.check(account, limit),
+            None => self.check_session_account(account),
+        }
+    }
+
     /// Counts one session-key request acting for `account`, whatever key signed it, against the
     /// account's session bucket.
     /// Error cases:
@@ -251,6 +299,8 @@ impl<C: Clock + Clone> ApiLimits<C> {
         self.paid_declarations.retain_recent();
         self.paid_per_ip.retain_recent();
         self.session_accounts.retain_recent();
+        self.tier_accounts.retain_recent();
+        self.tier_session_accounts.retain_recent();
         self.per_account.retain_recent();
         self.per_ip_connections.retain_recent();
     }

@@ -34,6 +34,7 @@ pub fn every_event() -> Vec<Event> {
         Reject::HouseCapacity,
         Reject::CloseSpreadCeiling { ceiling_bps: 20 },
         Reject::TooManyOrders { max: 100 },
+        Reject::TierOrderLimit { tier: 0, max: 25 },
         Reject::InvalidAmount,
         Reject::DuplicateReference,
         Reject::CustodyReceiptRequired,
@@ -71,6 +72,7 @@ pub fn every_event() -> Vec<Event> {
             | Reject::HouseCapacity
             | Reject::CloseSpreadCeiling { .. }
             | Reject::TooManyOrders { .. }
+            | Reject::TierOrderLimit { .. }
             | Reject::InvalidAmount
             | Reject::DuplicateReference
             | Reject::CustodyReceiptRequired

@@ -68,6 +68,12 @@ pub enum Reject {
     TooManyOrders {
         max: usize,
     },
+    /// From `V66`, a limit or stop order from an account that already rests `max`, the resting-order
+    /// limit of its volume tier `tier`.
+    TierOrderLimit {
+        tier: usize,
+        max: usize,
+    },
     /// An amount at or below zero, or above `Fixed::MAX_INPUT`.
     InvalidAmount,
     /// A custody reference that was already credited.
