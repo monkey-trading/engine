@@ -14,6 +14,26 @@ alloy::sol! {
     function turnsRunUntil() external view returns (uint64);
 }
 
+/// A `turnsRunUntil()` call that goes wrong.
+#[derive(Clone, Copy)]
+pub(in crate::custody::tests) enum TurnsRunUntilFault {
+    /// The call fails.
+    Refused,
+    /// The call answers bytes that are no `uint64`.
+    Undecodable,
+}
+
+impl Schedule {
+    /// The schedule the registry names, unless that read is set to fail.
+    /// Error cases:
+    /// - more reads than `named_reads_answered`
+    pub(in crate::custody::tests) fn named_or_refuse(&mut self) -> anyhow::Result<Address> {
+        self.named_reads += 1;
+        anyhow::ensure!(self.named_reads <= self.named_reads_answered.unwrap_or(usize::MAX), "connection refused");
+        Ok(self.named)
+    }
+}
+
 /// What the fake chain answers for the schedule binding reads.
 #[derive(Clone, Default)]
 pub(in crate::custody::tests) struct Schedule {
@@ -30,6 +50,13 @@ pub(in crate::custody::tests) struct Schedule {
     /// When the last turn the schedule drew ends, in seconds, as its `turnsRunUntil()` answers; zero,
     /// the default, before any is drawn.
     pub(in crate::custody::tests) turns_run_until: u64,
+    /// How many `registry_schedule` reads answer before the rest fail, as an unreachable provider's
+    /// do; `None`, the default, answers all.
+    pub(in crate::custody::tests) named_reads_answered: Option<usize>,
+    /// The `registry_schedule` reads so far.
+    named_reads: usize,
+    /// How the schedule answers `turnsRunUntil()` when it does not answer `turns_run_until`.
+    pub(in crate::custody::tests) turns_run_until_fault: Option<TurnsRunUntilFault>,
     /// The block of each `rotationState()` read, in order.
     pub(in crate::custody::tests) turn_reads: Vec<BlockRef>,
 }
@@ -58,7 +85,11 @@ impl ChainState {
             }
             _ if to == self.schedule.named && data == turnsRunUntilCall {}.abi_encode() => {
                 anyhow::ensure!(self.hash_at(at.number) == at.hash, "block {} is not canonical", at.hash);
-                Ok(turnsRunUntilCall::abi_encode_returns(&self.schedule.turns_run_until).into())
+                match self.schedule.turns_run_until_fault {
+                    Some(TurnsRunUntilFault::Refused) => anyhow::bail!("connection refused"),
+                    Some(TurnsRunUntilFault::Undecodable) => Ok(Bytes::from_static(b"no")),
+                    None => Ok(turnsRunUntilCall::abi_encode_returns(&self.schedule.turns_run_until).into()),
+                }
             }
             _ => self.epochs.answer(at, to, data),
         }

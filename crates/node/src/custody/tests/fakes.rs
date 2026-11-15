@@ -256,7 +256,7 @@ impl VaultReader for FakeChain {
     }
 
     async fn registry_schedule(&self, _at: BlockRef) -> anyhow::Result<Address> {
-        Ok(self.0.lock().unwrap().schedule.named)
+        self.0.lock().unwrap().schedule.named_or_refuse()
     }
 
     async fn schedule_registry(&self, _at: BlockRef) -> anyhow::Result<Option<Address>> {
@@ -497,4 +497,4 @@ mod files;
 pub(super) use files::{evm_toml, scratch, stored_cursor};
 mod logs;
 pub(super) use logs::Logs;
-mod schedule;
+pub(super) mod schedule;
