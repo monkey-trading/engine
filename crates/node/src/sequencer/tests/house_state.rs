@@ -184,7 +184,13 @@ fn a_pending_listing_notice_is_listed_in_the_market_reads_units_and_across_a_res
         .map(|tier| SpreadTier::tenths(tier.up_to, tier.tenth_bps() * 2))
         .collect();
     let effective_at = clock.now_ms() + NOTICE_MS + 60_000;
-    let notice = ListingNotice { spread_tiers: Some(doubled), margin_tiers: None, markup_bps: None, effective_at };
+    let notice = ListingNotice {
+        spread_tiers: Some(doubled),
+        margin_tiers: None,
+        markup_bps: None,
+        weekend_margin_bps: None,
+        effective_at,
+    };
     let events = operate(&mut seq, &clock, AdminCommand::AnnounceListing { market: 1, notice: notice.clone() });
     assert_eq!(events, [Event::AdminApplied]);
     let state = read(&mut seq);

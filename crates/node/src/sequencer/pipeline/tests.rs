@@ -89,6 +89,18 @@ impl Gated {
         Self { tx, permits, stream: stream_rx, stats, syncs, entered, manifest, task }
     }
 
+    /// Ticks, each synced on its own, until the next command opens a segment, so a test's batches
+    /// share syncs whatever the genesis's length: a segment's seal rides the sync of the batch that
+    /// ends it.
+    async fn align_to_segment(&self) {
+        while self.applied().await.map_or(0, |seq| seq + 1) % crate::test_support::SEGMENT_COMMANDS != 0 {
+            let reply = self.tick().await;
+            self.sync_started();
+            self.permits.send(Verdict::Pass).unwrap();
+            timeout(Duration::from_secs(10), reply).await.expect("an aligning tick is released").unwrap();
+        }
+    }
+
     /// Waits until the sync thread has started a sync and is waiting for its verdict.
     fn sync_started(&self) {
         self.entered.recv_timeout(Duration::from_secs(10)).expect("the sync thread starts a sync");
@@ -271,6 +283,8 @@ async fn a_full_pipeline_takes_no_request_until_a_sync_is_done() {
 #[tokio::test(flavor = "multi_thread")]
 async fn batches_queued_behind_a_sync_share_the_next_one() {
     let node = Gated::start("pipeline-grouped");
+    node.align_to_segment().await;
+    let synced = node.syncs.load(Ordering::SeqCst);
     let first = node.tick().await;
     node.applied().await;
     node.sync_started();
@@ -287,7 +301,7 @@ async fn batches_queued_behind_a_sync_share_the_next_one() {
     for reply in queued {
         timeout(Duration::from_secs(10), reply).await.expect("released by the shared sync").unwrap();
     }
-    assert_eq!(node.syncs.load(Ordering::SeqCst), 2);
+    assert_eq!(node.syncs.load(Ordering::SeqCst), synced + 2);
 }
 
 #[tokio::test(flavor = "multi_thread")]

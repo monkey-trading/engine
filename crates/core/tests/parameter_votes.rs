@@ -450,3 +450,5 @@ mod listing;
 mod toxicity;
 #[path = "parameter_votes/volume_tiers.rs"]
 mod volume_tiers;
+#[path = "parameter_votes/weekend.rs"]
+mod weekend;

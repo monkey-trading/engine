@@ -359,11 +359,26 @@ pub enum ProtocolVersion {
     /// parameters that name no table the launch table, starts every account at tier 0 with no counted
     /// volume, and holds every position held then pending, counting nothing, for its first 60 s.
     V59,
+    /// A market may carry a weekend margin (`weekend`): a rate each of its margin bands charges at
+    /// least over its weekend gap, any closure of at least 40 hours by its calendar. From two hours
+    /// before such a gap starts until the market reopens, the account's margin requirement counts each
+    /// position in the market at its weekend margin for a fill that adds risk in any market, which is
+    /// refused below it, and for a withdrawal. When the gap starts, each account holding the market
+    /// whose equity at its marks is below that requirement is closed out on the markets whose gaps
+    /// start then, largest loser first, at their marks, until it meets it; a relisting that puts the
+    /// market in a gap it has not closed out closes it out then. A listed market's weekend margin moves
+    /// only as a listing notice of at least seven days names it, or while rotation is on as a passed
+    /// vote does, to a rate from none to 10000 bps; a calendar change that is not a vote may not
+    /// narrow or remove a weekend gap within seven days, nor add or bring forward a held market's gap
+    /// within seven days. Before it a listing's weekend margin does nothing; activation starts each
+    /// listed market that names one, holding a gap it is in, or one starting within two hours, with
+    /// no close-out.
+    V60,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V59;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V60;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

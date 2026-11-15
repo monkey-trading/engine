@@ -123,4 +123,5 @@ mod tracked;
 pub mod turns;
 pub mod types;
 pub mod volume_tier;
+pub mod weekend;
 pub mod withdrawal;

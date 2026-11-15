@@ -80,6 +80,8 @@ impl Engine {
     ///   (`Engine::check_volume_tier_activation`); from `V54`, a markout floor `Engine::check_markout_floor` refuses
     /// - from `V56`, `SetGovernance` with any error case of `Engine::set_governance`; `SetParams` that
     ///   removes a stress level a restriction holds a floor at (see `Engine::check_restricted_levels`)
+    /// - from `V60`, `UpsertMarket` with a weekend margin `Engine::check_weekend_listing` refuses; and
+    ///   changing a listed market's weekend margin without a notice or a vote (`Engine::check_listing_change`)
     ///
     /// A `voted` command is a passed vote's, whose seven days' notice replaces the parameter, markup
     /// and ceiling notices. From `V56` new parameters and listings set the baseline, and the values in
@@ -149,6 +151,7 @@ impl Engine {
                     self.check_priceable(spec)?;
                 }
                 self.check_held_benchmark(spec)?;
+                self.check_weekend_listing(spec, voted)?;
                 let change = self.check_listing_change(spec, voted)?;
                 if let Some(params) = self.params.as_ref().filter(|_| self.protocol_version >= ProtocolVersion::V13) {
                     params.check_divergence_reachable(spec)?;
@@ -198,6 +201,7 @@ impl Engine {
                 self.end_unpriced_interval(spec.id);
                 self.rebase(Some(spec.id));
                 self.settle_listing_change(spec, change);
+                self.relist_weekend(spec.id, events);
                 self.refresh_session(spec.id, events);
                 // A new listing for a market others convert at can change what its index converts
                 // at, so it is their price update too, before any close-out runs.
@@ -386,6 +390,7 @@ impl Engine {
                 self.floor_bound_listings(*version);
                 self.start_hold_clocks(*version);
                 self.start_volume_tiers(*version);
+                self.start_weekend_closes(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
                 self.protocol_version = *version;
                 // Rules before `V47` record no candidate, so one an election already seated is seated before

@@ -28,6 +28,8 @@ pub(crate) mod reissue;
 mod signing;
 pub(crate) use signing::Signing;
 mod payouts;
+mod reads;
+use reads::markets;
 mod state;
 mod stats;
 mod stream;
@@ -47,7 +49,6 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use engine_core::auth::{ClientAuth, Operator, RequestAuth};
 use engine_core::emissions::TokenUnits;
-use engine_core::market::MarketSpec;
 use engine_core::merkle::{AccountProof, EntitlementProof};
 use engine_core::types::{AccountId, Millis};
 use engine_core::{Engine, Fixed};
@@ -147,19 +148,6 @@ pub struct ApiState {
     pub emission_budget: Option<TokenUnits>,
     /// The enclave key and deployment the API signs answers for.
     pub(crate) signing: Arc<Signing>,
-}
-
-#[derive(Serialize)]
-struct MarketView {
-    #[serde(flatten)]
-    spec: MarketSpec,
-    open: bool,
-    /// Whether the market takes no new risk: its own flag, or every market's.
-    reduce_only: bool,
-    mark: Option<Fixed>,
-    /// The FX index a market quoted in another currency than USD is valued at.
-    fx_mark: Option<Fixed>,
-    stress_level: usize,
 }
 
 #[derive(Serialize)]
@@ -307,28 +295,6 @@ async fn trace_request(req: Request, next: Next) -> Response {
 /// Liveness.
 async fn health() -> &'static str {
     "ok"
-}
-
-/// Every market with its live state.
-/// Error cases:
-/// - the sequencer has stopped
-async fn markets(State(s): State<ApiState>) -> ApiResult<Vec<MarketView>> {
-    let views = s
-        .read(|e| {
-            e.markets()
-                .values()
-                .map(|m| MarketView {
-                    spec: m.spec.clone(),
-                    open: m.open,
-                    reduce_only: e.is_reduce_only(m),
-                    mark: m.mark,
-                    fx_mark: m.fx_mark,
-                    stress_level: m.stress.level,
-                })
-                .collect()
-        })
-        .await?;
-    Ok(Json(views))
 }
 
 /// Benchmark history and the next rollover; available while startup synchronization waits.

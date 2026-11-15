@@ -501,6 +501,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/mod.rs` — REST routes, read handlers and the request span
 - `src/api/account.rs` — `GET /v1/accounts/{address}`: an account's balance, equity, margin, positions,
   orders, toxicity, close-outs, close fees and from `V59` its volume tier
+- `src/api/reads.rs` — `GET /v1/markets`: every market with its live state and from `V60` its weekend
+  margin window
 - `src/api/state.rs` — request authentication, nonce checks, the session-key admission a
   registered key's request falls back to, and durable sequencer round trips
 - `src/api/actions.rs` — signed client actions, session-key registration and revocation, and
@@ -527,6 +529,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   quarter of BTC's bound, churn and round trips counting nothing, an open crossing midnight counting on
   its day of maturity, pending volume granting nothing, tier 1 on the third day, the account and house
   reads, replay and a restart
+- `src/api/access_tests/weekend_margin.rs` — the `V60` dev scenario: WTI's weekend margin in the
+  market and account reads, an add refused from two hours before the close, the close-out at the
+  last price when the gap starts beside a long that holds the margin, a withdrawal held to it over the
+  gap, the normal margin at the reopen, a calendar change refused that would narrow the gap and a
+  weekend margin change refused without notice over TLS, replay and a restart
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
 - `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof, at the
@@ -541,8 +548,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/benchmark_tests/retention.rs` — failed publisher refreshes and calendar changes after restart
 - `src/api/benchmark_tests/schedule.rs` — actual worker rescheduling, in-flight nonce fencing, and financing
 - `src/api/benchmark_tests/schedule/reconnect.rs` — watch-only transport failure during a publisher fetch
-- `src/api/admin_tests.rs` — admin route tests, and the operator channel dev scenario through
-  `engine admin`
+- `src/api/admin_tests.rs` — admin route tests
+- `src/api/admin_tests/dev_scenario.rs` — the operator channel dev scenario through `engine admin`
 - `src/api/admin_tests/corporate.rs` — signed corporate-action TLS/API dev scenario, including
   prior-close holdings, a dividend followed by a split, restart and public-log replay
 - `src/api/stream/mod.rs` — the WebSocket stream: backfill from disk, then live, under the
@@ -2237,6 +2244,18 @@ horizon), for each tier from 0 `{"capped", "days"}`, the counted volume the tier
 which reaches the tier at its threshold, and the days whose volume reaches that cap, and by market
 where the account's first spread band ends, in USD. The table itself is the parameters'
 `volume_tiers` in `/v1/house/state`. The signed quote ladder steps at the account's own bounds.
+From `V60` the read adds `weekend_margins`, keyed by market, one entry per position in a market with
+a weekend margin and left out when there is none: `{"weekend_margin_bps", "from", "close", "reopen",
+"required"}`, the rate; from when new risk and withdrawals need it (two hours before the weekend gap
+starts); when the gap starts, and an account below it is closed out on the market; when the market
+reopens and the normal margin applies again; and the margin requirement the account must meet over
+the gap, every position at its mark now and each market whose kept weekend window covers the gap's
+start, or now once it has started, at its weekend margin. A market that has not yet reopened from its
+current gap counts at its normal margin there until it reopens and keeps its next window, so for the
+few hours a week one market has reopened and another not, the first one's figure can be low.
+`GET /v1/markets` gives each market's `weekend_margin_bps` (left out when none) and, for a market
+with one, `weekend_margin`: `{"weekend_margin_bps", "from", "close", "reopen"}` for its next or
+current weekend gap, or nothing while no gap starts within 366 days or before V60 activates.
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns
 `{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the
@@ -2350,7 +2369,8 @@ launch tiers, no threshold or day divisor below launch and no share above it; `a
 --effective-at <time>` gives the notice a listed market's markup change needs before an
 `upsert-market` carries it. From `V52`, `announce-listing <market>` with `--spreads-from` and
 `--margins-from` (TOML market specs whose bands it names) and `--markup-bps` gives the notice a listed
-market's spread band, margin band or markup change needs, and `adopt-close-spread-ceiling --listing
+market's spread band, margin band or markup change needs, and from `V60` with `--weekend-margin-bps`
+(0 for none) the notice its weekend margin change needs; `adopt-close-spread-ceiling --listing
 <spec.toml>` names the listing an adoption for a market not yet listed binds. From `V37`, while the operator registry has rotation on, the engine refuses
 `rotate-operator`, and an election's key takes over the same way: from the election's effective
 time, or seven days after the election is logged when that is later, and once the staking mirror
@@ -2363,7 +2383,8 @@ protocol parameters, the pending notices and the latest checkpoint without repla
 `profit_fee_bps`, `closeout_level_bps`, `stress`, from `V54` `score_tiers` and from `V55`
 `profit_fee_curve` it names, and `effective_at`. `listing_notices` maps each
 market with a pending notice to it (`spread_tiers` in tenths of a bp, `margin_tiers`, `markup_bps`,
-each left out when not named, and `effective_at`); the bands in force are `GET /v1/markets`'s. `seq` is the log head the read was taken at (`null` on an empty log).
+from `V60` `weekend_margin_bps`, each left out when not named, and `effective_at`); the bands in
+force are `GET /v1/markets`'s. `seq` is the log head the read was taken at (`null` on an empty log).
 `params` is `null` until the first `SetParams` applies, then the parameters in force, as the
 `set_params` command encodes them (`profit_fee_bps`, `closeout_level_bps`, `house_total_cap_bps`,
 `house_total_cap_floor` left out when zero, `stress_levels`, from `V55` `profit_fee_curve`, and the
