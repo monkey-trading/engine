@@ -1167,7 +1167,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/registry.rs` — the operator registry's rotation switch, election and installation events, its schedule's rotation set and turn events, the vote contract's passed proposals, and the registry's `rotationState()` read, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
 - `src/custody/tests/rpc/vote.rs` — passed proposals decoded only from the configured vote contract, with their canonical command or none, and a command not hashing to its event refused
-- `src/custody/tests/staking/vote.rs` — passed proposals mirrored only once the vote contract is read to name the configured schedule, and the registry's named turn, or from `V66` a drawn turn yet to start, reaching the engine with the frontier
+- `src/custody/tests/staking/vote.rs` — passed proposals mirrored only once the vote contract is read to name the configured schedule, and the registry's named turn, or from `V67` a drawn turn yet to start, reaching the engine with the frontier
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, the staking contract's deployer checked against the configured registry, and the schedule checked against the one the registry and the config name and against the registry it records
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, the pending listing notices, and the latest checkpoint
 - `src/api/operator.rs` — `GET /v1/operator`: the registry's `api_hostname` for the operator in effect, the key in effect, its pending rotation, whether rotation is on, the last election, and from `V51` the rotation set in effect and the next with its time, today's and tomorrow's turns, and the turn history (`?before=&limit=`)
@@ -2551,7 +2551,7 @@ JSON of, and the sequencer sequences `ApplyProposal` for a passed normal change 
 days. While votes govern at the stamp they would take, the node skips its own protocol activation and access
 policy, which wait for a vote; from `V65` votes govern only while a rotation set with members is in effect, and
 each staking frontier the watcher sequences carries the turn the registry's `rotationState()` names the operator by
-at that block, or none, read through the custody quorum once the registry is bound; from `V66`, with no turn
+at that block, or none, read through the custody quorum once the registry is bound; from `V67`, with no turn
 naming it, the frontier carries the boundary of the last turn the registry's schedule has drawn
 (`turnsRunUntil()`) when it is after the block.
 `GET /v1/house/state` adds a `governance` section, the recorded contract, each change waiting with its

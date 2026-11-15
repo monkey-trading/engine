@@ -1,4 +1,4 @@
-//! `V66`'s weekend close-out on a market with no index, through `Engine::apply`: it fills at the market's
+//! `V67`'s weekend close-out on a market with no index, through `Engine::apply`: it fills at the market's
 //! mark at the higher of the market's stress level and the level the house's loss sets then, though no
 //! index re-reads that level; it changes no level or cooldown; and its spread still clamps to the
 //! market's close-spread ceiling. `V62` fills at the level the market last set.
@@ -23,7 +23,7 @@ const OIL_CEILING_BPS: i64 = 25;
 
 #[test]
 fn a_close_out_on_a_market_with_no_index_pays_the_level_the_house_loss_sets_now() {
-    let scenario = Scenario { version: ProtocolVersion::V66, ..Scenario::default() };
+    let scenario = Scenario { version: ProtocolVersion::V67, ..Scenario::default() };
     let (before, after) = (Scenario { version: ProtocolVersion::V62, ..scenario }.run(), scenario.run());
     // Level 0 charges 2 bp on the first $500k of the $700k and 4 bp on the rest, 2.57 bp. Level 2 adds
     // its 6 bp minimum to four times that.
@@ -93,7 +93,7 @@ struct Scenario {
 
 impl Default for Scenario {
     fn default() -> Self {
-        Scenario { version: ProtocolVersion::V66, floor: false, btc_rises: true, units: "10000", funds: "10000" }
+        Scenario { version: ProtocolVersion::V67, floor: false, btc_rises: true, units: "10000", funds: "10000" }
     }
 }
 

@@ -107,7 +107,7 @@ async fn a_drawn_turn_yet_to_start_reaches_the_engine_when_none_names_the_operat
 }
 
 #[tokio::test]
-async fn before_v66_no_frontier_carries_a_drawn_turn_yet_to_start() {
+async fn before_v67_no_frontier_carries_a_drawn_turn_yet_to_start() {
     let dir = scratch("vote-upcoming-turn-v65");
     let node = governed_node_at(&dir, ProtocolVersion::V65).await;
     let chains = vote_chains(Some(SCHEDULE));

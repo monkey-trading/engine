@@ -446,7 +446,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/house_loss_bounds.rs` — the trigger's bounds under a stress notice and the operator's
   parameters, a lower threshold after its notice, refusal before `V62`, and a fresh log's first
   parameters recorded as launch's
-- `tests/house_loss_weekend.rs` — `V66`: a weekend close-out on a market with no index pays the level
+- `tests/house_loss_weekend.rs` — `V67`: a weekend close-out on a market with no index pays the level
   the house's loss sets, never less than the market's own level, within its ceiling, and changes no level
 - `src/access/mod.rs` — signed eligibility, source policy and bounded public screening types
 - `src/access/engine.rs` — deterministic screening, declarations and uncredited custody holds
@@ -586,7 +586,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V66` parts (`v15.rs` to `v66.rs`)
+  `V15` to `V67` parts (`v15.rs` to `v67.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1106,21 +1106,6 @@ then. Activation takes the earliest boundary of an accepted turn in effect or wa
 log holds rotation sets counts rotation as on until the first frontier carries the registry's state.
 Earlier logs keep V56's rule and encoding, and a frontier carries no turn before V65, so they replay
 unchanged. Its session is in `examples/reference_log/v65.rs`.
-Protocol V67 prices a weekend close-out at the stress level the house's loss sets when that is above
-the market's own. A close-out fills at its market's mark once the market has shut, where no index
-re-reads its level, so under V62 it paid the level its market last set, and a loss level that changed
-while the market had no live index never reached it. From V66 it pays the higher of the market's level
-and the level the house's loss sets at the house NAV then, which `Engine::close_out_stress_level` reads
-without recording it: the market's level, its cooldown and its events stay as its other triggers left
-them, so a market that is above the loss's level is not lowered, and one the loss has since cleared keeps
-its own level until it prices again. A pure close's spread still clamps to the market's close-spread
-ceiling. V67 also lets a staking frontier name a turn the registry has drawn and not yet started, with a
-boundary up to a day after the block's time (V65 and V66 accept none after it), so a turn refused before V65
-whose boundary is still ahead when V67 activates is not cleared by the first frontier before it: the
-operator's governed commands are refused from the boundary without a further frontier. The node reads the
-schedule's `turnsRunUntil()` when no turn names the operator, and carries the last drawn turn's boundary
-if it is after the block. Its log is `v67.jsonl`, and its session is in `examples/reference_log/v67.rs`.
-
 Protocol V66 adds request and order limits (`src/volume_tier/limits.rs`). Each tier of the
 parameters' `volume_tiers` table may name a `max_resting_orders` and a `requests_per_second`, each
 left out of the encoding while zero and named for every tier or none, in 1 to 1000 and never falling
@@ -1135,6 +1120,21 @@ earlier logs replay unchanged; activation gives each tier of the table in force,
 table that bounds it, that names none a limit by position (`ACTIVATION_MAX_RESTING_ORDERS`: 25, 50,
 100 and 250, and `ACTIVATION_REQUESTS_PER_SECOND`: 2, 5, 10 and 20), and leaves every order already
 resting. Its log is `v66.jsonl`, and its session is in `examples/reference_log/v66.rs`.
+
+Protocol V67 prices a weekend close-out at the stress level the house's loss sets when that is above
+the market's own. A close-out fills at its market's mark once the market has shut, where no index
+re-reads its level, so under V62 it paid the level its market last set, and a loss level that changed
+while the market had no live index never reached it. From V67 it pays the higher of the market's level
+and the level the house's loss sets at the house NAV then, which `Engine::close_out_stress_level` reads
+without recording it: the market's level, its cooldown and its events stay as its other triggers left
+them, so a market that is above the loss's level is not lowered, and one the loss has since cleared keeps
+its own level until it prices again. A pure close's spread still clamps to the market's close-spread
+ceiling. V67 also lets a staking frontier name a turn the registry has drawn and not yet started, with a
+boundary up to a day after the block's time (V65 and V66 accept none after it), so a turn refused before V65
+whose boundary is still ahead when V67 activates is not cleared by the first frontier before it: the
+operator's governed commands are refused from the boundary without a further frontier. The node reads the
+schedule's `turnsRunUntil()` when no turn names the operator, and carries the last drawn turn's boundary
+if it is after the block. Its log is `v67.jsonl`, and its session is in `examples/reference_log/v67.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

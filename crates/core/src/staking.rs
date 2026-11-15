@@ -211,7 +211,7 @@ impl Engine {
     /// Records a fully verified finalized staking range after all its events have applied, from
     /// `V37` the block's time, which never moves back, and from `V65` the registry's turn state at that
     /// block: the boundary of the drawn turn naming the operator, which a turn refused before `V65` left
-    /// no other record of, or none, which resolves what `V65`'s activation could not see; from `V66` a
+    /// no other record of, or none, which resolves what `V65`'s activation could not see; from `V67` a
     /// drawn turn not yet started, up to a day after the block's time, may be named.
     pub(crate) fn staking_progress(
         &mut self,

@@ -155,9 +155,9 @@ fn the_registry_names_a_turn_refused_before_v56_at_the_next_frontier() {
 }
 
 #[test]
-fn a_frontier_names_a_refused_turn_not_yet_started_from_v66() {
+fn a_frontier_names_a_refused_turn_not_yet_started_from_v67() {
     // The turn's boundary is a day past the block, as the day it is drawn.
-    let (mut h, begins) = refused_turn_ahead(ProtocolVersion::V66);
+    let (mut h, begins) = refused_turn_ahead(ProtocolVersion::V67);
     assert!(begins - h.ts <= DAY_MS);
     rejected(&h.operate(house_cap(&h, ETH, -1)), "only a passed vote changes this");
     let (block, block_hash) = (h.log.len() as u64, B256::repeat_byte(0x57));
@@ -182,7 +182,7 @@ fn a_frontier_names_a_refused_turn_not_yet_started_from_v66() {
 }
 
 #[test]
-fn before_v66_a_frontier_cannot_name_a_turn_after_its_block() {
+fn before_v67_a_frontier_cannot_name_a_turn_after_its_block() {
     let (mut h, begins) = refused_turn_ahead(ProtocolVersion::V65);
     let events = frontier(&mut h, Some(Some(begins)));
     assert!(

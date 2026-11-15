@@ -196,7 +196,7 @@ impl Engine {
 
     /// Prices a close-out's fill at index `mid`, converting to USD at `fx`, and books it: from `V60`
     /// a weekend close-out fills at its market's mark once the market has shut, where its own
-    /// index no longer prices; from `V66` at the market's level or the one the house's loss sets now,
+    /// index no longer prices; from `V67` at the market's level or the one the house's loss sets now,
     /// whichever is higher.
     /// Error cases:
     /// - as `price_at`

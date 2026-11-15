@@ -130,7 +130,7 @@ fn the_loss_level_is_the_highest_level_whose_threshold_the_loss_is_above() {
 #[test]
 fn a_close_out_reads_the_loss_at_the_nav_now_and_never_pays_below_its_market() {
     let mut engine = opened(T0 + 5_000, 100);
-    engine.protocol_version = ProtocolVersion::V66;
+    engine.protocol_version = ProtocolVersion::V67;
     engine.params = Some(params(vec![level(None), level(None), level(Some(0))]));
     engine.markets.insert(1, market());
     let mut events = Vec::new();

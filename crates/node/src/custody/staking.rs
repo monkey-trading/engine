@@ -214,7 +214,7 @@ impl StakingCursor {
 /// schedule has been read to name the registry, and its third whether a configured vote contract has
 /// been read to name the schedule: a schedule or vote event before then stalls the same way. With
 /// `turns`, the bound registry, the progress from `V65` carries the registry's turn state at `to`: the
-/// boundary of the drawn turn naming the operator, from `V66` else that of a drawn turn yet to start, or
+/// boundary of the drawn turn naming the operator, from `V67` else that of a drawn turn yet to start, or
 /// none. A failed event read halves `range`; a completed chunk lets it grow back.
 /// Error cases:
 /// - stalled: a read fails, an event is on an unproven block, an event arrives before the
@@ -299,8 +299,8 @@ pub(super) async fn mirror<V: VaultReader>(
             if version >= ProtocolVersion::V37 { Some(block_time(reader, to, block_hash).await?) } else { None };
         let named_turn = match turns.filter(|_| version >= ProtocolVersion::V65) {
             Some(registry) => {
-                // From V66 a drawn turn that has yet to start counts, as the engine accepts it.
-                let upcoming = block_time.filter(|_| version >= ProtocolVersion::V66);
+                // From V67 a drawn turn that has yet to start counts, as the engine accepts it.
+                let upcoming = block_time.filter(|_| version >= ProtocolVersion::V67);
                 Some(named_turn(reader, registry, to, block_hash, upcoming).await?)
             }
             None => None,

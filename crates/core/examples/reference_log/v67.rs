@@ -1,4 +1,4 @@
-//! The session's `V66` part: a weekend close-out on a market with no index pays the stress level the
+//! The session's `V67` part: a weekend close-out on a market with no index pays the stress level the
 //! house's loss sets. With rotation on, a vote activates the version and another puts level 2's loss
 //! threshold back at zero, so every market steps down to level 0 while the house is not behind. A
 //! client's AAPL long cannot be held over the weekend; a second client's BTC long gains until the house
@@ -26,9 +26,9 @@ const BTC_SEED: u8 = 0x6c;
 const COOLDOWN_MS: Millis = 300_000;
 const HOUR_MS: Millis = 60 * 60 * 1000;
 
-/// Activates `V66` and puts the threshold at zero, both by vote; then the close-out described above.
+/// Activates `V67` and puts the threshold at zero, both by vote; then the close-out described above.
 pub(crate) fn session(h: &mut Harness) {
-    let activation = AdminCommand::ActivateProtocol { version: ProtocolVersion::V66 };
+    let activation = AdminCommand::ActivateProtocol { version: ProtocolVersion::V67 };
     let mut params = h.engine.baseline_params().expect("set");
     params.stress_levels[2].trigger.get_or_insert_with(Default::default).house_loss = Some(Fixed::ZERO);
     let zero = AdminCommand::SetParams(params);
@@ -41,7 +41,7 @@ pub(crate) fn session(h: &mut Harness) {
         let events = h.cmd(Command::ApplyProposal(Box::new(VotedChange { proposal, command })));
         assert_eq!(events.last(), Some(&Event::AdminApplied), "{events:?}");
     }
-    assert_eq!(h.engine.protocol_version(), ProtocolVersion::V66);
+    assert_eq!(h.engine.protocol_version(), ProtocolVersion::V67);
 
     // The next weekend gap: two clients open three hours before it, and the house is not behind.
     let close = h.engine.markets()[&AAPL].weekend.expect("AAPL keeps its next gap").close;
@@ -68,7 +68,7 @@ pub(crate) fn session(h: &mut Harness) {
     h.advance_to(close - 2_000);
     let up = btc + btc.mul_bps(400);
     h.price(BTC, &up.to_string());
-    assert!(h.engine.house_loss().expect("V66").loss.is_positive());
+    assert!(h.engine.house_loss().expect("V67").loss.is_positive());
     let levels = (h.engine.markets()[&AAPL].stress.level, h.engine.markets()[&BTC].stress.level);
     assert_eq!(levels, (0, 2));
 
