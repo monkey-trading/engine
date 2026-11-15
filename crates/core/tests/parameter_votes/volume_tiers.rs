@@ -3,9 +3,10 @@
 //! launch, and a voted relisting keeps each tier's spread within its launch spread to twice it.
 
 use super::*;
+use common::weekend::{genesis_with_tiers, globex};
 use engine_core::Fixed;
 use engine_core::spread_tier::SpreadTier;
-use engine_core::volume_tier::launch_volume_tiers;
+use engine_core::volume_tier::{ACTIVATION_MARGIN_FLOORS_BPS, launch_volume_tiers};
 
 /// `governed`, with BTC, ETH and AAPL relisted before their launch bands are recorded at 1bp to $1m,
 /// 2bp to $5m and 5bp above: a first band a share cut or a demotion can charge twice. At `governed`'s
@@ -73,4 +74,30 @@ fn a_voted_table_keeps_each_margin_floor_at_or_above_launch() {
     rejected(&apply(&mut h, 2, cut), "volume tier 0's margin_floor_bps 200 is below its launch value 500");
     assert_eq!(apply(&mut h, 3, raised).last(), Some(&Event::AdminApplied));
     assert_eq!(h.engine.params().expect("set").volume_tiers[1].margin_floor_bps, 300);
+}
+
+#[test]
+fn a_genesis_that_names_the_floors_binds_a_voted_table_to_them() {
+    // A fresh log's genesis names tier 0's 5% and tier 1's 2% under `V64`, and governance follows it.
+    let mut tiers = launch_volume_tiers();
+    tiers.iter_mut().zip(ACTIVATION_MARGIN_FLOORS_BPS).for_each(|(tier, floor)| tier.margin_floor_bps = floor);
+    let mut h = genesis_with_tiers(ProtocolVersion::V64, globex(vec![]), 0, 0, tiers);
+    let config = engine_core::StakingConfig {
+        liquidity_floor: f("1000000"),
+        epoch_ms: 24 * 60 * 60 * 1000,
+        start_ms: h.ts,
+        cooldown_ms: 3 * 24 * 60 * 60 * 1000,
+    };
+    h.operator_admin(AdminCommand::InitStaking(config));
+    h.admin(AdminCommand::SetGovernance(GovernanceConfig { vote: VOTE, restriction_ttl_ms: TTL }));
+    switch_rotation(&mut h, true);
+    let cut = with_params(&h, |params| params.volume_tiers.iter_mut().for_each(|tier| tier.margin_floor_bps = 0));
+    let raised = with_params(&h, |params| params.volume_tiers[0].margin_floor_bps = 600);
+    for (proposal, command) in [(1, cut.clone()), (2, raised.clone())] {
+        assert!(matches!(pass(&mut h, proposal, false, command).last(), Some(Event::ProposalScheduled { .. })));
+    }
+    h.advance(NOTICE_MS);
+    rejected(&apply(&mut h, 1, cut), "volume tier 0's margin_floor_bps 0 is below its launch value 500");
+    assert_eq!(apply(&mut h, 2, raised).last(), Some(&Event::AdminApplied));
+    assert_eq!(h.engine.params().expect("set").volume_tiers[0].margin_floor_bps, 600);
 }
