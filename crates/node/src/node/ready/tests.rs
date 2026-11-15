@@ -146,6 +146,64 @@ async fn a_certificate_store_that_does_not_open_refuses_before_the_member_connec
     assert!(format!("{err:#}").contains("has format 2"), "{err:#}");
 }
 
+/// A member's start checks its replica's and its genesis's staking config against the contract before it connects to
+/// anything else: here the checkpoint endpoint and every time server are unreachable, the contract's
+/// providers answer, and the contract holds another epoch than the genesis record, so the refusal is
+/// `staking_terms_mismatch` and not a connection failure.
+#[tokio::test]
+async fn a_member_whose_staking_config_the_contract_does_not_hold_is_refused_before_it_connects() {
+    let (_guard, mut alerts) = crate::test_support::capture_alerts();
+    let data = scratch_dir("ready-staking-mismatch");
+    let log = data.join("log");
+    let cfg = unreachable(&data, &log);
+    write_log(&cfg).await;
+    let key = EnclaveKey::test_key();
+    let signer = AccountId(key.address());
+    let domain = CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };
+    let follower = Follower::open(&log, 4, domain, signer, [signer].into(), None, |_| {}).unwrap();
+
+    // The log's and the genesis's one-day epoch is not the contract's hour.
+    let cfg = served_by_contract(cfg, 3_600).await;
+    let err = read_member(&cfg, signer, &follower).await.expect("a start whose staking config differs read on");
+    assert!(format!("{err:#}").starts_with("the log: epoch 86400000 ms differs"), "{err:#}");
+    let alert = alerts.try_recv().expect("the refusal raises an alert");
+    assert_eq!(alert["alert"], "staking_terms_mismatch");
+
+    // Holding the contract's own values, the same start passes the check and fails on what it reads next.
+    let cfg = served_by_contract(cfg, 86_400).await;
+    let err = read_member(&cfg, signer, &follower).await.expect("the checkpoint endpoint is unreachable");
+    assert!(!format!("{err:#}").contains("staking"), "{err:#}");
+}
+
+/// `Ready::read` for `signer` over `follower`'s replica, and the error it stops on.
+async fn read_member(cfg: &NodeConfig, signer: AccountId, follower: &Follower) -> Option<anyhow::Error> {
+    let turn = crate::checkpoints::ScheduledTurn {
+        turn: 1,
+        boundary: 0,
+        candidate: signer,
+        admin_key: signer,
+        release: [0; 32],
+        generation: 0,
+        set: 1,
+        source: None,
+    };
+    let start = crate::node::KeyStart { mock_launch_digest: Some(DIGEST), ..Default::default() };
+    let sample = std::future::ready(Err(anyhow::anyhow!("the start went on to sample time")));
+    Ready::read(cfg, &start, &Metrics::new(), signer, follower.replica(), (&turn, 0), sample).await.err()
+}
+
+/// `cfg` with its custody providers on a stand-in whose staking contract holds `epoch_secs` and the
+/// genesis's cooldown.
+async fn served_by_contract(mut cfg: NodeConfig, epoch_secs: u64) -> NodeConfig {
+    let evm = cfg.custody.evm.as_mut().unwrap();
+    let rpc = crate::test_support::staking_rpc(evm.usdc, epoch_secs, 2_419_200).await;
+    for (provider, path) in evm.providers.iter_mut().zip(["a", "b", "c"]) {
+        let section = format!("name = '{path}'\nrpc_url = '{rpc}/{path}'");
+        provider.rpc_url = toml::from_str::<RpcProviderSection>(&section).unwrap().rpc_url;
+    }
+    cfg
+}
+
 /// A start that is not a member's reads the staking contract the config names before it serves, and
 /// refuses a genesis staking config it cannot check: here the contract's providers are unreachable.
 #[tokio::test]

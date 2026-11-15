@@ -1,6 +1,9 @@
 //! The staking contract's epoch and cooldown against `InitStaking`: what the quorum reads decodes, and
 //! a command that differs in either value is refused, as is one whose contract cannot be read.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol_types::SolCall;
 use engine_core::Fixed;
@@ -21,11 +24,21 @@ const CONTRACT: ContractTerms = ContractTerms { epoch_secs: 86_400, cooldown_sec
 struct Provider {
     chain: FakeChain,
     terms: Option<(U256, U256)>,
+    /// The identity this provider names after its first answer, when it changes network.
+    then: Option<VaultIdentity>,
+    /// Identity answers this provider has given.
+    answered: Arc<AtomicUsize>,
+    /// Identity answers every provider has given.
+    identities: Arc<AtomicUsize>,
 }
 
 impl VaultReader for Provider {
     async fn identity(&self) -> anyhow::Result<VaultIdentity> {
-        self.chain.identity().await
+        self.identities.fetch_add(1, Ordering::SeqCst);
+        match self.then {
+            Some(then) if self.answered.fetch_add(1, Ordering::SeqCst) > 0 => Ok(then),
+            _ => self.chain.identity().await,
+        }
     }
 
     async fn finality(&self) -> anyhow::Result<Finality> {
@@ -65,6 +78,17 @@ fn quorum(terms: Option<(U256, U256)>) -> Quorum<Provider> {
 
 /// A quorum whose providers serve `identity`, the configured deployment's when `None`.
 fn quorum_on(terms: Option<(U256, U256)>, identity: Option<VaultIdentity>) -> Quorum<Provider> {
+    changing(terms, identity, None).0
+}
+
+/// `quorum_on`, whose providers name `then` from their second identity answer on, and the number of
+/// identity answers they have given between them.
+fn changing(
+    terms: Option<(U256, U256)>,
+    identity: Option<VaultIdentity>,
+    then: Option<VaultIdentity>,
+) -> (Quorum<Provider>, Arc<AtomicUsize>) {
+    let identities = Arc::new(AtomicUsize::new(0));
     let providers = (0..3)
         .map(|i| {
             let chain = FakeChain::default();
@@ -74,10 +98,10 @@ fn quorum_on(terms: Option<(U256, U256)>, identity: Option<VaultIdentity>) -> Qu
                 state.final_block = Some(5);
                 state.identity = identity;
             }
-            (format!("p{i}"), Provider { chain, terms })
+            (format!("p{i}"), Provider { chain, terms, then, answered: Arc::default(), identities: identities.clone() })
         })
         .collect();
-    Quorum::new(providers).unwrap()
+    (Quorum::new(providers).unwrap(), identities)
 }
 
 fn init(epoch_ms: i64, cooldown_ms: i64) -> StakingConfig {
@@ -115,6 +139,17 @@ async fn providers_that_agree_on_another_chain_or_token_than_the_configured_ones
             format!("{:#}", read(&quorum_on(held, Some(identity)), Address::repeat_byte(1), CHAIN).await.unwrap_err());
         assert!(refused.contains("not the configured chain"), "{refused}");
     }
+}
+
+#[tokio::test]
+async fn one_identity_vote_admits_the_providers_and_is_the_one_checked() {
+    let held = secs(86_400, 2_419_200);
+    // Providers that change network after their first answer: the vote that was checked is the one that
+    // admitted them, and no second vote follows to admit them on another chain unchecked.
+    let elsewhere = VaultIdentity { chain_id: CHAIN_ID + 1, token: Some(USDC_TOKEN) };
+    let (quorum, identities) = changing(held, None, Some(elsewhere));
+    read(&quorum, Address::repeat_byte(1), CHAIN).await.unwrap();
+    assert_eq!(identities.load(Ordering::SeqCst), 3, "each of three providers answered one identity round");
 }
 
 #[test]

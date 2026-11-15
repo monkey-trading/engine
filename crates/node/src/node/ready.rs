@@ -76,12 +76,12 @@ impl Ready {
     /// trusted time sample `sample` gives, last, so it is fresh when the start stamps under it.
     /// Error cases:
     /// - the sealed certificate does not open (see `keys::certificates`)
+    /// - with a staking contract configured, the replica's or the genesis's staking config cannot be
+    ///   checked against it or differs (see `staking_preflight`)
     /// - the registry's rotation switch is off, or names another API hostname (see `check_rotation`)
     /// - the checkpoint setup fails, the replica does not retain the vault's finalized checkpoint, or
     ///   the vault does not authenticate it (see `Poster::startup`)
     /// - the emission budget cannot be read or differs from the log's (see `emission_preflight`)
-    ///   or, with a staking contract configured, the replica's or the genesis's staking config cannot be
-    ///   checked against it or differs (see `staking_preflight`)
     /// - the posted log heads cannot be read, or no trusted time sample can be taken
     pub(crate) async fn read(
         cfg: &NodeConfig,
@@ -93,6 +93,13 @@ impl Ready {
         sample: impl Future<Output = anyhow::Result<Sample>>,
     ) -> anyhow::Result<Self> {
         let certificates = crate::node::keys::certificates(cfg, start)?;
+        // Read here, before the member connects, so the start after the confirmation reads no more.
+        crate::node::preflight::staking_preflight(
+            crate::custody::StakingTerms::connect(&cfg.custody)?.as_ref(),
+            replica.engine().staking().map(|staking| &staking.config),
+            cfg.genesis.staking.as_ref(),
+        )
+        .await?;
         crate::node::handover::check_rotation_for(cfg, &mut false, Some(turn.candidate)).await?;
         let setup = crate::checkpoints::setup::connect_successor(cfg, signer, metrics).await?;
         let anchor = match setup.as_ref().and_then(|setup| setup.posted_seq) {
@@ -108,13 +115,6 @@ impl Ready {
             }
             None => None,
         };
-        // Read here, before the member connects, so the start after the confirmation reads no more.
-        crate::node::preflight::staking_preflight(
-            crate::custody::StakingTerms::connect(&cfg.custody)?.as_ref(),
-            replica.engine().staking().map(|staking| &staking.config),
-            cfg.genesis.staking.as_ref(),
-        )
-        .await?;
         let heads = crate::log_heads::setup::read_heads(cfg, signer).await?;
         let generations = BTreeMap::from([(turn.turn, generation)]);
         let sample = sample.await.context("taking the trusted time sample the start stamps under")?;
