@@ -2,8 +2,8 @@
 //! limit, in place of the parameters' cap, and a new resting order past it is refused naming the tier
 //! while orders already resting when the tier falls stay; the tier's request rate is what the node
 //! admits the account's signed requests at; a table naming no limit leaves the parameters' cap; and the
-//! activation gives a log's table its limits by position. Before `V67` a limit a table names does
-//! nothing. The limits' bounds are in `tier_limit_bounds.rs`.
+//! activation gives a log's table its limits by position. Before `V67` a table may name none. The
+//! limits' bounds are in `tier_limit_bounds.rs`.
 
 mod common;
 
@@ -60,6 +60,17 @@ fn each_tier_rests_up_to_its_own_limit() {
         accepted(&bid(&mut h, &a));
     }
     assert_eq!(rejection(&bid(&mut h, &a)), &Reject::TierOrderLimit { tier: 2, max: 100 });
+    // $608k counted reaches tier 3, whose limit of 250 is above the parameters' cap of 100, which it
+    // replaces rather than joins.
+    only_fill(&trade(&mut h, &a, GOLD, Side::Sell, "60", "2000"));
+    mature(&mut h);
+    assert_eq!(h.engine.volume_tier(a.account), 3);
+    assert_eq!(h.engine.params().unwrap().max_resting_orders, DEFAULT_MAX_RESTING_ORDERS);
+    for _ in 100..250 {
+        accepted(&bid(&mut h, &a));
+    }
+    assert_eq!(rejection(&bid(&mut h, &a)), &Reject::TierOrderLimit { tier: 3, max: 250 });
+    assert_eq!(h.engine.accounts()[&a.account].orders.len(), 250);
 }
 
 #[test]
@@ -140,10 +151,10 @@ fn activation_gives_unnamed_limits_by_position_and_leaves_resting_orders() {
 
 // ── Helpers ──
 
-/// A table whose tiers a few fills reach, each in a day: $100k counted reaches tier 1 and $400k tier
-/// 2. With `named`, it names the activation's limits and rates; without, none.
+/// A table whose tiers a few fills reach, each in a day: $100k counted reaches tier 1, $400k tier 2
+/// and $600k tier 3. With `named`, it names the activation's limits and rates; without, none.
 fn tiers(named: bool) -> Vec<VolumeTier> {
-    [(0, 2_500), (100_000, 5_000), (400_000, 10_000), (10_000_000, 25_000)]
+    [(0, 2_500), (100_000, 5_000), (400_000, 10_000), (600_000, 25_000)]
         .into_iter()
         .enumerate()
         .map(|(at, (usd, best_price_share_bps))| VolumeTier {

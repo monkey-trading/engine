@@ -92,28 +92,30 @@ pub(super) fn within_launch_limits(tiers: &[VolumeTier], launch: &[VolumeTier]) 
 }
 
 impl Engine {
-    /// The tier `account` trades at and the resting orders it may hold at once: from `V67`, the
-    /// tier's limit when the table names one. `None` before `V67`, with no table, or where the tier
-    /// names none, when the parameters' cap applies.
+    /// The resting orders and request rate tier `tier` of the table in force names: from `V67`, each
+    /// where it is not zero. `None` for each before `V67`, with no table, or where the tier names none.
+    pub(super) fn tier_limits(&self, tier: usize) -> (Option<usize>, Option<u32>) {
+        let named = self.volume_tiers_in_force().filter(|_| self.protocol_version >= ProtocolVersion::V67);
+        let Some(tier) = named.map(|tiers| &tiers[tier]) else { return (None, None) };
+        (
+            Some(tier.max_resting_orders).filter(|max| *max != 0),
+            Some(tier.requests_per_second).filter(|rate| *rate != 0),
+        )
+    }
+
+    /// The tier `account` trades at and the resting orders it may hold at once, where its tier names a
+    /// limit (`tier_limits`); otherwise the parameters' cap applies.
     pub(crate) fn order_limit(&self, account: AccountId) -> Option<(usize, usize)> {
-        if self.protocol_version < ProtocolVersion::V67 {
-            return None;
-        }
         let tier = self.volume_tier(account);
-        let max = self.volume_tiers_in_force()?[tier].max_resting_orders;
-        (max != 0).then_some((tier, max))
+        self.tier_limits(tier).0.map(|max| (tier, max))
     }
 
     /// The request rate `account`'s tier admits, which the node's buckets for the account and its
-    /// session keys take: from `V67`, when the table names one. `None` before `V67`, with no table,
-    /// or where the tier names none, when the node's configured rate applies.
+    /// session keys take, where its tier names one (`tier_limits`); otherwise the node's configured
+    /// rate applies.
     pub fn request_limit(&self, account: AccountId) -> Option<RequestLimit> {
-        if self.protocol_version < ProtocolVersion::V67 {
-            return None;
-        }
         let tier = self.volume_tier(account);
-        let per_second = self.volume_tiers_in_force()?[tier].requests_per_second;
-        (per_second != 0).then_some(RequestLimit { tier, per_second })
+        self.tier_limits(tier).1.map(|per_second| RequestLimit { tier, per_second })
     }
 
     /// Starts tier limits when `version` activates `V67` over the log: each tier of the table in force,

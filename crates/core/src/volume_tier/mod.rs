@@ -340,9 +340,8 @@ impl Engine {
                 TierProgress { capped, days: window.iter().filter(at_cap).count() }
             })
             .collect();
-        let (share, named) = (tiers[tier].best_price_share_bps, self.protocol_version >= ProtocolVersion::V67);
-        let max_resting_orders = Some(tiers[tier].max_resting_orders).filter(|max| named && *max != 0);
-        let requests_per_second = Some(tiers[tier].requests_per_second).filter(|rate| named && *rate != 0);
+        let share = tiers[tier].best_price_share_bps;
+        let (max_resting_orders, requests_per_second) = self.tier_limits(tier);
         let best_price_bounds = self
             .markets
             .iter()

@@ -426,7 +426,7 @@ pub enum ProtocolVersion {
     /// limits move only with the table, by a seven-day notice or a vote, never above launch's and never
     /// falling with the tier. Activation gives each tier of the table in force, and of its launch table,
     /// that names none a limit by position: 25, 50, 100 and 250 orders, and 2, 5, 10 and 20 requests a
-    /// second; before it a limit a table names does nothing.
+    /// second; before it a table may name none.
     V67,
 }
 

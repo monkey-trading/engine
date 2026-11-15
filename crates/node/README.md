@@ -2303,7 +2303,9 @@ access holds) off the sequencer's thread: it applies a batch's commands once the
 view queues behind them, so a view shows each command whose reply its caller has had and nothing a crash could
 take back, and a scan in progress delays views, not prices. House and dashboard views, which read the record
 a batch ahead of the copy, proofs, quote reads and the checks that admit a signed request stay on the
-sequencer, and their answers wait for the log to hold the seq they read. The result is installed by the next command or read
+sequencer, and their answers wait for the log to hold the seq they read; the one exception is, from `V67`, the
+request rate a credited account's signed request is counted at, which the copy gives, so that read waits
+behind the copy's applies and scans (and, with no worker, for the log to hold the batch it reads). The result is installed by the next command or read
 after it finishes,
 every due scan is taken, and if the worker stops the record scans on the
 sequencer's thread again and raises the `stats_scan_inline` warning. A replay scans on its own thread, lightly for all but the last, so a replay of a log at 100k accounts spends about 5 ms per light interval of sequenced time on it. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d

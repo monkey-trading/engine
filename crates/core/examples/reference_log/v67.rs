@@ -20,7 +20,7 @@ use crate::v56::pass;
 const CLIENT_SEED: u8 = 0x7b;
 
 /// `V67` activates by vote. A fresh wallet rests 25 buy limits in EUR-USD, and a 26th is refused as
-/// tier 0's limit; a voted cut of nothing but a raised limit, 26 at tier 0, is refused.
+/// tier 0's limit; a voted table that raises tier 0's limit to 26 is refused.
 pub(crate) fn session(h: &mut Harness) {
     let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V67 };
     scheduled(&pass(h, 80, false, Some(activate.clone())));

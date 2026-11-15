@@ -256,8 +256,9 @@ impl ApiState {
         }
         self.check_fresh(&auth, next, last_sequenced)?;
         // Counted against the account's session bucket, not the account's own: all of an
-        // account's keys share one allowance at the per-account rate, so keys cannot multiply
-        // it, and a flooding key cannot starve the wallet's requests, its revocation above all.
+        // account's keys share one allowance, at its tier's rate where the table names one and
+        // the per-account rate otherwise, so keys cannot multiply it, and a flooding key cannot
+        // starve the wallet's requests, its revocation above all.
         let limit = self.request_limit(account).await?;
         self.limits.check_session_account_at(account, limit)?;
         Ok(Some(auth))
