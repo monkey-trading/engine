@@ -204,6 +204,16 @@ impl Copy {
         }
     }
 
+    /// Records `head`, the last command the log on disk holds, which `sealer` sealed, as the copy's
+    /// durable head until a follower links the copy (`Follower::link_with`): an operator that handed
+    /// its keys over answers from it while its replica builds, so its successor's start check waits on
+    /// no replay.
+    pub(crate) fn seed(&self, head: Head, sealer: AccountId) {
+        let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        (state.durable, state.sealer) = (Some(head), Some(sealer));
+        state.links.insert(head.seq, (head.link, Some(sealer)));
+    }
+
     /// Clears the links and entries of a copy set aside, and its divergence from heads it saw: a
     /// rebuilt copy records its own. Conflicts stand.
     pub(crate) fn rebuilt(&self) {

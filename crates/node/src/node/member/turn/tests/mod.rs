@@ -153,14 +153,14 @@ async fn a_member_that_handed_its_turn_over_follows_on_a_sample_below_the_bounda
     fixture.seal_own_turn();
     fixture.time.set(AFTER - 5_000);
     let mut member = fixture.member();
-    member.handed_over(Handed { generation: Some(GENERATION), reached: Some(AFTER + 1) });
+    member.handed_over(Handed { generation: Some(GENERATION), reached: Some(AFTER + 1), head: None });
     tokio::select! {
         _ = member.until_turn() => panic!("the member came back to the turn it handed over"),
         () = operator.wait_for_connections(1) => {}
     }
 
     let mut member = fixture.member();
-    member.handed_over(Handed { generation: Some(GENERATION), reached: None });
+    member.handed_over(Handed { generation: Some(GENERATION), reached: None, head: None });
     let followed = operator.connections() + 1;
     tokio::select! {
         _ = member.until_turn() => panic!("the member held the generation it handed over"),

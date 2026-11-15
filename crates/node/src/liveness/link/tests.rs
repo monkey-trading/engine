@@ -42,6 +42,19 @@ fn a_copy_keeps_the_newest_head_of_each_recent_epoch_and_the_newest_signed_head(
     assert_eq!(empty.durable, None, "nothing durable: no durable head");
 }
 
+/// A copy seeded with the last command its log holds answers with it, and the key that sealed it, until
+/// a follower links the copy, which then answers from its own replica: an operator that handed its keys
+/// over answers its successor's start check while its replica builds.
+#[test]
+fn a_seeded_copy_answers_its_logs_last_command_until_a_follower_links_it() {
+    let copy = Copy::default();
+    copy.seed(head(9), AccountId([7; 20]));
+    let status = copy.status(1).expect("a seeded copy answers");
+    assert_eq!((status.durable, status.sealer), (Some(head(9)), AccountId([7; 20])));
+    copy.rebuilt();
+    assert_eq!(copy.status(1).ok().and_then(|status| status.durable), None, "a linked copy answers from its replica");
+}
+
 /// A copy set aside serves none of its entries; the heads seen and the conflicts are kept per key, so
 /// another key reusing an epoch number after a reorg answers from its own, and the first key, put back,
 /// finds its conflict standing; the newest signed head is the epoch in effect's.

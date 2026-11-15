@@ -45,7 +45,16 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
                 }
             }
             match Standby::open(self.cfg, &self.start, self.answering.clone(), self.metrics.clone()).await {
-                Ok((opened, promotion)) => (*standby, pending) = (Some(opened), promotion),
+                Ok((opened, promotion)) => {
+                    // Until the follower links the copy, an operator that handed its keys over answers
+                    // from its log's last command: the successor may have no other member to ask.
+                    if let Some((head, sealer)) =
+                        self.handed.and_then(|handed| handed.head).filter(|_| follower.is_none())
+                    {
+                        opened.copy().seed(head, sealer);
+                    }
+                    (*standby, pending) = (Some(opened), promotion)
+                }
                 Err(e) => {
                     warn!("opening the member's standby keys failed, trying again: {e:#}");
                     return Ok(Kept::Follow);

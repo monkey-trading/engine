@@ -243,14 +243,14 @@ impl Gate {
         self.0.wake.notified().await;
     }
 
-    /// Records the latest stamp a command may carry: one heartbeat interval past the newest confirmed
-    /// seq's stamp.
+    /// Records the latest stamp a command may carry: one heartbeat interval past the stamp of the first
+    /// command after the newest confirmed seq.
     pub(crate) fn bound_stamps(&self, stamp: u64) {
         self.0.stamp_bound.store(stamp, Ordering::SeqCst);
     }
 
-    /// Whether a command stamped `ts` may be admitted: the gate sequences, and `ts` is within one
-    /// heartbeat interval of the newest confirmed seq's stamp.
+    /// Whether a command stamped `ts` may be admitted: the gate sequences, and `ts` is within the stamp
+    /// bound (`bound_stamps`).
     pub(crate) fn admits(&self, ts: engine_core::types::Millis) -> bool {
         self.sequences() && u64::try_from(ts).is_ok_and(|ts| ts <= self.0.stamp_bound.load(Ordering::SeqCst))
     }

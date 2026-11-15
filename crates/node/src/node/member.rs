@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Context;
-use engine_core::types::Millis;
+use engine_core::types::{AccountId, Millis};
 use tracing::info;
 
 use crate::checkpoints::CheckpointRpc;
@@ -50,17 +50,27 @@ pub(super) enum Ended {
 /// time had reached, read once the stop the successor's admission triggered has drained the node,
 /// which is at or past the successor's turn's boundary. The member never holds that generation again,
 /// and its reach never falls below that time, so a later sample with a wider radius cannot give it
-/// back the turn it handed over.
+/// back the turn it handed over. Its log's last command, with the key that sealed it, is what its
+/// member link answers until its replica is built: a successor's start check, in a set of two, has no
+/// other member to ask.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Handed {
     pub generation: Option<u64>,
     pub reached: Option<Millis>,
+    pub head: Option<(Head, AccountId)>,
 }
 
 impl Handed {
-    /// What a run whose keys `store` sealed, if any, gives away, trusted time having reached `reached`.
-    pub(super) fn of(store: Option<&KeyStore>, reached: Option<Millis>) -> Self {
-        Self { generation: store.map(KeyStore::generation), reached }
+    /// What a run whose keys `store` sealed, if any, gives away, trusted time having reached `reached`,
+    /// its log ending at `last`, a command those keys sealed.
+    pub(super) fn of(store: Option<&KeyStore>, reached: Option<Millis>, last: Option<Head>) -> Self {
+        let sealer = store.and_then(|store| store.keys().enclave_key().ok()).map(|key| AccountId(key.address()));
+        Self { generation: store.map(KeyStore::generation), reached, head: last.zip(sealer) }
+    }
+
+    /// What a run that ended before it sequenced gives away: the generation `store` sealed, if any.
+    pub(super) fn sealed(store: Option<&KeyStore>) -> Self {
+        Self::of(store, None, None)
     }
 }
 

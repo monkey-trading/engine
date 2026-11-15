@@ -156,7 +156,7 @@ async fn serve_node(
             .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?
         {
             registration::Registered::Named(setup) => *setup,
-            registration::Registered::Superseded => return Ok(Ended::Replaced(Handed::of(store.as_deref(), None))),
+            registration::Registered::Superseded => return Ok(Ended::Replaced(Handed::sealed(store.as_deref()))),
         },
     };
     // The takeover cut runs once the vault names this key: a promoted node's first start began
@@ -320,7 +320,7 @@ async fn serve_node(
     }
     log_check::spawn(cfg, &mut tasks, (log_check_due, turn_store.as_ref()), &key, &tx, trusted())?;
     let started = liveness::Started { promoted, from_seq, key: &key, store: store.as_deref(), keys: start };
-    let serving = liveness::start(cfg, (liveness, released), started, &tx, trusted(), &mut tasks)?;
+    let serving = liveness::start(cfg, (liveness, released.clone()), started, &tx, trusted(), &mut tasks)?;
     let replacement = serving.replacement();
 
     // A successor's request stops sequencing through `drain_rx`, once the vault approves it; the
@@ -480,7 +480,7 @@ async fn serve_node(
         finish_history(supervised.history_task, history_stopper).await;
     }
     let outcome = supervised.outcome;
-    let gave = Handed::of(store.as_deref(), handover_clock.reached_ms());
+    let gave = Handed::of(store.as_deref(), handover_clock.reached_ms(), released.map(|last| last.borrow().head));
     match supervised.handing_over {
         Some(reply) => {
             let _ = reply.send(published.final_head());

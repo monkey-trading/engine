@@ -53,9 +53,11 @@ async fn a_checkpoint_waits_for_a_member_to_confirm_its_seq_and_nothing_is_stamp
     assert!(checkpoints.iter().all(|seq| *seq <= due + 1), "{checkpoints:?}");
 }
 
+/// A fenced enclave, or one whose start check has not passed, signs no checkpoint, however far a
+/// member confirmed: a member may hold more than its log, or another history.
 #[tokio::test]
-async fn a_fenced_enclave_signs_no_checkpoint_not_even_at_shutdown() {
-    for fenced in [false, true] {
+async fn a_fenced_or_unchecked_enclave_signs_no_checkpoint_not_even_at_shutdown() {
+    for (fenced, checked) in [(false, true), (true, true), (false, false)] {
         let dir = scratch_dir("seq-liveness-fenced-checkpoint");
         let gate = Gate::default();
         let (seq, _hold) = sequencer(&dir, gate.clone());
@@ -64,10 +66,12 @@ async fn a_fenced_enclave_signs_no_checkpoint_not_even_at_shutdown() {
         assert!(submit(&tx).await && submit(&tx).await);
         let last = last_seq(&tx).await;
         gate.fence(fenced);
+        gate.checked(checked);
         drop(tx);
         task.await.unwrap().unwrap();
         let signed = log_entries(&dir).iter().any(|entry| matches!(entry, LogEntry::Checkpoint(c) if c.seq == last));
-        assert_eq!(signed, !fenced, "fenced {fenced}: the drain's final checkpoint at seq {last}");
+        let case = format!("fenced {fenced}, checked {checked}");
+        assert_eq!(signed, !fenced && checked, "{case}: the drain's final checkpoint at seq {last}");
     }
 }
 

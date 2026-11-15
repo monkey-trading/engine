@@ -40,16 +40,24 @@ impl Sequencer {
     }
 
     /// Whether the checkpoint at `seq` must wait: the liveness rule applies and no member has confirmed
-    /// that far, or the fence stops the enclave signing, checkpoints included. The attempt is remembered, required if any attempt
-    /// was, the rule is woken to ask for a confirmation, and nothing is stamped until
-    /// `release_waiting_checkpoint` writes it.
+    /// that far, the start check has not passed (a member may hold more than this log, or another
+    /// history), or the fence stops the enclave signing, checkpoints included. The attempt is
+    /// remembered, required if any attempt was, the rule is woken to ask for a confirmation, and
+    /// nothing is stamped until `release_waiting_checkpoint` writes it.
     pub(super) fn checkpoint_waits_for(&mut self, seq: u64, paced: bool) -> bool {
         let Some(publisher) = &self.log_heads else { return false };
         let (confirmed, fenced) = (publisher.gate.confirmed(), !publisher.gate.signs());
-        if confirmed >= seq && !fenced {
+        let unchecked = !publisher.gate.start_checked();
+        if confirmed >= seq && !fenced && !unchecked {
             return false;
         }
-        debug!(seq, confirmed, fenced, "the checkpoint waits for a member to confirm holding its seq or the fence");
+        debug!(
+            seq,
+            confirmed,
+            fenced,
+            unchecked,
+            "the checkpoint waits for a member's confirmation, the start check or the fence"
+        );
         if !fenced {
             publisher.gate.want(seq);
         }
@@ -92,7 +100,7 @@ impl Sequencer {
         else {
             return Ok(());
         };
-        if publisher.gate.confirmed() < seq || !publisher.gate.signs() {
+        if publisher.gate.confirmed() < seq || !publisher.gate.signs() || !publisher.gate.start_checked() {
             return Ok(());
         }
         self.checkpoint_waits = None;

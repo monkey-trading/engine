@@ -12,7 +12,7 @@ use crate::test_support::dev_config;
 /// effect, or starting as the one a promotion of its own standby key made it.
 #[tokio::test]
 async fn after_a_confirmed_handover_or_a_replacement_the_incumbent_follows_again() {
-    let gave = Handed { generation: Some(3), reached: Some(1_000) };
+    let gave = Handed { generation: Some(3), reached: Some(1_000), head: None };
     for end in [Ended::HandedOver(gave), Ended::Replaced(gave)] {
         let calls = RefCell::new(Vec::new());
         let mut ends = [end, Ended::Stopped].into_iter();
@@ -35,7 +35,7 @@ async fn after_a_confirmed_handover_or_a_replacement_the_incumbent_follows_again
 /// A node that is no member serves once, however its run ends, and never follows.
 #[tokio::test]
 async fn a_node_that_is_no_member_serves_once() {
-    let gave = Handed { generation: None, reached: None };
+    let gave = Handed { generation: None, reached: None, head: None };
     for end in [Ended::HandedOver(gave), Ended::Replaced(gave), Ended::Stopped] {
         let served = RefCell::new(0);
         let wait = async |_: Option<Handed>| -> anyhow::Result<Turn> { panic!("a node that is no member followed") };
@@ -67,7 +67,7 @@ async fn metrics_answer_while_following_and_across_a_turn() {
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let scrape = async || client.get(&url).send().await.and_then(|answer| answer.error_for_status()).is_ok();
     let answered = RefCell::new(Vec::new());
-    let gave = Handed { generation: Some(1), reached: None };
+    let gave = Handed { generation: Some(1), reached: None, head: None };
     let mut ends = [Ended::HandedOver(gave), Ended::Stopped].into_iter();
     let wait = async |_: Option<Handed>| {
         let ok = scrape().await;
@@ -140,7 +140,7 @@ async fn process_tasks_run_while_following_and_across_a_turn() {
         .await;
     };
     let calls = RefCell::new(Vec::new());
-    let gave = Handed { generation: Some(1), reached: None };
+    let gave = Handed { generation: Some(1), reached: None, head: None };
     let mut ends = [Ended::HandedOver(gave), Ended::Stopped].into_iter();
     let wait = async |_: Option<Handed>| {
         ticking().await;

@@ -91,6 +91,38 @@ fn a_host_clock_ahead_of_the_chain_sends_no_witness() {
     assert!(calls(&view, None, now).is_empty(), "a witness for a slot the chain marked");
 }
 
+/// Only a revert is the chain refusing a call: an endpoint that cannot estimate for another reason has
+/// failed, which the caller pages, rather than passed over as a call the chain would refuse.
+#[tokio::test]
+async fn only_a_revert_in_an_estimate_is_the_chain_refusing_the_call() {
+    let endpoint = |url: String| {
+        let section =
+            format!("rpc_url = '{url}'\nrelayer = '{}'\nretry_interval = '1s'\nrpc_timeout = '2s'", Address::ZERO);
+        let checkpoints: crate::config::CheckpointSection = toml::from_str(&section).unwrap();
+        let liveness =
+            crate::config::LivenessSection { caller: Address::repeat_byte(0x22), min_balance: U256::from(1) };
+        Endpoint::new(&checkpoints, &liveness, 31_337).unwrap()
+    };
+    let reverting =
+        endpoint(rpc_answering(serde_json::json!({"code": 3, "message": "execution reverted: not due"})).await);
+    assert_eq!(reverting.send(Address::ZERO, Vec::new()).await.unwrap(), None, "a revert is the chain refusing");
+    let failing = endpoint(rpc_answering(serde_json::json!({"code": -32000, "message": "unknown account"})).await);
+    assert!(failing.send(Address::ZERO, Vec::new()).await.is_err(), "the endpoint's own failure passed as a refusal");
+}
+
+/// A JSON-RPC endpoint answering every request with `error`; returns its `http://` address.
+async fn rpc_answering(error: serde_json::Value) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let answer = move |axum::Json(request): axum::Json<serde_json::Value>| {
+        let error = error.clone();
+        async move { axum::Json(serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "error": error})) }
+    };
+    let app = axum::Router::new().fallback(axum::routing::post(answer));
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    url
+}
+
 #[test]
 fn a_read_calls_for_a_relay_once_the_chains_head_is_stale_and_a_newer_one_was_signed() {
     let mut view = view(ChainState { head: (7, 1_000, 1_800_000_000 - 39), ..Default::default() });
