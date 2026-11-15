@@ -1051,9 +1051,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/rpc/submission/tests.rs` — response-loss, restart, identity, and reservation regressions
 - `src/checkpoints/rpc/submission/tests/fakes.rs` — isolated relay and canonical transaction RPC fixtures
 - `src/checkpoints/rpc/submission/tests/nonce_progress.rs` — free, obsolete, and resurfaced nonce regressions
-- `src/checkpoints/setup.rs` — finalized chain anchor and registry operator lookup and pending-inclusion startup wait;
+- `src/checkpoints/setup/mod.rs` — finalized chain anchor and registry operator lookup and pending-inclusion startup wait;
   a member taking its turn reads the finalized checkpoint with no wait, the incumbent's checkpoint in
-  flight resumed from its replica as outstanding work
+  flight resumed from its replica as outstanding work, and waits while a change of signer is not
+  final; `setup/tests.rs` its tests
 - `src/checkpoints/tests.rs` — signature mutations, rollback, retry, and reconciliation tests
 - `src/checkpoints/tests/latest.rs` — the worker reports the vault's latest included checkpoint ahead of the finalized one, and when its signer is retired
 - `src/checkpoints/tests/collateral.rs` — shortfall, ledger-difference, surplus, and uncredited-deposit deadline tests

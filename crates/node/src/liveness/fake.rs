@@ -9,8 +9,9 @@ use anyhow::bail;
 use engine_core::types::AccountId;
 
 use crate::liveness::chain::{
-    LivenessDomain, headsCall, headsReturn, keyHolderCall, latestMarkCall, latestMarkReturn, livenessCall,
-    livenessReturn, promotionDueAtCall, rotationStateCall, rotationStateReturn, setOfCall, setOfReturn,
+    LivenessDomain, currentSetIdCall, headsCall, headsReturn, keyHolderCall, latestMarkCall, latestMarkReturn,
+    livenessCall, livenessReturn, pendingSetIdCall, promotionDueAtCall, rotationStateCall, rotationStateReturn,
+    setOfCall, setOfReturn,
 };
 use crate::standby_key::chain::{
     AgreedBlock, CandidateReturn, StandbyChain, StandbyDomain, TurnReturn, candidateOfCall, checkpointSignerCall,
@@ -47,6 +48,8 @@ pub(crate) struct ChainState {
     pub named: (Address, u16),
     /// The set the turn in effect was drawn from.
     pub set: u32,
+    /// The set in effect and the one waiting, zero for none, and the time the earliest takes effect.
+    pub sets: (u32, u32, u64),
     /// Whether the registry names the schedule.
     pub scheduled: bool,
     /// The set's members: candidate, handover endpoint, promotable standby key.
@@ -86,6 +89,7 @@ impl Default for ChainState {
             turn: 20_400,
             named: (Address::repeat_byte(0xa1), 0),
             set: 1,
+            sets: (1, 0, 0),
             scheduled: true,
             members: Vec::new(),
             held: Vec::new(),
@@ -195,7 +199,11 @@ fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8
     } else if to == SCHEDULE && is::<setOfCall>(data) {
         let candidates = chain.members.iter().map(|(candidate, ..)| *candidate).collect();
         let weights = chain.members.iter().map(|_| U256::from(1)).collect();
-        setOfCall::abi_encode_returns(&setOfReturn { epoch: 1, effectiveAt: 0, candidates, weights })
+        setOfCall::abi_encode_returns(&setOfReturn { epoch: 1, effectiveAt: chain.sets.2, candidates, weights })
+    } else if to == SCHEDULE && is::<currentSetIdCall>(data) {
+        currentSetIdCall::abi_encode_returns(&chain.sets.0)
+    } else if to == SCHEDULE && is::<pendingSetIdCall>(data) {
+        pendingSetIdCall::abi_encode_returns(&chain.sets.1)
     } else if to == REGISTRY && is::<candidateOfCall>(data) {
         let candidate = candidateOfCall::abi_decode(data)?.candidate;
         let endpoint = chain.members.iter().find(|(member, ..)| *member == candidate).map(|(_, endpoint, _)| endpoint);

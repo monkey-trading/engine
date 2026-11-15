@@ -387,7 +387,8 @@ impl<R: HeadsChain> Poster<R> {
                     reached: heartbeat.trusted.reached_ms(),
                     last_signed,
                 };
-                if !heartbeat.gate.signs() {
+                // Nor, through a hold, while the start check has not passed: such a node stays stopped.
+                if !heartbeat.gate.signs() || !heartbeat.gate.start_checked() {
                     continue;
                 }
                 let Some(next) = v2::next(&turn, bound, keys, inputs) else { continue };

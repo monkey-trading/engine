@@ -1,7 +1,9 @@
 //! A node whose key the vault does not name — new keys before governance registers them, or keys
 //! the vault has since retired — serves only `/v1/attestation` and waits. Governance verifies that
 //! attestation and has the timelock register the key; the node then starts as usual. It signs
-//! nothing while it waits, so a retired key restored by the host never signs.
+//! nothing while it waits, so a retired key restored by the host never signs. A rotation member whose
+//! key the finalized block names while the latest moves past it, as a promotion does, waits for
+//! nothing: it follows again.
 
 use std::sync::Arc;
 
@@ -19,9 +21,18 @@ use crate::metrics::Metrics;
 use crate::tee::{Attestation, EnclaveKey};
 use crate::tls::{Acceptors, serve};
 
-/// The checkpoint setup, once the vault names this enclave's key; `None` without `[checkpoints]`.
-/// Until then it serves the attestation on `node.listen` under `signer_unregistered`, and checks
-/// the vault again every `checkpoints.retry_interval`.
+/// What a start's wait for the vault to name its key ends in.
+pub(super) enum Registered {
+    /// The vault names this key: the checkpoint setup, `None` without `[checkpoints]`.
+    Named(Box<Option<Setup>>),
+    /// A rotation member's key the finalized block names and the latest moves past: its run ends as a
+    /// replacement's, and it follows again.
+    Superseded,
+}
+
+/// The checkpoint setup, once the vault names this enclave's key, or `Superseded` for a member a
+/// change of signer moves past. Until then it serves the attestation on `node.listen` under
+/// `signer_unregistered`, and checks the vault again every `checkpoints.retry_interval`.
 /// Error cases:
 /// - checkpoint setup fails for any other reason (see `checkpoints::setup::connect`)
 /// - the API's listener cannot be bound while it waits
@@ -31,7 +42,7 @@ pub(super) async fn registered(
     acceptors: &Acceptors,
     attestation: &Arc<Attestation>,
     metrics: &Metrics,
-) -> anyhow::Result<Option<Setup>> {
+) -> anyhow::Result<Registered> {
     wait(cfg, &key.address_hex(), acceptors, attestation, || connect(cfg, key, metrics)).await
 }
 
@@ -44,15 +55,20 @@ async fn wait<F: Future<Output = anyhow::Result<Option<Setup>>>>(
     acceptors: &Acceptors,
     attestation: &Arc<Attestation>,
     mut connect: impl FnMut() -> F,
-) -> anyhow::Result<Option<Setup>> {
+) -> anyhow::Result<Registered> {
+    let member = cfg.operator.rotation_enabled && cfg.tee.sealing.as_ref().is_some_and(|s| s.handover.is_some());
     let mut serving: Option<JoinHandle<anyhow::Result<()>>> = None;
     let outcome = loop {
         let unregistered = match connect().await {
             Err(e) => match e.downcast::<Unregistered>() {
+                Ok(unregistered) if unregistered.superseded && member => {
+                    info!(enclave = %enclave, "{unregistered}: a change of signer moves past this member's key");
+                    break Ok(Registered::Superseded);
+                }
                 Ok(unregistered) => unregistered,
                 Err(e) => break Err(e),
             },
-            Ok(setup) => break Ok(setup),
+            Ok(setup) => break Ok(Registered::Named(Box::new(setup))),
         };
         if serving.is_none() {
             error!(
@@ -69,8 +85,14 @@ async fn wait<F: Future<Output = anyhow::Result<Option<Setup>>>>(
         // Frees the listener for the API.
         server.abort();
         let _ = server.await;
-        if outcome.is_ok() {
-            info!(alert_resolved = "signer_unregistered", enclave = %enclave, "the vault names this enclave's key");
+        match &outcome {
+            Ok(Registered::Named(_)) => {
+                info!(alert_resolved = "signer_unregistered", enclave = %enclave, "the vault names this enclave's key");
+            }
+            Ok(Registered::Superseded) => {
+                info!(alert_resolved = "signer_unregistered", enclave = %enclave, "this member follows again");
+            }
+            Err(_) => {}
         }
     }
     outcome
@@ -112,7 +134,7 @@ mod tests {
 
     use super::*;
     use crate::tee::{AttestationBundle, MockAttestor, attest_bundle};
-    use crate::test_support::dev_config;
+    use crate::test_support::{dev_config, scratch_dir};
     use crate::tls::TlsIdentity;
     use crate::trusted_time::tests::logs::Logs;
 
@@ -141,13 +163,15 @@ mod tests {
         let vault = named.clone();
         let connect = move || {
             let named = vault.load(Ordering::SeqCst);
-            async move { if named { Ok(None) } else { Err(Unregistered { vault_signer: AccountId([0xbb; 20]) }.into()) } }
+            let unregistered = Unregistered { vault_signer: AccountId([0xbb; 20]), superseded: false };
+            async move { if named { Ok(None) } else { Err(unregistered.into()) } }
         };
         let waiting = {
             let (cfg, acceptors, attestation, enclave) =
                 (cfg, tls.acceptors.clone(), attestation.clone(), key.address_hex());
             tokio::spawn(async move {
-                wait(&cfg, &enclave, &acceptors, &attestation, connect).await.map(|setup| setup.is_none())
+                let waited = wait(&cfg, &enclave, &acceptors, &attestation, connect).await;
+                waited.map(|registered| matches!(registered, Registered::Named(setup) if setup.is_none()))
             })
         };
 
@@ -175,6 +199,41 @@ mod tests {
         assert_eq!(logs.count("alert_resolved=\"signer_unregistered\""), 1);
         assert_eq!(logs.critical("signer_unregistered"), 1, "raised once for the whole wait");
         std::net::TcpListener::bind(listen).expect("the API's listener was not freed");
+    }
+
+    /// A rotation member whose key the finalized block names while the latest names another, as a
+    /// promotion past it makes, ends its wait at once, serving nothing, to follow again; a node that is
+    /// no member waits for governance as before.
+    #[tokio::test]
+    async fn a_member_a_change_of_signer_moves_past_ends_its_wait_to_follow() {
+        let mut cfg = dev_config();
+        cfg.node.listen = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        cfg.checkpoints = Some(
+            toml::from_str(
+                "rpc_url = 'http://127.0.0.1:9'\nrelayer = '0x0000000000000000000000000000000000000001'\n\
+                 retry_interval = '20ms'\nrpc_timeout = '1s'",
+            )
+            .unwrap(),
+        );
+        cfg.operator.rotation_enabled = true;
+        let sealing =
+            format!("dir = '{}'\n[handover]\nlisten = '127.0.0.1:0'", scratch_dir("registration-member").display());
+        cfg.tee.sealing = Some(toml::from_str(&sealing).unwrap());
+        let tls = TlsIdentity::generate().unwrap();
+        let bundle = AttestationBundle {
+            enclave_address: [1; 20],
+            config_sha256: [1; 32],
+            tls_public_key_sha256: tls.public_key_sha256,
+        };
+        let attestation = Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap());
+        let superseded =
+            || async { Err(Unregistered { vault_signer: AccountId([0xbb; 20]), superseded: true }.into()) };
+        let ended = timeout(Duration::from_secs(5), wait(&cfg, "0x01", &tls.acceptors, &attestation, superseded)).await;
+        assert!(matches!(ended.expect("the member waited").unwrap(), Registered::Superseded));
+        std::net::TcpListener::bind(cfg.node.listen).expect("a superseded member served its attestation");
+        cfg.operator.rotation_enabled = false;
+        let waited = timeout(Duration::from_millis(500), wait(&cfg, "0x01", &tls.acceptors, &attestation, superseded));
+        assert!(waited.await.is_err(), "a node that is no member stopped waiting for governance");
     }
 
     #[tokio::test]

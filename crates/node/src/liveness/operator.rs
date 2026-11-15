@@ -18,7 +18,7 @@
 //! naming another key than this enclave's ends the run.
 //!
 //! While no turn names the operator, or its set has no other member, the gate is open and the poster
-//! signs at the log's tip, until the next turn boundary unless a later read moves it on. A missing
+//! signs at the log's tip, until a turn could let a promotion pass, unless a later read moves it on. A missing
 //! confirmation is never a hold: the heartbeat simply stops.
 
 use std::collections::BTreeMap;
@@ -32,7 +32,9 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, error, info, warn};
 
-use crate::liveness::chain::{LivenessDomain, Member, View, members, vault_signer, view};
+use crate::liveness::chain::{
+    LivenessDomain, Member, View, first_turnable, members, set_effective, vault_signer, view,
+};
 use crate::liveness::fence::Fence;
 use crate::liveness::link::Asking;
 use crate::liveness::operator::fencing::{AbortOnDrop, FenceState, fence_tick, lock};
@@ -104,8 +106,9 @@ enum Read {
     /// The vault names no registry, or the registry no schedule, at a block of time `time`, where it
     /// names `signer`.
     Unscheduled { time: u64, signer: AccountId },
-    /// The view under `schedule`, and, while a turn names the operator, its set's members.
-    Scheduled { schedule: Address, view: Box<View>, listed: Option<Vec<Member>> },
+    /// The view under `schedule`, and, while a turn names the operator, its set's members; otherwise
+    /// the first boundary a drawn turn could start at (`turnable`).
+    Scheduled { schedule: Address, view: Box<View>, listed: Option<Vec<Member>>, turnable: u64 },
 }
 
 /// The operator's liveness rule.
@@ -190,17 +193,17 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                     continue;
                 }
             };
-            let (schedule, view, listed) = match read {
+            let (schedule, view, listed, turnable) = match read {
                 Read::Unscheduled { time, signer } => {
                     if !std::mem::replace(&mut episodes.unscheduled, true) {
                         info!("the vault's registry names no schedule: the liveness rule does not apply");
                     }
                     self.named(&state, signer);
                     applied = None;
-                    self.exempt(&mut lock(&state), unturned(time));
+                    self.exempt(&mut lock(&state), unturned(first_turnable(time, None)));
                     continue;
                 }
-                Read::Scheduled { schedule, view, listed } => (schedule, *view, listed),
+                Read::Scheduled { schedule, view, listed, turnable } => (schedule, *view, listed, turnable),
             };
             if view.number < self.floor {
                 debug!(
@@ -217,7 +220,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             self.named(&state, view.signer);
             let Some((named, listed)) = view.named.filter(|_| view.turn_names_operator()).zip(listed) else {
                 applied = None;
-                self.exempt(&mut lock(&state), unturned(view.time));
+                self.exempt(&mut lock(&state), unturned(turnable));
                 continue;
             };
             // The members' age counts from when they were read, not from each reuse.
@@ -349,7 +352,8 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             }
         }
         let current = confirmed.filter(|(was, _)| *was == scope).map(|(_, signable)| signable);
-        let signing = current.map_or(Signing::Nothing, Signing::Confirmed);
+        // Until the start check passes the node stays stopped, heads included, so a promotion can pass it.
+        let signing = current.filter(|_| self.gate.start_checked()).map_or(Signing::Nothing, Signing::Confirmed);
         self.signing.send_if_modified(|was| std::mem::replace(was, signing) != signing);
         // The log runs unconfirmed from the first command past the newest confirmed seq, as the earliest
         // released head past it shows (within a poll): with none yet, the next command starts that run
@@ -419,7 +423,11 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                 (Some(named), _) => Some(members(&block, &standby, (named.set, named.turn)).await?),
                 (None, _) => None,
             };
-            Ok(Read::Scheduled { schedule: standby.schedule, view: Box::new(view), listed })
+            let turnable = match &listed {
+                Some(_) => next_boundary(view.time),
+                None => first_turnable(view.time, set_effective(&block, standby.schedule).await?),
+            };
+            Ok(Read::Scheduled { schedule: standby.schedule, view: Box::new(view), listed, turnable })
         })
     }
 

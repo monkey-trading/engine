@@ -18,6 +18,10 @@ use crate::standby_key::chain::{
 
 /// How many of a set's members are read at once.
 const MEMBER_READS: usize = 8;
+/// `OperatorRegistry.NOTICE`: a rotation set adopted now takes effect no sooner.
+const SET_NOTICE_SECS: u64 = 7 * 86_400;
+/// A turn is drawn from the set in effect at its draw deadline, a day before its boundary.
+const DRAW_LEAD_SECS: u64 = 86_400;
 
 sol! {
     function rotationState() external view returns (bool enabled, bytes32 release, uint64 generation, uint64 until);
@@ -27,6 +31,8 @@ sol! {
         returns (uint64 heartbeatInterval, uint64 headTolerance, uint16 heartbeatMisses, uint16 headBlocks);
     function latestMark() external view returns (uint64 slot, uint64 blockNumber);
     function promotionDueAt() external view returns (uint64);
+    function currentSetId() external view returns (uint32);
+    function pendingSetId() external view returns (uint32);
     function setOf(uint32 setId)
         external
         view
@@ -200,6 +206,36 @@ async fn read_view(block: &impl AgreedBlock, domain: &LivenessDomain) -> anyhow:
     })
 }
 
+/// The first turn boundary, at or after the next one past `time`, a drawn turn could start at: one whose
+/// draw deadline the earliest set to draw from has taken effect by, at `effective`; with no set in
+/// effect or waiting (`None`), one adopted at `time` takes effect `SET_NOTICE_SECS` later at the earliest.
+pub(crate) fn first_turnable(time: u64, effective: Option<u64>) -> u64 {
+    let effective = effective.unwrap_or(time.saturating_add(SET_NOTICE_SECS));
+    let boundary = crate::seed_relay::schedule::next_boundary;
+    boundary(effective.saturating_add(DRAW_LEAD_SECS).saturating_sub(1)).max(boundary(time))
+}
+
+/// When the earliest set `schedule` could draw a turn from takes effect, at `block`: the set in effect,
+/// else the one waiting; `None` with neither.
+/// Error cases:
+/// - a call fails, or its return does not decode
+pub(crate) fn set_effective<B: AgreedBlock>(
+    block: &B,
+    schedule: Address,
+) -> BoxFuture<'_, anyhow::Result<Option<u64>>> {
+    Box::pin(async move {
+        let current = call(block, "liveness_current_set", schedule, currentSetIdCall {}).await?;
+        let set = match current {
+            0 => call(block, "liveness_pending_set", schedule, pendingSetIdCall {}).await?,
+            current => current,
+        };
+        if set == 0 {
+            return Ok(None);
+        }
+        Ok(Some(call(block, "liveness_set", schedule, setOfCall { setId: set }).await?.effectiveAt))
+    })
+}
+
 /// The key the vault names as its signer at `block`.
 /// Error cases:
 /// - the call fails, or its return does not decode
@@ -348,4 +384,24 @@ async fn call<C: SolCall>(
 ) -> anyhow::Result<C::Return> {
     let out = block.call(operation, to, request.abi_encode().into()).await?;
     C::abi_decode_returns(&out).with_context(|| format!("decoding {operation}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A turn can start only at a boundary whose draw deadline, a day before it, a set was in effect at:
+    /// the next one for a set in effect by then, the one after for a set that takes effect later that
+    /// day, and eight days on with none in effect or waiting.
+    #[test]
+    fn a_turn_can_start_only_at_a_boundary_a_set_was_in_effect_a_day_before() {
+        // 08:00 UTC: the next boundary, 22:30, is 52,200 s on.
+        let time = 1_800_000_000;
+        let boundary = crate::seed_relay::schedule::next_boundary(time);
+        assert_eq!(boundary - time, 52_200);
+        assert_eq!(first_turnable(time, Some(0)), boundary, "a set in effect long since");
+        assert_eq!(first_turnable(time, Some(boundary - DRAW_LEAD_SECS)), boundary, "in effect at the deadline");
+        assert_eq!(first_turnable(time, Some(boundary - DRAW_LEAD_SECS + 1)), boundary + 86_400, "just past it");
+        assert_eq!(first_turnable(time, None), boundary + 8 * 86_400, "none in effect or waiting");
+    }
 }

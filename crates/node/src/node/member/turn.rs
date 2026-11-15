@@ -296,6 +296,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             false => None,
         };
         let dir = &self.cfg.tee.sealing.as_ref().context("a member seals its keys")?.dir;
+        let moving = self.signer_moving(&at).await?;
         match turn {
             // The generation a confirmed handover gave away is the successor's now.
             Some(turn)
@@ -304,6 +305,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             {
                 Ok(Holding::Follow(Some(turn)))
             }
+            // A change of signer in flight moves past the keys of the turn the finalized view names.
+            Some(turn) if turn.release == self.release.id() && moving => Ok(Holding::Follow(Some(turn))),
             Some(turn)
                 if turn.release == self.release.id() && file_for(dir, &self.release, turn.generation).exists() =>
             {
@@ -313,7 +316,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             Some(turn) => Ok(Holding::Follow(Some(turn))),
             None => {
                 let current = self.vault.current_release(&at).await?;
-                Ok(if current.id == self.release.id() { Holding::Hold } else { Holding::Follow(None) })
+                Ok(if current.id == self.release.id() && !moving { Holding::Hold } else { Holding::Follow(None) })
             }
         }
     }

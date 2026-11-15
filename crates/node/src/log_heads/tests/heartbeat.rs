@@ -167,6 +167,29 @@ async fn through_a_hold_held_heads_repeat_the_confirmed_tip_on_newer_blocks() {
     drive.stop().await;
 }
 
+/// A node whose start check has not passed stays stopped, heads included: with a member's
+/// confirmation, through a hold on newer blocks, no head goes out until the check passes.
+#[tokio::test(start_paused = true)]
+async fn no_head_goes_out_before_the_start_check_passes_even_through_a_hold() {
+    let chain = FakeChain::new(None);
+    chain.name_turn(turn(GENERATION));
+    let drive = spawn(chain.clone(), Some((RELEASE, GENERATION)));
+    drive.gate.checked(false);
+    drive.hold.send_replace(Hold::BenchmarkSync);
+    drive.release(4);
+    drive.confirm(4, 0xc1);
+    for block in [110, 120, 130] {
+        chain.change_turn(|turn| turn.block_number = block);
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+    assert!(chain.posts_v2().is_empty(), "a head went out before the start check passed");
+    drive.gate.checked(true);
+    chain.change_turn(|turn| turn.block_number = 140);
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert_eq!(chain.posts_v2().len(), 1, "once the check passed, the held head goes out");
+    drive.stop().await;
+}
+
 /// A held head signs at the newest confirmed seq, though the tip past it reached no member (as through
 /// a trusted-time halt, when no entry can be framed), once the block read is no older than the mark's.
 #[tokio::test(start_paused = true)]

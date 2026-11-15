@@ -5,14 +5,14 @@ use std::time::Duration;
 
 use crate::liveness::chain::Rule;
 use crate::liveness::{DELTA, HEAD_ROUND_TRIP, Released, Signable};
-use crate::seed_relay::schedule::next_boundary;
 
-/// The earliest a promotion can pass after a read at block time `time` showing no turn naming the
-/// operator, or no schedule: no slot can be witnessed before a turn names it, from the next boundary at
-/// the earliest, so its count then needs `heartbeatMisses` slots, more than `2 x DELTA` under any rule
-/// the operator takes (`refused`); the fence holds through the boundary while reads go on.
-pub(super) fn unturned(time: u64) -> u64 {
-    next_boundary(time).saturating_add(2 * DELTA.as_secs())
+/// The earliest a promotion can pass after a read showing no turn naming the operator, or no schedule,
+/// where `turnable` is the first boundary a drawn turn could start at (`chain::first_turnable`): no
+/// slot can be witnessed before a turn names it, so its count then needs `heartbeatMisses` slots, more
+/// than `2 x DELTA` under any rule the operator takes (`refused`); the fence holds through that boundary
+/// while reads go on.
+pub(super) fn unturned(turnable: u64) -> u64 {
+    turnable.saturating_add(2 * DELTA.as_secs())
 }
 
 /// Whether the log at `tip` has run unconfirmed for more than one heartbeat interval of sequenced

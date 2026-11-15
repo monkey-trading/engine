@@ -202,6 +202,7 @@ async fn a_member_pages_no_follow_failure_while_the_turns_member_comes_up() {
 
 mod episodes;
 mod moved;
+mod moving;
 mod stop;
 mod take;
 
@@ -301,6 +302,8 @@ impl Fixture {
 #[derive(Clone, Default)]
 struct Registry {
     hostname: Arc<Mutex<String>>,
+    /// The signer the latest view names while a change of signer is not final, if any.
+    moving: Arc<Mutex<Option<AccountId>>>,
     own: Arc<Mutex<Option<[u8; 32]>>>,
     source: Arc<Mutex<Option<HandoverSource>>>,
     prior: Arc<Mutex<Option<HandoverSource>>>,
@@ -348,10 +351,11 @@ impl Registry {
 }
 
 impl CheckpointChain for Registry {
-    async fn state(&self, _view: View) -> anyhow::Result<VaultState> {
+    async fn state(&self, view: View) -> anyhow::Result<VaultState> {
+        let moving = self.moving.lock().unwrap().filter(|_| matches!(view, View::Latest));
         Ok(VaultState {
             height: 1,
-            signer: AccountId(EnclaveKey::test_key().address()),
+            signer: moving.unwrap_or(AccountId(EnclaveKey::test_key().address())),
             checkpoint: None,
             balance: Fixed::ZERO,
             deposits: 0,

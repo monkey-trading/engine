@@ -25,7 +25,7 @@ use crate::standby::Follower;
 use crate::stats::Stats;
 use crate::tee::Attestor;
 use crate::tee::clock::GuestClock;
-use crate::tee::sealing::{Release, Sealer};
+use crate::tee::sealing::{KeyStore, Release, Sealer};
 use crate::trusted_time::Sample;
 
 mod prepare;
@@ -55,6 +55,13 @@ pub(super) enum Ended {
 pub(crate) struct Handed {
     pub generation: Option<u64>,
     pub reached: Option<Millis>,
+}
+
+impl Handed {
+    /// What a run whose keys `store` sealed, if any, gives away, trusted time having reached `reached`.
+    pub(super) fn of(store: Option<&KeyStore>, reached: Option<Millis>) -> Self {
+        Self { generation: store.map(KeyStore::generation), reached }
+    }
 }
 
 /// What a member's wait for its turn gives the node it starts.

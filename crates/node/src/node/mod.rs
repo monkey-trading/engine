@@ -151,9 +151,13 @@ async fn serve_node(
 
     let checkpoint_setup = match ready.as_mut() {
         Some(ready) => ready.setup.take(),
-        None => registration::registered(cfg, &key, &tls.acceptors, &attestation, &metrics)
+        None => match registration::registered(cfg, &key, &tls.acceptors, &attestation, &metrics)
             .await
-            .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?,
+            .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?
+        {
+            registration::Registered::Named(setup) => *setup,
+            registration::Registered::Superseded => return Ok(Ended::Replaced(Handed::of(store.as_deref(), None))),
+        },
     };
     // The takeover cut runs once the vault names this key: a promoted node's first start began
     // while the outgoing signer was still installed, and only now is the unposted tail cut.
@@ -476,8 +480,7 @@ async fn serve_node(
         finish_history(supervised.history_task, history_stopper).await;
     }
     let outcome = supervised.outcome;
-    let gave =
-        Handed { generation: store.as_ref().map(|store| store.generation()), reached: handover_clock.reached_ms() };
+    let gave = Handed::of(store.as_deref(), handover_clock.reached_ms());
     match supervised.handing_over {
         Some(reply) => {
             let _ = reply.send(published.final_head());

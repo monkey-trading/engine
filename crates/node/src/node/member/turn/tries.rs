@@ -7,7 +7,7 @@ use engine_core::types::AccountId;
 use tracing::{debug, error, info, warn};
 
 use super::STINT;
-use crate::checkpoints::{CheckpointChain, ScheduledTurn};
+use crate::checkpoints::{CheckpointChain, Observation, ScheduledTurn, View};
 use crate::handover::tail::{CopyChanged, TailMiss, TailRefused};
 use crate::node::member::turn::episodes::Step;
 use crate::node::member::{Member, PostedHead, Sampling};
@@ -157,6 +157,15 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                 None
             }
         }
+    }
+
+    /// Whether the vault's latest signer is another key than the one `at`, its finalized view, names:
+    /// a change of signer in flight, as a promotion makes, whose keys the finalized turn no longer
+    /// names once it is final, so no member reopens or takes that turn's keys meanwhile.
+    /// Error cases:
+    /// - the read fails
+    pub(super) async fn signer_moving(&self, at: &Observation) -> anyhow::Result<bool> {
+        Ok(self.vault.observe(View::Latest, &[]).await?.state.signer != at.state.signer)
     }
 
     /// Keeps the latest posted log head as one the replica holds, once it has passed it; a head the
