@@ -457,11 +457,12 @@ misses it is promoted at once.
   the set-aside files for the owner.
 - **A turn its member does not take.** A member takes its turn with its first head under its
   assignment, which `LogHeads` latches; post it as soon as the node holds the keys. Once `takeWindow`
-  witnessed slots (`cast call $SCHEDULE 'takeWindow()'`, 2 by default) pass after the later of the
-  boundary's slot and the assignment's with no latch, anyone's `skip()` names the next listed member in
-  the turn's order other than the turn's source, in a new generation, with no signer change; an
-  unwitnessed slot, as through a chain outage, restarts the window, and a promotion's assignment is
-  never skipped. The timelock sets the window within its deployment bounds while no turn
+  witnessed slots (`cast call $SCHEDULE 'takeWindow()'`, 2 by default) pass after the latest of the
+  boundary's slot, the assignment's and the last signer change's with no latch, anyone's `skip()` names
+  the next listed member in the turn's order other than the one whose release signed the newest head
+  (`cast call $LOG_HEADS 'headRelease(uint64)' <epoch>`), which holds the keys, in a new generation,
+  with no signer change; an unwitnessed slot, as through a chain outage, restarts the window, a
+  promotion's assignment is never skipped, and no skip is due while the guardian has retired the signer. The timelock sets the window within its deployment bounds while no turn
   names the operator (`setTakeWindow`); the deployment's minimum must exceed the switch budget plus one
   interval plus a head's inclusion (`headTolerance`) at the shortest interval the bounds allow. Skips
   act at sequencer confirmation: the member named takes the keys, and the key holder admits it, from the
@@ -472,12 +473,17 @@ misses it is promoted at once.
   schedule names again. A member is found where its heads are newest, then among the turn's other
   assignments, then at the turn's source and earlier holders; a member following moves to the holder
   when the operator the registry names fails a stint. A skip's member with no copy of the log, or one
-  restarting, reads the skip at its start the same way, before it is final. If no assignment of a turn is latched once `heartbeatMisses + 1`
-  witnessed slots pass after the latest of the boundary's slot, the last signer change and the next
-  qualified member's standby registration, `promote()` passes even while the incumbent posts heads,
-  which bind its own earlier turn, naming that member, the incumbent's own standby key included; the
-  incumbent stops by its own clock before that, as `promotionDueAt()` counts this path too, and with no
-  member to promote the path does not run.
+  restarting, reads the skip at its start the same way, before it is final, as does one whose keys a
+  later skip moved past, which starts to hand them on; a member that handed its drawn turn to a skip's
+  member takes it back once a reorg removes the skip. A skip's member restarting after a reorg removed
+  its skip finds nothing naming its keys: leave them sealed, as a later skip or a promotion moves the
+  turn on. If no assignment of a turn is latched once `heartbeatMisses + 1` witnessed slots pass after
+  the later of the boundary's slot and the last signer change, in a set of two or more members,
+  `promote()` passes even while the incumbent posts heads, which bind its own earlier turn, naming the
+  next qualified member, the incumbent's own standby key included; the incumbent stops by its own clock
+  before that, as `promotionDueAt()` counts this path too. With no member qualifying, the promotion is
+  refused after the incumbent has stopped: use the governance fallback (rotation off, then
+  `installOperator`).
 - **A replaced operator coming back.** The outgoing operator, restarted or still running, follows the
   promoted member. Its log may hold commands past the last head its signer epoch posted that no member
   received; once a final block shows that epoch ended, the node sets its log aside

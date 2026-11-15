@@ -135,7 +135,6 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                     match self.take(&turn, replica, operator).instrument(span.clone()).await {
                         Ok((Taken { store, after, entries, bytes }, ready)) if self.cfg.snapshots.is_none() => {
                             info!(after, entries, bytes, generation = store.generation(), "the copy took the tail");
-                            self.revalidate(&turn).await;
                             let (follower, stats, history, marks) =
                                 follower.take().expect("the follower took the tail");
                             let (replica, moved) =
@@ -151,7 +150,9 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                             // waits, as a turn drawn within a finality period does, its copy kept and followed.
                             span.in_scope(|| info!(turn = turn.turn, "waiting to take the turn: {e:#}"));
                             failing_since = None;
-                            if let Some(((replica, ..), (operator, _))) = follower.as_mut().zip(followed.as_ref())
+                            // A latest block short of the boundary catches up within seconds: a pause alone.
+                            let stint = follower.as_mut().zip(followed.as_ref()).filter(|_| !behind(&e));
+                            if let Some(((replica, ..), (operator, _))) = stint
                                 && let Err(e) = replica.stint(self.cfg, operator, STINT).await
                             {
                                 warn!("following while the signer epoch is not final failed: {e:#}");
@@ -237,6 +238,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                     Err(e) if e.downcast_ref::<Stopping>().is_some() => return Ok(Turn::Stop),
                     Err(e) => {
                         self.episodes.blocked(Step::OpenCopy, &e.context("opening the follower's copy"));
+                        // As a failed stint: the next try resolves the other operator to bootstrap from.
+                        (self.fallback.follow_holder, followed) = (!self.fallback.follow_holder, None);
                         tokio::time::sleep(STINT).await;
                         continue;
                     }
@@ -298,7 +301,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let dir = &self.cfg.tee.sealing.as_ref().context("a member seals its keys")?.dir;
         let moving = self.signer_moving(&at).await?;
         if let Some(turn) = &turn
-            && let Some(holding) = self.skipped(turn, dir).await
+            && let Some(holding) = self.skipped(turn).await
         {
             return Ok(holding);
         }

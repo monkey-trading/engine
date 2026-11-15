@@ -179,3 +179,42 @@ async fn after_a_reorg_removes_a_skip_the_drawn_member_takes_the_keys_from_the_o
     assert_eq!(order, [0x0b, 0x0a], "the orphaned recipient, whose head is newest, then the turn's source");
     assert_eq!(prepared.bound.binding, Some(drawn.binding), "the take binds the draw");
 }
+
+#[tokio::test]
+async fn keys_taken_under_an_earlier_skip_that_a_later_skip_moved_past_are_held_to_hand_on() {
+    let fixture = Fixture::start("member-skip-superseded", true).await;
+    fixture.time.set(OWN + 1);
+    let assignments = Arc::new(FakeAssignments::default());
+    // A second skip names another release; the first named this one, in `SKIPPED`.
+    assignments.set(Some(skip(12, 3, 0x0e, [0x0e; 32], SKIPPED + 3)));
+    *assignments.superseded.lock().unwrap() = Some(skip_of_own(fixture.release().id(), 0x0c));
+    let mut member = fixture.member_reading(&assignments);
+    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(_)), "it held keys it never took");
+    let sealer = MockSealer { launch_digest: DIGEST };
+    KeyStore::create(&fixture.keys, &sealer, fixture.cfg.file_sha256, SKIPPED, KeySet::generate().unwrap()).unwrap();
+    assert!(matches!(member.holding().await.unwrap(), Holding::Hold), "it left the keys it holds unopened");
+}
+
+/// A drawn member that took its turn late and handed it to a skip's member takes it back, in the same
+/// process, once a reorg removes the skip; one that handed its keys on with the draw still current
+/// follows.
+#[tokio::test]
+async fn a_member_that_handed_its_drawn_turn_to_a_skip_takes_it_back_once_a_reorg_removes_the_skip() {
+    let fixture = Fixture::start("member-skip-restored", true).await;
+    fixture.registry.draw(fixture.release().id());
+    fixture.time.set(OWN + 1);
+    let drawn = Assigned { reason: Reason::Draw, ..skip(12, 0, 0x0e, fixture.release().id(), GENERATION) };
+    let assignments = Arc::new(FakeAssignments::default());
+    assignments.set(Some(skip(12, 1, 0x0b, [0x0b; 32], SKIPPED)));
+    let mut member = fixture.member_reading(&assignments);
+    member.handed_over(Handed { generation: Some(GENERATION), reached: None });
+    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(_)), "it took back what it handed on");
+    assignments.set(Some(drawn));
+    match member.holding().await.unwrap() {
+        Holding::Take(turn) => assert_eq!((turn.turn, turn.generation), (12, GENERATION)),
+        _ => panic!("the member did not take back its drawn turn"),
+    }
+    let mut member = fixture.member_reading(&assignments);
+    member.handed_over(Handed { generation: Some(GENERATION), reached: None });
+    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(_)), "it took back a draw it handed on");
+}

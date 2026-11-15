@@ -3,7 +3,9 @@
 //! - takes a turn the latest block's skip names it for, from the operator holding the keys
 //!   (`handover::discovery`), binding the skip's assignment and sealing the keys in its generation;
 //! - does not take a turn it was skipped from, unless it already holds its keys, when it starts as
-//!   their holder and hands them to the member now named;
+//!   their holder and hands them to the member now named, as it does with keys it took under an
+//!   earlier assignment of the turn that a later skip moved past;
+//! - takes back a drawn holding it handed to a skip's member once a reorg removes that skip;
 //! - follows the operator whose release signed the newest head when the one the registry names fails
 //!   a stint, as while a skipped member never comes up the incumbent still serves.
 //!
@@ -14,7 +16,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, ensure};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::checkpoints::{CheckpointChain, HandoverSource, ScheduledTurn, View};
 use crate::config::NodeConfig;
@@ -33,6 +35,10 @@ pub(crate) struct Fallback {
     /// Whether it follows the operator whose release signed the newest head, rather than the one the
     /// registry names: each failed stint moves it to the other.
     pub follow_holder: bool,
+    /// Set by a confirmed handover until the next read records the assignment then current.
+    pub handing: bool,
+    /// The latest assignment when its last confirmed handover gave the keys away: the successor's.
+    pub handed_to: Option<Assigned>,
 }
 
 impl Fallback {
@@ -42,7 +48,7 @@ impl Fallback {
     /// - the custody section or the vault address is malformed
     pub(crate) fn for_config(cfg: &NodeConfig) -> anyhow::Result<Self> {
         let assignments = crate::handover::assigned::for_config(cfg, "member_assignments")?;
-        Ok(Self { assignments, follow_holder: false })
+        Ok(Self { assignments, ..Self::default() })
     }
 }
 
@@ -63,18 +69,37 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// What this member does when the latest agreed block's skip or promotion moved `finalised`, the
     /// turn in effect at trusted time, past what the finalised schedule shows: it takes the turn a skip
     /// names it for, and follows rather than takes one a reassignment moved past it; keys it already
-    /// holds for either it holds. A promotion naming it is its standby side's to start. `None` when no
-    /// reassignment of that turn says otherwise. `dir` holds the sealed keys.
-    pub(super) async fn skipped(&self, finalised: &ScheduledTurn, dir: &Path) -> Option<Holding> {
-        let assigned = self
-            .latest()
-            .await
-            .filter(|assigned| assigned.reason != Reason::Draw && assigned.binding.turn == finalised.turn)?;
+    /// holds for either, or for an earlier assignment of the turn a later skip moved past, it holds. A
+    /// promotion naming it is its standby side's to start. A drawn holding it handed to a skip's member
+    /// it takes back once a reorg removes the skip. `None` when no reassignment of that turn says
+    /// otherwise.
+    pub(super) async fn skipped(&mut self, finalised: &ScheduledTurn) -> Option<Holding> {
+        let cfg = self.cfg;
+        let dir = &cfg.tee.sealing.as_ref()?.dir;
+        let latest = self.latest().await;
+        if std::mem::take(&mut self.fallback.handing) {
+            self.fallback.handed_to = latest;
+        }
+        let assigned = latest.filter(|assigned| assigned.binding.turn == finalised.turn)?;
         let own = self.release.id();
+        // The successor this member handed the keys to was a skip's member that this assignment no longer is.
+        let restored =
+            self.fallback.handed_to.is_some_and(|to| to.reason == Reason::Skip && to.binding != assigned.binding);
+        let given = |generation| self.handed.is_some_and(|handed| handed.generation == Some(generation));
+        if assigned.reason == Reason::Draw {
+            let generation = assigned.binding.generation;
+            let back = restored
+                && assigned.release == own
+                && given(generation)
+                && !file_for(dir, &self.release, generation).exists();
+            return back.then(|| {
+                info!(turn = finalised.turn, "the skip this member handed its turn to is gone: taking the turn back");
+                Holding::Take(finalised.clone())
+            });
+        }
         if assigned.release == own && assigned.reason == Reason::Skip {
             let turn = assigned.as_scheduled(finalised);
-            let given = self.handed.is_some_and(|handed| handed.generation == Some(turn.generation));
-            return Some(match given {
+            return Some(match given(turn.generation) && !restored {
                 true => Holding::Follow(Some(turn)),
                 false if file_for(dir, &self.release, turn.generation).exists() => Holding::Hold,
                 false => {
@@ -86,6 +111,16 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                     Holding::Take(turn)
                 }
             });
+        }
+        // Keys it took under an earlier assignment of the turn that a later skip moved past: it holds,
+        // starts and hands them to the member now named. Past a promotion its key is fenced out.
+        if assigned.release != own && assigned.reason == Reason::Skip && seals_any(dir, &self.release) {
+            let read = self.fallback.assignments.as_ref()?;
+            let superseded = read.superseded(&assigned, own).await.ok().flatten();
+            if superseded.is_some_and(|held| file_for(dir, &self.release, held.binding.generation).exists()) {
+                info!(turn = finalised.turn, "a later skip moved past the keys this member holds: handing them on");
+                return Some(Holding::Hold);
+            }
         }
         // Moved past in a turn it holds no keys for: it follows. Keys sealed for the turn make it the
         // holder, which starts and hands them to the member now named.
@@ -170,25 +205,6 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let holder = crate::handover::discovery::holder(assigned.head_release, &members, &earlier).cloned();
         holder.filter(|holder| !holder.api_hostname.is_empty())
     }
-
-    /// After a confirmed tail handover and before the first command: logs whether the latest agreed
-    /// block's assignment still names the holding `turn` took. A skip after the confirmation leaves this
-    /// member holding the only keys, so it starts and hands them to the member now named.
-    pub(super) async fn revalidate(&self, turn: &ScheduledTurn) {
-        match self.latest().await {
-            Some(assigned) if !assigned.names(turn.release, turn.generation) => warn!(
-                turn = turn.turn,
-                assignment = ?assigned.binding,
-                "the turn's assignment moved after the keys were confirmed: this member holds them, starts, and \
-                 hands them to the member now named"
-            ),
-            _ => info!(
-                turn = turn.turn,
-                generation = turn.generation,
-                "took the turn's keys and tail; starting from the replica"
-            ),
-        }
-    }
 }
 
 /// The latest agreed block has not reached the boundary of the turn a take is for, as through a chain
@@ -208,4 +224,11 @@ impl std::error::Error for AssignmentBehind {}
 /// Whether a failed take waits on the latest agreed block reaching its turn (`AssignmentBehind`).
 pub(super) fn behind(e: &anyhow::Error) -> bool {
     e.downcast_ref::<AssignmentBehind>().is_some()
+}
+
+/// Whether `dir` holds keys sealed for `release` in any generation.
+fn seals_any(dir: &Path, release: &crate::tee::sealing::Release) -> bool {
+    let prefix = format!("{}-", hex::encode(release.id()));
+    let names = std::fs::read_dir(dir).into_iter().flatten().flatten();
+    names.into_iter().any(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
 }

@@ -405,14 +405,45 @@ contract UntakenTurnTest is SkipTest {
         _deployLiveness();
     }
 
-    function test_ASkipPassesOverTheTurnsSourceWhichHoldsTheKeys() public {
+    function test_ASkipPassesOverTheMemberWhoseReleaseSignedTheNewestHead() public {
         address[] memory order = new address[](3);
         (order[0], order[1], order[2]) = (bob, alice, carol);
         _startSourced(order);
+        // Alice, the turn's source, still holds the keys: her release signed the epoch's newest head.
+        LogHeads.HeadV2 memory head = _incumbentHead();
+        head.release = registry.candidateOf(alice).release;
+        _post(head);
         _marked(TAKE);
         (, uint16 position) = schedule.skip();
         assertEq(position, 2, "alice, at position 1, is passed over");
         assertEq(schedule.turnOf(turn).candidate, carol);
+    }
+
+    function test_ASkipNamesTheSourceWhenAnotherReleaseHoldsTheKeys() public {
+        address[] memory order = new address[](3);
+        (order[0], order[1], order[2]) = (bob, alice, carol);
+        _startSourced(order);
+        _post(_incumbentHead());
+        _marked(TAKE);
+        (, uint16 position) = schedule.skip();
+        assertEq(position, 1, "the source, whose release signed no head, is named");
+        assertEq(schedule.turnOf(turn).candidate, alice);
+    }
+
+    function test_ASkipWaitsWhileTheSignerIsRetiredAndGivesAFreshWindowAfterAnotherIsInstalled() public {
+        _startInOrder();
+        vm.prank(multisig);
+        vault.retireSigner();
+        _marked(TAKE + 1);
+        assertEq(schedule.skipDueAt(), type(uint64).max, "a skip while no head can latch");
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.SkipNotDue.selector, type(uint64).max));
+        schedule.skip();
+        // The timelock installs the operator's registered enclave: the member gets a whole window from it.
+        address installed = registry.operatorEnclave();
+        vm.prank(address(governance));
+        vault.setSigner(installed);
+        assertEq(vault.checkpointSigner(), installed);
+        assertEq(schedule.skipDueAt(), (block.timestamp / INTERVAL + TAKE + 1) * INTERVAL, "a window from the change");
     }
 
     function test_AnUntakenTurnsPromotionNamesTheNextQualifiedMemberTheSourceIncluded() public {
@@ -426,25 +457,29 @@ contract UntakenTurnTest is SkipTest {
         assertEq(vault.checkpointSigner(), key, "the incumbent's own standby key: its old key is fenced out");
     }
 
-    function test_AnUntakenTurnWithNoMemberToPromoteLeavesTheIncumbentRunning() public {
+    function test_AnUntakenTurnWithNoMemberToPromoteRefusesThePromotionAndItsTimeHolds() public {
         address[] memory order = new address[](1);
         order[0] = bob;
         _startSourced(order);
-        // Carol and dave lose their listings and alice's standby key is voided: past bob, no one qualifies.
+        uint64 dueAt = (_boundarySlot() + MISSES + 2) * INTERVAL;
+        uint64 before = schedule.promotionDueAt();
+        // Carol and dave lose their listings and alice's standby key is voided: past bob, no one qualifies,
+        // which leaves the count where it was, so the incumbent's fence holds.
         vm.prank(carol);
         registry.deregister();
         vm.prank(dave);
         registry.deregister();
         _voidStandby(alice);
+        assertEq(schedule.promotionDueAt(), before, "who qualifies moved the count");
         _beatingThrough(MISSES + 3);
-        assertGt(schedule.promotionDueAt(), block.timestamp, "only the incumbent's missed heads count");
-        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.PromotionNotDue.selector, schedule.promotionDueAt()));
+        assertEq(schedule.promotionDueAt(), dueAt, "the untaken count from the boundary");
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.NoQualifiedPosition.selector, turn));
         schedule.promote();
-        // A standby key registered now gives the incumbent a whole count from its registration to stop by.
+        // A standby key registered now qualifies alice at once: the time the incumbent stopped by stands.
         _registerStandby(alice);
-        assertGt(schedule.promotionDueAt(), block.timestamp + INTERVAL, "the untaken count passed at once");
-        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.PromotionNotDue.selector, schedule.promotionDueAt()));
+        assertEq(schedule.promotionDueAt(), dueAt, "a registration moved the count");
         schedule.promote();
+        assertEq(schedule.turnOf(turn).candidate, alice);
     }
 
     /// @dev Moves `member` to another approved release, which voids its standby key.

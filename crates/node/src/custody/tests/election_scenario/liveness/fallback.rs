@@ -11,8 +11,8 @@
 //!    agreed block's read shows the skip and the newest head's release names A, whom C asks first;
 //!    and once C holds the keys its head latches C's assignment;
 //! 2. at the next boundary B takes the keys late from C, its first head landing only after a skip
-//!    names D, passing over C, the turn's source: that head latches nothing, and D's latches D's
-//!    assignment;
+//!    names D, passing over C, next in the order, whose release signed the newest head: that head
+//!    latches nothing, and D's latches D's assignment within a slot;
 //! 3. block production pauses across the next boundary and resumes: no skip or promotion is due in
 //!    the first resumed block, and the turn's member, A, takes the turn;
 //! 4. at the next boundary A refuses every successor: the callers skip past B to C, A beats on and
@@ -103,7 +103,7 @@ async fn dev_scenario_a_down_successor_falls_back_to_the_next_member() {
     let first = (SET_EFFECTIVE_SECS + DAY_SECS - BOUNDARY_OFFSET_SECS) / DAY_SECS + 1;
     let turns = [first, first + 1, first + 2, first + 3, first + 4];
     // Each turn's seed, relayed before its draw deadline, picks its order's first positions.
-    let orders: [&[usize]; 5] = [&[A], &[B, C], &[B, D], &[A], &[B, C, D]];
+    let orders: [&[usize]; 5] = [&[A], &[B, C], &[B, C, D], &[A], &[B, C, D]];
     for (turn, order) in turns.into_iter().zip(orders) {
         world.relay(turn, order).await;
     }
@@ -144,12 +144,14 @@ async fn dev_scenario_a_down_successor_falls_back_to_the_next_member() {
         turns[1]
     );
 
-    // 2. B takes the keys late from C, the holder, and its first head lands after a skip names D, past C,
-    //    the turn's source.
+    // 2. B takes the keys late from C, and its first head lands after a skip names D, passing over C,
+    //    whose release signed the newest head.
     world.draw(turns[2]).await;
     let drawn = world.chain.view(world.domain.standby.schedule, turnOfCall { turn: turns[2] }).await.generation;
     warp(&world.chain, &world.clock, boundary(turns[2]) + 1).await;
     let skipped_at = world.until_skipped(turns[2], D, false).await;
+    let named = world.chain.view(world.domain.standby.schedule, turnOfCall { turn: turns[2] }).await;
+    assert_eq!(named.position, 2, "the skip did not pass over C, whose release signed the newest head");
     world.hold_in(B, drawn).await;
     world.beat(2).await;
     let latch = world.chain.view(world.domain.log_heads, latchesCall { turn: turns[2], position: 0 }).await;
@@ -159,7 +161,8 @@ async fn dev_scenario_a_down_successor_falls_back_to_the_next_member() {
     let latched_at = world.until_latched(turns[2]).await;
     assert!(latched_at < skipped_at + RULE.0, "D took the turn {} s after the skip", latched_at - skipped_at);
     println!(
-        "PASS: B took the keys late, its head latched nothing, and D's latched turn {} {} s after the skip",
+        "PASS: the skip passed over C, the holder, to D; B took the keys late, its head latched nothing, and D's \
+         latched turn {} {} s after the skip",
         turns[2],
         latched_at - skipped_at
     );

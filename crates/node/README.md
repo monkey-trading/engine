@@ -356,6 +356,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   refuses it, keys sealed in the turn's generation open, a returning holder's restart opens the keys
   it sealed there, a member without them asks the turn's source for them, no turn drawn takes no
   trusted time sample, and a turn drawn with no sample refuses it
+- `src/node/keys/tests/skip.rs` — the release watch under the latest agreed block's skip (#596): keys
+  sealed in a skip's generation page nothing before the skip is final, a failed latest read is
+  retried, and a later skip naming another holding pages past the grace
 - `src/node/recovery.rs` — the log a start runs from, before anything is written: a member's replica
   with no replay, its marks cache's log-derived rows kept and taken after its first command, or the
   log on disk replayed with the
@@ -907,15 +910,19 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the predecessor's checks on a request for the keys: the versions every successor reads, and a tail
   request's tip, on its log and still retained; `src/handover/predecessor/assignment.rs` holds its
   checks against the latest agreed block's assignment (#596): the binding a request names, a skip's
-  member under the log's notice rule, read again after the stop, with `tests/assignment.rs` covering a
-  skip's take, refusals, and a skip or a promotion at each phase of a transfer
+  member under the log's notice rule, read again before and after the stop, with `tests/assignment.rs`
+  covering a skip's take, refusals, a skip or a promotion at each phase of a transfer, a promotion
+  racing the boundary, the stopped holder's lookback and a reorged skip; `tests/entries.rs` holds the
+  log-writing helpers the predecessor tests share
 - `src/handover/assigned.rs` — the turn in effect's current assignment at the latest block the custody
-  quorum agrees on (#596), with its latch and the release of the signer epoch's newest head, and the
-  binding a handover's request carries and both sides read again before each step;
+  quorum agrees on (#596), with the release of the signer epoch's newest head, the turn's earlier
+  assignment naming a release, and the binding a handover's request carries and both sides read again
+  before each step;
   `src/handover/assigned/tests.rs` reads it from a scripted block and holds the fake reader other
   tests use
 - `src/handover/discovery.rs` — where a turn's keys are: the operator whose release signed the newest
-  head, the turn's other assigned members, then its source and earlier holders; its tests cover the
+  head, the turn's other assigned members in assignment order, then its source and earlier holders,
+  on tail and whole-log takes alike; its tests cover the
   order
 - `src/handover/secrets.rs` — the new release's side of moving the delivered secrets with an
   approved upgrade, checked by the operator's signature; `src/handover/predecessor/secrets.rs` is
@@ -1230,6 +1237,12 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   promotion, the promoted member's first fill within its start budget, its first checkpoint, A's
   authorization reissued and paid once, and the replay across the change of signer;
   `promoted/nodes.rs` the members' configs, sealed standby keys and child processes
+- `src/custody/tests/election_scenario/liveness/fallback.rs` — the successor-fallback leg (#596) that
+  `scripts/dev-daily-rotation.sh` runs on the same parts: a skip through the take window, a late take
+  whose head latches nothing past a skip that passes over the key holder, a paused chain across a
+  boundary, and a promotion past a beating incumbent that refuses every successor; `fallback/world.rs`
+  its members, handovers modelled as the holder's parts stopping and the next one's starting, and
+  steps
 - `src/custody/tests/election_scenario/operator_share.rs` — the operator's share dev scenario on
   isolated Anvil: the election's candidate and a staker claim through the vault, an epoch below the
   floor pays neither, and the candidate's unclaimed leaf registers and pays through the exit

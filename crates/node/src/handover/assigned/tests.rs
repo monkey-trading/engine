@@ -84,6 +84,8 @@ pub(crate) struct FakeAssignments {
     pub reads: std::sync::atomic::AtomicUsize,
     /// While set, every read fails, as with no quorum.
     pub failing: std::sync::atomic::AtomicBool,
+    /// What `superseded` answers.
+    pub superseded: Mutex<Option<Assigned>>,
 }
 
 impl FakeAssignments {
@@ -110,6 +112,15 @@ impl Assignments for FakeAssignments {
     fn members<'a>(&'a self, _assigned: &'a Assigned) -> BoxFuture<'a, anyhow::Result<Vec<Registered>>> {
         let members = self.members.lock().unwrap().clone();
         Box::pin(async move { Ok(members) })
+    }
+
+    fn superseded<'a>(
+        &'a self,
+        _assigned: &'a Assigned,
+        release: [u8; 32],
+    ) -> BoxFuture<'a, anyhow::Result<Option<Assigned>>> {
+        let superseded = self.superseded.lock().unwrap().filter(|held| held.release == release);
+        Box::pin(async move { Ok(superseded) })
     }
 }
 
@@ -223,6 +234,42 @@ async fn an_epoch_with_no_v2_head_names_no_head_release() {
     script_turn(&mut block, (0, 0), &[(B256::repeat_byte(1), 7)]);
     block.answer(LOG_HEADS, headReleaseCall { epoch: 3 }, &B256::ZERO);
     assert_eq!(read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap().unwrap().head_release, None);
+}
+
+#[tokio::test]
+async fn an_earlier_assignment_naming_a_release_reads_with_its_latest_generation() {
+    let mut block = Scripted::scheduled();
+    // Position 0 drew release 0x0b; position 1, a skip, holds 0x0c's, revised from generation 11 to 12.
+    for (position, byte, generations) in [(0u16, 0x0b, &[9u64][..]), (1, 0x0c, &[11, 12][..])] {
+        let made = AssignmentReturn {
+            candidate: Address::repeat_byte(byte),
+            adminKey: Address::repeat_byte(0xd1),
+            setId: 2,
+            reason: position as u8,
+            standbyKey: Address::ZERO,
+            signerEpoch: 0,
+            headSeq: 0,
+            headLink: B256::ZERO,
+            checkpointSeq: 0,
+            checkpointRoot: B256::ZERO,
+            at: 0,
+        };
+        let release = B256::repeat_byte(byte);
+        let revisions = generations.iter().map(|&generation| RevisionReturn { release, generation }).collect();
+        block.answer(
+            SCHEDULE,
+            assignmentOfCall { turn: TURN, position },
+            &assignmentOfReturn { _0: made, _1: revisions },
+        );
+    }
+    let current = skip(TURN, 2, 0xd1, [0x0d; 32], 14);
+    let held = superseded(&&block, CHAIN_ID, VAULT, &current, [0x0c; 32]).await.unwrap().expect("skip 1 named it");
+    assert_eq!(held.binding, Binding { position: 1, generation: 12, ..current.binding });
+    assert_eq!((held.reason, held.candidate, held.release), (Reason::Skip, AccountId([0x0c; 20]), [0x0c; 32]));
+    let drawn = superseded(&&block, CHAIN_ID, VAULT, &current, [0x0b; 32]).await.unwrap().expect("the draw named it");
+    assert_eq!((drawn.binding.position, drawn.reason), (0, Reason::Draw));
+    let none = superseded(&&block, CHAIN_ID, VAULT, &current, [0x0d; 32]).await.unwrap();
+    assert!(none.is_none(), "the current assignment is no earlier one");
 }
 
 #[tokio::test]

@@ -28,8 +28,8 @@
 # ACME; tls::acme::tests::sealed checks that a member's next turn reuses its certificate.
 # Then the successor-fallback leg (#596), on its own Anvil chain with a two-slot take window: with B
 # stopped, the holder A trades through the window and the members' callers skip the turn to C, whose
-# head latches it; B taking the keys late from C latches nothing once a skip names D, past C, the
-# turn's source, and D's head latches within a slot; across a paused chain no skip or promotion is due
+# head latches it; B taking the keys late from C latches nothing once a skip names D, passing over C,
+# whose release signed the newest head, and D's head latches within a slot; across a paused chain no skip or promotion is due
 # in the first resumed block; and with A refusing every successor, A stops by its own clock before the
 # promotion past it, which lands within the bound, and A's checkpoint is refused.
 # Needs Anvil, Forge, Python 3, Cargo, and installed Soldeer dependencies. No external RPC or keys are used.

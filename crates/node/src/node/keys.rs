@@ -417,13 +417,13 @@ pub(super) async fn watch_release(
         if reached.is_none() && crate::handover::turns::finalised_drawn(&vault).await {
             continue;
         }
-        let latest = crate::handover::assigned::names_holding(assignments.as_deref(), sealed.id(), generation);
-        let Some(latest) = latest.await else { continue };
         let (named, handing_over) = match crate::handover::turns::names(&vault, &sealed, generation, reached).await {
-            _ if latest => (true, false),
-            Some((named, boundary)) => {
-                (named, reached.is_some_and(|reached| reached < boundary.saturating_add(TURN_HANDOVER_GRACE_MS)))
+            Some((false, boundary)) => {
+                let latest = crate::handover::assigned::names_holding(assignments.as_deref(), sealed.id(), generation);
+                let Some(latest) = latest.await else { continue };
+                (latest, reached.is_some_and(|reached| reached < boundary.saturating_add(TURN_HANDOVER_GRACE_MS)))
             }
+            Some((true, _)) => (true, false),
             None => (current.id == sealed.id() && current.generation == generation, false),
         };
         if !named && handing_over {

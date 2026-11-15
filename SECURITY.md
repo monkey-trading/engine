@@ -436,14 +436,17 @@ and each member in the order that fails to start adds one more detection window;
 it with its first head under its assignment, which `LogHeads` latches, and once `takeWindow` witnessed
 slots (2 by default; the deployment's minimum exceeds the handover's switch budget plus one interval
 plus a head's inclusion, which the head tolerance bounds, at every interval the bounds allow) pass after
-the later of the boundary's slot and the assignment's with no latch, anyone skips the turn to the next
-listed member in its order other than the turn's source, which holds the keys, in a new generation with
-no signer change, never past a promotion, whose member the missed heads pass, and once
-`heartbeatMisses + 1` witnessed slots pass after the latest of the boundary's slot, the last signer
-change and the next qualified member's standby registration with the turn's assignment unlatched,
-anyone may promote that member even while the incumbent posts heads, which bind its own earlier turn and
-latch nothing, the incumbent's own standby key included, which fences its old key out; with no member to
-promote the count does not run; an unwitnessed slot restarts both
+the latest of the boundary's slot, the assignment's and the last signer change's with no latch,
+anyone skips the turn to the next listed member in its order other than the one whose release signed the
+signer epoch's newest head, which holds the keys, in a new generation with no signer change, never past
+a promotion, whose member the missed heads pass, nor while the guardian has retired the signer, when no
+head can latch, and once `heartbeatMisses + 1` witnessed slots pass after the later of the boundary's slot
+and the last signer change with the turn's assignment unlatched, in a set of two or more members, anyone
+may promote the next qualified member even while the incumbent posts heads, which bind its own earlier
+turn and latch nothing, the incumbent's own standby key included, which fences its old key out; who
+qualifies does not move the count, so no listing, release or standby change brings it earlier, and with
+none qualifying the promotion is refused after the incumbent has stopped, and the governance fallback
+below applies; an unwitnessed slot restarts both
 counts, so a chain outage across a boundary gives the member a fresh window; skips and promotions act at
 sequencer confirmation: the key holder admits, and the member named takes, the assignment the custody
 quorum's latest agreed block shows, bound to the signer epoch, the turn, the assignment's position and
@@ -455,7 +458,11 @@ it, the time before going to stakers; a member that took the keys and was then s
 until it hands them to the member now named, earning the operator's share only until the log mirrors the
 skip, and a holder whose skip a reorg removed
 hands them to the member the schedule names again; a skip's member with no copy of the log, or one
-restarting, reads the skip at its start the same way, before it is final; the incumbent stops by its own
+restarting, reads the skip at its start the same way, before it is final, as does one whose keys a later
+skip moved past, which starts to hand them on; a member that handed its drawn turn to a skip's member
+takes it back once a reorg removes the skip, while a skip's member restarting after a reorg removed its
+skip, which nothing on chain names any more, leaves its keys sealed until a later skip or a promotion
+moves the turn on; the incumbent stops by its own
 clock before a promotion on either path could pass, as below; once no position
 qualifies the order is exhausted, and the governance fallback (rotation off, then `installOperator`
 once the drawn turns end) applies, which takes at most the 10-minute bound plus the timelock delay,

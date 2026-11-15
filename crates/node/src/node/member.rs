@@ -289,6 +289,7 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
     /// Records what a confirmed handover gave away, which this member never holds again.
     pub(super) fn handed_over(&mut self, handed: Handed) {
         self.handed = Some(handed);
+        self.fallback.handing = true;
     }
 
     /// `until_turn`, or `Turn::Stop` once a shutdown signal arrives.

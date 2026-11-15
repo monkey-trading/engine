@@ -25,13 +25,15 @@ contract LivenessInvariantTest is LivenessTest {
         _track();
 
         targetContract(address(this));
-        bytes4[] memory selectors = new bytes4[](6);
+        bytes4[] memory selectors = new bytes4[](8);
         selectors[0] = this.handleWarp.selector;
         selectors[1] = this.handleWitness.selector;
         selectors[2] = this.handleHead.selector;
         selectors[3] = this.handlePromote.selector;
         selectors[4] = this.handleLapse.selector;
         selectors[5] = this.handleIncumbentHead.selector;
+        selectors[6] = this.handleSkip.selector;
+        selectors[7] = this.handleDeregister.selector;
         targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
     }
 
@@ -49,9 +51,8 @@ contract LivenessInvariantTest is LivenessTest {
 
     /// @dev `promotionDueAt` as its doc comment states it, read from the heads, latches and marks on
     /// chain: the earlier of the missed-head count, from the later slot of the epoch's latest head and of
-    /// the signer change over `misses` slots, and, while the turn's current assignment is unlatched and a
-    /// member could be promoted, the untaken-turn count, from the latest slot of the boundary, the signer
-    /// change and that member's standby registration over `misses + 1`.
+    /// the signer change over `misses` slots, and, while the turn's current assignment is unlatched, the
+    /// untaken-turn count, from the later slot of the boundary and of the signer change over `misses + 1`.
     function _modelDue() internal view returns (uint64 due) {
         (uint64 interval,, uint16 misses,) = schedule.liveness();
         (,,,, uint64 postedAt) = logHeads.heads(vault.signerEpoch());
@@ -60,29 +61,11 @@ contract LivenessInvariantTest is LivenessTest {
         if (postedAt / interval > latest) latest = postedAt / interval;
         due = _modelCount(latest, misses, interval);
         (uint64 at,,,,) = logHeads.latches(turn, schedule.turnOf(turn).position);
-        address member = _promotable();
-        if (at != 0 || member == address(0)) return due;
+        if (at != 0) return due;
         uint64 since = schedule.boundary(turn) / interval;
         if (changed > since) since = changed;
-        (,, uint64 registered) = schedule.standbyOf(member);
-        if (registered / interval > since) since = registered / interval;
         uint64 untaken = _modelCount(since, misses + 1, interval);
         if (untaken < due) due = untaken;
-    }
-
-    /// @dev The first position past the turn's current one naming a listed member that has held no
-    /// assignment of the turn and holds a promotable standby key, and that member; zero without one.
-    function _promotable() internal view returns (address) {
-        OperatorSchedule.Turn memory current = schedule.turnOf(turn);
-        (,, address[] memory candidates,) = schedule.setOf(current.setId);
-        uint256 end = schedule.MAX_DRAW_POSITIONS() + candidates.length;
-        for (uint16 position = current.position + 1; position < end; ++position) {
-            address member = schedule.memberAt(current.setId, current.seed, turn, position);
-            if (schedule.heldTurn(turn, member)) continue;
-            if (!registry.isListed(member) || registry.keyHolder(_key(member)) != member) continue;
-            if (schedule.promotable(member) != address(0)) return member;
-        }
-        return address(0);
     }
 
     /// @dev `(max(s, u) + count + 1) * interval`, with `u` the latest unmarked slot after `s` among the
@@ -184,6 +167,23 @@ contract LivenessInvariantTest is LivenessTest {
 
     function handlePromote() external {
         _tryPromote();
+        _track();
+    }
+
+    /// @dev A skip, once due: it moves the turn to another unlatched assignment.
+    function handleSkip() external {
+        try schedule.skip() {} catch {}
+        _track();
+    }
+
+    /// @dev A member past the current position leaves the registry, so who qualifies for a promotion
+    /// changes.
+    function handleDeregister(uint256 which) external {
+        (,, address[] memory candidates,) = schedule.setOf(schedule.turnOf(turn).setId);
+        address member = candidates[which % candidates.length];
+        if (member == schedule.turnOf(turn).candidate) return;
+        vm.prank(member);
+        try registry.deregister() {} catch {}
         _track();
     }
 

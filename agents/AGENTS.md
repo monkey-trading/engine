@@ -637,7 +637,11 @@ an index: load only the rule whose hint matches the current action.
   pays only once B's handover has verified A's log, and one approved during B's turn, with B drawn
   again, waits for that boundary's check, where a verification from B's own release is refused and
   C's, with A first in the turn's order down, releases it with no handover; then an installation of
-  the last turn's own candidate ends the turns;
+  the last turn's own candidate ends the turns; then the successor-fallback leg (#596) on the liveness
+  parts with a two-slot take window: a skip past a stopped member while the holder trades, a late take
+  whose head latches nothing once a skip passes over the key holder, a paused chain across a boundary
+  with nothing due in the first resumed block, and a promotion past a beating incumbent that refuses
+  every successor and stops first;
   `dev-liveness.sh`, the minute-scale liveness scenario (#595) on Anvil with a chain-backed `ArbSys`
   stand-in and trusted time on the chain's clock: the real head poster, liveness rule, member links and
   liveness callers; v2 heads at confirmed seqs and the turn's latch, relayed heads with the operator's
@@ -1001,7 +1005,8 @@ Run from the repo root:
   against its budget, the admin keys, `TurnTaken`, the time in office and `/v1/operator` checked at
   each boundary, a stream client following each holder, the holders posting checkpoints and two
   withdrawals claimed through the vault after the boundary's log check, then the log replayed and the
-  turns ended by an installation)
+  turns ended by an installation; then the successor-fallback leg on its own Anvil chain, the liveness
+  parts' callers, head poster, rule and member links with handovers modelled by moving the keys)
 - Minute-scale liveness dev scenario: `./scripts/dev-liveness.sh` (Anvil, Forge and installed Soldeer
   dependencies; about thirty minutes of wall time; CI runs it in the `dev-daily-rotation` job)
 - Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens

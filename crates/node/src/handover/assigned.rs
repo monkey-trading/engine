@@ -85,6 +85,16 @@ pub(crate) trait Assignments: Send + Sync {
     /// Error cases:
     /// - the providers have no quorum, or a call fails or does not decode
     fn members<'a>(&'a self, assigned: &'a Assigned) -> BoxFuture<'a, anyhow::Result<Vec<Registered>>>;
+
+    /// The latest of `assigned`'s turn's earlier assignments at the latest agreed block that names
+    /// `release`, with its latest revision's generation (`superseded`).
+    /// Error cases:
+    /// - the providers have no quorum, or a call fails or does not decode
+    fn superseded<'a>(
+        &'a self,
+        assigned: &'a Assigned,
+        release: [u8; 32],
+    ) -> BoxFuture<'a, anyhow::Result<Option<Assigned>>>;
 }
 
 /// A shared reader of the latest assignment.
@@ -106,6 +116,16 @@ impl<C: StandbyChain + Send> Assignments for LatestAssignments<C> {
 
     fn members<'a>(&'a self, assigned: &'a Assigned) -> BoxFuture<'a, anyhow::Result<Vec<Registered>>> {
         Box::pin(async move { members(&self.chain.latest().await?, self.chain_id, self.vault, assigned).await })
+    }
+
+    fn superseded<'a>(
+        &'a self,
+        assigned: &'a Assigned,
+        release: [u8; 32],
+    ) -> BoxFuture<'a, anyhow::Result<Option<Assigned>>> {
+        Box::pin(
+            async move { superseded(&self.chain.latest().await?, self.chain_id, self.vault, assigned, release).await },
+        )
     }
 }
 
@@ -201,8 +221,9 @@ impl Assigned {
 }
 
 /// `finalised`, the turn the finalised schedule names at a start, as the latest agreed block's skip of
-/// it names `release`'s holding when it does, so a skip's member that restarts before the skip is final
-/// opens the keys it sealed in the skip's generation; `finalised` otherwise, without a reader, or when
+/// it names `release`'s holding when it does, or, once a later skip moved past it, an earlier skip of
+/// the turn did, so a skip's member that restarts before the skip is final opens the keys it sealed in
+/// the skip's generation, to sequence or to hand on; `finalised` otherwise, without a reader, or when
 /// the read fails, so a member the skip passed still opens keys it holds and hands them over.
 /// Error cases:
 /// - the custody section or the vault address is malformed
@@ -214,14 +235,19 @@ pub(crate) async fn own_skip(
     let (Some(_), Some(read)) = (finalised.as_ref(), for_config(cfg, "start_assignments")?) else {
         return Ok(finalised);
     };
-    let latest = match read.assigned().await {
-        Ok(latest) => latest,
-        Err(e) => {
-            tracing::warn!("reading the turn's latest assignment at the start failed: {e:#}");
-            None
-        }
+    let latest = read.assigned().await;
+    let moved = latest.as_ref().ok().copied().flatten().filter(|latest| latest.release != release.id());
+    let earlier = match moved.filter(|latest| latest.reason == Reason::Skip) {
+        Some(latest) => read.superseded(&latest, release.id()).await,
+        None => Ok(None),
     };
-    Ok(skip_naming(finalised, latest, release))
+    match (latest, earlier) {
+        (Ok(latest), Ok(earlier)) => Ok(skip_naming(finalised, earlier.or(latest), release)),
+        (Err(e), _) | (_, Err(e)) => {
+            tracing::warn!("reading the turn's latest assignment at the start failed: {e:#}");
+            Ok(finalised)
+        }
+    }
 }
 
 /// `own_skip`'s choice: `latest` as `finalised`'s turn when it is a skip of that turn naming `release`,
@@ -306,18 +332,55 @@ pub(crate) async fn read(
     Ok(Some(Assigned {
         binding: Binding { epoch, turn, position, generation: named.generation },
         boundary: engine_core::turns::boundary(turn).context("the turn's boundary is out of range")?,
-        reason: match named.reason {
-            0 => Reason::Draw,
-            1 => Reason::Skip,
-            2 => Reason::Promotion,
-            other => anyhow::bail!("turn {turn}'s assignment names reason {other}, which the schedule does not define"),
-        },
+        reason: reason_of(turn, named.reason)?,
         set: named.setId,
         candidate: AccountId(named.candidate.0.0),
         admin_key: AccountId(made._0.adminKey.0.0),
         release,
         head_release: (head_release != B256::ZERO).then_some(head_release.0),
     }))
+}
+
+/// The latest of `assigned`'s turn's assignments before its current one at `block` whose latest revision
+/// names `release`, as `Assigned` with that revision's generation and `assigned`'s epoch, set and head:
+/// keys a member took under it stay sealed in that generation after a later skip moved past it.
+/// Error cases:
+/// - a call fails or does not decode, the vault names no schedule, or an assignment's reason is unknown
+pub(crate) async fn superseded(
+    block: &impl AgreedBlock,
+    chain_id: u64,
+    vault: Address,
+    assigned: &Assigned,
+    release: [u8; 32],
+) -> anyhow::Result<Option<Assigned>> {
+    let domain =
+        StandbyDomain::at_if_scheduled(block, chain_id, vault).await?.context("the registry names no schedule")?;
+    let turn = assigned.binding.turn;
+    for position in (0..assigned.binding.position).rev() {
+        let made = call(block, "assigned_superseded", domain.schedule, assignmentOfCall { turn, position }).await?;
+        let Some(revision) = made._1.last().filter(|revision| revision.release.0 == release) else { continue };
+        return Ok(Some(Assigned {
+            binding: Binding { position, generation: revision.generation, ..assigned.binding },
+            reason: reason_of(turn, made._0.reason)?,
+            candidate: AccountId(made._0.candidate.0.0),
+            admin_key: AccountId(made._0.adminKey.0.0),
+            release,
+            ..*assigned
+        }));
+    }
+    Ok(None)
+}
+
+/// The assignment reason `OperatorSchedule` numbers `reason`.
+/// Error cases:
+/// - the schedule defines no such reason
+fn reason_of(turn: u64, reason: u8) -> anyhow::Result<Reason> {
+    Ok(match reason {
+        0 => Reason::Draw,
+        1 => Reason::Skip,
+        2 => Reason::Promotion,
+        other => anyhow::bail!("turn {turn}'s assignment names reason {other}, which the schedule does not define"),
+    })
 }
 
 /// `request` made at `block` under `operation`, its return decoded.
