@@ -106,7 +106,11 @@ async fn a_copy_that_followed_while_the_predecessor_stopped_takes_only_the_rest_
         }
     }
     let lines: Vec<&[u8]> = tail.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).collect();
-    let followed: Vec<u8> = lines[..3].iter().flat_map(|line| line.iter().copied().chain([b'\n'])).collect();
+    let mut followed = Vec::new();
+    for line in &lines[..3] {
+        followed.extend_from_slice(line);
+        followed.push(b'\n');
+    }
     follower.take_tail(Offset::start_of(tip), &followed).unwrap();
     let (moved, _) = follower.tip().unwrap();
     assert!(moved > tip, "following took no command");
