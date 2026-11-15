@@ -29,7 +29,8 @@ an index: load only the rule whose hint matches the current action.
   off the base profit fee (`max(base x (1 - d), C(hold))`, read at the close), its financing discount a share off a
   position's markup at each scheduled rollover, and its emissions boost a share onto an account's weight at the period's
   end, moved only with the table, never above launch's and never falling with the tier, `tests/tier_benefits.rs` and
-  `tests/tier_benefit_bounds.rs`), from `V60` a market's weekend margin
+  `tests/tier_benefit_bounds.rs`; from `V69` a catch-up's rollover reads the tier from the volume counted by its own
+  time, not by the stamp a fill of the account settled the book to, `tests/tier_catch_up.rs`), from `V60` a market's weekend margin
   (`weekend/`: each margin band at least its rate over the market's weekend gap, any closure of at
   least 40 hours found by `session/weekend.rs`; new risk in any market and withdrawals meet it from
   two hours before the gap until the market reopens, and an account below it is closed out at its

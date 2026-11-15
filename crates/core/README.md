@@ -168,6 +168,10 @@ this crate and reproduce the signed state roots exactly.
   account's weight after its emission debt by the share, read at the period's close
   (`src/emissions.rs`). The benefits move only with the table, never above launch's and never falling
   with the tier, so a higher tier never pays more fee than a lower one
+- From protocol `V69`, a rollover reads an account's tier from the volume that had counted by its own
+  time, however many fills of the account the same catch-up makes first: a fill settles the volume book to
+  the command's stamp, and the tier read at an earlier boundary leaves out each lot, and each close-out's
+  count, whose time came after it (`AccountVolume::early`, `src/volume_tier/book.rs`)
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -377,6 +381,9 @@ this crate and reproduce the signed state roots exactly.
   period's close shares, the account read, activation, and the same before V68
 - `tests/tier_benefit_bounds.rs` — a table's benefits held at or below launch's and never falling with
   the tier, a smaller benefit noticed, and the refusal of a benefit before V68
+- `tests/tier_catch_up.rs` — a rollover and a weekend close-out in one catch-up: the rollover's tier leaves
+  out opening volume that matures, and closing volume whose horizon ends, after the rollover, a
+  catch-up deferred across commands, and the same scenario before V69
 - `tests/earned_leverage.rs` — a fresh wallet's 20x, each tier's leverage up to the market's bands, a
   falling tier's open position, withdrawals and close-out, the weekend margin and the floor band by
   band, and activation over a held position
@@ -600,7 +607,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V68` parts (`v15.rs` to `v68.rs`)
+  `V15` to `V69` parts (`v15.rs` to `v69.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1167,6 +1174,17 @@ activation gives each tier of the table in force, and of the launch table that b
 position's benefits (`ACTIVATION_FEE_DISCOUNTS_BPS` and `ACTIVATION_FINANCING_DISCOUNTS_BPS`: 0, 0,
 1000 and 2000, and `ACTIVATION_EMISSIONS_BOOSTS_BPS`: 0, 1000, 2500 and 5000). Its log is
 `v68.jsonl`, and its session is in `examples/reference_log/v68.rs`.
+
+Protocol V69 makes a rollover read an account's tier from the volume that had counted by its own time. A
+command that catches up several boundaries makes the account's fills in order, and each fill settles the
+account's volume book to the command's stamp, so a later boundary of the catch-up read volume that had not
+matured, or whose round-trip horizon had not ended, at its own time, and charged a tier's financing
+discount early. From V69 a settlement while the clock stands at an earlier boundary notes each lot it
+counts after that boundary, and a close-out's own count, in the account's volume book (`early`, encoded in
+its leaf while any are kept), and the tier read at the boundary leaves them out; a lot due exactly at the
+boundary counts. The notes are dropped when the book next settles past their time, so they also hold across
+the commands of a catch-up that was deferred past `MAX_CATCH_UP_BOUNDARIES`, and across a snapshot. A read
+at the command's stamp subtracts nothing. Its log is `v69.jsonl`, and its session is in `examples/reference_log/v69.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

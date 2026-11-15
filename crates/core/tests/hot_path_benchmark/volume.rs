@@ -128,7 +128,7 @@ fn fill_books(h: &mut Harness, accounts: impl Iterator<Item = String>, full: boo
         .collect();
     let markets: Vec<MarketId> = if full { h.engine.markets().keys().copied().collect() } else { vec![BTC] };
     let opening = markets.into_iter().map(|id| (id, lots.clone())).collect();
-    let book = serde_json::to_value(AccountVolume { days, opening, closing }).expect("a book encodes");
+    let book = serde_json::to_value(AccountVolume { days, opening, closing, early: vec![] }).expect("a book encodes");
     let mut state = serde_json::to_value(&h.engine).expect("fixture encoding");
     for key in accounts {
         state["volumes"][key] = book.clone();

@@ -444,11 +444,18 @@ pub enum ProtocolVersion {
     /// benefits: fee and financing discounts of 0, 0, 10% and 20%, and boosts of 0, 10%, 25% and 50%;
     /// before it a table may name none.
     V68,
+    /// A rollover reads an account's tier from only the volume that had counted by its own time, however
+    /// many fills of the account a catch-up makes first, in this command or an earlier one it was deferred
+    /// from: a fill's book settlement moves every lot counted by the command's stamp into its day, and the
+    /// book now keeps each lot counted after the boundary the catch-up stands at (a lot's due time, day and
+    /// notional, a close-out's own count included) until the catch-up has passed its time, and the tier
+    /// read at an earlier boundary leaves them out. The volume leaf encodes them while any are kept.
+    V69,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V68;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V69;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {
