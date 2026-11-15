@@ -82,6 +82,8 @@ pub(crate) struct FakeAssignments {
     pub script: Mutex<VecDeque<Option<Assigned>>>,
     pub members: Mutex<Vec<Registered>>,
     pub reads: std::sync::atomic::AtomicUsize,
+    /// While set, every read fails, as with no quorum.
+    pub failing: std::sync::atomic::AtomicBool,
 }
 
 impl FakeAssignments {
@@ -101,10 +103,11 @@ impl Assignments for FakeAssignments {
         self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut script = self.script.lock().unwrap();
         let answer = if script.len() > 1 { script.pop_front().flatten() } else { script.front().copied().flatten() };
-        Box::pin(async move { Ok(answer) })
+        let failing = self.failing.load(std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move { if failing { anyhow::bail!("no quorum") } else { Ok(answer) } })
     }
 
-    fn members(&self, _set: u32, _turn: u64) -> BoxFuture<'_, anyhow::Result<Vec<Registered>>> {
+    fn members<'a>(&'a self, _assigned: &'a Assigned) -> BoxFuture<'a, anyhow::Result<Vec<Registered>>> {
         let members = self.members.lock().unwrap().clone();
         Box::pin(async move { Ok(members) })
     }
@@ -121,15 +124,13 @@ pub(crate) fn skip(turn: u64, position: u16, candidate: u8, release: [u8; 32], g
         candidate: AccountId([candidate; 20]),
         admin_key: AccountId([candidate + 1; 20]),
         release,
-        latched: false,
         head_release: None,
-        at: 0,
     }
 }
 
 /// Scripts the turn in effect's assignment at `position`, for `reason`, naming `candidate` with the
-/// releases `revisions`, latched or not, under signer epoch 3, with the epoch's newest head's release.
-fn script_turn(block: &mut Scripted, (position, reason): (u16, u8), revisions: &[(B256, u64)], latched: bool) {
+/// releases `revisions`, under signer epoch 3, with the epoch's newest head's release.
+fn script_turn(block: &mut Scripted, (position, reason): (u16, u8), revisions: &[(B256, u64)]) {
     let candidate = Address::repeat_byte(0xc1);
     let named = TurnReturn {
         candidate,
@@ -159,42 +160,36 @@ fn script_turn(block: &mut Scripted, (position, reason): (u16, u8), revisions: &
     let revisions =
         revisions.iter().map(|&(release, generation)| RevisionReturn { release, generation }).collect::<Vec<_>>();
     block.answer(SCHEDULE, assignmentOfCall { turn: TURN, position }, &assignmentOfReturn { _0: made, _1: revisions });
-    let latch = latchesReturn {
-        at: if latched { TIME - 30 } else { 0 },
-        signerEpoch: 3,
-        member: candidate,
-        release: B256::ZERO,
-        generation: 0,
-    };
-    block.answer(LOG_HEADS, latchesCall { turn: TURN, position }, &latch);
     block.answer(LOG_HEADS, headReleaseCall { epoch: 3 }, &B256::repeat_byte(0xee));
 }
 
 #[tokio::test]
 async fn a_skip_reads_as_its_assignment_with_its_latest_release_and_generation() {
     let mut block = Scripted::scheduled();
-    script_turn(&mut block, (4, 1), &[(B256::repeat_byte(1), 7), (B256::repeat_byte(2), 8)], false);
+    script_turn(&mut block, (4, 1), &[(B256::repeat_byte(1), 7), (B256::repeat_byte(2), 8)]);
     let assigned = read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap().expect("a turn names the operator");
     assert_eq!(assigned.binding, Binding { epoch: 3, turn: TURN, position: 4, generation: 8 });
     assert_eq!(assigned.reason, Reason::Skip);
     assert_eq!((assigned.set, assigned.candidate), (2, AccountId([0xc1; 20])));
     assert_eq!(assigned.admin_key, AccountId([0xd1; 20]), "the key the set adopted");
     assert_eq!(assigned.release, [2; 32], "the latest revision's release");
-    assert!(!assigned.latched);
     assert_eq!(assigned.head_release, Some([0xee; 32]));
     assert_eq!(assigned.boundary, engine_core::turns::boundary(TURN).unwrap());
     assert!(assigned.names([2; 32], 8) && !assigned.names([1; 32], 8) && !assigned.names([2; 32], 7));
 }
 
 #[tokio::test]
-async fn reasons_and_latches_read_as_the_schedule_numbers_them() {
+async fn reasons_read_as_the_schedule_numbers_them_and_another_is_refused() {
     for (code, reason) in [(0, Reason::Draw), (1, Reason::Skip), (2, Reason::Promotion)] {
         let mut block = Scripted::scheduled();
-        script_turn(&mut block, (0, code), &[(B256::repeat_byte(1), 7)], true);
+        script_turn(&mut block, (0, code), &[(B256::repeat_byte(1), 7)]);
         let assigned = read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap().unwrap();
         assert_eq!(assigned.reason, reason);
-        assert!(assigned.latched, "a latch at a nonzero time");
     }
+    let mut block = Scripted::scheduled();
+    script_turn(&mut block, (0, 3), &[(B256::repeat_byte(1), 7)]);
+    let err = read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap_err();
+    assert!(format!("{err:#}").contains("reason 3"), "{err:#}");
 }
 
 #[tokio::test]
@@ -203,7 +198,7 @@ async fn no_schedule_no_turn_and_no_turn_naming_the_operator_read_as_none() {
     block.answer(VAULT, registryCall {}, &Address::ZERO);
     assert_eq!(read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap(), None, "no registry");
     let mut block = Scripted::scheduled();
-    script_turn(&mut block, (0, 0), &[(B256::repeat_byte(1), 7)], false);
+    script_turn(&mut block, (0, 0), &[(B256::repeat_byte(1), 7)]);
     let ended = rotationStateReturn { enabled: false, release: B256::ZERO, generation: 0, until: 0 };
     block.answer(REGISTRY, rotationStateCall {}, &ended);
     assert_eq!(read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap(), None, "an installation ended the turns");
@@ -225,18 +220,41 @@ async fn no_schedule_no_turn_and_no_turn_naming_the_operator_read_as_none() {
 #[tokio::test]
 async fn an_epoch_with_no_v2_head_names_no_head_release() {
     let mut block = Scripted::scheduled();
-    script_turn(&mut block, (0, 0), &[(B256::repeat_byte(1), 7)], false);
+    script_turn(&mut block, (0, 0), &[(B256::repeat_byte(1), 7)]);
     block.answer(LOG_HEADS, headReleaseCall { epoch: 3 }, &B256::ZERO);
     assert_eq!(read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap().unwrap().head_release, None);
 }
 
 #[tokio::test]
-async fn a_set_reads_each_member_with_its_registration_and_whether_it_held_the_turn() {
+async fn a_set_reads_each_member_with_its_registration_and_its_assignments_position() {
     let mut block = Scripted::scheduled();
-    let (a, b) = (Address::repeat_byte(0xa1), Address::repeat_byte(0xb1));
-    let set = setOfReturn { epoch: 1, effectiveAt: 0, candidates: vec![a, b], weights: vec![U256::from(1); 2] };
+    let (a, b, c) = (Address::repeat_byte(0xa1), Address::repeat_byte(0xb1), Address::repeat_byte(0xc1));
+    let set = setOfReturn { epoch: 1, effectiveAt: 0, candidates: vec![a, b, c], weights: vec![U256::from(1); 3] };
     block.answer(SCHEDULE, setOfCall { setId: 2 }, &set);
-    for (candidate, held, host) in [(a, true, "a.test"), (b, false, "b.test")] {
+    // Assignments at positions 1 (c, drawn) and 3 (a, skipped to); none at 0 or 2.
+    for position in 0..=3u16 {
+        let candidate = match position {
+            1 => c,
+            3 => a,
+            _ => Address::ZERO,
+        };
+        let made = AssignmentReturn {
+            candidate,
+            adminKey: Address::ZERO,
+            setId: 2,
+            reason: 0,
+            standbyKey: Address::ZERO,
+            signerEpoch: 0,
+            headSeq: 0,
+            headLink: B256::ZERO,
+            checkpointSeq: 0,
+            checkpointRoot: B256::ZERO,
+            at: 0,
+        };
+        let call = assignmentOfCall { turn: TURN, position };
+        block.answer(SCHEDULE, call, &assignmentOfReturn { _0: made, _1: Vec::new() });
+    }
+    for (candidate, held, host) in [(a, true, "a.test"), (b, false, "b.test"), (c, true, "c.test")] {
         let registered = CandidateReturn {
             adminKey: Address::ZERO,
             enclave: Address::ZERO,
@@ -249,13 +267,44 @@ async fn a_set_reads_each_member_with_its_registration_and_whether_it_held_the_t
         block.answer(REGISTRY, candidateOfCall { candidate }, &registered);
         block.answer(SCHEDULE, heldTurnCall { turn: TURN, candidate }, &held);
     }
-    let members = crate::handover::discovery::members(&&block, CHAIN_ID, VAULT, (2, TURN)).await.unwrap();
-    assert_eq!(members.len(), 2);
+    let assigned = Assigned { set: 2, ..skip(TURN, 3, 0xa1, [0; 32], 1) };
+    let members = crate::handover::discovery::members(&&block, CHAIN_ID, VAULT, &assigned).await.unwrap();
+    assert_eq!(members.len(), 3, "in the set's order");
     assert_eq!(members[0].source.candidate, AccountId([0xa1; 20]));
     assert_eq!(members[0].source.release, [0xa1; 32]);
     assert_eq!(members[0].source.api_hostname, "a.test");
     assert_eq!(members[0].source.handover_endpoint, "a.test:7443");
-    assert!(members[0].held && !members[1].held);
+    assert_eq!(members.iter().map(|member| member.held).collect::<Vec<_>>(), [Some(3), None, Some(1)]);
+}
+
+#[test]
+fn a_start_takes_the_skip_of_its_turn_naming_its_own_release_and_the_finalised_turn_otherwise() {
+    let release = Release { launch_digest: [0x11; 48], config_sha256: [0x22; 32] };
+    let finalised = ScheduledTurn {
+        turn: TURN,
+        boundary: engine_core::turns::boundary(TURN).unwrap(),
+        candidate: AccountId([0xb0; 20]),
+        admin_key: AccountId([0xb1; 20]),
+        release: [0x66; 32],
+        generation: 9,
+        set: 2,
+        source: None,
+    };
+    let own = skip(TURN, 3, 0xc1, release.id(), 11);
+    let started = skip_naming(Some(finalised.clone()), Some(own), &release).unwrap();
+    assert_eq!((started.release, started.generation, started.candidate), (release.id(), 11, AccountId([0xc1; 20])));
+    assert_eq!(started.boundary, finalised.boundary);
+    let others = [
+        ("a skip naming another release", Some(skip(TURN, 3, 0xc1, [0x77; 32], 11))),
+        ("a skip of another turn", Some(skip(TURN + 1, 3, 0xc1, release.id(), 11))),
+        ("a promotion", Some(Assigned { reason: Reason::Promotion, ..own })),
+        ("a draw", Some(Assigned { reason: Reason::Draw, ..own })),
+        ("no assignment", None),
+    ];
+    for (what, latest) in others {
+        assert_eq!(skip_naming(Some(finalised.clone()), latest, &release), Some(finalised.clone()), "{what}");
+    }
+    assert_eq!(skip_naming(None, Some(own), &release), None, "no turn in effect at the start");
 }
 
 #[test]

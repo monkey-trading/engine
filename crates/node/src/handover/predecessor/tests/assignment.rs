@@ -1,8 +1,9 @@
 //! A turn's handover bound to the latest agreed block's assignment (#596): a skip's member takes the
 //! keys before the finalised schedule shows the skip, under the skip's generation, once the holder's
-//! log shows the skip's set naming it with notice; and a skip or a promotion at each phase of a transfer
-//! — before the stop, after the stop before the keys go, after the keys go before the confirmation —
-//! leaves the keys with the holder, which goes on serving the member now named.
+//! log shows the skip's set naming it with notice; a skip or a promotion at each phase of a transfer —
+//! at the admission, before the stop, after the stop before the keys go, after the keys go before the
+//! confirmation — leaves the keys with the holder, which goes on serving the member now named; and a
+//! promotion racing the boundary leaves the drawn member without them.
 
 use super::*;
 
@@ -88,7 +89,7 @@ async fn a_skips_member_takes_the_keys_under_the_skip_before_the_finalised_sched
     assert_eq!((store.release(), store.generation()), (exchange.upgrade(), SKIPPED), "sealed in the skip's generation");
     timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
     assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
-    assert_eq!(exchange.assignments.reads.load(Ordering::SeqCst), 4, "each side read it before each step");
+    assert_eq!(exchange.assignments.reads.load(Ordering::SeqCst), 5, "each side read it before each step");
 }
 
 #[tokio::test]
@@ -106,23 +107,27 @@ async fn a_successor_binding_no_assignment_or_a_skip_its_log_refuses_gets_no_key
     exchange.assignments.set(Some(unnoticed));
     let err = exchange.take_bound().await.err().expect("keys left for a skip the log refuses");
     assert!(format!("{err:#}").contains("refuses turn"), "{err:#}");
-    // A promotion naming the successor: its member signs with its own standby key.
+    // A promotion naming the successor passes only the finalised checks a draw does, which the drawn
+    // assignment the finalised schedule shows fails.
     let promoted = Assigned { reason: Reason::Promotion, ..exchange.skip_to_successor(turn, key, 1, SKIPPED) };
     exchange.assignments.set(Some(promoted));
-    let err = exchange.take_bound().await.err().expect("keys left for a promotion");
-    assert!(format!("{err:#}").contains("is a promotion"), "{err:#}");
+    let err = exchange.take_bound().await.err().expect("keys left for an unfinal promotion");
+    assert!(format!("{err:#}").contains("the finalised schedule names release"), "{err:#}");
     assert!(exchange.drains.try_recv().is_err(), "sequencing stopped");
     assert!(!exchange.run.is_finished(), "the predecessor stopped serving");
     assert!(std::fs::read_dir(&exchange.successor_dir).is_err(), "the successor sealed keys");
 }
 
-/// A skip past the successor, or a promotion, landing before the stop, after the stop before the keys
-/// go, or after the keys go before the confirmation: the keys stay with the holder, sequencing goes on
-/// when it had not stopped, and the stopped holder admits the member then named, with no second stop.
+/// A skip past the successor, or a promotion, landing at the admission, between the admission and the
+/// stop, after the stop before the keys go, or after the keys go before the confirmation: the keys stay
+/// with the holder, which stops only for the later two, and then admits the member named next, with one
+/// stop in all.
 #[tokio::test]
 async fn a_skip_or_a_promotion_at_each_phase_of_a_transfer_leaves_the_keys_with_the_holder() {
-    for reason in [Reason::Skip, Reason::Promotion] {
-        for (phase, reads_before) in [("before the stop", 1), ("after the stop", 2), ("before the confirmation", 3)] {
+    let phases = [("at the admission", 1, false), ("before the stop", 2, false), ("after the stop", 3, true)];
+    let phases = phases.into_iter().chain([("before the confirmation", 4, true)]);
+    for (phase, reads_before, stops) in phases {
+        for reason in [Reason::Skip, Reason::Promotion] {
             let what = format!("{reason:?} {phase}");
             let name = format!("handover-phase-{}-{}", reads_before, reason == Reason::Skip);
             let (engine, _run, turn, key, boundary) = logged(&format!("{name}-log"));
@@ -133,17 +138,21 @@ async fn a_skip_or_a_promotion_at_each_phase_of_a_transfer_leaves_the_keys_with_
             let moved = elsewhere(turn, reason);
             exchange.assignments.then((0..reads_before).map(|_| Some(bound)).chain([Some(moved)]));
             let head = write_log_tail(&exchange.successor_log, 9, &exchange.old.enclave_key().unwrap());
-            let answer = exchange.answer_drain(Ok(head));
+            // A holder that does not stop never asks for its final checkpoint.
+            let answer = stops.then(|| exchange.answer_drain(Ok(head.clone())));
             let err =
                 exchange.take_bound().await.err().unwrap_or_else(|| panic!("{what}: the successor took the keys"));
             assert!(format!("{err:#}").contains("moved") || format!("{err:#}").contains("binds"), "{what}: {err:#}");
+            if !stops {
+                assert!(exchange.drains.try_recv().is_err(), "{what}: the holder stopped");
+            }
             assert!(
                 !file_for(&exchange.successor_dir, &exchange.upgrade(), SKIPPED).exists(),
                 "{what}: the successor sealed the keys"
             );
             assert!(!exchange.run.is_finished(), "{what}: the predecessor stopped serving");
-            // The member now named is admitted, by a stopped holder without stopping again: here the
-            // successor named once more, by a later skip.
+            // The member named next is admitted: here the successor named once more, by a later skip.
+            let answer = answer.unwrap_or_else(|| exchange.answer_drain(Ok(head)));
             exchange.assignments.set(Some(exchange.skip_to_successor(turn, key, 3, LATER)));
             let store = exchange.take_bound().await.unwrap_or_else(|e| panic!("{what}: the member now named: {e:#}"));
             assert_eq!(store.generation(), LATER, "{what}");
@@ -151,6 +160,23 @@ async fn a_skip_or_a_promotion_at_each_phase_of_a_transfer_leaves_the_keys_with_
             assert_eq!(answer.await.unwrap(), 1, "{what}: sequencing stopped once");
         }
     }
+}
+
+/// A promotion that lands as the drawn member takes its turn at the boundary: the holder, reading the
+/// promotion as the turn's assignment, refuses the drawn member and goes on sequencing.
+#[tokio::test]
+async fn a_promotion_racing_the_boundary_leaves_the_drawn_member_without_the_keys() {
+    let (engine, _run, turn, key, boundary) = logged("handover-boundary-promotion-log");
+    let mut exchange = Exchange::start_logged("handover-boundary-promotion", Some(engine.clone())).await;
+    exchange.schedule_successor(turn, key, boundary);
+    exchange.reach(boundary);
+    let drawn = Assigned { reason: Reason::Draw, ..exchange.skip_to_successor(turn, key, 0, 9) };
+    let promoted = Assigned { reason: Reason::Promotion, ..skip(turn, 1, 0xd1, [0x77; 32], 13) };
+    exchange.assignments.then([Some(drawn), Some(promoted)]);
+    let err = exchange.take_bound().await.err().expect("the drawn member took the keys past a promotion");
+    assert!(format!("{err:#}").contains("binds"), "{err:#}");
+    assert!(exchange.drains.try_recv().is_err(), "sequencing stopped for a member a promotion passed");
+    assert!(!exchange.run.is_finished(), "the predecessor stopped serving");
 }
 
 #[tokio::test]
@@ -175,7 +201,8 @@ async fn a_stopped_holder_admits_a_later_turns_skip_only_within_the_lookback() {
     let answer = exchange.answer_drain(Ok(head));
     // The stop goes through, then the transfer fails on the successor's side, and the sequencer ends.
     let bound = exchange.skip_to_successor(turn, key, 1, SKIPPED);
-    exchange.assignments.then([Some(bound), Some(bound), Some(bound), Some(elsewhere(turn, Reason::Skip))]);
+    let moved = Some(elsewhere(turn, Reason::Skip));
+    exchange.assignments.then([Some(bound), Some(bound), Some(bound), Some(bound), moved]);
     assert!(exchange.take_bound().await.is_err());
     drop(engine);
     timeout(Duration::from_secs(5), run).await.expect("the sequencer ended").unwrap().unwrap();

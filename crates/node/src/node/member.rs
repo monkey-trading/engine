@@ -211,11 +211,8 @@ pub(crate) struct Member<'a, C = CheckpointRpc, H = PostedHeads, T = Roughtime> 
     /// Its answers to the operator's log checks while it follows, without `[tee.sealing.handover]`
     /// none.
     answering: Option<Arc<Answering>>,
-    /// The turn's assignment at the latest agreed block, with `[log_heads]` (#596).
-    assignments: Option<Arc<dyn crate::handover::assigned::Assignments>>,
-    /// Whether it follows the operator whose release signed the newest head, rather than the one the
-    /// registry names: each failed stint moves it to the other.
-    follow_holder: bool,
+    /// What it reads a turn's reassignments through, and whom it follows past them (#596).
+    fallback: turn::Fallback,
 }
 
 impl<'a> Member<'a> {
@@ -231,7 +228,7 @@ impl<'a> Member<'a> {
         let checked = CheckedHeads::default();
         let quoting = attestor_for(cfg.tee.provider, &GuestClock::default())?;
         let answering = Answering::new(cfg, quoting, sealer.platform()?, checked.clone())?.map(Arc::new);
-        let assignments = crate::handover::assigned::for_config(cfg, "member_assignments")?;
+        let fallback = turn::Fallback::for_config(cfg)?;
         Ok(Self {
             cfg,
             metrics,
@@ -248,8 +245,7 @@ impl<'a> Member<'a> {
             stopping: Arc::default(),
             checked,
             answering,
-            assignments,
-            follow_holder: false,
+            fallback,
         })
     }
 }
@@ -284,8 +280,7 @@ impl<'a, T: Sampling> Member<'a, CheckpointRpc, PostedHeads, T> {
             stopping: Arc::default(),
             checked,
             answering: answering.map(Arc::new),
-            assignments: None,
-            follow_holder: false,
+            fallback: Default::default(),
         }
     }
 }

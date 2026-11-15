@@ -263,6 +263,13 @@ async fn after_an_unconfirmed_handover_the_next_turns_member_is_admitted_under_t
         let err = exchange.take().await.err().unwrap_or_else(|| panic!("{what}: keys left for a turn the log refuses"));
         assert!(format!("{err:#}").contains(&format!("has not accepted turn {next}")), "{what}: {err:#}");
     }
+    // A turn more than the lookback past the last the stopped log knows gets nothing, its set aside.
+    let far = turn + 1 + crate::handover::turns::SOURCE_LOOKBACK as u64;
+    exchange.reach(engine_core::turns::boundary(far).unwrap());
+    exchange.schedule_set_member(far, key, 1);
+    let err = exchange.take().await.err().expect("keys left for a turn past the lookback");
+    assert!(format!("{err:#}").contains(&format!("has not accepted turn {far}")), "{err:#}");
+    exchange.reach(next_boundary);
     exchange.schedule_set_member(next, key, 1);
     let store = exchange.take().await.expect("the next turn's member is admitted under the retained turns");
     assert_eq!((store.release(), store.generation()), (exchange.upgrade(), TURN_GENERATION));

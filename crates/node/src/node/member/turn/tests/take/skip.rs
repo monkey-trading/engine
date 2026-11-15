@@ -27,7 +27,7 @@ impl Fixture {
     /// The member, reading `assignments` as the latest agreed block's.
     fn member_reading(&self, assignments: &Arc<FakeAssignments>) -> Member<'_, Registry, Heads, Time> {
         let mut member = self.member();
-        member.assignments = Some(assignments.clone());
+        member.fallback.assignments = Some(assignments.clone());
         member
     }
 }
@@ -114,9 +114,9 @@ async fn a_skips_take_asks_the_operator_whose_head_is_newest_first_and_binds_the
     let assigned = Assigned { head_release: Some([0x0b; 32]), ..skip_of_own(fixture.release().id(), 0x0c) };
     assignments.set(Some(assigned));
     *assignments.members.lock().unwrap() = vec![
-        Registered { source: operator_of(0x0a), held: false },
-        Registered { source: operator_of(0x0b), held: true },
-        Registered { source: operator_of(0x0c), held: true },
+        Registered { source: operator_of(0x0a), held: None },
+        Registered { source: operator_of(0x0b), held: Some(0) },
+        Registered { source: operator_of(0x0c), held: Some(2) },
     ];
     let member = fixture.member_reading(&assignments);
     let Holding::Take(turn) = fixture.member_reading(&assignments).holding().await.unwrap() else {
@@ -139,14 +139,43 @@ async fn after_a_failed_stint_a_member_follows_the_operator_whose_head_is_newest
     fixture.time.set(OWN + 1);
     let assignments = Arc::new(FakeAssignments::default());
     assignments.set(Some(Assigned { head_release: Some([0x0a; 32]), ..skip_of_own([0x0e; 32], 0x0e) }));
-    *assignments.members.lock().unwrap() = vec![Registered { source: operator_of(0x0a), held: true }];
+    *assignments.members.lock().unwrap() = vec![Registered { source: operator_of(0x0a), held: Some(0) }];
     let mut member = fixture.member_reading(&assignments);
     let turn = fixture.registry.turns()[2].clone();
     assert_eq!(member.resolve_following(Some(&turn)).await.unwrap().origin, "https://named.test");
-    member.follow_holder = true;
+    member.fallback.follow_holder = true;
     let holder = member.resolve_following(Some(&turn)).await.unwrap();
     assert_eq!(holder.origin, "https://10.test", "the operator whose release signed the newest head");
     // With no head, or no operator running its release, it follows the one the registry names.
     assignments.set(Some(Assigned { head_release: Some([0x99; 32]), ..skip_of_own([0x0e; 32], 0x0e) }));
     assert_eq!(member.resolve_following(Some(&turn)).await.unwrap().origin, "https://named.test");
+}
+
+/// After a reorg removes a skip, the latest block names the drawn member again: one that handed its keys
+/// to the skip's member and holds no sealed copy any more takes them back, asking first the operator whose
+/// head is newest, the skip's orphaned member, which still holds them and sequences.
+#[tokio::test]
+async fn after_a_reorg_removes_a_skip_the_drawn_member_takes_the_keys_from_the_orphaned_recipient() {
+    let fixture = Fixture::start("member-skip-reorged", true).await;
+    fixture.registry.draw(fixture.release().id());
+    fixture.registry.source(operator_of(0x0a));
+    fixture.time.set(OWN + 1);
+    let assignments = Arc::new(FakeAssignments::default());
+    let drawn = Assigned {
+        reason: Reason::Draw,
+        head_release: Some([0x0b; 32]),
+        ..skip(12, 0, 0x0e, fixture.release().id(), GENERATION)
+    };
+    assignments.set(Some(drawn));
+    *assignments.members.lock().unwrap() = vec![
+        Registered { source: operator_of(0x0b), held: None },
+        Registered { source: operator_of(0x0a), held: None },
+    ];
+    let mut member = fixture.member_reading(&assignments);
+    let Holding::Take(turn) = member.holding().await.unwrap() else { panic!("the drawn member did not take its turn") };
+    assert_eq!((turn.generation, turn.release), (GENERATION, fixture.release().id()));
+    let (sources, prepared) = member.prepare_take(&turn).await.unwrap();
+    let order: Vec<u8> = sources.iter().map(|source| source.candidate.0[0]).collect();
+    assert_eq!(order, [0x0b, 0x0a], "the orphaned recipient, whose head is newest, then the turn's source");
+    assert_eq!(prepared.bound.binding, Some(drawn.binding), "the take binds the draw");
 }

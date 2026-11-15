@@ -212,6 +212,7 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
                 epoch = view.epoch,
                 marked_slot = view.marked_slot,
                 due_at = view.due_at,
+                skip_due_at = view.skip_due_at,
                 head_seq = view.head.seq,
                 posted_at = view.head.posted_at,
                 signed = ?signed.as_ref().map(|signed| (signed.epoch, signed.head.head.seq, signed.head.signed_at)),

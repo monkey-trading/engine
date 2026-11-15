@@ -437,10 +437,13 @@ it with its first head under its assignment, which `LogHeads` latches, and once 
 slots (2 by default; the deployment's minimum exceeds the handover's switch budget plus one interval
 plus a head's inclusion, which the head tolerance bounds, at every interval the bounds allow) pass after
 the later of the boundary's slot and the assignment's with no latch, anyone skips the turn to the next
-listed member in its order, in a new generation with no signer change, and once `heartbeatMisses + 1`
-witnessed slots pass after the later of the boundary's slot and the last signer change with the turn's
-assignment unlatched, in a set of two or more members, anyone may promote past the incumbent even while
-it posts heads, which bind its own earlier turn and latch nothing; an unwitnessed slot restarts both
+listed member in its order other than the turn's source, which holds the keys, in a new generation with
+no signer change, never past a promotion, whose member the missed heads pass, and once
+`heartbeatMisses + 1` witnessed slots pass after the latest of the boundary's slot, the last signer
+change and the next qualified member's standby registration with the turn's assignment unlatched,
+anyone may promote that member even while the incumbent posts heads, which bind its own earlier turn and
+latch nothing, the incumbent's own standby key included, which fences its old key out; with no member to
+promote the count does not run; an unwitnessed slot restarts both
 counts, so a chain outage across a boundary gives the member a fresh window; skips and promotions act at
 sequencer confirmation: the key holder admits, and the member named takes, the assignment the custody
 quorum's latest agreed block shows, bound to the signer epoch, the turn, the assignment's position and
@@ -448,11 +451,12 @@ its generation, which the holder reads again before it stops and before the keys
 before it seals them, so a reassignment in between leaves the keys with the holder, which serves the
 member then named; a skip's member is admitted once the holder's log shows the skip's set naming it with
 notice, before the log mirrors the skip at finality, and logs `TurnTaken` only once the mirror applies
-it, the time before going to stakers; a member that took the keys and was then skipped sequences on,
-earning nothing, until it hands them to the member now named, and a holder whose skip a reorg removed
-hands them to the member the schedule names again; a member with no copy of the log takes a skip's turn
-only once the skip is final; the incumbent stops by its own clock before a promotion on either path
-could pass, as below; once no position
+it, the time before going to stakers; a member that took the keys and was then skipped sequences on
+until it hands them to the member now named, earning the operator's share only until the log mirrors the
+skip, and a holder whose skip a reorg removed
+hands them to the member the schedule names again; a skip's member with no copy of the log, or one
+restarting, reads the skip at its start the same way, before it is final; the incumbent stops by its own
+clock before a promotion on either path could pass, as below; once no position
 qualifies the order is exhausted, and the governance fallback (rotation off, then `installOperator`
 once the drawn turns end) applies, which takes at most the 10-minute bound plus the timelock delay,
 below the 14-day exit period; a promoted member starts at a block the custody quorum agrees on, before

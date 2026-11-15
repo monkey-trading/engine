@@ -258,6 +258,11 @@ impl<C: CheckpointChain> Predecessor<C> {
                     );
                     return Ok(refuse(&mut stream, withheld).await);
                 }
+                // A skip or a promotion since the admission cancels the transfer before the stop: this
+                // release goes on sequencing (#596).
+                if let Err(e) = self.revalidate(request.binding.as_ref(), &release).await {
+                    return Ok(refuse(&mut stream, e).await);
+                }
                 self.retain_turns().await;
                 self.retain_version().await;
                 let stopped = self.stop().await;
@@ -281,8 +286,8 @@ impl<C: CheckpointChain> Predecessor<C> {
                 head.insert(stopped?).clone()
             }
         };
-        // A skip or a promotion since the admission leaves the stopped release serving the member now
-        // named (#596).
+        // A skip or a promotion since the stop leaves the stopped release serving the member now named
+        // (#596).
         if let Err(e) = self.revalidate(request.binding.as_ref(), &release).await {
             return Ok(refuse(&mut stream, e).await);
         }

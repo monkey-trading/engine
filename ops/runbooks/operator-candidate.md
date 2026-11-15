@@ -459,8 +459,9 @@ misses it is promoted at once.
   assignment, which `LogHeads` latches; post it as soon as the node holds the keys. Once `takeWindow`
   witnessed slots (`cast call $SCHEDULE 'takeWindow()'`, 2 by default) pass after the later of the
   boundary's slot and the assignment's with no latch, anyone's `skip()` names the next listed member in
-  the turn's order, in a new generation, with no signer change; an unwitnessed slot, as through a chain
-  outage, restarts the window. The timelock sets the window within its deployment bounds while no turn
+  the turn's order other than the turn's source, in a new generation, with no signer change; an
+  unwitnessed slot, as through a chain outage, restarts the window, and a promotion's assignment is
+  never skipped. The timelock sets the window within its deployment bounds while no turn
   names the operator (`setTakeWindow`); the deployment's minimum must exceed the switch budget plus one
   interval plus a head's inclusion (`headTolerance`) at the shortest interval the bounds allow. Skips
   act at sequencer confirmation: the member named takes the keys, and the key holder admits it, from the
@@ -470,11 +471,13 @@ misses it is promoted at once.
   them to the member now named; a holder whose skip a reorg removed hands them to the member the
   schedule names again. A member is found where its heads are newest, then among the turn's other
   assignments, then at the turn's source and earlier holders; a member following moves to the holder
-  when the operator the registry names fails a stint. A member with no copy of the log takes a skip's
-  turn only once the skip is final. If no assignment of a turn of two or more members is latched once
-  `heartbeatMisses + 1` witnessed slots pass after the later of the boundary's slot and the last signer
-  change, `promote()` passes even while the incumbent posts heads, which bind its own earlier turn; the
-  incumbent stops by its own clock before that, as `promotionDueAt()` counts this path too.
+  when the operator the registry names fails a stint. A skip's member with no copy of the log, or one
+  restarting, reads the skip at its start the same way, before it is final. If no assignment of a turn is latched once `heartbeatMisses + 1`
+  witnessed slots pass after the latest of the boundary's slot, the last signer change and the next
+  qualified member's standby registration, `promote()` passes even while the incumbent posts heads,
+  which bind its own earlier turn, naming that member, the incumbent's own standby key included; the
+  incumbent stops by its own clock before that, as `promotionDueAt()` counts this path too, and with no
+  member to promote the path does not run.
 - **A replaced operator coming back.** The outgoing operator, restarted or still running, follows the
   promoted member. Its log may hold commands past the last head its signer epoch posted that no member
   received; once a final block shows that epoch ended, the node sets its log aside

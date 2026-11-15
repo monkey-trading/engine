@@ -13,19 +13,19 @@ use engine_core::types::AccountId;
 use futures_util::{StreamExt, TryStreamExt, stream};
 
 use crate::checkpoints::{CheckpointChain, HandoverSource, Observation, ScheduledTurn};
-use crate::handover::assigned::{Assigned, call};
+use crate::handover::assigned::{Assigned, Assignments, call};
 use crate::liveness::chain::setOfCall;
-use crate::standby_key::chain::{AgreedBlock, StandbyDomain, candidateOfCall, heldTurnCall};
+use crate::standby_key::chain::{AgreedBlock, StandbyDomain, assignmentOfCall, candidateOfCall, heldTurnCall};
 
 /// How many of a set's members are read at once.
 const MEMBER_READS: usize = 8;
 
-/// A member of the turn's set as the latest agreed block registers it, and whether it held an
-/// assignment of the turn.
+/// A member of the turn's set as the latest agreed block registers it, and the position of its
+/// assignment of the turn, if it held one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Registered {
     pub source: HandoverSource,
-    pub held: bool,
+    pub held: Option<u16>,
 }
 
 /// The operators a member taking `turn` asks for the keys, in the order the module states, with
@@ -45,6 +45,30 @@ pub(crate) async fn sources(
     Ok(ordered(turn.candidate, assigned.head_release, members, earlier))
 }
 
+/// The operators a take of `turn` asks: with `assignments`, a reader of the latest agreed block whose
+/// assignment is of `turn`, in `sources`' order; the finalised schedule's source and earlier holders
+/// (`turns::sources`) otherwise.
+/// Error cases:
+/// - the latest block or the finalised schedule cannot be read
+pub(crate) async fn sources_reading(
+    assignments: Option<&dyn Assignments>,
+    vault: &impl CheckpointChain,
+    at: &Observation,
+    turn: &ScheduledTurn,
+) -> anyhow::Result<Vec<HandoverSource>> {
+    let latest = match assignments {
+        Some(read) => read.assigned().await.context("reading the turn's latest assignment")?.map(|a| (read, a)),
+        None => None,
+    };
+    match latest.filter(|(_, assigned)| assigned.binding.turn == turn.turn) {
+        Some((read, assigned)) => {
+            let members = read.members(&assigned).await?;
+            sources(vault, at, turn, &assigned, &members).await
+        }
+        None => crate::handover::turns::sources(vault, at, turn).await,
+    }
+}
+
 /// The operator whose release signed the signer epoch's newest head, among `members` and `earlier`,
 /// the turn's source and earlier holders: the enclave holding the keys; `None` with no head, or when
 /// no operator listed runs that release.
@@ -58,7 +82,8 @@ pub(crate) fn holder<'a>(
 }
 
 /// `sources`' order, for a turn whose member is `member`: the head's holder, the set's other members
-/// that held an assignment of the turn, then `earlier`, each once and with an endpoint.
+/// that held an assignment of the turn in the order their assignments were made, then `earlier`, each
+/// once and with an endpoint.
 pub(crate) fn ordered(
     member: AccountId,
     head_release: Option<[u8; 32]>,
@@ -66,7 +91,9 @@ pub(crate) fn ordered(
     earlier: Vec<HandoverSource>,
 ) -> Vec<HandoverSource> {
     let first = holder(head_release, members, &earlier).cloned();
-    let held = members.iter().filter(|registered| registered.held).map(|registered| registered.source.clone());
+    let mut assigned: Vec<&Registered> = members.iter().filter(|registered| registered.held.is_some()).collect();
+    assigned.sort_by_key(|registered| registered.held);
+    let held = assigned.into_iter().map(|registered| registered.source.clone());
     let mut sources: Vec<HandoverSource> = Vec::new();
     for source in first.into_iter().chain(held).chain(earlier) {
         if source.candidate != member
@@ -79,22 +106,33 @@ pub(crate) fn ordered(
     sources
 }
 
-/// The members of set `set` at `block`, each with its registration and whether it held an assignment
-/// of `turn`, in the set's order.
+/// The members of `assigned`'s set at `block`, each with its registration and the position of its
+/// assignment of `assigned`'s turn, if it held one, in the set's order: the assignments are read at
+/// each position up to the current one, at most the draw's positions and the set's size.
 /// Error cases:
 /// - a call fails or does not decode, or the vault names no schedule
 pub(crate) async fn members(
     block: &impl AgreedBlock,
     chain_id: u64,
     vault: Address,
-    (set, turn): (u32, u64),
+    assigned: &Assigned,
 ) -> anyhow::Result<Vec<Registered>> {
     let domain =
         StandbyDomain::at_if_scheduled(block, chain_id, vault).await?.context("the registry names no schedule")?;
+    let (set, turn, current) = (assigned.set, assigned.binding.turn, assigned.binding.position);
     let listed = call(block, "discovery_set", domain.schedule, setOfCall { setId: set }).await?;
+    let mut positions = std::collections::BTreeMap::new();
+    for position in 0..=current {
+        let made = call(block, "discovery_assignment", domain.schedule, assignmentOfCall { turn, position }).await?;
+        if !made._0.candidate.is_zero() {
+            positions.entry(made._0.candidate).or_insert(position);
+        }
+    }
+    let positions = &positions;
     let member = |candidate: Address| async move {
         let registered = call(block, "discovery_candidate", domain.registry, candidateOfCall { candidate }).await?;
         let held = call(block, "discovery_held", domain.schedule, heldTurnCall { turn, candidate }).await?;
+        let held = held.then(|| positions.get(&candidate).copied().unwrap_or(current));
         anyhow::Ok(Registered {
             source: HandoverSource {
                 candidate: AccountId(candidate.0.0),

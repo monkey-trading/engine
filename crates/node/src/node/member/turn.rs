@@ -146,12 +146,10 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                             info!(generation = store.generation(), "the node recovers the log it took from disk");
                             return Ok(Turn::Hold);
                         }
-                        Err(e) if e.downcast_ref::<EpochUnfinal>().is_some() => {
-                            // A promotion just before the boundary: the turn waits for it to be final, as
-                            // a turn drawn within a finality period does, its copy kept and followed.
-                            span.in_scope(|| {
-                                info!(turn = turn.turn, "waiting for the vault's signer epoch to be final")
-                            });
+                        Err(e) if e.downcast_ref::<EpochUnfinal>().is_some() || behind(&e) => {
+                            // A promotion just before the boundary, or a latest block short of it: the turn
+                            // waits, as a turn drawn within a finality period does, its copy kept and followed.
+                            span.in_scope(|| info!(turn = turn.turn, "waiting to take the turn: {e:#}"));
                             failing_since = None;
                             if let Some(((replica, ..), (operator, _))) = follower.as_mut().zip(followed.as_ref())
                                 && let Err(e) = replica.stint(self.cfg, operator, STINT).await
@@ -273,7 +271,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                     }
                     // A failed stint re-resolves the operator in effect, the other of the one the
                     // registry names and the one whose head is newest (#596).
-                    self.follow_holder = !self.follow_holder;
+                    self.fallback.follow_holder = !self.fallback.follow_holder;
                     followed = None;
                     tokio::time::sleep(STINT).await;
                 }
@@ -481,6 +479,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
 
 mod episodes;
 mod skip;
+pub(crate) use skip::Fallback;
+use skip::behind;
 mod tries;
 
 pub(crate) use episodes::Episodes;

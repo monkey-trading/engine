@@ -16,6 +16,7 @@ use engine_core::types::{AccountId, Millis};
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 
+use crate::checkpoints::{CheckpointRpc, ScheduledTurn};
 use crate::config::NodeConfig;
 use crate::custody::StandbyReader;
 use crate::handover::discovery::{Registered, members};
@@ -23,13 +24,10 @@ use crate::liveness::chain::rotationStateCall;
 use crate::standby_key::chain::{
     AgreedBlock, StandbyChain, StandbyDomain, assignmentOfCall, signerEpochCall, turnAtCall,
 };
-use crate::tee::sealing::Release;
+use crate::tee::keys::KeySet;
+use crate::tee::sealing::{KeyStore, Release, Sealer};
 
 sol! {
-    function latches(uint64 turn, uint16 position)
-        external
-        view
-        returns (uint64 at, uint64 signerEpoch, address member, bytes32 release, uint64 generation);
     function headRelease(uint64 epoch) external view returns (bytes32);
 }
 
@@ -39,7 +37,8 @@ pub(crate) enum Reason {
     Draw,
     /// The position before it did not take the turn within the take window.
     Skip,
-    /// The liveness rule moved the vault's signer to the member's standby key: no handover.
+    /// The liveness rule moved the vault's signer to the member's standby key: no handover takes the
+    /// turn, and its member hands its keys on only to its own approved release.
     Promotion,
 }
 
@@ -68,13 +67,9 @@ pub(crate) struct Assigned {
     pub admin_key: AccountId,
     /// The release the assignment names the member's holding in: its latest revision's.
     pub release: [u8; 32],
-    /// Whether a head latched it: its member took the turn.
-    pub latched: bool,
     /// The release of the signer epoch's newest v2 head, the enclave holding the keys; `None` before
     /// the epoch's first.
     pub head_release: Option<[u8; 32]>,
-    /// The block's time, in seconds.
-    pub at: u64,
 }
 
 /// Where the latest assignment is read.
@@ -85,12 +80,15 @@ pub(crate) trait Assignments: Send + Sync {
     /// - the providers have no quorum, or a call fails or does not decode
     fn assigned(&self) -> BoxFuture<'_, anyhow::Result<Option<Assigned>>>;
 
-    /// The members of set `set` at the latest agreed block, each with its registration and whether it
-    /// held an assignment of `turn` (`discovery::members`).
+    /// The members of `assigned`'s set at the latest agreed block, each with its registration and the
+    /// position of its assignment of the turn, if it held one (`discovery::members`).
     /// Error cases:
     /// - the providers have no quorum, or a call fails or does not decode
-    fn members(&self, set: u32, turn: u64) -> BoxFuture<'_, anyhow::Result<Vec<Registered>>>;
+    fn members<'a>(&'a self, assigned: &'a Assigned) -> BoxFuture<'a, anyhow::Result<Vec<Registered>>>;
 }
+
+/// A shared reader of the latest assignment.
+pub(crate) type Reader = Arc<dyn Assignments>;
 
 /// The latest assignment through a chain pinned at the latest agreed block, for the vault `vault`
 /// on `chain_id`, with the LogHeads contract `log_heads`.
@@ -106,8 +104,8 @@ impl<C: StandbyChain + Send> Assignments for LatestAssignments<C> {
         Box::pin(async move { read(&self.chain.latest().await?, self.chain_id, self.vault, self.log_heads).await })
     }
 
-    fn members(&self, set: u32, turn: u64) -> BoxFuture<'_, anyhow::Result<Vec<Registered>>> {
-        Box::pin(async move { members(&self.chain.latest().await?, self.chain_id, self.vault, (set, turn)).await })
+    fn members<'a>(&'a self, assigned: &'a Assigned) -> BoxFuture<'a, anyhow::Result<Vec<Registered>>> {
+        Box::pin(async move { members(&self.chain.latest().await?, self.chain_id, self.vault, assigned).await })
     }
 }
 
@@ -150,12 +148,27 @@ impl Bound {
         })
     }
 
+    /// Reads the latest assignment again (`recheck`), then seals `keys` in `dir` in `generation`: the step
+    /// a whole-log and a tail handover both end with before the confirmation.
+    /// Error cases:
+    /// - as `recheck`, or the keys cannot be sealed
+    pub(crate) async fn seal(
+        &self,
+        release: &Release,
+        (dir, sealer): (&std::path::Path, &dyn Sealer),
+        generation: u64,
+        keys: KeySet,
+    ) -> anyhow::Result<KeyStore> {
+        self.recheck(release).await?;
+        KeyStore::create(dir, sealer, release.config_sha256, generation, keys)
+    }
+
     /// Reads the latest assignment again before the keys are sealed, after they arrived: a skip or a
     /// promotion since the request leaves this release without them, and the holder serves the member
     /// now named. Nothing to check with no binding.
     /// Error cases:
     /// - the read fails, or the latest assignment is not the one bound, naming `release`
-    pub(crate) async fn recheck(&self, release: &Release) -> anyhow::Result<()> {
+    async fn recheck(&self, release: &Release) -> anyhow::Result<()> {
         let (Some(binding), Some(read)) = (self.binding, &self.assignments) else { return Ok(()) };
         let assigned = read.assigned().await.context("reading the turn's latest assignment before sealing")?;
         anyhow::ensure!(
@@ -172,13 +185,75 @@ impl Assigned {
     pub(crate) fn names(&self, release: [u8; 32], generation: u64) -> bool {
         self.release == release && self.binding.generation == generation
     }
+
+    /// `finalised`, the turn as the finalised schedule draws it, reassigned as this assignment names it:
+    /// its member, adopted key, set, release and generation.
+    pub(crate) fn as_scheduled(&self, finalised: &ScheduledTurn) -> ScheduledTurn {
+        ScheduledTurn {
+            candidate: self.candidate,
+            admin_key: self.admin_key,
+            release: self.release,
+            generation: self.binding.generation,
+            set: self.set,
+            ..finalised.clone()
+        }
+    }
+}
+
+/// `finalised`, the turn the finalised schedule names at a start, as the latest agreed block's skip of
+/// it names `release`'s holding when it does, so a skip's member that restarts before the skip is final
+/// opens the keys it sealed in the skip's generation; `finalised` otherwise, without a reader, or when
+/// the read fails, so a member the skip passed still opens keys it holds and hands them over.
+/// Error cases:
+/// - the custody section or the vault address is malformed
+pub(crate) async fn own_skip(
+    cfg: &NodeConfig,
+    finalised: Option<ScheduledTurn>,
+    release: &Release,
+) -> anyhow::Result<Option<ScheduledTurn>> {
+    let (Some(_), Some(read)) = (finalised.as_ref(), for_config(cfg, "start_assignments")?) else {
+        return Ok(finalised);
+    };
+    let latest = match read.assigned().await {
+        Ok(latest) => latest,
+        Err(e) => {
+            tracing::warn!("reading the turn's latest assignment at the start failed: {e:#}");
+            None
+        }
+    };
+    Ok(skip_naming(finalised, latest, release))
+}
+
+/// `own_skip`'s choice: `latest` as `finalised`'s turn when it is a skip of that turn naming `release`,
+/// `finalised` otherwise.
+pub(crate) fn skip_naming(
+    finalised: Option<ScheduledTurn>,
+    latest: Option<Assigned>,
+    release: &Release,
+) -> Option<ScheduledTurn> {
+    let turn = finalised.as_ref()?;
+    let skip = latest.filter(|latest| {
+        latest.reason == Reason::Skip && latest.binding.turn == turn.turn && latest.release == release.id()
+    });
+    skip.map(|skip| skip.as_scheduled(turn)).or(finalised)
 }
 
 /// Whether the latest assignment `assignments` reads names the holding of `release` in `generation`;
-/// false without a reader, while it names no turn, or when the read fails.
-pub(crate) async fn names_holding(assignments: Option<&dyn Assignments>, release: [u8; 32], generation: u64) -> bool {
-    let Some(read) = assignments else { return false };
-    read.assigned().await.ok().flatten().is_some_and(|assigned| assigned.names(release, generation))
+/// false without a reader or while it names no turn, and `None`, logged, when the read fails, so a
+/// caller retries rather than judging a holding by the finalised schedule alone.
+pub(crate) async fn names_holding(
+    assignments: Option<&dyn Assignments>,
+    release: [u8; 32],
+    generation: u64,
+) -> Option<bool> {
+    let Some(read) = assignments else { return Some(false) };
+    match read.assigned().await {
+        Ok(latest) => Some(latest.is_some_and(|assigned| assigned.names(release, generation))),
+        Err(e) => {
+            tracing::warn!("reading the turn's latest assignment failed: {e:#}");
+            None
+        }
+    }
 }
 
 /// The latest assignment `cfg` reads, through a quorum of its own: with `[log_heads]`, whose
@@ -196,6 +271,15 @@ pub(crate) fn for_config(cfg: &NodeConfig, name: &'static str) -> anyhow::Result
         vault,
         log_heads: log_heads.contract,
     })))
+}
+
+/// The vault reader and the latest assignment's reader `cfg` gives a release watch
+/// (`node::keys::watch_release`); `None` without `[checkpoints]`.
+/// Error cases:
+/// - as `handover::vault_reader` and `for_config`
+pub(crate) fn release_readers(cfg: &NodeConfig) -> anyhow::Result<Option<(CheckpointRpc, Option<Reader>)>> {
+    let Some(vault) = crate::handover::vault_reader(cfg)? else { return Ok(None) };
+    Ok(Some((vault, for_config(cfg, "release_assignments")?)))
 }
 
 /// The turn in effect's current assignment at `block`, as `Assignments::assigned` states it.
@@ -217,24 +301,22 @@ pub(crate) async fn read(
     let epoch = call(block, "assigned_epoch", vault, signerEpochCall {}).await?;
     let position = named.position;
     let made = call(block, "assigned_assignment", domain.schedule, assignmentOfCall { turn, position }).await?;
-    let latch = call(block, "assigned_latch", log_heads, latchesCall { turn, position }).await?;
     let head_release = call(block, "assigned_head_release", log_heads, headReleaseCall { epoch }).await?;
     let release = made._1.last().map(|revision| revision.release.0).unwrap_or_default();
     Ok(Some(Assigned {
         binding: Binding { epoch, turn, position, generation: named.generation },
         boundary: engine_core::turns::boundary(turn).context("the turn's boundary is out of range")?,
         reason: match named.reason {
+            0 => Reason::Draw,
             1 => Reason::Skip,
             2 => Reason::Promotion,
-            _ => Reason::Draw,
+            other => anyhow::bail!("turn {turn}'s assignment names reason {other}, which the schedule does not define"),
         },
         set: named.setId,
         candidate: AccountId(named.candidate.0.0),
         admin_key: AccountId(made._0.adminKey.0.0),
         release,
-        latched: latch.at != 0,
         head_release: (head_release != B256::ZERO).then_some(head_release.0),
-        at: block.time(),
     }))
 }
 

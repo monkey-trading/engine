@@ -363,8 +363,7 @@ pub(crate) async fn take_tail(
     ensure_tail_head(follower, &head, prepared.posted).map_err(|e| e.context(CopyChanged))?;
     info!(entries, bytes = listing.bytes, after = tip.seq, head_seq = head.seq, "took the tail past the copy's tip");
     let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
-    prepared.bound.recheck(&release).await?;
-    let store = KeyStore::create(&sealing.dir, sealer, cfg.file_sha256, prepared.generation, keys)?;
+    let store = prepared.bound.seal(&release, (&sealing.dir, sealer), prepared.generation, keys).await?;
     info!(
         enclave = %enclave.address_hex(),
         predecessor_launch_digest = %hex::encode(peer.launch_digest),

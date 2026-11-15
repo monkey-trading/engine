@@ -104,8 +104,7 @@ pub(crate) async fn take_with(
     };
     let signers = crate::handover::vault_signers(vault, &observation).await?;
     take_segments(&mut stream, dir, domain, &tails, log_tip, &head, signers, metrics).await?;
-    bound.recheck(&release).await?;
-    let store = KeyStore::create(&sealing.dir, sealer, cfg.file_sha256, generation, keys)?;
+    let store = bound.seal(&release, (&sealing.dir, sealer), generation, keys).await?;
     info!(
         enclave = %enclave.address_hex(),
         predecessor_launch_digest = %hex::encode(peer.launch_digest),

@@ -35,6 +35,27 @@ abstract contract SkipTest is LivenessTest {
         _startTurn(order);
     }
 
+    /// @dev Adopts the four members, starts `turn` for alice, draws `turn + 1` while alice is named, so
+    /// alice is its source, with its first positions picking `order`, and warps to its boundary.
+    function _startSourced(address[] memory order) internal {
+        address[] memory members = new address[](4);
+        uint256[] memory stakes = new uint256[](4);
+        (members[0], members[1], members[2], members[3]) = (alice, bob, carol, dave);
+        (stakes[0], stakes[1], stakes[2], stakes[3]) = (40_000e18, 30_000e18, 20_000e18, 10_000e18);
+        setId = _rotate(members, stakes);
+        turn = _nextTurn() + 1;
+        address[] memory first = new address[](1);
+        first[0] = alice;
+        seed = _relayOrder(turn, first);
+        bytes32 next = _relayOrder(turn + 1, order);
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        _draw(turn + 1);
+        assertEq(schedule.sourceOf(turn + 1), alice);
+        (turn, seed) = (turn + 1, next);
+        vm.warp(schedule.boundary(turn));
+    }
+
     /// @dev Witnesses `count` slots in a row from the next one and moves five seconds into the slot
     /// after them.
     function _marked(uint256 count) internal {
@@ -183,7 +204,7 @@ contract SkipScheduleTest is SkipTest {
         vm.warp(block.timestamp + 20);
         _beat();
         _marked(TAKE);
-        vm.expectRevert(OperatorSchedule.AssignmentTaken.selector);
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.SkipNotDue.selector, type(uint64).max));
         schedule.skip();
         assertEq(schedule.skipDueAt(), type(uint64).max);
         (uint64 at,, address member,,) = logHeads.latches(turn, 0);
@@ -195,7 +216,7 @@ contract SkipScheduleTest is SkipTest {
         _startInOrder();
         _marked(TAKE);
         _beat();
-        vm.expectRevert(OperatorSchedule.AssignmentTaken.selector);
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.SkipNotDue.selector, type(uint64).max));
         schedule.skip();
         assertEq(schedule.turnOf(turn).candidate, alice);
     }
@@ -333,6 +354,9 @@ contract SkipScheduleTest is SkipTest {
         _refusedWindow(lo, hi, OperatorSchedule.TakeWindow(0, 0, 8), 0);
         _refusedWindow(lo, hi, OperatorSchedule.TakeWindow(2, 3, 8), 10);
         _refusedWindow(lo, hi, OperatorSchedule.TakeWindow(9, 2, 8), 10);
+        // A window whose maximum spans more than a day at the shortest interval.
+        _refusedWindow(lo, hi, OperatorSchedule.TakeWindow(2, 2, 1441), 10);
+        _build(lo, hi, OperatorSchedule.TakeWindow(2, 2, 1440), 10);
     }
 
     function test_GasOfASkip() public {
@@ -346,6 +370,11 @@ contract SkipScheduleTest is SkipTest {
         uint256 skipGas = vm.lastCallGas().gasTotalUsed;
         console.log("skip, gas:", skipGas);
         assertLt(skipGas, 350_000);
+    }
+
+    function test_TheScheduleFitsEip170() public view {
+        console.log("OperatorSchedule, bytes:", address(schedule).code.length);
+        assertLe(address(schedule).code.length, 24_576, "EIP-170");
     }
 
     function _build(
@@ -374,6 +403,68 @@ contract SkipScheduleTest is SkipTest {
 contract UntakenTurnTest is SkipTest {
     function setUp() public {
         _deployLiveness();
+    }
+
+    function test_ASkipPassesOverTheTurnsSourceWhichHoldsTheKeys() public {
+        address[] memory order = new address[](3);
+        (order[0], order[1], order[2]) = (bob, alice, carol);
+        _startSourced(order);
+        _marked(TAKE);
+        (, uint16 position) = schedule.skip();
+        assertEq(position, 2, "alice, at position 1, is passed over");
+        assertEq(schedule.turnOf(turn).candidate, carol);
+    }
+
+    function test_AnUntakenTurnsPromotionNamesTheNextQualifiedMemberTheSourceIncluded() public {
+        address[] memory order = new address[](3);
+        (order[0], order[1], order[2]) = (bob, alice, carol);
+        _startSourced(order);
+        address key = schedule.promotable(alice);
+        _beatingThrough(MISSES + 1);
+        (, uint16 position) = schedule.promote();
+        assertEq(position, 1, "alice, the source, qualifies as #595 qualifies a member");
+        assertEq(vault.checkpointSigner(), key, "the incumbent's own standby key: its old key is fenced out");
+    }
+
+    function test_AnUntakenTurnWithNoMemberToPromoteLeavesTheIncumbentRunning() public {
+        address[] memory order = new address[](1);
+        order[0] = bob;
+        _startSourced(order);
+        // Carol and dave lose their listings and alice's standby key is voided: past bob, no one qualifies.
+        vm.prank(carol);
+        registry.deregister();
+        vm.prank(dave);
+        registry.deregister();
+        _voidStandby(alice);
+        _beatingThrough(MISSES + 3);
+        assertGt(schedule.promotionDueAt(), block.timestamp, "only the incumbent's missed heads count");
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.PromotionNotDue.selector, schedule.promotionDueAt()));
+        schedule.promote();
+        // A standby key registered now gives the incumbent a whole count from its registration to stop by.
+        _registerStandby(alice);
+        assertGt(schedule.promotionDueAt(), block.timestamp + INTERVAL, "the untaken count passed at once");
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.PromotionNotDue.selector, schedule.promotionDueAt()));
+        schedule.promote();
+    }
+
+    /// @dev Moves `member` to another approved release, which voids its standby key.
+    function _voidStandby(address member) internal {
+        vm.prank(address(governance));
+        registry.setReleaseApproval(member, _digest(77), CONFIG, true);
+        vm.prank(member);
+        registry.setRelease(_digest(77), CONFIG);
+        assertEq(schedule.promotable(member), address(0));
+    }
+
+    function test_APromotedAssignmentIsNeverSkipped() public {
+        _startInOrder();
+        _lapse();
+        schedule.promote();
+        assertEq(schedule.turnOf(turn).reason, 2);
+        assertEq(schedule.skipDueAt(), type(uint64).max);
+        _marked(TAKE + 1);
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.SkipNotDue.selector, type(uint64).max));
+        schedule.skip();
     }
 
     /// @dev The incumbent beats in each of the next `count` slots, each witnessed, and the clock moves

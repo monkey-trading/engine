@@ -11,23 +11,46 @@
 //! only the member its own read names.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context, ensure};
 use tracing::{debug, info, warn};
 
 use crate::checkpoints::{CheckpointChain, HandoverSource, ScheduledTurn, View};
-use crate::handover::assigned::{Assigned, Bound, Reason};
+use crate::config::NodeConfig;
+use crate::handover::assigned::{Assigned, Assignments, Bound, Reason};
 use crate::handover::tail::Prepared;
 use crate::node::member::turn::Holding;
 use crate::node::member::{Member, PostedHead, Sampling};
 use crate::standby::Followed;
 use crate::tee::sealing::file_for;
 
+/// What a member reads a turn's reassignments through, and whom it follows past them.
+#[derive(Default)]
+pub(crate) struct Fallback {
+    /// The turn's assignment at the latest agreed block, with `[log_heads]`.
+    pub assignments: Option<Arc<dyn Assignments>>,
+    /// Whether it follows the operator whose release signed the newest head, rather than the one the
+    /// registry names: each failed stint moves it to the other.
+    pub follow_holder: bool,
+}
+
+impl Fallback {
+    /// `cfg`'s reader of the latest agreed block (`assigned::for_config`), following the operator the
+    /// registry names first.
+    /// Error cases:
+    /// - the custody section or the vault address is malformed
+    pub(crate) fn for_config(cfg: &NodeConfig) -> anyhow::Result<Self> {
+        let assignments = crate::handover::assigned::for_config(cfg, "member_assignments")?;
+        Ok(Self { assignments, follow_holder: false })
+    }
+}
+
 impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// The latest agreed block's assignment of the turn in effect, `None` without a reader, while it
     /// names no turn, or when the read fails.
     async fn latest(&self) -> Option<Assigned> {
-        let read = self.assignments.as_ref()?;
+        let read = self.fallback.assignments.as_ref()?;
         match read.assigned().await {
             Ok(assigned) => assigned,
             Err(e) => {
@@ -49,7 +72,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             .filter(|assigned| assigned.reason != Reason::Draw && assigned.binding.turn == finalised.turn)?;
         let own = self.release.id();
         if assigned.release == own && assigned.reason == Reason::Skip {
-            let turn = skip_turn(finalised, &assigned);
+            let turn = assigned.as_scheduled(finalised);
             let given = self.handed.is_some_and(|handed| handed.generation == Some(turn.generation));
             return Some(match given {
                 true => Holding::Follow(Some(turn)),
@@ -84,7 +107,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     ///   another holding than `turn`'s
     pub(super) async fn prepare_take(&self, turn: &ScheduledTurn) -> anyhow::Result<(Vec<HandoverSource>, Prepared)> {
         let at = self.vault.observe(View::Finalized, &[]).await?;
-        let latest = match &self.assignments {
+        let latest = match &self.fallback.assignments {
             Some(read) => read.assigned().await.context("reading the turn's latest assignment")?.map(|a| (read, a)),
             None => None,
         };
@@ -92,6 +115,9 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             let sources = crate::handover::turns::sources(&self.vault, &at, turn).await?;
             return Ok((sources, Prepared::read(&self.vault, &self.release, Some(turn.boundary), None).await?));
         };
+        if assigned.binding.turn < turn.turn {
+            return Err(anyhow::Error::new(AssignmentBehind(turn.turn)));
+        }
         ensure!(
             assigned.binding.turn == turn.turn && assigned.names(turn.release, turn.generation),
             "the latest agreed block's assignment {:?} of release 0x{} is not turn {}'s holding of this release",
@@ -109,7 +135,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             }
             Reason::Promotion => anyhow::bail!("a promotion's member takes no keys by handover"),
         };
-        let members = read.members(assigned.set, assigned.binding.turn).await?;
+        let members = read.members(&assigned).await?;
         let sources = crate::handover::discovery::sources(&self.vault, &at, turn, &assigned, &members).await?;
         Ok((sources, prepared))
     }
@@ -121,7 +147,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// - the operator the registry names cannot be resolved (see `standby::resolve`)
     pub(super) async fn resolve_following(&self, turn: Option<&ScheduledTurn>) -> anyhow::Result<Followed> {
         let named = crate::standby::resolve(self.cfg, &self.vault).await?;
-        if !self.follow_holder {
+        if !self.fallback.follow_holder {
             return Ok(named);
         }
         let Some(holder) = self.holder(turn).await else { return Ok(named) };
@@ -132,8 +158,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// The operator whose release signed the newest head, among the latest set of the turn in effect
     /// and `turn`'s source and earlier holders; `None` without a reader, a head, or a match.
     async fn holder(&self, turn: Option<&ScheduledTurn>) -> Option<HandoverSource> {
-        let (read, assigned) = (self.assignments.as_ref()?, self.latest().await?);
-        let members = read.members(assigned.set, assigned.binding.turn).await.ok()?;
+        let (read, assigned) = (self.fallback.assignments.as_ref()?, self.latest().await?);
+        let members = read.members(&assigned).await.ok()?;
         let earlier = match turn {
             Some(turn) => {
                 let at = self.vault.observe(View::Finalized, &[]).await.ok()?;
@@ -165,15 +191,21 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     }
 }
 
-/// `finalised`, the turn as the finalised schedule draws it, reassigned as `assigned`, its skip at the
-/// latest agreed block, names it: the skip's member, its adopted key, its release and generation.
-fn skip_turn(finalised: &ScheduledTurn, assigned: &Assigned) -> ScheduledTurn {
-    ScheduledTurn {
-        candidate: assigned.candidate,
-        admin_key: assigned.admin_key,
-        release: assigned.release,
-        generation: assigned.binding.generation,
-        set: assigned.set,
-        ..finalised.clone()
+/// The latest agreed block has not reached the boundary of the turn a take is for, as through a chain
+/// outage across it: the member keeps its copy and waits, as for an unfinal signer epoch.
+#[derive(Debug)]
+pub(in crate::node::member) struct AssignmentBehind(pub u64);
+
+impl std::fmt::Display for AssignmentBehind {
+    /// What happened.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "the latest agreed block has not reached turn {}'s boundary", self.0)
     }
+}
+
+impl std::error::Error for AssignmentBehind {}
+
+/// Whether a failed take waits on the latest agreed block reaching its turn (`AssignmentBehind`).
+pub(super) fn behind(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<AssignmentBehind>().is_some()
 }

@@ -179,13 +179,13 @@ async fn obtain_with(
             None => None,
         },
     };
-    // From a daily turn's boundary the vault names its member's release before finality shows it:
-    // the turn the finalised schedule names at trusted time is the only holding named, and its
-    // generation is this release's when it names this one (`handover::turns`).
+    // From a daily turn's boundary the vault names its member's release before finality shows it, as the turn
+    // the finalised schedule names at trusted time does, or a skip of it naming this release (#596).
     let turn = match vault {
         Some(vault) if cfg.operator.rotation_enabled => crate::handover::turns::at_start(vault, reached).await?,
         _ => None,
     };
+    let turn = crate::handover::assigned::own_skip(cfg, turn, &release).await?;
     if let Some(turn) = &turn {
         crate::handover::turns::ensure_turn_names(turn, &release)
             .context("refusing this release's keys: a daily turn names another release")?;
@@ -386,11 +386,10 @@ async fn named_release(vault: &impl CheckpointChain) -> anyhow::Result<CurrentRe
 /// Raises `release_superseded` (Critical) once the vault's current release at finality, read every `every`,
 /// is no longer the release and generation `store`'s keys are sealed in: a restart would find no keys to open,
 /// so they must go to the release named before this node stops, superseded from the block the change reads
-/// at finality, not from the vault's fold of it. From a daily turn's boundary by `trusted` time, the finalised
-/// schedule's turn names it instead (`handover::turns`), and so, with `assignments`, does the latest agreed
-/// block's assignment, as a skip's before it is final (#596); a turn naming another holding pages only once
-/// `TURN_HANDOVER_GRACE_MS` has passed since its boundary, as its member takes the keys or this node seals them
-/// in the turn's generation (`sequencer::turns`). A failed read is retried.
+/// at finality, not from the vault's fold of it; a failed read is retried. From a turn's boundary by `trusted`
+/// time, the finalised schedule's turn names it (`handover::turns`), or the latest agreed block's skip (#596);
+/// a turn naming another holding pages only `TURN_HANDOVER_GRACE_MS` past its boundary, as its member takes
+/// the keys or this node seals them in the turn's generation (`sequencer::turns`).
 /// Error cases:
 /// - none; it runs until the node stops
 pub(super) async fn watch_release(
@@ -418,7 +417,8 @@ pub(super) async fn watch_release(
         if reached.is_none() && crate::handover::turns::finalised_drawn(&vault).await {
             continue;
         }
-        let latest = crate::handover::assigned::names_holding(assignments.as_deref(), sealed.id(), generation).await;
+        let latest = crate::handover::assigned::names_holding(assignments.as_deref(), sealed.id(), generation);
+        let Some(latest) = latest.await else { continue };
         let (named, handing_over) = match crate::handover::turns::names(&vault, &sealed, generation, reached).await {
             _ if latest => (true, false),
             Some((named, boundary)) => {

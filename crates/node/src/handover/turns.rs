@@ -190,7 +190,8 @@ pub(crate) async fn take_keys(
     attestor: &dyn Attestor,
     metrics: &crate::metrics::Metrics,
 ) -> anyhow::Result<KeyStore> {
-    let sources = sources(vault, at, turn).await?;
+    let assignments = crate::handover::assigned::for_config(cfg, "take_assignments")?;
+    let sources = crate::handover::discovery::sources_reading(assignments.as_deref(), vault, at, turn).await?;
     ensure!(
         !sources.is_empty(),
         "turn {} names this release but no operator with a handover endpoint to take its keys from",

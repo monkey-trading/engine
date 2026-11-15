@@ -162,12 +162,12 @@ pub(crate) fn applies(engine: &Engine) -> bool {
 
 /// The log's `TurnTaken` commands: the candidate and release each names, by the seq it was sequenced
 /// at, from the first command the replay that collected them applied; and the candidate of each
-/// promotion the log mirrored, accepted or refused, by the seq of the mirror (#595).
+/// promotion (#595) or skip (#596) the log mirrored, accepted or refused, by the seq of the mirror.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Takings {
     by_seq: BTreeMap<u64, Taking>,
-    /// A promoted member sequences from its promotion, before the finalised mirror of it and its own
-    /// `TurnTaken`, which a failure before then never logs.
+    /// A promoted or skipped-to member sequences from its promotion or its take, before the finalised
+    /// mirror of it and its own `TurnTaken`, which a failure before then never logs.
     promoted: BTreeMap<u64, BTreeSet<AccountId>>,
     /// The first command seen: zero for a replay from genesis, past a snapshot's base for one from it.
     from: Option<u64>,
@@ -180,8 +180,8 @@ impl Takings {
     pub(crate) fn command(&mut self, seq: u64, events: &[Event]) {
         self.from.get_or_insert(seq);
         for event in events {
-            if let Event::TurnAssigned { reason: TurnReason::Promotion, candidate, .. }
-            | Event::TurnRefused { cause: TurnReason::Promotion, candidate, .. } = event
+            if let Event::TurnAssigned { reason: TurnReason::Promotion | TurnReason::Skip, candidate, .. }
+            | Event::TurnRefused { cause: TurnReason::Promotion | TurnReason::Skip, candidate, .. } = event
             {
                 self.promoted.entry(seq).or_default().insert(*candidate);
             }

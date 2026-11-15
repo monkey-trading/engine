@@ -397,7 +397,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   member's turn under the latest agreed block's skips (#596): it takes a turn a skip names it for
   before the skip is final, follows rather than takes one a skip or a promotion moved past it, asks
   the operator whose head is newest first, and follows that operator every other failed stint;
-  `tests/skip.rs` there covers each
+  `tests/take/skip.rs` there covers each
 - `src/node/secrets.rs` — this start's delivered secrets: opening the sealed bundle, asking a
   predecessor, holding for what the node cannot run without, setting the rest into the config and
   the alert routes, `secret_missing`, and the listener handed back to a member's own operator key

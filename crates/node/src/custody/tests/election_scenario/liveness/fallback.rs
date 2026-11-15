@@ -11,7 +11,8 @@
 //!    agreed block's read shows the skip and the newest head's release names A, whom C asks first;
 //!    and once C holds the keys its head latches C's assignment;
 //! 2. at the next boundary B takes the keys late from C, its first head landing only after a skip
-//!    names C again: that head latches nothing, and C's, a slot later, latches C's assignment;
+//!    names D, passing over C, the turn's source: that head latches nothing, and D's latches D's
+//!    assignment;
 //! 3. block production pauses across the next boundary and resumes: no skip or promotion is due in
 //!    the first resumed block, and the turn's member, A, takes the turn;
 //! 4. at the next boundary A refuses every successor: the callers skip past B to C, A beats on and
@@ -71,9 +72,10 @@ const A: usize = 0;
 const B: usize = 1;
 const C: usize = 2;
 const D: usize = 3;
-/// The heartbeat rule: 30 s slots, 20 s tolerance, 5 misses, 10 blocks, so a promotion past an untaken
-/// turn is due seven slots after its boundary, four past the take window's skip.
-const RULE: (u64, u64, u16, u16) = (30, 20, 5, 10);
+/// The heartbeat rule: 30 s slots, 20 s tolerance, 3 misses, 10 blocks, so a promotion past an untaken
+/// turn is due five slots after its boundary, two past the take window's first skip and one before its
+/// second.
+const RULE: (u64, u64, u16, u16) = (30, 20, 3, 10);
 /// The take window, in slots, its bounds, and the heartbeat rule's bounds under a 5 s switch budget: one
 /// slot past the minimum's first, 30 s at the shortest interval, exceeds the budget plus the longest
 /// tolerance, 20 s.
@@ -101,7 +103,7 @@ async fn dev_scenario_a_down_successor_falls_back_to_the_next_member() {
     let first = (SET_EFFECTIVE_SECS + DAY_SECS - BOUNDARY_OFFSET_SECS) / DAY_SECS + 1;
     let turns = [first, first + 1, first + 2, first + 3, first + 4];
     // Each turn's seed, relayed before its draw deadline, picks its order's first positions.
-    let orders: [&[usize]; 5] = [&[A], &[B, C], &[B, C], &[A], &[B, C, D]];
+    let orders: [&[usize]; 5] = [&[A], &[B, C], &[B, D], &[A], &[B, C, D]];
     for (turn, order) in turns.into_iter().zip(orders) {
         world.relay(turn, order).await;
     }
@@ -128,7 +130,7 @@ async fn dev_scenario_a_down_successor_falls_back_to_the_next_member() {
     let assigned = crate::handover::assigned::read(&block, chain_id, vault, world.domain.log_heads).await.unwrap();
     let assigned = assigned.expect("a turn names the operator");
     assert_eq!((assigned.reason, assigned.candidate), (Reason::Skip, AccountId(world.members[C].candidate.0.0)));
-    let members = crate::handover::discovery::members(&block, chain_id, vault, (world.set, turns[1])).await.unwrap();
+    let members = crate::handover::discovery::members(&block, chain_id, vault, &assigned).await.unwrap();
     drop(block);
     let holder = crate::handover::discovery::holder(assigned.head_release, &members, &[]).map(|h| h.candidate);
     assert_eq!(holder, Some(AccountId(world.members[A].candidate.0.0)), "C asks A, whose head is newest, first");
@@ -142,21 +144,22 @@ async fn dev_scenario_a_down_successor_falls_back_to_the_next_member() {
         turns[1]
     );
 
-    // 2. B takes the keys late from C, and its first head lands after a skip names C again.
+    // 2. B takes the keys late from C, the holder, and its first head lands after a skip names D, past C,
+    //    the turn's source.
     world.draw(turns[2]).await;
     let drawn = world.chain.view(world.domain.standby.schedule, turnOfCall { turn: turns[2] }).await.generation;
     warp(&world.chain, &world.clock, boundary(turns[2]) + 1).await;
-    let skipped_at = world.until_skipped(turns[2], C, false).await;
+    let skipped_at = world.until_skipped(turns[2], D, false).await;
     world.hold_in(B, drawn).await;
     world.beat(2).await;
     let latch = world.chain.view(world.domain.log_heads, latchesCall { turn: turns[2], position: 0 }).await;
     assert_eq!(latch.at, 0, "B's late head latched its superseded assignment");
     assert_eq!(world.chain.view(world.domain.log_heads, headReleaseCall { epoch: 1 }).await, world.release(B));
-    world.hold(C, turns[2]).await;
+    world.hold(D, turns[2]).await;
     let latched_at = world.until_latched(turns[2]).await;
-    assert!(latched_at < skipped_at + 3 * RULE.0, "C took the turn {}s after the skip", latched_at - skipped_at);
+    assert!(latched_at < skipped_at + RULE.0, "D took the turn {} s after the skip", latched_at - skipped_at);
     println!(
-        "PASS: B took the keys late, its head latched nothing, and C's latched turn {} {} s after the skip",
+        "PASS: B took the keys late, its head latched nothing, and D's latched turn {} {} s after the skip",
         turns[2],
         latched_at - skipped_at
     );
