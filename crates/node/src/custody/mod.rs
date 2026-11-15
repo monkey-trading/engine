@@ -153,9 +153,9 @@ async fn read_final<R: crate::custody::evm::VaultReader + Sync>(
     read_final_on(quorum, to, |_| Ok(()), calls).await
 }
 
-/// `read_final` for a read that is bound to an identity: `admit` sees the identity the one vote that
-/// admits the providers agreed on, before any other read, so the providers that answer the calls are
-/// the ones whose chain and token it checked.
+/// `read_final` for a read bound to an identity: the one vote that admits the providers is passed to
+/// `admit` before any other read, so the providers that answer the calls are the ones whose chain and
+/// token it checked.
 /// Error cases:
 /// - `admit` refuses the identity
 /// - see `ContractQuorum::read`
