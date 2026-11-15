@@ -26,12 +26,16 @@ fn an_existing_v1_log_activates_at_its_next_seq_and_still_verifies() {
     assert_eq!(replayed.activations, [(ProtocolVersion::LATEST, 67)]);
     // Activation also turns its absolute divergence triggers of 15 and 20 bps into 60% and 80% of its
     // widest bound, 25 bps: the shares the dev config takes; its toxicity into `V54`'s form; the default
-    // curve; and gives level 2 a house loss threshold of zero.
+    // curve; gives level 2 a house loss threshold of zero; and gives volume tiers 0 and 1 `V64`'s
+    // margin floors.
     carried.toxicity.notional = Some(weighting);
     carried.share_divergence_triggers(25);
     carried.convert_to_score();
     carried.profit_fee_curve = engine_core::holding_fee::DEFAULT_PROFIT_FEE_CURVE.to_vec();
     carried.convert_to_tiered();
+    for (tier, floor) in carried.volume_tiers.iter_mut().zip(engine_core::volume_tier::ACTIVATION_MARGIN_FLOORS_BPS) {
+        tier.margin_floor_bps = floor;
+    }
     carried.stress_levels[2].trigger.get_or_insert_with(Default::default).house_loss = Some(Fixed::ZERO);
     assert_eq!(replayed.engine.params(), Some(&carried));
     // Each trigger is the dev config's, but for the house loss threshold, a fixture there.

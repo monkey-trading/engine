@@ -145,6 +145,12 @@ this crate and reproduce the signed state roots exactly.
   every fill and after every command, and steps down after the cooldown; each change is a
   `house_loss_changed` event. The stress levels keep each launch threshold at its level or above,
   at most its launch value, by notice and by vote; activation gives level 2 a threshold of zero
+- From protocol `V64`, earned leverage (`src/volume_tier/leverage.rs`): a volume tier's margin floor
+  raises each margin band of the account's initial requirement to at least the floor, with the
+  weekend margins that apply now on top band by band, so a fresh wallet opens at most 20x, tier 1 at
+  most 50x and tiers 2 and 3 at the market's own bands; fills that add risk and withdrawals meet it,
+  while close-outs read the market's bands, so a falling tier closes nothing out. The floors move only
+  with the table, never below launch's and never rising with the tier
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -245,7 +251,9 @@ this crate and reproduce the signed state roots exactly.
 - `src/lib.rs` — module index and the protocol summary
 - `src/engine/mod.rs` — engine state, command dispatch, sessions, and USD valuation
 - `src/engine/house.rs` — house NAV, gross exposure, and the caps set from them
-- `src/engine/margin.rs` — an account's equity and margin requirement at marks
+- `src/engine/margin.rs` — an account's equity and margin requirement at marks, from V64 its initial
+  requirement, and the account read's initial and maintenance requirements, withdrawable cash and
+  each market's maximum leverage
 - `src/engine/market.rs` — per-market state: quotes, marks, positions, resting orders, and futures
   roll position
 - `src/hot_indexes/mod.rs` — derived holder, trigger, pending-receipt and above-frontier coverage indexes, rebuilt after recovery
@@ -326,6 +334,8 @@ this crate and reproduce the signed state roots exactly.
   scaling; unit tests in `src/volume_tier/book/tests.rs`
 - `src/volume_tier/bounds.rs` — the bounds on the table, its notice, activation, and the tiered
   spread check on every table and listing change
+- `src/volume_tier/leverage.rs` — the V64 margin floors: the floor a tier sets on the initial
+  requirement, and the floors activation gives a table
 - `src/merkle/volume.rs` — the V59 volume leaves, kind 28, one per account's book
 - `tests/volume_tiers.rs` — the best-price bound at tier 0 and tier 1, counting after 60 s on the
   day of maturity, pending notional a close takes, a close's horizon, round trips both ways, the
@@ -333,8 +343,11 @@ this crate and reproduce the signed state roots exactly.
   beside the exit's proofs, and V61's closing lots through `Engine::apply`
 - `tests/volume_tier_bounds.rs` — the table's notice, its launch bounds, a listing and a table held
   together to each tier's launch spread, a raised threshold held at every tier below it, V61's launch
-  table at an activation (also across V52) and an adoption held to the tiers, and the rules before
-  V59
+  table at an activation (also across V52) and an adoption held to the tiers, the margin floors'
+  launch bound, and the rules before V59 and V64
+- `tests/earned_leverage.rs` — a fresh wallet's 20x, each tier's leverage up to the market's bands, a
+  falling tier's open position, withdrawals and close-out, the weekend margin and the floor band by
+  band, and activation over a held position
 - `tests/holding_fee.rs` — the fee at each hold, losses, adds, flips, close-outs, the margin check on
   a flip, close-all pieces, splits, activation, and what a close pays now
 - `tests/holding_fee_bounds.rs` — the bounds on the base fee and the curve, their notices, the
@@ -372,7 +385,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/parameter_votes/listing.rs` — `V56`: a voted relisting held to the listing bounds without a notice, the operator's listing notice refused while rotation is on, the size multiplier and close charge floors on voted changes, and a relisting under a margin restriction measured from the baseline
 - `tests/parameter_votes/toxicity.rs` — `V56`: a voted score tier change held to ±50% of launch without a notice, and a voted relisting keeping its markout floor
 - `tests/parameter_votes/holding_fee.rs` — `V56`: a voted curve held at or above its launch curve without a notice, and a voted base fee never below launch; from `V57` a voted extension lending an add no more than the launch curve's last hold
-- `tests/parameter_votes/volume_tiers.rs` — `V59` activated by a vote, a voted volume tier table held to its launch bounds without a notice, and a voted relisting held at every tier
+- `tests/parameter_votes/volume_tiers.rs` — `V59` activated by a vote, a voted volume tier table held to its launch bounds without a notice, a voted relisting held at every tier, and from `V64` a voted table's margin floors held at or above launch
 - `tests/parameter_votes/weekend.rs` — `V60`: a voted weekend margin with no listing notice, held to its listing's range, the operator's weekend margin notice refused while rotation is on, the fast path refusing to move it, and a fast-path margin raise past it
 - `tests/parameter_votes/house_loss.rs` — `V62`: a voted change to the house loss threshold, refused above launch's or off its level, applied below it, with no notice
 - `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, and the turn's time in office
@@ -550,7 +563,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V62` parts (`v15.rs` to `v62.rs`)
+  `V15` to `V64` parts (`v15.rs` to `v64.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1037,6 +1050,24 @@ activation to a version before V63 keeps them as before. Its log is `v63.jsonl`,
 session, which activates V63 over an open interval no lapse touched and shows the change across it
 counting nothing, is in
 `examples/reference_log/v63.rs`.
+
+Protocol V64 adds earned leverage (`src/volume_tier/leverage.rs`). Each tier of the parameters'
+`volume_tiers` table may name a `margin_floor_bps`, left out of the encoding while zero, and an
+account's initial requirement charges each of a position's margin bands at the larger of the band's
+rate and its tier's floor (`MarketSpec::floored_margin_for`); a market whose weekend margin applies
+now charges the larger of the floor and that margin, band by band, so the two never add. A fill that
+adds risk is refused below the initial requirement (`Reject::InsufficientMargin`, naming it), with
+the weekend margins on top refused as `Reject::WeekendMargin`, and a withdrawal leaves it
+(`Engine::withdrawable`). Close-outs, on a price move or at a weekend gap, read the market's bands
+alone, so a falling tier, or a raised floor, closes nothing out and only stops new risk and
+withdrawals. The account read gives the initial and maintenance requirements, the withdrawable cash
+and each listed market's maximum leverage for the account (`Engine::margin_standing`). The floors
+move only with the table, by its notice or a vote, each at or above its launch value and never
+rising with the tier. Activation gives each tier of the table in force, and of the launch table that
+bounds it, at least a floor by position (`ACTIVATION_MARGIN_FLOORS_BPS`: 500 bps at tier 0, 200 at
+tier 1, none above), keeping a higher one the table names, so a held position stays open at its
+leverage. Before V64 a floor a table names charges nothing, so earlier logs replay unchanged.
+Its log is `v64.jsonl`, and its session is in `examples/reference_log/v64.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

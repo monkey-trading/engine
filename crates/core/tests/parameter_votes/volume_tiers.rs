@@ -56,3 +56,21 @@ fn a_voted_table_needs_no_notice_and_stays_no_more_generous_than_launch() {
     h.advance(NOTICE_MS);
     rejected(&apply(&mut h, 5, relisting), "market 1 at volume tier 0, for an account at tier 1 at launch");
 }
+
+#[test]
+fn a_voted_table_keeps_each_margin_floor_at_or_above_launch() {
+    let mut h = governed_priced_from_the_first_dollar();
+    let activate = AdminCommand::ActivateProtocol { version: ProtocolVersion::V64 };
+    pass(&mut h, 1, false, activate.clone());
+    h.advance(NOTICE_MS);
+    assert_eq!(apply(&mut h, 1, activate).last(), Some(&Event::AdminApplied));
+    let cut = with_params(&h, |params| params.volume_tiers[0].margin_floor_bps = 200);
+    let raised = with_params(&h, |params| params.volume_tiers[1].margin_floor_bps = 300);
+    for (proposal, command) in [(2, cut.clone()), (3, raised.clone())] {
+        assert!(matches!(pass(&mut h, proposal, false, command).last(), Some(Event::ProposalScheduled { .. })));
+    }
+    h.advance(NOTICE_MS);
+    rejected(&apply(&mut h, 2, cut), "volume tier 0's margin_floor_bps 200 is below its launch value 500");
+    assert_eq!(apply(&mut h, 3, raised).last(), Some(&Event::AdminApplied));
+    assert_eq!(h.engine.params().expect("set").volume_tiers[1].margin_floor_bps, 300);
+}

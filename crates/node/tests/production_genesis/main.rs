@@ -84,6 +84,8 @@ fn the_production_genesis_applies_the_launch_decisions() {
     // 8 adding 2 and 5 bps, over the protocol's 5 s horizon; the notional weighting #130
     // calibrated applies before `V54`. From `V62` level 2 also rises once the house has lost money to
     // its clients over the trailing day, a threshold of zero (#695; research/loss-rate-trigger).
+    // From `V64` the volume tiers carry #614's decision D5's margin floors, 5% at tier 0 and 2% at
+    // tier 1, which dev leaves out so its scenarios open at the markets' own leverage.
     assert_eq!(production.params.profit_fee_bps, 1_000);
     let floor = dev.params.house_total_cap_floor;
     let level = |size_spread_multiplier_bps, min_spread_bps, trigger| StressLevel {
@@ -122,11 +124,16 @@ fn the_production_genesis_applies_the_launch_decisions() {
             score_tiers: launch_score_tiers(),
         }
     );
+    let floors: Vec<i64> = production.params.volume_tiers.iter().map(|tier| tier.margin_floor_bps).collect();
+    assert_eq!(floors, [500, 200, 0, 0]);
+    let mut volume_tiers = production.params.volume_tiers.clone();
+    volume_tiers.iter_mut().for_each(|tier| tier.margin_floor_bps = 0);
     assert_eq!(
         ProtocolParams {
             house_total_cap_floor: floor,
             stress_levels: dev.params.stress_levels.clone(),
             toxicity,
+            volume_tiers,
             ..production.params.clone()
         },
         dev.params

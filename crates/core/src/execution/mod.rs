@@ -177,15 +177,19 @@ impl Engine {
     /// - new risk below the market's minimum order notional
     /// - a spread at this size that reaches the price itself
     /// - a live price beyond the slippage bound or the limit
-    /// - not enough margin, or no house capacity, for the risk the fill adds
+    /// - not enough margin, from `V64` at the account's tier's margin floor, or no house capacity, for
+    ///   the risk the fill adds
     pub(crate) fn execute(&mut self, exec: Exec, events: &mut Vec<Event>) -> Result<Fill, Reject> {
         if self.protocol_version >= ProtocolVersion::V13 {
             let nav = self.house_nav();
             self.refresh_stress(exec.market, nav, events);
         }
-        let priced = self.price(&exec, self.best_price_share(exec.account))?;
+        // The account's tier, read once: its best-price share prices the fill, and its margin floor
+        // raises the initial requirement risk is checked against.
+        let tier = self.tier_in_force(exec.account);
+        let priced = self.price(&exec, tier.map(|tier| tier.best_price_share_bps))?;
         if priced.increases && !exec.liquidation {
-            self.check_risk(&exec, &priced, &HouseTotals::of(self))?;
+            self.check_risk(&exec, &priced, &HouseTotals::of(self), self.margin_floor_of(tier))?;
         }
         Ok(self.book(&exec, priced))
     }

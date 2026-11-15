@@ -14,7 +14,7 @@ use engine_core::params::ProtocolParams;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session::{Period, Schedule};
 use engine_core::types::{AssetClass, MarketId, Millis};
-use engine_core::volume_tier::launch_volume_tiers;
+use engine_core::volume_tier::{VolumeTier, launch_volume_tiers};
 
 use crate::common::close_spread::{attest, ceilings, evidence, fund, source_key};
 use crate::common::spreads::tenths;
@@ -75,12 +75,23 @@ pub fn genesis_at(
     oil_weekend_bps: i64,
     gold_weekend_bps: i64,
 ) -> Harness {
+    // From `V59` the parameters name a volume tier table, as a fresh node's config does.
+    let volume_tiers = if version >= ProtocolVersion::V59 { launch_volume_tiers() } else { vec![] };
+    genesis_with_tiers(version, schedule, oil_weekend_bps, gold_weekend_bps, volume_tiers)
+}
+
+/// `genesis_at` with the parameters naming `volume_tiers`.
+pub fn genesis_with_tiers(
+    version: ProtocolVersion,
+    schedule: Schedule,
+    oil_weekend_bps: i64,
+    gold_weekend_bps: i64,
+    volume_tiers: Vec<VolumeTier>,
+) -> Harness {
     let mut h = Harness::empty();
     h.admin(AdminCommand::SetClientAuth(ClientAuth::Eip712 { chain_id: CHAIN_ID, vault: VAULT }));
     h.admin(AdminCommand::SetOperator(operator()));
     h.admin(AdminCommand::ActivateProtocol { version });
-    // From `V59` the parameters name a volume tier table, as a fresh node's config does.
-    let volume_tiers = if version >= ProtocolVersion::V59 { launch_volume_tiers() } else { vec![] };
     h.admin(AdminCommand::SetParams(ProtocolParams { volume_tiers, ..v54_params() }));
     h.admin(AdminCommand::SetBenchmarkRate { benchmark: "SOFR".into(), annual_bps: 430 });
     for (id, symbol, class, schedule, margin) in [

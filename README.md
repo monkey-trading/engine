@@ -51,6 +51,12 @@ over five to all of it, and $250M over ten to two and a half times it. No tier c
 volume that has stood counts: an opening counts once it has been held a minute, a close counts only
 what has matured, and a round trip at an unchanged price counts nothing, so churn earns no tier.
 
+From V64 the tier also sets how much leverage an account opens at: a fresh wallet opens at most 20x
+and tier 1 at most 50x, while tiers 2 and 3 reach each market's own bands, 100x on BTC-USD and
+ETH-USD. The tier's margin floor raises the initial requirement that new risk and withdrawals must
+leave, never the level an account is closed out at, so a tier that falls closes nothing out; it only
+stops new risk and withdrawals until the account is back above the requirement.
+
 Losing trades pay nothing. Winning trades pay a share of the profit they realise, which from protocol
 V55 falls with how long the position was held: the whole gain on a close within 10 seconds of the
 open, falling to the standard 10% at 15 minutes. Adding to a position moves its open time to the
@@ -145,7 +151,8 @@ can only be listed as that adoption named it. From V55 the profit fee moves only
 value, to at most half again, and the fee that short holds pay only to a curve at or above the launch
 curve at every hold, each after the same notice, so no hold pays less than at launch. From V59 the
 volume tier table moves only after the same notice too, never more generously than at launch, and at
-every tier and size a spread stays between that tier's launch spread and twice it. From V60 a
+every tier and size a spread stays between that tier's launch spread and twice it, and from V64 each
+tier's margin floor stays at or above launch's. From V60 a
 listed market's weekend margin also changes only after the same notice, or while rotation is on by a
 vote; the operator's calendar change may not shorten or remove a weekend closure starting within
 seven days, and while the market holds positions may not add or bring one forward within seven days

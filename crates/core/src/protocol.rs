@@ -401,11 +401,20 @@ pub enum ProtocolVersion {
     /// sampled under the rules before it), so a lapse since the last grid point may be unseen and the
     /// change across it would count.
     V63,
+    /// Earned leverage (`volume_tier`): a volume tier may carry a margin floor, and an account's initial
+    /// requirement charges each margin band at the larger of its rate and its tier's floor, with the
+    /// weekend margins that apply now on top band by band. A fill that adds risk is refused below it,
+    /// and a withdrawal leaves it; close-outs, on a price move or at a weekend gap, read the market's
+    /// bands alone, so a falling tier closes nothing out. The table's floors move only with it, by a
+    /// seven-day notice or a vote, never below launch's and never rising with the tier. Activation gives
+    /// each tier of the table in force, and of its launch table, at least a floor by position: 500 bps
+    /// at tier 0, 200 at tier 1 and none above; before it a floor a table names charges nothing.
+    V64,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V63;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V64;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

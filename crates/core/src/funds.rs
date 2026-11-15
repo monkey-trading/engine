@@ -43,8 +43,28 @@ impl Engine {
         events.push(Event::Deposited { account, amount });
     }
 
+    /// The cash `account` may withdraw now: its balance, from `V20` less its unfinalised deposits, and no
+    /// more than its equity above its initial requirement (`Engine::equity_and_initial_margin_now`),
+    /// which from `V60` holds the weekend margins that apply now and from `V64` its tier's margin floor;
+    /// zero for an account never credited.
+    pub fn withdrawable(&self, account: AccountId) -> Fixed {
+        self.accounts.get(&account).map_or(Fixed::ZERO, |acct| {
+            let (equity, initial) = self.equity_and_initial_margin_now(account, acct);
+            let cash = if self.deposit_finality_enabled() {
+                if acct.balance > acct.unfinalised_deposits {
+                    acct.balance - acct.unfinalised_deposits
+                } else {
+                    Fixed::ZERO
+                }
+            } else {
+                acct.balance
+            };
+            cash.min(equity - initial).max(Fixed::ZERO)
+        })
+    }
+
     /// Authorises the request, then approves a withdrawal of free cash: no more than the balance,
-    /// and no more than equity above the margin requirement. Approval bumps the account's
+    /// and no more than equity above the initial requirement (`Engine::withdrawable`). Approval bumps the account's
     /// withdrawal nonce, which the enclave signs with the payout. From V22, reserves whole USDC
     /// first; the bounded FIFO pass allocates each payable part its own nonce. From V34 a request
     /// of less than `MIN_WITHDRAWAL` is refused.
@@ -72,21 +92,7 @@ impl Engine {
             .and_then(|()| {
                 if access.is_some_and(|(_, available)| !available) { Err(Reject::PayoutUnavailable) } else { Ok(()) }
             });
-        let available = self.accounts.get(&account).map_or(Fixed::ZERO, |acct| {
-            let (equity, margin) = self.equity_and_margin(acct, None);
-            // From `V60` a withdrawal leaves the weekend margins that apply now.
-            let margin = margin + self.weekend_margin_extra_now(acct);
-            let cash = if self.deposit_finality_enabled() {
-                if acct.balance > acct.unfinalised_deposits {
-                    acct.balance - acct.unfinalised_deposits
-                } else {
-                    Fixed::ZERO
-                }
-            } else {
-                acct.balance
-            };
-            cash.min(equity - margin).max(Fixed::ZERO)
-        });
+        let available = self.withdrawable(account);
         let payable = if self.protocol_version >= ProtocolVersion::V22 { whole_usdc(amount) } else { amount };
         let reason = if let Err(reason) = authorised {
             Some(reason)

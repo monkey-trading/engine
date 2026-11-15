@@ -195,7 +195,11 @@ well. From protocol V59 the volume tier table moves only after a seven-day
 notice, keeping its launch tiers with no threshold or day divisor below launch and no best-price share
 above it, and at every tier and notional each market's spread stays from that tier's launch spread to
 twice it, as does every tier below one whose threshold or day divisor was raised, so a change past
-those bounds is in scope as well.
+those bounds is in scope as well. From protocol V64 each tier's margin floor stays at or above its
+launch value and never rises with the tier, the initial requirement charges every margin band at
+least its account's tier's floor for new risk and withdrawals, and close-outs read the market's bands
+alone, so a fill or withdrawal admitted below that requirement, or a close-out caused by a tier or a
+floor, is in scope.
 From protocol V60 a listed market's weekend margin changes only after a seven-day notice, or
 while rotation is on by a vote, the operator's calendar change does not shorten or remove a weekend
 closure starting within seven days, nor add or bring forward a held market's closure within seven
@@ -423,8 +427,8 @@ requirement at or above launch's, no stress level's size multiplier below 1x), V
 from its launch value up to +50%, the curve at or above its launch curve at every hold and reaching
 at most 30 minutes), V59's volume tier bounds (the launch tiers, no threshold or day divisor below
 launch, no best-price share above it, and each tier's spread from its launch spread to twice it), V62's
-(each launch house loss threshold kept at its level or above, at most its launch value) and each
-field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
+(each launch house loss threshold kept at its level or above, at most its launch value), V64's (each
+margin floor at or above launch's) and each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
 can set the other parameters to any valid value after seven days' notice, and a normal change applies only over the
 parameters or market it passed on; a fast-path proposal applies at once but only as a restriction that
 moves fields toward lower risk and lapses at the recorded lifetime, at most seven days, and its margin

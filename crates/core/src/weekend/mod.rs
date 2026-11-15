@@ -12,9 +12,11 @@
 //! the gap starts, each account holding the market whose equity at its marks is below that
 //! requirement is closed out on the markets whose gaps start then, largest loser first, at their
 //! marks, as a close-out does, until it meets it. Close-outs on price moves keep the normal margin
-//! throughout. A listed market's weekend margin moves only as a listing notice of at least seven
-//! days names it (`listing_bounds`), or, while rotation is on, as a passed vote does (`governance`),
-//! and its calendar changes only as `schedule` allows.
+//! throughout. From `V64` the weekend margin raises the initial requirement band by band
+//! (`volume_tier`): a band charges the larger of its tier's floor and the weekend margin. A listed
+//! market's weekend margin moves only as a listing notice of at least seven days names it
+//! (`listing_bounds`), or, while rotation is on, as a passed vote does (`governance`), and its
+//! calendar changes only as `schedule` allows.
 
 mod schedule;
 
@@ -114,19 +116,22 @@ impl Engine {
             .filter_map(|id| Some((*id, self.markets.get(id)?.weekend_window()?)))
             .map(|(id, window)| {
                 let at = window.close.max(self.now);
-                let required = margin + self.weekend_margin_extra(acct, at, at_mark);
+                let required = margin + self.weekend_margin_extra(acct, at, 0, at_mark);
                 (id, WeekendRequirement { window, required })
             })
             .collect()
     }
 
-    /// What weekend margins add to `acct`'s margin requirement at `at`, each position valued at the
-    /// price and FX index `price_of` gives: for each position in a market whose weekend margin
-    /// applies then, its weekend margin less its normal margin, each rounded as a requirement is.
+    /// What weekend margins add to `acct`'s requirement at `at` with each margin band charging at least
+    /// `floor_bps`, each position valued at the price and FX index `price_of` gives: for each position
+    /// in a market whose weekend margin applies then, its margin with each band at the larger of the
+    /// floor and the weekend margin, less its margin at the floor, each rounded as a requirement is.
+    /// At a floor of zero, its weekend margin less its normal margin.
     pub(crate) fn weekend_margin_extra(
         &self,
         acct: &Account,
         at: Millis,
+        floor_bps: i64,
         price_of: impl Fn(MarketId, &MarketState, &Position) -> (Fixed, Option<Fixed>),
     ) -> Fixed {
         let charge = self.charge_rounding();
@@ -139,14 +144,17 @@ impl Engine {
                 let (price, fx) = price_of(id, market, pos);
                 let notional = pos.qty.abs().mul_rounded(price, charge);
                 let notional = market.spec.quote_currency.to_usd(notional, fx, Rounding::Up);
-                market.spec.weekend_margin_for(notional, charge) - market.spec.margin_for(notional, charge)
+                let weekend_bps = floor_bps.max(market.spec.weekend_margin_bps);
+                market.spec.floored_margin_for(notional, weekend_bps, charge)
+                    - market.spec.floored_margin_for(notional, floor_bps, charge)
             })
             .sum()
     }
 
-    /// What weekend margins add to `acct`'s requirement now, at its marks.
-    pub(crate) fn weekend_margin_extra_now(&self, acct: &Account) -> Fixed {
-        self.weekend_margin_extra(acct, self.now, at_mark)
+    /// What weekend margins add to `acct`'s requirement now, at its marks, with each margin band
+    /// charging at least `floor_bps`.
+    pub(crate) fn weekend_margin_extra_now(&self, acct: &Account, floor_bps: i64) -> Fixed {
+        self.weekend_margin_extra(acct, self.now, floor_bps, at_mark)
     }
 
     /// The next weekend boundary of any market, from `V60`: a gap's start, until its close-out runs,
@@ -243,7 +251,7 @@ impl Engine {
     ) -> Option<(MarketId, Fixed, Fixed, Fixed)> {
         let acct = self.accounts.get(&account)?;
         let (equity, margin) = self.equity_and_margin(acct, None);
-        let required = margin + self.weekend_margin_extra(acct, at, at_mark);
+        let required = margin + self.weekend_margin_extra(acct, at, 0, at_mark);
         if equity >= required {
             return None;
         }

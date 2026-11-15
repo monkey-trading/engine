@@ -2,12 +2,13 @@
 //! a seven-day notice names it, keeps its launch tiers, never lowers a threshold or a day divisor or
 //! raises a share, and with every listed market's bands keeps each tier's spread from its launch
 //! spread to twice it; a listing's new bands are held to the same at every tier. Votes are held to
-//! the same bounds (`parameter_votes/volume_tiers.rs`).
+//! the same bounds (`parameter_votes/volume_tiers.rs`). From `V64` a table keeps each tier's margin
+//! floor at or above launch's, and before it a floor charges nothing.
 
 mod common;
 
 use common::close_spread::{ceilings, trade};
-use common::events::only_fill;
+use common::events::{fills, only_fill};
 use common::session_keys::funded_at;
 use common::spreads::{applied, genesis_at, refused, spread_notice, tenths, with_spreads};
 use common::{BTC, Harness, f, market};
@@ -22,6 +23,8 @@ use engine_core::volume_tier::{VolumeTier, launch_volume_tiers};
 
 const V59: ProtocolVersion = ProtocolVersion::V59;
 const V61: ProtocolVersion = ProtocolVersion::V61;
+const V63: ProtocolVersion = ProtocolVersion::V63;
+const V64: ProtocolVersion = ProtocolVersion::V64;
 /// A market the harness does not list.
 const SOL: MarketId = 7;
 
@@ -399,6 +402,56 @@ fn from_v61_an_adoption_is_held_to_the_volume_tiers_when_adopted_and_its_listing
     let refusal = refused(&h.operate(AdminCommand::UpsertMarket(listing))).to_owned();
     assert!(refusal.contains("market 7's first listing at volume tier 0"), "{refusal}");
     assert!(!h.engine.markets().contains_key(&SOL));
+}
+
+#[test]
+fn a_tables_margin_floors_stay_at_or_above_launch_and_never_rise_with_the_tier() {
+    // Activated over the harness's parameters, `V64` gives tiers 0 and 1 floors of 5% and 2%.
+    let (mut h, _, _) = funded_at(V64);
+    let in_force = h.engine.params().unwrap().volume_tiers.clone();
+    assert_eq!(in_force.iter().map(|tier| tier.margin_floor_bps).collect::<Vec<_>>(), [500, 200, 0, 0]);
+    let due = h.ts + NOTICE_MS;
+    let cases: [(Change, &str); 3] = [
+        (|tiers| tiers[0].margin_floor_bps = 499, "volume tier 0's margin_floor_bps 499 is below its launch value 500"),
+        (|tiers| tiers[1].margin_floor_bps = 0, "volume tier 1's margin_floor_bps 0 is below its launch value 200"),
+        (|tiers| tiers[2].margin_floor_bps = 300, "never rise with the tier"),
+    ];
+    for (change, reason) in cases {
+        let mut tiers = in_force.clone();
+        change(&mut tiers);
+        let refusal = refused(&h.operate(notice(tiers, due))).to_owned();
+        assert!(refusal.contains(reason), "{reason}: {refusal}");
+    }
+    // A higher floor is less generous: noticed, it applies from its time.
+    let mut raised = in_force.clone();
+    raised.iter_mut().zip([1_000, 500, 100, 0]).for_each(|(tier, floor)| tier.margin_floor_bps = floor);
+    assert!(applied(&h.operate(notice(raised.clone(), due))));
+    h.advance_to(due);
+    assert!(applied(&h.operate(AdminCommand::SetParams(params(&h, raised.clone())))));
+    assert_eq!(h.engine.params().unwrap().volume_tiers, raised);
+}
+
+#[test]
+fn before_v64_a_floor_charges_nothing_and_activation_keeps_the_larger_one() {
+    // At `V63` a noticed table may name floors: tier 0's 15% charges nothing yet, so $90k of equity
+    // holds $900k of BTC at its 10%.
+    let (mut h, client, _) = funded_at(V63);
+    let named = with_tiers(|tiers| (tiers[0].margin_floor_bps, tiers[1].margin_floor_bps) = (1_500, 100));
+    let due = h.ts + NOTICE_MS;
+    assert!(applied(&h.operate(notice(named.clone(), due))));
+    h.advance_to(due);
+    assert!(applied(&h.operate(AdminCommand::SetParams(params(&h, named)))));
+    h.price(BTC, "100000");
+    only_fill(&trade(&mut h, &client, BTC, Side::Buy, "9", "100000"));
+    // `V64` keeps tier 0's higher 15% and raises tier 1 to 2%, and the launch table takes 5% and 2%.
+    h.admin(AdminCommand::ActivateProtocol { version: V64 });
+    let floors = |tiers: &[VolumeTier]| tiers.iter().map(|tier| tier.margin_floor_bps).collect::<Vec<_>>();
+    assert_eq!(floors(&h.engine.params().unwrap().volume_tiers), [1_500, 200, 0, 0]);
+    assert_eq!(floors(h.engine.operator_bounds().launch_volume_tiers.as_deref().unwrap()), [500, 200, 0, 0]);
+    // The long stays open, its initial requirement now $135k.
+    h.advance(1_000);
+    assert!(fills(&h.price(BTC, "100000")).is_empty());
+    assert_eq!(h.engine.margin_standing(client.account).unwrap().initial_margin, f("135000"));
 }
 
 // ── Helpers ──

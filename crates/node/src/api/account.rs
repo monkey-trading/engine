@@ -1,4 +1,5 @@
-//! `GET /v1/accounts/{address}`: one account's balance, equity, margin, positions, orders, toxicity,
+//! `GET /v1/accounts/{address}`: one account's balance, equity, margin, initial and maintenance
+//! requirements, withdrawable cash and maximum leverage in each market, positions, orders, toxicity,
 //! each position's close-out and close fee, from `V59` its volume tier, and from `V60` the weekend
 //! margin each position needs.
 
@@ -22,6 +23,10 @@ pub(crate) struct AccountView {
     unfinalised_deposits: Fixed,
     equity: Fixed,
     margin: Fixed,
+    /// The initial requirement, from `V64` at the account's tier's margin floor, the maintenance
+    /// requirement a close-out reads, the withdrawable cash and each market's maximum leverage.
+    #[serde(flatten)]
+    standing: engine_core::engine::MarginStanding,
     positions: BTreeMap<MarketId, Position>,
     orders: BTreeMap<OrderId, RestingOrder>,
     /// The `V11` score in whole bps, before `V54`; zero from it.
@@ -43,8 +48,9 @@ pub(crate) struct AccountView {
     weekend_margins: BTreeMap<MarketId, engine_core::weekend::WeekendRequirement>,
 }
 
-/// One account's balance, equity, margin, positions, orders, each position's close-out and close fee,
-/// its volume tier, and the weekend margin each position needs.
+/// One account's balance, equity, margin, initial and maintenance requirements, withdrawable cash,
+/// maximum leverage in each market, positions, orders, each position's close-out and close fee, its
+/// volume tier, and the weekend margin each position needs.
 /// Error cases:
 /// - the address is malformed
 /// - the account has never been credited
@@ -66,6 +72,7 @@ pub(crate) fn account_view(e: &Engine, id: AccountId) -> Option<AccountView> {
         unfinalised_deposits: acct.unfinalised_deposits,
         equity,
         margin,
+        standing: e.margin_standing(id)?,
         positions: acct.positions.clone(),
         orders: acct.orders.clone(),
         toxicity_bps: acct.toxicity_bps,

@@ -4,6 +4,7 @@ mod admission;
 mod batch;
 mod cancel;
 mod declarations;
+mod earned_leverage;
 mod holding_fee;
 mod pre_deposit;
 mod pre_deposit_budgets;
@@ -46,7 +47,7 @@ use tower::ServiceExt;
 use crate::access::AccessClient;
 use crate::api::{ApiState, MAX_BACKFILLS, router};
 use crate::clock::test_clock::TestClock;
-use crate::config::{AccessSection, Budget, FreshAccountBudgets, RateLimit};
+use crate::config::{AccessSection, Budget, FreshAccountBudgets, Genesis, RateLimit};
 use crate::history::{INDEX_FILE, Reader};
 use crate::limits::ApiLimits;
 use crate::log::{LogEntry, Manifest};
@@ -244,6 +245,11 @@ impl Node {
     }
 
     async fn start_with_time(name: &str, mock_custody: bool, trusted: bool, gated: bool) -> Self {
+        Self::start_from(name, mock_custody, trusted, gated, &dev_config().genesis).await
+    }
+
+    /// `start_with_time` from `genesis` instead of the dev config's.
+    async fn start_from(name: &str, mock_custody: bool, trusted: bool, gated: bool, genesis: &Genesis) -> Self {
         let (work, work_rx) = mpsc::channel(1024);
         let dir = scratch_dir(&format!("access-api-{name}"));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -279,11 +285,12 @@ impl Node {
             operator,
             clock: stamps.clone(),
             checkpoints: gated.then_some(work),
+            genesis: crate::sequencer::genesis_commands(genesis),
             ..sequencer_config(&dir, manifest_tx)
         };
         let mut sequencer = Sequencer::recover(cfg, enclave.clone(), stream.clone(), withdrawals).unwrap();
         sequencer.activate_protocol().unwrap();
-        sequencer.genesis(&dev_config().genesis).unwrap();
+        sequencer.genesis(genesis).unwrap();
         if trusted {
             sequencer.trust(sample_around(stamps.as_ref())).unwrap();
         }

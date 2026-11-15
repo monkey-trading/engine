@@ -13,12 +13,15 @@
 //! - **Tiers.** A day counts toward a tier at most its threshold over its day divisor, and the tier is
 //!   the highest whose capped sum over the window reaches its threshold; tier 0 needs nothing.
 //! - **Best price.** An account's first spread band ends at its tier's share of its market's first
-//!   bound, rounded down, and at most the second bound. No tier changes a rate.
+//!   bound, rounded down, and at most the second bound. No tier changes a spread rate.
+//! - **Earned leverage** (`leverage`), from `V64`. A tier's margin floor raises each margin band of
+//!   the account's initial requirement to at least the floor; close-outs read the market's bands.
 //! - **Bounds** (`bounds`). The table moves only after a seven-day notice, or by a vote while rotation
 //!   is on: the same number of tiers, thresholds and day divisors at or above launch, shares at or
-//!   below launch, and in every listed market each tier's spread at every notional from its launch
-//!   spread to twice it, against which a listing's spread bands are checked too. From `V61` a ceiling
-//!   adoption's bound first listing is checked when it is adopted as well as when it is listed.
+//!   below launch, from `V64` margin floors at or above launch, and in every listed market each tier's
+//!   spread at every notional from its launch spread to twice it, against which a listing's spread
+//!   bands are checked too. From `V61` a ceiling adoption's bound first listing is checked when it is
+//!   adopted as well as when it is listed.
 //! - **Activation.** Parameters that name no table take `launch_volume_tiers`, and every account
 //!   starts at tier 0 with no counted volume; every position held then is pending for its first
 //!   `MIN_HOLD_MS`, as no record says which of its units were held that long. From `V61` the launch
@@ -33,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::Fixed;
 use crate::engine::Engine;
 use crate::fixed::Rounding;
-use crate::market::banded;
+use crate::market::{banded, is_zero_bps};
 use crate::protocol::ProtocolVersion;
 use crate::spread_tier::SpreadTier;
 use crate::types::{AccountId, MarketId, Millis};
@@ -42,6 +45,8 @@ mod book;
 pub use book::{AccountVolume, ClosingLot, DayVolume, MAX_CLOSING_LOTS, MAX_OPENING_LOTS, OpeningLot};
 mod bounds;
 pub(crate) use bounds::spend_volume_tier_notice;
+mod leverage;
+pub use leverage::ACTIVATION_MARGIN_FLOORS_BPS;
 
 /// How long opening notional is held before it counts: 60 s of sequenced time.
 pub const MIN_HOLD_MS: Millis = 60_000;
@@ -53,6 +58,8 @@ pub const DAY_MS: Millis = 24 * 60 * 60 * 1000;
 pub const MAX_VOLUME_TIERS: usize = 8;
 /// The largest best-price share a tier may have: ten times the first bound.
 const MAX_SHARE_BPS: i64 = 100_000;
+/// The largest margin floor a tier may have: 100%.
+const MAX_MARGIN_FLOOR_BPS: i64 = 10_000;
 
 /// One volume tier: the counted volume that reaches it, how many days that takes, and its benefit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +72,10 @@ pub struct VolumeTier {
     pub day_divisor: i64,
     /// Where the account's first spread band ends, in bps of its market's first bound.
     pub best_price_share_bps: i64,
+    /// From `V64`, the least rate each margin band charges in the account's initial requirement, in
+    /// bps (`leverage`); zero for none, and left out of the encoding then.
+    #[serde(default, skip_serializing_if = "is_zero_bps")]
+    pub margin_floor_bps: i64,
 }
 
 /// An account's volume as the account read gives it.
@@ -179,19 +190,22 @@ pub fn launch_volume_tiers() -> Vec<VolumeTier> {
             threshold: Fixed::from_int(usd),
             day_divisor,
             best_price_share_bps,
+            margin_floor_bps: 0,
         })
         .collect()
 }
 
 /// Checks a tier table: none, or at most `MAX_VOLUME_TIERS` tiers, the first needing nothing (a zero
 /// threshold and a day divisor of 1), thresholds strictly ascending up to `Fixed::MAX_INPUT`, day
-/// divisors from 1 to `WINDOW_DAYS`, and shares from 1 to 100000 bps that never fall with the tier.
+/// divisors from 1 to `WINDOW_DAYS`, shares from 1 to 100000 bps that never fall with the tier, and
+/// margin floors from 0 to 10000 bps that never rise with it.
 /// Error cases:
 /// - more than `MAX_VOLUME_TIERS` tiers
 /// - a first tier with a threshold or a day divisor that needs anything
 /// - thresholds not strictly ascending, or one above `Fixed::MAX_INPUT`
 /// - a day divisor outside 1..=30, past which the window could never reach the tier
 /// - a share outside 1..=100000 bps, or one below the share of the tier before it
+/// - a margin floor outside 0..=10000 bps, or one above the floor of the tier before it
 pub fn validate_volume_tiers(tiers: &[VolumeTier]) -> Result<(), String> {
     if tiers.len() > MAX_VOLUME_TIERS {
         return Err(format!("volume_tiers has more than {MAX_VOLUME_TIERS} tiers"));
@@ -211,6 +225,11 @@ pub fn validate_volume_tiers(tiers: &[VolumeTier]) -> Result<(), String> {
         || tiers.windows(2).any(|pair| pair[0].best_price_share_bps > pair[1].best_price_share_bps)
     {
         return Err(format!("best_price_share_bps must be in 1..={MAX_SHARE_BPS} and never fall with the tier"));
+    }
+    if tiers.iter().any(|tier| !(0..=MAX_MARGIN_FLOOR_BPS).contains(&tier.margin_floor_bps))
+        || tiers.windows(2).any(|pair| pair[0].margin_floor_bps < pair[1].margin_floor_bps)
+    {
+        return Err(format!("margin_floor_bps must be in 0..={MAX_MARGIN_FLOOR_BPS} and never rise with the tier"));
     }
     Ok(())
 }
@@ -265,11 +284,16 @@ impl Engine {
         self.volumes.get(&account)
     }
 
+    /// The tier of the table in force `account` trades at now, from `V59`; `None` before it.
+    pub(crate) fn tier_in_force(&self, account: AccountId) -> Option<&VolumeTier> {
+        // The tier is below the table's length, which `volume_tiers_in_force` keeps above zero.
+        self.volume_tiers_in_force().map(|table| &table[self.volume_tier(account)])
+    }
+
     /// The share of each market's first bound `account`'s first band ends at now, in bps: from `V59`
     /// its tier's, and `None` before it, when every band is as listed.
     pub(crate) fn best_price_share(&self, account: AccountId) -> Option<i64> {
-        // The tier is below the table's length, which `volume_tiers_in_force` keeps above zero.
-        self.volume_tiers_in_force().map(|table| table[self.volume_tier(account)].best_price_share_bps)
+        self.tier_in_force(account).map(|tier| tier.best_price_share_bps)
     }
 
     /// `account`'s volume, tier, progress towards each tier and best-price bound in each market, from
