@@ -198,8 +198,32 @@ impl MarketSpec {
     /// each band charges at least the weekend margin rate, each band's charge rounded as `rounding`
     /// says. With no weekend margin, the margin `margin_for` gives.
     pub fn weekend_margin_for(&self, notional: Fixed, rounding: Rounding) -> Fixed {
-        let bands = self.margin_tiers.iter().map(|tier| (tier.up_to, tier.bps.max(self.weekend_margin_bps)));
+        self.floored_margin_for(notional, self.weekend_margin_bps, rounding)
+    }
+
+    /// Margin required for a position of `notional` (either sign) with each band charging at least
+    /// `floor_bps`, each band's charge rounded as `rounding` says. With a floor of zero, the margin
+    /// `margin_for` gives.
+    pub fn floored_margin_for(&self, notional: Fixed, floor_bps: i64, rounding: Rounding) -> Fixed {
+        let bands = self.margin_tiers.iter().map(|tier| (tier.up_to, tier.bps.max(floor_bps)));
         banded(bands, Fixed::ZERO, notional.abs(), |slice, bps| slice.mul_bps_rounded(bps, rounding))
+    }
+
+    /// The most leverage a position in the market can take or approach with each margin band charged
+    /// at least `floor_bps`, rounded down: a position's notional over its margin, rounded as a
+    /// requirement is, peaks where the average rate up to its notional is lowest, at a band's end or,
+    /// past the last band's start, at that band's rate as the notional grows.
+    pub fn max_leverage(&self, floor_bps: i64) -> Fixed {
+        // A validated listing has at least one band, the last unbounded, each at 1 bps or more, and
+        // positive band ends, so no margin here is zero.
+        let last = self.margin_tiers.last().expect("a listing has a margin band").bps.max(floor_bps);
+        let limit = Fixed::from_int(10_000).div_rounded(Fixed::from_int(last), Rounding::Down);
+        let ends = self
+            .margin_tiers
+            .iter()
+            .filter_map(|tier| tier.up_to)
+            .map(|end| end.div_rounded(self.floored_margin_for(end, floor_bps, Rounding::Up), Rounding::Down));
+        ends.fold(limit, Fixed::max)
     }
 
     /// Checks this listing's quote currency against the FX pairs, given the symbol of each market
@@ -296,7 +320,7 @@ impl QuoteCurrency {
 }
 
 /// Whether a rate in bps is zero, so the encoding leaves it out.
-fn is_zero_bps(bps: &i64) -> bool {
+pub(crate) fn is_zero_bps(bps: &i64) -> bool {
     *bps == 0
 }
 

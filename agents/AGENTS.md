@@ -18,7 +18,10 @@ an index: load only the rule whose hint matches the current action.
   over 30 UTC days, opening notional once held 60 s and a matured close once the round-trip horizon has
   passed, a round trip counting nothing, in its own leaf in `merkle/volume.rs`, setting where its first spread
   band ends in every market; the table moved only after notice or by vote, never more generously than at
-  launch, with each tier's spread from its launch spread to twice it, and from `V61` measured from the launch table at an activation, a ceiling adoption's bound first listing held to it when adopted, and a closing lot joining another only when the order of their units does not matter), from `V60` a market's weekend margin
+  launch, with each tier's spread from its launch spread to twice it, and from `V61` measured from the launch table at an activation, a ceiling adoption's bound first listing held to it when adopted, and a closing lot joining another only when the order of their units does not matter; from `V64` earned leverage in
+  `volume_tier/leverage.rs`: a tier's margin floor raises each margin band of the initial requirement
+  that new risk and withdrawals meet, band by band with the weekend margin, while close-outs read the
+  market's bands, the floors moved only with the table and never below launch's, `tests/earned_leverage.rs`), from `V60` a market's weekend margin
   (`weekend/`: each margin band at least its rate over the market's weekend gap, any closure of at
   least 40 hours found by `session/weekend.rs`; new risk in any market and withdrawals meet it from
   two hours before the gap until the market reopens, and an account below it is closed out at its
@@ -232,6 +235,7 @@ an index: load only the rule whose hint matches the current action.
   latest checkpoint (`api/house_state.rs`,
   `sequencer/house.rs`), the account read (`api/account.rs`) with the toxicity score, tier and add-on from `V54` and the
   volume tier, counted and pending volume, each tier's progress and each market's best-price bound from `V59`, the
+  initial and maintenance requirements, withdrawable cash and each market's maximum leverage (`margin_standing`), the
   signed quote ladder's steps at the account's own band bounds, checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), at most one signed checkpoint on its way to
   finality at a time (`sequencer/checkpoints/hold_back.rs`), with strict signature replay and startup checks
@@ -423,8 +427,9 @@ an index: load only the rule whose hint matches the current action.
   close-spread ceiling (#147's calibrated values, recomputed for `V52`'s floor and `V54`'s score
   tiers), from `V54` the toxicity score's tiers and each market's markout floor, its year's
   markout spread (#699), from `V59` the volume tier table (#614, D1), from `V60` the weekend margins of
-  WTI, Japan 225, silver and US Tech 100 (#750), and from `V62` level 2's house loss threshold of zero
-  (`dev.toml` and `anvil.toml` carry a labelled $1M fixture); a deployment's node sections complete it
+  WTI, Japan 225, silver and US Tech 100 (#750), from `V62` level 2's house loss threshold of zero
+  (`dev.toml` and `anvil.toml` carry a labelled $1M fixture), and from `V64` its volume tiers' margin
+  floors (#614, D5); a deployment's node sections complete it
   into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
@@ -524,6 +529,11 @@ an index: load only the rule whose hint matches the current action.
   gap starts beside a long that holds the margin and may withdraw only above it over the gap, the
   normal margin at Sunday's open, the market and account reads, a calendar change narrowing the gap
   and a weekend margin change without notice refused over TLS, restart and replay;
+  `dev-earned-leverage.sh`, the V64 earned leverage on a dev node: a fresh wallet's BTC short refused
+  at 25x by tier 0's 5% margin floor and opened at 19.8x, then 50x at tier 1 and 100x at tier 2, its
+  tier falling thirty days on with the short left open, a withdrawal stopped at the initial
+  requirement, the close-out at BTC's own bands, the account read's requirements, withdrawable cash
+  and leverage, restart and replay;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
@@ -696,7 +706,7 @@ an index: load only the rule whose hint matches the current action.
   before, and a job that times out is cancelled rather than failed, so the run continues too.
   `gh run rerun --failed` re-runs the failed, cancelled, and unstarted jobs with `ci-passed`, so a
   re-run after a flake repeats everything the first failure cut short. The test job also runs the
-  corporate-action, operator bounds, parameter notice, holding-time fee, volume tier and weekend margin dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
+  corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin and earned leverage dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
   their own job, `test-production`, which compiles a different feature set.
   `merge-approval.yaml` runs only on merge groups: its `merge-approved` job, the merge-group side of
   the required `merge-approved` check, runs `scripts/check-merge-approved.sh`, which follows the
@@ -860,6 +870,9 @@ Run from the repo root:
 - Weekend margin dev scenario: `./scripts/dev-weekend-margin.sh` (runs the isolated access-screened
   WTI trading and withdrawals across a weekend close, market and account reads and signed admin over
   TLS scenario with deterministic time, restart and public replay)
+- Earned leverage dev scenario: `./scripts/dev-earned-leverage.sh` (runs the isolated access-screened
+  BTC trading and withdrawals through three tiers and thirty days, with the account read, on
+  deterministic time, restart and public replay)
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault

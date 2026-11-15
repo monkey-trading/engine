@@ -4,7 +4,10 @@ use super::*;
 fn the_launch_table_validates_and_each_shape_rule_refuses_its_case() {
     assert_eq!(validate_volume_tiers(&launch_volume_tiers()), Ok(()));
     assert_eq!(validate_volume_tiers(&[]), Ok(()));
-    let cases: [(&str, Change); 8] = [
+    let mut floored = launch_volume_tiers();
+    floored.iter_mut().zip(ACTIVATION_MARGIN_FLOORS_BPS).for_each(|(tier, floor)| tier.margin_floor_bps = floor);
+    assert_eq!(validate_volume_tiers(&floored), Ok(()));
+    let cases: [(&str, Change); 11] = [
         ("tiers", |t| t.extend((0..5).map(|n| tier(300_000_000 + n, 10, 25_000)))),
         ("tier 0", |t| t[0].threshold = usd(1)),
         ("tier 0", |t| t[0].day_divisor = 2),
@@ -13,6 +16,9 @@ fn the_launch_table_validates_and_each_shape_rule_refuses_its_case() {
         ("day_divisor", |t| t[1].day_divisor = 31),
         ("best_price_share_bps", |t| t[3].best_price_share_bps = 100_001),
         ("best_price_share_bps", |t| t[2].best_price_share_bps = 4_999),
+        ("margin_floor_bps", |t| t[0].margin_floor_bps = 10_001),
+        ("margin_floor_bps", |t| t[0].margin_floor_bps = -1),
+        ("margin_floor_bps", |t| t[2].margin_floor_bps = 1),
     ];
     for (named, change) in cases {
         let mut tiers = launch_volume_tiers();
@@ -112,7 +118,7 @@ fn usd_raw(raw: i128) -> Fixed {
 }
 
 fn tier(threshold: i64, day_divisor: i64, best_price_share_bps: i64) -> VolumeTier {
-    VolumeTier { threshold: usd(threshold), day_divisor, best_price_share_bps }
+    VolumeTier { threshold: usd(threshold), day_divisor, best_price_share_bps, margin_floor_bps: 0 }
 }
 
 /// BTC-USD's bands in the dev genesis: 2bp to $2M, 4bp to $10M and 8bp above.

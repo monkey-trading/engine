@@ -1,9 +1,10 @@
-//! The volume tiers' cost from `V59` at 100k accounts, against `V58` running the same commands: a fill
-//! by an account whose volume book is full, and one price triggering 20k stops, each account's book
-//! busy. A full book holds the most a book can: 30 days of counted volume, `MAX_OPENING_LOTS` opening
-//! lots pending in every launch market and `MAX_CLOSING_LOTS` closing lots within the horizon, so each
-//! fill's tier and count read every lot. A busy book holds the 30 days and, in BTC alone,
-//! `MAX_OPENING_LOTS` opening and as many closing lots, which keeps 20k books in memory.
+//! The volume tiers' cost from `V59` at 100k accounts, against `V58` running the same commands, and
+//! earned leverage's from `V64` against `V63`: a fill by an account whose volume book is full, and one
+//! price triggering 20k stops, each account's book busy. A full book holds the most a book can: 30 days
+//! of counted volume, `MAX_OPENING_LOTS` opening lots pending in every launch market and
+//! `MAX_CLOSING_LOTS` closing lots within the horizon, so each fill's tier and count read every lot. A
+//! busy book holds the 30 days and, in BTC alone, `MAX_OPENING_LOTS` opening and as many closing lots,
+//! which keeps 20k books in memory.
 
 use super::common::close_spread::trade;
 use super::toxicity::scored_fixture;
@@ -19,8 +20,37 @@ use engine_core::volume_tier::{
 fn volume_fill_latency() {
     // Among 100k accounts, a client with a full book opens and closes 0.01 BTC in turn: from `V59`
     // each fill reads the client's tier from its book, and counts in it.
+    fill_latency("volume", [ProtocolVersion::V58, ProtocolVersion::V59]);
+}
+
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn earned_leverage_fill_latency() {
+    // The same fills: from `V64` each open's margin check charges every band at least the tier's
+    // margin floor, read with the best-price share from the one tier the fill reads.
+    fill_latency("earned_leverage", [ProtocolVersion::V63, ProtocolVersion::V64]);
+}
+
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn volume_trigger_latency() {
+    // One price triggers a resting stop buy of 0.01 BTC for each of 20k accounts, each with a busy
+    // book: from `V59` each fill reads its account's tier and counts in its book.
+    trigger_latency("volume", [ProtocolVersion::V58, ProtocolVersion::V59]);
+}
+
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn earned_leverage_trigger_latency() {
+    // The same stops: from `V64` each triggered open's margin check charges its tier's floor.
+    trigger_latency("earned_leverage", [ProtocolVersion::V63, ProtocolVersion::V64]);
+}
+
+/// A full-book client's 0.01 BTC fills, in turn opening and closing, at each of `versions`, printed
+/// as `name`; each version's p99 within `BATCH_BUDGET_US`.
+fn fill_latency(name: &str, versions: [ProtocolVersion; 2]) {
     let mut p50s = Vec::new();
-    for version in [ProtocolVersion::V58, ProtocolVersion::V59] {
+    for version in versions {
         let (mut h, client, _) = scored_fixture(version, 100_000, None);
         fill_books(&mut h, [key_of(client.account)].into_iter(), true);
         let mut times = Vec::with_capacity(2 * SAMPLES);
@@ -34,21 +64,19 @@ fn volume_fill_latency() {
         }
         times.sort_unstable();
         let (p50, p99) = (times[times.len() / 2 - 1], times[times.len() * 99 / 100 - 1]);
-        println!("LATENCY volume_fill_{version:?} accounts=100000 p50_us={p50} p99_us={p99}");
+        println!("LATENCY {name}_fill_{version:?} accounts=100000 p50_us={p50} p99_us={p99}");
         assert!(p99 <= BATCH_BUDGET_US, "a {version:?} fill's p99 {p99}us exceeds {BATCH_BUDGET_US}us");
         p50s.push(p50);
     }
-    println!("LATENCY volume_fill_added p50_us={}", p50s[1] as i128 - p50s[0] as i128);
+    println!("LATENCY {name}_fill_added p50_us={}", p50s[1] as i128 - p50s[0] as i128);
 }
 
-#[test]
-#[ignore = "100k-account benchmark: run in an isolated CPU window"]
-fn volume_trigger_latency() {
-    // One price triggers a resting stop buy of 0.01 BTC for each of 20k accounts, each with a busy
-    // book: from `V59` each fill reads its account's tier and counts in its book.
+/// One price triggering 20k busy-book accounts' stops at each of `versions`, printed as `name`; the
+/// later version within twice the earlier's and 10 ms.
+fn trigger_latency(name: &str, versions: [ProtocolVersion; 2]) {
     const TRIGGERED: usize = 20_000;
     let mut took = Vec::new();
-    for version in [ProtocolVersion::V58, ProtocolVersion::V59] {
+    for version in versions {
         let (mut h, client, fillers) = scored_fixture(version, TRIGGERED, Some("100100"));
         fill_books(&mut h, fillers.iter().cloned().chain([key_of(client.account)]), false);
         h.advance(1);
@@ -57,11 +85,17 @@ fn volume_trigger_latency() {
         took.push(began.elapsed().as_micros());
         let fills = events.iter().filter(|e| matches!(e, Event::Fill(_))).count();
         assert_eq!(fills, TRIGGERED + 1, "every stop fills");
-        println!("LATENCY volume_trigger_{version:?} fills={fills} us={}", took[took.len() - 1]);
+        println!("LATENCY {name}_trigger_{version:?} fills={fills} us={}", took[took.len() - 1]);
     }
     let per_fill = (took[1] as i128 - took[0] as i128) as f64 / (TRIGGERED + 1) as f64;
-    println!("LATENCY volume_trigger_added_per_fill us={per_fill:.2}");
-    assert!(took[1] <= 2 * took[0] + 10_000, "V59's triggered fills took {}us against V58's {}us", took[1], took[0]);
+    println!("LATENCY {name}_trigger_added_per_fill us={per_fill:.2}");
+    let [earlier, later] = versions;
+    assert!(
+        took[1] <= 2 * took[0] + 10_000,
+        "{later:?}'s triggered fills took {}us against {earlier:?}'s {}us",
+        took[1],
+        took[0]
+    );
 }
 
 /// Gives each account in `accounts` a book from `V59`: $1M counted on each of the 30 days of the

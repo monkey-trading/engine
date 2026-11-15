@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 mod house;
 mod margin;
+pub use margin::MarginStanding;
 mod market;
 
 pub use market::MarketState;

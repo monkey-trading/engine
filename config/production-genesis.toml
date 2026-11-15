@@ -224,10 +224,15 @@ profit_fee_curve = [
 # day counting at most threshold / day_divisor, so it takes trading on that many
 # days (#614, D1): under $1M a quarter of the first bound, $1M over 2 days half,
 # $25M over 5 days all of it, and $250M over 10 days two and a half times it.
+# From protocol V64 a tier's margin_floor_bps is the least rate each margin
+# band charges in its accounts' initial requirement, which new risk and
+# withdrawals must leave; close-outs read the market's bands alone (#614, D5):
+# 5% at tier 0 (20x), 2% at tier 1 (50x), and none above, where BTC-USD and
+# ETH-USD reach their own 1% (100x, D4).
 # The table moves only after a seven-day notice, never more generously (D7).
 volume_tiers = [
-  { threshold = "0", day_divisor = 1, best_price_share_bps = 2500 },
-  { threshold = "1000000", day_divisor = 2, best_price_share_bps = 5000 },
+  { threshold = "0", day_divisor = 1, best_price_share_bps = 2500, margin_floor_bps = 500 },
+  { threshold = "1000000", day_divisor = 2, best_price_share_bps = 5000, margin_floor_bps = 200 },
   { threshold = "25000000", day_divisor = 5, best_price_share_bps = 10000 },
   { threshold = "250000000", day_divisor = 10, best_price_share_bps = 25000 },
 ]

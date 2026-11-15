@@ -161,6 +161,49 @@ fn a_weekend_margin_raises_each_band_to_at_least_its_rate() {
 }
 
 #[test]
+fn a_margin_floor_raises_each_band_to_it_and_a_zero_floor_leaves_the_margin() {
+    let oil = commodity(0, weekly());
+    let at = |floor_bps, notional: &str| oil.floored_margin_for(d(notional), floor_bps, Rounding::Up);
+    // 1% to 2m and 5% above: a 5% floor raises the first band only, 2% the first band to 2%.
+    assert_eq!((at(500, "1000000"), at(500, "-3000000")), (d("50000"), d("150000")));
+    assert_eq!(at(200, "3000000"), d("90000"));
+    for notional in ["0", "0.000000001", "1999999.999999999", "2000000", "-2000000.000000001", "7000000"] {
+        assert_eq!(at(0, notional), oil.margin_for(d(notional), Rounding::Up), "{notional}");
+        assert_eq!(at(0, notional), oil.weekend_margin_for(d(notional), Rounding::Up), "{notional}");
+    }
+    // Rising bands peak in the first: 100x at 1%, 20x under a 5% floor, and 33.333333333x under 3%.
+    assert_eq!((oil.max_leverage(0), oil.max_leverage(500)), (d("100"), d("20")));
+    assert_eq!(oil.max_leverage(300), d("33.333333333"));
+}
+
+#[test]
+fn the_maximum_leverage_is_the_lowest_average_rate_a_position_reaches() {
+    let bands = |tiers: serde_json::Value| -> MarketSpec {
+        let mut spec = commodity(0, weekly());
+        spec.margin_tiers = serde_json::from_value(tiers).unwrap();
+        spec
+    };
+    // A restriction's 10% on the first $1M over 5% above: a position approaches 20x as it grows, and a
+    // 15% floor holds every band at 6.666666666x.
+    let restricted = bands(serde_json::json!([{ "up_to": "1000000", "bps": 1000 }, { "bps": 500 }]));
+    assert_eq!((restricted.max_leverage(0), restricted.max_leverage(1_500)), (d("20"), d("6.666666666")));
+    // 1% to $1M, 10% to $2M and 2% above: $1M at its band's end is the most, 100x, above the 50x the
+    // last band approaches.
+    let dipped = bands(serde_json::json!([
+        { "up_to": "1000000", "bps": 100 }, { "up_to": "2000000", "bps": 1000 }, { "bps": 200 }
+    ]));
+    assert_eq!(dipped.max_leverage(0), d("100"));
+    // 5% to $1M, 1% to $2M and 4% above: at $2M the average is 3%, 33.333333333x, above both bands'.
+    let valley = bands(serde_json::json!([
+        { "up_to": "1000000", "bps": 500 }, { "up_to": "2000000", "bps": 100 }, { "bps": 400 }
+    ]));
+    assert_eq!(valley.max_leverage(0), d("33.333333333"));
+    // A first band of one raw unit charges that unit whole, rounded up, so no position takes its 1%.
+    let sliver = bands(serde_json::json!([{ "up_to": "0.000000001", "bps": 100 }, { "bps": 10000 }]));
+    assert_eq!(sliver.max_leverage(0), d("1"));
+}
+
+#[test]
 fn a_weekend_margin_is_a_rate_to_100_percent_on_a_weekly_schedule() {
     // A rate under a band leaves that band's charge as it is, so any rate is at or above the normal
     // margin.

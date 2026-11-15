@@ -30,13 +30,21 @@ impl HouseTotals {
 }
 
 impl Engine {
-    /// Checks a fill that adds risk against the account's margin and the house's exposure caps, in
-    /// USD: realised PnL converts rounded down, and exposure rounded up.
+    /// Checks a fill that adds risk against the account's initial requirement and the house's exposure
+    /// caps, in USD: realised PnL converts rounded down, and exposure rounded up. `floor_bps` is the
+    /// margin floor of the account's tier (`Engine::margin_floor_of`), which each margin band of the
+    /// initial requirement charges at least.
     /// Error cases:
-    /// - the account's equity after the fill would be below its margin requirement
-    /// - from `V60`, below its requirement with the weekend margins that apply now
+    /// - the account's equity after the fill would be below its initial requirement
+    /// - from `V60`, below it with the weekend margins that apply now
     /// - the fill would push the house's net exposure past the market cap or the total cap
-    pub(super) fn check_risk(&self, exec: &Exec, priced: &Priced, house: &HouseTotals) -> Result<(), Reject> {
+    pub(super) fn check_risk(
+        &self,
+        exec: &Exec,
+        priced: &Priced,
+        house: &HouseTotals,
+        floor_bps: i64,
+    ) -> Result<(), Reject> {
         let params = self.params.as_ref().expect("callers check params are set");
         let market = &self.markets[&exec.market];
         let usd = |amount, rounding| market.spec.quote_currency.to_usd(amount, priced.fx, rounding);
@@ -50,7 +58,8 @@ impl Engine {
         // From `V55` the fee is the closing slice's, at its hold.
         let (_, fee_bps) = self.close_fee_terms(exec.account, exec.market);
         sim.balance += realised - profit_fee(realised, fee_bps, version);
-        let (equity, required) = self.equity_and_margin(&sim, Some((exec.market, priced.mid, priced.fx)));
+        let (equity, required) =
+            self.equity_and_initial_margin(&sim, floor_bps, Some((exec.market, priced.mid, priced.fx)));
         if equity < required {
             return Err(Reject::InsufficientMargin { equity, required });
         }
@@ -64,7 +73,7 @@ impl Engine {
                     (other.mark.unwrap_or(pos.entry), other.fx_mark)
                 }
             };
-            let required = required + self.weekend_margin_extra(&sim, self.now, price_of);
+            let required = required + self.weekend_margin_extra(&sim, self.now, floor_bps, price_of);
             if equity < required {
                 return Err(Reject::WeekendMargin { equity, required });
             }

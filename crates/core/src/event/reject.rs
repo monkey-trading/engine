@@ -38,6 +38,8 @@ pub enum Reject {
         live: Fixed,
         slippage_bps: i64,
     },
+    /// A fill that adds risk and would leave the account's equity below `required`: its margin
+    /// requirement, from `V64` its initial requirement at its volume tier's margin floor.
     InsufficientMargin {
         equity: Fixed,
         required: Fixed,

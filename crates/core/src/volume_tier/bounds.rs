@@ -77,16 +77,20 @@ impl Engine {
     /// take `launch_volume_tiers`, and the table in force becomes the launch table, or from `V61`
     /// `launch_volume_tiers` itself, which the table in force is no more generous than. No account has
     /// counted volume yet, so every account is at tier 0, and every held position is pending for its
-    /// first `MIN_HOLD_MS` (`Engine::hold_held_positions`).
+    /// first `MIN_HOLD_MS` (`Engine::hold_held_positions`). Their margin floors start when `version`
+    /// activates `V64` (`Engine::start_margin_floors`).
     pub(crate) fn start_volume_tiers(&mut self, version: ProtocolVersion) {
-        if self.protocol_version >= ProtocolVersion::V59 || version < ProtocolVersion::V59 {
-            return;
+        if self.protocol_version < ProtocolVersion::V59
+            && version >= ProtocolVersion::V59
+            && let Some(params) = self.params.as_mut()
+        {
+            params.convert_to_tiered();
+            let launch =
+                if version >= ProtocolVersion::V61 { launch_volume_tiers() } else { params.volume_tiers.clone() };
+            self.operator_bounds.launch_volume_tiers = Some(launch);
+            self.hold_held_positions();
         }
-        let Some(params) = self.params.as_mut() else { return };
-        params.convert_to_tiered();
-        let launch = if version >= ProtocolVersion::V61 { launch_volume_tiers() } else { params.volume_tiers.clone() };
-        self.operator_bounds.launch_volume_tiers = Some(launch);
-        self.hold_held_positions();
+        self.start_margin_floors(version);
     }
 
     /// From `V59`, records the table in force as the launch table with the first parameters set under
@@ -259,10 +263,11 @@ impl ProtocolParams {
     }
 }
 
-/// Checks `tiers` keeps `launch`'s number of tiers, each threshold and day divisor at or above its
-/// launch value and each share at or below it.
+/// Checks `tiers` keeps `launch`'s number of tiers, each threshold, day divisor and margin floor at or
+/// above its launch value and each share at or below it.
 /// Error cases:
 /// - another number of tiers, a threshold or day divisor below launch's, or a share above it
+/// - a margin floor below launch's
 fn within_launch_table(tiers: &[VolumeTier], launch: &[VolumeTier]) -> Result<(), String> {
     if tiers.len() != launch.len() {
         return Err(format!("a volume tier table keeps its {} launch tiers", launch.len()));
@@ -275,6 +280,12 @@ fn within_launch_table(tiers: &[VolumeTier], launch: &[VolumeTier]) -> Result<()
             return Err(format!(
                 "volume tier {at}'s best_price_share_bps {} is above its launch value {}",
                 tier.best_price_share_bps, launched.best_price_share_bps
+            ));
+        }
+        if tier.margin_floor_bps < launched.margin_floor_bps {
+            return Err(format!(
+                "volume tier {at}'s margin_floor_bps {} is below its launch value {}",
+                tier.margin_floor_bps, launched.margin_floor_bps
             ));
         }
     }

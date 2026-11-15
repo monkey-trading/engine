@@ -525,8 +525,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log/tests/reader.rs` — reader tests: offsets, following the writer, flushed entries only,
   and the checks on what it reads
 - `src/api/mod.rs` — REST routes, read handlers and the request span
-- `src/api/account.rs` — `GET /v1/accounts/{address}`: an account's balance, equity, margin, positions,
-  orders, toxicity, close-outs, close fees and from `V59` its volume tier
+- `src/api/account.rs` — `GET /v1/accounts/{address}`: an account's balance, equity, margin, initial
+  and maintenance requirements, withdrawable cash, each market's maximum leverage, positions, orders,
+  toxicity, close-outs, close fees, from `V59` its volume tier and from `V60` its weekend margins
 - `src/api/reads.rs` — `GET /v1/markets`: every market with its live state and from `V60` its weekend
   margin window
 - `src/api/state.rs` — request authentication, nonce checks, the session-key admission a
@@ -560,6 +561,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   last price when the gap starts beside a long that holds the margin, a withdrawal held to it over the
   gap, the normal margin at the reopen, a calendar change refused that would narrow the gap and a
   weekend margin change refused without notice over TLS, replay and a restart
+- `src/api/access_tests/earned_leverage.rs` — the `V64` dev scenario: a fresh wallet's BTC short
+  refused at 25x by tier 0's margin floor and opened at 19.8x, 50x at tier 1 and 100x at tier 2, the
+  tier falling thirty days on with the short open, a withdrawal stopped at the initial requirement, the
+  close-out at BTC's own bands, the account read, replay and a restart
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
 - `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof, at the
@@ -2332,6 +2337,16 @@ the gap, every position at its mark now and each market whose kept weekend windo
 start, or now once it has started, at its weekend margin. A market that has not yet reopened from its
 current gap counts at its normal margin there until it reopens and keeps its next window, so for the
 few hours a week one market has reopened and another not, the first one's figure can be low.
+Beside `margin`, the requirement at the markets' own bands, the read gives `initial_margin`, what a
+fill that adds risk and a withdrawal must leave equity at or above: from `V64` each margin band
+charged at least the account's volume tier's `margin_floor_bps`, and from `V60` each position in a
+market whose weekend margin applies now at least that, band by band. `maintenance_margin` is the
+equity below which a price move closes the account out, `margin` at the close-out level, which no tier
+changes (a weekend gap's start closes out below `weekend_margins`' `required` instead);
+`withdrawable` is the cash a withdrawal may take now, the engine's own check; and `max_leverage`,
+keyed by every listed market, is the most leverage a position opened now can take or approach in the
+market's margin bands at the same floors (at the production genesis's floors, 20 at tier 0 on a 1%
+market, 50 at tier 1 and 100 above).
 `GET /v1/markets` gives each market's `weekend_margin_bps` (left out when none) and, for a market
 with one, `weekend_margin`: `{"weekend_margin_bps", "from", "close", "reopen"}` for its next or
 current weekend gap, or nothing while no gap starts within 366 days or before V60 activates.
@@ -2444,7 +2459,8 @@ window and cooldown that a `set-params` carrying that file applies, and from `V5
 `--profit-fee-curve-from <params.toml>` the notice for its `profit_fee_curve`, which must stay at or
 above the launch curve at every hold, as the profit fee stays at or above its launch value, and from
 `V59` with `--volume-tiers-from <params.toml>` the notice for its `volume_tiers`, which keeps the
-launch tiers, no threshold or day divisor below launch and no share above it; `announce-markup <market> <bps>
+launch tiers, no threshold or day divisor below launch and no share above it, and from `V64` no margin
+floor below launch or above the tier before it; `announce-markup <market> <bps>
 --effective-at <time>` gives the notice a listed market's markup change needs before an
 `upsert-market` carries it. From `V52`, `announce-listing <market>` with `--spreads-from` and
 `--margins-from` (TOML market specs whose bands it names) and `--markup-bps` gives the notice a listed
