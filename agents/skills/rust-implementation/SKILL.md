@@ -298,8 +298,10 @@ Every crate has a `README.md` with these sections, in order: H1 title (crate nam
 ## Cargo profiles
 
 - Release: `opt-level = 3` and `lto = true`.
-- Debug: `opt-level = 2` and `lto = "thin"` to speed up compilation, with `debug = "line-tables-only"`:
-  backtraces keep file and line, and no test binary carries full debug info through its link.
+- Debug: `opt-level = 2` with `lto = false` and `debug = "line-tables-only"`. Each crate is optimised on
+  its own, so a test binary's link does not re-optimise its dependencies, and backtraces keep file and
+  line without full debug info. With thin LTO and full debug info, CI's test step spent 41 of its 48
+  minutes compiling; without them it compiles in under half that, and the latency budgets still pass.
 - Release also keeps `overflow-checks = true`: money arithmetic must halt on overflow, never wrap.
   Input that could overflow is rejected at the boundary first (see Numeric types).
 

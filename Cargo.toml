@@ -112,9 +112,9 @@ overflow-checks = true
 
 [profile.dev]
 opt-level = 2
-lto = "thin"
-# File and line numbers in backtraces, without the full debug info that every test binary would
-# otherwise carry through its link.
+# Each crate optimised on its own: thin LTO re-optimised every dependency in each of the ~85 test
+# binaries' links. File and line numbers in backtraces, without full debug info.
+lto = false
 debug = "line-tables-only"
 
 # The browser verifier's release build (scripts/build-wasm-verifier.sh): the release profile, with
