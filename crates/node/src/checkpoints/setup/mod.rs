@@ -255,7 +255,7 @@ async fn connect_with(
         Start::Promoted => at_latest(&chain, signer).await?,
     };
     let finalized = authority(&chain, start, &state).await?;
-    chain.authenticate_reservation(&finalized).await?;
+    chain.authenticate_reservation(&finalized, start == Start::Promoted).await?;
     let registry_operator = chain.registry_operator_at(&finalized).await?;
     let parent = match &state.state.checkpoint {
         Some((seq, root)) => crate::log::CheckpointParent { has_checkpoint: true, seq: *seq, root: root.parse()? },

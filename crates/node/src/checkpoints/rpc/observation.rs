@@ -8,6 +8,7 @@ use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use futures_util::{StreamExt, TryStreamExt, stream};
 
+use crate::checkpoints::rpc::authority::NotAccepted;
 use crate::checkpoints::rpc::{
     CheckpointRpc, balanceOfCall, checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall,
     checkpointSignerCall, currentReleaseCall, depositCountCall, depositedThroughCall, distributionsPaidCall,
@@ -168,16 +169,15 @@ impl CheckpointRpc {
         let vault = Address::from(self.domain.vault.0);
         let mut accepted = Vec::with_capacity(sequences.len());
         for seq in sequences {
-            ensure!(
-                at.state.checkpoint.as_ref().is_some_and(|(latest, _)| seq <= latest),
-                "checkpoint is beyond the finalized anchor"
-            );
-            ensure!(
-                hasCheckpointAtCall::abi_decode_returns(
-                    &self.call(vault, hasCheckpointAtCall { seq: *seq }.abi_encode(), block).await?
-                )?,
-                "checkpoint was not accepted by the vault"
-            );
+            if at.state.checkpoint.as_ref().is_none_or(|(latest, _)| seq > latest) {
+                return Err(NotAccepted("checkpoint is beyond the finalized anchor").into());
+            }
+            let has = hasCheckpointAtCall::abi_decode_returns(
+                &self.call(vault, hasCheckpointAtCall { seq: *seq }.abi_encode(), block).await?,
+            )?;
+            if !has {
+                return Err(NotAccepted("checkpoint was not accepted by the vault").into());
+            }
             let root = checkpointRootsCall::abi_decode_returns(
                 &self.call(vault, checkpointRootsCall { seq: *seq }.abi_encode(), block).await?,
             )?;

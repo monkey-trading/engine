@@ -484,6 +484,7 @@ fn trusted_at(ms: Millis) -> std::future::Ready<anyhow::Result<Millis>> {
     std::future::ready(Ok(ms))
 }
 
+mod promoted;
 mod turns;
 mod vault;
 use vault::Vault;

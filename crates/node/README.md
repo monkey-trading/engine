@@ -273,6 +273,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `src/liveness/operator/statuses.rs` how it asks the members and matches their statuses to its log;
   `src/liveness/operator/assess.rs` how members' statuses weigh against the log;
   `src/liveness/operator/limits.rs` its pure limits (an exempt read's hold, the lag, refused rules);
+  `src/liveness/operator/stamps.rs` the released heads' stamps, sampled as the sequencer releases them;
   `src/liveness/operator/tests.rs` drives it against fake members, chain and sequencer, with
   `tests/assess.rs`, `tests/members.rs` (every member but this node's own is asked),
   `tests/exemptions.rs` (reads under which no promotion can pass, and how long each holds),
@@ -283,6 +284,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/liveness/link.rs` — the member link: statuses, entries and vouches a member answers on its
   handover endpoint while it follows, and the operator's log checks (`log_check::answer`) on the same
   endpoint; `src/liveness/link/ask.rs` how a node asks and checks a status;
+  `src/liveness/link/state.rs` the copy's state, and which key a head that differs from it is evidence
+  against;
   `src/liveness/link/slots.rs` its places, per peer address (IPv6 by /64), with the oldest connection
   that has not asked giving its place up once all are taken; `src/liveness/link/tests.rs`
 - `src/liveness/caller.rs` — a member's liveness caller: witnesses, promotions and relayed heads from its
@@ -304,7 +307,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/node/member/promoted.rs` — a promoted member's start: the promotion's prefixes, the reseal,
   restarts and the quarantine; `src/node/member/promoted/record.rs` the record it keeps and what the
   chain records of its promotion; `src/node/member/promoted/gap.rs` (with `gap/tests.rs`) the gap
-  fetched from members and the archive within one budget; `src/node/member/promoted/tests.rs`
+  fetched from members and the archive within one budget; `src/node/member/promoted/watch.rs` the
+  watch that stops the node once its promotion is gone; `src/node/member/promoted/tests.rs`
 - `src/sequencer/liveness.rs` — the sequencer's hold, and checkpoints that wait for a member's
   confirmation; `src/sequencer/liveness/tests.rs`
 - `src/api/standby.rs` — `POST /v1/standby/vouch`, the operator's vouch for a standby key

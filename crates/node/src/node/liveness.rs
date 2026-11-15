@@ -170,6 +170,23 @@ async fn checkpoints(
     ("checkpoints", setup.poster.run_with_approvals(setup.rx, sequencer, recovery, setup.approvals).await)
 }
 
+/// The watch over the release a node's keys are sealed in (`keys::watch_release`): a promoted node's,
+/// whose signer `promoted` names, starts once its promotion is final, since the finalised schedule
+/// names the outgoing holding until then, which the watch would page as a supersession.
+/// Error cases:
+/// - none; it runs until the node stops
+pub(super) async fn watch_release(
+    vault: impl crate::checkpoints::CheckpointChain,
+    (store, promoted): (Arc<crate::tee::sealing::KeyStore>, Option<AccountId>),
+    every: std::time::Duration,
+    trusted: crate::trusted_time::TrustedClock,
+) -> anyhow::Result<()> {
+    if let Some(signer) = promoted {
+        crate::checkpoints::setup::await_signer_final(&vault, signer, every).await;
+    }
+    super::keys::watch_release(vault, store, every, trusted).await
+}
+
 /// Spawns the operator's rule for the enclave at `key`, reading the sequencer's `released` heads, and
 /// no block below `floor`, the one a promoted start read its promotion at.
 /// Error cases:
