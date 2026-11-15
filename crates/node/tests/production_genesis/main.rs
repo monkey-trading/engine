@@ -1,11 +1,13 @@
 //! The production genesis: it loads as a dev node's genesis, every market validates and carries the
 //! launch decisions, and markets on one venue share one calendar. Sequenced as the node sequences
 //! it, each market opens and closes on its venue's hours through weeks with holidays and early
-//! closes. `divergence` checks the stress levels each market reaches, `futures` the contracts the
-//! index and commodity markets roll through, and `spreads` their size spreads.
+//! closes. `caps` checks the exposure-cap floors and level 1's utilisation, `divergence` the stress
+//! levels each market reaches, `futures` the contracts the index and commodity markets roll
+//! through, and `spreads` their size spreads.
 
 #[path = "../common/access.rs"]
 pub mod access;
+mod caps;
 mod divergence;
 mod futures;
 mod spreads;
@@ -73,13 +75,14 @@ fn a_dev_node_loads_the_production_genesis_and_every_market_validates() {
 fn the_production_genesis_applies_the_launch_decisions() {
     let production = production_genesis("launch-decisions");
     let dev = NodeConfig::load(Path::new(DEV)).unwrap().genesis;
-    // A 10% profit fee (#9); the other parameters are dev's, except the total cap floor, whose
-    // production value is not chosen yet, and the stress triggers, which #133 calibrates from
+    // A 10% profit fee (#9); the other parameters are dev's, except the total cap floor, which
+    // #614's decision D8 sets (`caps` checks it), and the stress triggers, which #133 calibrates from
     // data for production (research/cap-calibration's stress stage; the values in
     // results/stress_choice.json): divergence shares whose stale-fill loss at fire covers each
     // level's spread on the tightest bound (share 6001 is the lowest the engine's truncated-share
     // arithmetic fires at 4 bps on the 5-bps markets), fast moves under a minute-scale noise
-    // bound, and utilisation levels under a 2% flow-weighted fire rate in the Monte Carlo.
+    // bound, and utilisation levels under a 2% flow-weighted fire rate in the Monte Carlo, level 1 at 8_000
+    // from research/launch-caps (#500; D8).
     // The toxicity parameters: from `V54` the score's tiers are #614's decision D1, scores of 4 and
     // 8 adding 2 and 5 bps, over the protocol's 5 s horizon; the notional weighting #130
     // calibrated applies before `V54`. From `V62` level 2 also rises once the house has lost money to
@@ -106,7 +109,7 @@ fn the_production_genesis_applies_the_launch_decisions() {
         production.params.stress_levels,
         [
             level(10_000, 0, None),
-            level(20_000, 2, trigger(6_001, 75, 7_000, None)),
+            level(20_000, 2, trigger(6_001, 75, 8_000, None)),
             level(40_000, 10, trigger(9_500, 200, 9_500, Some(Fixed::ZERO))),
         ]
     );

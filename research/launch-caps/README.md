@@ -6,7 +6,7 @@ This study measures the launch exposure-cap floors and the level-1 utilisation t
 pricing that ships: #623's spread tiers in tenths of a bp, each fill through its bands at its tier's
 best-price size, the owner's 10 s fee curve and D5's tier leverage, at tier 0 and at tier 3, the
 ends of the volume-tier range, on the genesis's 34 launch markets. It changes no genesis value; the
-owner decides (#614, decision D8) and F11 (#696) applies.
+owner decided (#614, decision D8) and F11 (#696) applied it, with the floors rounded to three figures.
 
 **Proposed for the owner:**
 
@@ -89,7 +89,7 @@ utilisation stage. This study:
 - measures paired positions across session gaps on the FX, index and commodity markets at each
   tier's leverage, which #623 measured only across unpriced spells on crypto.
 
-It changes no genesis value: F11 (#696) applies what the owner decides.
+It changes no genesis value: F11 (#696) applied what the owner decided.
 
 ## The launch pricing bundle
 
@@ -189,7 +189,7 @@ study's floor grid's values, which the owner may round:
   markets no floor at all, so they refuse every order until house NAV builds their share cap, and
   leaves WTI refusing 2.6% over 90 days. $1M a market, the cap study's choice without spreads
   (#662), refuses 29% to 38% of launch-week notional.
-- **Today's genesis** sets no floor, so every cap is zero at zero NAV, no opening trade fills, and
+- **Before #696 the genesis set no floor,** so every cap is zero at zero NAV, no opening trade fills, and
   utilisation reads full on every market.
 
 **The total floor does not bind.** At the proposed market floors, a total floor of 25% of their
