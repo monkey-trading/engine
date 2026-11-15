@@ -136,6 +136,7 @@ pub(crate) fn skip(turn: u64, position: u16, candidate: u8, release: [u8; 32], g
         admin_key: AccountId([candidate + 1; 20]),
         release,
         head_release: None,
+        revised: false,
     }
 }
 
@@ -338,14 +339,16 @@ fn a_start_takes_the_skip_of_its_turn_naming_its_own_release_and_the_finalised_t
         source: None,
     };
     let own = skip(TURN, 3, 0xc1, release.id(), 11);
-    let started = skip_naming(Some(finalised.clone()), Some(own), &release).unwrap();
-    assert_eq!((started.release, started.generation, started.candidate), (release.id(), 11, AccountId([0xc1; 20])));
-    assert_eq!(started.boundary, finalised.boundary);
+    // A skip naming this release, or a draw of it a later skip moved past, opens in its own generation.
+    for latest in [own, Assigned { reason: Reason::Draw, ..own }] {
+        let started = skip_naming(Some(finalised.clone()), Some(latest), &release).unwrap();
+        assert_eq!((started.release, started.generation, started.candidate), (release.id(), 11, AccountId([0xc1; 20])));
+        assert_eq!(started.boundary, finalised.boundary);
+    }
     let others = [
         ("a skip naming another release", Some(skip(TURN, 3, 0xc1, [0x77; 32], 11))),
         ("a skip of another turn", Some(skip(TURN + 1, 3, 0xc1, release.id(), 11))),
         ("a promotion", Some(Assigned { reason: Reason::Promotion, ..own })),
-        ("a draw", Some(Assigned { reason: Reason::Draw, ..own })),
         ("no assignment", None),
     ];
     for (what, latest) in others {

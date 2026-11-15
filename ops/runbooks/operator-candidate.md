@@ -467,7 +467,9 @@ misses it is promoted at once.
   interval plus a head's inclusion (`headTolerance`) at the shortest interval the bounds allow. Skips
   act at sequencer confirmation: the member named takes the keys, and the key holder admits it, from the
   turn's assignment at the custody quorum's latest agreed block, not finality, and the holder's log must
-  show the skip's set naming the member with seven days' notice. Whoever holds the keys hands them on:
+  show the skip's set naming the member with seven days' notice; a skip's member upgrading to another
+  approved release hands its keys on only once the log has mirrored the skip at finality. Whoever holds
+  the keys hands them on:
   the incumbent, or a member that took them late and was then skipped, which starts, sequences and hands
   them to the member now named; a holder whose skip a reorg removed hands them to the member the
   schedule names again. A member is found where its heads are newest, then among the turn's other

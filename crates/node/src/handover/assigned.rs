@@ -70,6 +70,8 @@ pub(crate) struct Assigned {
     /// The release of the signer epoch's newest v2 head, the enclave holding the keys; `None` before
     /// the epoch's first.
     pub head_release: Option<[u8; 32]>,
+    /// Whether a release move revised it after it was made: its member's own approved upgrade.
+    pub revised: bool,
 }
 
 /// Where the latest assignment is read.
@@ -250,8 +252,8 @@ pub(crate) async fn own_skip(
     }
 }
 
-/// `own_skip`'s choice: `latest` as `finalised`'s turn when it is a skip of that turn naming `release`,
-/// `finalised` otherwise.
+/// `own_skip`'s choice: `latest` as `finalised`'s turn when it is a skip or a draw of that turn naming
+/// `release`, the draw one a later skip moved past, `finalised` otherwise.
 pub(crate) fn skip_naming(
     finalised: Option<ScheduledTurn>,
     latest: Option<Assigned>,
@@ -259,7 +261,7 @@ pub(crate) fn skip_naming(
 ) -> Option<ScheduledTurn> {
     let turn = finalised.as_ref()?;
     let skip = latest.filter(|latest| {
-        latest.reason == Reason::Skip && latest.binding.turn == turn.turn && latest.release == release.id()
+        latest.reason != Reason::Promotion && latest.binding.turn == turn.turn && latest.release == release.id()
     });
     skip.map(|skip| skip.as_scheduled(turn)).or(finalised)
 }
@@ -338,6 +340,7 @@ pub(crate) async fn read(
         admin_key: AccountId(made._0.adminKey.0.0),
         release,
         head_release: (head_release != B256::ZERO).then_some(head_release.0),
+        revised: made._1.len() > 1,
     }))
 }
 
@@ -365,6 +368,7 @@ pub(crate) async fn superseded(
             candidate: AccountId(made._0.candidate.0.0),
             admin_key: AccountId(made._0.adminKey.0.0),
             release,
+            revised: made._1.len() > 1,
             ..*assigned
         }));
     }

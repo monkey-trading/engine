@@ -3,12 +3,15 @@
 //! names its release in that generation: a skip names the next member at sequencer confirmation, a
 //! finality period before the finalised schedule does. A drawn assignment still passes the finalised
 //! checks it always has, and so does a promotion's, whose member holds its own standby key and hands
-//! it only to its own approved release. A skip's member is admitted once this release's log shows the skip's set naming its candidate with
-//! the adopted admin key under V51's notice rule (`DailyTurns::set_refusal`), without waiting for the
-//! log's own mirror of the skip, which comes only at finality; once sequencing has stopped, the turns
-//! retained at the stop answer, for turns up to `turns::SOURCE_LOOKBACK` past the last one they know.
-//! The holder reads the assignment again after the stop, before the keys go: one that moved since the
-//! admission refuses that successor, and the stopped holder goes on serving the member now named.
+//! it only to its own approved release, and a skip a release move revised, its member's own upgrade,
+//! which so waits for the log's mirror of the skip, and the log check counts the member's commands as
+//! its own. A skip's member is admitted once this release's log shows the skip's set naming its
+//! candidate with the adopted admin key under V51's notice rule (`DailyTurns::set_refusal`), without
+//! waiting for the log's own mirror of the skip, which comes only at finality; once sequencing has
+//! stopped, the turns retained at the stop answer, for turns up to `turns::SOURCE_LOOKBACK` past the
+//! last one they know. The holder reads the assignment again just before its stop and, once stopped,
+//! before the keys go: one that moved since the admission refuses that successor, and the stopped
+//! holder goes on serving the member now named.
 
 use anyhow::{Context, bail, ensure};
 use engine_core::turns::{DAY_MS, DailyTurns};
@@ -26,8 +29,8 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// finalised schedule at `at` and trusted time as before otherwise (see the module).
     /// Error cases:
     /// - the latest assignment cannot be read, is not the one `binding` names, or names another release
-    /// - a draw or a promotion fails the finalised checks (`named_generation`, `ensure_logged`), or a
-    ///   skip the log's notice rule (`ensure_noticed`)
+    /// - a draw, a promotion or a revised skip fails the finalised checks (`named_generation`,
+    ///   `ensure_logged`), or another skip the log's notice rule (`ensure_noticed`)
     pub(super) async fn admit_turn(
         &self,
         binding: Option<&Binding>,
@@ -48,10 +51,12 @@ impl<C: CheckpointChain> Predecessor<C> {
         };
         ensure_bound(&assigned, binding, release)?;
         match assigned.reason {
-            Reason::Skip => self.ensure_noticed(&assigned, reached).await,
+            Reason::Skip if !assigned.revised => self.ensure_noticed(&assigned, reached).await,
             // A promotion's member holds its standby key, the vault's signer, so the only keys it takes by a
-            // handover are its own, moving to an approved release: the finalised checks a draw passes.
-            Reason::Draw | Reason::Promotion => {
+            // handover are its own, moving to an approved release, as a skip's member's upgrade does: these
+            // pass the finalised checks a draw does, the log having mirrored the assignment, so the log
+            // check counts the member's own commands as its own, not as another's to check.
+            Reason::Skip | Reason::Draw | Reason::Promotion => {
                 let (generation, turn) = named_generation(&self.vault, at, release, reached).await?;
                 let turn = turn.context("trusted time has not reached a turn the finalised schedule names")?;
                 ensure!(

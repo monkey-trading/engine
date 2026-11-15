@@ -453,13 +453,15 @@ quorum's latest agreed block shows, bound to the signer epoch, the turn, the ass
 its generation, which the holder reads again before it stops and before the keys go, and the member
 before it seals them, so a reassignment in between leaves the keys with the holder, which serves the
 member then named; a skip's member is admitted once the holder's log shows the skip's set naming it with
-notice, before the log mirrors the skip at finality, and logs `TurnTaken` only once the mirror applies
+notice, before the log mirrors the skip at finality, while its own upgrade to another approved release
+waits for that mirror, so the boundary's log check never counts the member's commands as another's to
+check, and it logs `TurnTaken` only once the mirror applies
 it, the time before going to stakers; a member that took the keys and was then skipped sequences on
 until it hands them to the member now named, earning the operator's share only until the log mirrors the
 skip, and a holder whose skip a reorg removed
 hands them to the member the schedule names again; a skip's member with no copy of the log, or one
-restarting, reads the skip at its start the same way, before it is final, as does one whose keys a later
-skip moved past, which starts to hand them on; a member that handed its drawn turn to a skip's member
+restarting, reads the skip at its start the same way, before it is final, as does one whose keys, under
+a draw or an earlier skip, a later skip moved past, which starts to hand them on; a member that handed its drawn turn to a skip's member
 takes it back once a reorg removes the skip, while a skip's member restarting after a reorg removed its
 skip, which nothing on chain names any more, leaves its keys sealed until a later skip or a promotion
 moves the turn on; the incumbent stops by its own

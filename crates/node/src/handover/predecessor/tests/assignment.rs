@@ -107,12 +107,14 @@ async fn a_successor_binding_no_assignment_or_a_skip_its_log_refuses_gets_no_key
     exchange.assignments.set(Some(unnoticed));
     let err = exchange.take_bound().await.err().expect("keys left for a skip the log refuses");
     assert!(format!("{err:#}").contains("refuses turn"), "{err:#}");
-    // A promotion naming the successor passes only the finalised checks a draw does, which the drawn
-    // assignment the finalised schedule shows fails.
-    let promoted = Assigned { reason: Reason::Promotion, ..exchange.skip_to_successor(turn, key, 1, SKIPPED) };
-    exchange.assignments.set(Some(promoted));
-    let err = exchange.take_bound().await.err().expect("keys left for an unfinal promotion");
-    assert!(format!("{err:#}").contains("the finalised schedule names release"), "{err:#}");
+    // A promotion naming the successor, or a skip its member's upgrade revised, passes only the finalised
+    // checks a draw does, which the drawn assignment the finalised schedule shows fails.
+    let skipped = exchange.skip_to_successor(turn, key, 1, SKIPPED);
+    for moved in [Assigned { reason: Reason::Promotion, ..skipped }, Assigned { revised: true, ..skipped }] {
+        exchange.assignments.set(Some(moved));
+        let err = exchange.take_bound().await.err().expect("keys left for an unfinal promotion or upgrade");
+        assert!(format!("{err:#}").contains("the finalised schedule names release"), "{moved:?}: {err:#}");
+    }
     assert!(exchange.drains.try_recv().is_err(), "sequencing stopped");
     assert!(!exchange.run.is_finished(), "the predecessor stopped serving");
     assert!(std::fs::read_dir(&exchange.successor_dir).is_err(), "the successor sealed keys");
