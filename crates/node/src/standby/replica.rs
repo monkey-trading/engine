@@ -5,7 +5,7 @@
 //! build changes nothing the start relies on.
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -13,8 +13,8 @@ use anyhow::{Context, ensure};
 use engine_core::eip712::B256;
 use engine_core::types::AccountId;
 
-use super::chain::{Chain, Step};
-use super::follow::{ReplicaRefused, follow};
+use super::chain::{Chain, Step, rollback_of};
+use super::follow::{ReplicaRefused, follow, follow_until};
 use super::open_copy_replayed;
 use super::operator::Followed;
 use crate::config::NodeConfig;
@@ -25,11 +25,19 @@ use crate::sequencer::ReplayedLog;
 use crate::sequencer::replay::LiveReplay;
 use crate::stats::Stats;
 
+/// How long `follow_during` waits before following again after a stint the operator ended.
+const FOLLOW_PAUSE: Duration = Duration::from_millis(100);
+
 /// A follower's copy, open for appends, its seal chain, and its replica.
 pub(crate) struct Follower {
     writer: LogWriter,
     copied: Chain,
     replica: LiveReplay,
+    /// What a member's link answers from: the copy's durable head, latest entries and signed heads.
+    link: Option<crate::liveness::link::Copy>,
+    /// The newest entries the copy held when it was opened, with their offsets, for the member link
+    /// to serve once one links the copy.
+    opened: VecDeque<(Offset, LogEntry)>,
 }
 
 impl Follower {
@@ -53,13 +61,14 @@ impl Follower {
             observe(entry);
             Ok(())
         };
-        Self::open_pinned(dir, segment_commands, domain, enclave, signers, (stats, None, None), None, observe)
+        Self::open_pinned(dir, segment_commands, domain, enclave, signers, (stats, None, None), (None, &[]), observe)
     }
 
     /// `open`, pinning the posted log head `posted` as the replay passes it (see `LiveReplay::pin`),
-    /// so a replica built long after that head still holds it, with `marks`, folding each mark the
-    /// replica applies, from the build on, into it, and with `checked`, recording each checkpoint it
-    /// verifies there (`LiveReplay::record_checked_with`); an `observe` that fails ends the build.
+    /// so a replica built long after that head still holds it, keeping the links and checkpoints at
+    /// the seqs `keep` names (see `LiveReplay::keep`), with `marks`, folding each mark the replica
+    /// applies, from the build on, into it, and with `checked`, recording each checkpoint it verifies
+    /// there (`LiveReplay::record_checked_with`); an `observe` that fails ends the build.
     /// Error cases:
     /// - see `open`, or `observe` fails
     #[allow(clippy::too_many_arguments)]
@@ -70,11 +79,12 @@ impl Follower {
         enclave: AccountId,
         signers: BTreeSet<AccountId>,
         (stats, marks, checked): (Option<Stats>, Option<Rc<RefCell<MarkFold>>>, Option<CheckedHeads>),
-        posted: Option<(u64, B256)>,
+        (posted, keep): (Option<(u64, B256)>, &[u64]),
         mut observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
         let fresh = || {
             let mut replica = LiveReplay::new(domain, signers.clone());
+            keep.iter().for_each(|seq| replica.keep(*seq));
             if let Some(stats) = &stats {
                 replica.record_stats_with(stats.clone());
             }
@@ -89,10 +99,21 @@ impl Follower {
             }
             replica
         };
+        let (mut opened, mut previous) = (VecDeque::new(), None);
         let (writer, copied, replica) =
             open_copy_replayed(dir, segment_commands.max(1), Chain::new(domain, enclave), fresh, |replica, entry| {
                 observe(entry)?;
                 replica.apply(entry)?;
+                let offset = offset_of(previous, entry)?;
+                // A retried build reads the copy again from its start.
+                if previous.is_some_and(|was| offset <= was) {
+                    opened.clear();
+                }
+                previous = Some(offset);
+                opened.push_back((offset, entry.clone()));
+                if opened.len() > crate::liveness::link::RECENT_ENTRIES {
+                    opened.pop_front();
+                }
                 if let (Some((seq, link)), LogEntry::Command(command)) = (posted, entry)
                     && command.sequenced.seq == seq
                 {
@@ -101,12 +122,18 @@ impl Follower {
                 Ok(())
             })
             .context("the copy does not replay")?;
-        Ok(Self { writer, copied, replica })
+        Ok(Self { writer, copied, replica, link: None, opened })
     }
 
     /// The replica.
     pub(crate) fn replica(&self) -> &LiveReplay {
         &self.replica
+    }
+
+    /// Records the replica's anchor work at its tip when the copy holds no checkpoint entry there (see
+    /// `LiveReplay::capture_tip`).
+    pub(crate) fn capture_tip(&mut self) {
+        self.replica.capture_tip();
     }
 
     /// The seq of the copy's last command, and the cumulative prefix after it: the tip a tail
@@ -136,22 +163,108 @@ impl Follower {
         followed: &Followed,
         budget: Duration,
     ) -> anyhow::Result<Option<Offset>> {
+        // The followed enclave is the vault's signer at the latest block: a promotion's standby key
+        // signs from its promotion's block, before the set this replica was built with names it.
         self.copied.admit(followed.enclave);
-        follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica)).await
+        self.replica.admit(followed.enclave);
+        let link = self.link.as_ref();
+        follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica), link).await
     }
 
-    /// Takes a handover's tail: the JSON lines in `bytes`, the entries the predecessor's log holds
-    /// after the command at `after`, the copy's tip. Each entry the copy already holds must repeat
-    /// it exactly; each later one must extend the copy's seal chain, and the replica must apply it
-    /// before the copy takes it. Returns how many entries the copy took; the copy is synced.
+    /// Follows `followed` while `work` runs, a stint at a time for at most `budget` in all, so what the
+    /// operator seals meanwhile reaches the copy and its member link: an incumbent whose handover's
+    /// final checkpoint waits for a member to confirm its seq can take this member's confirmation.
+    /// Returns `work`'s output, and why the following stopped early: the replica refused an entry
+    /// (`ReplicaRefused`, after which the follower must be opened again), or the operator's log no
+    /// longer extends the copy.
+    pub(crate) async fn follow_during<T>(
+        &mut self,
+        cfg: &NodeConfig,
+        followed: &Followed,
+        budget: Duration,
+        work: impl Future<Output = T>,
+    ) -> (T, anyhow::Result<()>) {
+        let (ended, until) = tokio::sync::watch::channel(false);
+        let work = async move {
+            let output = work.await;
+            ended.send_replace(true);
+            output
+        };
+        let following = async {
+            let started = tokio::time::Instant::now();
+            loop {
+                let left = budget.saturating_sub(started.elapsed());
+                if *until.borrow() || left.is_zero() {
+                    return Ok(());
+                }
+                self.copied.admit(followed.enclave);
+                self.replica.admit(followed.enclave);
+                let (stint, link) = ((left, Some(until.clone())), self.link.as_ref());
+                match follow_until(
+                    &mut self.writer,
+                    &mut self.copied,
+                    cfg,
+                    followed,
+                    stint,
+                    Some(&mut self.replica),
+                    link,
+                )
+                .await
+                {
+                    Err(e) if e.downcast_ref::<ReplicaRefused>().is_some() || rollback_of(&e).is_some() => {
+                        return Err(e);
+                    }
+                    Err(e) => tracing::debug!("following while waiting failed, following again: {e:#}"),
+                    Ok(_) => {}
+                }
+                // A stream the operator ends at once must not make this a spin.
+                let mut paused = until.clone();
+                tokio::select! {
+                    () = tokio::time::sleep(FOLLOW_PAUSE) => {}
+                    _ = paused.wait_for(|ended| *ended) => {}
+                }
+            }
+        };
+        tokio::join!(work, following)
+    }
+
+    /// The offset of the copy's last entry, `None` for an empty copy.
+    pub(crate) fn head(&self) -> Option<Offset> {
+        self.copied.head()
+    }
+
+    /// Whether a member link records what the copy holds.
+    pub(crate) fn linked(&self) -> bool {
+        self.link.is_some()
+    }
+
+    /// Records what the copy holds into `link` from here on, starting with the links the replica
+    /// retains, its head as durable, and the entries it held when it was opened, to serve.
+    pub(crate) fn link_with(&mut self, link: crate::liveness::link::Copy) {
+        link.rebuilt();
+        link.served(std::mem::take(&mut self.opened));
+        for retained in self.replica.retained_links() {
+            link.linked(retained.seq, retained.link, retained.sealer);
+        }
+        if let Some((seq, head)) = self.tip() {
+            link.durable(crate::log_heads::Head { seq, link: head }, self.replica.tip_sealer());
+        }
+        self.link = Some(link);
+    }
+
+    /// Takes a tail: the JSON lines in `bytes`, the entries another log holds after the entry at
+    /// `after`, the copy's tip command or an entry past it at that seq. Each entry the copy already
+    /// holds must repeat it exactly; each later one must extend the copy's seal chain, and the replica
+    /// must apply it before the copy takes it. Returns how many entries the copy took; the copy is
+    /// synced.
     /// Error cases:
-    /// - `after` is not the copy's tip, a line does not parse, an entry repeats the copy's
+    /// - `after` is not at the copy's tip, a line does not parse, an entry repeats the copy's
     ///   differently or does not extend it, or the replica refuses one (`ReplicaRefused`)
     /// - the copy cannot be written or synced
-    pub(crate) fn take_tail(&mut self, after: u64, bytes: &[u8]) -> anyhow::Result<u64> {
-        ensure!(self.replica.last_seq() == Some(after), "the tail follows seq {after}, not the copy's tip");
-        self.copied.begin_after_command();
-        let mut previous = Some(Offset::start_of(after));
+    pub(crate) fn take_tail(&mut self, after: Offset, bytes: &[u8]) -> anyhow::Result<u64> {
+        ensure!(self.replica.last_seq() == Some(after.seq), "the tail follows {after}, not the copy's tip");
+        self.copied.begin_after(after);
+        let mut previous = Some(after);
         let mut taken = 0;
         for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
             let entry: LogEntry = serde_json::from_slice(line).context("a tail line is not a log entry")?;
@@ -173,6 +286,19 @@ impl Follower {
     /// - the write or sync fails
     pub(crate) fn sync(&mut self) -> anyhow::Result<()> {
         self.writer.sync().context("syncing the copy")
+    }
+
+    /// The copy as a recovered log under the standby key a promotion installed (see
+    /// `LiveReplay::into_promoted_log`).
+    /// Error cases:
+    /// - see `LiveReplay::into_promoted_log`
+    pub(crate) fn into_promoted_log(
+        self,
+        parent: Option<CheckpointParent>,
+        signer: AccountId,
+        posted: Option<u64>,
+    ) -> anyhow::Result<ReplayedLog> {
+        self.replica.into_promoted_log(self.writer, parent, signer, posted)
     }
 
     /// The copy as a recovered log, its writer open at its end (see `LiveReplay::into_log`).

@@ -149,7 +149,7 @@ async fn retired_reservation_recovers_only_after_exact_finalized_history_authent
     let chain = rotated_rpc(&server.url, &dir, AccountId(new.address()));
     assert!(chain.reserved_checkpoint().is_err(), "parsing retired bytes never grants authority");
     let at = chain.observe(View::Finalized, &[]).await.unwrap();
-    chain.authenticate_reservation(&at).await.unwrap();
+    chain.authenticate_reservation(&at, false).await.unwrap();
     assert_eq!(chain.reserved_checkpoint().unwrap(), Some(old));
     assert_eq!(fs::read(dir.join("checkpoint-submission.json")).unwrap(), before, "authentication is read only");
     assert!(server.state.lock().unwrap().sent.is_empty());
@@ -178,11 +178,60 @@ async fn retired_reservation_wrong_root_or_unaccepted_identity_stays_unauthorize
     }
     let chain = rotated_rpc(&server.url, &dir, AccountId(new.address()));
     let at = chain.observe(View::Finalized, &[]).await.unwrap();
-    assert!(chain.authenticate_reservation(&at).await.is_err());
+    assert!(chain.authenticate_reservation(&at, false).await.is_err());
     assert!(chain.reserved_checkpoint().is_err());
     server.state.lock().unwrap().accepted.clear();
-    assert!(chain.authenticate_reservation(&at).await.unwrap_err().to_string().contains("not accepted"));
+    assert!(chain.authenticate_reservation(&at, false).await.unwrap_err().to_string().contains("not accepted"));
     assert_eq!(fs::read(dir.join("checkpoint-submission.json")).unwrap(), before);
+    assert!(server.state.lock().unwrap().sent.is_empty());
+}
+
+/// A promoted start authenticates the outgoing key's journal work against the vault's record though
+/// finality still names that key: work by any key but the start's own needs historical authority.
+#[tokio::test]
+async fn a_promoted_start_authenticates_the_outgoing_keys_work_while_finality_names_it() {
+    let dir = scratch_dir("payout-promoted-reservation");
+    fs::create_dir_all(&dir).unwrap();
+    let old = checkpoint(10);
+    let outgoing = AccountId(EnclaveKey::test_key().address());
+    let store = SubmissionStore::load(&dir, domain(), Address::repeat_byte(3), outgoing).unwrap();
+    store.reserve(old.clone(), 7, None).unwrap();
+    let server = Server::start(&dir).await;
+    {
+        let mut state = server.state.lock().unwrap();
+        state.signer = Address::from(outgoing.0);
+        state.latest = Some(old.clone());
+        state.finalized = Some(old.clone());
+        state.accepted.insert(old.seq, (old.clone(), 1));
+    }
+    let chain = rotated_rpc(&server.url, &dir, AccountId(EnclaveKey::generate().address()));
+    let at = chain.observe(View::Finalized, &[]).await.unwrap();
+    chain.authenticate_reservation(&at, true).await.unwrap();
+    assert_eq!(chain.reserved_checkpoint().unwrap(), Some(old), "accepted work is kept, with its authority");
+}
+
+/// A promoted start retires the outgoing key's journal work the vault never accepted, which the
+/// promotion moved past for good; any other start refuses it.
+#[tokio::test]
+async fn a_promoted_start_retires_the_outgoing_keys_unaccepted_work() {
+    let dir = scratch_dir("payout-promoted-retired");
+    fs::create_dir_all(&dir).unwrap();
+    let outgoing = AccountId(EnclaveKey::test_key().address());
+    let store = SubmissionStore::load(&dir, domain(), Address::repeat_byte(3), outgoing).unwrap();
+    store.reserve(checkpoint(10), 7, None).unwrap();
+    let server = Server::start(&dir).await;
+    {
+        let mut state = server.state.lock().unwrap();
+        state.signer = Address::from(outgoing.0);
+        state.latest = Some(checkpoint(9));
+        state.finalized = Some(checkpoint(9));
+    }
+    let chain = rotated_rpc(&server.url, &dir, AccountId(EnclaveKey::generate().address()));
+    let at = chain.observe(View::Finalized, &[]).await.unwrap();
+    assert!(chain.authenticate_reservation(&at, false).await.is_err(), "another start refuses it");
+    chain.authenticate_reservation(&at, true).await.unwrap();
+    assert!(!dir.join("checkpoint-submission.json").exists(), "the promoted start retired it");
+    assert_eq!(chain.reserved_checkpoint().unwrap(), None);
     assert!(server.state.lock().unwrap().sent.is_empty());
 }
 
@@ -307,7 +356,7 @@ async fn new_signer_reuses_publicly_obsolete_reservation_with_the_same_nonce_fen
     }
     let chain = rotated_rpc(&server.url, &dir, AccountId(new.address()));
     let at = chain.observe(View::Finalized, &[]).await.unwrap();
-    chain.authenticate_reservation(&at).await.unwrap();
+    chain.authenticate_reservation(&at, false).await.unwrap();
     let parent = CheckpointParent { has_checkpoint: true, seq: old.seq, root: old.root.parse().unwrap() };
     let successor = Checkpoint {
         seq: 11,
@@ -354,7 +403,7 @@ async fn a_pre_rotation_consumer_of_a_reused_nonce_is_authenticated_by_its_accep
     }
     let chain = rotated_rpc(&server.url, &dir, AccountId(new.address()));
     let at = chain.observe(View::Finalized, &[]).await.unwrap();
-    chain.authenticate_reservation(&at).await.unwrap();
+    chain.authenticate_reservation(&at, false).await.unwrap();
     let b = signed_successor(&new, &old, 11);
     chain.post(&b).await.unwrap();
     assert_eq!(read_record(&dir)["reused_through"], serde_json::to_value(&old).unwrap());

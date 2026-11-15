@@ -313,6 +313,7 @@ pub fn sequencer_config(dir: &Path, manifest: watch::Sender<Manifest>) -> Sequen
         history_sealing: None,
         checkpoint_signing: None,
         registry_operator: None,
+        promoted_operator: None,
         log_heads: None,
         turn_release: None,
         turn_sealing: None,

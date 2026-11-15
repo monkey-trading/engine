@@ -52,7 +52,7 @@ mod api_defaults;
 use api_defaults::MIN_OPERATORS_INTERVAL;
 mod checkpoints;
 pub use checkpoints::CheckpointSection;
-pub use checkpoints::LogHeadsSection;
+pub use checkpoints::{LivenessSection, LogHeadsSection};
 mod seed_relay;
 pub use seed_relay::SeedRelaySection;
 mod telemetry;
@@ -119,6 +119,8 @@ pub struct NodeConfig {
     /// On-chain log-head commitments (#541): posts the newest released head so a truncated log
     /// cannot restart unnoticed; reads the head through the custody RPC quorum.
     pub log_heads: Option<LogHeadsSection>,
+    /// A rotation-set member's liveness caller (#595), which witnesses, promotes and relays heads.
+    pub liveness: Option<LivenessSection>,
     pub feeds: FeedsSection,
     pub time: TimeSection,
     pub history: HistorySection,

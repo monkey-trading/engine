@@ -45,7 +45,18 @@ pub(crate) struct Signing {
     deployment: Deployment,
     time: TrustedClock,
     pub(crate) heartbeat_interval: Duration,
+    /// The liveness rule's gate: while it fences, nothing is signed (`liveness`).
+    gate: crate::liveness::Gate,
+    /// The v2 heads the enclave signs, which every signed stream connection carries.
+    pub(crate) heads: Option<tokio::sync::watch::Receiver<Option<crate::log_heads::SignedHead>>>,
+    /// The vault's signer epoch and the key it names, as the liveness rule last read them.
+    vault_signer: Option<tokio::sync::watch::Receiver<Option<crate::liveness::VaultSigner>>>,
+    /// The enclave key's vouches for candidates' standby keys, with the rule's chain access.
+    vouching: Option<Arc<Vouching>>,
 }
+
+/// The operator's vouching for standby keys over the custody quorum.
+pub(crate) type Vouching = crate::standby_key::vouch::Service<crate::custody::StandbyReader>;
 
 impl Signing {
     /// Signs with `key` for the vault `vault` on `chain_id`, at the times `time` reads.
@@ -56,12 +67,48 @@ impl Signing {
         heartbeat_interval: Duration,
         time: TrustedClock,
     ) -> Self {
-        Self { key, deployment: Deployment { chain_id, vault: vault.0 }, time, heartbeat_interval }
+        let deployment = Deployment { chain_id, vault: vault.0 };
+        let (gate, heads, vault_signer, vouching) = (Default::default(), None, None, None);
+        Self { key, deployment, time, heartbeat_interval, gate, heads, vault_signer, vouching }
+    }
+
+    /// This signing, stopped while `gate` fences, with the signed heads `heads` carries on every
+    /// signed stream connection, and the vault's signer as the liveness rule reads it.
+    pub(crate) fn with_liveness(
+        self,
+        gate: crate::liveness::Gate,
+        heads: tokio::sync::watch::Receiver<Option<crate::log_heads::SignedHead>>,
+        vault_signer: tokio::sync::watch::Receiver<Option<crate::liveness::VaultSigner>>,
+    ) -> Self {
+        Self { gate, heads: Some(heads), vault_signer: Some(vault_signer), ..self }
+    }
+
+    /// This signing, vouching for standby keys with `vouching`.
+    pub(crate) fn with_vouching(self, vouching: Option<Arc<Vouching>>) -> Self {
+        Self { vouching, ..self }
+    }
+
+    /// The enclave key's vouching for standby keys, if this node vouches.
+    pub(crate) fn vouching(&self) -> Option<&Vouching> {
+        self.vouching.as_deref()
+    }
+
+    /// The enclave address every answer is signed by.
+    pub(crate) fn enclave(&self) -> AccountId {
+        AccountId(self.key.address())
+    }
+
+    /// The vault's signer epoch and the key it names, as the liveness rule last read them.
+    pub(crate) fn vault_signer(&self) -> Option<crate::liveness::VaultSigner> {
+        self.vault_signer.as_ref().and_then(|signer| *signer.borrow())
     }
 
     /// The time to sign an answer with now, or `None` while trusted time does not bound the host
-    /// clock, when nothing may be signed.
+    /// clock, or the liveness rule's fence stops the enclave, when nothing may be signed.
     pub(crate) fn time_ms(&self) -> Option<u64> {
+        if !self.gate.signs() {
+            return None;
+        }
         self.time.now_ms().and_then(|ms| u64::try_from(ms).ok())
     }
 

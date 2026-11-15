@@ -41,7 +41,7 @@ mod pipeline;
 pub(crate) mod prefixes;
 use pipeline::{Batch, Pipeline};
 #[cfg(test)]
-mod withdrawal_scenario;
+pub(crate) mod withdrawal_scenario;
 use access::AccessAlerts;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -164,6 +164,11 @@ pub struct Sequencer {
     /// freeze latch the poster sets the moment it detects a rollback — before its `Freeze`
     /// request dequeues — so nothing queued behind the detection is stamped or checkpointed.
     log_heads: Option<crate::log_heads::Publisher>,
+    /// A checkpoint waiting for another member to confirm holding its seq, and whether it was
+    /// paced: nothing is stamped past that seq until it is written (`liveness`).
+    checkpoint_waits: Option<bool>,
+    /// A handover's stop parked while its final checkpoint waits, and when the wait runs out.
+    handover_waits: Option<(tokio::sync::oneshot::Sender<anyhow::Result<()>>, Instant)>,
 }
 
 impl Sequencer {
@@ -247,9 +252,8 @@ impl Sequencer {
                         // loop ends once the final checkpoint is durable.
                         match self.handover_checkpoint()? {
                             HandoverGate::Admitted => handover_stop = Some(reply),
-                            HandoverGate::Refused(reason) => {
-                                let _ = reply.send(Err(reason));
-                            }
+                            HandoverGate::Waiting => self.park_handover(reply),
+                            HandoverGate::Refused(reason) => _ = reply.send(Err(reason)),
                         }
                     }
                     // The poster latched the freeze before sending this; nothing queued behind the
@@ -264,6 +268,8 @@ impl Sequencer {
             if sequenced {
                 self.refresh_log_check();
             }
+            self.release_waiting_checkpoint()?;
+            handover_stop = handover_stop.or_else(|| self.admitted_handover());
             batch.timing = sequenced.then_some(started);
             let release = self.stage(std::mem::take(&mut batch))?;
             self.submit(release)?;
@@ -293,6 +299,12 @@ impl Sequencer {
             }
             if final_checkpoint {
                 self.checkpoint()?;
+                if self.checkpoint_waits.is_some() {
+                    info!(
+                        seq = ?self.engine.last_seq(),
+                        "no final checkpoint at shutdown: no member of the turn's set has confirmed holding its seq"
+                    );
+                }
             } else if let Some(deferred) = self.uncaptured.take() {
                 // The last command's checkpoint found a capture in flight; history accepts a
                 // capture of the checkpoint it has just indexed. Its seal is collected like any
@@ -359,10 +371,10 @@ impl Sequencer {
     /// - the log cannot be written
     /// - the engine refuses the sequence, which means this sequencer is broken
     fn stamp_once(&mut self, ts: Millis, cmd: Command) -> anyhow::Result<Vec<Event>> {
-        if self.frozen() {
-            // The common per-command boundary: a rollback that froze sequencing while this request
-            // was admitted — mid catch-up, or before its own stamp — refuses here, like an
-            // unadmitted stamp, with nothing logged.
+        if self.stopped() {
+            // The common per-command boundary: a rollback that froze sequencing, or a fence that
+            // closed, while this request was admitted — mid catch-up, or before its own stamp —
+            // refuses here, like an unadmitted stamp, with nothing logged.
             return Ok(Vec::new());
         }
         let previous_schedule =
@@ -391,6 +403,7 @@ impl Sequencer {
         let reinstated = reinstated_receipt(&sequenced.cmd, &events);
         self.access_alerts.note(&self.engine, &sequenced.cmd, &events);
         self.report_marks(&sequenced, &events);
+        self.log_check.command(sequenced.seq, &events);
         self.next_seq += 1;
         self.last_ts = ts;
         let mut entry = CommandEntry { sequenced, events: Some(events.clone()), seal: None };
@@ -460,6 +473,7 @@ impl Sequencer {
 mod alerts;
 pub(crate) mod genesis;
 mod governance;
+mod liveness;
 mod snapshots;
 pub use genesis::{GenesisProgress, genesis_commands};
 mod quotes;

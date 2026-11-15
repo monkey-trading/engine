@@ -75,3 +75,58 @@ async fn the_tail_is_the_entries_after_the_tips_command() {
     let err = read_tail(&dir, head.seq + 1, &head).unwrap_err();
     assert!(format!("{err:#}").contains("holds no command at seq"), "{err:#}");
 }
+
+/// A copy that followed the predecessor while it stopped holds the tail's first entries: the tail goes
+/// on from the copy's last command, the entries through it are not taken again, and the copy ends as
+/// the predecessor's log does.
+#[tokio::test]
+async fn a_copy_that_followed_while_the_predecessor_stopped_takes_only_the_rest_of_the_tail() {
+    let (full, copy) = (scratch_dir("tail-past-copy-full"), scratch_dir("tail-past-copy-copy"));
+    ticks(&full, 4).await;
+    std::fs::create_dir_all(&copy).unwrap();
+    for file in std::fs::read_dir(&full).unwrap().map(Result::unwrap) {
+        std::fs::copy(file.path(), copy.join(file.file_name())).unwrap();
+    }
+    ticks(&full, 4).await;
+    let signer = AccountId(crate::tee::EnclaveKey::test_key().address());
+    let domain = CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };
+    let mut follower =
+        Follower::open(&copy, crate::test_support::SEGMENT_COMMANDS, domain, signer, [signer].into(), None, |_| {})
+            .unwrap();
+    let (tip, _) = follower.tip().unwrap();
+    // The predecessor's tail past the tip it was asked from, of which following took the first lines.
+    let mut previous = None;
+    let mut tail = Vec::new();
+    for entry in log_entries(&full) {
+        let offset = offset_of(previous, &entry).unwrap();
+        previous = Some(offset);
+        if offset > Offset::start_of(tip) {
+            tail.extend(serde_json::to_vec(&entry).unwrap());
+            tail.push(b'\n');
+        }
+    }
+    let lines: Vec<&[u8]> = tail.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).collect();
+    let mut followed = Vec::new();
+    for line in &lines[..3] {
+        followed.extend_from_slice(line);
+        followed.push(b'\n');
+    }
+    follower.take_tail(Offset::start_of(tip), &followed).unwrap();
+    let (moved, _) = follower.tip().unwrap();
+    assert!(moved > tip, "following took no command");
+    let (after, rest) = past_copy(&follower, tip, &tail).unwrap();
+    assert_eq!(after, Offset::start_of(moved));
+    assert!(rest.len() < tail.len());
+    follower.take_tail(after, &rest).unwrap();
+    drop(follower);
+    assert_eq!(log_entries(&copy), log_entries(&full), "the copy is not the predecessor's log");
+}
+
+/// Runs the test sequencer on `dir`, from its log, for `count` ticks, then stops it.
+async fn ticks(dir: &std::path::Path, count: usize) {
+    let node = TestSequencer::start(dir, 1024);
+    for _ in 0..count {
+        node.submit(Command::Tick).await;
+    }
+    node.stop().await;
+}

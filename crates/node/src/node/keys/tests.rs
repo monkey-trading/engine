@@ -100,6 +100,45 @@ async fn a_running_node_alerts_once_the_vault_names_another_release_or_generatio
     watch.abort();
 }
 
+/// A promoted member's keys sit under its own release while the vault still names the drawn member's:
+/// before trusted time, with a drawn schedule, nothing pages; once a sample lets the turn decide, its
+/// latest assignment naming this release keeps it quiet.
+#[tokio::test(start_paused = true)]
+async fn a_drawn_schedule_waits_for_trusted_time_before_the_vault_alone_decides() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (sealed, drawn) = (
+        Release { launch_digest: DIGEST, config_sha256: [0xc1; 32] },
+        Release { launch_digest: DIGEST, config_sha256: [0xc2; 32] },
+    );
+    let vault = Vault::naming(CurrentRelease { id: drawn.id(), generation: 3 });
+    let boundary = 1_793_226_600_000;
+    *vault.scheduled.lock().unwrap() = Some(crate::checkpoints::ScheduledTurn {
+        turn: 20_754,
+        boundary,
+        candidate: AccountId([0xb0; 20]),
+        admin_key: AccountId([0xb1; 20]),
+        release: sealed.id(),
+        generation: 4,
+        set: 1,
+        source: None,
+    });
+    let every = Duration::from_secs(60);
+    let (samples, samples_rx) = tokio::sync::watch::channel(None);
+    let trusted = crate::trusted_time::TrustedClock::new(Arc::new(crate::clock::SystemClock), samples_rx, every);
+    let watch = tokio::spawn(watch_release(vault, sealed_store("keys-watch-untimed", sealed, 4), every, trusted));
+    tokio::time::sleep(every * 3).await;
+    assert!(alerts.try_recv().is_err(), "paged on the vault's release before trusted time");
+    let after = boundary + TURN_HANDOVER_GRACE_MS;
+    samples.send_replace(Some(crate::trusted_time::Sample {
+        at: std::time::Instant::now(),
+        earliest_ms: after,
+        latest_ms: after + 1,
+    }));
+    tokio::time::sleep(every * 2).await;
+    assert!(alerts.try_recv().is_err(), "the turn names this release: nothing pages");
+    watch.abort();
+}
+
 #[tokio::test(start_paused = true)]
 async fn from_a_turns_boundary_the_turn_alone_names_a_release() {
     let (_guard, mut alerts) = capture_alerts();
@@ -445,6 +484,7 @@ fn trusted_at(ms: Millis) -> std::future::Ready<anyhow::Result<Millis>> {
     std::future::ready(Ok(ms))
 }
 
+mod promoted;
 mod turns;
 mod vault;
 use vault::Vault;

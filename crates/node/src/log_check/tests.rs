@@ -29,6 +29,37 @@ fn a_range_names_the_member_in_office_at_its_start_and_each_that_took_a_turn_in_
     assert_eq!(names(Some(39), 45), sequencers(&[C]));
 }
 
+/// A promoted member sequences from its promotion, before the finalised mirror of it and its own
+/// `TurnTaken`, which a failure before then never logs: each promotion mirrored after the `TurnTaken`
+/// in office, accepted or refused, names its candidate in a range through the mirror.
+#[test]
+fn a_range_names_each_member_promoted_after_the_turn_taken_in_office() {
+    // A takes its turn at 10. B, promoted, sequences from 21 and fails before its `TurnTaken`; C,
+    // promoted past it, sequences from 31; the mirrors of B's promotion (refused) and C's (accepted)
+    // follow at 35 and 36, and C's `TurnTaken` at 40.
+    let mut failed = takings(0, &[(10, A)]);
+    failed.command(35, &[promotion(B, false)]);
+    failed.command(36, &[promotion(C, true)]);
+    failed.command(40, &[turn_taken(C)]);
+    let names = |after, through| failed.sequenced(after, through).unwrap();
+    let candidates = |releases: &[B256]| releases.iter().map(|release| candidate(*release)).collect::<BTreeSet<_>>();
+    assert_eq!(names(Some(20), 45).candidates, candidates(&[A, B, C]), "C's check names B");
+    assert!(names(Some(20), 45).include(candidate(B), B2), "so B's member verifies none of it on any release");
+    assert_eq!(own_check(Some(head(20)), &failed, head(45), (B2, &member(B))), Some(head(20)));
+    assert_eq!(names(Some(20), 36).candidates, candidates(&[A, B, C]), "a range through the mirrors names them");
+    assert_eq!(names(Some(39), 45), sequencers(&[C]), "from C's `TurnTaken`, the promotions before it name none");
+    let mut pruned = failed.clone();
+    pruned.prune(39);
+    assert_eq!(pruned.sequenced(Some(39), 45), Some(sequencers(&[C])));
+    // B, surviving, logs its `TurnTaken` at 30 after its promotion's mirror at 25: its commands from 21 on
+    // are its own in a range through either.
+    let mut survived = takings(0, &[(10, A)]);
+    survived.command(25, &[promotion(B, true)]);
+    survived.command(30, &[turn_taken(B)]);
+    assert_eq!(survived.sequenced(Some(20), 27).unwrap().candidates, candidates(&[A, B]));
+    assert_eq!(survived.sequenced(Some(20), 32).unwrap().candidates, candidates(&[A, B]));
+}
+
 #[test]
 fn records_that_start_past_a_range_attribute_none_of_it() {
     // A replay from a snapshot sees the commands from its base on, so it cannot say who sequenced
@@ -171,6 +202,15 @@ fn takings_at_handover() -> Takings {
 /// A `TurnTaken` under `release`, by its member.
 fn turn_taken(release: B256) -> Event {
     Event::TurnTaken { turn: 1, candidate: candidate(release), release }
+}
+
+/// The mirror of a promotion of `release`'s member, accepted or refused.
+fn promotion(release: B256, accepted: bool) -> Event {
+    let (candidate, admin_key, cause) = (candidate(release), candidate(release), TurnReason::Promotion);
+    match accepted {
+        true => Event::TurnAssigned { turn: 1, position: 1, reason: cause, candidate, admin_key, applies_at: 0 },
+        false => Event::TurnRefused { turn: 1, position: 1, cause, candidate, admin_key, reason: "ended".into() },
+    }
 }
 
 /// The member that runs `release`: `A2` and `B2` are A's and B's other releases.

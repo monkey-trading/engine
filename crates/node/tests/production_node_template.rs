@@ -45,6 +45,8 @@ fn the_template_holds_what_a_production_build_requires() {
     assert!(cfg.api.allowed_origins.iter().all(|origin| origin.starts_with("https://")));
     assert!(cfg.alerts.critical.is_some(), "real attestation needs a Critical route");
     assert!(cfg.checkpoints.is_some() && cfg.tee.sealing.is_some(), "hardware custody needs both");
+    // A rotation-set member witnesses, promotes and relays heads through its own funded caller.
+    assert!(cfg.log_heads.is_some() && cfg.liveness.is_some(), "[log_heads] and [liveness] run the heartbeat rule");
     let evm = cfg.custody.evm.as_ref().expect("EVM custody");
     assert!(evm.providers.len() >= 3);
     // The template's fresh-account budgets are the production values, the ceiling a production build enforces.

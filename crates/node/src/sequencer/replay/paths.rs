@@ -136,6 +136,7 @@ pub(crate) fn replay_path_with_authorities(
         log::read_file(path, &mut visit)?;
     }
     ensure!(anchored, "public log is shorter than or omits the finalized vault anchor");
+    replay.ensure_superseded_continued()?;
     let replayed = replay.finish();
     replayed.origin.require_recovery(domain, signer)?;
     ensure!(replayed.commands > 0 && replayed.checkpoints > 0, "public log has no verified command/checkpoint");

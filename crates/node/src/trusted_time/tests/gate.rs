@@ -180,6 +180,20 @@ fn the_estimate_moves_the_last_sample_on_by_the_monotonic_clock_past_the_grace()
     assert_eq!(estimate.since_sample_ms(), Some(TRUE_MS + 3_000 + elapsed), "the upper bound, moved on");
 }
 
+#[test]
+fn the_upper_bound_widens_the_time_since_the_sample_by_the_slowest_clock_rate_and_rounds_up() {
+    let clock = Arc::new(TestClock::at(TRUE_MS));
+    let (samples, latest) = watch::channel(None);
+    let estimate = TrustedClock::new(clock.clone(), latest, MAX_DRIFT);
+    assert_eq!(estimate.upper_bound_ms(500), None, "before the first sample");
+    samples.send_replace(Some(sample(clock.instant())));
+    clock.skew(-3_600_000);
+    // An hour on a clock up to 500 ppm slow is up to 3,600,000 / 0.9995 ms of true time: 1,801 ms more.
+    clock.advance(Duration::from_secs(3_600));
+    assert_eq!(estimate.upper_bound_ms(500), Some(TRUE_MS + 3_000 + 3_600_000 + 1_801));
+    assert_eq!(estimate.upper_bound_ms(0), estimate.since_sample_ms(), "no drift widens nothing");
+}
+
 // ── Helpers ──
 
 /// A sample taken at `at`, when true time was `TRUE_MS` ± 3s.

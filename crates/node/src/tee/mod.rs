@@ -28,7 +28,7 @@ use sha2::Sha256;
 pub(crate) mod certificates;
 pub(crate) mod clock;
 pub(crate) mod keys;
-mod release_file;
+pub(crate) mod release_file;
 pub(crate) mod sealing;
 pub(crate) mod secrets;
 #[cfg(target_os = "linux")]

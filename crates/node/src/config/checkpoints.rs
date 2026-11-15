@@ -59,6 +59,18 @@ pub struct LogHeadsSection {
     pub interval: Duration,
 }
 
+/// A rotation-set member's liveness caller (#595): the account the checkpoint endpoint signs its
+/// witnesses, promotions and relayed heads for, funded apart from every relayer.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LivenessSection {
+    /// The caller's account. It must differ from the checkpoint, log-head and seed relayers.
+    pub caller: Address,
+    /// The balance below which `liveness_caller_unfunded` fires, in ether, e.g. `"0.01"`.
+    #[serde(deserialize_with = "ether")]
+    pub min_balance: U256,
+}
+
 impl NodeConfig {
     /// Validates checkpoint transport and refuses hardware custody without rollback protection.
     /// Error cases:
@@ -108,6 +120,25 @@ impl NodeConfig {
         ensure!(!cfg.relayer.is_zero(), "log_heads.relayer must be non-zero");
         ensure!(cfg.relayer != checkpoints.relayer, "log_heads.relayer must differ from the checkpoint relayer");
         ensure!(!cfg.interval.is_zero(), "log_heads.interval must be non-zero");
+        let Some(liveness) = &self.liveness else { return Ok(()) };
+        ensure!(!liveness.caller.is_zero(), "liveness.caller must be non-zero");
+        let seed_relayer = self.seed_relay.as_ref().map(|seed| seed.relayer);
+        ensure!(
+            ![Some(checkpoints.relayer), Some(cfg.relayer), seed_relayer].contains(&Some(liveness.caller)),
+            "liveness.caller must differ from the checkpoint, log-head and seed relayers"
+        );
+        ensure!(!liveness.min_balance.is_zero(), "liveness.min_balance must be non-zero");
+        Ok(())
+    }
+
+    /// Refuses `[liveness]` without `[log_heads]`.
+    /// Error cases:
+    /// - `[liveness]` is set without `[log_heads]`, whose contract and heads it reads
+    pub(super) fn validate_liveness(&self) -> anyhow::Result<()> {
+        ensure!(
+            self.liveness.is_none() || self.log_heads.is_some(),
+            "[liveness] requires [log_heads]: the caller relays and reads its heads"
+        );
         Ok(())
     }
 }

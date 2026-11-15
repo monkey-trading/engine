@@ -19,6 +19,8 @@ pub(super) struct Vault {
     pub(super) scheduled: Arc<Mutex<Option<crate::checkpoints::ScheduledTurn>>>,
     /// The incumbent an election in effect replaced, with rotation on; none with it off.
     pub(super) elected_from: Arc<Mutex<Option<crate::checkpoints::HandoverSource>>>,
+    /// The signer every view names.
+    pub(super) signer: Arc<Mutex<AccountId>>,
 }
 
 impl Vault {
@@ -28,6 +30,7 @@ impl Vault {
             synced: Arc::new(Mutex::new(None)),
             scheduled: Arc::default(),
             elected_from: Arc::default(),
+            signer: Arc::new(Mutex::new(AccountId([0; 20]))),
         }
     }
 }
@@ -37,7 +40,7 @@ impl CheckpointChain for Vault {
         let zero = Fixed::ZERO;
         Ok(VaultState {
             height: 1,
-            signer: AccountId([0; 20]),
+            signer: *self.signer.lock().unwrap(),
             checkpoint: None,
             balance: zero,
             deposits: 0,

@@ -1,44 +1,51 @@
-//! A member's holdings: after a confirmed handover the incumbent goes back to following, a node that
-//! is no member serves once, a shutdown while following ends the node, and the metrics listener
-//! answers throughout.
+//! A member's holdings: after a confirmed handover or a replacement the incumbent goes back to
+//! following, a node that is no member serves once, a shutdown while following ends the node, and the
+//! metrics listener answers throughout.
 
 use std::cell::RefCell;
 
 use super::*;
 use crate::test_support::dev_config;
 
-/// Once a successor confirms the handover, the incumbent's run does not end the node: it waits for
-/// its next turn again, following the operator in effect, which is now its successor.
+/// Once a successor confirms the handover, or the vault names another key, as a promotion does, the
+/// incumbent's run does not end the node: it waits for its next turn again, following the operator in
+/// effect, or starting as the one a promotion of its own standby key made it.
 #[tokio::test]
-async fn after_a_confirmed_handover_the_incumbent_follows_again() {
-    let calls = RefCell::new(Vec::new());
-    let gave = Handed { generation: Some(3), reached: Some(1_000) };
-    let mut ends = [Ended::HandedOver(gave), Ended::Stopped].into_iter();
-    let wait = async |handed: Option<Handed>| {
-        calls.borrow_mut().push(("follow", handed));
-        Ok(Turn::Hold)
-    };
-    let serve = async |_start: Option<Box<Start>>, handed: Option<Handed>| {
-        calls.borrow_mut().push(("serve", handed));
-        Ok(ends.next().expect("served past the shutdown"))
-    };
-    run_turns(true, wait, serve).await.unwrap();
-    // What the handover gave away reaches the next wait and the run after it.
-    let after = Some(gave);
-    assert_eq!(calls.into_inner(), [("follow", None), ("serve", None), ("follow", after), ("serve", after)]);
+async fn after_a_confirmed_handover_or_a_replacement_the_incumbent_follows_again() {
+    let gave = Handed { generation: Some(3), reached: Some(1_000), head: None };
+    for end in [Ended::HandedOver(gave), Ended::Replaced(gave)] {
+        let calls = RefCell::new(Vec::new());
+        let mut ends = [end, Ended::Stopped].into_iter();
+        let wait = async |handed: Option<Handed>| {
+            calls.borrow_mut().push(("follow", handed));
+            Ok(Turn::Hold)
+        };
+        let serve = async |_start: Option<Box<Start>>, handed: Option<Handed>| {
+            calls.borrow_mut().push(("serve", handed));
+            Ok(ends.next().expect("served past the shutdown"))
+        };
+        run_turns(true, wait, serve).await.unwrap();
+        // What the end gave away reaches the next wait and the run after it.
+        let after = Some(gave);
+        let calls = calls.into_inner();
+        assert_eq!(calls, [("follow", None), ("serve", None), ("follow", after), ("serve", after)], "{end:?}");
+    }
 }
 
 /// A node that is no member serves once, however its run ends, and never follows.
 #[tokio::test]
 async fn a_node_that_is_no_member_serves_once() {
-    let served = RefCell::new(0);
-    let wait = async |_: Option<Handed>| -> anyhow::Result<Turn> { panic!("a node that is no member followed") };
-    let serve = async |_start: Option<Box<Start>>, _: Option<Handed>| {
-        *served.borrow_mut() += 1;
-        Ok(Ended::HandedOver(Handed { generation: None, reached: None }))
-    };
-    run_turns(false, wait, serve).await.unwrap();
-    assert_eq!(served.into_inner(), 1);
+    let gave = Handed { generation: None, reached: None, head: None };
+    for end in [Ended::HandedOver(gave), Ended::Replaced(gave), Ended::Stopped] {
+        let served = RefCell::new(0);
+        let wait = async |_: Option<Handed>| -> anyhow::Result<Turn> { panic!("a node that is no member followed") };
+        let serve = async |_start: Option<Box<Start>>, _: Option<Handed>| {
+            *served.borrow_mut() += 1;
+            Ok(end)
+        };
+        run_turns(false, wait, serve).await.unwrap();
+        assert_eq!(served.into_inner(), 1, "{end:?}");
+    }
 }
 
 /// A shutdown signal while the member follows ends the node without serving.
@@ -60,7 +67,7 @@ async fn metrics_answer_while_following_and_across_a_turn() {
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let scrape = async || client.get(&url).send().await.and_then(|answer| answer.error_for_status()).is_ok();
     let answered = RefCell::new(Vec::new());
-    let gave = Handed { generation: Some(1), reached: None };
+    let gave = Handed { generation: Some(1), reached: None, head: None };
     let mut ends = [Ended::HandedOver(gave), Ended::Stopped].into_iter();
     let wait = async |_: Option<Handed>| {
         let ok = scrape().await;
@@ -133,7 +140,7 @@ async fn process_tasks_run_while_following_and_across_a_turn() {
         .await;
     };
     let calls = RefCell::new(Vec::new());
-    let gave = Handed { generation: Some(1), reached: None };
+    let gave = Handed { generation: Some(1), reached: None, head: None };
     let mut ends = [Ended::HandedOver(gave), Ended::Stopped].into_iter();
     let wait = async |_: Option<Handed>| {
         ticking().await;

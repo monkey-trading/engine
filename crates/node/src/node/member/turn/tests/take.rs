@@ -102,6 +102,33 @@ async fn each_sources_failure_is_classified_though_a_later_source_fails() {
     assert_eq!(paged.count(), 2, "the incumbent's refusals were not paged");
 }
 
+/// While the predecessor holds its answer, as an incumbent does while its handover's final checkpoint
+/// waits for a member to confirm its seq, the member follows the incumbent, so its copy and member link
+/// reach what the incumbent sealed: in a set of two, the member taking the turn is the only one that
+/// could confirm it.
+#[tokio::test]
+async fn a_member_follows_the_incumbent_while_the_predecessor_holds_its_answer() {
+    let held = Arc::new(tokio::sync::Notify::new());
+    let lagged = Answer::Missed(TailMiss::Lagged);
+    let script = vec![Answer::Held(held.clone(), Box::new(lagged.clone())), lagged.clone(), lagged];
+    let (fixture, operator, served, asked) = in_own_turn("member-follows-asked", script).await;
+    let mut member = fixture.member();
+    let drive = async {
+        crate::test_support::wait_for("the member's request", async {
+            while asked.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        // Two more connections: at least one made while the answer is held.
+        operator.wait_for_connections(operator.connections() + 2).await;
+        held.notify_one();
+    };
+    let (turn, ()) = tokio::join!(member.until_turn(), drive);
+    served.abort();
+    assert!(matches!(turn.unwrap(), Turn::Hold), "the member did not fall back to the cold start");
+}
+
 /// Only a replica that refused an entry, or a copy a handover began changing, is rebuilt.
 #[test]
 fn only_a_refused_entry_or_a_part_changed_copy_rebuilds_the_replica() {

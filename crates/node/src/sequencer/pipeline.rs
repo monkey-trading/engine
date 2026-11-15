@@ -64,6 +64,8 @@ pub(super) struct Release {
     /// The log head this batch made durable, captured at stage: the sync thread may finish an
     /// earlier batch after a later one is staged, so the link at finish is not this batch's.
     head: crate::log_heads::Head,
+    /// The stamp of the command at `head`.
+    stamp: engine_core::types::Millis,
     outbox: Vec<Arc<StreamMsg>>,
     marks: Vec<MarkSample>,
     house: Option<(Vec<oneshot::Sender<HouseState>>, HouseState)>,
@@ -283,6 +285,7 @@ impl Sequencer {
             last_seq: self.engine.last_seq(),
             staged: tokio::time::Instant::now(),
             head: crate::log_heads::Head { seq: self.engine.last_seq().unwrap_or(0), link: self.command_prefix.into() },
+            stamp: self.engine.now(),
             outbox: std::mem::take(&mut self.outbox),
             marks: self.marks.take_pending(),
             house: self.house.take_answer(&self.engine, self.progress.params_seq),
@@ -298,13 +301,18 @@ impl Sequencer {
     /// Error cases:
     /// - a checkpoint cannot be posted
     fn finish(&mut self, release: Release) -> anyhow::Result<()> {
-        let Release { job, batch, last_seq, staged: _, head, outbox, marks, house, schedule, stats, after } = release;
+        let Release { job, batch, last_seq, staged: _, head, stamp, outbox, marks, house, schedule, stats, after } =
+            release;
         self.marks.deliver_stats(stats);
         self.log.finish_sync(&job);
         if let Some(publisher) = &self.log_heads
             && *publisher.tx.borrow() != head
         {
             publisher.tx.send_replace(head);
+        }
+        if let Some(publisher) = &self.log_heads {
+            let released = crate::liveness::Released { head, stamp: u64::try_from(stamp).unwrap_or(0) };
+            publisher.released.send_if_modified(|was| std::mem::replace(was, released) != released);
         }
         self.run_after(after)?;
         if let Some(schedule) = schedule {

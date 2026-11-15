@@ -158,7 +158,7 @@ async fn a_member_falls_back_to_the_whole_log_whatever_its_copys_segments() {
     let signer = signer();
     let mut follower =
         Follower::open(&exchange.successor_log, 3, DOMAIN, signer, [signer].into(), None, |_| {}).unwrap();
-    follower.take_tail(tip, &lines_after(&operator, tip)).unwrap();
+    follower.take_tail(crate::log::Offset::start_of(tip), &lines_after(&operator, tip)).unwrap();
     drop(follower);
 
     crate::node::member::turn::set_copy_aside(&exchange.successor_log).unwrap();
@@ -314,7 +314,7 @@ impl Tailed {
             &sealer,
             &MockAttestor,
             prepared,
-            &mut self.follower,
+            (&mut self.follower, None),
         )
         .await
     }

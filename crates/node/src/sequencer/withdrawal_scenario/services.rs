@@ -27,7 +27,7 @@ use crate::roughtime::testing::TestServer;
 use crate::test_support::LOADED_WAIT;
 use crate::test_support::access;
 
-pub(super) struct Services {
+pub(crate) struct Services {
     pub feed: String,
     pub time: Vec<Value>,
     pub rpcs: Vec<String>,

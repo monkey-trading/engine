@@ -436,6 +436,7 @@ mod backlog;
 mod claim_retirement;
 mod halt;
 mod origin;
+mod promotion;
 mod read;
 mod reissue;
 mod restart_bound;

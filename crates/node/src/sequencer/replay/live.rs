@@ -21,12 +21,13 @@ const RETAINED_CHECKPOINTS: usize = 4096;
 /// How many of the latest commands' cumulative prefixes a replica retains.
 pub(crate) const RETAINED_LINKS: usize = 1 << 16;
 
-/// A command's cumulative command-prefix digest and its sequenced time.
+/// A command's cumulative command-prefix digest, its sequenced time, and the key that sealed it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Link {
     pub seq: u64,
     pub link: B256,
     pub ts: Millis,
+    pub sealer: Option<AccountId>,
 }
 
 /// A replay of a follower's copy that takes each entry the copy takes.
@@ -42,6 +43,11 @@ pub(crate) struct LiveReplay {
     pinned: Option<Link>,
     /// Where a member's replica records each checkpoint it verifies, for its log check answers.
     checked: Option<crate::log_check::answer::CheckedHeads>,
+    /// The seqs whose command link and checkpoint the replica keeps past `links` and `checkpoints`
+    /// as it passes them (a promotion's fixed head and checkpoint), with what it kept.
+    keeping: BTreeSet<u64>,
+    kept: BTreeMap<u64, Link>,
+    kept_checkpoints: BTreeMap<u64, Checkpoint>,
 }
 
 impl LiveReplay {
@@ -56,6 +62,9 @@ impl LiveReplay {
             links: VecDeque::new(),
             pinned: None,
             checked: None,
+            keeping: BTreeSet::new(),
+            kept: BTreeMap::new(),
+            kept_checkpoints: BTreeMap::new(),
         }
     }
 
@@ -63,6 +72,19 @@ impl LiveReplay {
     /// `checked`.
     pub(crate) fn record_checked_with(&mut self, checked: crate::log_check::answer::CheckedHeads) {
         self.checked = Some(checked);
+    }
+
+    /// Keeps the command link and the checkpoint at `seq` past the retention windows, once replayed.
+    pub(crate) fn keep(&mut self, seq: u64) {
+        self.keeping.insert(seq);
+    }
+
+    /// Drops every retained link and checkpoint, as a replay long past them leaves the windows.
+    #[cfg(test)]
+    pub(crate) fn forget_retained(&mut self) {
+        self.links.clear();
+        self.checkpoints.clear();
+        self.pinned = None;
     }
 
     /// Has the replica record every command it applies into `stats`, which starts over.
@@ -80,6 +102,14 @@ impl LiveReplay {
     /// Error cases:
     /// - the entry fails replay; the replica may then hold part of it and must be rebuilt
     pub(crate) fn apply(&mut self, entry: &LogEntry) -> anyhow::Result<()> {
+        // A command sealed by another key than the last: a promotion's first, where the copy may hold
+        // no entry for the vault's checkpoint at the last command.
+        if let LogEntry::Command(command) = entry
+            && let Some(sealer) = command.seal.as_ref().map(|seal| seal.signer)
+            && self.replay.last_sealer().is_some_and(|last| last != sealer)
+        {
+            self.capture_tip();
+        }
         self.replay.apply(entry)?;
         match entry {
             LogEntry::Command(command) => {
@@ -87,13 +117,20 @@ impl LiveReplay {
                     seq: command.sequenced.seq,
                     link: B256::from(self.replay.command_prefix),
                     ts: command.sequenced.ts,
+                    sealer: command.seal.as_ref().map(|seal| seal.signer),
                 };
                 self.links.push_back(link);
+                if self.keeping.contains(&link.seq) {
+                    self.kept.insert(link.seq, link);
+                }
                 if self.links.len() > RETAINED_LINKS {
                     self.links.pop_front();
                 }
             }
             LogEntry::Checkpoint(checkpoint) => {
+                if self.keeping.contains(&checkpoint.seq) {
+                    self.kept_checkpoints.entry(checkpoint.seq).or_insert_with(|| checkpoint.clone());
+                }
                 let engine = &self.replay.engine;
                 let work = Work::capture(checkpoint.clone(), self.replay.accounting, engine);
                 // A second checkpoint at one seq extends no outstanding chain in recovery's replay
@@ -134,6 +171,11 @@ impl LiveReplay {
         self.replay.engine.last_seq()
     }
 
+    /// The key that sealed the last command, if it was sealed.
+    pub(crate) fn tip_sealer(&self) -> Option<AccountId> {
+        self.replay.last_sealer()
+    }
+
     /// The cumulative command-prefix digest after the last command: what a log head commits to.
     pub(crate) fn head_link(&self) -> B256 {
         B256::from(self.replay.command_prefix)
@@ -144,17 +186,53 @@ impl LiveReplay {
         self.replay.last_signed_checkpoint.as_ref()
     }
 
-    /// The retained checkpoint at `seq`.
+    /// Records the anchor work at the last command as a checkpoint there carries it, when the copy
+    /// holds no checkpoint entry there: the vault's latest checkpoint a promotion fixed may be one the
+    /// outgoing key posted while no member received its entry (#595). It names the last command's
+    /// sealer, the key that signed the vault's checkpoint if there is one, and the state root computed
+    /// now, so it anchors only a start whose vault checkpoint is at this seq with this root, and is kept
+    /// past the retention window, as a checkpoint entry is, when `keep` names its seq.
+    pub(crate) fn capture_tip(&mut self) {
+        let (Some(seq), Some(signer)) = (self.last_seq(), self.replay.last_sealer()) else { return };
+        if self.checkpoints.contains_key(&seq) {
+            return;
+        }
+        let root = B256::from(self.replay.engine.state_root());
+        let checkpoint = crate::sequencer::replay::unheld::unheld(seq, root, signer, self.replay.domain);
+        let engine = &self.replay.engine;
+        if self.keeping.contains(&seq) {
+            self.kept_checkpoints.entry(seq).or_insert_with(|| checkpoint.clone());
+        }
+        let work = Work::capture(checkpoint, self.replay.accounting, engine);
+        self.checkpoints.insert(seq, (work, engine.now()));
+        if self.checkpoints.len() > RETAINED_CHECKPOINTS {
+            self.checkpoints.pop_first();
+            self.complete = false;
+        }
+    }
+
+    /// The retained, or kept, checkpoint at `seq`.
     pub(crate) fn checkpoint_at(&self, seq: u64) -> Option<&Checkpoint> {
-        self.checkpoints.get(&seq).map(|(work, _)| &work.checkpoint)
+        self.checkpoints.get(&seq).map(|(work, _)| &work.checkpoint).or_else(|| self.kept_checkpoints.get(&seq))
     }
 
     /// The cumulative prefix after the command at `seq`, with its stamp, while the replica retains
     /// it: one of the latest `RETAINED_LINKS` commands, or the pinned posted head.
     pub(crate) fn link_at(&self, seq: u64) -> Option<Link> {
-        let first = self.links.front()?.seq;
-        let retained = seq.checked_sub(first).and_then(|index| self.links.get(usize::try_from(index).ok()?));
-        retained.copied().or(self.pinned.filter(|pinned| pinned.seq == seq))
+        let index = self.links.front().and_then(|first| seq.checked_sub(first.seq));
+        let retained = index.and_then(|index| self.links.get(usize::try_from(index).ok()?));
+        retained.copied().or(self.pinned.filter(|pinned| pinned.seq == seq)).or_else(|| self.kept.get(&seq).copied())
+    }
+
+    /// Takes `signer`, a key the vault names that the replica's attested set predates, as attested
+    /// from here on (see `Replay::admit`).
+    pub(crate) fn admit(&mut self, signer: AccountId) {
+        self.replay.admit(signer);
+    }
+
+    /// The latest links the replica retains, oldest first, at most `crate::liveness::link`'s window.
+    pub(crate) fn retained_links(&self) -> impl Iterator<Item = &Link> {
+        self.links.iter().skip(self.links.len().saturating_sub(RETAINED_LINKS / 4))
     }
 
     /// Keeps the posted head `(seq, link)` as one the replica holds, once its own link at `seq`
@@ -173,7 +251,8 @@ impl LiveReplay {
     /// checkpoint `parent` as its anchor (`None` without a checkpoint service), its commands'
     /// authority pinned to `signer`, and the posted log head at `posted` located for the startup
     /// check. The copy must end at a checkpoint `signer` signed, as a handover's head does, so no
-    /// command past it needs another authority.
+    /// command past it needs another authority; only `signer`'s outstanding checkpoints extend the
+    /// anchor, since the vault takes no other key's.
     /// Error cases:
     /// - the writer and the replica end at different entries, or the copy does not end at a
     ///   checkpoint `signer` signed
@@ -201,7 +280,7 @@ impl LiveReplay {
             "the replica does not end at a checkpoint {signer} signed, so its tail has no authority to start from"
         );
         if let Some(parent) = parent {
-            self.anchor(parent)?;
+            self.anchor(parent, Some(signer))?;
         }
         self.replay.origin.pin(domain, signer)?;
         self.replay.trusted_signer = Some(signer);
@@ -211,12 +290,46 @@ impl LiveReplay {
         Ok(ReplayedLog::live(writer, self.replay.finish()))
     }
 
+    /// `into_log` for a promoted member (#595): the standby key the promotion made the vault's signer
+    /// has signed no checkpoint, so the copy need not end at one; its commands after the last
+    /// checkpoint are the outgoing key's, sealed and attested as the replay checked them, and the
+    /// promotion's fixed head and checkpoint, which the caller checked the copy holds, are the start's
+    /// authority. The new key joins the attested signers before it is pinned.
+    /// Error cases:
+    /// - the writer and the replica end at different entries
+    /// - as `into_log`'s anchor and pin
+    pub(crate) fn into_promoted_log(
+        mut self,
+        writer: LogWriter,
+        parent: Option<CheckpointParent>,
+        signer: AccountId,
+        posted: Option<u64>,
+    ) -> anyhow::Result<ReplayedLog> {
+        ensure!(
+            writer.last_offset() == self.replay.last_offset,
+            "the copy ends at {:?} but the replica at {:?}",
+            writer.last_offset(),
+            self.replay.last_offset
+        );
+        let domain = self.replay.domain.context("a replica replays in a deployment")?;
+        if let Some(parent) = parent {
+            self.anchor(parent, Some(signer))?;
+        }
+        self.replay.admit(signer);
+        self.replay.origin.pin(domain, signer)?;
+        self.replay.trusted_signer = Some(signer);
+        if let Some(found) = posted.and_then(|seq| self.link_at(seq)) {
+            (self.replay.captured_link, self.replay.captured_ts) = (Some(found.link), Some(found.ts));
+        }
+        Ok(ReplayedLog::live(writer, self.replay.finish()))
+    }
+
     /// Sets the checkpoint gate's recovery facts as a recovery replay anchored at `parent` sets
-    /// them: the anchor's work and stamp, and the outstanding checkpoints after it, each extending
-    /// the signed parent before it.
+    /// them: the anchor's work and stamp, and the outstanding checkpoints after it, those `signed_by`
+    /// signed when given, each extending the signed parent before it.
     /// Error cases:
     /// - the anchor is not retained, or the outstanding chain breaks
-    fn anchor(&mut self, parent: CheckpointParent) -> anyhow::Result<()> {
+    fn anchor(&mut self, parent: CheckpointParent, signed_by: Option<AccountId>) -> anyhow::Result<()> {
         let replay = &mut self.replay;
         replay.recovery_origin = Some(parent);
         if parent.has_checkpoint {
@@ -237,8 +350,12 @@ impl LiveReplay {
             ensure!(self.complete, "the replica no longer retains every checkpoint since the log's start");
         }
         let mut running = parent;
+        // The outstanding work is the starting key's only: what another key signed past the vault's
+        // latest the vault never accepted and never will, and the next checkpoint extends that latest.
         let outstanding = self.checkpoints.values().filter(|(work, _)| {
-            work.checkpoint.parent.is_some() && (!parent.has_checkpoint || work.checkpoint.seq > parent.seq)
+            work.checkpoint.parent.is_some()
+                && (!parent.has_checkpoint || work.checkpoint.seq > parent.seq)
+                && signed_by.is_none_or(|signer| work.checkpoint.signer.parse::<AccountId>().ok() == Some(signer))
         });
         for (work, _) in outstanding {
             ensure!(work.checkpoint.parent == Some(running), "outstanding checkpoint has a divergent signed parent");

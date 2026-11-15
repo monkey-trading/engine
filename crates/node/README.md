@@ -80,7 +80,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   signature over the request and its body, the client's challenge, the node's time, which it signs
   only while trusted time bounds it, the log head, and the status and body; a `signed=1` stream
   connection gets each message in a numbered frame
-  chained to the one before it, and a signed heartbeat at least every `api.heartbeat_interval`;
+  chained to the one before it, and a signed heartbeat at least every `api.heartbeat_interval`; with
+  `heads=1` too, it also gets each log head the enclave signs under the liveness rule as a `log_head`
+  message, bare while trusted time does not bound the host clock, which a member's follower relays;
   `engine verify-response` and `engine verify-frames` check them with the shared `engine-wire`
   definitions
 - Executable quotes: a `signed=1` stream connection can ask for an account's quotes in up to
@@ -225,15 +227,18 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/standby/chain/tests.rs` — against a real sequencer's log, an operator that carries on extends
   the copy, one cut back and restarted is caught at the first entry or heartbeat that shows it, and
   an entry or archive segment that does not chain leaves the copy as it was
-- `src/standby/tests.rs` — copy appends that verify frames and refuse a wrong signer, truncation at
-  the resume checkpoint, stream resumption at the copy's last command, and a follow that stops at a
-  cut-back operator or a heartbeat behind the copy with the copy unchanged
+- `src/standby/tests/mod.rs` — copy appends that verify frames and refuse a wrong signer, truncation
+  at the resume checkpoint, stream resumption at the copy's last command, and a follow that stops at a
+  cut-back operator or a heartbeat behind the copy with the copy unchanged; `src/standby/tests/durable.rs`
+  the durable head a stint records for the member link
 - `src/standby/follow.rs` — one follow stint: the signed stream at the copy's last command, each frame
   verified against the followed enclave, each new entry applied to a replica, when there is one,
-  before the copy takes it (`ReplicaRefused` otherwise)
+  before the copy takes it (`ReplicaRefused` otherwise); with a member link, the copy synced every
+  200 ms and its durable head (the last command it appended, with the key that sealed it), entries and
+  the stream's signed heads recorded for it
 - `src/standby/operator.rs` — the operator a follower follows: under rotation the registry's candidate
-  in effect at `https://` its registered API hostname, verified against the vault's signer at
-  finality; without rotation the one `[standby]` names; a `--standby` node's, with `[standby]`'s
+  in effect at `https://` its registered API hostname, verified against the vault's signer at the
+  latest block; without rotation the one `[standby]` names; a `--standby` node's, with `[standby]`'s
   mirrors; and the signers a promotion replays the copy against, the vault's recorded ones under
   rotation; `src/standby/operator/tests.rs` covers a turn change, rotation off, a standby and a
   promotion whose configured enclave is not the vault's signer
@@ -241,6 +246,72 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   built by one replay as the copy opens and fed every entry the copy takes after, a handover's tail
   included; `src/standby/replica/tests.rs` starts the sequencer from the replica with the copy's files
   altered, and extends the copy with a tail, refusing a forged one
+- `src/standby_key/mod.rs` — a member's standby key and the TLS key it would serve with, sealed per
+  release apart from the turn's keys; the seal opens only while the schedule lists the key as
+  promotable, or as the signer of a promotion still its turn's latest assignment until its reseal as
+  the turn's keys is durable, and a start seals a new one in any other state
+- `src/standby_key/chain.rs` — the vault, registry and schedule reads the standby key's rules make, at
+  the latest block the custody quorum agrees on: the key's state and what a vouch depends on
+- `src/standby_key/vouch.rs` — the standby key's attestation report data, the vouch request and
+  reply, the client's request, the vouching enclave's handler (one-hour expiry bound), and the
+  registration a vouch gives
+- `src/standby_key/tests.rs` — the fake chain the tests set; `src/standby_key/tests/seal.rs` covers
+  sealing, the opening rule, and crashes before, during and after a reseal;
+  `src/standby_key/tests/vouch.rs` covers the digest against the schedule's, the report data, and
+  every refusal of the handler; `src/standby_key/tests/standing.rs` covers what a promoted member's
+  restart finds of its promotion and the unfinal signer epochs a rebuild reads
+- `src/liveness/mod.rs` — the minute-scale liveness rule (#595): the gate sequencing, signed answers and
+  heads wait on, the released head with its stamp, a member's signed status, and the stop margin and
+  drift rate the fence assumes
+- `src/liveness/chain.rs` — what the rule reads at one block the custody quorum agrees on: the vault's
+  signer, the registry's rotation state, the schedule's heartbeat rule, marks, turn and
+  `promotionDueAt`, the epoch's stored head, a set's members with their endpoints and standby keys
+- `src/liveness/fence.rs` — the operator's stop by its own clock before the earliest promotion, or the
+  next turn boundary after a read under which none can pass
+- `src/liveness/operator.rs` — the operator's side: members' statuses, the start check, the newest
+  confirmation the poster signs at, and the lag stop; `src/liveness/operator/fencing.rs` the fence tick;
+  `src/liveness/operator/statuses.rs` how it asks the members and matches their statuses to its log;
+  `src/liveness/operator/assess.rs` how members' statuses weigh against the log;
+  `src/liveness/operator/limits.rs` its pure limits (an exempt read's hold, the lag, refused rules);
+  `src/liveness/operator/stamps.rs` the released heads' stamps, sampled as the sequencer releases them;
+  `src/liveness/operator/tests.rs` drives it against fake members, chain and sequencer, with
+  `tests/assess.rs`, `tests/members.rs` (every member but this node's own is asked),
+  `tests/exemptions.rs` (reads under which no promotion can pass, and how long each holds),
+  `tests/copies.rs` (a reopened predecessor beside its successor) and
+  `tests/rounds.rs` (the vault's signer before any exemption, a retired signer, confirmations per set,
+  rounds while reads fail, a full set read within an interval, a former holder's tail, a promoted
+  operator's blocked reads, the incumbent beside an orphaned holder)
+- `src/liveness/link.rs` — the member link: statuses, entries and vouches a member answers on its
+  handover endpoint while it follows, and the operator's log checks (`log_check::answer`) on the same
+  endpoint; `src/liveness/link/ask.rs` how a node asks and checks a status;
+  `src/liveness/link/state.rs` the copy's state, and which key a head that differs from it is evidence
+  against;
+  `src/liveness/link/slots.rs` its places, per peer address (IPv6 by /64), with the oldest connection
+  that has not asked giving its place up once all are taken; `src/liveness/link/tests.rs`
+- `src/liveness/caller.rs` — a member's liveness caller: witnesses, promotions and relayed heads from its
+  own account; `src/liveness/caller/tests.rs`
+- `src/liveness/fake.rs` — the fake chain the rule's tests set
+- `src/node/liveness.rs` — the operator's wiring of the rule, a promoted start's checkpoints after
+  finality and retired work, and the watch that stops on a reorged promotion
+- `src/node/member/standby.rs` — a member's standby side beside its following: standby keys, member
+  link, liveness caller, the vouched registration it asks for, and promotion checks;
+  `src/node/member/standby/keep.rs` how the follow loop keeps it, resumes an earlier promotion and
+  starts a promoted member;
+  `src/node/member/standby/certificate.rs` (with `certificate/tests.rs`) the standby TLS key's public
+  certificate, validated on the API's listener while the member follows and taken into the member's
+  certificate store by a promotion;
+  `src/node/member/standby/registration.rs` the registration file it writes for its candidate;
+  `src/node/member/standby/renewal.rs` a promoted operator's replacement standby key;
+  `src/node/member/standby/orphans.rs` (with `orphans/tests.rs`) setting aside a copy whose tail a
+  reorged promotion's key sealed, or an ended signer epoch's key past the head that epoch posted last
+- `src/node/member/promoted.rs` — a promoted member's start: the promotion's prefixes, the reseal,
+  restarts and the quarantine; `src/node/member/promoted/record.rs` the record it keeps and what the
+  chain records of its promotion; `src/node/member/promoted/gap.rs` (with `gap/tests.rs`) the gap
+  fetched from members and the archive within one budget; `src/node/member/promoted/watch.rs` the
+  watch that stops the node once its promotion is gone; `src/node/member/promoted/tests.rs`
+- `src/sequencer/liveness.rs` — the sequencer's hold, and checkpoints that wait for a member's
+  confirmation; `src/sequencer/liveness/tests.rs`
+- `src/api/standby.rs` — `POST /v1/standby/vouch`, the operator's vouch for a standby key
 - `src/node/mod.rs` — startup, task supervision, and shutdown; a member's start from its replica
   reads nothing from the chain and takes no trusted time sample, using what it read before connecting
 - `src/node/run.rs` — `run_with_cpu`: a member's wait for its turns around each `serve_node`, or one
@@ -251,7 +322,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   opened first, the rotation check, the checkpoint setup with the vault's anchor checked against its
   replica, the MONKEY budget, the posted log heads, the turn's generation, and last the trusted time
   sample; `src/node/ready/tests.rs` starts a node from a replica with every chain endpoint and time
-  server unreachable, and refuses an altered certificate store before any chain read. Between the
+  server unreachable, and refuses an altered certificate store before any chain read, with
+  `tests/promoted.rs` for a promoted member's start from its copy and its staking check. Between the
   confirmation and the first command, a start from the replica then runs: the certificate store
   and the keys the handover sealed, attested (one quote); the marks cache opened empty on its seed
   file (no import: `src/node/marks.rs`); the replica finished as the log (`LiveReplay::into_log`, its
@@ -294,12 +366,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/node/log_check.rs` — a node's part in the boundary's log check: the check the first start after
   a handover makes and seals (none when this release, or the member its operator key sits for,
   sequenced part of the range, as after the member's own upgrade, which keeps the head the keys
-  carried), the sequencer's setup with the sealed keys of a node that takes turns, and its supervised
-  asking task
+  carried), the check a promoted start seals through the checkpoint the promotion fixed, under the
+  same exclusion, the sequencer's setup with the sealed keys of a node that takes turns, and its
+  supervised asking task
 - `src/node/member.rs` — a rotation-set member's life: following the operator in effect between its
   turns, answering the operator's log checks on its handover endpoint meanwhile
-  (`Member::until_turn_answering`), taking a turn with the tail past its copy's tip, starting from the
-  replica, and following its successor once it hands over, a shutdown signal ending a replica's build
+  (`Member::until_turn_answering`, or the member link where the liveness rule runs), taking a turn
+  with the tail past its copy's tip, starting from the replica, and following its successor once it
+  hands over, or once the vault names another key (`Ended::Replaced`), a shutdown signal ending a replica's build
   at its next entry;
   `src/node/member/tests.rs` covers the loop between holdings, the metrics listener answering
   through it and through a held future, and the process's own tasks running through it
@@ -354,7 +428,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/log_check.rs` — the sequencer's side of the boundary's log check: the verified head, restored from the sealed keys only when the log holds its checkpoint and dropped from them once the gate no longer applies, the log's `TurnTaken` records attributing each range, the check due once this node holds on through a turn of its operator key, under this release or its member's earlier one, that its verified head does not reach (with the checkpoint it writes after its `TurnTaken`), `log_check_unattributable` while the records cannot say who sequenced that range, `log_check_unavailable` while the gate holds payouts on a node set up to take no turns, the check republished after each sequenced batch, a member's verification taken only for the check due and from a member and release outside its range, and the boundary an unpaid approval waits for, the turn in effect's while its member's handover is still to come; `src/sequencer/log_check/tests.rs` covers a held turn's check, its target whether the checkpoint or the `TurnTaken` is noted first, a one-member set, rotation off, a reissue on a signer change and on request, a restart, and a handover's check; `src/sequencer/log_check/tests/handover.rs` the head a start after a handover seals only while the gate applies; `src/sequencer/log_check/tests/pages.rs` the unattributable and unavailable alerts, the run loop withdrawing a check rotation ends, and an upgrade that keeps asking for its member's check
 - `src/sequencer/payout_schedule.rs` — complete unpaid approval order, bounded epoch and requested reissue scheduling, and the hold behind unloaded recovered approvals
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
-- `src/sequencer/payout_tests/` — the account payouts read across signing, reissue, payment and an unfinished restart load, paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
+- `src/sequencer/payout_tests/` — `promotion.rs`: an unpaid authorization reissued across a promotion; the account payouts read across signing, reissue, payment and an unfinished restart load, paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time,
   the enclave key lifecycle scenario (`keys.rs`), and the elected operator's handover (`handover/mod.rs`), ending with the
   operator in effect's upgrade while rotation is on (`handover/upgrade.rs`)
@@ -391,6 +465,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/origin.rs` — command-origin coverage shared by replay and writable recovery
 - `src/sequencer/replay.rs` — log replay, which recovery and `engine replay` share
 - `src/sequencer/replay/snapshot.rs` — replay restored from a verified state snapshot
+- `src/sequencer/replay/replayed.rs` — what a replay yields (`Replayed`)
 - `src/sequencer/replay/replayed_log.rs` — a log read and replayed before anything is written, or a
   member's copy whose writer is already open, and the head link and prefix ring the log-head poster
   reads from it
@@ -398,6 +473,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   work and the latest commands' cumulative prefixes retained, and the finish recovery's replay of the
   same log anchored at the vault's finalized checkpoint would give; `src/sequencer/replay/live/tests.rs`
   compares both with a full replay
+- `src/sequencer/replay/unheld.rs` — a vault checkpoint the log holds no entry for, anchored at the
+  log's own state with the vault's root, and a superseded key's checkpoint the vault never accepted
 - `src/sequencer/prefixes.rs` — the cumulative command prefix after each of the latest commands the
   sequencer applied, which a handover checks a successor's tip against
 - `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, signed, unsigned or voted, and the pending parameter and listing notices, which `GET /v1/house/state` answers from, with the mirrored votes and the house's loss over the trailing day
@@ -753,7 +830,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   reseal into a daily turn's new generation, and the mock TEE's public stand-in for sealing;
   `src/tee/sealing/tests.rs` covers it
 - `src/tee/release_file.rs` — a file sealed to a release alone, under a tag naming its kind: the
-  secrets' and the certificate's
+  secrets', the certificate's and the standby keys'
 - `src/tee/secrets.rs` — the sealed secrets file, per release and apart from the keys, and what the
   host can do with it; `src/tee/secrets/tests.rs` covers it
 - `src/tee/snp.rs` — the SEV-SNP sealing key and report through `/dev/sev-guest` (Linux)
@@ -978,9 +1055,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/rpc/submission/tests.rs` — response-loss, restart, identity, and reservation regressions
 - `src/checkpoints/rpc/submission/tests/fakes.rs` — isolated relay and canonical transaction RPC fixtures
 - `src/checkpoints/rpc/submission/tests/nonce_progress.rs` — free, obsolete, and resurfaced nonce regressions
-- `src/checkpoints/setup.rs` — finalized chain anchor and registry operator lookup and pending-inclusion startup wait;
+- `src/checkpoints/setup/mod.rs` — finalized chain anchor and registry operator lookup and pending-inclusion startup wait;
   a member taking its turn reads the finalized checkpoint with no wait, the incumbent's checkpoint in
-  flight resumed from its replica as outstanding work
+  flight resumed from its replica as outstanding work, and waits while a change of signer is not
+  final; `setup/tests.rs` its tests
 - `src/checkpoints/tests.rs` — signature mutations, rollback, retry, and reconciliation tests
 - `src/checkpoints/tests/latest.rs` — the worker reports the vault's latest included checkpoint ahead of the finalized one, and when its signer is retired
 - `src/checkpoints/tests/collateral.rs` — shortfall, ledger-difference, surplus, and uncredited-deposit deadline tests
@@ -1070,6 +1148,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log_heads/tests/mod.rs` — the poster's loop tests: pacing, lost responses, rollback freezes
   at a higher or forked posted head, stall and transport-failure alert episodes, and the reorg
   reparenting
+- `src/log_heads/v2.rs` — `engine.log-head.v2` heads: the digest, the `postV2` call, which head the
+  poster signs, live or held, and the assignment it binds; `src/log_heads/tests/heartbeat.rs` covers
+  the heartbeat against the fake chain
 - `src/log_heads/tests/stall.rs` — the stall alarm's window: three posting intervals, or two under rotation, and one page per episode
 - `src/log_heads/tests/recovery.rs` — recovery behaviors: heads that land despite a lost response
   or across a restart, the stall alarm counting across a restart from the checked head or the
@@ -1124,6 +1205,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   seed relay scenario's two-chain fixture
 - `src/custody/tests/election_scenario/daily_turns/checks.rs` — the time in office, the operator
   view, the stopped log's commands, and a copy's commands against the log, which the scenario checks
+- `src/custody/tests/election_scenario/liveness.rs` — the minute-scale liveness dev scenario's parts
+  (#595) on a chain-backed `ArbSys` stand-in with trusted time on the chain's clock: the real head
+  poster, liveness rule, member links and callers over a synthetic log, through heartbeats, relays,
+  holds, a paused chain, blocked reads, a promotion and its reorg; `liveness/rig.rs` the operator's
+  parts it drives
+- `src/custody/tests/election_scenario/liveness/promoted.rs` — the promotion on real nodes: A, B and
+  C as the node binary's own start on a chain running on true time, A killed under load, the callers'
+  promotion, the promoted member's first fill within its start budget, its first checkpoint, A's
+  authorization reissued and paid once, and the replay across the change of signer;
+  `promoted/nodes.rs` the members' configs, sealed standby keys and child processes
 - `src/custody/tests/election_scenario/operator_share.rs` — the operator's share dev scenario on
   isolated Anvil: the election's candidate and a staker claim through the vault, an epoch below the
   floor pays neither, and the candidate's unclaimed leaf registers and pays through the exit
@@ -1201,6 +1292,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/stall.rs` — what a poll did, the watcher's run loop, and the alert each kind of
   stall raises
 - `src/custody/sizing.rs` — read sizes that adapt to a provider's limits
+- `src/custody/standby_keys.rs` — the standby key's reads through its own quorum, at the latest block
+  a strict majority agrees on, one session at a time; `src/custody/standby_keys/tests.rs` covers the
+  agreed block, its time, and a minority, split or wrong-chain answer
 - `src/custody/credit.rs` — crediting or reserving one deposit once, and the sequencer round trips it needs
 - `src/custody/pending.rs` — bounded, backed-off log-derived retries of deposits left pending by source failures
 - `src/custody/quorum.rs` — strict-majority reads at common block heights, provider alerts, and

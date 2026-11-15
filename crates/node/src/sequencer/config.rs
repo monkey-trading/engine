@@ -51,6 +51,9 @@ pub struct SequencerConfig<'a> {
     /// checkpoint setup read: recovery admits a config naming its key before the log has mirrored
     /// its installation, and no benchmark hold waits on the key it replaced.
     pub(crate) registry_operator: Option<crate::checkpoints::RegistryOperator>,
+    /// The admin key of the candidate a promotion named, when it named this node's (#595): recovery
+    /// admits a config naming it before the log has mirrored the promotion.
+    pub(crate) promoted_operator: Option<engine_core::types::AccountId>,
     /// The on-chain head poster's publish end, when `[log_heads]` runs: the released-head watch
     /// and the rollback freeze latch the poster shares with the sequencer.
     pub(crate) log_heads: Option<crate::log_heads::Publisher>,

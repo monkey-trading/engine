@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use anyhow::Context;
 use engine_core::eip712::B256;
 use engine_core::types::AccountId;
 use tokio::sync::{mpsc, watch};
@@ -19,6 +20,56 @@ use crate::tee::EnclaveKey;
 use crate::tee::keys::Head;
 use crate::tee::sealing::KeyStore;
 use crate::trusted_time::TrustedClock;
+
+/// The checks a start records: after a handover, the handed-over checkpoint (`after_handover`); for a
+/// start a promotion made, the vault's checkpoint at `promoted`, the seq the promotion fixed, which the
+/// member's replica verified as it followed (`after_promotion`).
+/// Error cases:
+/// - see `after_handover` and `after_promotion`
+pub(crate) fn after_start(
+    store: Option<&KeyStore>,
+    operator: AccountId,
+    log: &ReplayedLog,
+    promoted: Option<u64>,
+) -> anyhow::Result<()> {
+    after_handover(store, operator, log)?;
+    match promoted {
+        Some(checkpoint_seq) => after_promotion(store, operator, log, checkpoint_seq),
+        None => Ok(()),
+    }
+}
+
+/// Seals, for a start a promotion made, the verified head after the member's own verification of the
+/// log through `checkpoint_seq`, the vault's checkpoint the promotion fixed, which its replica checked
+/// entry by entry as it followed: counted, as a successor's at a handover, only while the gate applies
+/// and neither this release nor the member its node runs for under the `operator` key sequenced part
+/// of the range (`own_check`); otherwise the head the keys carry stays, and a following member's check
+/// is asked for once this release has taken the turn. A log that no longer holds that checkpoint's
+/// link or root, as a restart long past it, records nothing.
+/// Error cases:
+/// - the keys cannot be sealed again
+pub(crate) fn after_promotion(
+    store: Option<&KeyStore>,
+    operator: AccountId,
+    log: &ReplayedLog,
+    checkpoint_seq: u64,
+) -> anyhow::Result<()> {
+    let replayed = &log.replayed;
+    let Some(store) = store.filter(|_| applies(&replayed.engine)) else { return Ok(()) };
+    let link = replayed.prefix_ring.prefix_at(checkpoint_seq);
+    let (Some(link), Some(root)) = (link, replayed.checkpoint_root(checkpoint_seq)) else {
+        return Ok(());
+    };
+    let head = VerifiedHead { seq: checkpoint_seq, link, root };
+    let (release, candidates) = (B256::from(store.release().id()), own_candidates(&replayed.engine, operator));
+    let previous = store.keys().log_check;
+    let checked = own_check(previous, &replayed.takings, head, (release, &candidates));
+    if checked == previous {
+        return Ok(());
+    }
+    info!(seq = checkpoint_seq, "the promotion's check: this start verified the log through the vault's checkpoint");
+    store.update(|keys| keys.log_check = checked).context("sealing the promotion's verified head")
+}
 
 /// Refuses the first start after a handover unless `log` ends at the predecessor's final checkpoint
 /// (`keys::check_predecessor_head`), and seals, in the same write, the verified head after it: the

@@ -57,6 +57,19 @@ async fn unknown_collateral_observations_preserve_startup_and_divergence_holds()
     }
 }
 
+/// A checkpoint withheld before the first collateral verdict, as a promoted start's first is until its
+/// poster's first report, is signed as soon as collateral reconciles, not at the next cadence.
+#[tokio::test]
+async fn a_checkpoint_withheld_before_the_first_verdict_is_signed_once_collateral_reconciles() {
+    let (mut seq, mut queued, work) = bootstrap("withheld-until-healthy");
+    seq.gate.as_mut().unwrap().health = None;
+    seq.sequence(Command::Tick).unwrap();
+    assert!(queued.try_recv().is_err(), "a checkpoint was signed before any collateral verdict");
+    let (posted, health) = worker_status(work, Comparison::Healthy).await;
+    seq.checkpoint_status(posted, health).unwrap();
+    assert!(queued.try_recv().is_ok(), "the withheld checkpoint waited for a later command");
+}
+
 #[tokio::test]
 async fn an_rpc_failure_does_not_clear_a_proved_divergence() {
     let (mut seq, mut queued, work) = bootstrap("rpc-failure-after-divergence");

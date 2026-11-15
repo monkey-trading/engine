@@ -49,11 +49,20 @@ pub(crate) async fn run_with_cpu(
     let member = is_member(&cfg, &start);
     let turns = async {
         // A member checks the registry's rotation switch before it follows, as any node does before
-        // its keys.
+        // its keys; a registered candidate running the rule's standby side prepares its standby key
+        // while the switch is off, and any other refuses before it opens its sealing.
+        let mut waiting = None;
         if member {
+            if crate::node::member::standby::prepares(&cfg).await {
+                let prepared = waiting.insert(Member::new(&cfg, &start, metrics.clone())?);
+                // On the heap, as the member's turns below: a test awaits `run` on its own stack.
+                Box::pin(prepared.prepare_standby(&mut chain_read)).await;
+            }
             crate::node::handover::check_rotation_switch(&cfg, &mut chain_read).await?;
+            if waiting.is_none() {
+                waiting = Some(Member::new(&cfg, &start, metrics.clone())?);
+            }
         }
-        let mut waiting = member.then(|| Member::new(&cfg, &start, metrics.clone())).transpose()?;
         let operator = cfg.operator()?.address;
         run_turns(
             member,
@@ -63,7 +72,7 @@ pub(crate) async fn run_with_cpu(
                     waiting.handed_over(handed);
                     delivered.following(operator);
                 }
-                waiting.wait().await
+                Box::pin(waiting.wait()).await
             },
             async |replica, handed| {
                 let chain_read = &mut chain_read;

@@ -57,6 +57,10 @@ pub struct StreamParams {
     /// With `signed=1`, and only with it, the client's fresh 64 hex characters, which every frame
     /// is signed under.
     challenge: Option<String>,
+    /// With `signed=1`, `1` also sends each log head the enclave signs under the liveness rule as a
+    /// `log_head` message, a member's follower's way to relay them: framed, or bare while trusted time
+    /// does not bound the host clock, when the connection stays open for them.
+    heads: Option<u8>,
 }
 
 /// One subscriber's messages, in offset order, each once.
@@ -149,6 +153,7 @@ impl Feed {
 /// - both `after` and `from` are given
 /// - `signed` is not `1`, it comes without a `challenge` or a `challenge` without it, or the
 ///   challenge is not 64 hex characters
+/// - `heads` is not `1`, or comes without `signed=1`
 /// - every subscriber place is taken
 pub async fn stream(
     State(s): State<ApiState>,
@@ -162,6 +167,12 @@ pub async fn stream(
         (None, Some(seq)) => Some(Offset::start_of(seq)),
         (None, None) => None,
     };
+    let heads = match (params.heads, params.signed) {
+        (None, _) => false,
+        (Some(1), Some(1)) => true,
+        (Some(1), _) => return Err(ApiError::BadRequest("heads=1 needs signed=1".into())),
+        (Some(_), _) => return Err(ApiError::BadRequest("heads must be 1".into())),
+    };
     let signed = match (params.signed, params.challenge.as_deref()) {
         (None, None) => None,
         (Some(1), Some(challenge)) => {
@@ -170,7 +181,7 @@ pub async fn stream(
             // Frames bind the request exactly as the client sent it, start included.
             let request = uri.path_and_query().map_or(uri.path(), |request| request.as_str());
             let connection = Connection::new(challenge, request);
-            let framing = Framing::new(s.signing.clone(), connection, s.manifest.clone());
+            let framing = Framing::new(s.signing.clone(), connection, s.manifest.clone(), heads);
             let (inbox, requests) = watch::channel(String::new());
             let quotes = Quotes::new(
                 s.tx.downgrade(),

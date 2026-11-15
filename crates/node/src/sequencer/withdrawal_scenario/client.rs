@@ -26,19 +26,19 @@ use crate::clock::now_ms;
 use crate::sequencer::SignedWithdrawal;
 use crate::test_support::LOADED_WAIT;
 
-pub(super) struct User {
+pub(crate) struct User {
     pub account: AccountId,
     key: SigningKey,
 }
 
 #[derive(Clone)]
-pub(super) struct Client {
+pub(crate) struct Client {
     http: reqwest::Client,
     base: String,
     domain: Eip712Domain,
 }
 
-pub(super) struct Stream {
+pub(crate) struct Stream {
     socket: WebSocketStream<reqwest::Upgraded>,
     pending: VecDeque<SignedWithdrawal>,
 }

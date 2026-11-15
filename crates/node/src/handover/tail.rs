@@ -12,11 +12,16 @@
 //!
 //! The successor reads the vault's signer and the schedule before it connects (`Prepared`), so
 //! only the transfer and local checks fall in the window between the incumbent's last command and
-//! its own first. It checks each entry against its copy's seal chain, applies it to the replica
-//! before the copy takes it, requires the copy to end at the handed-over checkpoint and the replica
-//! to hold the latest posted log head, seals the keys in the turn's generation, and confirms.
+//! its own first. While the predecessor stops it follows the operator it followed, so its copy and
+//! member link reach what the predecessor sealed: a final checkpoint that waits for a member to
+//! confirm its seq can take this member's confirmation, the only one in a set of two, and the tail's
+//! entries the copy took meanwhile are not taken again. It checks each entry against its copy's seal
+//! chain, applies it to the replica before the copy takes it, requires the copy to end at the
+//! handed-over checkpoint and the replica to hold the latest posted log head, seals the keys in the
+//! turn's generation, and confirms.
 
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, ensure};
 use engine_core::eip712::B256;
@@ -25,17 +30,21 @@ use engine_core::types::{AccountId, Millis};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio::net::TcpStream;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::checkpoints::{CheckpointChain, View};
 use crate::config::NodeConfig;
 use crate::handover::successor::{Answered, ask, confirm};
 use crate::handover::{padded, receive_bytes, send_bytes};
 use crate::log::{CheckpointDomain, LogEntry, Manifest, Offset, offset_of};
-use crate::standby::Follower;
+use crate::standby::{Followed, Follower, ReplicaRefused};
 use crate::tee::Attestor;
 use crate::tee::keys::Head;
 use crate::tee::sealing::{KeyStore, Release, Sealer};
+
+/// The longest the successor follows the operator while the predecessor stops: well past the
+/// predecessor's own wait for its final checkpoint's confirmation.
+const FOLLOW_WHILE_ASKED: Duration = Duration::from_secs(30);
 
 /// The most bytes a tail may carry, which the successor holds in memory before it applies them.
 pub(crate) const MAX_TAIL_BYTES: u64 = 512 << 20;
@@ -272,7 +281,8 @@ async fn receive_tail(stream: &mut TcpStream, listing: &TailListing) -> anyhow::
 }
 
 /// Takes the keys from the predecessor whose handover listener is at `address`, asking for the
-/// entries past `follower`'s tip alone, with what `prepared` read before connecting. The tail must
+/// entries past `follower`'s tip alone, with what `prepared` read before connecting, following
+/// `operator`, if any, until the predecessor answers. The tail must
 /// extend the copy's seal chain entry by entry and replay onto its replica, end at the handed-over
 /// checkpoint, and leave the replica holding the latest posted log head. The keys are then sealed in
 /// the prepared generation and the handover confirmed.
@@ -284,13 +294,14 @@ async fn receive_tail(stream: &mut TcpStream, listing: &TailListing) -> anyhow::
 /// - the tail differs from its listing, does not extend the copy, does not replay, does not end at
 ///   the final checkpoint, or the replica does not hold the latest posted head (`CopyChanged`)
 /// - the keys cannot be sealed, or the predecessor does not acknowledge the confirmation
+/// - the replica refused an entry `operator` sealed while the predecessor stopped (`ReplicaRefused`)
 pub(crate) async fn take_tail(
     cfg: &NodeConfig,
     address: &str,
     sealer: &dyn Sealer,
     attestor: &dyn Attestor,
     prepared: &Prepared,
-    follower: &mut Follower,
+    (follower, operator): (&mut Follower, Option<&Followed>),
 ) -> anyhow::Result<Taken> {
     let sealing = cfg.tee.sealing.as_ref().context("a tail handover needs [tee.sealing]")?;
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
@@ -299,8 +310,20 @@ pub(crate) async fn take_tail(
     let tip = Tip { seq, link };
     follower.sync()?;
     // The tip alone names what the copy holds: its segment files are its own writer's.
-    let Answered { mut stream, request, mut keys, peer } =
-        ask(cfg, address, attestor, &platform, None, Some(&tip)).await?;
+    let asked = ask(cfg, address, attestor, &platform, None, Some(&tip));
+    let answered = match operator {
+        Some(operator) => {
+            let (answered, followed) = follower.follow_during(cfg, operator, FOLLOW_WHILE_ASKED, asked).await;
+            match followed {
+                Err(e) if e.downcast_ref::<ReplicaRefused>().is_some() => return Err(e),
+                Err(e) => warn!("following the operator while the predecessor stopped failed: {e:#}"),
+                Ok(()) => {}
+            }
+            answered
+        }
+        None => asked.await,
+    };
+    let Answered { mut stream, request, mut keys, peer } = answered?;
     let head = keys.predecessor_head.clone().context("the keys carry no final checkpoint")?;
     let tails = std::mem::take(&mut keys.handover_tails);
     let listing = keys.handover_tail.take();
@@ -316,7 +339,8 @@ pub(crate) async fn take_tail(
     ensure!(tails.is_empty(), "the predecessor sent whole segments for a tail request");
     ensure!(listing.after == tip.seq, "the predecessor's tail follows seq {}, not the tip {}", listing.after, tip.seq);
     let bytes = receive_tail(&mut stream, &listing).await?;
-    let entries = follower.take_tail(tip.seq, &bytes).map_err(|e| e.context(CopyChanged))?;
+    let (after, bytes) = past_copy(follower, tip.seq, &bytes).map_err(|e| e.context(CopyChanged))?;
+    let entries = follower.take_tail(after, &bytes).map_err(|e| e.context(CopyChanged))?;
     ensure_tail_head(follower, &head, prepared.posted).map_err(|e| e.context(CopyChanged))?;
     info!(entries, bytes = listing.bytes, after = tip.seq, head_seq = head.seq, "took the tail past the copy's tip");
     let store = KeyStore::create(&sealing.dir, sealer, cfg.file_sha256, prepared.generation, keys)?;
@@ -329,6 +353,29 @@ pub(crate) async fn take_tail(
     );
     confirm(&mut stream, domain, &request, &enclave, address).await?;
     Ok(Taken { store, after: tip.seq, entries, bytes: listing.bytes })
+}
+
+/// The tail's lines past the copy's last command, and that command's offset: the copy that followed
+/// the predecessor while it stopped holds the entries through that command past `tip`, from the same
+/// log, and the tail goes on from it, the copy repeating the entries after it that it holds.
+/// Error cases:
+/// - the copy holds no command, or a line of the tail is not a log entry
+fn past_copy(follower: &Follower, tip: u64, bytes: &[u8]) -> anyhow::Result<(Offset, Vec<u8>)> {
+    let (last, _) = follower.tip().context("the follower's copy holds no command")?;
+    if last == tip {
+        return Ok((Offset::start_of(tip), bytes.to_vec()));
+    }
+    let (mut previous, mut kept) = (Some(Offset::start_of(tip)), Vec::new());
+    for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+        let entry: LogEntry = serde_json::from_slice(line).context("a tail line is not a log entry")?;
+        let offset = offset_of(previous, &entry)?;
+        previous = Some(offset);
+        if offset > Offset::start_of(last) {
+            kept.extend_from_slice(line);
+            kept.push(b'\n');
+        }
+    }
+    Ok((Offset::start_of(last), kept))
 }
 
 /// Requires the follower's replica to end at the handed-over checkpoint `head` and, with `posted`,

@@ -5,7 +5,7 @@
 use anyhow::{Context, anyhow, bail};
 use tokio::signal::ctrl_c;
 use tokio::signal::unix::{SignalKind, signal};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
@@ -36,22 +36,26 @@ pub(super) struct Supervised {
     pub sequencer: Worker,
     pub handover: JoinSet<anyhow::Result<()>>,
     pub handing_over: Option<DrainReply>,
-    /// Why supervision ended: a shutdown signal or a committed handover (`Ok`), or the error.
+    /// Whether supervision ended because the vault named another key (`liveness::Gate::replace`).
+    pub replaced: bool,
+    /// Why supervision ended: a shutdown signal, a committed handover or the vault naming another key
+    /// (`Ok`), or the error.
     pub outcome: anyhow::Result<()>,
 }
 
-/// Runs the node's tasks until one stops or panics, a shutdown signal arrives, or an approved
-/// handover stops sequencing, and records why in `outcome`. A handover stops the node only once
-/// the sequencer has admitted its final checkpoint; refused by the checkpoint gate, the node
-/// answers the predecessor's refusal and goes on sequencing.
+/// Runs the node's tasks until one stops or panics, a shutdown signal arrives, an approved handover
+/// stops sequencing, or the liveness rule's `replacement` shows the vault naming another key, and
+/// records why in `outcome` and `replaced`. A handover stops the node only once the sequencer has
+/// admitted its final checkpoint; refused by the checkpoint gate, the node answers the predecessor's
+/// refusal and goes on sequencing.
 /// Error cases:
 /// - in `outcome`: a supervised task stops or panics, the sequencer stops, the sequencer is gone
 ///   when a handover asks it to, or the shutdown signal cannot be installed
 pub(super) async fn supervise(
     mut supervised: Supervised,
     routing: &mut Routing,
-    drain_rx: &mut mpsc::Receiver<DrainReply>,
-    handover_stop_tx: &mpsc::Sender<Request>,
+    (drain_rx, handover_stop_tx): (&mut mpsc::Receiver<DrainReply>, &mpsc::Sender<Request>),
+    mut replacement: Option<watch::Receiver<bool>>,
 ) -> Supervised {
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -95,6 +99,11 @@ pub(super) async fn supervise(
                 }
             },
             signal = &mut shutdown => Some(signal.map(|()| info!("shutting down"))),
+            () = replaced(&mut replacement) => {
+                supervised.replaced = true;
+                warn!("the vault names another key than this enclave's: ending this run");
+                Some(Ok(()))
+            }
         };
         match stop {
             Some(outcome) => {
@@ -104,6 +113,17 @@ pub(super) async fn supervise(
             None => info!("the handover was refused: going on sequencing"),
         }
     }
+}
+
+/// Resolves once `replacement` shows the vault naming another key; never without one, or once its
+/// sender is gone.
+async fn replaced(replacement: &mut Option<watch::Receiver<bool>>) {
+    if let Some(replacement) = replacement
+        && replacement.wait_for(|replaced| *replaced).await.is_ok()
+    {
+        return;
+    }
+    std::future::pending().await
 }
 
 /// Stops sequencing for a handover through the sequencer, which writes the final checkpoint the
@@ -222,6 +242,50 @@ pub(super) fn sequencer_outcome(joined: Result<anyhow::Result<()>, oneshot::erro
 mod tests {
     use super::*;
     use crate::tee::keys::Head;
+
+    /// The vault naming another key ends supervision cleanly, marked as a replacement, while the tasks
+    /// run on; a node the rule does not run on, with no replacement to watch, is not ended by it.
+    #[tokio::test]
+    async fn a_vault_naming_another_key_ends_supervision_as_a_replacement() {
+        let mut cfg = crate::test_support::dev_config();
+        cfg.alerts.outbox.dir = crate::test_support::scratch_dir("supervise-replaced").join("alerts");
+        let metrics = std::sync::Arc::new(crate::metrics::Metrics::new());
+        let (_layer, alerts) = crate::alerts::channel(crate::alerts::Routes::default(), metrics);
+        let mut routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await.unwrap();
+        let (_drain_tx, mut drain_rx) = mpsc::channel(1);
+        let (stop_tx, _stop_rx) = mpsc::channel(1);
+        let supervised = || {
+            let (mut tasks, mut history_task) = (JoinSet::new(), JoinSet::new());
+            tasks.spawn(std::future::pending::<TaskResult>());
+            history_task.spawn(std::future::pending());
+            Supervised {
+                tasks,
+                history_task,
+                history_finished: false,
+                sequencer: Worker::start(std::future::pending(), None).unwrap(),
+                handover: JoinSet::new(),
+                handing_over: None,
+                replaced: false,
+                outcome: Ok(()),
+            }
+        };
+        let gate = crate::liveness::Gate::closed();
+        {
+            let watching = supervise(supervised(), &mut routing, (&mut drain_rx, &stop_tx), Some(gate.replacement()));
+            tokio::pin!(watching);
+            if let Ok(early) = timeout(std::time::Duration::from_millis(200), &mut watching).await {
+                panic!("supervision ended while the vault named this key: {:?}", early.outcome);
+            }
+            gate.replace();
+            let ended = timeout(std::time::Duration::from_secs(5), watching).await.expect("the replacement ended it");
+            assert!(ended.replaced && ended.outcome.is_ok(), "{:?}", ended.outcome);
+        }
+
+        let unwatched = supervise(supervised(), &mut routing, (&mut drain_rx, &stop_tx), None);
+        if let Ok(ended) = timeout(std::time::Duration::from_millis(200), unwatched).await {
+            panic!("supervision with no replacement to watch ended: {:?}", ended.outcome);
+        }
+    }
 
     #[tokio::test]
     async fn the_handover_tasks_outcome_is_the_nodes() {

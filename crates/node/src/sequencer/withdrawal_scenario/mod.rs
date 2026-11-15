@@ -1,14 +1,14 @@
 //! Opt-in local Anvil scenario over `node::run`; no production configuration enables these hooks.
 
-mod client;
+pub(crate) mod client;
 mod exit;
 mod flows;
 mod guardian;
 mod handover;
 mod keys;
-mod node;
-mod rpc;
-mod services;
+pub(crate) mod node;
+pub(crate) mod rpc;
+pub(crate) mod services;
 mod standby;
 
 use std::fs::OpenOptions;
@@ -25,16 +25,16 @@ use tokio::time::timeout;
 
 use crate::config::{CustodyProvider, FeedProvider, NodeConfig, TeeProvider};
 
-const CHILD_CONFIG: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_CONFIG";
-const CHILD_FEED: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_FEED";
-const CHILD_ALERTS: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_ALERTS";
+pub(crate) const CHILD_CONFIG: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_CONFIG";
+pub(crate) const CHILD_FEED: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_FEED";
+pub(crate) const CHILD_ALERTS: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_ALERTS";
 /// `new-key`, or `predecessor=<host:port>`: the child's one-off choice of keys.
 const CHILD_KEYS: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_KEYS";
 /// The child's stand-in launch measurement, as `--mock-launch-digest` takes it.
-const CHILD_LAUNCH_DIGEST: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_LAUNCH_DIGEST";
+pub(crate) const CHILD_LAUNCH_DIGEST: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_LAUNCH_DIGEST";
 /// Runs the child as the standby for the operator in effect, following its stream.
 const CHILD_STANDBY: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_STANDBY";
-const CHILD_TEST: &str = "sequencer::withdrawal_scenario::node_child";
+pub(crate) const CHILD_TEST: &str = "sequencer::withdrawal_scenario::node_child";
 
 #[derive(Deserialize, Serialize)]
 struct Barrier {
@@ -134,7 +134,8 @@ async fn node_child() -> anyhow::Result<()> {
         let telemetry = crate::telemetry::init_telemetry(&cfg, |name| {
             (name == "ENGINE_ALERTS_CRITICAL_URL").then(|| alerts.clone())
         })?;
-        return crate::standby::run(cfg, telemetry, crate::KeyStart::default()).await;
+        // On the heap: the node's future is large, and this test thread's stack is not.
+        return Box::pin(crate::standby::run(cfg, telemetry, crate::KeyStart::default())).await;
     }
     ensure!(
         cfg.tee.provider == TeeProvider::Mock && (cfg.tee.use_published_mock_key || cfg.tee.sealing.is_some()),
@@ -167,5 +168,6 @@ async fn node_child() -> anyhow::Result<()> {
     ))?);
     let telemetry =
         crate::telemetry::init_telemetry(&cfg, |name| (name == "ENGINE_ALERTS_CRITICAL_URL").then(|| alerts.clone()))?;
-    crate::node::run_with_cpu(cfg, telemetry, None, keys).await
+    // On the heap: the node's future is large, and this test thread's stack is not.
+    Box::pin(crate::node::run_with_cpu(cfg, telemetry, None, keys)).await
 }

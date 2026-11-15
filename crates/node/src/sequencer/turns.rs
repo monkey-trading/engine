@@ -101,7 +101,7 @@ impl Sequencer {
         if turn.admin_key != self.operator.address || taken {
             return Ok(());
         }
-        if self.frozen() {
+        if self.stopped() {
             return Ok(());
         }
         if self.turn_sealing.as_mut().is_some_and(|sealing| !sealing.sealed_for(turn.turn, ts)) {
@@ -114,7 +114,7 @@ impl Sequencer {
             other => warn!(turn = turn.turn, "the engine did not record this node's turn: {other:?}"),
         }
         match self.engine.last_seq() {
-            Some(seq) if !events.is_empty() => self.log_check_taken(seq, &events),
+            Some(seq) if !events.is_empty() => self.log_check_taken(seq),
             _ => Ok(()),
         }
     }

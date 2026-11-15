@@ -284,9 +284,11 @@ impl Sequencer {
                     info!(seq = self.next_seq, ?cmd, "votes govern, so this waits for a passed vote");
                     continue;
                 }
-                let Some(events) = self.stamp(ts, cmd)? else {
-                    // Frozen mid-request: the remaining required commands wait for a restart, like
-                    // stamps the clock refuses.
+                let Some(events) = self.stamp(ts, cmd.clone())? else {
+                    // Frozen or fenced mid-request: this command and the rest wait, like stamps the
+                    // clock refuses, for the fence to open or a restart.
+                    self.required.push((what, std::iter::once(cmd).chain(cmds).collect()));
+                    self.required.extend(queued);
                     return Ok(());
                 };
                 stamped = true;

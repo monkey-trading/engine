@@ -18,7 +18,7 @@ use crate::sequencer::withdrawal_scenario::{
 use crate::test_support::ANVIL_CONFIG;
 use crate::test_support::LOADED_WAIT;
 
-pub(super) struct ChildProcess(Child);
+pub(crate) struct ChildProcess(Child);
 
 pub(super) struct Node {
     child: Option<ChildProcess>,

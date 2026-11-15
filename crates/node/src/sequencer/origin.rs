@@ -112,9 +112,18 @@ impl Origin {
         Ok(())
     }
 
+    /// Adds `signer` to the attested authority: the standby key a promotion made the vault's signer,
+    /// which the promotion, not a checkpoint, authenticates (#595).
+    pub(crate) fn admit(&mut self, signer: AccountId) {
+        if let Some(attested) = self.attested.as_mut() {
+            attested.insert(signer);
+        }
+    }
+
     /// Pins `signer`, one of the attested signers a live replica accepted, as this replay's recovery
     /// authority, as if recovery had replayed under it: sound only once no command follows the last
-    /// checkpoint, which the caller requires `signer` to have signed.
+    /// checkpoint, which the caller requires `signer` to have signed, or a promotion that `admit`ted
+    /// it authenticates the commands after it.
     /// Error cases:
     /// - the replay accepted no attested set naming `signer`, ran in another deployment, or a
     ///   command lacks authenticated coverage

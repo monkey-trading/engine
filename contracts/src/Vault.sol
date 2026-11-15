@@ -133,6 +133,11 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     uint64 public signerEpoch = 1;
     /// @notice Historical signer identity for replay; custody still requires the current signer.
     mapping(uint64 epoch => address signer) public signerAtEpoch;
+    /// @notice The block time of the last signer change: deployment, `setSigner` or `promoteSigner`.
+    /// The schedule's count of missed heartbeats starts again at its slot.
+    uint64 public signerSince;
+    /// @notice Every address ever installed as the signer, which the schedule never promotes.
+    mapping(address signer => bool installed) public wasSigner;
     /// @notice The enclave release that holds the signer's key: `keccak256` of its 48-byte SEV-SNP
     /// launch measurement and the SHA-256 of the config file it runs with. A node opens its sealed
     /// keys only while it is this release, and hands them only to this release, so no code or config
@@ -346,6 +351,8 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         usdc = usdc_;
         checkpointSigner = checkpointSigner_;
         signerAtEpoch[signerEpoch] = checkpointSigner_;
+        signerSince = uint64(block.timestamp);
+        wasSigner[checkpointSigner_] = true;
         governance = governance_;
         guardian = guardian_;
         monkey = new MonkeyToken(2 * PERIODS_PER_HALVING * periodBudget_);
@@ -376,10 +383,29 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
             address enclave = registry.operatorEnclave();
             if (signer != enclave) revert NotTheRegisteredEnclave(signer, enclave);
         }
+        _install(signer);
+    }
+
+    /// @notice Installs `signer`, the standby key of the member the registry's schedule promotes, in
+    /// a new signer epoch, as `setSigner` does but with no timelock: only the schedule calls it, and
+    /// only for a vouched standby key. Refused once the exit has started and while the guardian has
+    /// retired the signer.
+    function promoteSigner(address signer) external {
+        if (msg.sender != address(registry.schedule())) revert UnauthorizedSchedule();
+        if (exitStartedAt != 0) revert ExitActive();
+        if (checkpointSigner == address(0)) revert NoSigner();
+        if (signer == address(0)) revert ZeroAddress();
+        _install(signer);
+    }
+
+    /// @dev Makes `signer` the signer of the next epoch.
+    function _install(address signer) private {
         address previous = checkpointSigner;
         checkpointSigner = signer;
         signerEpoch++;
         signerAtEpoch[signerEpoch] = signer;
+        signerSince = uint64(block.timestamp);
+        wasSigner[signer] = true;
         emit SignerChanged(previous, signer, signerEpoch);
     }
 

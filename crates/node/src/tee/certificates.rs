@@ -7,7 +7,10 @@
 //!
 //! The store holds the newest certificate, with the domain, the TLS key, and the ACME directory it
 //! was issued for, and serves it only when all three are the ones asked for. A new issue replaces it,
-//! since the enclave holds one TLS key at a time.
+//! since the enclave serves one TLS key at a time. A member's standby key (#595) has its own TLS key,
+//! whose certificate it obtains while it follows and keeps in a store of its own kind (`standby`), so
+//! the turn's certificate stays for the member's next turn; a promotion copies it into this store
+//! before the promoted member serves.
 //!
 //! The host holds the file and bounds what each thing it can do with it achieves:
 //! - deleting it makes the next start order a certificate, under the CA's rate limits;
@@ -30,6 +33,12 @@ use crate::tee::sealing::Sealer;
 /// The certificates' file, whose tag opens neither the keys nor the secrets as a certificate.
 const CERTIFICATES: Kind =
     Kind { tag: b"engine.sealed-certificates.v1", suffix: "certificates.json", what: "certificates" };
+/// The standby key's certificate's file, which opens as no other kind.
+const STANDBY_CERTIFICATES: Kind = Kind {
+    tag: b"engine.sealed-standby-certificates.v1",
+    suffix: "standby-certificates.json",
+    what: "standby certificates",
+};
 
 /// A certificate chain a CA issued, and what for.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,7 +69,21 @@ impl CertificateStore {
     /// - the file cannot be read, is not a sealed file this build reads, names another release, or
     ///   does not decrypt to a certificate
     pub fn open(dir: &Path, sealer: Box<dyn Sealer>, config_sha256: [u8; 32]) -> anyhow::Result<Self> {
-        let file = ReleaseFile::new(dir, CERTIFICATES, sealer, config_sha256)?;
+        Self::open_kind(dir, CERTIFICATES, sealer, config_sha256)
+    }
+
+    /// The store for this release's standby key's certificate in `dir` (see `open`).
+    /// Error cases:
+    /// - as for `open`
+    pub fn open_standby(dir: &Path, sealer: Box<dyn Sealer>, config_sha256: [u8; 32]) -> anyhow::Result<Self> {
+        Self::open_kind(dir, STANDBY_CERTIFICATES, sealer, config_sha256)
+    }
+
+    /// The store of `kind` for this release in `dir` (see `open`).
+    /// Error cases:
+    /// - as for `open`
+    fn open_kind(dir: &Path, kind: Kind, sealer: Box<dyn Sealer>, config_sha256: [u8; 32]) -> anyhow::Result<Self> {
+        let file = ReleaseFile::new(dir, kind, sealer, config_sha256)?;
         let stored = file
             .read()?
             .map(|plaintext| serde_json::from_slice(&plaintext).context("the sealed certificate does not parse"))
@@ -118,6 +141,24 @@ impl CertificateStore {
         self.file.write(serde_json::to_vec(&certificate).context("encoding the certificate")?)?;
         *stored = Some(certificate);
         Ok(())
+    }
+
+    /// Seals the chain `standby` holds for `domain`, the TLS key whose DER SubjectPublicKeyInfo hashes
+    /// to `tls_key_sha256`, and `directory_url`, in place of the stored one: a promotion's, so the
+    /// promoted member serves its standby key's certificate from its first answer. Returns whether
+    /// `standby` held one.
+    /// Error cases:
+    /// - the standby chain does not decode, or the file cannot be written and synced
+    pub fn adopt(
+        &self,
+        standby: &CertificateStore,
+        domain: &str,
+        tls_key_sha256: &[u8; 32],
+        directory_url: &str,
+    ) -> anyhow::Result<bool> {
+        let Some(chain) = standby.chain_for(domain, tls_key_sha256, directory_url)? else { return Ok(false) };
+        self.replace(domain, tls_key_sha256, directory_url, &chain)?;
+        Ok(true)
     }
 
     /// The release the store is sealed to, for tests to find its file.

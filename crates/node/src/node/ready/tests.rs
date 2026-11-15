@@ -51,6 +51,7 @@ async fn a_member_starts_from_its_replica_without_reading_the_chain_or_sampling_
         generations: BTreeMap::new(),
         sample: sample_around(&crate::clock::SystemClock),
         certificates: None,
+        promoted: None,
     };
     let moved = Moved { after: last, entries: 0, bytes: 0 };
     let marks = Default::default();
@@ -348,3 +349,5 @@ fn setup(cfg: &NodeConfig, data: &std::path::Path, anchor: &crate::log::Checkpoi
         registry_operator: None,
     }
 }
+
+mod promoted;

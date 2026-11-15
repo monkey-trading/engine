@@ -1,7 +1,9 @@
 //! The operator a follower follows. Under rotation it is the candidate the registry names in effect,
 //! at the API hostname its candidacy registered (the read the ACME hostname check uses), and every
-//! frame verifies against the vault's signer at finality: neither the host nor the config names it.
-//! Without rotation it is the one `[standby]` names.
+//! frame verifies against the vault's signer at the latest block: neither the host nor the config
+//! names it, and a promotion's standby key, which signs from the promotion's block, is followed at
+//! once, so the promoted member's followers can confirm its log (#595). Without rotation it is the
+//! one `[standby]` names.
 
 use std::collections::BTreeSet;
 
@@ -48,7 +50,7 @@ impl Followed {
 }
 
 /// The operator in effect: with `operator.rotation_enabled`, the registry's candidate in effect at
-/// `https://` its registered API hostname, with the vault's signer at finality and the archive
+/// `https://` its registered API hostname, with the vault's signer at the latest block and the archive
 /// settings of `[tee.sealing.handover]`; otherwise the one `[standby]` names.
 /// Error cases:
 /// - rotation is off and there is no `[standby]`
@@ -61,7 +63,7 @@ pub(crate) async fn resolve(cfg: &NodeConfig, vault: &impl CheckpointChain) -> a
     }
     let hostname = vault.operator_hostname().await.context("reading the operator in effect's API hostname")?;
     ensure!(!hostname.is_empty(), "the registry records no API hostname for the operator in effect");
-    let enclave = vault.state(View::Finalized).await.context("reading the vault's signer at finality")?.signer;
+    let enclave = vault.state(View::Latest).await.context("reading the vault's signer")?.signer;
     let handover = cfg.tee.sealing.as_ref().and_then(|sealing| sealing.handover.as_ref());
     Ok(Followed {
         origin: format!("https://{hostname}"),

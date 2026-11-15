@@ -68,6 +68,25 @@ impl SubmissionStore {
         Ok(store)
     }
 
+    /// The signer this start's own work is signed by: work by any other needs historical authority.
+    pub fn signer(&self) -> AccountId {
+        self.signer
+    }
+
+    /// Removes the reservation of work that can never be accepted, an outgoing key's a promotion moved
+    /// past: the next reservation finds its relayer's nonce free before it takes one.
+    /// Error cases:
+    /// - the file cannot be removed, or its directory synced
+    pub fn retire(&self) -> anyhow::Result<()> {
+        match fs::remove_file(&self.path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error).context("retiring the checkpoint submission reservation"),
+        }
+        let dir = self.path.parent().context("the reservation has no directory")?;
+        File::open(dir).and_then(|dir| dir.sync_all()).context("syncing the reservation's directory")
+    }
+
     /// Remembers independently authenticated identities, never host-provided signer names.
     /// Error cases:
     /// - the authority registry is poisoned or an accepted identity conflicts

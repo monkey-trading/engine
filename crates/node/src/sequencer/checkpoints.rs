@@ -165,16 +165,6 @@ impl Gate {
     }
 }
 
-/// A handover's stop at the checkpoint gate: admitted with a final checkpoint written, or refused
-/// with the gate's reason while it would withhold one.
-pub(crate) enum HandoverGate {
-    /// A checkpoint of the last command exists to hand over.
-    Admitted,
-    /// The gate withholds or defers the final checkpoint; a `HandoverRefused` error, so the node
-    /// refuses the handover and goes on sequencing.
-    Refused(anyhow::Error),
-}
-
 impl Sequencer {
     /// The state root of the engine a test's recovered sequencer holds.
     #[cfg(test)]
@@ -297,6 +287,9 @@ impl Sequencer {
             && let Some(gate) = &mut self.gate
             && gate.holds_back(seq, self.clock.instant())?
         {
+            return Ok(());
+        }
+        if self.checkpoint_waits_for(seq, paced) {
             return Ok(());
         }
         // The worker finalizes one checkpoint at a time, so a full queue defers the next checkpoint
@@ -426,6 +419,9 @@ impl Sequencer {
         if health != Some(crate::checkpoints::Health::Healthy) {
             return Ok(());
         }
+        // A checkpoint withheld for unvalidated collateral, as a promoted start's first is until its
+        // poster's first report, is attempted again once collateral reconciles, not at the cadence.
+        let retry = gate.withheld.contains(&Withheld::Collateral);
         if let Some(work) = self.snapshot_work.iter().find(|work| Some(work.checkpoint.seq) == posted) {
             self.snapshot_base =
                 Some(crate::snapshot::RecoveryBase::Checkpoint { checkpoint: work.checkpoint.clone() });
@@ -433,7 +429,7 @@ impl Sequencer {
             self.snapshot_work.retain(|work| Some(work.checkpoint.seq) > posted);
         }
         if gate.halted {
-            return Ok(());
+            return self.retry_withheld(retry);
         }
         let needs_authorization = ProtocolVersion::LATEST.supports_deposit_finality()
             && gate.pending.iter().any(|(_, account, _, nonce)| {
@@ -474,11 +470,19 @@ impl Sequencer {
             self.legacy_approvals.signed(account, amount, nonce);
             self.legacy_authorizations.remove(&(account, nonce));
         }
-        Ok(())
+        self.retry_withheld(retry)
+    }
+
+    /// Attempts a paced checkpoint again when `retry`: one was withheld for a cause that has cleared.
+    /// Error cases:
+    /// - as `paced_checkpoint`
+    fn retry_withheld(&mut self, retry: bool) -> anyhow::Result<()> {
+        if retry { self.paced_checkpoint() } else { Ok(()) }
     }
 }
 
 mod handover;
+pub(crate) use handover::HandoverGate;
 mod hold_back;
 pub(super) mod publish;
 

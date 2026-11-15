@@ -184,14 +184,15 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
     let nonce = usedNoncesCall { account: trader.address(), nonce: outstanding.nonce };
     ensure!(chain.read(chain.vault, nonce).await?, "the authorization the old release signed did not pay");
 
-    // The old release's sealed file is still on the disk, but the upgrade superseded it.
-    ensure!(sealed.exists(), "the old release's sealed file is gone");
+    // The old release deleted its sealed copy once the upgrade confirmed the handover, and the vault
+    // no longer names it either.
+    ensure!(!sealed.exists(), "the old release kept its sealed copy of the keys it handed over");
     old.spawn(Keys::Sealed)?;
     ensure!(!old.exited().await?.success(), "the superseded release opened its keys");
     ensure!(old.logged("refusing this release's keys")?, "the refusal did not say why");
 
-    // Governance names the old release again, in a new generation: its sealed copy still does not
-    // open, and it takes the keys afresh from the running upgrade, which exits.
+    // Governance names the old release again, in a new generation: it has no sealed copy to open,
+    // and it takes the keys afresh from the running upgrade, which exits.
     let again = chain.set_current_release(&RELEASE, old.release.config_sha256).await?;
     old.spawn(Keys::Sealed)?;
     ensure!(!old.exited().await?.success(), "a release named again reopened its old sealed copy");
@@ -201,7 +202,7 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
     old.ready().await?;
     ensure!(old.attested_signer().await? == signer, "the release named again attests another signer");
     let resealed = file_for(&data.join("keys"), &old.release, again);
-    ensure!(sealed.exists() && resealed.exists(), "the keys were not sealed afresh beside the old copy");
+    ensure!(!sealed.exists() && resealed.exists(), "the keys were not sealed afresh in the new generation alone");
 
     // A second copy of the release unseals the same keys, and each sequences a history of its own.
     // Both take the same signed withdrawal, unless the conflict has already stopped one; the vault

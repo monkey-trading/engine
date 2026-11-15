@@ -3,11 +3,13 @@
 use std::fs;
 
 use engine_core::command::Command;
+use engine_core::eip712::B256;
 
 use crate::authenticated::Store;
 use crate::history::PageQuery;
 use crate::log::catalog_head::CatalogDomain;
 use crate::node::paired_tests::harness::{Node, configuration};
+use crate::sequencer::Request;
 use crate::snapshot;
 use crate::test_support::{TRADER, deposit, logged_history, withdraw};
 
@@ -43,6 +45,10 @@ async fn paired_node_drains_exact_checkpoint_seals_and_restarts_with_complete_hi
     drop(reader);
     let node = Node::start(cfg).await.unwrap();
     assert!(node.snapshot_seq.is_some(), "real Node startup must select paired fast recovery");
+    // The base's authenticated prefix is retained, so a member's status at its seq has one to match.
+    let (reply, prefix) = tokio::sync::oneshot::channel();
+    node.tx.send(Request::PrefixAt { seq: payload.checkpoint.seq, reply }).await.unwrap();
+    assert_eq!(prefix.await.unwrap(), Some(B256::from(payload.context.command_prefix)), "the base's prefix");
     let (cfg, reader) = node.stop_after_signing("after-paired-restart").await;
     assert_eq!(reader.page(query()).await.unwrap().unwrap().events, logged_history(&cfg.node.log_dir, TRADER));
 }

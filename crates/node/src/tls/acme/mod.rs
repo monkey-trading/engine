@@ -86,9 +86,10 @@ pub struct CertificateTask<H = AcmeHttp> {
 }
 
 /// The sealed keys the task keeps its account in, the member's own store it keeps its certificate
-/// in, and the trusted time a restored certificate's age is read at.
+/// in, and the trusted time a restored certificate's age is read at. A standby key's task (#595) keeps
+/// no account: its keys are sealed apart from the turn's, so each of its starts registers one.
 pub struct Sealed {
-    pub store: Arc<KeyStore>,
+    pub store: Option<Arc<KeyStore>>,
     pub certificates: Arc<CertificateStore>,
     pub trusted: TrustedClock,
 }
@@ -372,7 +373,8 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
     /// - the sealed credentials do not parse
     async fn register(&self, use_sealed: bool) -> anyhow::Result<Account> {
         let builder = Account::builder_with_http(Box::new(self.http.clone()));
-        let sealed = self.sealed.as_ref().filter(|_| use_sealed).and_then(|sealed| sealed.store.keys().acme_account);
+        let store = self.sealed.as_ref().and_then(|sealed| sealed.store.as_ref());
+        let sealed = store.filter(|_| use_sealed).and_then(|store| store.keys().acme_account);
         if let Some(sealed) = sealed.filter(|account| account.directory_url == self.directory_url) {
             let credentials: AccountCredentials =
                 serde_json::from_value(sealed.credentials).context("the sealed ACME credentials do not parse")?;
@@ -410,8 +412,8 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
     /// Seals `change` into the keys, if they are sealed. A failure keeps what this process holds,
     /// with a Warning: the next start registers again.
     fn seal(&self, what: &str, change: impl FnOnce(&mut crate::tee::keys::KeySet)) {
-        let Some(sealed) = &self.sealed else { return };
-        if let Err(e) = sealed.store.update(change) {
+        let Some(store) = self.sealed.as_ref().and_then(|sealed| sealed.store.as_ref()) else { return };
+        if let Err(e) = store.update(change) {
             warn!(alert = "sealed_keys_write_failed", "{what} is not sealed, so a restart obtains it again: {e:#}");
         }
     }

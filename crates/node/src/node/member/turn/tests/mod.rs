@@ -153,14 +153,14 @@ async fn a_member_that_handed_its_turn_over_follows_on_a_sample_below_the_bounda
     fixture.seal_own_turn();
     fixture.time.set(AFTER - 5_000);
     let mut member = fixture.member();
-    member.handed_over(Handed { generation: Some(GENERATION), reached: Some(AFTER + 1) });
+    member.handed_over(Handed { generation: Some(GENERATION), reached: Some(AFTER + 1), head: None });
     tokio::select! {
         _ = member.until_turn() => panic!("the member came back to the turn it handed over"),
         () = operator.wait_for_connections(1) => {}
     }
 
     let mut member = fixture.member();
-    member.handed_over(Handed { generation: Some(GENERATION), reached: None });
+    member.handed_over(Handed { generation: Some(GENERATION), reached: None, head: None });
     let followed = operator.connections() + 1;
     tokio::select! {
         _ = member.until_turn() => panic!("the member held the generation it handed over"),
@@ -201,6 +201,8 @@ async fn a_member_pages_no_follow_failure_while_the_turns_member_comes_up() {
 }
 
 mod episodes;
+mod moved;
+mod moving;
 mod stop;
 mod take;
 
@@ -300,6 +302,8 @@ impl Fixture {
 #[derive(Clone, Default)]
 struct Registry {
     hostname: Arc<Mutex<String>>,
+    /// The signer the latest view names while a change of signer is not final, if any.
+    moving: Arc<Mutex<Option<AccountId>>>,
     own: Arc<Mutex<Option<[u8; 32]>>>,
     source: Arc<Mutex<Option<HandoverSource>>>,
     prior: Arc<Mutex<Option<HandoverSource>>>,
@@ -347,10 +351,11 @@ impl Registry {
 }
 
 impl CheckpointChain for Registry {
-    async fn state(&self, _view: View) -> anyhow::Result<VaultState> {
+    async fn state(&self, view: View) -> anyhow::Result<VaultState> {
+        let moving = self.moving.lock().unwrap().filter(|_| matches!(view, View::Latest));
         Ok(VaultState {
             height: 1,
-            signer: AccountId(EnclaveKey::test_key().address()),
+            signer: moving.unwrap_or(AccountId(EnclaveKey::test_key().address())),
             checkpoint: None,
             balance: Fixed::ZERO,
             deposits: 0,

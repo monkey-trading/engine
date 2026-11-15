@@ -63,7 +63,7 @@ impl LogCheck {
         };
         let sealed = store.keys().log_check;
         let verified = sealed.filter(|head| {
-            replayed.checkpoint_roots.get(&head.seq) == Some(&head.root)
+            replayed.checkpoint_root(head.seq) == Some(head.root)
                 && replayed.prefix_ring.prefix_at(head.seq).is_none_or(|link| link == head.link)
         });
         match (sealed, verified) {
@@ -86,7 +86,7 @@ impl LogCheck {
     }
 
     /// Notes the command at `seq` with the `events` it gave (see `Takings::command` and `retarget`).
-    fn command(&mut self, seq: u64, events: &[Event]) {
+    pub(super) fn command(&mut self, seq: u64, events: &[Event]) {
         self.takings.command(seq, events);
         self.retarget();
     }
@@ -256,13 +256,12 @@ impl Sequencer {
         self.refresh_log_check();
     }
 
-    /// Records this node's `TurnTaken` at `seq`, and, when its verified head does not reach the
-    /// boundary, writes the checkpoint the check verifies, held back while the last is not final, unless
-    /// the schedule already wrote one at `seq`.
+    /// After this node's `TurnTaken` at `seq`, which its stamp recorded, writes the checkpoint the
+    /// check verifies when its verified head does not reach the boundary, held back while the last is
+    /// not final, unless the schedule already wrote one at `seq`.
     /// Error cases:
     /// - the checkpoint cannot be written
-    pub(super) fn log_check_taken(&mut self, seq: u64, events: &[Event]) -> anyhow::Result<()> {
-        self.log_check.command(seq, events);
+    pub(super) fn log_check_taken(&mut self, seq: u64) -> anyhow::Result<()> {
         if self.log_check.outstanding(&self.engine).is_some() {
             info!(seq, "the log check at this boundary is outstanding: checkpointing for a member to verify");
             self.paced_checkpoint()?;

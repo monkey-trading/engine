@@ -145,6 +145,7 @@ mod fake_ca;
 mod http;
 mod orders;
 mod sealed;
+mod standby;
 
 // ── Helpers ──
 

@@ -3,11 +3,14 @@
 //! take once the tries run out.
 
 use anyhow::Context;
-use tracing::{error, warn};
+use engine_core::types::AccountId;
+use tracing::{debug, error, info, warn};
 
 use super::STINT;
-use crate::checkpoints::ScheduledTurn;
+use crate::checkpoints::{CheckpointChain, Observation, ScheduledTurn, View};
 use crate::handover::tail::{CopyChanged, TailMiss, TailRefused};
+use crate::node::member::turn::episodes::Step;
+use crate::node::member::{Member, PostedHead, Sampling};
 use crate::standby::{Followed, Follower, ReplicaRefused};
 
 /// Pages what one source's failed tail handover for `turn` says: a predecessor that did not find the
@@ -122,4 +125,72 @@ pub(super) fn damaged(e: &anyhow::Error) -> bool {
     e.downcast_ref::<ReplicaRefused>().is_some()
         || e.downcast_ref::<CopyChanged>().is_some()
         || e.downcast_ref::<SourcesFailed>().is_some_and(|failed| failed.damaged)
+}
+
+/// A replica's build ended by a shutdown signal (`Member::wait`).
+#[derive(Debug)]
+pub(in crate::node::member) struct Stopping;
+
+impl std::fmt::Display for Stopping {
+    /// What happened.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the node is shutting down")
+    }
+}
+
+impl std::error::Error for Stopping {}
+
+impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
+    /// The operator in effect, when the vault names another enclave than `enclave`, the one followed:
+    /// read after each stint, so a promotion moves the copy to the promoted key at once. `None` when
+    /// it is the same one, or the read fails.
+    pub(super) async fn moved_on(&self, enclave: AccountId) -> Option<Followed> {
+        match crate::standby::resolve(self.cfg, &self.vault).await {
+            Ok(resolved) if resolved.enclave != enclave => {
+                info!(from = %enclave, to = %resolved.enclave, operator = %resolved.origin,
+                    "the vault names another operator: following it");
+                Some(resolved)
+            }
+            Ok(_) => None,
+            Err(e) => {
+                debug!("reading the operator in effect after a stint failed: {e:#}");
+                None
+            }
+        }
+    }
+
+    /// Whether the vault's latest signer is another key than the one `at`, its finalized view, names:
+    /// a change of signer in flight, as a promotion makes, whose keys the finalized turn no longer
+    /// names once it is final, so no member reopens or takes that turn's keys meanwhile.
+    /// Error cases:
+    /// - the read fails
+    pub(super) async fn signer_moving(&self, at: &Observation) -> anyhow::Result<bool> {
+        Ok(self.vault.observe(View::Latest, &[]).await?.state.signer != at.state.signer)
+    }
+
+    /// Keeps the latest posted log head as one the replica holds, once it has passed it; a head the
+    /// copy contradicts pages Critical `operator_log_rollback`, and one that cannot be read, or that
+    /// the replica passed without keeping, pages `member_follow_blocked` once it persists.
+    pub(super) async fn pin_posted(&mut self, follower: &mut Follower) {
+        let Some(heads) = &self.heads else { return };
+        let head = match heads.posted_head().await {
+            Ok(head) => head,
+            Err(e) => return self.episodes.blocked(Step::ReadPostedHead, &e.context("reading the posted log head")),
+        };
+        self.episodes.cleared(Step::ReadPostedHead);
+        let Some(head) = head else { return self.episodes.posted_held() };
+        match follower.pin(head.seq, head.link) {
+            Some(true) => {
+                self.episodes.posted_held();
+                self.episodes.cleared(Step::PinPostedHead);
+            }
+            Some(false) => self.episodes.posted_contradicts(head.seq, head.link.to_string()),
+            None if follower.replica().last_seq().is_some_and(|last| last >= head.seq) => {
+                let e =
+                    anyhow::anyhow!("the replica passed the posted log head at seq {} without keeping it", head.seq);
+                self.episodes.blocked(Step::PinPostedHead, &e);
+            }
+            None => {}
+        }
+    }
 }

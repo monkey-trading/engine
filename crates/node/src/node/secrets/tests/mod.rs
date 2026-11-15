@@ -305,7 +305,7 @@ async fn a_start_that_fails_with_a_chain_key_named_takes_a_delivery_and_exits() 
     let cfg = startable("startup-failed");
     sealed_earlier(&cfg, full(1, "a"));
     let (address, tool) = (listen(&cfg), config("startup-failed-tool"));
-    let running = crate::node::run_with_cpu(cfg, telemetry(), None, start());
+    let running = Box::pin(crate::node::run_with_cpu(cfg, telemetry(), None, start()));
     tokio::pin!(running);
     assert!(timeout(HOLDING, &mut running).await.is_err(), "the node stopped, and the listener with it");
     assert_eq!(logs.critical("secrets_start_failed"), 1);
@@ -321,7 +321,7 @@ async fn a_start_that_fails_with_a_chain_key_named_takes_a_delivery_and_exits() 
 async fn a_start_that_fails_with_a_chain_key_named_exits_after_its_hold() {
     let cfg = startable("startup-failed-hold");
     sealed_earlier(&cfg, full(1, "a"));
-    let outcome = timeout(WAIT, crate::node::run_with_cpu(cfg, telemetry(), None, start())).await;
+    let outcome = timeout(WAIT, Box::pin(crate::node::run_with_cpu(cfg, telemetry(), None, start()))).await;
     assert!(outcome.expect("the node held past its bound").is_err());
 }
 
@@ -338,7 +338,7 @@ async fn a_start_that_fails_with_no_key_in_its_chain_read_ends_at_once() {
         )
         .unwrap(),
     );
-    let outcome = timeout(UNDER_THE_HOLD, crate::node::run_with_cpu(cfg, telemetry(), None, start())).await;
+    let outcome = timeout(UNDER_THE_HOLD, Box::pin(crate::node::run_with_cpu(cfg, telemetry(), None, start()))).await;
     assert!(outcome.expect("the node held").is_err());
     assert_eq!(logs.critical("secrets_start_failed"), 0);
 }
@@ -381,7 +381,7 @@ async fn a_start_that_fails_after_its_chain_read_ends_at_once() {
         )
         .unwrap(),
     );
-    let outcome = timeout(UNDER_THE_HOLD, crate::node::run_with_cpu(cfg, telemetry(), None, start())).await;
+    let outcome = timeout(UNDER_THE_HOLD, Box::pin(crate::node::run_with_cpu(cfg, telemetry(), None, start()))).await;
     assert!(outcome.expect("the node held").is_err());
     assert_eq!(logs.critical("secrets_start_failed"), 0);
     assert_eq!(logs.count("the node read the chain"), 1, "the failure must come after the read");

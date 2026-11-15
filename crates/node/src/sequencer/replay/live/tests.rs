@@ -2,6 +2,8 @@
 
 use super::*;
 
+use alloy::primitives::U256;
+
 use engine_core::command::Command;
 use tokio::sync::watch;
 
@@ -104,7 +106,224 @@ async fn a_restart_and_a_replicas_start_retain_every_prefix_the_sequencer_retain
     }
 }
 
+/// A replica asked to keep a seq holds its command link and checkpoint once the retention windows have
+/// passed them, as a promoted member's restart checks its promotion's fixed head and checkpoint;
+/// without the request the link is gone.
+#[tokio::test]
+async fn a_kept_seq_outlives_the_retained_links() {
+    let dir = scratch_dir("live-replica-kept");
+    sequence_ticks(&dir, 40).await;
+    let entries = log_entries(&dir);
+    let checkpoint = entries
+        .iter()
+        .find_map(|entry| match entry {
+            LogEntry::Checkpoint(checkpoint) => Some(checkpoint.seq),
+            _ => None,
+        })
+        .expect("an early checkpoint");
+    let (mut kept, mut plain, mut early) = (live_empty(), live_empty(), live_empty());
+    kept.keep(3);
+    kept.keep(checkpoint);
+    for entry in &entries {
+        kept.apply(entry).unwrap();
+        plain.apply(entry).unwrap();
+        if early.last_seq() < Some(3) {
+            early.apply(entry).unwrap();
+        }
+    }
+    // The windows move on past seq 3 and the checkpoint, as a long log's replay leaves them.
+    plain.forget_retained();
+    kept.forget_retained();
+    assert_eq!(plain.link_at(3), None, "seq 3 is past the retained links");
+    assert_eq!(kept.link_at(3).map(|held| held.link), Some(early.head_link()), "the kept link is seq 3's");
+    assert!(kept.checkpoint_at(checkpoint).is_some(), "the kept checkpoint");
+}
+
 // ── Helpers ──
+
+/// An empty replica of the test sequencer's log.
+fn live_empty() -> LiveReplay {
+    LiveReplay::new(DOMAIN, [signer()].into())
+}
+
+/// A replica built before the vault named a key refuses that key's seals and checkpoints until it
+/// admits the key, as a follower does once the vault's latest signer is a promotion's standby key.
+#[tokio::test]
+async fn a_replica_takes_a_key_the_vault_named_after_its_build_only_once_it_admits_it() {
+    let dir = scratch_dir("live-replica-admit");
+    sequence_ticks(&dir, 6).await;
+    let other = AccountId(EnclaveKey::generate().address());
+    let fed = |admitted: bool| {
+        let mut replica = LiveReplay::new(DOMAIN, [other].into());
+        if admitted {
+            replica.admit(signer());
+        }
+        log_entries(&dir).iter().try_for_each(|entry| replica.apply(entry))
+    };
+    let refused = fed(false).unwrap_err();
+    assert!(format!("{refused:#}").contains("verified attestation"), "{refused:#}");
+    fed(true).unwrap();
+}
+
+/// A promoted start retires what the outgoing key signed past the vault's latest checkpoint: the
+/// anchor's work stays for reconciliation, no outstanding checkpoint of another key is resumed, and the
+/// next checkpoint extends the anchor; a restart resumes the promoted key's own outstanding ones, whose
+/// chain starts at the anchor and would break any other start's.
+#[test]
+fn a_promoted_anchor_keeps_only_the_promoted_keys_outstanding_checkpoints() {
+    let (outgoing, promoted) = (signer(), AccountId(EnclaveKey::generate().address()));
+    let parent = |seq: u64| CheckpointParent { has_checkpoint: true, seq, root: B256::from(U256::from(seq)) };
+    let work = |seq: u64, signer: AccountId, after: u64| crate::checkpoints::Work {
+        checkpoint: crate::log::Checkpoint {
+            parent: Some(parent(after)),
+            seq,
+            root: format!("{:#x}", B256::from(U256::from(seq))),
+            signature: String::new(),
+            signer: format!("0x{}", hex::encode(signer.0)),
+            domain: None,
+            deferred_withdrawals: true,
+        },
+        liabilities: engine_core::Fixed::ZERO,
+        deposits: 0,
+        authorized: engine_core::Fixed::ZERO,
+        coverage: crate::checkpoints::DepositCoverage::Historical,
+        distributed: engine_core::UsdcUnits(0),
+    };
+    let replica = || {
+        let mut replica = LiveReplay::new(DOMAIN, [outgoing].into());
+        // The anchor and an unaccepted checkpoint by the outgoing key; two by the promoted key after it.
+        for (seq, signer, after) in [(10, outgoing, 5), (20, outgoing, 10), (30, promoted, 10), (40, promoted, 30)] {
+            replica.checkpoints.insert(seq, (work(seq, signer, after), 0));
+        }
+        replica
+    };
+    let mut first = replica();
+    first.anchor(parent(10), Some(promoted)).unwrap();
+    let seqs =
+        |replica: &LiveReplay| replica.replay.recovery_work.iter().map(|work| work.checkpoint.seq).collect::<Vec<_>>();
+    assert_eq!(first.replay.recovery_anchor_work.as_ref().map(|work| work.checkpoint.seq), Some(10));
+    assert_eq!(seqs(&first), vec![30, 40], "the outgoing key's unaccepted checkpoint is retired");
+    let refused = replica().anchor(parent(10), None).unwrap_err();
+    assert!(format!("{refused:#}").contains("divergent"), "unfiltered, the two chains break: {refused:#}");
+    let mut fresh = LiveReplay::new(DOMAIN, [outgoing].into());
+    fresh.checkpoints.insert(10, (work(10, outgoing, 5), 0));
+    fresh.checkpoints.insert(20, (work(20, outgoing, 10), 0));
+    fresh.anchor(parent(10), Some(promoted)).unwrap();
+    assert!(seqs(&fresh).is_empty(), "a first start resumes nothing the outgoing key signed");
+}
+
+/// A copy holding every command through the vault's checkpoint but not its entry, as a promotion
+/// leaves one when no member received it (#595), anchors there from its own state: at the start's
+/// tip, at a command sealed by another key, and in a full recovery's replay; only with the vault's root.
+#[tokio::test]
+async fn a_copy_lacking_the_vaults_checkpoint_entry_anchors_at_its_own_state_with_the_vaults_root() {
+    let dir = scratch_dir("live-replica-unheld");
+    sequence_ticks(&dir, 7).await;
+    let entries = log_entries(&dir);
+    // The copy ends at the command of the vault's latest checkpoint, without the entry.
+    let at = entries.iter().rposition(|entry| matches!(entry, LogEntry::Checkpoint(_))).unwrap();
+    let LogEntry::Checkpoint(accepted) = entries[at].clone() else { unreachable!() };
+    let copy = &entries[..at];
+    let vault = |root: B256| CheckpointParent { has_checkpoint: true, seq: accepted.seq, root };
+    let (root, other) = (accepted.root.parse::<B256>().unwrap(), B256::repeat_byte(0xee));
+    let fed = || {
+        let mut replica = LiveReplay::new(DOMAIN, [signer()].into());
+        copy.iter().for_each(|entry| replica.apply(entry).unwrap());
+        replica
+    };
+    // At the start's tip.
+    let mut tip = fed();
+    assert!(tip.checkpoint_at(accepted.seq).is_none());
+    tip.capture_tip();
+    let held = tip.checkpoint_at(accepted.seq).cloned().expect("captured at the tip");
+    assert_eq!(
+        (held.seq, held.root.as_str(), held.signer.as_str()),
+        (accepted.seq, accepted.root.as_str(), accepted.signer.as_str())
+    );
+    // Kept past the retention window when the start keeps its seq, as a checkpoint entry is.
+    let mut kept = fed();
+    kept.keep(accepted.seq);
+    kept.capture_tip();
+    assert!(kept.kept_checkpoints.contains_key(&accepted.seq), "a kept seq's captured checkpoint is kept");
+    let mut anchored = fed();
+    anchored.capture_tip();
+    anchored.anchor(vault(root), None).unwrap();
+    assert_eq!(anchored.replay.recovery_anchor.as_ref().map(|cp| cp.seq), Some(accepted.seq));
+    // Its root is the finished replay's checkpoint root there, as an entry's would be.
+    assert_eq!(anchored.replay.finish().checkpoint_root(accepted.seq), Some(root));
+    let refused = tip.anchor(vault(other), None).unwrap_err();
+    assert!(format!("{refused:#}").contains("not among the checkpoints"), "another root: {refused:#}");
+    // At a command sealed by another key, captured before it applies.
+    let mut next = fed();
+    let LogEntry::Command(mut command) = copy.last().cloned().unwrap() else { panic!("the copy ends at a command") };
+    command.seal.as_mut().expect("sealed").signer = AccountId([0x77; 20]);
+    let _ = next.apply(&LogEntry::Command(command));
+    assert!(next.checkpoint_at(accepted.seq).is_some(), "another key's command captures the tip first");
+    // In a full recovery's replay anchored at the vault's checkpoint.
+    let recovered = |root: B256| {
+        let mut replay = Replay::with_recovery(Some(DOMAIN), Some(signer()), vault(root));
+        copy.iter().for_each(|entry| replay.apply(entry).unwrap());
+        replay.finish()
+    };
+    let replayed = recovered(root);
+    assert_eq!(replayed.checkpoint_root(accepted.seq), Some(root));
+    assert_eq!(replayed.recovery_anchor_work.map(|work| work.checkpoint.seq), Some(accepted.seq));
+    let refused = recovered(other);
+    assert!(refused.recovery_anchor_work.is_none(), "another root anchors nothing");
+    assert_eq!(refused.checkpoint_root(accepted.seq), None, "nor counts as a checkpoint root");
+}
+
+/// A full recovery under a promoted key passes the checkpoints the outgoing key signed past the vault's
+/// latest: the vault never took them and never will, so they anchor and extend nothing, but only once
+/// a later key's command follows them. Without the history naming the outgoing key in an earlier epoch,
+/// such a checkpoint is refused at once.
+#[tokio::test]
+async fn a_recovery_under_a_promoted_key_passes_the_outgoing_keys_unaccepted_checkpoints() {
+    let dir = scratch_dir("replay-superseded");
+    sequence_ticks(&dir, 7).await;
+    let entries = log_entries(&dir);
+    let checkpoints: Vec<_> = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            LogEntry::Checkpoint(checkpoint) => Some(checkpoint.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(checkpoints.len() >= 2, "an accepted checkpoint and a later one");
+    let accepted = &checkpoints[0];
+    let (outgoing, promoted) = (signer(), AccountId(EnclaveKey::generate().address()));
+    let parent = CheckpointParent { has_checkpoint: true, seq: accepted.seq, root: accepted.root.parse().unwrap() };
+    let recovered = |epochs: BTreeMap<u64, AccountId>| {
+        let mut replay = Replay::with_recovery(Some(DOMAIN), Some(promoted), parent);
+        let authority = crate::checkpoints::AcceptedCheckpoint {
+            seq: accepted.seq,
+            root: accepted.root.clone(),
+            signer: outgoing,
+            signer_epoch: 1,
+        };
+        replay.set_authorities(crate::checkpoints::SignerHistory { checkpoints: vec![authority], epochs })?;
+        entries.iter().try_for_each(|entry| replay.apply(entry))?;
+        anyhow::Ok(replay)
+    };
+    let passed = recovered(BTreeMap::from([(1, outgoing), (2, promoted)])).unwrap();
+    assert!(passed.recovery_work.is_empty(), "the unaccepted checkpoints extend nothing");
+    // This log ends at the outgoing key's checkpoint, as a rotation leaves one: no promoted key's
+    // command follows it, so the recovery is refused.
+    let ended = passed.ensure_superseded_continued().unwrap_err();
+    assert!(format!("{ended:#}").contains("no later key's command follows it"), "{ended:#}");
+    // A promoted key's command after it, as a promotion's copy holds one, settles it.
+    let mut continued = recovered(BTreeMap::from([(1, outgoing), (2, promoted)])).unwrap();
+    let mut next = entries.iter().rev().find_map(|entry| match entry {
+        LogEntry::Command(command) => Some(command.clone()),
+        _ => None,
+    });
+    next.as_mut().and_then(|command| command.seal.as_mut()).expect("sealed").signer = promoted;
+    continued.before(&LogEntry::Command(next.unwrap()));
+    continued.ensure_superseded_continued().expect("a later key's command follows the checkpoint");
+    assert_eq!(passed.recovery_anchor.as_ref().map(|cp| cp.seq), Some(accepted.seq));
+    let refused = recovered(BTreeMap::from([(1, outgoing)])).err().expect("no later epoch names the promoted key");
+    assert!(format!("{refused:#}").contains("trusted recovery authority"), "{refused:#}");
+}
 
 /// `value` as JSON, to compare recovery facts that implement no equality.
 fn json<T: serde::Serialize>(value: &T) -> serde_json::Value {

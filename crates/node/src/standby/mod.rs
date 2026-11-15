@@ -196,7 +196,7 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
         copied.admit(operator.enclave);
         // The copy's last command is the resume point, so an error mid-stint never duplicates
         // appends: the next stint re-requests from it.
-        let followed = follow(&mut writer, &mut copied, cfg, &operator, STINT, None).await;
+        let followed = follow(&mut writer, &mut copied, cfg, &operator, STINT, None, None).await;
         // The stream itself worked: what it carried is another matter.
         match stint_action(&followed, rolled_back.is_some(), copied.confirmed()) {
             StintAction::FollowFailed => {

@@ -11,7 +11,7 @@
 //!   answers from the checkpoints its replica verified (`answer`).
 //!
 //! A check counts only from a release that sequenced none of the covered range, the commands after
-//! the last verified head, as the log's `TurnTaken` commands record (`Takings`). The verified head is
+//! the last verified head, as the log's `TurnTaken` commands and mirrored promotions record (`Takings`). The verified head is
 //! sealed with the keys, so a restart restores it once the recovered log holds that checkpoint, and an
 //! approved upgrade carries it to the next release; a host that restores an older copy only delays
 //! payouts. The check bounds how long a withheld branch can pay nothing: a day plus the switch. It does
@@ -25,6 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use engine_core::Engine;
 use engine_core::eip712::B256;
 use engine_core::event::Event;
+use engine_core::turns::TurnReason;
 use engine_core::types::{AccountId, Millis};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -160,19 +161,31 @@ pub(crate) fn applies(engine: &Engine) -> bool {
 }
 
 /// The log's `TurnTaken` commands: the candidate and release each names, by the seq it was sequenced
-/// at, from the first command the replay that collected them applied.
+/// at, from the first command the replay that collected them applied; and the candidate of each
+/// promotion the log mirrored, accepted or refused, by the seq of the mirror (#595).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Takings {
     by_seq: BTreeMap<u64, Taking>,
+    /// A promoted member sequences from its promotion, before the finalised mirror of it and its own
+    /// `TurnTaken`, which a failure before then never logs.
+    promoted: BTreeMap<u64, BTreeSet<AccountId>>,
     /// The first command seen: zero for a replay from genesis, past a snapshot's base for one from it.
     from: Option<u64>,
 }
 
 impl Takings {
     /// Notes the command at `seq` with the `events` it gave: a `TurnTaken` the engine accepted
-    /// records its candidate and release.
+    /// records its candidate and release, and a promotion's assignment, accepted or refused, its
+    /// candidate.
     pub(crate) fn command(&mut self, seq: u64, events: &[Event]) {
         self.from.get_or_insert(seq);
+        for event in events {
+            if let Event::TurnAssigned { reason: TurnReason::Promotion, candidate, .. }
+            | Event::TurnRefused { cause: TurnReason::Promotion, candidate, .. } = event
+            {
+                self.promoted.entry(seq).or_default().insert(*candidate);
+            }
+        }
         let taken = events.iter().find_map(|event| match event {
             Event::TurnTaken { candidate, release, .. } => Some(Taking { candidate: *candidate, release: *release }),
             _ => None,
@@ -196,7 +209,9 @@ impl Takings {
 
     /// Who sequenced the commands after `after`, the last verified head, through `through`, as
     /// `TurnTaken` records them: the latest one at or before the first of them, whose member sequenced
-    /// on from there, and each one after it. With no verified head, as before the first check or once
+    /// on from there, and each one after it; with the candidate of each promotion mirrored after that
+    /// latest one through `through`, whose member's commands may precede its mirror and its own
+    /// `TurnTaken`, if it ever logged one. With no verified head, as before the first check or once
     /// a host kept the sealed one from a start, the range is the holding of the latest `TurnTaken` at
     /// or before `through`: from genesis it would name every member that ever took a turn, and no
     /// check could count again. `None` when no `TurnTaken` these records hold names who sequenced the
@@ -208,16 +223,20 @@ impl Takings {
             None => self.by_seq.range(..=through).next_back().map_or(0, |(seq, _)| *seq),
         };
         let from = self.from?;
-        let in_office = self.by_seq.range(..=first).next_back().map(|(_, taking)| *taking);
-        if from > first || in_office.is_none() {
+        let (since, in_office) = self.by_seq.range(..=first).next_back().map(|(seq, taking)| (*seq, *taking))?;
+        if from > first {
             return None;
         }
-        let takings = in_office.into_iter().chain(self.by_seq.range(first..=through).map(|(_, taking)| *taking));
-        Some(takings.fold(Sequencers::default(), |mut sequencers, taking| {
+        let takings = std::iter::once(in_office).chain(self.by_seq.range(first..=through).map(|(_, taking)| *taking));
+        let mut sequencers = takings.fold(Sequencers::default(), |mut sequencers, taking| {
             sequencers.candidates.insert(taking.candidate);
             sequencers.releases.insert(taking.release);
             sequencers
-        }))
+        });
+        let after_in_office = (std::ops::Bound::Excluded(since), std::ops::Bound::Included(through));
+        let promoted = self.promoted.range(after_in_office).flat_map(|(_, candidates)| candidates);
+        sequencers.candidates.extend(promoted);
+        Some(sequencers)
     }
 
     /// Drops the records no range after `verified` needs: those before the latest at or before the
@@ -226,6 +245,7 @@ impl Takings {
         let first = verified.saturating_add(1);
         if let Some((&keep, _)) = self.by_seq.range(..=first).next_back() {
             self.by_seq = self.by_seq.split_off(&keep);
+            self.promoted = self.promoted.split_off(&keep.saturating_add(1));
             self.from = self.from.max(Some(keep));
         }
     }
