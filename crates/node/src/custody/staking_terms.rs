@@ -16,8 +16,8 @@ use anyhow::{Context, bail, ensure};
 use engine_core::staking::StakingConfig;
 use futures_util::future::BoxFuture;
 
-use super::{ContractQuorum, Quorum, VaultReader, read_final};
 use crate::config::CustodySection;
+use crate::custody::{ContractQuorum, Quorum, VaultReader, read_final};
 
 // The staking contract's immutables, as `contracts/src/Staking.sol` declares them.
 sol! {
@@ -54,6 +54,9 @@ impl fmt::Display for Refused {
 #[derive(Clone)]
 pub struct StakingTerms {
     read: Arc<dyn Fn() -> BoxFuture<'static, anyhow::Result<ContractTerms>> + Send + Sync>,
+    /// One read at a time: a quorum's provider admission is shared state that each read begins by
+    /// resetting, so overlapping reads would leave each other's providers unadmitted.
+    gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl StakingTerms {
@@ -75,11 +78,11 @@ impl StakingTerms {
     }
 
     /// A reader that calls `read` for each check.
-    fn new<F>(read: impl Fn() -> F + Send + Sync + 'static) -> Self
+    pub(super) fn new<F>(read: impl Fn() -> F + Send + Sync + 'static) -> Self
     where
         F: Future<Output = anyhow::Result<ContractTerms>> + Send + 'static,
     {
-        Self { read: Arc::new(move || Box::pin(read())) }
+        Self { read: Arc::new(move || Box::pin(read())), gate: Arc::default() }
     }
 
     /// A reader that answers `terms`, or fails when `None`.
@@ -103,7 +106,10 @@ impl StakingTerms {
     /// - the contract cannot be read
     /// - the epoch or cooldown differs from the contract's (see `check`)
     pub async fn check(&self, config: &StakingConfig) -> Result<(), Refused> {
-        let terms = (self.read)().await.map_err(Refused::Unread)?;
+        let terms = {
+            let _one_at_a_time = self.gate.lock().await;
+            (self.read)().await.map_err(Refused::Unread)?
+        };
         check(terms, config).map_err(Refused::Differs)
     }
 }

@@ -331,6 +331,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   stops sequencing, which commits only once the sequencer admits its final checkpoint; then ending
   history, and waiting for a successor to confirm a handover
 - `src/node/tests.rs` — startup, history recovery, and incomplete-genesis tests
+- `src/node/preflight/staking_tests.rs` — startup refuses a log or genesis staking config the contract
+  does not hold, and an unreadable contract
 - `src/node/preflight/unscanned.rs` — unprovable prelaunch anchors refuse writable startup before changing log or history
 - `src/node/preflight/tests/origin.rs` — integrity refusal preserves absent, corrupt, and WAL-backed history
 - `src/telemetry.rs` — the log subscriber, which feeds alert lines to the router, and the metrics
@@ -1129,8 +1131,6 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   quorum, and the check of `InitStaking` against them that the admin route and startup make; its tests,
   `src/custody/tests/staking_terms.rs`, cover the read, the comparison, the chain it must serve and an
   unreadable contract
-- `src/node/preflight/staking_tests.rs` — startup refuses a log or genesis staking config the contract
-  does not hold, and an unreadable contract
 - `src/custody/evm.rs` — the deposit watcher: the chain and token check, range reads from blocks
   proven to lead to the tagged final block, the completeness check, and stall alerts
 - `src/custody/evm/lifecycle.rs` — confirmed receipt reconciliation, principal finality and the replayed scan frontier

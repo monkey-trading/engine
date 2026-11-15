@@ -879,7 +879,7 @@ Run from the repo root:
 - Launch values dev scenario: `./scripts/dev-launch-values.sh` (the same requirements; deploys the
   vault, its token, the timelock and the staking contract at the values in
   `ops/runbooks/production-deployment.toml`, and posts `InitEmissions` and `InitStaking` to a node whose
-  checks read the contracts through the custody quorum: the decided values apply, a budget, epoch or
+  checks read the contracts (the staking one through the custody quorum): the decided values apply, a budget, epoch or
   cooldown that differs is refused and stays out of the log)
 - Deliver secrets into an enclave as the operator: `cargo run -p engine-node -- admin --config <config>
   --key-file <key> deliver-secrets --to <host:port> --release <release.toml> --secrets-file <file>`

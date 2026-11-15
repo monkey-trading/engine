@@ -89,6 +89,8 @@ pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
 /// - the engine would reject a genesis command
 /// - with checkpoints configured, the vault's MONKEY cap cannot be read, or it was derived from
 ///   another emission period budget than the one the log records
+/// - with a staking contract configured, it cannot be read, or the log or genesis records another
+///   epoch or cooldown than it holds (see `preflight::staking_preflight`)
 /// - any supervised task stops or panics, or the sequencer cannot drain in time, none of them, once
 ///   the first read of the chain has set `chain_read`, a delivered key's doing
 #[allow(clippy::too_many_arguments)]
@@ -179,9 +181,13 @@ async fn serve_node(
         (None, None) => None,
     };
 
-    // Nor may the log or the genesis carry a staking config the staking contract does not hold.
+    // Nor may the log or the genesis carry a staking config the staking contract does not hold: a
+    // member's start made that check before it connected (`ready`), and reads nothing now.
     let staking_terms = crate::custody::StakingTerms::connect(&cfg.custody)?;
-    preflight::staking_preflight(staking_terms.as_ref(), log.staking_config(), cfg.genesis.staking.as_ref()).await?;
+    if ready.is_none() {
+        preflight::staking_preflight(staking_terms.as_ref(), log.staking_config(), cfg.genesis.staking.as_ref())
+            .await?;
+    }
 
     let vault: AccountId = cfg.custody.vault.parse().context("custody.vault")?;
     let client_auth = cfg.client_auth()?;

@@ -2,7 +2,6 @@
 //! against the vault's MONKEY cap, and a staking config's epoch and cooldown against the staking
 //! contract's. A refused command stays out of the log.
 
-use super::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -10,6 +9,7 @@ use engine_core::Fixed;
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::staking::StakingConfig;
 
+use super::*;
 use crate::custody::StakingTerms;
 
 #[tokio::test]

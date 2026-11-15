@@ -138,3 +138,30 @@ async fn a_reader_refuses_a_difference_and_an_unreadable_contract_apart() {
     assert!(matches!(StakingTerms::fixed(None).check(&init(DAY_MS, 28 * DAY_MS)).await, Err(Refused::Unread(_))));
     assert!(unread.to_string().contains("cannot read the staking contract"), "{unread}");
 }
+
+#[tokio::test]
+async fn checks_that_overlap_read_the_contract_one_at_a_time() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let (running, peak) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let terms = {
+        let (running, peak) = (running.clone(), peak.clone());
+        StakingTerms::new(move || {
+            let (running, peak) = (running.clone(), peak.clone());
+            async move {
+                peak.fetch_max(running.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                for _ in 0..8 {
+                    tokio::task::yield_now().await;
+                }
+                running.fetch_sub(1, Ordering::SeqCst);
+                Ok(CONTRACT)
+            }
+        })
+    };
+    let config = init(DAY_MS, 28 * DAY_MS);
+    for checked in futures_util::future::join_all((0..4).map(|_| terms.check(&config))).await {
+        checked.unwrap();
+    }
+    assert_eq!(peak.load(Ordering::SeqCst), 1, "two reads were in flight together");
+}
