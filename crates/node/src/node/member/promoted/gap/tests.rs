@@ -8,6 +8,7 @@ use engine_core::types::AccountId;
 
 use super::*;
 use crate::log::{CheckpointDomain, LogEntry};
+use crate::standby_key::chain::Promotion;
 use crate::tee::EnclaveKey;
 use crate::test_support::{SEGMENT_COMMANDS, TestSequencer, copy_dir, log_entries, scratch_dir};
 
@@ -261,6 +262,87 @@ async fn a_gap_of_more_than_sixty_four_pages_is_taken_whole() {
         from_members(&Paging(entries.clone()), &[member], &mut follower, Instant::now() + BUDGET).await;
     assert!(refused.is_none());
     assert_eq!(taken as usize, entries.len(), "every page was taken");
+}
+
+/// Answers busy for its first asks, as a donor does while still reading for questions the fetch dropped,
+/// then gives the log.
+struct Busy {
+    log: Vec<(Offset, LogEntry)>,
+    busy_for: std::sync::atomic::AtomicU32,
+}
+
+impl Asking for Busy {
+    async fn ask(&self, endpoint: &str, request: &Request) -> anyhow::Result<Reply> {
+        use std::sync::atomic::Ordering;
+        if self.busy_for.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1)).is_ok() {
+            return Ok(Reply::Refused { reason: "busy answering entries and vouches: ask again".into() });
+        }
+        Paging(self.log.clone()).ask(endpoint, request).await
+    }
+}
+
+fn one_member() -> SetMember {
+    SetMember {
+        candidate: AccountId([1; 20]),
+        endpoint: "busy:1".into(),
+        standby: None,
+        admin_key: AccountId([1; 20]),
+        held: false,
+    }
+}
+
+/// A donor that answers busy is asked again shortly rather than read as out of entries, and one that stays
+/// busy ends the fetch after a bounded wait.
+#[tokio::test]
+async fn a_busy_donor_is_asked_again_and_a_donor_that_stays_busy_ends_the_fetch() {
+    let (full, empty) = (scratch_dir("gap-busy-full"), scratch_dir("gap-busy-empty"));
+    ticks(&full, 6).await;
+    let log = with_offsets(&full);
+    tokio::time::pause();
+    let started = Instant::now();
+    let busy = Busy { log: log.clone(), busy_for: 3.into() };
+    let (taken, refused) = from_members(&busy, &[one_member()], &mut open(&empty), started + BUDGET).await;
+    assert!(taken as usize == log.len() && refused.is_none(), "taken {taken}, refused {refused:?}");
+    assert!(started.elapsed() >= BUSY_WAIT * 3, "the fetch waited between asks: {:?}", started.elapsed());
+    let started = Instant::now();
+    let stuck = Busy { log, busy_for: u32::MAX.into() };
+    let (taken, _) =
+        from_members(&stuck, &[one_member()], &mut open(&scratch_dir("gap-busy-stuck")), started + BUDGET).await;
+    assert_eq!(taken, 0);
+    assert!(started.elapsed() <= BUSY_WAIT * (BUSY_RETRIES + 1), "{:?}", started.elapsed());
+}
+
+/// A gap longer than the replica retains keeps the prefixes the promotion fixed: the head's link is still
+/// there once the copy is far past it.
+#[tokio::test]
+async fn a_long_gap_leaves_the_promotions_fixed_head_in_the_replica() {
+    let full = scratch_dir("gap-keep-full");
+    ticks(&full, 300).await;
+    let log = with_offsets(&full);
+    let promotion = Promotion {
+        turn: 1,
+        position: 0,
+        signer_epoch: 2,
+        generation: 1,
+        head_seq: 5,
+        head_link: Default::default(),
+        checkpoint_seq: 0,
+        checkpoint_root: Default::default(),
+        at: 0,
+        block: 0,
+    };
+    let member = one_member();
+    for kept in [true, false] {
+        let mut follower = open(&scratch_dir(&format!("gap-keep-{kept}")));
+        if kept {
+            keep_fixed(&mut follower, &promotion);
+        }
+        let asking = Busy { log: log.clone(), busy_for: 0.into() };
+        let (taken, _) =
+            from_members(&asking, std::slice::from_ref(&member), &mut follower, Instant::now() + BUDGET).await;
+        assert!(taken as usize == log.len(), "the whole log was taken");
+        assert_eq!(follower.replica().link_at(5).is_some(), kept, "kept {kept}");
+    }
 }
 
 // ── Helpers ──

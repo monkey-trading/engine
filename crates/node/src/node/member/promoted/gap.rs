@@ -27,6 +27,10 @@ use crate::standby_key::chain::Promotion;
 pub(super) const BUDGET: Duration = Duration::from_secs(60);
 /// How long one member gets to answer a round.
 const ASK: Duration = Duration::from_secs(5);
+/// How long a round waits before asking again when a member answered busy, and how many such waits in a row
+/// the fetch makes: a donor still finishing questions the member dropped frees its places soon.
+const BUSY_WAIT: Duration = Duration::from_millis(250);
+const BUSY_RETRIES: u32 = 20;
 
 /// A source of the gap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -60,6 +64,7 @@ pub(super) async fn fetch(
     operator: Option<&crate::standby::Followed>,
     (deadline, refused): (Instant, &BTreeSet<Source>),
 ) -> Option<Source> {
+    keep_fixed(follower, promotion);
     let mut members = match tokio::time::timeout_at(deadline, standby.turn_members()).await {
         Ok(Ok(members)) => members,
         Ok(Err(e)) => {
@@ -109,6 +114,16 @@ pub(super) async fn fetch(
     None
 }
 
+/// Keeps the replica's links and checkpoints at the prefixes `promotion` fixed through the fetch: a long
+/// gap takes the copy past the replica's retention windows, which would drop them before the start checks
+/// them (`missing`).
+pub(super) fn keep_fixed(follower: &mut Follower, promotion: &Promotion) {
+    [promotion.head_seq, promotion.checkpoint_seq]
+        .into_iter()
+        .filter(|seq| *seq > 0)
+        .for_each(|seq| follower.keep(seq));
+}
+
 /// Takes what `members` hold past the copy: each round asks every member at once, each within `ASK`
 /// and all before `deadline`, and takes the first answer that extends the copy;
 /// rounds go on while one does. Returns how many entries the copy took, and the member whose entries
@@ -119,7 +134,7 @@ pub(super) async fn from_members(
     follower: &mut Follower,
     deadline: Instant,
 ) -> (u64, Option<AccountId>) {
-    let mut taken = 0;
+    let (mut taken, mut waited) = (0, 0);
     // Rounds go on while one extends the copy and the deadline allows: a whole log is many pages.
     loop {
         // From the copy's last entry, past its tip's command when a page ended among the entries
@@ -138,11 +153,12 @@ pub(super) async fn from_members(
                     (member, tokio::time::timeout_at(by, asking.ask(&member.endpoint, request)).await)
                 })
                 .collect();
-        let mut progressed = false;
+        let (mut progressed, mut busy) = (false, false);
         while let Some((member, answer)) = answers.next().await {
             let entries = match answer {
                 Ok(Ok(Reply::Entries { entries })) if !entries.is_empty() => entries,
                 Ok(Ok(other)) => {
+                    busy |= matches!(&other, Reply::Refused { reason } if reason.contains("busy"));
                     info!(member = %member.candidate, ?after, "the member has no entries past it: {}", describe(&other));
                     continue;
                 }
@@ -181,7 +197,17 @@ pub(super) async fn from_members(
                 }
             }
         }
-        if !progressed || Instant::now() >= deadline {
+        if progressed {
+            waited = 0;
+        } else if busy && waited < BUSY_RETRIES && Instant::now() < deadline {
+            // A donor busy with questions this fetch dropped is not out of entries: ask again shortly.
+            waited += 1;
+            tokio::time::sleep(BUSY_WAIT).await;
+            continue;
+        } else {
+            return (taken, None);
+        }
+        if Instant::now() >= deadline {
             return (taken, None);
         }
     }

@@ -145,6 +145,12 @@ impl Follower {
         }
     }
 
+    /// Keeps the replica's link and checkpoint at `seq` past its retention windows once taken (see
+    /// `LiveReplay::keep`).
+    pub(crate) fn keep(&mut self, seq: u64) {
+        self.replica.keep(seq);
+    }
+
     /// The replica.
     pub(crate) fn replica(&self) -> &LiveReplay {
         &self.replica

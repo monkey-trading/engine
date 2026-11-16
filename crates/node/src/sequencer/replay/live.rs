@@ -19,7 +19,7 @@ use crate::stats::Stats;
 /// among them for a start from the replica, which otherwise recovers from the log on disk.
 const RETAINED_CHECKPOINTS: usize = 4096;
 /// How many of the latest commands' cumulative prefixes a replica retains.
-pub(crate) const RETAINED_LINKS: usize = 1 << 16;
+pub(crate) const RETAINED_LINKS: usize = if cfg!(test) { 256 } else { 1 << 16 };
 
 /// A command's cumulative command-prefix digest, its sequenced time, and the key that sealed it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
