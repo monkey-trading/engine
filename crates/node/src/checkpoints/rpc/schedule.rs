@@ -1,6 +1,8 @@
 //! The daily turn the vault's registry's schedule names at a time, read at a finalized block, as
 //! `contracts/src/OperatorSchedule.sol` declares it.
 
+use std::collections::BTreeSet;
+
 use alloy::eips::BlockId;
 use alloy::primitives::Address;
 use alloy::sol;
@@ -10,6 +12,10 @@ use engine_core::types::{AccountId, Millis};
 
 use crate::checkpoints::rpc::{candidateOfCall, registryCall};
 use crate::checkpoints::{CheckpointRpc, HandoverSource, Observation, ScheduledTurn, View};
+use crate::standby_key::chain::assignmentOfCall;
+
+/// The reason a turn's draw records, as `OperatorSchedule.DRAWN` declares it.
+const DRAWN: u8 = 0;
 
 sol! {
     function schedule() external view returns (address);
@@ -32,7 +38,6 @@ sol! {
         returns (uint64 epoch, uint64 effectiveAt, address[] memory candidates, uint256[] memory weights);
     function memberAt(uint32 setId, bytes32 seed, uint64 turn, uint16 position) external view returns (address);
     function MAX_DRAW_POSITIONS() external view returns (uint16);
-    function heldTurn(uint64 turn, address candidate) external view returns (bool);
 }
 
 impl CheckpointRpc {
@@ -137,34 +142,39 @@ impl CheckpointRpc {
         Ok(sources)
     }
 
-    /// See `CheckpointChain::held_turns`: one read per turn and candidate, over the turns since the last
-    /// verified head's, which each check that counts moves on.
+    /// See `CheckpointChain::reassigned`: a read of each turn's latest assignment, and, of a turn whose
+    /// latest is not its draw, of each assignment up to it, over the turns since the last verified
+    /// head's, which each check that counts moves on.
     /// Error cases:
     /// - the vault follows no registry, or a call or its decoding fails
-    pub(super) async fn read_held_turns(
-        &self,
-        turns: std::ops::Range<u64>,
-        candidates: &std::collections::BTreeSet<AccountId>,
-    ) -> anyhow::Result<bool> {
+    pub(super) async fn read_reassigned(&self, turns: std::ops::Range<u64>) -> anyhow::Result<BTreeSet<AccountId>> {
         let block = BlockId::latest();
         let vault = Address::from(self.domain.vault.0);
         let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), block).await?)?;
         ensure!(!registry.is_zero(), "the vault follows no operator registry");
         let schedule =
             scheduleCall::abi_decode_returns(&self.call(registry, scheduleCall {}.abi_encode(), block).await?)?;
+        let mut reassigned = BTreeSet::new();
         if schedule.is_zero() {
-            return Ok(false);
+            return Ok(reassigned);
         }
         for turn in turns {
-            for candidate in candidates {
-                let call = heldTurnCall { turn, candidate: Address::from(candidate.0) };
-                let raw = self.call(schedule, call.abi_encode(), block).await?;
-                if heldTurnCall::abi_decode_returns(&raw).context("decoding the schedule's assignment")? {
-                    return Ok(true);
+            let latest =
+                turnOfCall::abi_decode_returns(&self.call(schedule, turnOfCall { turn }.abi_encode(), block).await?)
+                    .context("decoding the schedule's turn")?;
+            if latest.reason == DRAWN {
+                continue;
+            }
+            for position in 0..=latest.position {
+                let raw = self.call(schedule, assignmentOfCall { turn, position }.abi_encode(), block).await?;
+                let assignment =
+                    assignmentOfCall::abi_decode_returns(&raw).context("decoding the schedule's assignment")?._0;
+                if assignment.reason != DRAWN && !assignment.candidate.is_zero() {
+                    reassigned.insert(AccountId(assignment.candidate.0.0));
                 }
             }
         }
-        Ok(false)
+        Ok(reassigned)
     }
 
     /// See `CheckpointChain::handover_source_at`.

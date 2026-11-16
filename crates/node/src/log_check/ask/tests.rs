@@ -90,11 +90,11 @@ async fn the_first_qualifying_member_is_asked_first_then_the_next_and_the_sequen
     assert_eq!(first_admitted(None, &[]).await, release_of(0xc));
 }
 
-/// A member the schedule assigned a turn the range spans, as a promotion whose mirror the log has yet to
-/// sequence does, may have sequenced part of the range: it is not asked, though its replica verified the
+/// A member the schedule promoted or skipped to in a turn the range spans, whose assignment the log has
+/// yet to mirror, may have sequenced part of the range: it is not asked, though its replica verified the
 /// checkpoint, and the next qualifying member is.
 #[tokio::test]
-async fn a_member_assigned_a_turn_the_range_spans_is_not_asked() {
+async fn a_member_promoted_or_skipped_to_in_a_turn_the_range_spans_is_not_asked() {
     assert_eq!(first_admitted(Some(head()), &[0xb]).await, release_of(0xc));
 }
 
@@ -148,11 +148,11 @@ async fn the_page_comes_due_during_a_round_that_outlasts_it() {
 // ── Helpers ──
 
 /// The schedule's order of one turn, read after `delay` at an observation whose signer epoch is 1,
-/// and the members it assigned a turn from the range's first on, as a promotion does.
+/// and the members it promoted or skipped to in a turn from the range's first on.
 struct Order {
     order: Vec<HandoverSource>,
     delay: Duration,
-    held: BTreeSet<AccountId>,
+    reassigned: BTreeSet<AccountId>,
 }
 
 impl CheckpointChain for Order {
@@ -195,23 +195,23 @@ impl CheckpointChain for Order {
         Ok(self.order.clone())
     }
 
-    async fn held_turns(&self, turns: std::ops::Range<u64>, candidates: &BTreeSet<AccountId>) -> anyhow::Result<bool> {
+    async fn reassigned(&self, turns: std::ops::Range<u64>) -> anyhow::Result<BTreeSet<AccountId>> {
         assert_eq!(turns, TURN - 1..TURN + 1, "the range's first turn through the turn due");
-        Ok(!self.held.is_disjoint(candidates))
+        Ok(self.reassigned.clone())
     }
 }
 
 /// The release whose verification A's asker gives the sequencer, the order being A, B, whose replica
 /// verified `b_head`, if any, and C, whose replica verified the checkpoint due, the schedule having
-/// assigned the members of `held` a turn the range spans.
-async fn first_admitted(b_head: Option<VerifiedHead>, held: &[u8]) -> B256 {
+/// promoted or skipped to the members of `reassigned` in a turn the range spans.
+async fn first_admitted(b_head: Option<VerifiedHead>, reassigned: &[u8]) -> B256 {
     let (b, b_endpoint) = following(0xb, b_head);
     let (c, c_endpoint) = following(0xc, Some(head()));
     let order = vec![member(0xa, "127.0.0.1:1"), member(0xb, &b_endpoint), member(0xc, &c_endpoint)];
     let (sequencer, mut requests) = mpsc::channel(4);
     let (due_tx, due_rx) = watch::channel(Some(due(AccountId([0xa; 20]), sequencers(&[0xa]))));
-    let held = held.iter().map(|byte| AccountId([*byte; 20])).collect();
-    let asker = slow_asker(order, Duration::ZERO, held, &sequencer, due_rx);
+    let reassigned = reassigned.iter().map(|byte| AccountId([*byte; 20])).collect();
+    let asker = slow_asker(order, Duration::ZERO, reassigned, &sequencer, due_rx);
     let taken = async {
         let Some(Request::LogChecked { head: checked, candidate, release, reply }) = requests.recv().await else {
             panic!("the asker gave the sequencer nothing");
@@ -251,18 +251,18 @@ fn asker(
     slow_asker(order, Duration::ZERO, BTreeSet::new(), sequencer, due)
 }
 
-/// `asker`, over a schedule that takes `delay` to read the order and assigned the members of `held` a
-/// turn the range spans.
+/// `asker`, over a schedule that takes `delay` to read the order and promoted or skipped to the members
+/// of `reassigned` in a turn the range spans.
 fn slow_asker(
     order: Vec<HandoverSource>,
     delay: Duration,
-    held: BTreeSet<AccountId>,
+    reassigned: BTreeSet<AccountId>,
     sequencer: &mpsc::Sender<Request>,
     due: watch::Receiver<Option<Due>>,
 ) -> Asker<Order> {
     let own = Platform { launch_digest: [0; 48], policy: 0, tcb: 0 };
     let trusted = crate::test_support::trusted(Arc::new(crate::clock::test_clock::TestClock::default()));
-    Asker::new(Order { order, delay, held }, sequencer, due, (domain(), TeeProvider::Mock, own), key(), trusted)
+    Asker::new(Order { order, delay, reassigned }, sequencer, due, (domain(), TeeProvider::Mock, own), key(), trusted)
 }
 
 /// The operator enclave's key, which signs its checkpoints and its questions.

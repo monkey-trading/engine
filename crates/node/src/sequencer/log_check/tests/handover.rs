@@ -14,9 +14,9 @@ fn a_start_after_a_handover_seals_its_check_only_while_the_gate_applies() {
     let mut node = Node::start("log-check-after-handover", &[other()]);
     node.approve(1);
     node.take_turn();
-    // A member the schedule assigned a turn of the range, as a promotion not yet mirrored, is no check.
+    // A member the schedule promoted or skipped to in a turn of the range, not yet mirrored, is no check.
     let carried = node.store.keys().log_check;
-    assert_eq!(handed_over(&mut node, "held", true), carried, "a member assigned a turn of the range checked it");
+    assert_eq!(handed_over(&mut node, "held", true), carried, "a member promoted in a turn of the range checked it");
     // Another member takes the keys and the log at the last checkpoint: its replay is the check.
     let handed = handed_over(&mut node, "gated", false);
     assert_eq!(handed.map(|head| head.seq), Some(node.last_checkpoint().seq));
@@ -38,9 +38,9 @@ fn a_promoted_start_seals_its_check_only_when_another_member_sequenced_the_range
     // The other member, promoted over this node's turn, replayed its log through the fixed checkpoint.
     let other_member = promoted(&node, other().admin_key, fixed, ("other", false));
     assert_eq!(other_member, Some(node.checkpoint_head(fixed)), "the promoted member's replay is the check");
-    // The same member, had the schedule assigned it a turn of the range, as an unmirrored promotion.
+    // The same member, had the schedule promoted it in a turn of the range, not yet mirrored.
     let held = promoted(&node, other().admin_key, fixed, ("held", true));
-    assert_eq!(held, None, "a member assigned a turn of the range checked it");
+    assert_eq!(held, None, "a member promoted in a turn of the range checked it");
     // This node's own member, promoted under another release, sequenced the range: its replay is none.
     let own = promoted(&node, node.member, fixed, ("own", false));
     assert_eq!(own, None, "the member that sequenced it checked itself");
@@ -90,7 +90,7 @@ fn a_promoted_start_checks_through_a_fixed_checkpoint_whose_entry_its_log_lacks(
 // ── Helpers ──
 
 /// The verified head the other member's promoted start under `operator` seals over `node`'s log once a
-/// promotion fixed its checkpoint at `checkpoint_seq`, the schedule having assigned it a turn of the
+/// promotion fixed its checkpoint at `checkpoint_seq`, the schedule having promoted it in a turn of the
 /// range if `held`.
 fn promoted(node: &Node, operator: AccountId, checkpoint_seq: u64, (name, held): (&str, bool)) -> Option<VerifiedHead> {
     let sealer = MockSealer { launch_digest: [0x47; 48] };
@@ -104,7 +104,7 @@ fn promoted(node: &Node, operator: AccountId, checkpoint_seq: u64, (name, held):
 }
 
 /// The verified head the other member's start seals once it takes `node`'s keys and its log ending at
-/// a checkpoint written now, the schedule having assigned it a turn of the range if `held`.
+/// a checkpoint written now, the schedule having promoted it in a turn of the range if `held`.
 fn handed_over(node: &mut Node, name: &str, held: bool) -> Option<VerifiedHead> {
     node.seq.checkpoint().unwrap();
     node.seq.flush().unwrap();

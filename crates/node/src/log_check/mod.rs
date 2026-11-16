@@ -64,9 +64,9 @@ pub(crate) struct Due {
 pub(crate) struct Sequencers {
     pub candidates: BTreeSet<AccountId>,
     pub releases: BTreeSet<B256>,
-    /// The turn the `TurnTaken` in office at the range's start took: a member the schedule assigned
-    /// this turn or a later one may have sequenced part of the range before the log mirrored it, so a
-    /// check counts only from one the schedule assigned none of them (`CheckpointChain::held_turns`).
+    /// The turn the `TurnTaken` in office at the range's start took: a member the schedule promoted or
+    /// skipped to in this turn or a later one may have sequenced part of the range before the log
+    /// mirrored it, so a check counts from none of them (`CheckpointChain::reassigned`).
     pub turns_from: u64,
 }
 
