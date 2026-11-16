@@ -77,8 +77,9 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     ) -> anyhow::Result<(Taken, Ready)> {
         let (sources, mut prepared) = self.prepare_take(turn).await?;
         // The reassignments the start's own log check counts, read with the rest: none after the confirmation.
-        let reassigned =
-            crate::node::log_check::read_reassigned(&self.vault, turn.turn, None, &[turn.candidate].into()).await?;
+        // The keys bring the last verified head only then, so the read cannot start at the range's in-office turn.
+        let own = [turn.candidate].into();
+        let reassigned = crate::node::log_check::read_reassigned(&self.vault, (turn.turn, None), None, &own).await?;
         let read = Ready::read(
             self.cfg,
             &self.start,

@@ -120,17 +120,20 @@ impl Sequencers {
     }
 }
 
-/// The schedule's assignments a start read before it connected, for its own check, over the turns near
-/// its own and other than the one that made the start (`own_check_read`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// The schedule's assignments a start read before it connected, for its own check, over the turns from
+/// `from` and other than the one that made the start (`own_check_read`).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Reassigned {
     pub assigned: Vec<Assigned>,
+    /// The first turn read.
+    pub from: u64,
 }
 
-/// As `own_check`, and counted only when the schedule `read` also shows no promotion or skip to one of
-/// `candidates`, this node's member, after the in-office assignment: its commands may precede the mirror
-/// the log has yet to hold, as a promotion within the finality window leaves it. Without a `read`, as
-/// for a start that read no schedule, the log's records alone decide.
+/// As `own_check`, and counted only when the schedule `read` covers the range's in-office turn and shows
+/// no promotion or skip to one of `candidates`, this node's member, after the in-office assignment: its
+/// commands may precede the mirror the log has yet to hold, as a promotion before the log stopped leaves
+/// it, however long ago. Without a `read`, as for a start that read no schedule, the log's records alone
+/// decide.
 pub(crate) fn own_check_read(
     previous: Option<VerifiedHead>,
     takings: &Takings,
@@ -142,13 +145,15 @@ pub(crate) fn own_check_read(
     let checked = own_check(previous, takings, holders, head, (release, candidates));
     let Some(read) = read.filter(|_| checked != previous) else { return checked };
     let sequenced = takings.sequenced(previous.map(|previous| previous.seq), head.seq);
-    // A reassignment in a turn that began after the range's last command sequenced none of it, and one
-    // in a turn before the read began is final and mirrored, so the log's records name it.
+    // A reassignment in a turn that began after the range's last command sequenced none of it. One in a
+    // turn before the read's first may have, unmirrored, for a stopped log mirrors nothing: a read that
+    // begins after the in-office turn cannot clear the range.
     let began = takings.began_by(head.seq);
     let assigned: Vec<Assigned> =
         read.assigned.iter().filter(|at| began.is_none_or(|began| at.turn <= began)).copied().collect();
+    let covered = |sequencers: &Sequencers| sequencers.in_office.0 >= read.from;
     match sequenced {
-        Some(sequencers) if sequencers.reassigned(&assigned).is_disjoint(candidates) => checked,
+        Some(sequencers) if covered(&sequencers) && sequencers.reassigned(&assigned).is_disjoint(candidates) => checked,
         _ => previous,
     }
 }
