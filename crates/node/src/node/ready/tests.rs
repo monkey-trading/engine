@@ -68,9 +68,14 @@ async fn a_member_checks_the_final_replicas_staking_config_against_the_terms_it_
     let hour = crate::custody::StakingTerms::fixed(Some((3_600, 2_419_200))).read().await.unwrap();
     let err = run_member("ready-final-staking", Some(hour)).await.err().expect("the member served");
     assert!(format!("{err:#}").starts_with("the log: epoch 86400000 ms differs"), "{err:#}");
-    assert_eq!(alerts.try_recv().expect("the refusal raises an alert")["alert"], "staking_terms_mismatch");
+    // The rotating member's log may raise its own alerts first; the refusal is among them.
+    let mut raised = Vec::new();
+    while let Ok(alert) = alerts.try_recv() {
+        raised.push(alert["alert"].clone());
+    }
+    assert!(raised.iter().any(|alert| alert == "staking_terms_mismatch"), "alerts raised: {raised:?}");
     // Terms the log's config holds let it serve.
-    let day = crate::custody::StakingTerms::fixed(Some((86_400, 2_419_200))).read().await.unwrap();
+    let day = crate::custody::StakingTerms::fixed(Some((86_400, 86_400))).read().await.unwrap();
     run_member("ready-final-staking-held", Some(day)).await.expect("the member served");
 }
 

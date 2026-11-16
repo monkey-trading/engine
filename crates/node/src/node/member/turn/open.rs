@@ -69,7 +69,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// on, nothing reads the chain or samples time.
     /// Error cases:
     /// - the reads or the sample fail, no source has a handover endpoint, or every source fails
-    async fn take(
+    pub(super) async fn take(
         &self,
         turn: &ScheduledTurn,
         follower: &mut Follower,
@@ -121,7 +121,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// against the vault's signer at finality: whom a stale copy catches up from.
     /// Error cases:
     /// - the turn names no source, or the vault cannot be read
-    async fn incumbent(&self, turn: &ScheduledTurn) -> anyhow::Result<Followed> {
+    pub(super) async fn incumbent(&self, turn: &ScheduledTurn) -> anyhow::Result<Followed> {
         let source = turn.source.as_ref().context("the turn names no source to follow")?;
         let at = self.vault.observe(View::Finalized, &[]).await?;
         let handover = self.cfg.tee.sealing.as_ref().and_then(|sealing| sealing.handover.as_ref());
