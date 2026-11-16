@@ -138,6 +138,21 @@ fn logged(turns: &DailyTurns, number: u64, key: AccountId) -> bool {
     turns.assigned.get(&number).or(in_effect).is_some_and(|assigned| assigned.admin_key == key)
 }
 
+/// How many bytes of tail a successor may be sent, before the stop, with a segment frame's room for what
+/// is sequenced first. A test sets its own on the thread of its runtime, which no other test shares.
+pub(super) fn tail_room() -> u64 {
+    #[cfg(test)]
+    if let Some(room) = TEST_ROOM.get() {
+        return room;
+    }
+    crate::handover::tail::MAX_TAIL_BYTES - u64::from(crate::handover::MAX_SEGMENT_BYTES)
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static TEST_ROOM: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
 /// Whether the tail past `after` may be over `bound` bytes, judged before the stop from the
 /// listed segments that hold an entry past it and the open segment the stop seals: an upper
 /// bound on what `read_tail` reads after it. A log this cannot read is taken to be over.

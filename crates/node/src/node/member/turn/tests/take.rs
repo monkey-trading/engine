@@ -129,6 +129,22 @@ async fn a_member_follows_the_incumbent_while_the_predecessor_holds_its_answer()
     assert!(matches!(turn.unwrap(), Turn::Hold), "the member did not fall back to the cold start");
 }
 
+/// A vault read that fails once as the member opens its copy at its turn does not set the copy aside:
+/// the member retries, builds its replica once, and asks the predecessor for the tail, which here
+/// refuses it `TAIL_ATTEMPTS` times before the member leaves the turn to the start.
+#[tokio::test]
+async fn a_failed_read_opening_the_copy_at_a_turn_is_retried_and_the_tail_asked_for() {
+    let lagged = Answer::Missed(TailMiss::Lagged);
+    let (fixture, _operator, served, asked) = in_own_turn("member-open-retry", vec![lagged; TAIL_ATTEMPTS]).await;
+    fixture.registry.flaky.arm();
+    let mut member = fixture.member();
+    let turn = member.until_turn().await;
+    served.abort();
+    assert!(matches!(turn.unwrap(), Turn::Hold));
+    assert_eq!(asked.load(Ordering::SeqCst), TAIL_ATTEMPTS, "the member did not ask for the tail after the retry");
+    assert_eq!(member.metrics.full_replays.get(), 1, "the copy was replayed other than once");
+}
+
 /// Only a replica that refused an entry, or a copy a handover began changing, is rebuilt.
 #[test]
 fn only_a_refused_entry_or_a_part_changed_copy_rebuilds_the_replica() {
@@ -160,6 +176,31 @@ async fn in_own_turn(name: &str, script: Vec<Answer>) -> (Fixture, Operator, Joi
     let (served, asked) = serve_tail(listener, domain, keys, script);
     fixture.time.set(OWN + 1);
     (fixture, operator, served, asked)
+}
+
+/// A one-off failure of a vault read: `arm` lets the next read through and fails the one after it,
+/// as a provider's blip does between the read that names a turn and the one that opens the copy.
+#[derive(Clone, Default)]
+pub(super) struct Flaky(Arc<Mutex<u8>>);
+
+impl Flaky {
+    fn arm(&self) {
+        *self.0.lock().unwrap() = 2;
+    }
+
+    /// Passes the read, or fails it once armed.
+    pub(super) fn read(&self) -> anyhow::Result<()> {
+        let mut state = self.0.lock().unwrap();
+        match *state {
+            2 => *state = 1,
+            1 => {
+                *state = 0;
+                anyhow::bail!("the provider failed once");
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }
 
 /// The copy in `dir` is left whole for the start, whose whole-log take sets it aside

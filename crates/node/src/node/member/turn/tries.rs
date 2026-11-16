@@ -194,3 +194,16 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         }
     }
 }
+
+/// A copy that did not replay when its replica was built: not a failed read, which is retried.
+#[derive(Debug)]
+pub(super) struct CopyRefused;
+
+impl std::fmt::Display for CopyRefused {
+    /// What happened.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the copy does not replay")
+    }
+}
+
+impl std::error::Error for CopyRefused {}

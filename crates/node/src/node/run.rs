@@ -47,7 +47,8 @@ pub(crate) async fn run_with_cpu(
     let mut chain_read = false;
     // A rotation-set member follows between its holdings, and goes back to following once it hands over.
     let member = is_member(&cfg, &start);
-    let turns = async {
+    // On the heap, with everything it awaits: tests pin the node's future on a libtest thread's stack.
+    let turns = Box::pin(async {
         // A member checks the registry's rotation switch before it follows, as any node does before
         // its keys; a registered candidate running the rule's standby side prepares its standby key
         // while the switch is off, and any other refuses before it opens its sealing.
@@ -76,23 +77,12 @@ pub(crate) async fn run_with_cpu(
             },
             async |replica, handed| {
                 let chain_read = &mut chain_read;
-                // On the heap: the serving future is large, and a test awaits `run` on its own stack.
-                Box::pin(serve_node(
-                    &cfg,
-                    metrics.clone(),
-                    &mut routing,
-                    cpu,
-                    &start,
-                    &delivered,
-                    chain_read,
-                    replica,
-                    handed,
-                ))
-                .await
+                serve_node(&cfg, metrics.clone(), &mut routing, cpu, &start, &delivered, chain_read, replica, handed)
+                    .await
             },
         )
         .await
-    };
+    });
     let outcome = tokio::select! {
         outcome = crate::metrics::alongside(metrics_listener, metrics.clone(), supervised(&mut process, turns)) => outcome,
         Some(stopped) = listening.join_next() => Err(anyhow!("the delivery listener stopped: {stopped:?}")),

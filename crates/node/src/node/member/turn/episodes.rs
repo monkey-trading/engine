@@ -111,15 +111,16 @@ impl Episodes {
         }
     }
 
-    /// A stint followed: ends the follow-failure, divergence and stream-rollback episodes.
-    pub(crate) fn followed(&mut self) {
+    /// A stint followed: ends the follow-failure and divergence episodes, and, once the stint
+    /// `confirmed` that the operator's log holds the copy's tail, the stream-rollback episode too.
+    pub(crate) fn followed(&mut self, confirmed: bool) {
         if let Some(operator) = self.follow_failed.take() {
             info!(alert_resolved = "standby_follow_failed", operator, "following works again");
         }
         if let Some(operator) = self.diverged.take() {
             info!(alert_resolved = "replica_diverged", operator, "the replica takes the operator's entries again");
         }
-        if let Some(operator) = self.rolled_back.take() {
+        if confirmed && let Some(operator) = self.rolled_back.take() {
             info!(
                 alert_resolved = "operator_log_rollback",
                 operator, "the operator's log holds the copy's history again"
