@@ -1469,7 +1469,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/tests/quiet.rs` — a venue repeating its top of book: a repeated mid is sequenced only
   to refresh the engine's quote, a moved mid or a new connection's first quote goes at once
 - `src/feeds/tests/coinbase_support.rs` — a loopback Coinbase `level2` endpoint at the venue's
-  load: multi-megabyte snapshots, 25 updates a second a product, pings answered in stream order,
+  load: whole-book snapshots (a tenth of Coinbase's depth by default, its full depth on request),
+  25 updates a second a product, pings answered in stream order,
   subscriptions served from a source a set time behind or put behind while they stream, and halted
   products
 - `src/feeds/tests/silent.rs` — silent and stale symbols resubscribed until they quote: a stale

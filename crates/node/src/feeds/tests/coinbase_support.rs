@@ -1,6 +1,6 @@
 //! Test support: a loopback Coinbase Advanced Trade `level2` endpoint that behaves as the venue does
-//! under its real load. Each subscription gets a snapshot of its product's whole book, megabytes for
-//! BTC-USD and ETH-USD, then an update to its top at Coinbase's rate; every message is numbered on its
+//! under its real load. Each subscription gets a snapshot of its product's whole book, then an update
+//! to its top at Coinbase's rate; every message is numbered on its
 //! connection, and a ping is answered in stream order, behind what was sent before it. A subscription
 //! can be served from a source behind the venue's own, its snapshot and updates stamped that far in
 //! the past, as Coinbase served one product on a connection on 16 November 2026 while the other
@@ -26,17 +26,20 @@ use crate::feeds::tests::fake::{Conn, WAIT, listen, rfc3339};
 /// About the rate Coinbase updates BTC-USD's and ETH-USD's books at, a second.
 pub const UPDATES_PER_SECOND: u32 = 25;
 
-/// BTC-USD at about Coinbase's depth: a snapshot of some 4 MB.
-pub const BTC: Product = Product { id: "BTC-USD", mid_cents: 6_500_000, depth: 18_000 };
+/// BTC-USD, its snapshot some 330 KB: a tenth of Coinbase's depth, which keeps the shared test
+/// binary's timing-sensitive tests clear of the CPU a full snapshot takes to build and read.
+pub const BTC: Product = Product { id: "BTC-USD", mid_cents: 6_500_000, depth: 1_500 };
 
-/// ETH-USD at about Coinbase's depth: a snapshot of some 2 MB.
-pub const ETH: Product = Product { id: "ETH-USD", mid_cents: 182_000, depth: 9_000 };
+/// ETH-USD, its snapshot some 165 KB, a tenth of Coinbase's depth as `BTC` is.
+pub const ETH: Product = Product { id: "ETH-USD", mid_cents: 182_000, depth: 750 };
 
 /// How far behind the venue's own time products are served, shared by every connection.
 type Behind = Arc<Mutex<Lags>>;
 
 /// A product the endpoint serves: its id, the mid its book centres on, in cents, and the levels on
-/// each side of its snapshot, a cent apart.
+/// each side of its snapshot, a cent apart. Coinbase's own depth, about 18,000 levels a side for
+/// BTC-USD (a 4 MB snapshot) and 9,000 for ETH-USD (2 MB), is for a test of a snapshot's transfer:
+/// `Product { depth: 18_000, ..BTC }`.
 #[derive(Debug, Clone, Copy)]
 pub struct Product {
     pub id: &'static str,
