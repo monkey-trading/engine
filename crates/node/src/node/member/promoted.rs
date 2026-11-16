@@ -163,13 +163,15 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let log_heads = self.cfg.log_heads.as_ref().context("[log_heads]")?.contract;
         let chain = crate::custody::StandbyReader::connect_named(&self.cfg.custody, log_heads, "promotion")?;
         let vault = Address::from(self.cfg.custody.vault.parse::<AccountId>()?.0);
-        let read: BoxFuture<'_, anyhow::Result<Standing>> = Box::pin(async {
+        let read: BoxFuture<'_, anyhow::Result<(Standing, u64)>> = Box::pin(async {
             let domain = StandbyDomain::read(&chain, self.cfg.custody.chain_id, vault).await?;
-            record.standing_at_start(&chain, &domain, B256::from(self.release.id()), &sealing.dir).await
+            let standing = record.standing_at_start(&chain, &domain, B256::from(self.release.id()), &sealing.dir);
+            Ok((standing.await?, record.carried(&chain, &domain).await))
         });
-        let promotion = record.promotion();
+        let (standing, carried) = read.await?;
+        let promotion = Promotion { carried, ..record.promotion() };
         let dirs = (self.cfg.node.log_dir.as_path(), sealing.dir.as_path(), key_file.as_path());
-        if let Some(resumed) = settle(read.await?, &record, dirs)? {
+        if let Some(resumed) = settle(standing, &record, dirs)? {
             return Ok(resumed);
         }
         // The promotion's fixed head and checkpoint stay checkable however far the copy has run past.

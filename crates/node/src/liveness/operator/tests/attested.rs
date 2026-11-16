@@ -76,6 +76,14 @@ async fn a_failed_recheck_keeps_the_verified_attested_key_until_a_check_refutes_
     rig.task.abort();
 }
 
+/// A failed re-check warns once, until one passes again.
+#[test]
+fn a_failed_recheck_warns_once_per_episode() {
+    let (kept, member) = (super::super::attested::Kept::default(), AccountId([MEMBER; 20]));
+    assert!(kept.first_failure(member) && !kept.first_failure(member), "the second failure warned again");
+    assert!(kept.first_failure(AccountId([0x22; 20])), "another member's episode");
+}
+
 // ── Helpers ──
 
 /// A rule whose other member, once its promotable key is gone, signs its statuses with a new standby

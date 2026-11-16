@@ -29,6 +29,11 @@ struct Held {
 }
 
 impl Kept {
+    /// Whether this is the first failed re-check of `candidate`'s key since one last passed.
+    pub(super) fn first_failure(&self, candidate: AccountId) -> bool {
+        self.with(|held| held.failing.insert(candidate))
+    }
+
     fn with<T>(&self, f: impl FnOnce(&mut Held) -> T) -> T {
         f(&mut self.0.lock().unwrap_or_else(PoisonError::into_inner))
     }
@@ -63,7 +68,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                                 debug!(member = %member.candidate, "no attested standby key to take statuses on: {e:#}")
                             }
                             Some((key, release)) if !self.refuted(block, domain, &member, (key, release)).await => {
-                                if self.kept.with(|held| held.failing.insert(member.candidate)) {
+                                if self.kept.first_failure(member.candidate) {
                                     warn!(member = %member.candidate, %key, "re-checking the member's attested standby key failed, so the key stays until a check refutes it: {e:#}");
                                 }
                                 member.standby = Some(key);
