@@ -215,11 +215,11 @@ async fn entries_from_the_first_take_onto_an_empty_copy_only() {
     assert_eq!(log_entries(&dir), log_entries(&operator), "the empty copy took the whole log");
 }
 
-/// A copy that took entries before it was linked links with no ring to serve from, rather than one with a
-/// hole between what it held at its opening and what it took since: the link serves the page from the copy's
-/// log on disk, which chains.
+/// A copy that took entries before it was linked serves none of them from a ring: the ring holds what the
+/// copy opened with and what it took after the link, which would leave the entries between out of a page.
+/// The link serves the page from the copy's log on disk, which chains.
 #[tokio::test]
-async fn a_link_made_after_the_copy_took_entries_serves_them_from_its_log_not_from_a_ring_with_a_hole() {
+async fn a_link_made_after_the_copy_took_entries_never_serves_a_ring_with_a_hole() {
     let operator = scratch_dir("replica-hole-operator");
     crate::standby::tests::ticks(&operator, 6).await;
     let dir = scratch_dir("replica-hole-copy");
@@ -229,12 +229,8 @@ async fn a_link_made_after_the_copy_took_entries_serves_them_from_its_log_not_fr
         Follower::open(&dir, SEGMENT_COMMANDS, DOMAIN, signer(), [signer()].into(), None, |_| {}).unwrap();
     let after = follower.head().unwrap();
     let (tip, _) = follower.tip().unwrap();
-    assert!(follower.take_tail(Offset::start_of(tip), &lines_after(&operator, tip)).unwrap() > 0);
-    let copy = crate::liveness::link::Copy::default();
-    follower.link_with(copy.clone());
-    assert_eq!(copy.entries_after(Some(after)), Vec::new(), "no ring is served across the entries it lacks");
     let mut previous = None;
-    let expected: Vec<(Offset, LogEntry)> = log_entries(&operator)
+    let log: Vec<(Offset, LogEntry)> = log_entries(&operator)
         .into_iter()
         .map(|entry| {
             let offset = offset_of(previous, &entry).unwrap();
@@ -243,7 +239,24 @@ async fn a_link_made_after_the_copy_took_entries_serves_them_from_its_log_not_fr
         })
         .filter(|(offset, _)| *offset > after)
         .collect();
-    assert_eq!(copy.entries(Some(after)).await, expected, "the copy's log serves them");
+    let lines = |entries: &[(Offset, LogEntry)]| {
+        entries
+            .iter()
+            .flat_map(|(_, entry)| [serde_json::to_vec(entry).unwrap(), vec![b'\n']].concat())
+            .collect::<Vec<u8>>()
+    };
+    // The first page, taken unlinked, ends at the next command; the second after the link.
+    let split = log
+        .iter()
+        .position(|(offset, entry)| *offset > Offset::start_of(tip) && matches!(entry, LogEntry::Command(_)))
+        .unwrap()
+        + 1;
+    assert!(follower.take_tail(after, &lines(&log[..split])).unwrap() > 0);
+    let copy = crate::liveness::link::Copy::default();
+    follower.link_with(copy.clone());
+    assert!(follower.take_tail(log[split - 1].0, &lines(&log[split..])).unwrap() > 0);
+    assert_eq!(copy.entries_after(Some(after)), Vec::new(), "no ring is served across the entries it lacks");
+    assert_eq!(copy.entries(Some(after)).await, log, "the copy's log serves them");
 }
 
 /// An empty copy takes the log's first entries, sealed by a key an earlier signer change replaced, once

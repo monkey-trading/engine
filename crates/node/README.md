@@ -1252,10 +1252,12 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   (#595) on a chain-backed `ArbSys` stand-in with trusted time on the chain's clock: the real head
   poster, liveness rule, member links and callers over a synthetic log, through heartbeats, relays,
   holds, a paused chain, blocked reads, a promotion and its reorg; `liveness/rig.rs` the operator's
-  parts it drives
+  parts it drives, with the members following the operator's real signed stream through the production
+  follower
 - `src/custody/tests/election_scenario/liveness/promoted.rs` — the promotion on real nodes: A, B and
   C as the node binary's own start on a chain running on true time, A killed under load, the callers'
-  promotion, the promoted member's first fill within its start budget, its first checkpoint, A's
+  promotion, the promoted member's first fill within its start budget, no checkpoint while its
+  promotion is not final and its first checkpoint once it is, A's
   authorization reissued and paid once, and the replay across the change of signer;
   `promoted/nodes.rs` the members' configs, sealed standby keys and child processes;
   `promoted/short_turns.rs`, in a `short-turns` build, the same nodes on five-minute turns that

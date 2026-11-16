@@ -7,7 +7,8 @@
 //! it then never sees paid, and is killed. It checks that the callers promote the next member, whose
 //! node starts from its copy under its standby key and fills an order within its start budget, printed,
 //! of the promotion and within `(heartbeatMisses + 1) x heartbeatInterval` plus that budget of A's
-//! last head; that its first checkpoint lands once the promotion is final; that it vouches for its
+//! last head; that it posts no checkpoint while the promotion is not final, finality held a block short, and
+//! that its first checkpoint, over the one the promotion fixed, lands once it is; that it vouches for its
 //! replacement standby key with the signer key it now holds; that it reissues A's
 //! authorization under the promotion's epoch, which pays once while A's reverts; and that its log
 //! replays across the change of signer.
