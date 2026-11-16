@@ -194,10 +194,10 @@ pub(crate) fn next(
         Signing::Nothing => return None,
         // The tip and a confirmation count only under the epoch and set they were given in: across a
         // change of set, neither is an anchor the turn's members can be promoted from.
-        Signing::Tip(scope) if scope == Some((inputs.epoch, turn.set)) => {
-            Signable { released: inputs.tip, confirmer: Address::ZERO, scope }
+        Signing::Tip(scope, until) if scope == Some((inputs.epoch, turn.set)) => {
+            Signable { released: inputs.tip, confirmer: Address::ZERO, scope, until }
         }
-        Signing::Tip(_) => return None,
+        Signing::Tip(..) => return None,
         Signing::Confirmed(signable) if signable.scope.is_none_or(|scope| scope == (inputs.epoch, turn.set)) => {
             signable
         }

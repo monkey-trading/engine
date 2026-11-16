@@ -90,7 +90,7 @@ fn the_rule_refuses_a_window_within_the_stop_margin_and_a_ticker_slower_than_hal
 fn the_log_lags_once_it_runs_an_interval_of_sequenced_time_unconfirmed() {
     let rule = Rule { interval: 60, tolerance: 30, misses: 5, blocks: 200 };
     let released = |stamp| Released { head: Head::default(), stamp };
-    let confirmed = Signable { released: released(1_000_000), confirmer: Address::ZERO, scope: None };
+    let confirmed = Signable { released: released(1_000_000), confirmer: Address::ZERO, scope: None, until: u64::MAX };
     assert!(!lagging(released(1_060_000), Some(confirmed), Some(1_000_000), rule));
     assert!(lagging(released(1_060_001), Some(confirmed), Some(1_000_000), rule));
     assert!(lagging(released(1_000_000), None, None, rule), "no confirmation at all");
@@ -122,6 +122,8 @@ async fn a_start_waits_for_a_members_status_then_signs_only_where_it_confirmed()
     let Signing::Confirmed(signable) = *rig.signing.borrow() else { panic!("not confirmed") };
     assert_eq!(signable.released.head, Head { seq: 10, link: link(10) });
     assert_eq!(signable.confirmer, Address::repeat_byte(MEMBER));
+    let boundary = next_boundary(rig.chain.0.lock().unwrap().time).saturating_mul(1000);
+    assert_eq!(signable.until, boundary, "it signs nothing from the read's next boundary");
     // The confirmed tip was stamped long ago: the next command is admitted whenever it comes, and
     // starts the run of unconfirmed sequenced time the bound counts from.
     assert!(rig.gate.admits(TRUE_MS), "a quiet confirmed log admits its next command");
@@ -231,7 +233,7 @@ async fn with_no_turn_naming_the_operator_the_gate_opens_and_heads_go_at_the_tip
     settle().await;
     assert!(rig.gate.sequences() && rig.gate.signs());
     assert_eq!(rig.gate.confirmed(), u64::MAX, "no checkpoint waits");
-    assert_eq!(*rig.signing.borrow(), Signing::Tip(None));
+    assert!(matches!(*rig.signing.borrow(), Signing::Tip(None, _)));
     rig.task.abort();
 }
 

@@ -72,8 +72,11 @@ fn the_node_asks_neither_itself_nor_a_member_or_release_in_the_range_nor_a_membe
     // F sequenced part of the range on a release it has since left.
     let f = HandoverSource { release: release_of(0x9).0, ..member(0xf, "f:1") };
     let order = [member(0xa, "a:1"), member(0xb, "b:1"), member(0xd, ""), f, member(0xc, "c:1"), member(0xe, "e:1")];
-    let excluded =
-        Sequencers { candidates: BTreeSet::from([AccountId([0xf; 20])]), releases: BTreeSet::from([release_of(0xe)]) };
+    let excluded = Sequencers {
+        candidates: BTreeSet::from([AccountId([0xf; 20])]),
+        releases: BTreeSet::from([release_of(0xe)]),
+        turns_from: TURN - 1,
+    };
     let due = due(AccountId([0xa; 20]), excluded);
     let asked: Vec<_> = qualifying(&order, &due).map(|member| member.candidate).collect();
     assert_eq!(asked, [AccountId([0xb; 20]), AccountId([0xc; 20])]);
@@ -82,9 +85,17 @@ fn the_node_asks_neither_itself_nor_a_member_or_release_in_the_range_nor_a_membe
 #[tokio::test]
 async fn the_first_qualifying_member_is_asked_first_then_the_next_and_the_sequencer_takes_the_admitted_one() {
     // A asks: with both replicas past the checkpoint, B, first in the order after A, verifies.
-    assert_eq!(first_admitted(Some(head())).await, release_of(0xb));
+    assert_eq!(first_admitted(Some(head()), &[]).await, release_of(0xb));
     // B's replica has not verified the checkpoint yet; C, the next qualifying member, has.
-    assert_eq!(first_admitted(None).await, release_of(0xc));
+    assert_eq!(first_admitted(None, &[]).await, release_of(0xc));
+}
+
+/// A member the schedule assigned a turn the range spans, as a promotion whose mirror the log has yet to
+/// sequence does, may have sequenced part of the range: it is not asked, though its replica verified the
+/// checkpoint, and the next qualifying member is.
+#[tokio::test]
+async fn a_member_assigned_a_turn_the_range_spans_is_not_asked() {
+    assert_eq!(first_admitted(Some(head()), &[0xb]).await, release_of(0xc));
 }
 
 #[tokio::test(start_paused = true)]
@@ -122,7 +133,7 @@ async fn the_page_comes_due_during_a_round_that_outlasts_it() {
     let order = vec![member(0xa, "127.0.0.1:1"), member(0xb, "")];
     let (sequencer, _requests) = mpsc::channel(4);
     let (_due_tx, due_rx) = watch::channel(Some(due(AccountId([0xa; 20]), sequencers(&[0xa]))));
-    let asker = slow_asker(order, PENDING_ALERT_AFTER * 4, &sequencer, due_rx);
+    let asker = slow_asker(order, PENDING_ALERT_AFTER * 4, BTreeSet::new(), &sequencer, due_rx);
     let drive = async {
         tokio::time::sleep(PENDING_ALERT_AFTER * 2).await;
         let paged = named(&mut alerts, "log_check_pending");
@@ -136,10 +147,12 @@ async fn the_page_comes_due_during_a_round_that_outlasts_it() {
 
 // ── Helpers ──
 
-/// The schedule's order of one turn, read after `delay` at an observation whose signer epoch is 1.
+/// The schedule's order of one turn, read after `delay` at an observation whose signer epoch is 1,
+/// and the members it assigned a turn from the range's first on, as a promotion does.
 struct Order {
     order: Vec<HandoverSource>,
     delay: Duration,
+    held: BTreeSet<AccountId>,
 }
 
 impl CheckpointChain for Order {
@@ -181,17 +194,24 @@ impl CheckpointChain for Order {
         tokio::time::sleep(self.delay).await;
         Ok(self.order.clone())
     }
+
+    async fn held_turns(&self, turns: std::ops::Range<u64>, candidates: &BTreeSet<AccountId>) -> anyhow::Result<bool> {
+        assert_eq!(turns, TURN - 1..TURN + 1, "the range's first turn through the turn due");
+        Ok(!self.held.is_disjoint(candidates))
+    }
 }
 
 /// The release whose verification A's asker gives the sequencer, the order being A, B, whose replica
-/// verified `b_head`, if any, and C, whose replica verified the checkpoint due.
-async fn first_admitted(b_head: Option<VerifiedHead>) -> B256 {
+/// verified `b_head`, if any, and C, whose replica verified the checkpoint due, the schedule having
+/// assigned the members of `held` a turn the range spans.
+async fn first_admitted(b_head: Option<VerifiedHead>, held: &[u8]) -> B256 {
     let (b, b_endpoint) = following(0xb, b_head);
     let (c, c_endpoint) = following(0xc, Some(head()));
     let order = vec![member(0xa, "127.0.0.1:1"), member(0xb, &b_endpoint), member(0xc, &c_endpoint)];
     let (sequencer, mut requests) = mpsc::channel(4);
     let (due_tx, due_rx) = watch::channel(Some(due(AccountId([0xa; 20]), sequencers(&[0xa]))));
-    let asker = asker(order, &sequencer, due_rx);
+    let held = held.iter().map(|byte| AccountId([*byte; 20])).collect();
+    let asker = slow_asker(order, Duration::ZERO, held, &sequencer, due_rx);
     let taken = async {
         let Some(Request::LogChecked { head: checked, candidate, release, reply }) = requests.recv().await else {
             panic!("the asker gave the sequencer nothing");
@@ -228,19 +248,21 @@ fn asker(
     sequencer: &mpsc::Sender<Request>,
     due: watch::Receiver<Option<Due>>,
 ) -> Asker<Order> {
-    slow_asker(order, Duration::ZERO, sequencer, due)
+    slow_asker(order, Duration::ZERO, BTreeSet::new(), sequencer, due)
 }
 
-/// `asker`, over a schedule that takes `delay` to read the order.
+/// `asker`, over a schedule that takes `delay` to read the order and assigned the members of `held` a
+/// turn the range spans.
 fn slow_asker(
     order: Vec<HandoverSource>,
     delay: Duration,
+    held: BTreeSet<AccountId>,
     sequencer: &mpsc::Sender<Request>,
     due: watch::Receiver<Option<Due>>,
 ) -> Asker<Order> {
     let own = Platform { launch_digest: [0; 48], policy: 0, tcb: 0 };
     let trusted = crate::test_support::trusted(Arc::new(crate::clock::test_clock::TestClock::default()));
-    Asker::new(Order { order, delay }, sequencer, due, (domain(), TeeProvider::Mock, own), key(), trusted)
+    Asker::new(Order { order, delay, held }, sequencer, due, (domain(), TeeProvider::Mock, own), key(), trusted)
 }
 
 /// The operator enclave's key, which signs its checkpoints and its questions.
@@ -306,6 +328,7 @@ fn sequencers(bytes: &[u8]) -> Sequencers {
     Sequencers {
         candidates: bytes.iter().map(|byte| AccountId([*byte; 20])).collect(),
         releases: bytes.iter().map(|byte| release_of(*byte)).collect(),
+        turns_from: TURN - 1,
     }
 }
 

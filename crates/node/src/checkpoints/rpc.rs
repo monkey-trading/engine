@@ -360,6 +360,14 @@ impl CheckpointChain for CheckpointRpc {
         self.read_turn_order(at, turn).await
     }
 
+    async fn held_turns(
+        &self,
+        turns: std::ops::Range<u64>,
+        candidates: &std::collections::BTreeSet<engine_core::types::AccountId>,
+    ) -> anyhow::Result<bool> {
+        self.read_held_turns(turns, candidates).await
+    }
+
     async fn handover_source_at(
         &self,
         at: &Observation,

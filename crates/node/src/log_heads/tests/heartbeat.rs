@@ -184,7 +184,12 @@ async fn a_confirmation_from_another_set_signs_no_head() {
     assert!(chain.posts_v2().is_empty(), "set 1's confirmation signed a head for a turn of set 2");
     let released = Released { head: at(5), stamp: stamp(5) };
     let confirmer = Address::repeat_byte(0xc2);
-    drive.signing.send_replace(Signing::Confirmed(Signable { released, confirmer, scope: Some((1, 2)) }));
+    drive.signing.send_replace(Signing::Confirmed(Signable {
+        released,
+        confirmer,
+        scope: Some((1, 2)),
+        until: u64::MAX,
+    }));
     tokio::time::sleep(Duration::from_secs(30)).await;
     assert_eq!(chain.posts_v2().last().map(|(_, head)| head.confirmer), Some(confirmer), "set 2's member's");
     drive.stop().await;
@@ -199,48 +204,49 @@ async fn a_tip_from_another_set_signs_no_head() {
     chain.change_turn(|turn| turn.set = 2);
     let drive = spawn(chain.clone(), Some((RELEASE, GENERATION)));
     drive.release(5);
-    drive.signing.send_replace(Signing::Tip(Some((1, 1))));
+    drive.signing.send_replace(Signing::Tip(Some((1, 1)), u64::MAX));
     drive.clock.advance(Duration::from_secs(1));
     tokio::time::sleep(Duration::from_secs(30)).await;
     assert!(chain.posts_v2().is_empty(), "set 1's exemption signed the tip for a turn of set 2");
-    drive.signing.send_replace(Signing::Tip(Some((1, 2))));
+    drive.signing.send_replace(Signing::Tip(Some((1, 2)), u64::MAX));
     tokio::time::sleep(Duration::from_secs(30)).await;
     assert_eq!(chain.posts_v2().last().map(|(_, head)| head.confirmer), Some(Address::ZERO), "set 2's tip");
     drive.stop().await;
 }
 
-/// A confirmation, or a one-member set's exemption, lets a head be signed only until the boundary from
-/// which another set may apply, as it lets checkpoints pass: with the rule's read and the poster's own
-/// turn read both pinned before that boundary, no head goes out past it until a fresh read renews it.
+/// A confirmation, or a one-member set's exemption, signs a head only before its own boundary from which
+/// another set may apply, as it lets checkpoints pass: once a read past that boundary renewed the gate
+/// for a set whose members have yet to answer, and with the poster's own turn read still pinned before
+/// it, no head goes out at the old permission until a round gives the permission the next boundary.
 #[tokio::test(start_paused = true)]
-async fn past_the_boundary_another_set_may_apply_from_no_head_is_signed_until_a_read_renews_it() {
-    let confirmed = |seq| {
+async fn past_its_boundary_a_permission_signs_no_head_whatever_read_renewed_the_gate() {
+    let confirmed = |seq, until| {
         let (released, confirmer) = (Released { head: at(seq), stamp: stamp(seq) }, Address::repeat_byte(0xc1));
-        Signing::Confirmed(Signable { released, confirmer, scope: Some((1, 1)) })
+        Signing::Confirmed(Signable { released, confirmer, scope: Some((1, 1)), until })
     };
-    let exempt = |_| Signing::Tip(Some((1, 1)));
-    let cases: [(&str, &dyn Fn(u64) -> Signing); 2] = [("a confirmation", &confirmed), ("an exempt tip", &exempt)];
+    let exempt = |_, until| Signing::Tip(Some((1, 1)), until);
+    let cases: [(&str, &dyn Fn(u64, u64) -> Signing); 2] = [("a confirmation", &confirmed), ("an exempt tip", &exempt)];
     for (case, signing) in cases {
         let chain = FakeChain::new(None);
         chain.name_turn(turn(GENERATION));
         let drive = spawn(chain.clone(), Some((RELEASE, GENERATION)));
-        // The rule's last read, a minute before the boundary, holds until it.
         let boundary = u64::try_from(TRUE_MS).unwrap() + 60_000;
         drive.gate.deadline(Some(u64::MAX - 1), &drive.trusted);
-        drive.gate.holds_until(boundary);
+        // A read past the boundary renewed the gate for the next day's set.
+        drive.gate.holds_until(boundary + 86_400_000);
         drive.release(5);
-        drive.signing.send_replace(signing(5));
+        drive.signing.send_replace(signing(5, boundary));
         drive.clock.advance(Duration::from_secs(1));
         tokio::time::sleep(Duration::from_secs(30)).await;
         assert_eq!(chain.posts_v2().len(), 1, "{case}: before the boundary");
-        // Past it by trusted time's upper bound, with no read since: nothing, at a newer seq included.
+        // Past it by trusted time's upper bound: nothing at the old permission, at a newer seq included.
         drive.clock.advance(Duration::from_secs(60));
         drive.release(6);
-        drive.signing.send_replace(signing(6));
+        drive.signing.send_replace(signing(6, boundary));
         tokio::time::sleep(Duration::from_secs(60)).await;
         assert_eq!(chain.posts_v2().len(), 1, "{case}: a head past the boundary");
-        // A read at or past the boundary that names the same set renews it until the next one.
-        drive.gate.holds_until(boundary + 86_400_000);
+        // A round under a read that names this set past the boundary gives it the next one.
+        drive.signing.send_replace(signing(6, boundary + 86_400_000));
         tokio::time::sleep(Duration::from_secs(30)).await;
         assert_eq!(chain.posts_v2().last().map(|(_, head)| head.head), Some(at(6)), "{case}: once renewed");
         drive.stop().await;
@@ -368,7 +374,12 @@ impl Drive {
     fn confirm(&self, seq: u64, member: u8) {
         let released = Released { head: at(seq), stamp: stamp(seq) };
         let confirmer = Address::repeat_byte(member);
-        self.signing.send_replace(Signing::Confirmed(Signable { released, confirmer, scope: Some((1, 1)) }));
+        self.signing.send_replace(Signing::Confirmed(Signable {
+            released,
+            confirmer,
+            scope: Some((1, 1)),
+            until: u64::MAX,
+        }));
     }
 
     /// How the poster ended within `within`, its inputs kept open meanwhile; `None` if it ran on.

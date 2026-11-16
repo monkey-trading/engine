@@ -1,10 +1,12 @@
 //! The operator's side of the boundary's log check: once its sequencer publishes a check due, its node
 //! asks the members of the turn's order, first position first, for an attested verification of the
 //! checkpoint, signing each question with its enclave key, skipping its own candidate, each member that
-//! sequenced the covered range under any release, each release that did, and each member with no
-//! handover endpoint, and gives the first it admits to the sequencer. A round that no member answers is
+//! sequenced the covered range under any release, each release that did, each member the schedule
+//! assigned a turn the range spans, and each member with no handover endpoint, and gives the first it
+//! admits to the sequencer. A round that no member answers is
 //! tried again; a check that stays due pages `log_check_pending`.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -139,7 +141,14 @@ impl<C: CheckpointChain> Asker<C> {
             Statement { signer_epoch, boundary, turn: due.turn, position: due.position, set: due.set, head: due.head };
         let order = self.vault.turn_order(&at, due.turn).await.context("reading the turn's order")?;
         let mut failures = Vec::new();
+        // A member the schedule assigned a turn the range spans, as a promotion does, may have sequenced
+        // part of it before the log mirrored the assignment: it is not asked.
+        let spanned = due.excluded.turns_from..due.turn.saturating_add(1);
         for member in qualifying(&order, due) {
+            if self.vault.held_turns(spanned.clone(), &BTreeSet::from([member.candidate])).await? {
+                failures.push(format!("{}: assigned a turn the range spans", member.candidate));
+                continue;
+            }
             let asked = timeout(ASK_TIMEOUT, self.ask(member, &statement, &due.excluded)).await;
             match asked.unwrap_or_else(|_| Err(anyhow!("no answer in {ASK_TIMEOUT:?}"))) {
                 Ok(release) => {

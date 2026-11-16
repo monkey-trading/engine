@@ -57,9 +57,10 @@ struct ChainState {
     /// generation.
     turn: u64,
     named: (Address, u16, u8, u64),
-    /// The turn drawn before the one in effect, and each earlier turn's latest assignment as `named`.
+    /// The turn drawn before the one in effect, and each earlier turn's latest assignment as `named`
+    /// with the turn drawn before it.
     prior: u64,
-    turns: BTreeMap<u64, (Address, u16, u8, u64)>,
+    turns: BTreeMap<u64, ((Address, u16, u8, u64), u64)>,
     assignments: BTreeMap<(u64, u16), (AssignmentReturn, Vec<RevisionReturn>)>,
     /// The release and generation the registry names for the operator in effect.
     rotation: (B256, u64),
@@ -202,7 +203,7 @@ impl FakeChain {
     /// Starts the turn after the one in effect, a day on, drawn for `candidate` in `generation`.
     fn draw_next(&self, candidate: AccountId, generation: u64) {
         self.set(|chain| {
-            chain.turns.insert(chain.turn, chain.named);
+            chain.turns.insert(chain.turn, (chain.named, chain.prior));
             (chain.time, chain.prior, chain.turn) = (chain.time + 86_400, chain.turn, chain.turn + 1);
             chain.named = (address(candidate), 0, 0, generation);
         });
@@ -294,14 +295,14 @@ fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8
         turnAtCall::abi_encode_returns(&turnAtReturn { turn: chain.turn, _1: named })
     } else if to == SCHEDULE && is::<turnOfCall>(data) {
         let turn = turnOfCall::abi_decode(data)?.turn;
-        let (candidate, position, reason, generation) = chain.turns.get(&turn).copied().unwrap_or_default();
+        let ((candidate, position, reason, generation), prior) = chain.turns.get(&turn).copied().unwrap_or_default();
         turnOfCall::abi_encode_returns(&TurnReturn {
             candidate,
             position,
             reason,
             setId: 1,
             generation,
-            prior: 0,
+            prior,
             seed: B256::ZERO,
             source: Address::ZERO,
         })

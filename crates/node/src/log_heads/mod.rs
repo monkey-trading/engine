@@ -389,9 +389,10 @@ impl<R: HeadsChain> Poster<R> {
                     epoch,
                 };
                 // Nor, through a hold, while the start check has not passed: such a node stays stopped.
-                // Nor, as checkpoints wait, at a confirmation or a tip past the boundary from which
-                // another set may apply, whatever set this poster's own read last named.
-                if !heartbeat.gate.signs() || !heartbeat.gate.start_checked() || !heartbeat.gate.holds() {
+                // Nor, as checkpoints wait, at a confirmation or a tip past its own boundary from which
+                // another set may apply, whatever set this poster's own read names or a later read renewed.
+                let lapsed = !heartbeat.gate.before(inputs.signing.until());
+                if !heartbeat.gate.signs() || !heartbeat.gate.start_checked() || lapsed {
                     continue;
                 }
                 let Some(next) = v2::next(&turn, bound, keys, inputs) else { continue };

@@ -18,6 +18,9 @@ use crate::liveness::chain::rotationStateCall;
 const PROMOTED: u8 = 2;
 /// How many signer epochs past finality a rebuilt copy reads keys for at most.
 const UNFINAL_EPOCHS: u64 = 64;
+/// How many turns drawn for a promoted member in the promotion's generation, one a day, are followed
+/// back to the promotion at most: a key whose reseal a crash left undone longer reads as unusable.
+const CARRIED_TURNS: usize = 64;
 
 sol! {
     function registry() external view returns (address);
@@ -222,11 +225,12 @@ impl StandbyDomain {
 }
 
 /// What `key` is for `candidate` at the latest agreed block (see `StandbyState`). A promotion counts
-/// while the turn in effect at the block's time names it as its latest assignment, or, as the schedule
-/// carries a promotion into its member's next drawn turn (`_carryNext`), names that member drawn in the
-/// promotion's generation with the promotion as the latest assignment of the turn before; that
-/// assignment installed `key`, the vault still names `key` as its signer in the epoch the promotion
-/// started, and the turn in effect still holds the generation the promotion reserved.
+/// while the turn in effect at the block's time names it as its latest assignment, or names that member
+/// drawn in the promotion's generation, which the schedule carries into the member's next drawn turn
+/// (`_carryNext`) and continues through each draw of it after (`_generation`), every turn back to the
+/// promotion's drawn for it in that generation; that assignment installed `key`, the vault still names
+/// `key` as its signer in the epoch the promotion started, and the turn in effect still holds the
+/// generation the promotion reserved.
 /// Error cases:
 /// - a read fails, or the schedule records a promotion with no generation
 pub(crate) async fn standby_state(
@@ -248,14 +252,18 @@ pub(crate) async fn standby_state(
     if turn == 0 || named.candidate != candidate {
         return Ok(StandbyState::Unusable("no promotion of the candidate is its turn's latest assignment"));
     }
-    let (turn, position) = match named.reason {
-        PROMOTED => (turn, named.position),
-        _ => {
-            let prior = call(&block, "standby_prior_turn", domain.schedule, turnOfCall { turn: named.prior }).await?;
-            (named.prior, prior.position)
+    let (mut turn, mut latest) = (turn, named.clone());
+    for _ in 0..CARRIED_TURNS {
+        if latest.reason == PROMOTED || latest.prior == 0 {
+            break;
         }
-    };
-    let Some(promotion) = promotion_of(&block, domain, AccountId(key.0.0), turn, position).await? else {
+        let prior = call(&block, "standby_prior_turn", domain.schedule, turnOfCall { turn: latest.prior }).await?;
+        if prior.candidate != candidate || prior.generation != named.generation {
+            break;
+        }
+        (turn, latest) = (latest.prior, prior);
+    }
+    let Some(promotion) = promotion_of(&block, domain, AccountId(key.0.0), turn, latest.position).await? else {
         return Ok(StandbyState::Unusable("no promotion in the turn in effect, or carried into it, installed the key"));
     };
     if !in_effect(&block, domain, AccountId(key.0.0), &promotion).await? {

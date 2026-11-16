@@ -283,11 +283,12 @@ fn member(release: B256) -> BTreeSet<AccountId> {
     BTreeSet::from([candidate(release)])
 }
 
-/// Who sequenced a range in which each of `releases` took a turn by its member.
+/// Who sequenced a range in which each of `releases` took a turn by its member, from turn 1 on.
 fn sequencers(releases: &[B256]) -> Sequencers {
     Sequencers {
         candidates: releases.iter().map(|release| candidate(*release)).collect(),
         releases: releases.iter().copied().collect(),
+        turns_from: 1,
     }
 }
 

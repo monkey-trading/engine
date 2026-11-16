@@ -32,6 +32,7 @@ sol! {
         returns (uint64 epoch, uint64 effectiveAt, address[] memory candidates, uint256[] memory weights);
     function memberAt(uint32 setId, bytes32 seed, uint64 turn, uint16 position) external view returns (address);
     function MAX_DRAW_POSITIONS() external view returns (uint16);
+    function heldTurn(uint64 turn, address candidate) external view returns (bool);
 }
 
 impl CheckpointRpc {
@@ -134,6 +135,36 @@ impl CheckpointRpc {
             sources.push(self.handover_source_of(registry, member, block).await?);
         }
         Ok(sources)
+    }
+
+    /// See `CheckpointChain::held_turns`: one read per turn and candidate, over the turns since the last
+    /// verified head's, which each check that counts moves on.
+    /// Error cases:
+    /// - the vault follows no registry, or a call or its decoding fails
+    pub(super) async fn read_held_turns(
+        &self,
+        turns: std::ops::Range<u64>,
+        candidates: &std::collections::BTreeSet<AccountId>,
+    ) -> anyhow::Result<bool> {
+        let block = BlockId::latest();
+        let vault = Address::from(self.domain.vault.0);
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), block).await?)?;
+        ensure!(!registry.is_zero(), "the vault follows no operator registry");
+        let schedule =
+            scheduleCall::abi_decode_returns(&self.call(registry, scheduleCall {}.abi_encode(), block).await?)?;
+        if schedule.is_zero() {
+            return Ok(false);
+        }
+        for turn in turns {
+            for candidate in candidates {
+                let call = heldTurnCall { turn, candidate: Address::from(candidate.0) };
+                let raw = self.call(schedule, call.abi_encode(), block).await?;
+                if heldTurnCall::abi_decode_returns(&raw).context("decoding the schedule's assignment")? {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// See `CheckpointChain::handover_source_at`.

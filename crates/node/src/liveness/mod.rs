@@ -103,6 +103,9 @@ pub(crate) struct Signable {
     /// The signer epoch and rotation set the confirmation was given under; `None` for the tip with no
     /// other member to ask.
     pub scope: Option<(u64, u32)>,
+    /// The time in milliseconds from which another set than the one it was given under may apply
+    /// (`Gate::holds_until`): nothing is signed at it once trusted time may have reached it.
+    pub until: u64,
 }
 
 /// The vault's signer epoch and the key it names, at the latest block the rule read: a client takes
@@ -208,17 +211,16 @@ impl Gate {
     /// read: a checkpoint is signed at no later seq. Either stands only until another set may apply
     /// (`holds_until`), and none past it until a fresh read renews it.
     pub(crate) fn confirmed(&self) -> u64 {
-        match self.holds() {
+        match self.before(self.0.holds_until.load(Ordering::SeqCst)) {
             true => self.0.confirmed.load(Ordering::SeqCst),
             false => 0,
         }
     }
 
-    /// Whether the last read's confirmations, or its exemption, still stand: trusted time's upper bound
-    /// has not reached the boundary from which another set may apply (`holds_until`).
-    pub(crate) fn holds(&self) -> bool {
-        let until = self.0.holds_until.load(Ordering::SeqCst);
-        until == u64::MAX || !self.reached(until)
+    /// Whether the enclave's upper bound on true time has certainly not reached `at_ms`, `u64::MAX`
+    /// never coming: a permission that lapses at `at_ms` still stands.
+    pub(crate) fn before(&self, at_ms: u64) -> bool {
+        at_ms == u64::MAX || !self.reached(at_ms)
     }
 
     /// Records `until_ms`, from which another set than the read's may apply: the confirmations taken

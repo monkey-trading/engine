@@ -285,6 +285,20 @@ pub(crate) trait CheckpointChain: Send + Sync {
         anyhow::bail!("this checkpoint chain reads no schedule")
     }
 
+    /// Whether the schedule the vault's registry names assigned any of `candidates` any of `turns`, by
+    /// a draw or a promotion, at the latest block: a promoted member sequences before the log mirrors
+    /// its assignment, which finality holds back, so a check of a range counts from none of them. A
+    /// registry with no schedule assigned none.
+    /// Error cases: the chain cannot be read; a chain with no registry cannot answer
+    async fn held_turns(
+        &self,
+        turns: std::ops::Range<u64>,
+        candidates: &std::collections::BTreeSet<AccountId>,
+    ) -> anyhow::Result<bool> {
+        let _ = (turns, candidates);
+        anyhow::bail!("this checkpoint chain reads no schedule")
+    }
+
     /// `candidate`'s handover data as its candidacy registered it, at the already pinned finalized
     /// observation: where the member a promotion named in a turn hands its keys over from (#595). A
     /// chain with no registry reads `None`.

@@ -268,7 +268,6 @@ async fn a_member_answers_its_status_and_entries_on_its_endpoint() {
     task.abort();
 }
 
-/// A peer's connections count per IPv4 address, and per /64 for IPv6, which one host commonly holds.
 /// A member answers `Attestation` with the latest vouch request quoted for the standby key it signs
 /// with, and refuses one before any is quoted or when the latest is another key's.
 #[tokio::test]
@@ -286,6 +285,7 @@ async fn a_member_attests_the_standby_key_it_signs_with() {
     assert_eq!((request.candidate, request.key), (own.candidate, server.standby.address()));
 }
 
+/// A peer's connections count per IPv4 address, and per /64 for IPv6, which one host commonly holds.
 #[test]
 fn peers_count_per_ipv4_address_and_per_ipv6_64() {
     let v6 = |text: &str| text.parse::<std::net::IpAddr>().unwrap();

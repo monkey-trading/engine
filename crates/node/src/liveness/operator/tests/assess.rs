@@ -51,10 +51,10 @@ fn the_assessment_confirms_matching_copies_and_names_longer_or_conflicting_ones(
 }
 
 /// A head at a seq of this log whose prefix the ring no longer holds cannot show a conflict: a member's
-/// durable copy or seen head there counts neither as an answer nor as an empty copy, alone or beside a
-/// member that confirms the tip, while a head past the tip still refuses.
+/// durable copy or seen head there is reported unchecked, alone or beside a member that confirms the
+/// tip, while a head past the tip still refuses.
 #[test]
-fn a_head_the_ring_no_longer_holds_answers_nothing() {
+fn a_head_the_ring_no_longer_holds_is_unchecked() {
     let tip = Head { seq: 70_000, link: link(70_000) };
     let prefixes = BTreeMap::from([(70_000, link(70_000))]);
     let prefix_at = |seq| prefixes.get(&seq).copied();
@@ -69,34 +69,41 @@ fn a_head_the_ring_no_longer_holds_answers_nothing() {
     ];
     for (case, unchecked) in unretained {
         let alone = assess(&[(account(1), unchecked)], prefix_at, tip, (OWN, &none));
-        assert_eq!((alone.answered, alone.empty, alone.conflict), (0, 0, None), "{case}: alone");
+        assert_eq!((alone.unchecked, alone.conflict), (Some((3_000, account(1))), None), "{case}: alone");
         let beside = [(account(1), unchecked), (account(2), status(Some(tip), None))];
         let beside = assess(&beside, prefix_at, tip, (OWN, &none));
-        assert_eq!((beside.answered, beside.empty), (1, 0), "{case}: beside a confirmation");
+        assert_eq!(beside.unchecked, Some((3_000, account(1))), "{case}: beside a confirmation");
         assert_eq!(beside.confirmed.map(|(seq, _)| seq), Some(70_000), "{case}");
     }
     let past = status(Some(forked), Some(Head { seq: 70_001, link: link(70_001) }));
     let assessment = assess(&[(account(1), past)], prefix_at, tip, (OWN, &none));
-    assert_eq!((assessment.answered, assessment.beyond), (0, Some((70_001, account(1)))));
+    assert_eq!((assessment.unchecked, assessment.beyond), (Some((3_000, account(1))), Some((70_001, account(1)))));
+    let checked = assess(&[(account(2), status(Some(tip), None))], prefix_at, tip, (OWN, &none));
+    assert_eq!(checked.unchecked, None, "a head the ring holds is checked");
 }
 
-/// The start check waits on a member whose copy ends at a seq this log's ring no longer holds, and
-/// passes once it answers from a seq the ring holds.
+/// The start check refuses while a member reports a head this log's ring no longer holds, though another
+/// member confirms the tip, and passes once that member answers from a seq the ring holds.
 #[tokio::test(start_paused = true)]
-async fn the_start_check_passes_on_no_head_the_ring_no_longer_holds() {
+async fn the_start_check_refuses_beside_a_head_the_ring_no_longer_holds() {
     let rig = Rig::spawn(10);
     rig.prefixes.lock().unwrap().remove(&3);
-    let forked = Status {
-        epoch: 1,
-        durable: Some(Head { seq: 3, link: B256::repeat_byte(0xee) }),
-        sealer: AccountId([0; 20]),
-        seen: None,
-    };
+    let other = Arc::new(EnclaveKey::generate());
+    rig.chain.set(|chain| {
+        chain.members.push((Address::repeat_byte(0xc3), "member:2".into(), Address::from(other.address())))
+    });
+    let confirms =
+        Status { epoch: 1, durable: Some(Head { seq: 10, link: link(10) }), sealer: AccountId([0; 20]), seen: None };
+    rig.members.0.lock().unwrap().insert("member:2".into(), (AccountId([0xc3; 20]), other, Some(confirms)));
+    let forked = Status { durable: Some(Head { seq: 3, link: B256::repeat_byte(0xee) }), ..confirms };
     rig.members.0.lock().unwrap().get_mut("member:1").unwrap().2 = Some(forked);
+    // The members the first read listed are read again once they are a minute old.
+    tokio::time::sleep(MEMBERS_EVERY).await;
     settle().await;
-    assert!(!rig.gate.start_checked(), "the start check passed on a head it could not check");
+    assert_eq!(rig.gate.confirmed(), 10, "the other member's copy confirmed the tip");
+    assert!(!rig.gate.start_checked(), "the start check passed beside a head it could not check");
     rig.answer(Some(10));
     settle().await;
-    assert!(rig.gate.start_checked() && rig.gate.sequences(), "a checked answer passes it");
+    assert!(rig.gate.start_checked() && rig.gate.sequences(), "with every head checked it passes");
     rig.task.abort();
 }

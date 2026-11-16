@@ -7,8 +7,8 @@
 //! - lets the poster sign at the newest confirmed seq only (`Signing::Confirmed`);
 //! - holds sequencing until a start check passes: a member whose copy holds a command answered, or,
 //!   with this log empty at genesis, any member did, an empty copy's included, and none holds a seq
-//!   past this log or a link that conflicts with it, which raises Critical `liveness_start_refused`
-//!   naming the range;
+//!   past this log, a link that conflicts with it, or a head older than its prefix ring can check, which
+//!   raises Critical `liveness_start_refused` naming the range;
 //! - stops taking commands once the log has run more than one heartbeat interval of sequenced time from
 //!   the first command past the newest confirmation (Critical `liveness_unconfirmed`);
 //! - feeds the fence the read's `promotionDueAt`, which a separate tick checks against trusted time.
@@ -63,19 +63,31 @@ pub(crate) enum Signing {
     Nothing,
     /// The log's tip: the rule does not apply, or the set has no other member, whose signer epoch and
     /// set it names (`None` with no turn naming the operator): a head is signed at the tip only under
-    /// that read's turn, so a change of set the rule has not read signs nothing unconfirmed.
-    Tip(Option<(u64, u32)>),
+    /// that read's turn, so a change of set the rule has not read signs nothing unconfirmed, and only
+    /// before the time in milliseconds from which another set may apply (`Signable::until`).
+    Tip(Option<(u64, u32)>, u64),
     /// The newest seq a member confirmed.
     Confirmed(Signable),
+}
+
+impl Signing {
+    /// The time in milliseconds from which nothing is signed at it: its own boundary from which another
+    /// set may apply, whatever later read renewed the gate's.
+    pub(crate) fn until(&self) -> u64 {
+        match self {
+            Signing::Nothing => 0,
+            Signing::Tip(_, until) => *until,
+            Signing::Confirmed(signable) => signable.until,
+        }
+    }
 }
 
 /// What one round of statuses shows against this log.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Assessment {
-    /// How many members answered with a verified status of a copy holding a command, every head of
-    /// which at a seq of this log was checked against it.
+    /// How many members answered with a verified status of a copy holding a command.
     pub answered: usize,
-    /// How many answered so of a copy holding none.
+    /// How many answered with a verified status of a copy holding none.
     pub empty: usize,
     /// The newest seq a member's durable copy holds with this log's link there, and that member.
     pub confirmed: Option<(u64, AccountId)>,
@@ -83,6 +95,9 @@ pub(crate) struct Assessment {
     pub beyond: Option<(u64, AccountId)>,
     /// A seq where a member holds another link than this log, and that member.
     pub conflict: Option<(u64, AccountId)>,
+    /// A seq of this log, past what its prefix ring retains, where a member holds or has seen a head,
+    /// and that member: no conflict there can be seen.
+    pub unchecked: Option<(u64, AccountId)>,
 }
 
 /// Which members a read lists: the schedule's, of a set, for a turn.
@@ -349,14 +364,19 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             if let Some((_, released)) = stamps.range(..=seq).next_back()
                 && confirmed.is_none_or(|(was, at)| was != scope || at.released.head.seq < released.head.seq)
             {
-                let confirmer = Address::from(member.0);
-                let signable = Signable { released: *released, confirmer, scope: Some((scope.0, scope.2)) };
+                let (confirmer, until) = (Address::from(member.0), 0);
+                let signable = Signable { released: *released, confirmer, scope: Some((scope.0, scope.2)), until };
                 *confirmed = Some((scope, signable));
             }
         }
         let current = confirmed.filter(|(was, _)| *was == scope).map(|(_, signable)| signable);
         // Until the start check passes the node stays stopped, heads included, so a promotion can pass it.
-        let signing = current.filter(|_| self.gate.start_checked()).map_or(Signing::Nothing, Signing::Confirmed);
+        // The confirmation signs nothing from the next boundary, from which another set may apply, until a
+        // round under a read past it gives it that read's.
+        let until = next_boundary(view.time).saturating_mul(1000);
+        let signing = current
+            .filter(|_| self.gate.start_checked())
+            .map_or(Signing::Nothing, |signable| Signing::Confirmed(Signable { until, ..signable }));
         self.signing.send_if_modified(|was| std::mem::replace(was, signing) != signing);
         // The log runs unconfirmed from the first command past the newest confirmed seq, as the earliest
         // released head past it shows (within a poll): with none yet, the next command starts that run
@@ -406,22 +426,25 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         state.fence.exempt(until);
         self.deadline(&state.fence);
         self.gate.exempt(holds.saturating_mul(1000));
-        let tip = Signing::Tip(scope);
+        let tip = Signing::Tip(scope, holds.saturating_mul(1000));
         self.signing.send_if_modified(|signing| std::mem::replace(signing, tip) != tip);
     }
 
     /// Opens sequencing once a member holding a command answered, or at `genesis` any member, and none
-    /// holds more than this log or a conflicting link; otherwise raises Critical `liveness_start_refused`
-    /// naming the range, once.
+    /// holds more than this log, a conflicting link, or a head older than its prefix ring can check;
+    /// otherwise raises Critical `liveness_start_refused` naming the range, once.
     fn start_check(&self, assessment: &Assessment, tip: u64, genesis: bool, episodes: &mut Episodes) {
-        let refusal = match (assessment.beyond, assessment.conflict) {
-            (Some((seq, member)), _) => Some(format!(
+        let refusal = match (assessment.beyond, assessment.conflict, assessment.unchecked) {
+            (Some((seq, member)), ..) => Some(format!(
                 "member {member} holds seqs {}..={seq} this log does not: a rollback of this copy, or a gap to fetch",
                 tip + 1
             )),
-            (None, Some((seq, member))) => Some(format!("member {member} holds another link at seq {seq}")),
-            (None, None) if assessment.answered == 0 && !(genesis && assessment.empty > 0) => None,
-            (None, None) => {
+            (None, Some((seq, member)), _) => Some(format!("member {member} holds another link at seq {seq}")),
+            (None, None, Some((seq, member))) => Some(format!(
+                "member {member} holds a head at seq {seq}, older than this log retains a prefix to check it against"
+            )),
+            (None, None, None) if assessment.answered == 0 && !(genesis && assessment.empty > 0) => None,
+            (None, None, None) => {
                 self.gate.checked(true);
                 info!(answered = assessment.answered, tip, "the start check passed: sequencing");
                 resolve(&mut episodes.start_refused, "liveness_start_refused", "the start check passed");
