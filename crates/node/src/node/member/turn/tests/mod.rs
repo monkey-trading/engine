@@ -226,6 +226,10 @@ impl CheckpointChain for Registry {
         Ok(self.hostname.lock().unwrap().clone())
     }
 
+    async fn reassignments(&self, _turns: std::ops::Range<u64>) -> anyhow::Result<Vec<crate::checkpoints::Assigned>> {
+        Ok(Vec::new())
+    }
+
     async fn scheduled_turn(&self, _at: &Observation, now_ms: Millis) -> anyhow::Result<Option<ScheduledTurn>> {
         Ok(self.turns().into_iter().filter(|turn| turn.boundary <= now_ms).max_by_key(|turn| turn.boundary))
     }

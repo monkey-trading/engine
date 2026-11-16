@@ -54,6 +54,76 @@ async fn an_attestation_the_member_cannot_stand_on_confirms_nothing() {
     rig.task.abort();
 }
 
+/// A member whose attested key an earlier read verified keeps it through a re-check that fails once, its
+/// statuses still counting, until a check refutes the key: the schedule has taken it.
+#[tokio::test(start_paused = true)]
+async fn a_failed_recheck_keeps_the_verified_attested_key_until_a_check_refutes_it() {
+    let (rig, key) = attested_keyed("attested-kept", AccountId([MEMBER; 20]), |_, _| {}, |_| {}, 14).await;
+    assert_eq!(rig.gate.confirmed(), 10, "the attested key's status confirmed nothing");
+    // The member's attestation fails to answer at the next members read, as its status still does.
+    rig.members.2.lock().unwrap().clear();
+    tokio::time::sleep(MEMBERS_EVERY).await;
+    settle().await;
+    rig.answer(Some(12));
+    settle().await;
+    assert_eq!(rig.gate.confirmed(), 12, "one failed re-check dropped the key");
+    // The schedule takes the key: the next failed re-check is refuted by it, and the status counts for nothing.
+    rig.chain.set(|chain| chain.holders.push((key, Address::repeat_byte(MEMBER))));
+    tokio::time::sleep(MEMBERS_EVERY).await;
+    settle().await;
+    rig.answer(Some(14));
+    settle().await;
+    assert_eq!(rig.gate.confirmed(), 12, "a refuted key still confirmed");
+    rig.task.abort();
+}
+
+/// A failed re-check warns once per episode: not again while it keeps failing, and again once a re-check
+/// has passed in between.
+#[tokio::test(start_paused = true)]
+async fn a_failed_recheck_warns_once_per_episode() {
+    let (_guard, mut warned) = crate::test_support::capture_field("member");
+    let (rig, _) = attested_keyed("attested-warned", AccountId([MEMBER; 20]), |_, _| {}, |_| {}, 14).await;
+    let saved = rig.members.2.lock().unwrap().clone();
+    let warnings = |warned: &mut tokio::sync::mpsc::UnboundedReceiver<crate::test_support::Alert>| {
+        std::iter::from_fn(|| warned.try_recv().ok()).filter(|event| event["level"] == "WARN").count()
+    };
+    assert_eq!(warnings(&mut warned), 0);
+    for (restored, expected) in [(false, 1), (false, 0), (true, 0), (false, 1)] {
+        *rig.members.2.lock().unwrap() = if restored { saved.clone() } else { Default::default() };
+        tokio::time::sleep(MEMBERS_EVERY).await;
+        settle().await;
+        assert_eq!(warnings(&mut warned), expected, "restored {restored}");
+    }
+    rig.task.abort();
+}
+
+/// A kept key that its candidate's registered release no longer stands for, or that lost its approval,
+/// is dropped by a failed re-check, as one the schedule took is, and a re-check that itself finds the
+/// release moved drops it too.
+#[tokio::test(start_paused = true)]
+async fn a_failed_recheck_drops_a_kept_key_whose_release_moved_or_lost_approval() {
+    type Change = fn(&mut ChainState);
+    let cases: [(&str, Change); 2] = [
+        ("another release", |chain| chain.release = B256::repeat_byte(0x99)),
+        ("an unapproved release", |chain| chain.approved = false),
+    ];
+    for (case, change) in cases {
+        for served in [false, true] {
+            let (rig, _) = attested_keyed("attested-moved", AccountId([MEMBER; 20]), |_, _| {}, |_| {}, 14).await;
+            if !served {
+                rig.members.2.lock().unwrap().clear();
+            }
+            rig.chain.set(change);
+            tokio::time::sleep(MEMBERS_EVERY).await;
+            settle().await;
+            rig.answer(Some(14));
+            settle().await;
+            assert_eq!(rig.gate.confirmed(), 10, "{case} (served {served}): a refuted key counted");
+            rig.task.abort();
+        }
+    }
+}
+
 // ── Helpers ──
 
 /// A rule whose other member, once its promotable key is gone, signs its statuses with a new standby
@@ -70,7 +140,18 @@ async fn attested_as(
     change: impl FnOnce(&mut ChainState, Address),
     tamper: impl FnOnce(&mut VouchRequest),
 ) -> Rig {
-    let rig = Rig::spawn(10);
+    attested_keyed(name, attesting, change, tamper, 10).await.0
+}
+
+/// `attested_as` over a log whose tip is `tip`, with the standby key the member attests too.
+async fn attested_keyed(
+    name: &str,
+    attesting: AccountId,
+    change: impl FnOnce(&mut ChainState, Address),
+    tamper: impl FnOnce(&mut VouchRequest),
+    tip: u64,
+) -> (Rig, Address) {
+    let rig = Rig::spawn(tip);
     let keys = StandbyKeys::for_test(&scratch_dir(name));
     let mut attestation = request(&QUOTING, &MockAttestor, &keys, &DOMAIN.standby, attesting, TRUE_MS).await.unwrap();
     tamper(&mut attestation);
@@ -87,5 +168,5 @@ async fn attested_as(
     // The members the first read listed are read again once they are a minute old.
     tokio::time::sleep(MEMBERS_EVERY).await;
     settle().await;
-    rig
+    (rig, key)
 }

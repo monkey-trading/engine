@@ -6,6 +6,7 @@
 use super::*;
 
 use crate::log::{CheckpointDomain, CheckpointParent, SegmentedLog};
+use crate::sequencer::ReplayedLog;
 use crate::tee::keys::Head;
 use crate::test_support::SEGMENT_COMMANDS;
 
@@ -45,6 +46,94 @@ fn a_promoted_start_seals_its_check_only_when_another_member_sequenced_the_range
     assert_eq!(promoted(&node, other().admin_key, fixed, "ungated"), None, "sealed with the gate off");
 }
 
+/// A promoted start reads the schedule before it starts: a member promoted within the finality window,
+/// whose promotion the log has yet to mirror, sequenced the range as its promotion's commands, so its
+/// own check of it counts for nothing, as one of a member the schedule never reassigned does.
+#[test]
+fn a_promoted_start_whose_member_the_schedule_promoted_in_the_range_seals_no_check() {
+    let mut node = Node::start("log-check-after-promotion-read", &[other()]);
+    node.approve(1);
+    node.take_turn();
+    node.seq.checkpoint().unwrap();
+    node.seq.flush().unwrap();
+    let fixed = node.last_checkpoint().seq;
+    let reading = |name: &str, own: bool| {
+        let log = recovered(&node);
+        let in_office = log.replayed.takings.sequenced(None, fixed).expect("the turn taken").in_office;
+        let assigned = |candidate, position, reassigned| crate::checkpoints::Assigned {
+            turn: in_office.0,
+            position,
+            candidate,
+            reassigned,
+        };
+        let promoted_to = if own { other().candidate } else { AccountId([0x99; 20]) };
+        let read = crate::log_check::Reassigned {
+            assigned: vec![assigned(in_office.1, 0, false), assigned(promoted_to, 1, true)],
+        };
+        promoted_reading(&log, other().admin_key, fixed, name, Some(&read))
+    };
+    assert_eq!(reading("read-other", false), Some(node.checkpoint_head(fixed)), "another member's promotion");
+    assert_eq!(reading("read-own", true), None, "the member the schedule promoted checked its own work");
+}
+
+/// What names a promotion's turn as one the range spans is the turn that had begun by the range's last
+/// command, which the live sequencer and a replay both note as they apply each command.
+#[test]
+fn the_live_sequencer_and_a_replay_note_the_turn_that_had_begun_by_each_command() {
+    let mut node = Node::start("log-check-began", &[other()]);
+    node.approve(1);
+    node.take_turn();
+    let own = node.turn;
+    node.hand_over_turn();
+    node.seq.flush().unwrap();
+    let last = node.seq.engine.last_seq().unwrap();
+    assert_eq!(node.seq.log_check.takings.began_by(last), Some(own + 1), "the live sequencer");
+    assert_eq!(recovered(&node).replayed.takings.began_by(last), Some(own + 1), "a replay");
+    assert_eq!(recovered(&node).replayed.takings.began_by(last - 1), Some(own), "the command before the boundary");
+}
+
+/// A start that read no schedule before it connected, as a whole-log take or a restart, reads the
+/// reassignments of the turns before the one in effect while the gate applies, so its own check sees a
+/// promotion the log has yet to mirror, and reads nothing once rotation is off.
+#[tokio::test]
+async fn a_start_with_no_earlier_read_reads_the_schedule_while_the_gate_applies() {
+    struct Schedule(std::sync::Mutex<Vec<std::ops::Range<u64>>>);
+    impl crate::checkpoints::CheckpointChain for Schedule {
+        async fn state(&self, _view: crate::checkpoints::View) -> anyhow::Result<crate::checkpoints::VaultState> {
+            anyhow::bail!("no vault state")
+        }
+
+        async fn post(&self, _checkpoint: &Checkpoint) -> anyhow::Result<()> {
+            anyhow::bail!("posts nothing")
+        }
+
+        async fn reassignments(
+            &self,
+            turns: std::ops::Range<u64>,
+        ) -> anyhow::Result<Vec<crate::checkpoints::Assigned>> {
+            self.0.lock().unwrap().push(turns);
+            Ok(Vec::new())
+        }
+    }
+    let mut node = Node::start("log-check-start-reads", &[other()]);
+    node.approve(1);
+    node.take_turn();
+    node.seq.flush().unwrap();
+    let schedule = Schedule(Default::default());
+    let read = crate::node::log_check::read_unreadied(&schedule, &recovered(&node), &Default::default()).await.unwrap();
+    assert!(read.is_some(), "the gate applies");
+    assert_eq!(schedule.0.lock().unwrap().iter().map(|turns| turns.end).collect::<Vec<_>>(), [node.turn + 1]);
+    let off =
+        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
+    node.seq.sequence(off).unwrap().expect("admitted");
+    node.seq.flush().unwrap();
+    assert_eq!(
+        crate::node::log_check::read_unreadied(&schedule, &recovered(&node), &Default::default()).await.unwrap(),
+        None
+    );
+    assert_eq!(schedule.0.lock().unwrap().len(), 1, "read with rotation off");
+}
+
 /// A promotion can fix a checkpoint the vault accepted whose entry no member received: the promoted
 /// start anchors at its own state there, and that root is the one its check seals and a restart's log
 /// check restores the verified head against.
@@ -72,7 +161,7 @@ fn a_promoted_start_checks_through_a_fixed_checkpoint_whose_entry_its_log_lacks(
     let sealer = MockSealer { launch_digest: [0x48; 48] };
     let dir = scratch_dir("log-check-promoted-unheld-keys");
     let store = Arc::new(KeyStore::create(&dir, &sealer, CONFIG, 9, KeySet::generate().unwrap()).unwrap());
-    crate::node::log_check::after_promotion(Some(&store), other().admin_key, &log, fixed.seq).unwrap();
+    crate::node::log_check::after_promotion(Some(&store), other().admin_key, &log, fixed.seq, None).unwrap();
     let head = node.checkpoint_head(fixed.seq);
     assert_eq!(store.keys().log_check, Some(head), "the promotion's check verified the log through it");
     let setup = LogCheckSetup { store, due: tokio::sync::watch::channel(None).0 };
@@ -85,13 +174,28 @@ fn a_promoted_start_checks_through_a_fixed_checkpoint_whose_entry_its_log_lacks(
 /// The verified head the other member's promoted start under `operator` seals over `node`'s log once a
 /// promotion fixed its checkpoint at `checkpoint_seq`.
 fn promoted(node: &Node, operator: AccountId, checkpoint_seq: u64, name: &str) -> Option<VerifiedHead> {
+    promoted_reading(&recovered(node), operator, checkpoint_seq, name, None)
+}
+
+/// `node`'s log as a start reads it.
+fn recovered(node: &Node) -> ReplayedLog {
+    let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) };
+    let signer = AccountId(EnclaveKey::test_key().address());
+    Sequencer::read_log_with_trust(&node.dir, Some(domain), Some(signer), |_| {}).unwrap()
+}
+
+/// As `promoted`, over `log`, with the schedule's reassignments `read`.
+fn promoted_reading(
+    log: &ReplayedLog,
+    operator: AccountId,
+    checkpoint_seq: u64,
+    name: &str,
+    read: Option<&crate::log_check::Reassigned>,
+) -> Option<VerifiedHead> {
     let sealer = MockSealer { launch_digest: [0x47; 48] };
     let dir = scratch_dir(&format!("log-check-promoted-{name}"));
     let store = KeyStore::create(&dir, &sealer, CONFIG, 9, KeySet::generate().unwrap()).unwrap();
-    let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) };
-    let signer = AccountId(EnclaveKey::test_key().address());
-    let log = Sequencer::read_log_with_trust(&node.dir, Some(domain), Some(signer), |_| {}).unwrap();
-    crate::node::log_check::after_promotion(Some(&store), operator, &log, checkpoint_seq).unwrap();
+    crate::node::log_check::after_promotion(Some(&store), operator, log, checkpoint_seq, read).unwrap();
     store.keys().log_check
 }
 
@@ -109,6 +213,6 @@ fn handed_over(node: &mut Node, name: &str) -> Option<VerifiedHead> {
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) };
     let signer = AccountId(EnclaveKey::test_key().address());
     let log = Sequencer::read_log_with_trust(&node.dir, Some(domain), Some(signer), |_| {}).unwrap();
-    crate::node::log_check::after_handover(Some(&successor), other().admin_key, &log).unwrap();
+    crate::node::log_check::after_handover(Some(&successor), other().admin_key, &log, None).unwrap();
     successor.keys().log_check
 }

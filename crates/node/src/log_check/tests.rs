@@ -115,6 +115,69 @@ fn a_promotion_mirrored_past_the_range_names_its_member_from_the_turn_in_office_
     assert_eq!(own_check(Some(head(20)), &late, head(34), (E, &member(E))), Some(head(34)), "E sequenced none");
 }
 
+/// A promotion mirrored past the range names its member only once its turn had begun by the range's
+/// last command: C takes turn 2 and a check covers the range through 34; D, promoted in turn 3, which
+/// began after seq 34, sequenced none of it, whenever its mirror lands.
+#[test]
+fn a_promotion_in_a_turn_that_began_after_the_range_names_no_member_of_it() {
+    let begin = |turn: u64| engine_core::turns::boundary(turn).unwrap();
+    let taken = |turn, release| Event::TurnTaken { turn, candidate: candidate(release), release };
+    let promoted = |turn, release| Event::TurnAssigned {
+        turn,
+        position: 1,
+        reason: TurnReason::Promotion,
+        candidate: candidate(release),
+        admin_key: candidate(release),
+        applies_at: 0,
+    };
+    let mut late = Takings::default();
+    late.stamped(10, begin(2) + 1);
+    late.command(10, &[taken(2, C)]);
+    late.stamped(34, begin(3) - 1);
+    // D's turn began at 35, and its mirror landed at 36.
+    late.stamped(35, begin(3));
+    late.stamped(36, begin(3) + 5);
+    late.command(36, &[promoted(3, D)]);
+    let names = late.sequenced(Some(20), 34).unwrap();
+    assert!(!names.candidates.contains(&candidate(D)), "a turn that began after the range named its member");
+    assert_eq!(own_check(Some(head(20)), &late, head(34), (D, &member(D))), Some(head(34)), "D checked C's holding");
+    // A range through a command stamped in turn 3 names D.
+    let names = late.sequenced(Some(20), 36).unwrap();
+    assert!(names.candidates.contains(&candidate(D)), "a turn that began by the range's end named no member");
+    assert_eq!(own_check(Some(head(20)), &late, head(36), (D, &member(D))), Some(head(20)));
+    // The stamps survive a prune at a verified head inside the range.
+    late.prune(20);
+    assert!(!late.sequenced(Some(20), 34).unwrap().candidates.contains(&candidate(D)));
+}
+
+/// A start's own check also reads the schedule, which a promotion or skip within the finality window may
+/// have changed before the log mirrors it: it counts for nothing when the schedule promoted or skipped
+/// to its member after the in-office assignment, or when it read no turn as early as the in-office one.
+#[test]
+fn the_nodes_own_check_counts_for_nothing_when_the_schedule_promoted_its_member_in_the_range() {
+    // A takes turn 2 at 10; B, promoted in it, sequenced 21 to 30 with no mirror in the log.
+    let mut recorded = Takings::default();
+    recorded.command(10, &[Event::TurnTaken { turn: 2, candidate: candidate(A), release: A }]);
+    let at = |position, release, reassigned| Assigned { turn: 2, position, candidate: candidate(release), reassigned };
+    let own = |read: &Reassigned| own_check_read(Some(head(20)), &recorded, head(34), (B2, &member(B)), Some(read));
+    let read = Reassigned { assigned: vec![at(0, A, false), at(1, B, true)] };
+    assert_eq!(own(&read), Some(head(20)), "B's member checked its own work");
+    // Without a record of the promotion, the log's records alone count it.
+    assert_eq!(own_check_read(Some(head(20)), &recorded, head(34), (B2, &member(B)), None), Some(head(34)));
+    // Another member's promotion, or a draw of this one, says nothing of it.
+    assert_eq!(own(&Reassigned { assigned: vec![at(0, B, false), at(1, C, true)] }), Some(head(34)));
+    // A reassignment in a turn that began after the range's last command sequenced none of it.
+    let begin = |turn: u64| engine_core::turns::boundary(turn).unwrap();
+    recorded.stamped(10, begin(2) + 1);
+    recorded.stamped(34, begin(3) - 1);
+    let later = Reassigned { assigned: vec![at(0, A, false), Assigned { turn: 3, ..at(1, B, true) }] };
+    let own = |read: &Reassigned| own_check_read(Some(head(20)), &recorded, head(34), (B2, &member(B)), Some(read));
+    assert_eq!(own(&later), Some(head(34)), "a turn that began after the range named its member");
+    recorded.stamped(40, begin(3) + 1);
+    let own = |read: &Reassigned| own_check_read(Some(head(20)), &recorded, head(40), (B2, &member(B)), Some(read));
+    assert_eq!(own(&later), Some(head(20)), "a turn that had begun by the range's end did not");
+}
+
 /// A member the schedule promoted or skipped to after the in-office holder's assignment may have
 /// sequenced part of the range before the log mirrored it, in the holder's turn or a later one; one
 /// reassigned earlier in the holder's turn ended before the holder's `TurnTaken`, and a draw is no

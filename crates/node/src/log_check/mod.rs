@@ -91,6 +91,38 @@ impl Sequencers {
     }
 }
 
+/// The schedule's assignments a start read before it connected, for its own check, over the turns near
+/// its own and other than the one that made the start (`own_check_read`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Reassigned {
+    pub assigned: Vec<Assigned>,
+}
+
+/// As `own_check`, and counted only when the schedule `read` also shows no promotion or skip to one of
+/// `candidates`, this node's member, after the in-office assignment: its commands may precede the mirror
+/// the log has yet to hold, as a promotion within the finality window leaves it. Without a `read`, as
+/// for a start that read no schedule, the log's records alone decide.
+pub(crate) fn own_check_read(
+    previous: Option<VerifiedHead>,
+    takings: &Takings,
+    head: VerifiedHead,
+    (release, candidates): (B256, &BTreeSet<AccountId>),
+    read: Option<&Reassigned>,
+) -> Option<VerifiedHead> {
+    let checked = own_check(previous, takings, head, (release, candidates));
+    let Some(read) = read.filter(|_| checked != previous) else { return checked };
+    let sequenced = takings.sequenced(previous.map(|previous| previous.seq), head.seq);
+    // A reassignment in a turn that began after the range's last command sequenced none of it, and one
+    // in a turn before the read began is final and mirrored, so the log's records name it.
+    let began = takings.began_by(head.seq);
+    let assigned: Vec<Assigned> =
+        read.assigned.iter().filter(|at| began.is_none_or(|began| at.turn <= began)).copied().collect();
+    match sequenced {
+        Some(sequencers) if sequencers.reassigned(&assigned).is_disjoint(candidates) => checked,
+        _ => previous,
+    }
+}
+
 /// A `TurnTaken` the engine accepted: the turn, the candidate whose turn it took, and the release it
 /// took it under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,6 +221,9 @@ pub(crate) struct Takings {
     /// mirror of it and its own `TurnTaken`, which a failure before then never logs: each one's turn and
     /// candidate.
     promoted: BTreeMap<u64, BTreeSet<(u64, AccountId)>>,
+    /// The latest turn that had begun by a command's stamp, at each seq where it moved: which turns had
+    /// begun by the command at a range's end (`turn_begun_by`).
+    began: BTreeMap<u64, u64>,
     /// The first command seen: zero for a replay from genesis, past a snapshot's base for one from it.
     from: Option<u64>,
 }
@@ -217,6 +252,20 @@ impl Takings {
         }
     }
 
+    /// Notes that the command at `seq`, which `command` notes the events of, was stamped `ts`.
+    pub(crate) fn stamped(&mut self, seq: u64, ts: Millis) {
+        if let Some(begun) = turn_begun_by(ts)
+            && self.began.last_key_value().is_none_or(|(_, last)| *last != begun)
+        {
+            self.began.insert(seq, begun);
+        }
+    }
+
+    /// The latest turn that had begun by the stamp of the command at `through`, as far as it is known.
+    pub(crate) fn began_by(&self, through: u64) -> Option<u64> {
+        self.began.range(..=through).next_back().map(|(_, turn)| *turn)
+    }
+
     /// Takes the records as complete from `next`, the next command's seq, when no command was seen:
     /// a log with none yet, or a start whose snapshot covers every command.
     pub(crate) fn complete_from(mut self, next: u64) -> Self {
@@ -232,9 +281,10 @@ impl Takings {
     /// Who sequenced the commands after `after`, the last verified head, through `through`, as
     /// `TurnTaken` records them: the latest one at or before the first of them, whose member sequenced
     /// on from there, and each one after it; with the candidate of each promotion or skip mirrored after
-    /// that latest one, at any seq, in its turn or a later one: the member's commands may precede its
-    /// mirror, which finality can hold past `through`, and its own `TurnTaken`, if it ever logged one,
-    /// while one in an earlier turn ended before that `TurnTaken`. With no verified head, as before the
+    /// that latest one, at any seq, in its turn or a later one that had begun by the command at `through`
+    /// (when its stamp is known): the member's commands may precede its mirror, which finality can hold
+    /// past `through`, and its own `TurnTaken`, if it ever logged one, while one in an earlier turn ended
+    /// before that `TurnTaken`, and one in a turn that began after `through` sequenced none of the range. With no verified head, as before the
     /// first check or once a host kept the sealed one from a start, the range is the holding of the
     /// latest `TurnTaken` at or before `through`: from genesis it would name every member that ever
     /// took a turn, and no check could count again. `None` when no `TurnTaken` these records hold names
@@ -263,7 +313,9 @@ impl Takings {
         });
         let after_in_office = (std::ops::Bound::Excluded(since), std::ops::Bound::Unbounded);
         let promoted = self.promoted.range(after_in_office).flat_map(|(_, promoted)| promoted);
-        let from_in_office = promoted.filter(|(turn, _)| *turn >= in_office.turn).map(|(_, candidate)| *candidate);
+        let begun = self.began_by(through);
+        let named = |turn: u64| turn >= in_office.turn && begun.is_none_or(|begun| turn <= begun);
+        let from_in_office = promoted.filter(|(turn, _)| named(*turn)).map(|(_, candidate)| *candidate);
         sequencers.candidates.extend(from_in_office);
         Some(sequencers)
     }
@@ -275,9 +327,20 @@ impl Takings {
         if let Some((&keep, _)) = self.by_seq.range(..=first).next_back() {
             self.by_seq = self.by_seq.split_off(&keep);
             self.promoted = self.promoted.split_off(&keep.saturating_add(1));
+            if let Some((&base, _)) = self.began.range(..=keep).next_back() {
+                self.began = self.began.split_off(&base);
+            }
             self.from = self.from.max(Some(keep));
         }
     }
+}
+
+/// The latest turn that had begun by `ts`, `None` before the first one's boundary.
+fn turn_begun_by(ts: Millis) -> Option<u64> {
+    let turn =
+        u64::try_from(ts.checked_sub(engine_core::turns::BOUNDARY_OFFSET_MS)?.div_euclid(engine_core::turns::DAY_MS))
+            .ok()?;
+    engine_core::turns::boundary(turn).filter(|boundary| *boundary <= ts).map(|_| turn)
 }
 
 /// The verified head after this node's own verification of the log through `head`, at a handover or

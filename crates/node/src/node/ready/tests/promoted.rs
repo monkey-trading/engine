@@ -45,6 +45,7 @@ async fn a_promoted_member_keeps_its_copy_and_extends_the_vaults_latest_under_it
         checkpoint_root: anchor.root.parse().unwrap(),
         at: 0,
         block: 0,
+        carried: 20_400,
     };
     let sealer = MockSealer { launch_digest: DIGEST };
     let sealing = cfg.tee.sealing.as_ref().unwrap();
@@ -60,6 +61,7 @@ async fn a_promoted_member_keeps_its_copy_and_extends_the_vaults_latest_under_it
         sample: sample_around(&crate::clock::SystemClock),
         certificates: None,
         promoted: Some(promotion),
+        reassigned: None,
     };
     let moved = Moved { after: last, entries: 0, bytes: 0 };
     let start = Start { replica: Replica { follower, stats, history, marks: Default::default() }, store, ready, moved };
@@ -148,6 +150,7 @@ async fn a_promoted_start_checks_its_staking_config_against_the_contract() {
         checkpoint_root: Default::default(),
         at: 0,
         block: 0,
+        carried: 1,
     };
     let sample = std::future::ready(Err(anyhow::anyhow!("the start sampled time after its staking check failed")));
     let start = crate::node::KeyStart::default();
@@ -155,4 +158,40 @@ async fn a_promoted_start_checks_its_staking_config_against_the_contract() {
     let read = Ready::read_promoted(&cfg, &start, &Metrics::new(), signer, signer, replica, promotion, sample).await;
     let err = read.err().expect("a promoted start whose staking contract cannot be read read on");
     assert!(format!("{err:#}").contains("cannot read the staking contract"), "{err:#}");
+}
+
+/// A promoted start publishes the generation of the turn in effect its promotion is carried into, as well
+/// as the promotion's own, so the first command in that turn is its `TurnTaken` before any read of the
+/// schedule's generations.
+#[tokio::test]
+async fn a_promoted_start_publishes_the_generation_of_the_turn_it_carries_into() {
+    let data = scratch_dir("ready-promoted-generations");
+    let log = data.join("log");
+    let mut cfg = unreachable(&data, &log);
+    cfg.checkpoints = None;
+    cfg.genesis.staking = None;
+    cfg.custody.evm.as_mut().unwrap().staking = None;
+    write_log(&cfg).await;
+    let signer = AccountId(EnclaveKey::test_key().address());
+    let domain = CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };
+    let follower = Follower::open(&log, 4, domain, signer, [signer].into(), None, |_| {}).unwrap();
+    let promotion = crate::standby_key::chain::Promotion {
+        turn: 20_400,
+        position: 1,
+        signer_epoch: 2,
+        generation: 9,
+        head_seq: 0,
+        head_link: Default::default(),
+        checkpoint_seq: 0,
+        checkpoint_root: Default::default(),
+        at: 0,
+        block: 0,
+        carried: 20_401,
+    };
+    let sample = std::future::ready(Ok(sample_around(&crate::clock::SystemClock)));
+    let start = crate::node::KeyStart::default();
+    let metrics = Metrics::new();
+    let read = Ready::read_promoted(&cfg, &start, &metrics, signer, signer, follower.replica(), promotion, sample);
+    let ready = read.await.expect("a promoted start with no chain to read");
+    assert_eq!(ready.generations, BTreeMap::from([(20_400, 9), (20_401, 9)]));
 }

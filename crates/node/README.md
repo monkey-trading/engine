@@ -274,7 +274,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `src/liveness/operator/assess.rs` how members' statuses weigh against the log;
   `src/liveness/operator/read.rs` its read of the chain and the set's members at one block;
   `src/liveness/operator/attested.rs` the key a member with no promotable standby key confirms with,
-  once this enclave verifies its attestation;
+  once this enclave verifies its attestation, kept through a failed re-check until a check refutes it;
   `src/liveness/operator/limits.rs` its pure limits (an exempt read's hold, the lag, refused rules);
   `src/liveness/operator/stamps.rs` the released heads' stamps, sampled as the sequencer releases them;
   `src/liveness/operator/tests.rs` drives it against fake members, chain and sequencer, with
@@ -325,7 +325,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/node/ready.rs` — what a member reads before it connects for its turn, so the window from the
   confirmation to its first command holds no chain read and no time sample: the sealed certificate,
   opened first, the rotation check, the checkpoint setup with the vault's anchor checked against its
-  replica, the MONKEY budget, the posted log heads, the turn's generation, and last the trusted time
+  replica, the MONKEY budget, the posted log heads, the generations of the turns it starts in (a promotion's
+  carried turn too), and last the trusted time
   sample; `src/node/ready/tests.rs` starts a node from a replica with every chain endpoint and time
   server unreachable, and refuses an altered certificate store before any chain read, with
   `tests/promoted.rs` for a promoted member's start from its copy and its staking check. Between the
@@ -1149,9 +1150,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   gate's condition (rotation on and a turn in effect whose set names two or more members), the log's
   `TurnTaken` records that attribute a range to the members and releases that sequenced it (with no
   verified head, the latest holding; none before the log's first `TurnTaken`, nor from a snapshot's
-  base until a `TurnTaken` it saw), and the
-  node's own check at a handover, which a
-  member's other release never makes for a range it sequenced; `src/log_check/tests.rs` covers the
+  base until a `TurnTaken` it saw; a promotion or skip mirrored past the range names its member only
+  for a turn that had begun by the range's end), and the
+  node's own check at a handover or a promoted start, which a
+  member's other release never makes for a range it sequenced, nor its member when the schedule, read
+  before the start, promoted or skipped to it after the in-office assignment; `src/log_check/tests.rs` covers the
   attribution, the own check, an upgrade, and what the quote and the question bind
 - `src/log_check/ask.rs` — the operator's asking: the members of the turn's order, first to last,
   but its own candidate, those with no handover endpoint, members and releases in the range and members

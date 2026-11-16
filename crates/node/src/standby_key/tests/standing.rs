@@ -117,6 +117,27 @@ async fn a_restart_judges_the_promotion_by_the_block_it_read_it_at_not_by_time()
     assert_eq!(record.standing(&chain, &DOMAIN, own).await.unwrap(), Standing::Ended, "a final block at it has it");
 }
 
+/// A restart that resumes from the promotion's record finds the turn in effect its generation is carried
+/// into, as a start from the standby seal does, so its first command there is its `TurnTaken`.
+#[tokio::test]
+async fn a_resumed_promotion_names_the_drawn_turn_it_is_carried_into() {
+    let key = AccountId([0x5b; 20]);
+    let chain = FakeChain::new();
+    chain.register(CANDIDATE, release().id(), true);
+    chain.promote(CANDIDATE, key);
+    let record = Record::new(CANDIDATE, key, PROMOTION, 121);
+    assert_eq!(record.carried(&chain, &DOMAIN).await.unwrap(), PROMOTION.turn, "its own turn while it is the latest");
+    chain.draw_next(CANDIDATE, PROMOTION.generation);
+    assert_eq!(record.carried(&chain, &DOMAIN).await.unwrap(), PROMOTION.turn + 1, "the drawn turn it is carried into");
+    chain.draw_next(AccountId([0x77; 20]), PROMOTION.generation);
+    assert_eq!(record.carried(&chain, &DOMAIN).await.unwrap(), PROMOTION.turn, "another member's turn carries nothing");
+    // A promotion carried through more drawn turns than a start's walk follows still resumes.
+    let chain = FakeChain::new();
+    chain.promote(CANDIDATE, key);
+    (0..70).for_each(|_| chain.draw_next(CANDIDATE, PROMOTION.generation));
+    assert_eq!(record.carried(&chain, &DOMAIN).await.unwrap(), PROMOTION.turn + 70);
+}
+
 /// The promotion's watch: a latest block recording the promotion stands until a final one does, a
 /// latest block older than the one the start read it at stands too, and one at or past it that lacks
 /// it is missing.

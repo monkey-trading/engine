@@ -47,6 +47,31 @@ fn a_continuing_holder_takes_its_turn_in_the_generation_it_holds() {
     assert_eq!(std::fs::read_dir(&keys_dir).unwrap().count(), 1, "the keys were sealed again");
 }
 
+/// A promoted start that continues its promotion into the same member's drawn turn publishes the
+/// generation of that turn as well as the promotion's, so its first command there is its `TurnTaken`
+/// before any read of the schedule's generations.
+#[test]
+fn a_promotion_carried_into_a_drawn_turn_takes_it_on_the_starts_generations() {
+    let Holding { mut seq, turn, store, generations, .. } = holding("turn-carried");
+    let promotion = crate::standby_key::chain::Promotion {
+        turn: turn - 1,
+        position: 1,
+        signer_epoch: 2,
+        generation: HELD,
+        head_seq: 0,
+        head_link: B256::ZERO,
+        checkpoint_seq: 0,
+        checkpoint_root: B256::ZERO,
+        at: 0,
+        block: 0,
+        carried: turn,
+    };
+    generations.send_replace(promotion.generations());
+    seq.sequence(Command::Tick).unwrap().expect("admitted");
+    assert_eq!(seq.engine.daily_turns().taken.map(|taken| taken.turn), Some(turn), "the carried turn was not taken");
+    assert_eq!(store.generation(), HELD);
+}
+
 #[test]
 fn a_turn_whose_keys_cannot_be_sealed_in_its_generation_waits_and_retries_later() {
     let Holding { mut seq, clock, turn, store, generations, keys_dir } = holding("turn-reseal-fails");

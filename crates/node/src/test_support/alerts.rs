@@ -46,6 +46,13 @@ pub fn capture_alerts() -> (DefaultGuard, mpsc::UnboundedReceiver<Alert>) {
     (tracing::subscriber::set_default(Registry::default().with(AlertLayer(tx, "alert"))), rx)
 }
 
+/// Collects the fields of every event that carries a `key` field, as `capture_alerts` does for alerts.
+pub fn capture_field(key: &'static str) -> (DefaultGuard, mpsc::UnboundedReceiver<Alert>) {
+    keep_callsites_interested();
+    let (tx, rx) = mpsc::unbounded_channel();
+    (tracing::subscriber::set_default(Registry::default().with(AlertLayer(tx, key))), rx)
+}
+
 /// As `capture_alerts`, and the events that end an alert's episode (those with an `alert_resolved`
 /// field) arrive on the second receiver.
 pub fn capture_alerts_and_resolutions() -> (DefaultGuard, mpsc::UnboundedReceiver<Alert>, mpsc::UnboundedReceiver<Alert>)

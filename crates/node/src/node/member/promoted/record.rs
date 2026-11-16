@@ -84,6 +84,7 @@ impl Record {
             checkpoint_root,
             at,
             block,
+            carried: _,
         } = promotion;
         Self {
             candidate,
@@ -117,7 +118,16 @@ impl Record {
             checkpoint_root: self.checkpoint_root,
             at: self.at,
             block: self.block,
+            carried: self.turn,
         }
+    }
+
+    /// The turn in effect at `chain`'s latest agreed block that this promotion's generation is carried
+    /// into (`carried_turn`): its own turn when the schedule names another member or generation there.
+    /// Error cases:
+    /// - a read fails
+    pub(crate) async fn carried(&self, chain: &impl StandbyChain, domain: &StandbyDomain) -> anyhow::Result<u64> {
+        crate::standby_key::chain::carried_turn(chain, domain, (self.candidate, self.generation, self.turn)).await
     }
 
     /// The record in `dir`, if one is there.

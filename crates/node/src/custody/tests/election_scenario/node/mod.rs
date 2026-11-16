@@ -271,7 +271,7 @@ impl Node {
             }
         };
         // A start after a handover records its check as a node's does (`node::log_check`).
-        crate::node::log_check::after_handover(store.as_deref(), operator.address, &replayed).unwrap();
+        crate::node::log_check::after_handover(store.as_deref(), operator.address, &replayed, None).unwrap();
         let (replayed, mut history) = plan.finish_with_log(replayed, key.clone()).unwrap();
         seq_cfg.history_sealing = history.sealing();
         let handover = signing.map(|signing| {

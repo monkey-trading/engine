@@ -119,6 +119,9 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         // Before the start's reads open the member's certificate store, a restart's included.
         let tls_key_sha256 = Sha256::digest(store.keys().tls_key()?.subject_public_key_info()).into();
         crate::node::member::standby::certificate::promoted(self.cfg, &self.start, &tls_key_sha256);
+        let held = Some((promotion.position, promotion.carried));
+        let reassigned =
+            crate::node::log_check::read_reassigned(&self.vault, promotion.turn, held, &Default::default()).await?;
         let read = Ready::read_promoted(
             self.cfg,
             &self.start,
@@ -129,7 +132,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             promotion,
             self.time.sample(),
         );
-        let ready = read.await?;
+        let mut ready = read.await?;
+        ready.reassigned = Some(reassigned);
         info!(turn = promotion.turn, position = promotion.position, %signer, after = tip,
             "promoted: starting from the copy under the standby key");
         let moved = Moved { after: before, entries: tip.saturating_sub(before), bytes: 0 };
@@ -160,13 +164,15 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let log_heads = self.cfg.log_heads.as_ref().context("[log_heads]")?.contract;
         let chain = crate::custody::StandbyReader::connect_named(&self.cfg.custody, log_heads, "promotion")?;
         let vault = Address::from(self.cfg.custody.vault.parse::<AccountId>()?.0);
-        let read: BoxFuture<'_, anyhow::Result<Standing>> = Box::pin(async {
+        let read: BoxFuture<'_, anyhow::Result<(Standing, u64)>> = Box::pin(async {
             let domain = StandbyDomain::read(&chain, self.cfg.custody.chain_id, vault).await?;
-            record.standing_at_start(&chain, &domain, B256::from(self.release.id()), &sealing.dir).await
+            let standing = record.standing_at_start(&chain, &domain, B256::from(self.release.id()), &sealing.dir);
+            Ok((standing.await?, record.carried(&chain, &domain).await?))
         });
-        let promotion = record.promotion();
+        let (standing, carried) = read.await?;
+        let promotion = Promotion { carried, ..record.promotion() };
         let dirs = (self.cfg.node.log_dir.as_path(), sealing.dir.as_path(), key_file.as_path());
-        if let Some(resumed) = settle(read.await?, &record, dirs)? {
+        if let Some(resumed) = settle(standing, &record, dirs)? {
             return Ok(resumed);
         }
         // The promotion's fixed head and checkpoint stay checkable however far the copy has run past.

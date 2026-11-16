@@ -163,14 +163,23 @@ pub(crate) struct Promotion {
     pub at: u64,
     /// The number of the agreed block it was read at: no block below it says anything of it.
     pub block: u64,
+    /// The turn in effect the promotion's generation is carried into at that block: `turn`, or the same
+    /// member's drawn turn that continues it (`_carryNext`), which a start publishes the generation of.
+    pub carried: u64,
 }
 
 impl Promotion {
+    /// The generation the promotion reserved, by the turn it is the schedule's for and the turn in effect
+    /// it is carried into, which a start publishes, so its first command in either is its `TurnTaken`.
+    pub(crate) fn generations(&self) -> std::collections::BTreeMap<u64, u64> {
+        [(self.turn, self.generation), (self.carried, self.generation)].into()
+    }
+
     /// Whether `other` is this promotion: the same assignment, signer epoch, generation and
-    /// commitments. The block time and the block read are no part of it: a reorg that includes the
-    /// same promotion again at a later block fixes the same history.
+    /// commitments. The block time, the block read and the turn carried into are no part of it: a reorg
+    /// that includes the same promotion again at a later block fixes the same history.
     pub(crate) fn same(&self, other: &Promotion) -> bool {
-        Self { at: 0, block: 0, ..*self } == Self { at: 0, block: 0, ..*other }
+        Self { at: 0, block: 0, carried: 0, ..*self } == Self { at: 0, block: 0, carried: 0, ..*other }
     }
 }
 
@@ -271,7 +280,7 @@ pub(crate) async fn standby_state(
     if named.generation != promotion.generation {
         return Ok(StandbyState::Unusable("the turn in effect holds another generation than the promotion's"));
     }
-    Ok(StandbyState::Promoted(promotion))
+    Ok(StandbyState::Promoted(Promotion { carried: found.turn, ..promotion }))
 }
 
 /// The promotion the schedule records for assignment `(turn, position)` at `block`, if one installed
@@ -303,6 +312,7 @@ pub(crate) async fn promotion_of(
         checkpoint_root: assignment.checkpointRoot,
         at: assignment.at,
         block: block.number(),
+        carried: turn,
     }))
 }
 
@@ -414,15 +424,13 @@ pub(crate) async fn vouch_view(
     vouch_view_at(&chain.latest().await?, domain, candidate, own).await
 }
 
-/// `vouch_view`, at `block`.
-/// Error cases:
-/// - a read fails
-pub(crate) async fn vouch_view_at(
+/// `candidate`'s registered release at `block` (`None` while unregistered), and whether the timelock
+/// approved it for the candidate. Error cases: a read fails.
+pub(crate) async fn registration_at(
     block: &impl AgreedBlock,
     domain: &StandbyDomain,
     candidate: AccountId,
-    own: Option<AccountId>,
-) -> anyhow::Result<VouchView> {
+) -> anyhow::Result<(Option<B256>, bool)> {
     let candidate = Address::from(candidate.0);
     let registered = call(block, "standby_candidate", domain.registry, candidateOfCall { candidate }).await?;
     let release = (!registered.adminKey.is_zero()).then_some(registered.release);
@@ -433,6 +441,35 @@ pub(crate) async fn vouch_view_at(
         }
         None => false,
     };
+    Ok((release, approved))
+}
+
+/// The turn in effect at the latest agreed block when the schedule names `candidate` for it in
+/// `generation`, which a promotion of `turn` in that generation is carried into; `turn` otherwise.
+/// Error cases:
+/// - a read fails
+pub(crate) async fn carried_turn(
+    chain: &impl StandbyChain,
+    domain: &StandbyDomain,
+    (candidate, generation, turn): (AccountId, u64, u64),
+) -> anyhow::Result<u64> {
+    let block = chain.latest().await?;
+    let found = call(&block, "standby_turn", domain.schedule, turnAtCall { timestamp: block.time() }).await?;
+    let named = found._1;
+    let carried = found.turn != 0 && named.candidate == Address::from(candidate.0) && named.generation == generation;
+    Ok(if carried { found.turn } else { turn })
+}
+
+/// `vouch_view`, at `block`.
+/// Error cases:
+/// - a read fails
+pub(crate) async fn vouch_view_at(
+    block: &impl AgreedBlock,
+    domain: &StandbyDomain,
+    candidate: AccountId,
+    own: Option<AccountId>,
+) -> anyhow::Result<VouchView> {
+    let (release, approved) = registration_at(block, domain, candidate).await?;
     let signer = call(block, "standby_signer", domain.vault, checkpointSignerCall {}).await?;
     let own_promotable = match own {
         Some(own) => {
