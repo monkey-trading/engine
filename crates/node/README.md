@@ -390,13 +390,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   following for a stint before retrying, each attempt's lines in a `take{turn}` span; each source's
   refusal of the tip pages naming the turn, and each is classified, a later source's failure hiding
   none (`turn/tries.rs`), and after three refusals, or five minutes of failures no source refused
-  (the start's reads, or no source answering), it leaves its turn to a whole-log start; after a
+  (the start's reads, or no source answering), it leaves its turn to a whole-log start; opening the
+  copy's replica, the incumbent a stale copy follows and the take itself are in `turn/open.rs`; after a
   confirmed handover it never
   holds again the generation it gave away, and its trusted reach, and the next start's, never falls
   below what it had reached then; `src/node/member/turn/tests/` drives it against stand-in registry,
   operator, archive, heads and time, `take.rs` there its tries at the turn, a take that changed the
-  copy rebuilding the replica, against `src/handover/stand_in.rs`, `episodes.rs` its alerts'
-  episodes, and `stop.rs` a shutdown during a replica's build; `src/node/member/turn/skip.rs` is the
+  copy rebuilding the replica, against `src/handover/stand_in.rs`, `following.rs` its following,
+  bootstrap and posted-head paging, `episodes.rs` its alerts' episodes, and `stop.rs` a shutdown during a replica's build; `src/node/member/turn/skip.rs` is the
   member's turn under the latest agreed block's skips (#596): it takes a turn a skip names it for
   before the skip is final, follows rather than takes one a skip or a promotion moved past it, asks
   the operator whose head is newest first, and follows that operator every other failed stint;
