@@ -75,7 +75,7 @@ an index: load only the rule whose hint matches the current action.
   member's `TurnTaken`, from which the operator's share counts its time in office to its turn's end,
   `tests/daily_turns.rs`; from `V53`, a member's notice carried across sets that name it unchanged,
   and no office past the first turn's application for the account in it before turns run; from `V71` a promotion mirrored
-  after its turn's end applies while no later turn is in effect, `tests/daily_turns/late_promotion.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
+  after its turn's end applies while no later turn is in effect, and from `V72` the set of a refused draw is kept for it, `tests/daily_turns/late_promotion.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), from `V70` cut by a proven fault's haircut, which starts at the recorded penalty and falls linearly to nothing, the withheld part going to stakers (`operator_faults.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
