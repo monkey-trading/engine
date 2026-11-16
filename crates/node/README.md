@@ -1493,8 +1493,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/tests/coinbase_support.rs` — a loopback Coinbase `level2` endpoint at the venue's
   load: whole-book snapshots (a tenth of Coinbase's depth by default, its full depth on request),
   25 updates a second a product, pings answered in stream order,
-  subscriptions served from a source a set time behind or put behind while they stream, and halted
-  products
+  subscriptions served from a source a set time behind or put behind while they stream, and
+  products halted, their snapshots stamped at the halt, and resumed
+- `src/feeds/tests/kraken_support.rs` — a loopback Kraken v2 `book` endpoint: ten levels a side with
+  Kraken's checksum, an update to the top 25 times a second, pings answered in stream order
+- `src/feeds/tests/link.rs` — a loopback link between a feed and its stand-in that stalls, drops,
+  refuses or throttles what the venue sends
+- `src/feeds/tests/venue_load.rs` — the venue load dev scenario: the crypto feeds at the production
+  template's timings against Coinbase's full books and both venues' rates, each fault in turn (a stalled,
+  dropped and slow Coinbase connection, a quiet and a stale product, outages of both venues and of
+  trusted time), the monitor's alerts while a market is unpriced, and the deadlines to reprice
 - `src/feeds/tests/silent.rs` — silent and stale symbols resubscribed until they quote: a stale
   product alone while the other quotes on, a later episode alone too, one still stale alone then on
   a new connection, a halted product alone each time, and a Kraken symbol on each new connection
@@ -3474,6 +3482,9 @@ cargo test -p engine-node --features short-turns --lib -- seed_relay::schedule l
 # Dev scenario: loopback crypto venues price BTC-USD; a toxic client's tier from its 21st fill, an
 # edgeless client at the best price, round trips that leave the score, a replay and a restart
 ./scripts/dev-toxicity.sh
+# Dev scenario: the crypto feeds against Coinbase's full books and both venues' rates, through faults
+# one at a time; each market alerts while unpriced and reprices within its deadline
+./scripts/dev-venue-load.sh
 # Dev scenario: loopback crypto venues move BTC-USD a client's way until the house has lost money
 # over the day; BTC at level 2 on that move, its cooldown once the house is ahead, a replay, a restart
 ./scripts/dev-loss-trigger.sh

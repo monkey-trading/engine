@@ -62,6 +62,7 @@ jobs:
       scenario_tests: ${{ steps.classify.outputs.scenario_tests }}
       rwa_feeds: ${{ steps.classify.outputs.rwa_feeds }}
       toxicity: ${{ steps.classify.outputs.toxicity }}
+      venue_load: ${{ steps.classify.outputs.venue_load }}
       loss_trigger: ${{ steps.classify.outputs.loss_trigger }}
       cme_feeds: ${{ steps.classify.outputs.cme_feeds }}
       attestation_verifier: ${{ steps.classify.outputs.attestation_verifier }}
@@ -84,7 +85,7 @@ jobs:
           # engine-node's lib tests, and those against loopback venues.
           prebuilt="metrics_alerts alert_outbox browser_origin dashboard_data proxy_protocol batch_orders ct_watch snapshot_restart signed_api production_secrets log_heads"
           anvil="vault_deposits daily_rotation short_turns"
-          feeds="toxicity loss_trigger rwa_feeds cme_feeds"
+          feeds="toxicity loss_trigger rwa_feeds cme_feeds venue_load"
           # Every scenario that runs engine-node's lib tests, every one that runs the node, and every one.
           lib_tests="$anvil $feeds scenario_tests attestation_verifier"
           # The scenarios that drive the API.
@@ -281,6 +282,7 @@ jobs:
                   | scripts/dev-spreads.sh)
                   areas+=" scenario_tests" ;;
                 scripts/dev-toxicity.sh) areas+=" toxicity" ;;
+                scripts/dev-venue-load.sh) areas+=" venue_load" ;;
                 scripts/dev-loss-trigger.sh) areas+=" loss_trigger" ;;
                 scripts/dev-rwa-feeds.sh) areas+=" rwa_feeds" ;;
                 scripts/dev-cme-feeds.sh) areas+=" cme_feeds" ;;
@@ -908,6 +910,24 @@ jobs:
           cache-on-failure: true
       - name: Run the toxicity score dev scenario
         run: ./scripts/dev-toxicity.sh
+
+  dev-venue-load:
+    needs: changes
+    if: needs.changes.outputs.venue_load == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: engine-lib
+          save-if: false
+          cache-on-failure: true
+      - name: Run the venue load dev scenario
+        run: ./scripts/dev-venue-load.sh
 
   dev-loss-trigger:
     needs: changes
@@ -1647,6 +1667,23 @@ jobs:
           gh run cancel ${{ github.run_id }} \
             || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
 
+  cancel-dev-venue-load:
+    needs: dev-venue-load
+    if: failure() && needs.dev-venue-load.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
   cancel-dev-loss-trigger:
     needs: dev-loss-trigger
     if: failure() && needs.dev-loss-trigger.result == 'failure'
@@ -1890,7 +1927,7 @@ jobs:
   # `changes` set its area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-daily-rotation, dev-short-turns, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-scenario-tests, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-cme-feeds, dev-toxicity, dev-loss-trigger, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval, ci-changes]
+    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-daily-rotation, dev-short-turns, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-scenario-tests, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-cme-feeds, dev-toxicity, dev-venue-load, dev-loss-trigger, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval, ci-changes]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1908,7 +1945,7 @@ jobs:
                "engine-build": "engine_build", "dev-metrics-alerts": "metrics_alerts", "dev-alert-outbox": "alert_outbox",
                "dev-ct-watch": "ct_watch", "dev-browser-origin": "browser_origin", "dev-dashboard-data": "dashboard_data",
                "dev-proxy-protocol": "proxy_protocol", "dev-scenario-tests": "scenario_tests", "dev-batch-orders": "batch_orders",
-               "dev-snapshot-restart": "snapshot_restart", "dev-rwa-feeds": "rwa_feeds", "dev-toxicity": "toxicity",
+               "dev-snapshot-restart": "snapshot_restart", "dev-rwa-feeds": "rwa_feeds", "dev-toxicity": "toxicity", "dev-venue-load": "venue_load",
                "dev-loss-trigger": "loss_trigger", "dev-cme-feeds": "cme_feeds", "dev-attestation-verifier": "attestation_verifier",
                "dev-signed-api": "signed_api", "dev-production-secrets": "production_secrets", "dev-log-heads": "log_heads",
                "dev-acme": "acme", "wasm-verifier": "wasm_verifier", "wasm-verifier-compare": "wasm_verifier", image: "image",

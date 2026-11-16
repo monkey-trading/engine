@@ -9,7 +9,9 @@ mod emission;
 pub(super) mod fake;
 mod hostile;
 mod hours;
+mod kraken_support;
 mod late;
+mod link;
 mod loss_trigger;
 mod mock;
 mod quiet;
@@ -21,6 +23,7 @@ mod scenario;
 mod silent;
 mod toxicity;
 mod vendors;
+mod venue_load;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
