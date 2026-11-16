@@ -22,7 +22,9 @@ impl Asking for Members {
     async fn ask(&self, endpoint: &str, request: &Request) -> anyhow::Result<Reply> {
         let Request::Entries { after } = request else { anyhow::bail!("only entries") };
         match self.0.get(endpoint).cloned().flatten() {
-            Some(entries) => Ok(Reply::Entries { entries: entries.into_iter().filter(|(at, _)| at > after).collect() }),
+            Some(entries) => {
+                Ok(Reply::Entries { entries: entries.into_iter().filter(|(at, _)| Some(*at) > *after).collect() })
+            }
             None => std::future::pending().await,
         }
     }
@@ -35,7 +37,7 @@ struct Paging(Vec<(Offset, LogEntry)>);
 impl Asking for Paging {
     async fn ask(&self, _: &str, request: &Request) -> anyhow::Result<Reply> {
         let Request::Entries { after } = request else { anyhow::bail!("only entries") };
-        Ok(Reply::Entries { entries: self.0.iter().filter(|(at, _)| at > after).take(1).cloned().collect() })
+        Ok(Reply::Entries { entries: self.0.iter().filter(|(at, _)| Some(*at) > *after).take(1).cloned().collect() })
     }
 }
 
@@ -139,6 +141,46 @@ async fn a_gap_given_one_entry_a_page_is_taken_page_by_page() {
     assert!(taken > 1 && refused.is_none(), "taken {taken}, refused {refused:?}");
     drop(follower);
     assert_eq!(log_entries(&copy), log_entries(&full), "the copy took the whole gap");
+}
+
+/// A member's link over `copy`: its ring, else its durable log.
+struct Link(crate::liveness::link::Copy);
+
+impl Asking for Link {
+    async fn ask(&self, _: &str, request: &Request) -> anyhow::Result<Reply> {
+        let Request::Entries { after } = request else { anyhow::bail!("only entries") };
+        Ok(Reply::Entries { entries: self.0.entries(*after).await })
+    }
+}
+
+/// A member that keeps none of its copy in its ring gives the gap from its durable log, to a copy that
+/// trails it and to an empty one, which asks from the log's first entry.
+#[tokio::test]
+async fn a_member_gives_an_empty_copy_and_a_trailing_one_the_gap_from_its_log() {
+    let (full, trailing, empty) =
+        (scratch_dir("gap-log-full"), scratch_dir("gap-log-trail"), scratch_dir("gap-log-empty"));
+    ticks(&full, 4).await;
+    copy_dir(&full, &trailing);
+    ticks(&full, 5).await;
+    let member = crate::liveness::link::Copy::default();
+    member.logged(full.clone(), crate::test_support::published_manifest(&full));
+    let link = Link(member);
+    let set_member = SetMember {
+        candidate: AccountId([1; 20]),
+        endpoint: "link:1".into(),
+        standby: None,
+        admin_key: AccountId([1; 20]),
+        held: false,
+    };
+    let deadline = Instant::now() + BUDGET;
+    for (name, dir) in [("trailing", &trailing), ("empty", &empty)] {
+        let mut follower = open(dir);
+        assert_eq!(follower.head().is_none(), name == "empty");
+        let (taken, refused) = from_members(&link, std::slice::from_ref(&set_member), &mut follower, deadline).await;
+        assert!(taken > 0 && refused.is_none(), "{name}: taken {taken}, refused {refused:?}");
+        drop(follower);
+        assert_eq!(log_entries(dir), log_entries(&full), "{name}: the copy took the whole gap");
+    }
 }
 
 // ── Helpers ──

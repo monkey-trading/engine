@@ -123,8 +123,8 @@ pub(super) async fn from_members(
     let mut taken = 0;
     for _ in 0..ROUNDS {
         // From the copy's last entry, past its tip's command when a page ended among the entries
-        // that follow it, so the next page goes on from there.
-        let Some(after) = follower.head() else { return (taken, None) };
+        // that follow it, so the next page goes on from there; from the log's first for an empty copy.
+        let after = follower.head();
         let request = Request::Entries { after };
         let by = deadline.min(Instant::now() + ASK);
         let answers =
@@ -135,7 +135,7 @@ pub(super) async fn from_members(
             let entries = match answer {
                 Ok(Ok(Reply::Entries { entries })) if !entries.is_empty() => entries,
                 Ok(Ok(other)) => {
-                    info!(member = %member.candidate, "the member has no entries past {after}: {}", describe(&other));
+                    info!(member = %member.candidate, ?after, "the member has no entries past it: {}", describe(&other));
                     continue;
                 }
                 Ok(Err(e)) => {
@@ -160,9 +160,9 @@ pub(super) async fn from_members(
                     }
                 }
             }
-            match follower.take_tail(after, &lines) {
+            match follower.take_entries(after, &lines) {
                 Ok(count) if count > 0 => {
-                    info!(member = %member.candidate, taken = count, %after, "took the gap from a member");
+                    info!(member = %member.candidate, taken = count, ?after, "took the gap from a member");
                     (taken, progressed) = (taken + count, true);
                     break;
                 }
@@ -180,8 +180,8 @@ pub(super) async fn from_members(
     (taken, None)
 }
 
-/// Takes what `operator`'s archive and its mirrors hold past the copy's tip: every entry of the
-/// completed segments after the command at the tip, through the copy's seal chain as a handover's tail.
+/// Takes what `operator`'s archive and its mirrors hold past the copy's tip, or all of it for an empty
+/// copy: every entry of the completed segments after the command at the tip, through the copy's seal chain as a handover's tail.
 /// Returns how many entries the copy took.
 /// Error cases:
 /// - the archive cannot be read, a segment differs from its listing or does not parse, or its entries
@@ -189,10 +189,11 @@ pub(super) async fn from_members(
 async fn archive(follower: &mut Follower, operator: &crate::standby::Followed) -> anyhow::Result<u64> {
     use crate::standby::archive::{archive_client, check_listing, fetch_archive_bytes, fetch_manifest};
     let (archive, origins) = (archive_client(operator.danger_accept_invalid_certs)?, operator.origins());
-    let tip = follower.replica().last_seq().context("the copy holds no command")?;
+    // An empty copy takes the whole log.
+    let tip = follower.replica().last_seq();
     let listings = fetch_manifest(&archive, &origins).await?;
     let mut lines = Vec::new();
-    for listed in listings.iter().filter(|listed| listed.last_seq >= tip) {
+    for listed in listings.iter().filter(|listed| tip.is_none_or(|tip| listed.last_seq >= tip)) {
         let bytes = fetch_archive_bytes(&archive, &origins, &listed.file, Some(listed)).await?;
         check_listing(listed, &bytes)?;
         let mut seq = listed.first_seq.saturating_sub(1);
@@ -202,8 +203,8 @@ async fn archive(follower: &mut Follower, operator: &crate::standby::Followed) -
                 seq = command.sequenced.seq;
             }
             let after_tip = match entry {
-                crate::log::LogEntry::Command(_) => seq > tip,
-                _ => seq >= tip,
+                crate::log::LogEntry::Command(_) => tip.is_none_or(|tip| seq > tip),
+                _ => tip.is_none_or(|tip| seq >= tip),
             };
             if after_tip {
                 lines.extend_from_slice(line);
@@ -211,8 +212,8 @@ async fn archive(follower: &mut Follower, operator: &crate::standby::Followed) -
             }
         }
     }
-    anyhow::ensure!(!lines.is_empty(), "the archive holds nothing past seq {tip}");
-    follower.take_tail(Offset::start_of(tip), &lines).map_err(|e| e.context(TailRefused))
+    anyhow::ensure!(!lines.is_empty(), "the archive holds nothing past the copy's tip, {tip:?}");
+    follower.take_entries(tip.map(Offset::start_of), &lines).map_err(|e| e.context(TailRefused))
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ use super::open_copy_replayed;
 use super::operator::Followed;
 use crate::config::NodeConfig;
 use crate::history::marks::fold::MarkFold;
-use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, LogWriter, Offset, offset_of};
+use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, LogWriter, Manifest, Offset, offset_of};
 use crate::log_check::answer::CheckedHeads;
 use crate::sequencer::ReplayedLog;
 use crate::sequencer::replay::LiveReplay;
@@ -38,6 +38,10 @@ pub(crate) struct Follower {
     /// The newest entries the copy held when it was opened, with their offsets, for the member link
     /// to serve once one links the copy.
     opened: VecDeque<(Offset, LogEntry)>,
+    /// The copy's directory and the manifest its writer publishes, which the member link reads the copy
+    /// from beyond the entries it keeps.
+    dir: std::path::PathBuf,
+    manifest: tokio::sync::watch::Receiver<Manifest>,
 }
 
 impl Follower {
@@ -122,7 +126,10 @@ impl Follower {
                 Ok(())
             })
             .context("the copy does not replay")?;
-        Ok(Self { writer, copied, replica, link: None, opened })
+        let (published, manifest) = tokio::sync::watch::channel(Manifest::default());
+        let mut writer = writer;
+        writer.publish_on(published);
+        Ok(Self { writer, copied, replica, link: None, opened, dir: dir.to_owned(), manifest })
     }
 
     /// The replica.
@@ -248,6 +255,7 @@ impl Follower {
     /// retains, its head as durable, and the entries it held when it was opened, to serve.
     pub(crate) fn link_with(&mut self, link: crate::liveness::link::Copy) {
         link.rebuilt();
+        link.logged(self.dir.clone(), self.manifest.clone());
         link.served(std::mem::take(&mut self.opened));
         for retained in self.replica.retained_links() {
             link.linked(retained.seq, retained.link, retained.sealer);
@@ -268,9 +276,21 @@ impl Follower {
     ///   differently or does not extend it, or the replica refuses one (`ReplicaRefused`)
     /// - the copy cannot be written or synced
     pub(crate) fn take_tail(&mut self, after: Offset, bytes: &[u8]) -> anyhow::Result<u64> {
-        ensure!(self.replica.last_seq() == Some(after.seq), "the tail follows {after}, not the copy's tip");
-        self.copied.begin_after(after);
-        let mut previous = Some(after);
+        self.take_entries(Some(after), bytes)
+    }
+
+    /// `take_tail`, or for `None` the whole log onto an empty copy, from its first command.
+    /// Error cases:
+    /// - as `take_tail`, or `None` for a copy that holds a command
+    pub(crate) fn take_entries(&mut self, after: Option<Offset>, bytes: &[u8]) -> anyhow::Result<u64> {
+        match after {
+            Some(after) => {
+                ensure!(self.replica.last_seq() == Some(after.seq), "the tail follows {after}, not the copy's tip");
+                self.copied.begin_after(after);
+            }
+            None => ensure!(self.replica.last_seq().is_none(), "the entries start the log, but the copy holds some"),
+        }
+        let mut previous = after;
         let mut taken = 0;
         for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
             let entry: LogEntry = serde_json::from_slice(line).context("a tail line is not a log entry")?;

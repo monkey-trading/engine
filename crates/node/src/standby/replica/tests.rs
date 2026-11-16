@@ -161,7 +161,58 @@ async fn a_reopened_follower_serves_the_entries_it_replayed() {
         .filter(|(offset, _)| *offset > Offset::start_of(1))
         .collect();
     assert!(!held.is_empty());
-    assert_eq!(copy.entries_after(Offset::start_of(1)), held, "the reopened copy serves what it holds");
+    assert_eq!(copy.entries_after(Some(Offset::start_of(1))), held, "the reopened copy serves what it holds");
+}
+
+/// What a follower took after its link was made is not among the entries the link's ring was given, and
+/// is served from the copy's log on disk: the link reads the copy through the manifest its writer
+/// publishes.
+#[tokio::test]
+async fn a_followers_link_serves_the_entries_it_took_from_its_log() {
+    let operator = scratch_dir("replica-served-log-operator");
+    crate::standby::tests::ticks(&operator, 6).await;
+    let dir = scratch_dir("replica-served-log-copy");
+    crate::standby::tests::copy_log(&operator, &dir);
+    crate::standby::tests::ticks(&operator, 9).await;
+    let mut follower =
+        Follower::open(&dir, SEGMENT_COMMANDS, DOMAIN, signer(), [signer()].into(), None, |_| {}).unwrap();
+    let copy = crate::liveness::link::Copy::default();
+    follower.link_with(copy.clone());
+    let after = follower.head().unwrap();
+    let (tip, _) = follower.tip().unwrap();
+    assert!(follower.take_tail(Offset::start_of(tip), &lines_after(&operator, tip)).unwrap() > 0);
+    let mut previous = None;
+    let taken: Vec<(Offset, LogEntry)> = log_entries(&operator)
+        .into_iter()
+        .map(|entry| {
+            let offset = offset_of(previous, &entry).unwrap();
+            previous = Some(offset);
+            (offset, entry)
+        })
+        .filter(|(offset, _)| *offset > after)
+        .collect();
+    assert_eq!(copy.entries_after(Some(after)), Vec::new(), "the ring was not given what the copy took");
+    assert_eq!(copy.entries(Some(after)).await, taken, "the copy's log serves it");
+}
+
+/// Entries that start the log take onto an empty copy and onto no other.
+#[tokio::test]
+async fn entries_from_the_first_take_onto_an_empty_copy_only() {
+    let operator = scratch_dir("replica-first-operator");
+    crate::standby::tests::ticks(&operator, 5).await;
+    let all = lines_after(&operator, 0);
+    let mut whole = Vec::new();
+    for entry in log_entries(&operator) {
+        whole.extend(serde_json::to_vec(&entry).unwrap());
+        whole.push(b'\n');
+    }
+    let dir = scratch_dir("replica-first-copy");
+    let mut follower =
+        Follower::open(&dir, SEGMENT_COMMANDS, DOMAIN, signer(), [signer()].into(), None, |_| {}).unwrap();
+    assert!(follower.take_entries(None, &whole).unwrap() > 0);
+    assert!(follower.take_entries(None, &all).is_err(), "a copy that holds commands takes no start of the log");
+    drop(follower);
+    assert_eq!(log_entries(&dir), log_entries(&operator), "the empty copy took the whole log");
 }
 
 // ── Helpers ──

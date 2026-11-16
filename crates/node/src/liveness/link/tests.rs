@@ -20,8 +20,8 @@ fn an_entries_question_at_the_largest_offsets_answers_nothing() {
     for seq in 1..=3 {
         copy.appended(Offset::start_of(seq), &tick(seq));
     }
-    assert!(copy.entries_after(Offset { seq: 1, index: u32::MAX }).is_empty());
-    assert!(copy.entries_after(Offset { seq: u64::MAX, index: u32::MAX }).is_empty());
+    assert!(copy.entries_after(Some(Offset { seq: 1, index: u32::MAX })).is_empty());
+    assert!(copy.entries_after(Some(Offset { seq: u64::MAX, index: u32::MAX })).is_empty());
 }
 
 #[test]
@@ -31,10 +31,14 @@ fn entries_answer_from_right_after_the_asked_entry_and_never_across_a_gap() {
         copy.appended(Offset::start_of(seq), &tick(seq));
     }
     let seqs = |entries: Vec<(Offset, LogEntry)>| entries.into_iter().map(|(offset, _)| offset.seq).collect::<Vec<_>>();
-    assert_eq!(seqs(copy.entries_after(Offset::start_of(6))), vec![7, 8, 9], "joined at the entry asked after");
-    assert_eq!(seqs(copy.entries_after(Offset::start_of(4))), vec![5, 6, 7, 8, 9], "the first retained follows it");
-    assert!(copy.entries_after(Offset::start_of(3)).is_empty(), "seq 4 is not retained: a gap");
-    assert!(copy.entries_after(Offset::start_of(9)).is_empty(), "nothing past the copy's tip");
+    assert_eq!(seqs(copy.entries_after(Some(Offset::start_of(6)))), vec![7, 8, 9], "joined at the entry asked after");
+    assert_eq!(
+        seqs(copy.entries_after(Some(Offset::start_of(4)))),
+        vec![5, 6, 7, 8, 9],
+        "the first retained follows it"
+    );
+    assert!(copy.entries_after(Some(Offset::start_of(3))).is_empty(), "seq 4 is not retained: a gap");
+    assert!(copy.entries_after(Some(Offset::start_of(9))).is_empty(), "nothing past the copy's tip");
 }
 
 #[test]
@@ -79,7 +83,7 @@ fn a_rebuilt_copy_serves_nothing_old_and_evidence_is_kept_per_key() {
         copy.appended(Offset::start_of(seq), &tick(seq));
     }
     copy.rebuilt();
-    assert!(copy.entries_after(Offset::start_of(6)).is_empty(), "the set-aside copy's entries were served");
+    assert!(copy.entries_after(Some(Offset::start_of(6))).is_empty(), "the set-aside copy's entries were served");
     let (first, second) = (AccountId([0x51; 20]), AccountId([0x52; 20]));
     copy.follows(first);
     copy.linked(5, B256::repeat_byte(0xaa), Some(first));
@@ -246,7 +250,7 @@ async fn a_member_answers_its_status_and_entries_on_its_endpoint() {
     let status = verified_status(reply, deployment, MEMBER, keys.address(), &nonce.0).unwrap();
     assert_eq!((status.epoch, status.durable), (1, Some(head(3))));
     let Reply::Entries { entries } =
-        Tcp.ask(&endpoint, &Request::Entries { after: Offset::start_of(1) }).await.unwrap()
+        Tcp.ask(&endpoint, &Request::Entries { after: Some(Offset::start_of(1)) }).await.unwrap()
     else {
         panic!("no entries")
     };
@@ -305,7 +309,7 @@ async fn a_heavy_question_with_no_permit_free_is_refused_at_once() {
         let (stream, _) = listener.accept().await.unwrap();
         server.serve(stream, &none_free, Silent::default().enter(1)).await
     };
-    let question = Request::Entries { after: Offset::start_of(1) };
+    let question = Request::Entries { after: Some(Offset::start_of(1)) };
     let asking = Tcp.ask(&endpoint, &question);
     let (served, asked) = tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(serving, asking) })
         .await
@@ -421,7 +425,7 @@ fn vouch_request(keys: &StandbyKeys) -> VouchRequest {
 }
 
 /// A member link over a fresh test standby key in `name`'s scratch directory, on a fake chain.
-fn test_server(name: &str) -> Server<Arc<FakeChain>> {
+pub(super) fn test_server(name: &str) -> Server<Arc<FakeChain>> {
     let keys = Arc::new(StandbyKeys::for_test(&scratch_dir(name)));
     let clock: Arc<dyn crate::clock::Clock> = Arc::new(crate::clock::SystemClock);
     Server {
