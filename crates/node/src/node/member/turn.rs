@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use engine_core::turns::TURN_MS;
 use engine_core::types::{AccountId, Millis};
-use tracing::{Instrument, info, info_span, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::checkpoints::setup::EpochUnfinal;
 use crate::checkpoints::{CheckpointChain, ScheduledTurn, View};
@@ -30,7 +30,8 @@ const STINT: Duration = if cfg!(test) { Duration::from_secs(2) } else { Duration
 /// How long after a turn's boundary its member may take to serve, during which a member following it
 /// expects failed stints and pages none: five minutes, or half a turn when that is shorter.
 pub(crate) const COMING_UP: Millis = if TURN_MS / 2 < 300_000 { TURN_MS / 2 } else { 300_000 };
-/// How long the stint that catches the copy up after the start's reads runs before the tail.
+/// How long, connecting included, a take follows the incumbent to catch the copy up after the start's
+/// reads, a stint at a time, before it asks for the tail.
 const CATCH_UP: Duration = if cfg!(test) { Duration::from_millis(500) } else { Duration::from_secs(1) };
 /// How long a trusted time sample bounds time from, before the member takes another.
 const SAMPLE_FOR: Duration = if cfg!(test) { Duration::ZERO } else { Duration::from_secs(3600) };
@@ -60,6 +61,16 @@ enum Holding {
     Follow(Option<ScheduledTurn>),
 }
 
+impl Holding {
+    /// The turn and generation it takes, `None` when it takes none.
+    fn taking(&self) -> Option<(u64, u64)> {
+        match self {
+            Self::Take(turn) => Some((turn.turn, turn.generation)),
+            Self::Hold | Self::Follow(_) => None,
+        }
+    }
+}
+
 impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// Follows the operator in effect until this member holds a turn: the keys for the turn in effect
     /// are sealed here, or this member takes them with the tail past its copy's tip. With no turn in
@@ -84,7 +95,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     async fn follow_until_turn(&mut self, standby: &mut Option<Standby>) -> anyhow::Result<Turn> {
         let mut follower: Option<Opened> = None;
         let mut followed: Option<(Followed, Option<u64>)> = None;
-        let (mut refusals, mut failing_since) = (0, None::<Instant>);
+        let mut tries = Tries::default();
         loop {
             match self.keep_standby(standby, &mut follower, followed.as_ref().map(|(operator, _)| operator)).await {
                 Ok(Kept::Start(start)) => return Ok(Turn::Replica(start)),
@@ -98,7 +109,12 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             }
             let holding = self.holding().await;
             match &holding {
-                Ok(_) => self.episodes.cleared(Step::ReadTurn),
+                Ok(holding) => {
+                    self.episodes.cleared(Step::ReadTurn);
+                    if let Some(taking) = holding.taking() {
+                        tries.at(taking);
+                    }
+                }
                 Err(e) => self.episodes.blocked(Step::ReadTurn, e),
             }
             let turn = match holding {
@@ -106,6 +122,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                 Ok(Holding::Take(turn)) => {
                     // A member that has not followed yet builds its replica from the copy it holds,
                     // if any; with none, the start takes the turn as a node with no copy does.
+                    let mut just_opened = false;
                     if follower.is_none() {
                         if !self.cfg.node.log_dir.join(MANIFEST).exists() {
                             info!(turn = turn.turn, "no copy of the log to take the tail onto");
@@ -122,23 +139,28 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                             // A chain read that failed is retried, as a failed take is, for `RETRY_FOR`.
                             Err(e) => {
                                 warn!("opening the copy for this member's turn failed: {e:#}");
-                                failing_since.get_or_insert_with(Instant::now);
-                                if failing_since.is_some_and(|since| since.elapsed() >= RETRY_FOR) {
+                                if tries.failed(false) {
                                     return Ok(Turn::Hold);
                                 }
                                 tokio::time::sleep(RETRY_PAUSE).await;
                                 continue;
                             }
                         }
-                        // A stale copy, restarted past its boundary or rebuilt, catches up with the
-                        // incumbent first, within bounds, so its first take names a tip the
-                        // incumbent still retains.
-                        if followed.is_none() {
-                            followed = self.incumbent(&turn).await.ok().map(|operator| (operator, Some(turn.turn)));
+                        just_opened = true;
+                    }
+                    // A copy just opened, or whose last stint failed, follows the incumbent again.
+                    if followed.is_none() {
+                        match self.incumbent(&turn).await {
+                            Ok(operator) => followed = Some((operator, Some(turn.turn))),
+                            Err(e) => debug!(turn = turn.turn, "no incumbent to follow while taking the turn: {e:#}"),
                         }
-                        if let (Some((replica, ..)), Some((operator, _))) = (follower.as_mut(), followed.as_ref()) {
-                            catch_up(self.cfg, replica, operator).await;
-                        }
+                    }
+                    // A stale copy, restarted past its boundary or rebuilt, catches up with the incumbent
+                    // first, within bounds, so its first take names a tip the incumbent still retains.
+                    if just_opened
+                        && let (Some((replica, ..)), Some((operator, _))) = (follower.as_mut(), followed.as_ref())
+                    {
+                        catch_up(self.cfg, replica, operator).await;
                     }
                     let (replica, ..) = follower.as_mut().expect("opened above");
                     info!(turn = turn.turn, "this member's turn has come: reading what its start needs, then the tail");
@@ -159,20 +181,43 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                         }
                         Err(e) if e.downcast_ref::<EpochUnfinal>().is_some() || behind(&e) => {
                             // A promotion just before the boundary, or a latest block short of it: the turn
-                            // waits, as a turn drawn within a finality period does, its copy kept and followed.
-                            span.in_scope(|| info!(turn = turn.turn, "waiting to take the turn: {e:#}"));
-                            failing_since = None;
-                            // A latest block short of the boundary catches up within seconds: a pause alone.
-                            let stint = follower.as_mut().zip(followed.as_ref()).filter(|_| !behind(&e));
-                            if let Some(((replica, ..), (operator, _))) = stint
-                                && let Err(e) = replica.stint(self.cfg, operator, STINT).await
-                            {
-                                warn!("following while the signer epoch is not final failed: {e:#}");
+                            // waits, as a turn drawn within a finality period does, its copy kept and followed,
+                            // so the incumbent's confirmations go on.
+                            let first = tries.waits();
+                            if first {
+                                span.in_scope(|| info!(turn = turn.turn, "waiting to take the turn: {e:#}"));
+                            } else {
+                                span.in_scope(|| debug!(turn = turn.turn, "still waiting to take the turn: {e:#}"));
+                            }
+                            let following = follower.as_mut().zip(followed.as_ref());
+                            let failed = match following {
+                                // A latest block short of the boundary most often catches up within seconds: the
+                                // copy follows through the pause alone, so the take is retried as soon as before.
+                                Some(((replica, ..), (operator, _))) if behind(&e) => {
+                                    let pause = tokio::time::sleep(RETRY_PAUSE);
+                                    replica.follow_during(self.cfg, operator, RETRY_PAUSE, pause).await.1.err()
+                                }
+                                Some(((replica, ..), (operator, _))) => {
+                                    let stint = replica.stint(self.cfg, operator, STINT).await.err();
+                                    tokio::time::sleep(RETRY_PAUSE).await;
+                                    stint
+                                }
+                                None => {
+                                    tokio::time::sleep(RETRY_PAUSE).await;
+                                    None
+                                }
+                            };
+                            if let Some(e) = failed {
+                                // The finalised source may name an operator promoted past: a warning once a wait.
+                                if first {
+                                    warn!("following while waiting to take the turn failed: {e:#}");
+                                } else {
+                                    debug!("following while waiting to take the turn failed again: {e:#}");
+                                }
                                 if damaged(&e) {
                                     follower = None;
                                 }
                             }
-                            tokio::time::sleep(RETRY_PAUSE).await;
                             continue;
                         }
                         Err(e) => {
@@ -180,13 +225,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                             if e.downcast_ref::<SourcesFailed>().is_none() {
                                 span.in_scope(|| warn!(turn = turn.turn, "taking this member's turn failed: {e:#}"));
                             }
-                            if refused(&e) {
-                                (refusals, failing_since) = (refusals + 1, None);
-                            } else {
-                                failing_since.get_or_insert_with(Instant::now);
-                            }
-                            let out_of_time = failing_since.is_some_and(|since| since.elapsed() >= RETRY_FOR);
-                            if refusals >= TAIL_ATTEMPTS || out_of_time {
+                            if tries.failed(refused(&e)) {
                                 // The start takes the whole log, setting the copy aside first, as
                                 // every whole-log take of a member's does (`before_whole_log_take`).
                                 drop(follower.take());
@@ -375,7 +414,7 @@ pub(crate) use episodes::Episodes;
 use episodes::Step;
 pub(in crate::node::member) use tries::Stopping;
 pub(crate) use tries::set_copy_aside;
-use tries::{CopyRefused, SourcesFailed, catch_up, damaged, page_refusal, refused};
+use tries::{CopyRefused, SourcesFailed, Tries, catch_up, damaged, page_refusal, refused};
 
 #[cfg(test)]
 mod tests;

@@ -203,19 +203,15 @@ impl Assigned {
 }
 
 /// `finalised`, the turn the finalised schedule names at a start, as the latest agreed block's skip of
-/// it names `release`'s holding when it does, so a skip's member that restarts before the skip is final
-/// opens the keys it sealed in the skip's generation; `finalised` otherwise, without a reader, or when
-/// the read fails.
-/// Error cases:
-/// - the custody section or the vault address is malformed
+/// it, read through `assignments`, names `release`'s holding when it does, so a skip's member that
+/// restarts before the skip is final opens the keys it sealed in the skip's generation; `finalised`
+/// otherwise, without a reader, or when the read fails.
 pub(crate) async fn own_skip(
-    cfg: &NodeConfig,
+    assignments: Option<&dyn Assignments>,
     finalised: Option<ScheduledTurn>,
     release: &Release,
-) -> anyhow::Result<Option<ScheduledTurn>> {
-    let (Some(_), Some(read)) = (finalised.as_ref(), for_config(cfg, "start_assignments")?) else {
-        return Ok(finalised);
-    };
+) -> Option<ScheduledTurn> {
+    let (Some(_), Some(read)) = (finalised.as_ref(), assignments) else { return finalised };
     let latest = match read.assigned().await {
         Ok(latest) => latest,
         Err(e) => {
@@ -223,7 +219,7 @@ pub(crate) async fn own_skip(
             None
         }
     };
-    Ok(skip_naming(finalised, latest, release))
+    skip_naming(finalised, latest, release)
 }
 
 /// `own_skip`'s choice: `latest` as `finalised`'s turn when it is a skip of that turn naming `release`,

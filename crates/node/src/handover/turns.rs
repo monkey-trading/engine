@@ -186,19 +186,18 @@ pub(crate) async fn sources(
 
 /// Takes `turn`'s keys, which the finalised schedule at `at` names this release for, from the first
 /// of its `sources` that hands them over: each one's published log first, then the keys and the log's
-/// tail by the handover, with trusted time at the turn's boundary.
+/// tail by the handover, with trusted time at the turn's boundary, the sources and the request's
+/// binding read from the latest assignment through `assignments`, if given.
 /// Error cases:
 /// - no source has a handover endpoint, the vault's signers cannot be read, or every source fails
 pub(crate) async fn take_keys(
     cfg: &NodeConfig,
     vault: &impl CheckpointChain,
-    at: &Observation,
-    turn: &ScheduledTurn,
-    sealer: &dyn Sealer,
-    attestor: &dyn Attestor,
+    (at, turn): (&Observation, &ScheduledTurn),
+    (sealer, attestor): (&dyn Sealer, &dyn Attestor),
     metrics: &crate::metrics::Metrics,
+    assignments: Option<crate::handover::assigned::Reader>,
 ) -> anyhow::Result<KeyStore> {
-    let assignments = crate::handover::assigned::for_config(cfg, "take_assignments")?;
     let sources = crate::handover::discovery::sources_reading(assignments.as_deref(), vault, at, turn).await?;
     ensure!(
         !sources.is_empty(),
@@ -217,7 +216,9 @@ pub(crate) async fn take_keys(
         };
         let taken = async {
             crate::handover::sync_predecessor_log(cfg, &source, signers.clone(), metrics).await?;
-            crate::handover::take(cfg, &source.endpoint, sealer, attestor, vault, Some(turn.boundary), metrics).await
+            let (endpoint, reached) = (&source.endpoint, Some(turn.boundary));
+            let parts = (sealer, attestor);
+            crate::handover::take_with(cfg, endpoint, parts, vault, reached, metrics, assignments.clone()).await
         };
         match taken.await {
             Ok(store) => return Ok(store),

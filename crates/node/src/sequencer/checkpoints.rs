@@ -172,16 +172,22 @@ impl Sequencer {
         self.engine.state_root()
     }
 
-    /// Seals the log's open segment for an admitted handover stop, then answers it: the published
-    /// archive and the successor the keys go to need the segment the final checkpoint is in, so it
-    /// seals before the stop commits, and a failure is the refusal the predecessor reports while
-    /// this node goes on sequencing, not a stop. A full live catalog is folded first, as rotation
-    /// does; a catalog that still cannot take the segment degrades to the plain manifest, which
-    /// remains authoritative. With no stop the answer is `false` and nothing seals.
+    /// Seals the log's open segment for an admitted handover stop, then the gate's records in the keys
+    /// (`log_check_hand_over`), and answers it: the published archive and the successor the keys go to
+    /// need the segment the final checkpoint is in, so it seals before the stop commits, and a failure
+    /// is what the predecessor reports, not a stop. Once the segment is sealed the log is whole, so a
+    /// failure to seal the keys' records is a refusal (`HandoverRefused`), and this node goes on
+    /// sequencing. A full live catalog is folded first, as rotation does; a catalog that still cannot
+    /// take the segment degrades to the plain manifest, which remains authoritative. With no stop the
+    /// answer is `false` and nothing seals.
     pub(super) fn seal_handover_tail(&mut self, reply: Option<oneshot::Sender<anyhow::Result<()>>>) -> bool {
         let Some(reply) = reply else { return false };
         let sealed =
-            self.log.seal_open_segment().context("sealing the log's final segment for the handover").map(|_| ());
+            self.log.seal_open_segment().context("sealing the log's final segment for the handover").and_then(|_| {
+                let refused =
+                    |e: anyhow::Error| anyhow::anyhow!(crate::sequencer::HandoverRefused::new(format!("{e:#}")));
+                self.log_check_hand_over().map_err(refused)
+            });
         let ok = sealed.is_ok();
         let _ = reply.send(sealed);
         ok

@@ -18,7 +18,7 @@ pub(crate) const SCHEDULE: Address = Address::repeat_byte(0x5c);
 pub(crate) const LOG_HEADS: Address = Address::repeat_byte(0x4d);
 pub(crate) const CHAIN_ID: u64 = 42161;
 /// The block's time, in turn 20,800's day, after its boundary.
-const TIME: u64 = 20_800 * 86_400 + 81_000 + 600;
+pub(crate) const TIME: u64 = 20_800 * 86_400 + 81_000 + 600;
 const TURN: u64 = 20_800;
 
 /// A block answering exactly the calls a test scripts, each by its calldata.
@@ -131,7 +131,7 @@ pub(crate) fn skip(turn: u64, position: u16, candidate: u8, release: [u8; 32], g
 
 /// Scripts the turn in effect's assignment at `position`, for `reason`, naming `candidate` with the
 /// releases `revisions`, under signer epoch 3, with the epoch's newest head's release.
-fn script_turn(block: &mut Scripted, (position, reason): (u16, u8), revisions: &[(B256, u64)]) {
+pub(crate) fn script_turn(block: &mut Scripted, (position, reason): (u16, u8), revisions: &[(B256, u64)]) {
     let candidate = Address::repeat_byte(0xc1);
     let named = TurnReturn {
         candidate,

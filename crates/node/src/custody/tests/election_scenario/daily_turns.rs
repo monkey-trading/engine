@@ -86,7 +86,11 @@ const DAY_SECS: u64 = 86_400;
 /// The most wall time a switch may take, from the incumbent's last command to the member's
 /// `TurnTaken`: about twice the longest window measured, rounded up: 0.085 to 0.22 s on a
 /// development machine, 0.21 to 0.41 s on a CI runner. The member's full-replay counter, checked
-/// at each switch, is the guard against a replay inside the window.
+/// at each switch, is the guard against a replay inside the window. The members run without
+/// `[log_heads]`, so the window holds none of the latest assignment reads a production handover makes
+/// after the stop, the holder's and the successor's: a deployment's switch budget, from which the take
+/// window's minimum is set, is this budget plus two such reads at its providers' latency, each a fixed
+/// number of round trips (`custody::standby_keys`'s latency test).
 const SWITCH_BUDGET: Duration = Duration::from_secs(1);
 
 #[tokio::test]

@@ -9,7 +9,6 @@ use std::sync::Arc;
 use anyhow::{Context, anyhow, ensure};
 use engine_core::eip712::{self, B256, Signature};
 use engine_core::types::AccountId;
-use engine_verify::Tcb;
 use ring::rand::{SecureRandom, SystemRandom};
 use sha2::Digest as _;
 use tokio::net::{TcpListener, TcpStream};
@@ -19,8 +18,8 @@ use tracing::{Instrument, error, info, info_span, warn};
 
 use crate::checkpoints::{CheckpointChain, CheckpointRpc};
 use crate::config::{NodeConfig, TeeProvider};
-use crate::handover::assigned::Assignments;
-use crate::handover::evidence::{self, Peer, Quoting};
+use crate::handover::assigned::{Assigned, Assignments};
+use crate::handover::evidence::{self, Quoting};
 use crate::handover::tail::{TailMiss, read_tail, send_tail, tail_report_data};
 use crate::handover::{
     Challenge, Confirm, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, bound_report_data, confirm_digest,
@@ -28,7 +27,7 @@ use crate::handover::{
 };
 use crate::log::{CheckpointDomain, Manifest, SegmentInfo};
 use crate::tee::keys::Head;
-use crate::tee::sealing::{KeyStore, Platform, Release};
+use crate::tee::sealing::{KeyStore, Release};
 use crate::tee::secrets::SecretStore;
 use crate::tee::{Attestor, EnclaveKey};
 use crate::trusted_time::TrustedClock;
@@ -76,8 +75,9 @@ pub(crate) struct Predecessor<C = CheckpointRpc> {
 
 /// How one connection ended.
 enum Served {
-    /// The successor confirmed: the node ends.
-    Confirmed,
+    /// The successor confirmed: the node ends. With a reader, the turn's assignment the successor bound,
+    /// as this release read it last before the keys went.
+    Confirmed(Option<Assigned>),
     /// The keys stayed here, or went out unconfirmed.
     Unconfirmed,
 }
@@ -143,12 +143,13 @@ impl<C: CheckpointChain> Predecessor<C> {
     }
 
     /// Serves successors one connection at a time until one confirms a handover, which ends the
-    /// node's run. Once sequencing has stopped it goes on serving them, under `handover_unconfirmed`: the
-    /// vault names the successor's release, so this release's own copy of the keys no longer opens,
-    /// and only a confirmed handover or the operator ends it.
+    /// node's run with the assignment the successor bound, if any (#596). Once sequencing has stopped
+    /// it goes on serving them, under `handover_unconfirmed`: the vault names the successor's release,
+    /// so this release's own copy of the keys no longer opens, and only a confirmed handover or the
+    /// operator ends it.
     /// Error cases:
     /// - the node cannot stop sequencing, or has no final checkpoint to hand over
-    pub(crate) async fn run(self) -> anyhow::Result<()> {
+    pub(crate) async fn run(self) -> anyhow::Result<Option<Assigned>> {
         let mut head = None;
         let mut connection = 0_u64;
         loop {
@@ -162,7 +163,7 @@ impl<C: CheckpointChain> Predecessor<C> {
             connection += 1;
             let span = info_span!("handover", id = connection, peer = %peer);
             match self.serve(stream, &mut head).instrument(span).await? {
-                Served::Confirmed => return Ok(()),
+                Served::Confirmed(bound) => return Ok(bound),
                 Served::Unconfirmed if head.is_some() => error!(
                     alert = "handover_unconfirmed",
                     "sequencing has stopped and no successor holds the keys yet: this release goes on serving \
@@ -288,9 +289,10 @@ impl<C: CheckpointChain> Predecessor<C> {
         };
         // A skip or a promotion since the stop leaves the stopped release serving the member now named
         // (#596).
-        if let Err(e) = self.revalidate(request.binding.as_ref(), &release).await {
-            return Ok(refuse(&mut stream, e).await);
-        }
+        let bound = match self.revalidate(request.binding.as_ref(), &release).await {
+            Ok(bound) => bound,
+            Err(e) => return Ok(refuse(&mut stream, e).await),
+        };
         // The log past the successor's tip travels with the keys: the listings are bound inside
         // the ciphertext, and each segment's bytes are read, verified, and sent one at a time, so
         // the transfer holds at most one segment in memory. A listing-read failure must not end
@@ -306,7 +308,7 @@ impl<C: CheckpointChain> Predecessor<C> {
         match self.hand_over(&mut stream, &public_key, &report_data, head.clone(), tails, after).await {
             Ok(()) => {
                 info!(alert_resolved = "handover_unconfirmed", "the successor holds the keys; this release exits");
-                Ok(Served::Confirmed)
+                Ok(Served::Confirmed(bound))
             }
             Err(e) => Ok(unconfirmed(&format!("{e:#}"))),
         }
@@ -440,26 +442,6 @@ impl<C: CheckpointChain> Predecessor<C> {
     }
 }
 
-/// Requires a peer, a successor or a member verifying the log, to run under the same guest policy as
-/// this release, since the launch measurement does not cover the policy and one that allowed
-/// debugging would expose the keys or its replay, and, on hardware, at a TCB no lower than this
-/// platform's committed one.
-/// Error cases:
-/// - the policy differs, or the TCB is below the floor
-pub(crate) fn no_weaker(own: &Platform, peer: &Peer) -> anyhow::Result<()> {
-    ensure!(
-        peer.policy == own.policy,
-        "the peer's guest policy {:#x} differs from this release's {:#x}",
-        peer.policy,
-        own.policy
-    );
-    if let Some(tcb) = peer.tcb {
-        let floor = Tcb::from_packed(own.tcb);
-        ensure!(tcb.meets(floor), "the peer's TCB {tcb:?} is below this platform's committed {floor:?}");
-    }
-    Ok(())
-}
-
 /// Refuses the request with `reason`, which the successor reports.
 async fn refuse(stream: &mut TcpStream, reason: anyhow::Error) -> Served {
     warn!("refusing the handover: {reason:#}");
@@ -486,6 +468,7 @@ fn unconfirmed(why: &str) -> Served {
 
 mod assignment;
 mod checks;
+pub(crate) use checks::no_weaker;
 mod secrets;
 mod tail;
 

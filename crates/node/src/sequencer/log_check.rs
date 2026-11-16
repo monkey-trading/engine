@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use anyhow::Context;
 use engine_core::Engine;
 use engine_core::eip712::B256;
 use engine_core::event::Event;
@@ -11,7 +12,7 @@ use engine_core::types::AccountId;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
-use crate::log_check::{Due, Takings, VerifiedHead, applies};
+use crate::log_check::{Due, Holder, Takings, VerifiedHead, applies, own_candidates, seal_verified};
 use crate::sequencer::{CheckWait, Replayed, Sequencer};
 use crate::tee::sealing::KeyStore;
 
@@ -32,6 +33,9 @@ pub(super) struct LogCheck {
     due: Option<watch::Sender<Option<Due>>>,
     verified: Option<VerifiedHead>,
     takings: Takings,
+    /// The releases the sealed keys name as having handed them on past the verified head, which no
+    /// check due may come from.
+    holders: Vec<Holder>,
     /// The first checkpoint written at or after the latest `TurnTaken`, the target of a check that
     /// comes due, fixed once chosen so a check asked for it is still the one due when it arrives; a
     /// restart takes the last checkpoint the log holds.
@@ -61,7 +65,8 @@ impl LogCheck {
         let Some(LogCheckSetup { store, due }) = setup else {
             return Self { takings, target, latest: target, ..Self::default() };
         };
-        let sealed = store.keys().log_check;
+        let keys = store.keys();
+        let (sealed, holders) = (keys.log_check, keys.holders);
         let verified = sealed.filter(|head| {
             replayed.checkpoint_root(head.seq) == Some(head.root)
                 && replayed.prefix_ring.prefix_at(head.seq).is_none_or(|link| link == head.link)
@@ -76,7 +81,7 @@ impl LogCheck {
         }
         let (operator, store, due) = (Some(operator), Some(store), Some(due));
         let sealed = sealed.is_some();
-        Self { operator, store, due, verified, takings, target, latest: target, sealed, ..Self::default() }
+        Self { operator, store, due, verified, takings, holders, target, latest: target, sealed, ..Self::default() }
     }
 
     /// Notes the checkpoint `head` just written (see `retarget`).
@@ -107,12 +112,14 @@ impl LogCheck {
 
     /// The check this node waits for: with the gate applying, once this release has taken the turn in
     /// effect at a `TurnTaken` its verified head does not reach, the target checkpoint at or after it,
-    /// with who sequenced the range since the verified head; `None` while no checkpoint has followed,
-    /// or while the records cannot attribute the range (`unattributable`).
+    /// with who sequenced the range since the verified head, the keys' holders included; `None` while no
+    /// checkpoint has followed, or while the records cannot attribute the range (`unattributable`).
     fn due(&self, engine: &Engine) -> Option<Due> {
         let (taken_seq, in_effect) = self.outstanding(engine)?;
         let head = self.target.filter(|head| head.seq >= taken_seq)?;
-        let excluded = self.takings.sequenced(self.verified.map(|verified| verified.seq), head.seq)?;
+        let after = self.verified.map(|verified| verified.seq);
+        let first = self.takings.first(after, head.seq);
+        let excluded = self.takings.sequenced(after, head.seq)?.with_holders(&self.holders, first);
         let (turn, position, set, candidate) = (in_effect.turn, in_effect.position, in_effect.set, in_effect.candidate);
         Some(Due { turn, position, set, candidate, head, excluded })
     }
@@ -168,21 +175,27 @@ impl LogCheck {
         Some(CheckWait { turn, boundary_ms: engine_core::turns::boundary(turn)? })
     }
 
-    /// Drops the verified head and its seal once the gate no longer applies, so keys handed over with
-    /// rotation off carry none and a release built before the log check can take them; a failed seal
-    /// is tried again at the next refresh.
-    fn forget(&mut self) {
-        let Some(store) = &self.store else { return };
-        match store.update(|keys| keys.log_check = None) {
-            Ok(()) => {
-                info!(
-                    seq = self.verified.map(|head| head.seq),
-                    "the gate no longer applies: dropped the verified head"
-                );
-                (self.verified, self.sealed) = (None, false);
-            }
-            Err(e) => warn!("dropping the verified head from the sealed keys failed: {e:#}"),
-        }
+    /// Whether the sealed keys may carry the gate's records: a verified head or holders.
+    fn carried(&self) -> bool {
+        self.sealed || self.verified.is_some() || !self.holders.is_empty()
+    }
+
+    /// Drops the verified head, the holders and their seal once the gate no longer applies, so keys
+    /// handed over with rotation off carry none and a release built before the log check can take them.
+    /// Error cases:
+    /// - the keys cannot be sealed again, which leaves the records to drop at the next refresh
+    fn forget(&mut self) -> anyhow::Result<()> {
+        let Some(store) = &self.store else { return Ok(()) };
+        let dropped = |keys: &mut crate::tee::keys::KeySet| {
+            keys.log_check = None;
+            keys.holders.clear();
+        };
+        store.update(dropped).context("dropping the gate's records from the sealed keys")?;
+        let (seq, holders) = (self.verified.map(|head| head.seq), self.holders.len());
+        info!(seq, holders, "the gate no longer applies: dropped its records from the sealed keys");
+        (self.verified, self.sealed) = (None, false);
+        self.holders.clear();
+        Ok(())
     }
 
     /// Takes `head` as the verified head and seals it with the keys; a failed seal leaves the next
@@ -190,8 +203,9 @@ impl LogCheck {
     fn verify(&mut self, head: VerifiedHead) {
         self.verified = Some(head);
         self.takings.prune(head.seq);
+        self.holders.retain(|holder| holder.through > head.seq);
         if let Some(store) = &self.store {
-            match store.update(|keys| keys.log_check = Some(head)) {
+            match store.update(|keys| seal_verified(keys, Some(head))) {
                 Ok(()) => self.sealed = true,
                 Err(e) => {
                     warn!(seq = head.seq, "sealing the verified head failed: a restart asks for the check again: {e:#}")
@@ -205,8 +219,11 @@ impl Sequencer {
     /// Publishes the check due, when it changed, and raises `log_check_unattributable` while one is
     /// outstanding that no member can be asked for (`LogCheck::unattributable`).
     pub(super) fn refresh_log_check(&mut self) {
-        if (self.log_check.sealed || self.log_check.verified.is_some()) && !applies(&self.engine) {
-            self.log_check.forget();
+        if self.log_check.carried()
+            && !applies(&self.engine)
+            && let Err(e) = self.log_check.forget()
+        {
+            warn!("{e:#}: trying again at the next refresh");
         }
         let due = self.log_check.due(&self.engine);
         if let Some(sender) = &self.log_check.due {
@@ -293,6 +310,34 @@ impl Sequencer {
         info!(seq = head.seq, turn = due.turn, verifier = %candidate, %release, "a member's check verified the log through seq");
         self.refresh_log_check();
         true
+    }
+
+    /// Names this release, with the candidates its operator key sits for in the log's turns, as a holder
+    /// of the keys through the last command, a handover's final checkpoint, in the sealed keys the
+    /// handover sends, while the gate applies to the log there (`log_check::Holder`): the log names no
+    /// member whose skip a reorg removed, and no check counts from a holder for a range reaching its
+    /// commands. While the gate does not apply, the keys the handover sends carry none of its records,
+    /// so a release built before them takes the keys.
+    /// Error cases:
+    /// - the keys cannot be sealed again, which refuses the handover
+    pub(super) fn log_check_hand_over(&mut self) -> anyhow::Result<()> {
+        if !applies(&self.engine) {
+            return if self.log_check.carried() { self.log_check.forget() } else { Ok(()) };
+        }
+        let check = &mut self.log_check;
+        let (Some(store), Some(operator), Some(through)) = (&check.store, check.operator, self.engine.last_seq())
+        else {
+            return Ok(());
+        };
+        let release = B256::from(store.release().id());
+        let holder = Holder { through, release, candidates: own_candidates(&self.engine, operator) };
+        if check.holders.contains(&holder) {
+            return Ok(());
+        }
+        store.update(|keys| keys.holders.push(holder.clone())).context("naming this release a holder of the keys")?;
+        info!(through, "the keys name this release as a holder through the handover's final checkpoint");
+        check.holders.push(holder);
+        Ok(())
     }
 
     /// The boundary whose check an approval at `approved_seq` waits for (see `LogCheck::wait`).

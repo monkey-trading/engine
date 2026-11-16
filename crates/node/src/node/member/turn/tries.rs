@@ -1,17 +1,61 @@
-//! A member's tries at its turn: what a failed tail handover pages, which failures rebuild the
-//! replica, the stale copy's catch-up before its first take, and the copy set aside for a whole-log
-//! take once the tries run out.
+//! A member's tries at its turn: what it counts toward leaving a holding to the start, what a failed
+//! tail handover pages, which failures rebuild the replica, the stale copy's catch-up before its first
+//! take, and the copy set aside for a whole-log take once the tries run out.
+
+use std::time::Instant;
 
 use anyhow::Context;
 use engine_core::types::AccountId;
 use tracing::{debug, error, info, warn};
 
-use super::STINT;
+use super::{RETRY_FOR, STINT, TAIL_ATTEMPTS};
 use crate::checkpoints::{CheckpointChain, Observation, ScheduledTurn, View};
 use crate::handover::tail::{CopyChanged, TailMiss, TailRefused};
 use crate::node::member::turn::episodes::Step;
 use crate::node::member::{Member, PostedHead, Sampling};
 use crate::standby::{Followed, Follower, ReplicaRefused};
+
+/// A member's tries at one holding, the turn and generation it takes: the sources' refusals, when its
+/// other failures began since the last refusal, and whether it waits on the chain, which it logs once
+/// per wait.
+#[derive(Debug, Default)]
+pub(super) struct Tries {
+    pub(super) holding: Option<(u64, u64)>,
+    pub(super) refusals: usize,
+    pub(super) failing_since: Option<Instant>,
+    waiting: bool,
+}
+
+impl Tries {
+    /// Counts the tries at `holding`, the turn and generation the member takes now: afresh when it is
+    /// another than the last taken, so an earlier take, one a skip moved the member off or an earlier
+    /// turn's, carries no failures into it. Following between tries at one holding, as a failed read of
+    /// the latest assignment reads, keeps them.
+    pub(super) fn at(&mut self, holding: (u64, u64)) {
+        if self.holding != Some(holding) {
+            *self = Self { holding: Some(holding), ..Self::default() };
+        }
+    }
+
+    /// Counts a failed take, `refused` by a source or failed otherwise: whether the member leaves the
+    /// turn to the start, after `TAIL_ATTEMPTS` refusals, or failures for `RETRY_FOR` since the last.
+    pub(super) fn failed(&mut self, refused: bool) -> bool {
+        self.waiting = false;
+        if refused {
+            (self.refusals, self.failing_since) = (self.refusals + 1, None);
+        } else {
+            self.failing_since.get_or_insert_with(Instant::now);
+        }
+        self.refusals >= TAIL_ATTEMPTS || self.failing_since.is_some_and(|since| since.elapsed() >= RETRY_FOR)
+    }
+
+    /// Notes a take that waits on the chain, across which no failure counts: whether the wait is a new
+    /// one, which the member logs.
+    pub(super) fn waits(&mut self) -> bool {
+        self.failing_since = None;
+        !std::mem::replace(&mut self.waiting, true)
+    }
+}
 
 /// Pages what one source's failed tail handover for `turn` says: a predecessor that did not find the
 /// copy's tip on its log pages Critical `handover_tip_not_on_log`, one it found the copy lagging

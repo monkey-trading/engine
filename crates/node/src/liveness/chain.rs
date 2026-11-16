@@ -85,6 +85,9 @@ pub(crate) struct Named {
     pub generation: u64,
     /// The turn drawn before it, zero for the first.
     pub prior: u64,
+    /// The operator the registry named when it was drawn, which hands its member the keys; zero for
+    /// none.
+    pub source: AccountId,
 }
 
 /// What the liveness rule depends on, at one agreed block.
@@ -116,6 +119,9 @@ pub(crate) struct View {
     pub head: StoredHead,
 }
 
+/// The set a turn was drawn from, the turn, the turn drawn before it, and its source.
+pub(crate) type TurnSet = (u32, u64, u64, AccountId);
+
 /// A rotation-set member as the liveness rule reaches it: where its node answers, and the standby key
 /// it signs confirmations with.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,8 +135,9 @@ pub(crate) struct Member {
     /// The admin key its candidacy registered: the node that runs for it.
     pub admin_key: AccountId,
     /// Whether it held an assignment of the turn the members were read for, or of the turn drawn before
-    /// it, whose holder keeps the keys until the turn's member takes them: the turn's first member, or
-    /// one a promotion moved past, whose own tail past the promotion's head no member had to hold.
+    /// it, or is the turn's source, as `holdsTurn` counts it on chain: whose holder keeps the keys until
+    /// the turn's member takes them, the turn's first member, or one a promotion moved past, whose own
+    /// tail past the promotion's head no member had to hold.
     pub held: bool,
 }
 
@@ -187,6 +194,7 @@ async fn read_view(block: &impl AgreedBlock, domain: &LivenessDomain) -> anyhow:
         set: found._1.setId,
         generation: found._1.generation,
         prior: found._1.prior,
+        source: AccountId(found._1.source.0.0),
     });
     Ok(View {
         time: block.time(),
@@ -293,16 +301,16 @@ pub(crate) fn stored_head<'a, B: AgreedBlock>(
 }
 
 /// The members of set `set` at `block`, each with its registered handover endpoint and promotable
-/// standby key, and whether it held an assignment of `turn`, or of `prior`, the turn drawn before it,
-/// whose holder keeps the keys into `turn` until its member takes them.
+/// standby key, and whether it held an assignment of `turn`, or of `prior`, the turn drawn before it, or
+/// is `source`, the turn's source: each may keep the keys into `turn` until its member takes them.
 /// Error cases:
 /// - a call fails, or its return does not decode
 pub(crate) fn members<'a, B: AgreedBlock>(
     block: &'a B,
     domain: &'a StandbyDomain,
-    (set, turn, prior): (u32, u64, u64),
+    (set, turn, prior, source): TurnSet,
 ) -> BoxFuture<'a, anyhow::Result<Vec<Member>>> {
-    Box::pin(read_members(block, domain, set, (turn, prior)))
+    Box::pin(read_members(block, domain, set, (turn, prior, source)))
 }
 
 /// `members`, unboxed.
@@ -312,7 +320,7 @@ async fn read_members(
     block: &impl AgreedBlock,
     domain: &StandbyDomain,
     set: u32,
-    (turn, prior): (u64, u64),
+    (turn, prior, source): (u64, u64, AccountId),
 ) -> anyhow::Result<Vec<Member>> {
     let listed = call(block, "liveness_set", domain.schedule, setOfCall { setId: set }).await?;
     let member = |candidate: Address| async move {
@@ -323,6 +331,7 @@ async fn read_members(
         )
         .await?;
         let held = held
+            || AccountId(candidate.0.0) == source
             || (prior != 0
                 && call(block, "liveness_held", domain.schedule, heldTurnCall { turn: prior, candidate }).await?);
         anyhow::Ok(Member {
@@ -337,18 +346,19 @@ async fn read_members(
     stream::iter(listed.candidates).map(member).buffered(MEMBER_READS).try_collect().await
 }
 
-/// The set the turn in effect at `block`'s time was drawn from, and the turn, `None` before any is
-/// drawn.
+/// The set the turn in effect at `block`'s time was drawn from, the turn, the turn drawn before it and
+/// its source, `None` before any is drawn.
 /// Error cases:
 /// - the call fails, or its return does not decode
 pub(crate) fn turn_set<'a, B: AgreedBlock>(
     block: &'a B,
     domain: &'a LivenessDomain,
-) -> BoxFuture<'a, anyhow::Result<Option<(u32, u64, u64)>>> {
+) -> BoxFuture<'a, anyhow::Result<Option<TurnSet>>> {
     Box::pin(async move {
         let found =
             call(block, "liveness_turn", domain.standby.schedule, turnAtCall { timestamp: block.time() }).await?;
-        Ok((found.turn != 0).then_some((found._1.setId, found.turn, found._1.prior)))
+        let (named, source) = (&found._1, AccountId(found._1.source.0.0));
+        Ok((found.turn != 0).then_some((named.setId, found.turn, named.prior, source)))
     })
 }
 

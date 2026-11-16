@@ -32,12 +32,13 @@ use tokio::sync::broadcast;
 
 use crate::checkpoints::{CurrentRelease, Observation, VaultState, View};
 use crate::clock::SystemClock;
+use crate::handover::evidence::Peer;
 use crate::handover::{Challenge, Kx, Published, take};
 use crate::log::{Checkpoint, CommandEntry, LogEntry};
 use crate::sequencer::StreamMsg;
 use crate::tee::MockAttestor;
 use crate::tee::keys::KeySet;
-use crate::tee::sealing::{MockSealer, file_for};
+use crate::tee::sealing::{MockSealer, Platform, file_for};
 use crate::tee::secrets::SecretStore;
 use crate::test_support::{capture_alerts, dev_config, scratch_dir};
 
@@ -53,11 +54,12 @@ const GENERATION: u64 = 4;
 /// A running predecessor, the node behind it, and the successor's config.
 struct Exchange {
     address: String,
-    run: JoinHandle<anyhow::Result<()>>,
+    run: JoinHandle<anyhow::Result<Option<crate::handover::assigned::Assigned>>>,
     drains: mpsc::Receiver<oneshot::Sender<anyhow::Result<Head>>>,
     old: KeySet,
-    /// The predecessor's sealed keys, which it hands over.
+    /// The predecessor's sealed keys, which it hands over, and where they are sealed.
     store: Arc<KeyStore>,
+    predecessor_dir: PathBuf,
     successor: NodeConfig,
     successor_dir: PathBuf,
     /// The successor's log directory: what the archive bootstrap would leave, and what the
@@ -131,6 +133,10 @@ async fn the_current_release_takes_the_keys_seals_them_and_the_predecessor_ends(
     let sealer = MockSealer { launch_digest: UPGRADE };
     let older = KeySet::generate().unwrap();
     KeyStore::create(&exchange.successor_dir, &sealer, exchange.successor.file_sha256, 1, older.clone()).unwrap();
+    // A holder the predecessor's keys name, as its sequencer records one at a stop while the gate applies.
+    let holder =
+        crate::log_check::Holder { through: 7, release: [0x77; 32].into(), candidates: [AccountId([0x77; 20])].into() };
+    exchange.store.update(|keys| keys.holders.push(holder.clone())).unwrap();
     let head = write_log_tail(&exchange.successor_log, 9, &exchange.old.enclave_key().unwrap());
     let answer = exchange.answer_drain(Ok(head.clone()));
     let store = exchange.take().await.unwrap();
@@ -140,6 +146,7 @@ async fn the_current_release_takes_the_keys_seals_them_and_the_predecessor_ends(
     assert_eq!(taken.enclave_key().unwrap().address(), exchange.old.enclave_key().unwrap().address());
     assert_eq!(taken.tls_key().unwrap().serialize_der(), exchange.old.tls_key().unwrap().serialize_der());
     assert_eq!(taken.predecessor_head, Some(head), "the final checkpoint did not come with the keys");
+    assert_eq!(taken.holders, [holder], "the holders did not come with the keys");
     assert_eq!((store.release(), store.generation()), (exchange.upgrade(), GENERATION), "sealed elsewhere");
     assert!(file_for(&exchange.successor_dir, &exchange.upgrade(), GENERATION).exists());
     let kept = KeyStore::open(&exchange.successor_dir, &sealer, exchange.successor.file_sha256, 1).unwrap();
@@ -335,6 +342,7 @@ impl Exchange {
             drains,
             old,
             store,
+            predecessor_dir: dir,
             successor,
             successor_dir,
             successor_log,

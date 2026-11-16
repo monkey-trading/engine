@@ -1,13 +1,16 @@
 //! A member's turn under the latest agreed block's reassignments (#596): it takes a turn a skip names
 //! it for before the finalised schedule shows the skip, follows rather than takes one a skip or a
 //! promotion moved past it, holds one it already holds keys for, asks the operator whose head is
-//! newest first, and follows that operator every other time a stint fails.
+//! newest first, follows that operator every other time a stint fails, keeps following while a take
+//! waits on a latest block short of the boundary, and counts a take's retries per holding.
 
 use super::*;
 
 use crate::handover::assigned::tests::{FakeAssignments, skip};
 use crate::handover::assigned::{Assigned, Reason};
 use crate::handover::discovery::Registered;
+use crate::handover::stand_in::Answer;
+use crate::handover::tail::TailMiss;
 use crate::node::member::turn::Holding;
 
 /// The generation a skip of this member's turn holds.
@@ -65,7 +68,7 @@ async fn a_skip_this_member_gave_away_or_already_holds_keys_for_does_not_take_it
     let assignments = Arc::new(FakeAssignments::default());
     assignments.set(Some(skip_of_own(fixture.release().id(), 0x0c)));
     let mut member = fixture.member_reading(&assignments);
-    member.handed_over(Handed { generation: Some(SKIPPED), reached: None, head: None });
+    member.handed_over(Handed { generation: Some(SKIPPED), reached: None, head: None, to: None });
     assert!(matches!(member.holding().await.unwrap(), Holding::Follow(_)), "it took back the turn it handed over");
     let sealer = MockSealer { launch_digest: DIGEST };
     KeyStore::create(&fixture.keys, &sealer, fixture.cfg.file_sha256, SKIPPED, KeySet::generate().unwrap()).unwrap();
@@ -182,25 +185,152 @@ async fn after_a_reorg_removes_a_skip_the_drawn_member_takes_the_keys_from_the_o
 }
 
 /// A drawn member that took its turn late and handed it to a skip's member takes it back, in the same
-/// process, once a reorg removes the skip; one that handed its keys on with the draw still current
-/// follows.
+/// process, once a reorg removes the skip, by the assignment its confirmed handover recorded the
+/// successor bound: whether its first read after the handover already shows the draw again, or fails
+/// first. One that handed its keys on to the draw's own member, or recorded no successor, follows.
 #[tokio::test]
 async fn a_member_that_handed_its_drawn_turn_to_a_skip_takes_it_back_once_a_reorg_removes_the_skip() {
     let fixture = Fixture::start("member-skip-restored", true).await;
     fixture.registry.draw(fixture.release().id());
     fixture.time.set(OWN + 1);
     let drawn = Assigned { reason: Reason::Draw, ..skip(12, 0, 0x0e, fixture.release().id(), GENERATION) };
+    let skipped = skip(12, 1, 0x0b, [0x0b; 32], SKIPPED);
+    let handed = |to| Handed { generation: Some(GENERATION), reached: None, head: None, to };
+    let take_back =
+        |holding: Holding| matches!(holding, Holding::Take(turn) if (turn.turn, turn.generation) == (12, GENERATION));
     let assignments = Arc::new(FakeAssignments::default());
-    assignments.set(Some(skip(12, 1, 0x0b, [0x0b; 32], SKIPPED)));
+    // The skip still current: the member follows its successor.
+    assignments.set(Some(skipped));
     let mut member = fixture.member_reading(&assignments);
-    member.handed_over(Handed { generation: Some(GENERATION), reached: None, head: None });
+    member.handed_over(handed(Some(skipped)));
     assert!(matches!(member.holding().await.unwrap(), Holding::Follow(_)), "it took back what it handed on");
     assignments.set(Some(drawn));
-    match member.holding().await.unwrap() {
-        Holding::Take(turn) => assert_eq!((turn.turn, turn.generation), (12, GENERATION)),
-        _ => panic!("the member did not take back its drawn turn"),
-    }
+    assert!(take_back(member.holding().await.unwrap()), "the member did not take back its drawn turn");
+    // A reorg before the member's first read: that read already shows the draw.
     let mut member = fixture.member_reading(&assignments);
-    member.handed_over(Handed { generation: Some(GENERATION), reached: None, head: None });
-    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(_)), "it took back a draw it handed on");
+    member.handed_over(handed(Some(skipped)));
+    assert!(take_back(member.holding().await.unwrap()), "a reorg before the first read kept the turn away");
+    // The first read fails: the member follows, and takes the turn back at the next read.
+    let mut member = fixture.member_reading(&assignments);
+    member.handed_over(handed(Some(skipped)));
+    assignments.failing.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(_)), "a failed read took the turn back");
+    assignments.failing.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert!(take_back(member.holding().await.unwrap()), "a failed first read lost the record");
+    // Handed on to the draw's own member, or with no successor recorded, the drawn turn stays given.
+    for to in [Some(drawn), None] {
+        let mut member = fixture.member_reading(&assignments);
+        member.handed_over(handed(to));
+        assert!(
+            matches!(member.holding().await.unwrap(), Holding::Follow(_)),
+            "{to:?}: it took back a draw it handed on"
+        );
+    }
+}
+
+/// A take that waits on a latest agreed block short of the turn's boundary, as through a chain outage
+/// across it, keeps the copy following the incumbent, so the incumbent's confirmations go on, and goes
+/// on to the predecessor once the block reaches the boundary.
+#[tokio::test]
+async fn a_take_waiting_on_a_latest_block_behind_the_boundary_keeps_following() {
+    let lagged = Answer::Missed(TailMiss::Lagged);
+    let (fixture, operator, served, asked) = super::in_own_turn("member-behind", vec![lagged; TAIL_ATTEMPTS]).await;
+    let assignments = Arc::new(FakeAssignments::default());
+    // The latest block still shows turn 11's draw; the finalised schedule names this member for turn 12.
+    assignments.set(Some(Assigned { reason: Reason::Draw, ..skip(11, 0, 0x0b, [0x0b; 32], 2) }));
+    let mut member = fixture.member_reading(&assignments);
+    let reads = || assignments.reads.load(Ordering::SeqCst);
+    let drive = async {
+        let read = |count| {
+            crate::test_support::wait_for("the member's waits on the latest block", async move {
+                while reads() < count {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+        };
+        // Two reads a try: the holding's, then the take's.
+        read(2).await;
+        let connected = operator.connections();
+        read(10).await;
+        assert!(operator.connections() >= connected + 2, "the copy stopped following while the take waited");
+        assert_eq!(asked.load(Ordering::SeqCst), 0, "the take asked the predecessor before the block caught up");
+        let drawn = Assigned { reason: Reason::Draw, ..skip(12, 0, 0x0e, fixture.release().id(), GENERATION) };
+        assignments.set(Some(drawn));
+    };
+    let (turn, ()) = tokio::join!(member.until_turn(), drive);
+    served.abort();
+    assert!(matches!(turn.unwrap(), Turn::Hold), "the member did not leave the refused turn to the start");
+    assert_eq!(asked.load(Ordering::SeqCst), TAIL_ATTEMPTS, "the take did not go on once the block caught up");
+}
+
+/// A take that fails once and is then abandoned, a later skip moving past the member, which follows for
+/// longer than `RETRY_FOR`, carries no failures into the next holding it takes: that one's first failure
+/// is retried for `RETRY_FOR` before the member leaves it to the start.
+#[tokio::test]
+async fn a_take_a_skip_abandoned_carries_no_failures_into_the_next_holding() {
+    let fixture = Fixture::start("member-skip-retries", true).await;
+    let operator = fixture.operator(true).await;
+    fixture.registry.name(&operator.host);
+    fixture.time.set(OWN + 1);
+    let assignments = Arc::new(FakeAssignments::default());
+    // No operator has a handover endpoint, so each take fails without a refusal.
+    assignments.set(Some(skip_of_own(fixture.release().id(), 0x0c)));
+    let mut member = fixture.member_reading(&assignments);
+    let reads = || assignments.reads.load(Ordering::SeqCst);
+    let retaken = std::sync::Mutex::new(None);
+    let drive = async {
+        crate::test_support::wait_for("the member's first take", async {
+            while reads() < 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assignments.set(Some(skip(12, 3, 0x0e, [0x0e; 32], SKIPPED + 1)));
+        operator.wait_for_connections(1).await;
+        tokio::time::sleep(RETRY_FOR + std::time::Duration::from_secs(1)).await;
+        *retaken.lock().unwrap() = Some(std::time::Instant::now());
+        assignments.set(Some(skip(12, 4, 0x0c, fixture.release().id(), SKIPPED + 2)));
+    };
+    let (turn, ()) = tokio::join!(member.until_turn(), drive);
+    assert!(matches!(turn.unwrap(), Turn::Hold), "the member did not leave the failing turn to the start");
+    let retaken = retaken.lock().unwrap().expect("the next holding was never named");
+    assert!(retaken.elapsed() >= RETRY_FOR, "the next holding's first failure fell back on the abandoned take's");
+}
+
+/// A member whose stints before its turn failed keeps its copy open but follows no one: once its take
+/// waits on a latest block behind the boundary, it resolves the incumbent and follows it through the wait.
+#[tokio::test]
+async fn a_take_waiting_after_a_failed_stint_follows_the_incumbent() {
+    let lagged = Answer::Missed(TailMiss::Lagged);
+    let (mut fixture, operator, served, asked) =
+        super::in_own_turn("member-behind-refollow", vec![lagged; TAIL_ATTEMPTS]).await;
+    // With rotation on the member follows the operator the registry names, which here nothing serves:
+    // its copy opens, and each stint before the turn fails.
+    fixture.cfg.operator.rotation_enabled = true;
+    fixture.time.set(SECOND + 1);
+    fixture.registry.name("127.0.0.1:9");
+    let assignments = Arc::new(FakeAssignments::default());
+    assignments.set(Some(Assigned { reason: Reason::Draw, ..skip(11, 0, 0x0b, [0x0b; 32], 2) }));
+    let mut member = fixture.member_reading(&assignments);
+    let reads = || assignments.reads.load(Ordering::SeqCst);
+    let drive = async {
+        let read = |count| {
+            crate::test_support::wait_for("the member's reads", async move {
+                while reads() < count {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+        };
+        read(3).await;
+        assert_eq!(operator.connections(), 0, "the incumbent was followed before the turn");
+        fixture.time.set(OWN + 1);
+        read(reads() + 6).await;
+        assert!(operator.connections() >= 1, "the waiting take did not follow the incumbent");
+        assert_eq!(asked.load(Ordering::SeqCst), 0, "the take asked the predecessor before the block caught up");
+        let drawn = Assigned { reason: Reason::Draw, ..skip(12, 0, 0x0e, fixture.release().id(), GENERATION) };
+        assignments.set(Some(drawn));
+    };
+    let (turn, ()) = tokio::join!(member.until_turn(), drive);
+    served.abort();
+    assert!(matches!(turn.unwrap(), Turn::Hold), "the member did not leave the refused turn to the start");
 }

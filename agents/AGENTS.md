@@ -270,7 +270,8 @@ an index: load only the rule whose hint matches the current action.
   `TurnTaken` and asks the turn's order (`turn_order`), first to last, in questions its enclave signs,
   for a quote-bound verification of it from a member that sequenced none of the range since the last
   verified head under any release, nor runs a release that did, as the log's `TurnTaken` commands and
-  mirrored promotions and skips record, nor was promoted or skipped to after the assignment in office,
+  mirrored promotions and skips record, and the keys record of each release that handed them on past
+  that head (a reorged skip's member is never mirrored), nor was promoted or skipped to after the assignment in office,
   as the schedule reads at the latest block (Warning `log_check_pending` after 30 minutes, `log_check_unavailable` on a node set up to
   take no turns, and `log_check_unattributable` while those records cannot say who sequenced the
   range, as after a snapshot start), which a following member answers on its handover endpoint from

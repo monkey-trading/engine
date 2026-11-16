@@ -126,7 +126,7 @@ async fn a_full_set_reads_well_within_an_interval() {
     });
     let block = chain.latest().await.unwrap();
     let started = tokio::time::Instant::now();
-    let read = members(&block, &DOMAIN.standby, (1, 20_400, 0)).await.unwrap();
+    let read = members(&block, &DOMAIN.standby, (1, 20_400, 0, AccountId([0; 20]))).await.unwrap();
     assert!(started.elapsed() <= Duration::from_secs(5), "{:?}", started.elapsed());
     let candidates: Vec<Address> = read.iter().map(|member| Address::from(member.candidate.0)).collect();
     assert_eq!(candidates, listed.iter().map(|(candidate, ..)| *candidate).collect::<Vec<_>>(), "in the set's order");
@@ -195,6 +195,26 @@ async fn a_prior_turns_holder_tail_is_exempt_as_a_turn_holders_is() {
     settle().await;
     assert!(rig.gate.start_checked(), "the prior turn's holder's tail refused the start");
     rig.task.abort();
+}
+
+/// The turn's source, which the untaken-turn promotion moved past while it beat on, reports its last
+/// released head, which its replaced run seeds into its member link's copy, as its own cut-off tail: it
+/// holds no assignment of the turn or of the one before it, but `holdsTurn` counts it on chain as a
+/// holder, and so does the start check.
+#[tokio::test(start_paused = true)]
+async fn a_turn_sources_tail_is_exempt_as_a_turn_holders_is() {
+    for (case, source, exempt) in [("the turn's source", MEMBER, true), ("another candidate's", 0xc9, false)] {
+        let rig = Rig::spawn(10);
+        rig.chain.set(|chain| chain.source = Address::repeat_byte(source));
+        // The source's run ended `Replaced` past its seq 12, sealed by the turn's keys.
+        let copy = crate::liveness::link::Copy::default();
+        copy.seed(Head { seq: 12, link: link(12) }, AccountId([0x73; 20]));
+        let status = copy.status(1).expect("a seeded copy answers its status");
+        rig.members.0.lock().unwrap().get_mut("member:1").unwrap().2 = Some(status);
+        settle().await;
+        assert_eq!(rig.gate.start_checked(), exempt, "{case}");
+        rig.task.abort();
+    }
 }
 
 /// A promoted operator, whose reads count only from the block its start read the promotion at, still

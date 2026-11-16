@@ -23,12 +23,13 @@ approval; an approval for one step is not one for the next.
   vault names is then the operator in effect's. Naming a release is instead the timelock's approval
   of it for the operator's candidacy and the candidacy's move to it
   ([operator-candidate.md](operator-candidate.md), section 5); the handover in section 3 is the same.
-- **While the boundary's log check applies, the keys carry its verified head**, and a release built
-  before the log check refuses keys that carry one: its handover stops the running release and then
-  fails. The check applies only while rotation is on and the turn's set names two or more members,
-  and the node drops the head from its sealed keys once it no longer applies, so with rotation off an
+- **While the boundary's log check applies, the keys carry its verified head**, and each release that
+  handed them on past it, and a release built before either refuses keys that carry one: its handover
+  stops the running release and then fails. The check applies only while rotation is on and the
+  turn's set names two or more members, and the node drops the head and those releases from its
+  sealed keys once it no longer applies, and refuses a handover until it has, so with rotation off an
   upgrade or a rollback across this change hands over as before. While rotation is on, upgrade and
-  roll back only between releases that have the log check
+  roll back only between releases that have the log check and name those releases
   ([operator-candidate.md](operator-candidate.md), "Daily turns").
 - **No staging environment exists yet.** Run this on a testnet vault first; the steps are the same.
 

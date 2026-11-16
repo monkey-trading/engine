@@ -12,12 +12,18 @@ use tracing::{error, info, warn};
 
 use crate::alerts::Routing;
 use crate::handover::DrainReply;
+use crate::handover::assigned::Assigned;
 use crate::node::SHUTDOWN_GRACE;
+use crate::node::member::Handed;
 use crate::sequencer::Request;
 use crate::sequencer_thread::Worker;
 
 /// The tasks a node runs as one supervised unit, named by their role.
 pub(super) type TaskResult = (&'static str, anyhow::Result<()>);
+
+/// The handover listener's outcome: a confirmed handover, with the assignment its successor bound, if
+/// any (`Predecessor::run`).
+pub(super) type HandoverResult = anyhow::Result<Option<Assigned>>;
 
 /// What the node's stop at the sequencer answers for a handover.
 enum HandoverStop {
@@ -34,7 +40,7 @@ pub(super) struct Supervised {
     pub history_task: JoinSet<anyhow::Result<()>>,
     pub history_finished: bool,
     pub sequencer: Worker,
-    pub handover: JoinSet<anyhow::Result<()>>,
+    pub handover: JoinSet<HandoverResult>,
     pub handing_over: Option<DrainReply>,
     /// Whether supervision ended because the vault named another key (`liveness::Gate::replace`).
     pub replaced: bool,
@@ -77,7 +83,8 @@ pub(super) async fn supervise(
                 Some(sequencer_outcome(joined).and_then(|()| Err(anyhow!("sequencer stopped"))))
             }
             joined = supervised.handover.join_next(), if !supervised.handover.is_empty() => {
-                Some(Err(stopped_task(joined.map(|joined| joined.map(|result| ("handover", result))))))
+                let joined = joined.map(|joined| joined.map(|result| ("handover", result.map(|_| ()))));
+                Some(Err(stopped_task(joined)))
             }
             Some(reply) = drain_rx.recv() => {
                 let probe = handover_stop(handover_stop_tx, reply);
@@ -196,13 +203,14 @@ async fn drain_history(mut history: JoinSet<anyhow::Result<()>>, stopper: crate:
 }
 
 /// Waits for the handover task once sequencing has stopped: the successor's confirmation ends the
-/// node, as does a shutdown signal, with an error.
+/// node, giving away what `gave` holds and the assignment the successor bound, if any, as does a
+/// shutdown signal, with an error.
 /// Error cases:
 /// - a signal arrives first, or the task fails
-pub(super) async fn handed_over(mut handover: JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
+pub(super) async fn handed_over(mut handover: JoinSet<HandoverResult>, gave: Handed) -> anyhow::Result<Handed> {
     tokio::select! {
         joined = handover.join_next() => match joined {
-            Some(Ok(result)) => result,
+            Some(Ok(result)) => result.map(|to| Handed { to, ..gave }),
             Some(Err(e)) => Err(anyhow!(e).context("the handover task panicked")),
             None => Err(anyhow!("the handover task is gone")),
         },
@@ -289,13 +297,16 @@ mod tests {
 
     #[tokio::test]
     async fn the_handover_tasks_outcome_is_the_nodes() {
+        let gave = Handed { generation: Some(4), reached: Some(1_000), head: None, to: None };
         let mut confirmed = JoinSet::new();
-        confirmed.spawn(async { anyhow::Ok(()) });
-        handed_over(confirmed).await.expect("a confirmed handover ends the node cleanly");
+        let bound = crate::handover::assigned::tests::skip(12, 1, 0x0b, [0x0b; 32], 21);
+        confirmed.spawn(async move { anyhow::Ok(Some(bound)) });
+        let handed = handed_over(confirmed, gave).await.expect("a confirmed handover ends the node cleanly");
+        assert_eq!(handed, Handed { to: Some(bound), ..gave }, "what the node gave away lost the bound assignment");
 
         let mut unconfirmed = JoinSet::new();
         unconfirmed.spawn(async { Err(anyhow!("the handover was not confirmed")) });
-        let err = handed_over(unconfirmed).await.unwrap_err();
+        let err = handed_over(unconfirmed, gave).await.unwrap_err();
         assert!(err.to_string().contains("not confirmed"), "{err:#}");
 
         let mut panicked = JoinSet::new();
@@ -303,12 +314,12 @@ mod tests {
             if true {
                 panic!("a bug in the handover task");
             }
-            anyhow::Ok(())
+            anyhow::Ok(None)
         });
-        let err = handed_over(panicked).await.unwrap_err();
+        let err = handed_over(panicked, gave).await.unwrap_err();
         assert!(err.to_string().contains("panicked"), "{err:#}");
 
-        let err = handed_over(JoinSet::new()).await.unwrap_err();
+        let err = handed_over(JoinSet::new(), gave).await.unwrap_err();
         assert!(err.to_string().contains("is gone"), "{err:#}");
     }
 

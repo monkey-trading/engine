@@ -42,36 +42,39 @@ async fn keys_are_opened_or_sealed_only_for_the_vaults_current_release() {
         ("a config change", named(Release { config_sha256: [0xc2; 32], ..this }, 2)),
     ];
     for (what, vault) in &superseded {
-        let err =
-            obtain_with(&cfg, &start(true), &MockAttestor, Some(vault), trusted_at(0), &Metrics::new()).await.err();
+        let err = obtain_with(&cfg, &start(true), &MockAttestor, (Some(vault), None), trusted_at(0), &Metrics::new())
+            .await
+            .err();
         let err = err.unwrap_or_else(|| panic!("new keys were sealed while the vault names {what}"));
         assert!(format!("{err:#}").contains("the vault's current release is"), "{what}: {err:#}");
         assert!(std::fs::read_dir(&dir).is_err(), "{what}: a refused start sealed keys");
     }
     let (key, _, store) =
-        obtain_with(&cfg, &start(true), &MockAttestor, Some(&named(this, 1)), trusted_at(0), &Metrics::new())
+        obtain_with(&cfg, &start(true), &MockAttestor, (Some(&named(this, 1)), None), trusted_at(0), &Metrics::new())
             .await
             .unwrap();
     assert!(file_for(&dir, &this, 1).exists() && store.unwrap().generation() == 1, "sealed outside generation 1");
     let (again, _, _) =
-        obtain_with(&cfg, &start(false), &MockAttestor, Some(&named(this, 1)), trusted_at(0), &Metrics::new())
+        obtain_with(&cfg, &start(false), &MockAttestor, (Some(&named(this, 1)), None), trusted_at(0), &Metrics::new())
             .await
             .unwrap();
     assert_eq!(again.address(), key.address());
 
     // Once governance names another release, this one's sealed keys stay sealed.
     for (what, vault) in &superseded {
-        let err =
-            obtain_with(&cfg, &start(false), &MockAttestor, Some(vault), trusted_at(0), &Metrics::new()).await.err();
+        let err = obtain_with(&cfg, &start(false), &MockAttestor, (Some(vault), None), trusted_at(0), &Metrics::new())
+            .await
+            .err();
         let err = err.unwrap_or_else(|| panic!("the keys opened while the vault names {what}"));
         assert!(format!("{err:#}").contains("refusing this release's keys"), "{what}: {err:#}");
     }
 
     // Named again, in a later generation, it finds no keys there: its copy from generation 1 stays
     // sealed, and it takes the keys afresh from the release running then.
-    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&named(this, 3)), trusted_at(0), &Metrics::new())
-        .await
-        .err();
+    let err =
+        obtain_with(&cfg, &start(false), &MockAttestor, (Some(&named(this, 3)), None), trusted_at(0), &Metrics::new())
+            .await
+            .err();
     let err = format!("{:#}", err.expect("a release named again reopened its older copy"));
     assert!(err.contains("no keys are sealed for this release") && err.contains("generation 3"), "{err}");
     assert!(file_for(&dir, &this, 1).exists() && !file_for(&dir, &this, 3).exists());
@@ -373,9 +376,12 @@ fn a_certificate_store_that_does_not_open_refuses_the_start_with_a_critical_aler
 fn the_first_start_after_a_handover_needs_the_log_to_end_at_the_predecessors_checkpoint() {
     let root = format!("0x{}", "ab".repeat(32));
     let head = Head { seq: 5, root: root.clone() };
+    let holder = |through| crate::log_check::Holder { through, release: B256::repeat_byte(9), candidates: [].into() };
+    let holders = [holder(4), holder(9)].to_vec();
     let store = |name: &str| {
         let mut keys = KeySet::generate().unwrap();
         keys.predecessor_head = Some(head.clone());
+        keys.holders = holders.clone();
         KeyStore::create(&scratch_dir(name), &MockSealer { launch_digest: DIGEST }, [0xc1; 32], 1, keys).unwrap()
     };
     let other_root = format!("0x{}", "cd".repeat(32));
@@ -386,27 +392,29 @@ fn the_first_start_after_a_handover_needs_the_log_to_end_at_the_predecessors_che
         ("a log with no checkpoint", Some(5), None),
     ] {
         let refused = store(&format!("head-refused-{last_seq:?}-{}", last.is_some()));
-        let err = check_predecessor_head(Some(&refused), last_seq, last.as_ref(), |_, _| panic!("checked")).err();
+        let err = check_predecessor_head(Some(&refused), last_seq, last.as_ref(), |_, _, _| panic!("checked")).err();
         assert!(err.is_some(), "{what} passed");
         assert_eq!(refused.keys().predecessor_head, Some(head.clone()), "{what}: the head was forgotten");
         assert_eq!(refused.keys().log_check, None, "{what}: a refused start recorded a log check");
+        assert_eq!(refused.keys().holders, holders, "{what}: a refused start dropped a holder");
     }
 
-    // A log that ends there passes once, and the head is forgotten: later starts extend the log. The
-    // log check the keys carried becomes what the check makes of it and the head, in the same seal.
+    // A log that ends there passes once, and the head is forgotten: later starts extend the log. The log
+    // check becomes what the check makes of the keys' and the head, sealed dropping the holders it reaches.
     let passed = store("head-passed");
     let verified = VerifiedHead { seq: 5, link: B256::repeat_byte(7), root: root.parse().unwrap() };
-    let check = |previous: Option<VerifiedHead>, at: &Head| {
-        assert_eq!((previous, at), (None, &head));
+    let check = |previous: Option<VerifiedHead>, carried: &[crate::log_check::Holder], at: &Head| {
+        assert_eq!((previous, carried, at), (None, holders.as_slice(), &head));
         Some(verified)
     };
     check_predecessor_head(Some(&passed), Some(5), Some(&checkpoint(5, &root)), check).unwrap();
     assert_eq!((passed.keys().predecessor_head, passed.keys().log_check), (None, Some(verified)));
-    check_predecessor_head(Some(&passed), Some(9), Some(&checkpoint(9, &other_root)), |_, _| panic!("checked"))
+    assert_eq!(passed.keys().holders, [holder(9)], "the verified head did not drop the holder it reaches");
+    check_predecessor_head(Some(&passed), Some(9), Some(&checkpoint(9, &other_root)), |_, _, _| panic!("checked"))
         .unwrap();
     assert_eq!(passed.keys().log_check, Some(verified), "a start with no handover changed the log check");
     // Keys nobody handed over, or no sealing, carry no head.
-    check_predecessor_head(None, Some(1), None, |_, _| panic!("checked")).unwrap();
+    check_predecessor_head(None, Some(1), None, |_, _, _| panic!("checked")).unwrap();
 }
 
 // ── Helpers ──

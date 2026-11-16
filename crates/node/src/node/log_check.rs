@@ -15,7 +15,7 @@ use crate::checkpoints::CheckpointChain;
 use crate::config::NodeConfig;
 use crate::log::CheckpointDomain;
 use crate::log_check::ask::Asker;
-use crate::log_check::{Due, Reassigned, VerifiedHead, applies, own_candidates, own_check_read};
+use crate::log_check::{Due, Holder, Reassigned, VerifiedHead, applies, own_candidates, own_check_read, seal_verified};
 use crate::node::shutdown::TaskResult;
 use crate::sequencer::{LogCheckSetup, ReplayedLog, Request};
 use crate::tee::EnclaveKey;
@@ -154,13 +154,14 @@ pub(crate) fn after_promotion(
     };
     let head = VerifiedHead { seq: checkpoint_seq, link, root };
     let (release, candidates) = (B256::from(store.release().id()), own_candidates(&replayed.engine, operator));
-    let previous = store.keys().log_check;
-    let checked = own_check_read(previous, &replayed.takings, head, (release, &candidates), read);
+    let keys = store.keys();
+    let previous = keys.log_check;
+    let checked = own_check_read(previous, &replayed.takings, &keys.holders, head, (release, &candidates), read);
     if checked == previous {
         return Ok(());
     }
     info!(seq = checkpoint_seq, "the promotion's check: this start verified the log through the vault's checkpoint");
-    store.update(|keys| keys.log_check = checked).context("sealing the promotion's verified head")
+    store.update(|keys| seal_verified(keys, checked)).context("sealing the promotion's verified head")
 }
 
 /// Refuses the first start after a handover unless `log` ends at the predecessor's final checkpoint
@@ -180,13 +181,13 @@ pub(crate) fn after_handover(
     let release = store.map(|store| B256::from(store.release().id()));
     let candidates = own_candidates(&log.replayed.engine, operator);
     let gated = applies(&log.replayed.engine);
-    let check = |previous: Option<VerifiedHead>, head: &Head| {
+    let check = |previous: Option<VerifiedHead>, holders: &[Holder], head: &Head| {
         if !gated {
             return None;
         }
         let (Some(release), Ok(root)) = (release, head.root.parse()) else { return previous };
         let handed = VerifiedHead { seq: head.seq, link: log.head_link(), root };
-        let checked = own_check_read(previous, &log.replayed.takings, handed, (release, &candidates), read);
+        let checked = own_check_read(previous, &log.replayed.takings, holders, handed, (release, &candidates), read);
         if checked == Some(handed) {
             info!(
                 seq = head.seq,

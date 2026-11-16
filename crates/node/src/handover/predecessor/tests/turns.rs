@@ -221,11 +221,10 @@ async fn a_turns_member_takes_the_keys_from_its_source_while_the_sources_archive
     let store = crate::handover::turns::take_keys(
         &exchange.successor,
         &vault,
-        &at,
-        &turn,
-        &sealer,
-        &MockAttestor,
+        (&at, &turn),
+        (&sealer, &MockAttestor),
         &crate::metrics::Metrics::new(),
+        None,
     )
     .await
     .expect("the keys came over the source's listener");

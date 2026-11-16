@@ -63,7 +63,7 @@ fn a_range_names_each_member_promoted_after_the_turn_taken_in_office() {
     let candidates = |releases: &[B256]| releases.iter().map(|release| candidate(*release)).collect::<BTreeSet<_>>();
     assert_eq!(names(Some(20), 45).candidates, candidates(&[A, B, C]), "C's check names B");
     assert!(names(Some(20), 45).include(candidate(B), B2), "so B's member verifies none of it on any release");
-    assert_eq!(own_check(Some(head(20)), &failed, head(45), (B2, &member(B))), Some(head(20)));
+    assert_eq!(own_check(Some(head(20)), &failed, &[], head(45), (B2, &member(B))), Some(head(20)));
     assert_eq!(names(Some(20), 36).candidates, candidates(&[A, B, C]), "a range through the mirrors names them");
     assert_eq!(names(Some(39), 45), sequencers(&[C]), "from C's `TurnTaken`, the promotions before it name none");
     let mut pruned = failed.clone();
@@ -125,10 +125,10 @@ fn a_promotion_mirrored_past_the_range_names_its_member_from_the_turn_in_office_
     assert!(names.candidates.contains(&candidate(D)), "a promotion in a turn no `TurnTaken` names was missed");
     assert!(!names.candidates.contains(&candidate(E)), "an earlier turn's promotion named a member of none of it");
     for member_of in [B, D] {
-        let own = own_check(Some(head(20)), &late, head(34), (A2, &member(member_of)));
+        let own = own_check(Some(head(20)), &late, &[], head(34), (A2, &member(member_of)));
         assert_eq!(own, Some(head(20)), "{member_of}'s member checked its own work");
     }
-    assert_eq!(own_check(Some(head(20)), &late, head(34), (E, &member(E))), Some(head(34)), "E sequenced none");
+    assert_eq!(own_check(Some(head(20)), &late, &[], head(34), (E, &member(E))), Some(head(34)), "E sequenced none");
 }
 
 /// A promotion mirrored past the range names its member only once its turn had begun by the range's
@@ -156,11 +156,15 @@ fn a_promotion_in_a_turn_that_began_after_the_range_names_no_member_of_it() {
     late.command(36, &[promoted(3, D)]);
     let names = late.sequenced(Some(20), 34).unwrap();
     assert!(!names.candidates.contains(&candidate(D)), "a turn that began after the range named its member");
-    assert_eq!(own_check(Some(head(20)), &late, head(34), (D, &member(D))), Some(head(34)), "D checked C's holding");
+    assert_eq!(
+        own_check(Some(head(20)), &late, &[], head(34), (D, &member(D))),
+        Some(head(34)),
+        "D checked C's holding"
+    );
     // A range through a command stamped in turn 3 names D.
     let names = late.sequenced(Some(20), 36).unwrap();
     assert!(names.candidates.contains(&candidate(D)), "a turn that began by the range's end named no member");
-    assert_eq!(own_check(Some(head(20)), &late, head(36), (D, &member(D))), Some(head(20)));
+    assert_eq!(own_check(Some(head(20)), &late, &[], head(36), (D, &member(D))), Some(head(20)));
     // The stamps survive a prune at a verified head inside the range.
     late.prune(20);
     assert!(!late.sequenced(Some(20), 34).unwrap().candidates.contains(&candidate(D)));
@@ -175,11 +179,12 @@ fn the_nodes_own_check_counts_for_nothing_when_the_schedule_promoted_its_member_
     let mut recorded = Takings::default();
     recorded.command(10, &[Event::TurnTaken { turn: 2, candidate: candidate(A), release: A }]);
     let at = |position, release, reassigned| Assigned { turn: 2, position, candidate: candidate(release), reassigned };
-    let own = |read: &Reassigned| own_check_read(Some(head(20)), &recorded, head(34), (B2, &member(B)), Some(read));
+    let own =
+        |read: &Reassigned| own_check_read(Some(head(20)), &recorded, &[], head(34), (B2, &member(B)), Some(read));
     let read = Reassigned { assigned: vec![at(0, A, false), at(1, B, true)] };
     assert_eq!(own(&read), Some(head(20)), "B's member checked its own work");
     // Without a record of the promotion, the log's records alone count it.
-    assert_eq!(own_check_read(Some(head(20)), &recorded, head(34), (B2, &member(B)), None), Some(head(34)));
+    assert_eq!(own_check_read(Some(head(20)), &recorded, &[], head(34), (B2, &member(B)), None), Some(head(34)));
     // Another member's promotion, or a draw of this one, says nothing of it.
     assert_eq!(own(&Reassigned { assigned: vec![at(0, B, false), at(1, C, true)] }), Some(head(34)));
     // A reassignment in a turn that began after the range's last command sequenced none of it.
@@ -187,10 +192,12 @@ fn the_nodes_own_check_counts_for_nothing_when_the_schedule_promoted_its_member_
     recorded.stamped(10, begin(2) + 1);
     recorded.stamped(34, begin(3) - 1);
     let later = Reassigned { assigned: vec![at(0, A, false), Assigned { turn: 3, ..at(1, B, true) }] };
-    let own = |read: &Reassigned| own_check_read(Some(head(20)), &recorded, head(34), (B2, &member(B)), Some(read));
+    let own =
+        |read: &Reassigned| own_check_read(Some(head(20)), &recorded, &[], head(34), (B2, &member(B)), Some(read));
     assert_eq!(own(&later), Some(head(34)), "a turn that began after the range named its member");
     recorded.stamped(40, begin(3) + 1);
-    let own = |read: &Reassigned| own_check_read(Some(head(20)), &recorded, head(40), (B2, &member(B)), Some(read));
+    let own =
+        |read: &Reassigned| own_check_read(Some(head(20)), &recorded, &[], head(40), (B2, &member(B)), Some(read));
     assert_eq!(own(&later), Some(head(20)), "a turn that had begun by the range's end did not");
 }
 
@@ -239,7 +246,7 @@ fn records_that_start_past_a_range_attribute_none_of_it() {
     assert_eq!(Takings::default().complete_from(8).sequenced(Some(7), 9), None);
     assert_eq!(Takings::default().complete_from(8).sequenced(Some(3), 9), None);
     // The node's own check of a range it cannot attribute keeps the head it had.
-    assert_eq!(own_check(Some(head(49)), &takings, head(55), (C, &member(C))), Some(head(49)));
+    assert_eq!(own_check(Some(head(49)), &takings, &[], head(55), (C, &member(C))), Some(head(49)));
 }
 
 #[test]
@@ -259,23 +266,64 @@ fn the_nodes_own_check_counts_only_when_neither_its_member_nor_its_release_seque
     let recorded = takings(0, &[(10, A), (20, B), (30, B), (40, C)]);
     let previous = Some(head(19));
     // B handed over at 39 to C: C's replay verified B's range.
-    assert_eq!(own_check(previous, &recorded, head(39), (C, &member(C))), Some(head(39)));
+    assert_eq!(own_check(previous, &recorded, &[], head(39), (C, &member(C))), Some(head(39)));
     // A release that sequenced part of the range verifies nothing for it.
-    assert_eq!(own_check(previous, &recorded, head(39), (B, &member(C))), previous);
+    assert_eq!(own_check(previous, &recorded, &[], head(39), (B, &member(C))), previous);
     // Nor does the member that sequenced it on another release, as after its upgrade, whether or not
     // its start was flagged as one.
-    assert_eq!(own_check(previous, &recorded, head(39), (B2, &member(B2))), previous);
-    assert_eq!(own_check(Some(head(9)), &recorded, head(19), (A2, &member(A))), Some(head(9)));
+    assert_eq!(own_check(previous, &recorded, &[], head(39), (B2, &member(B2))), previous);
+    assert_eq!(own_check(Some(head(9)), &recorded, &[], head(19), (A2, &member(A))), Some(head(9)));
     // Nor does a head at or below the one verified, or one the records cannot attribute.
-    assert_eq!(own_check(Some(head(39)), &recorded, head(30), (C, &member(C))), Some(head(39)));
-    assert_eq!(own_check(previous, &takings(25, &[(30, B)]), head(39), (C, &member(C))), previous);
+    assert_eq!(own_check(Some(head(39)), &recorded, &[], head(30), (C, &member(C))), Some(head(39)));
+    assert_eq!(own_check(previous, &takings(25, &[(30, B)]), &[], head(39), (C, &member(C))), previous);
     // A member's upgrade before any turn checks nothing: no record names the operator before them.
     let before_turns = takings(0, &[]);
-    assert_eq!(own_check(None, &before_turns, head(9), (A2, &member(A))), None);
+    assert_eq!(own_check(None, &before_turns, &[], head(9), (A2, &member(A))), None);
     // With nothing verified, the range is the holding of the latest `TurnTaken`: B's.
-    assert_eq!(own_check(None, &recorded, head(39), (C, &member(C))), Some(head(39)));
-    assert_eq!(own_check(None, &recorded, head(39), (A2, &member(A))), Some(head(39)));
-    assert_eq!(own_check(None, &recorded, head(39), (B2, &member(B2))), None);
+    assert_eq!(own_check(None, &recorded, &[], head(39), (C, &member(C))), Some(head(39)));
+    assert_eq!(own_check(None, &recorded, &[], head(39), (A2, &member(A))), Some(head(39)));
+    assert_eq!(own_check(None, &recorded, &[], head(39), (B2, &member(B2))), None);
+}
+
+/// A member a reorged skip named sequences with no record in the log: the keys it handed on name it as a
+/// holder through its last command, so neither its own check at a later handover, on any release, nor
+/// its answer when asked, counts for a range reaching that command; past it, it counts again.
+#[test]
+fn an_orphaned_skips_member_the_keys_name_verifies_no_range_reaching_its_commands() {
+    // A took the turn at 10 and handed it to B, a skip's member, which sequenced to 29 and, its skip
+    // reorged away, handed the keys back; A handed them to B, drawn next, at 39.
+    let recorded = takings(0, &[(10, A), (40, B)]);
+    let orphaned = [Holder { through: 29, release: B, candidates: member(B) }];
+    let previous = Some(head(9));
+    assert_eq!(own_check(previous, &recorded, &[], head(39), (B, &member(B))), Some(head(39)), "the log alone");
+    assert_eq!(own_check(previous, &recorded, &orphaned, head(39), (B, &member(B))), previous);
+    assert_eq!(own_check(previous, &recorded, &orphaned, head(39), (B2, &member(B2))), previous, "B's upgrade");
+    assert_eq!(own_check(previous, &recorded, &orphaned, head(39), (C, &member(C))), Some(head(39)));
+    assert_eq!(own_check(Some(head(29)), &recorded, &orphaned, head(39), (B, &member(B))), Some(head(39)));
+    // Asked at a boundary, B is excluded from the check due, by its member or its release.
+    let excluded = recorded.sequenced(Some(9), 39).unwrap().with_holders(&orphaned, recorded.first(Some(9), 39));
+    assert!(excluded.include(candidate(B), B2) && excluded.include(candidate(C), B), "{excluded:?}");
+    assert!(!excluded.include(candidate(C), C));
+    let past = recorded.sequenced(Some(29), 39).unwrap().with_holders(&orphaned, recorded.first(Some(29), 39));
+    assert!(!past.include(candidate(B), B), "a holder the verified head reaches excluded B");
+}
+
+/// With nothing verified, the range is the latest `TurnTaken`'s holding: a holder whose commands all
+/// precede it is not in it, as the operator in office before the first turn, which the keys name at its
+/// stop, is not in its successor's; one whose last command falls in it is.
+#[test]
+fn with_nothing_verified_only_a_holder_whose_commands_reach_the_latest_holding_is_excluded() {
+    // A, in office before any `TurnTaken`, handed the keys to B at 9, which took its turn at 10; C, a
+    // skip's member a reorg orphaned, sequenced within B's holding to 29 and handed the keys back.
+    let recorded = takings(0, &[(10, B)]);
+    let before = [Holder { through: 9, release: A, candidates: member(A) }];
+    let due = recorded.sequenced(None, 39).unwrap().with_holders(&before, recorded.first(None, 39));
+    assert!(!due.include(candidate(A), A), "a holder before the range excluded A: {due:?}");
+    assert_eq!(own_check(None, &recorded, &before, head(39), (A, &member(A))), Some(head(39)));
+    let within = [before[0].clone(), Holder { through: 29, release: C, candidates: member(C) }];
+    let due = recorded.sequenced(None, 39).unwrap().with_holders(&within, recorded.first(None, 39));
+    assert!(due.include(candidate(C), C) && !due.include(candidate(A), A), "{due:?}");
+    assert_eq!(own_check(None, &recorded, &within, head(39), (C, &member(C))), None);
 }
 
 #[test]
@@ -286,7 +334,7 @@ fn a_missing_head_leaves_the_latest_holding_to_check_not_every_turn_since_genesi
     assert_eq!(recorded.sequenced(None, 55), Some(sequencers(&[B])));
     assert_eq!(recorded.sequenced(None, 45), Some(sequencers(&[A])));
     // B's holding hands over to C, whose start checks it and so sets the head again.
-    assert_eq!(own_check(None, &recorded, head(55), (C, &member(C))), Some(head(55)));
+    assert_eq!(own_check(None, &recorded, &[], head(55), (C, &member(C))), Some(head(55)));
     // At a boundary B holds on through, any member but B can be asked.
     let held = takings(0, &[(10, A), (20, B), (30, C), (40, A), (50, B), (60, B)]);
     let excluded = held.sequenced(None, 61).unwrap();

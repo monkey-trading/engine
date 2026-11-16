@@ -380,8 +380,9 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
   question, so keep that endpoint reachable from every member's node, not only from the next turn's. A
   one-member set, or rotation off, needs no check. The verified head is sealed with the keys, and an
   upgrade (section 5) carries it to the new release; a start that finds its log does not hold the
-  sealed head asks for the check again. Every member must run a release that has the log check before
-  rotation is turned on, since keys carrying a verified head do not open on an older release; with
+  sealed head asks for the check again. Every member must run a release that has the log check, and
+  names the releases that hand the keys on, before rotation is turned on, since keys carrying a
+  verified head or those releases do not open on an older release; with
   rotation off the keys carry none ([deploy-and-rollback.md](deploy-and-rollback.md), "Know before you
   start"). Leave `[snapshots]` unset here too: a start from a snapshot
   past the verified head cannot say who sequenced the range and pages `log_check_unattributable`.
@@ -477,7 +478,11 @@ misses it is promoted at once.
   with no signer change; an unwitnessed slot, as through a chain outage, restarts the window, a
   promotion's assignment is never skipped, and no skip is due while the guardian has retired the signer. The timelock sets the window within its deployment bounds while no turn
   names the operator (`setTakeWindow`); the deployment's minimum must exceed the switch budget plus one
-  interval plus a head's inclusion (`headTolerance`) at the shortest interval the bounds allow. Skips
+  interval plus a head's inclusion (`headTolerance`) at the shortest interval the bounds allow. The
+  switch budget covers the daily rotation scenario's measured switch plus two reads of the turn's latest
+  assignment after the stop, the holder's and the successor's, each thirteen round trips to the custody
+  providers one after another, fourteen while a provider's tip is past the agreed block: at 100 ms a
+  round trip, up to 2.8 s on top of the measured switch. Skips
   act at sequencer confirmation: the member named takes the keys, and the key holder admits it, from the
   turn's assignment at the custody quorum's latest agreed block, not finality, and the holder's log must
   show the skip's set naming the member with seven days' notice; a skip's member upgrading to another

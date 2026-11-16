@@ -1,12 +1,15 @@
 //! A start while rotation is on: from a daily turn's boundary by trusted time, the turn the finalised
 //! schedule names decides whether this release opens or takes the keys, and in which generation,
-//! whatever release the finalised vault still names; a start with no turn drawn takes no sample, and
-//! one with a turn drawn and no sample refuses; a member sets its copy aside before a whole-log take.
+//! whatever release the finalised vault still names, or the latest agreed block's skip of it names; a
+//! start with no turn drawn takes no sample, and one with a turn drawn and no sample refuses; a member
+//! sets its copy aside before a whole-log take.
 
 use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::checkpoints::{HandoverSource, ScheduledTurn};
+use crate::handover::assigned::Reader;
+use crate::handover::assigned::tests::{FakeAssignments, skip};
 
 /// The turn the schedule draws, and the generation it fixes for its member.
 const TURN: u64 = 20_754;
@@ -18,16 +21,17 @@ async fn a_turn_naming_another_release_refuses_the_start_though_the_vault_names_
     let this = release(&cfg);
     let vault = Vault::naming(CurrentRelease { id: this.id(), generation: 1 });
     // With no turn drawn the vault's release applies: this release seals keys in its generation.
-    obtain_with(&cfg, &start(true), &MockAttestor, Some(&vault), trusted_at(boundary()), &Metrics::new())
+    obtain_with(&cfg, &start(true), &MockAttestor, (Some(&vault), None), trusted_at(boundary()), &Metrics::new())
         .await
         .unwrap();
     assert!(file_for(&dir, &this, 1).exists());
 
     let other = Release { config_sha256: [0xc2; 32], ..this };
     *vault.scheduled.lock().unwrap() = Some(turn(&other, TURN_GENERATION, None));
-    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), trusted_at(boundary()), &Metrics::new())
-        .await
-        .err();
+    let err =
+        obtain_with(&cfg, &start(false), &MockAttestor, (Some(&vault), None), trusted_at(boundary()), &Metrics::new())
+            .await
+            .err();
     let err = format!("{:#}", err.expect("the keys opened for a release the turn does not name"));
     assert!(err.contains("refusing this release's keys: a daily turn names another release"), "{err}");
 }
@@ -45,12 +49,12 @@ async fn keys_sealed_in_the_turns_generation_open_while_the_vault_still_names_th
 
     // A second short of the boundary the turn names no one yet, and the vault names the incumbent.
     let early = trusted_at(boundary() - 1_000);
-    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), early, &Metrics::new()).await.err();
+    let err = obtain_with(&cfg, &start(false), &MockAttestor, (Some(&vault), None), early, &Metrics::new()).await.err();
     let err = format!("{:#}", err.expect("the keys opened before the turn's boundary"));
     assert!(err.contains("the vault's current release is"), "{err}");
 
     let (key, _, store) =
-        obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), trusted_at(boundary()), &Metrics::new())
+        obtain_with(&cfg, &start(false), &MockAttestor, (Some(&vault), None), trusted_at(boundary()), &Metrics::new())
             .await
             .unwrap();
     assert_eq!(key.address(), sealed.keys().enclave_key().unwrap().address(), "other keys opened");
@@ -71,16 +75,17 @@ async fn a_returning_holders_restart_opens_the_keys_it_sealed_in_its_turns_gener
     let store = store.unwrap();
 
     // Keys left in the earlier generation do not open, and no other operator holds them.
-    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), trusted_at(boundary()), &Metrics::new())
-        .await
-        .err();
+    let err =
+        obtain_with(&cfg, &start(false), &MockAttestor, (Some(&vault), None), trusted_at(boundary()), &Metrics::new())
+            .await
+            .err();
     let err = format!("{:#}", err.expect("keys opened in a generation the turn does not hold"));
     assert!(err.contains("no operator with a handover endpoint"), "{err}");
 
     // Sealed in the turn's generation as the running holder took the turn, they open.
     store.reseal(TURN_GENERATION).unwrap();
     let (key, _, opened) =
-        obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), trusted_at(boundary()), &Metrics::new())
+        obtain_with(&cfg, &start(false), &MockAttestor, (Some(&vault), None), trusted_at(boundary()), &Metrics::new())
             .await
             .unwrap();
     assert_eq!(key.address(), store.keys().enclave_key().unwrap().address(), "other keys opened");
@@ -105,14 +110,78 @@ async fn without_sealed_keys_or_a_flag_a_turns_member_asks_the_turns_source_for_
     };
     *vault.scheduled.lock().unwrap() = Some(turn(&this, TURN_GENERATION, Some(source)));
 
-    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), trusted_at(boundary()), &Metrics::new())
-        .await
-        .err();
+    let err =
+        obtain_with(&cfg, &start(false), &MockAttestor, (Some(&vault), None), trusted_at(boundary()), &Metrics::new())
+            .await
+            .err();
     let err = format!("{:#}", err.expect("keys taken from a source that serves nothing"));
     // The start asked the turn's source, rather than refusing or resolving an election's incumbent;
     // `handover::predecessor`'s tests take the keys from a source that answers.
     assert!(err.contains(&format!("no operator handed turn {TURN}'s keys over: {endpoint}: ")), "{err}");
     assert!(std::fs::read_dir(&dir).is_err(), "a failed handover sealed keys");
+}
+
+/// A skip's member restarting before the skip is final opens the keys it sealed in the skip's
+/// generation, by the latest agreed block's read at the start, though the finalised schedule still
+/// names the drawn member (#596); a failed read leaves the finalised turn to decide, which refuses this
+/// release, and opens the keys of a finalised turn naming it.
+#[tokio::test]
+async fn a_skips_member_restarting_before_finality_opens_its_keys_and_a_failed_read_falls_back() {
+    let (cfg, dir) = rotating_config("keys-turn-skip");
+    let this = release(&cfg);
+    let drawn = Release { config_sha256: [0xc2; 32], ..this };
+    let vault = Vault::naming(CurrentRelease { id: drawn.id(), generation: TURN_GENERATION });
+    *vault.scheduled.lock().unwrap() = Some(turn(&drawn, TURN_GENERATION, None));
+    let skipped = TURN_GENERATION + 3;
+    let sealer = MockSealer { launch_digest: DIGEST };
+    let sealed = KeyStore::create(&dir, &sealer, cfg.file_sha256, skipped, KeySet::generate().unwrap()).unwrap();
+    let assignments = Arc::new(FakeAssignments::default());
+    assignments.set(Some(skip(TURN, 1, 0xc1, this.id(), skipped)));
+    let reader = || -> Option<Reader> { Some(assignments.clone()) };
+
+    let (key, _, store) = obtain_with(
+        &cfg,
+        &start(false),
+        &MockAttestor,
+        (Some(&vault), reader()),
+        trusted_at(boundary()),
+        &Metrics::new(),
+    )
+    .await
+    .expect("the skip's member opened its keys");
+    assert_eq!(key.address(), sealed.keys().enclave_key().unwrap().address(), "other keys opened");
+    assert_eq!(store.map(|store| store.generation()), Some(skipped), "opened outside the skip's generation");
+
+    // A skip naming another release, or a failed read, leaves the finalised turn, which names the drawn member.
+    for failing in [false, true] {
+        assignments.set(Some(skip(TURN, 1, 0xd1, [0x88; 32], skipped)));
+        assignments.failing.store(failing, Ordering::SeqCst);
+        let err = obtain_with(
+            &cfg,
+            &start(false),
+            &MockAttestor,
+            (Some(&vault), reader()),
+            trusted_at(boundary()),
+            &Metrics::new(),
+        )
+        .await
+        .err()
+        .unwrap_or_else(|| panic!("failing {failing}: keys opened for a turn naming another release"));
+        assert!(format!("{err:#}").contains("a daily turn names another release"), "failing {failing}: {err:#}");
+    }
+    // With the read failing, a finalised turn naming this release opens its own generation's keys.
+    *vault.scheduled.lock().unwrap() = Some(turn(&this, skipped, None));
+    let (_, _, store) = obtain_with(
+        &cfg,
+        &start(false),
+        &MockAttestor,
+        (Some(&vault), reader()),
+        trusted_at(boundary()),
+        &Metrics::new(),
+    )
+    .await
+    .expect("the finalised turn's keys opened");
+    assert_eq!(store.map(|store| store.generation()), Some(skipped));
 }
 
 /// A member with a copy of the log sets it aside before any whole-log take, whatever brings its
@@ -155,7 +224,8 @@ async fn a_member_sets_its_copy_aside_before_any_whole_log_take() {
             }
         };
         let (keys, metrics) = (start(false), Metrics::new());
-        let taken = obtain_with(&cfg, &keys, &MockAttestor, Some(&vault), trusted_at(boundary()), &metrics).await;
+        let taken =
+            obtain_with(&cfg, &keys, &MockAttestor, (Some(&vault), None), trusted_at(boundary()), &metrics).await;
         assert!(taken.is_err(), "the {path} took keys from an incumbent that serves nothing");
         let aside = cfg.node.log_dir.with_extension("aside");
         assert_eq!(crate::test_support::log_entries(&aside), copy, "the {path}'s take did not set the copy aside");
@@ -176,7 +246,8 @@ async fn a_failed_trusted_time_sample_with_a_turn_drawn_refuses_the_start() {
     *vault.scheduled.lock().unwrap() = Some(turn(&other, TURN_GENERATION, None));
 
     let unsampled = std::future::ready(Err(anyhow::anyhow!("no Roughtime server answered")));
-    let err = obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), unsampled, &Metrics::new()).await.err();
+    let err =
+        obtain_with(&cfg, &start(false), &MockAttestor, (Some(&vault), None), unsampled, &Metrics::new()).await.err();
     let err = format!("{:#}", err.expect("the incumbent's keys opened with no trusted time sample"));
     assert!(err.contains("no Roughtime server answered"), "{err}");
     let files: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|entry| entry.unwrap().path()).collect();
@@ -189,9 +260,16 @@ async fn a_start_with_no_turn_drawn_takes_no_trusted_time_sample() {
     let this = release(&cfg);
     let vault = Vault::naming(CurrentRelease { id: this.id(), generation: 1 });
     let sampled = AtomicBool::new(false);
-    obtain_with(&cfg, &start(true), &MockAttestor, Some(&vault), sampled_at(&sampled, boundary()), &Metrics::new())
-        .await
-        .unwrap();
+    obtain_with(
+        &cfg,
+        &start(true),
+        &MockAttestor,
+        (Some(&vault), None),
+        sampled_at(&sampled, boundary()),
+        &Metrics::new(),
+    )
+    .await
+    .unwrap();
     assert!(!sampled.load(Ordering::SeqCst), "a start with no turn drawn sampled trusted time");
     assert!(file_for(&dir, &this, 1).exists());
 
@@ -200,7 +278,7 @@ async fn a_start_with_no_turn_drawn_takes_no_trusted_time_sample() {
     *vault.scheduled.lock().unwrap() = Some(turn(&other, TURN_GENERATION, None));
     let early = sampled_at(&sampled, boundary() - 1_000);
     let (_, _, store) =
-        obtain_with(&cfg, &start(false), &MockAttestor, Some(&vault), early, &Metrics::new()).await.unwrap();
+        obtain_with(&cfg, &start(false), &MockAttestor, (Some(&vault), None), early, &Metrics::new()).await.unwrap();
     assert!(sampled.load(Ordering::SeqCst), "a start with a turn drawn took no sample");
     assert_eq!(store.map(|store| store.generation()), Some(1));
 }

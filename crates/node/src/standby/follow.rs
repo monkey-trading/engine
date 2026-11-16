@@ -89,10 +89,17 @@ pub(super) async fn follow_until(
     let url = stream_url(&followed.origin, &path_and_query)?;
     let connector = tokio_tungstenite::Connector::Rustls(tls(followed.danger_accept_invalid_certs)?);
     let connect = tokio_tungstenite::connect_async_tls_with_config(url.as_str(), None, false, Some(connector));
-    let (mut stream, _) = timeout(FETCH_TIMEOUT, connect)
-        .await
-        .context("connecting to the stream timed out")?
-        .with_context(|| format!("connecting to {url}"))?;
+    let connect = timeout(FETCH_TIMEOUT, connect);
+    // A stint that `until` ends while it still connects ends there, with nothing appended.
+    let connected = match until.clone() {
+        Some(mut until) => tokio::select! {
+            connected = connect => connected,
+            _ = until.wait_for(|ended| *ended) => return Ok(None),
+        },
+        None => connect.await,
+    };
+    let (mut stream, _) =
+        connected.context("connecting to the stream timed out")?.with_context(|| format!("connecting to {url}"))?;
     let mut verifier = engine_wire::FrameVerifier::new(
         followed.enclave.0,
         engine_wire::Deployment {

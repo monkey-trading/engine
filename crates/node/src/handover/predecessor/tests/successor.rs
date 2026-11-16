@@ -3,6 +3,9 @@
 //! out, and without the signed acknowledgement the keys stay sealed but the start fails.
 
 use super::*;
+
+use engine_verify::Tcb;
+
 /// The final segment rides with the keys: the predecessor's sealed tail lands in the successor's
 /// log, and the successor confirms only because the log then ends at the handed-over head.
 #[tokio::test]

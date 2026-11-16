@@ -6,7 +6,8 @@
 //!   one the registry no longer names does not restart as a holder, as an incumbent past its boundary
 //!   does not (`check_rotation`), so keys it sealed stay sealed and the turn moves on by a skip or the
 //!   missed-head promotion;
-//! - takes back a drawn holding it handed to a skip's member once a reorg removes that skip;
+//! - takes back a drawn holding it handed to a skip's member once a reorg removes that skip, by the
+//!   assignment its confirmed handover recorded the successor bound (`Handed::to`);
 //! - follows the operator whose release signed the newest head when the one the registry names fails
 //!   a stint, as while a skipped member never comes up the incumbent still serves.
 //!
@@ -35,10 +36,6 @@ pub(crate) struct Fallback {
     /// Whether it follows the operator whose release signed the newest head, rather than the one the
     /// registry names: each failed stint moves it to the other.
     pub follow_holder: bool,
-    /// Set by a confirmed handover until the next read records the assignment then current.
-    pub handing: bool,
-    /// The latest assignment when its last confirmed handover gave the keys away: the successor's.
-    pub handed_to: Option<Assigned>,
 }
 
 impl Fallback {
@@ -72,18 +69,14 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// keys or not. A promotion naming it is its standby side's to start. A drawn holding it handed to a
     /// skip's member it takes back once a reorg removes the skip. `None` when no reassignment of that turn
     /// says otherwise.
-    pub(super) async fn skipped(&mut self, finalised: &ScheduledTurn) -> Option<Holding> {
+    pub(super) async fn skipped(&self, finalised: &ScheduledTurn) -> Option<Holding> {
         let cfg = self.cfg;
         let dir = &cfg.tee.sealing.as_ref()?.dir;
-        let latest = self.latest().await;
-        if std::mem::take(&mut self.fallback.handing) {
-            self.fallback.handed_to = latest;
-        }
-        let assigned = latest.filter(|assigned| assigned.binding.turn == finalised.turn)?;
+        let assigned = self.latest().await.filter(|assigned| assigned.binding.turn == finalised.turn)?;
         let own = self.release.id();
         // The successor this member handed the keys to was a skip's member that this assignment no longer is.
-        let restored =
-            self.fallback.handed_to.is_some_and(|to| to.reason == Reason::Skip && to.binding != assigned.binding);
+        let handed_to = self.handed.and_then(|handed| handed.to);
+        let restored = handed_to.is_some_and(|to| to.reason == Reason::Skip && to.binding != assigned.binding);
         let given = |generation| self.handed.is_some_and(|handed| handed.generation == Some(generation));
         if assigned.reason == Reason::Draw {
             let generation = assigned.binding.generation;
