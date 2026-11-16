@@ -2,22 +2,25 @@
 //! production template opens for them, at its feed timings, with the node's monitor watching, for
 //! `SOAK_MINUTES` (30 unless set). Every `DROP_EVERY` it drops connections, as a network fault or a
 //! restart does, each reopened at once: each connection alone in turn, then all of them. No market is
-//! unpriced for longer than `DEADLINE`, through a drop or between them, and each time one is it
-//! prints for how long. It needs the venues, so it runs before each release, by
-//! `scripts/dev-venue-load.sh --soak`, and never in CI.
+//! unpriced for longer than `DEADLINE`, through a drop or between them. Each time one is, it prints
+//! for how long and why, with each source's quote age, and it prints each alert as it is raised. It
+//! needs the venues, so it runs before each release, by `scripts/dev-venue-load.sh --soak`, and never
+//! in CI.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use engine_core::price::compute_index;
 use engine_core::types::MarketId;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep};
 
+use crate::clock::now_ms;
 use crate::config::{VenueConnection, VenuesSection};
-use crate::feeds::tests::toxicity::{boot_with, keep_time};
-use crate::feeds::tests::venue_load::{DEADLINE, MARKETS, NO_PRICE_AFTER, priced, production_venues, wait_priced};
+use crate::feeds::tests::toxicity::{boot_with, keep_time, query};
+use crate::feeds::tests::venue_load::{DEADLINE, MARKETS, NO_PRICE_AFTER, production_venues, wait_priced};
 use crate::feeds::venue::{self, Credentials, Timing};
 use crate::metrics::Metrics;
 use crate::monitor;
@@ -39,6 +42,22 @@ fn live_connections(venues: VenuesSection) -> Vec<VenueConnection> {
         (!symbols.is_empty()).then_some(VenueConnection { symbols, ..conn })
     };
     venues.connections.into_iter().filter_map(quoting).collect()
+}
+
+/// Whether `market` has a price, judged as `venue_load::priced` judges it, or else why not: the
+/// engine's refusal and each source's quote age.
+async fn standing(tx: &mpsc::Sender<Request>, market: MarketId) -> Result<(), String> {
+    query(tx, move |engine| {
+        let state = &engine.markets()[&market];
+        let held = state.quotes_for(None).expect("a spot market");
+        let now = now_ms().max(engine.now());
+        compute_index(held, &state.spec.price_rules, now).map(drop).map_err(|refused| {
+            let ages: Vec<String> =
+                held.iter().map(|(source, quote)| format!("{source} {} ms", now - quote.ts)).collect();
+            format!("{refused:?}, quotes aged {}", ages.join(", "))
+        })
+    })
+    .await
 }
 
 /// `conn`'s feed, sequencing into `tx`.
@@ -71,7 +90,8 @@ async fn soak_live_venues() {
 
     let end = Instant::now() + Duration::from_secs(60 * minutes);
     let (mut drops, mut next_drop) = (0, Instant::now() + DROP_EVERY);
-    let (mut unpriced_since, mut longest) = (BTreeMap::<MarketId, Instant>::new(), Duration::ZERO);
+    let (mut unpriced, mut longest) = (BTreeMap::<MarketId, (Instant, String)>::new(), Duration::ZERO);
+    let mut raised: BTreeMap<String, usize> = BTreeMap::new();
     while Instant::now() < end {
         if Instant::now() >= next_drop {
             let dropped: Vec<usize> = match drops % (connections.len() + 1) {
@@ -87,22 +107,25 @@ async fn soak_live_venues() {
             (drops, next_drop) = (drops + 1, next_drop + DROP_EVERY);
         }
         for market in MARKETS {
-            if priced(&tx, market).await {
-                if let Some(since) = unpriced_since.remove(&market) {
-                    let run = since.elapsed();
-                    println!("market {market} unpriced for {run:?}");
-                    longest = longest.max(run);
+            match standing(&tx, market).await {
+                Ok(()) => {
+                    if let Some((since, why)) = unpriced.remove(&market) {
+                        let run = since.elapsed();
+                        println!("market {market} unpriced for {run:?}: {why}");
+                        longest = longest.max(run);
+                    }
                 }
-            } else {
-                let since = *unpriced_since.entry(market).or_insert_with(Instant::now);
-                assert!(since.elapsed() <= DEADLINE, "market {market} unpriced for over {DEADLINE:?}");
+                Err(why) => {
+                    let (since, first) = unpriced.entry(market).or_insert_with(|| (Instant::now(), why));
+                    assert!(since.elapsed() <= DEADLINE, "market {market} unpriced for over {DEADLINE:?}: {first}");
+                }
             }
         }
+        while let Ok(alert) = alerts.try_recv() {
+            println!("alert {alert:?}");
+            *raised.entry(alert.get("alert").cloned().unwrap_or_default()).or_default() += 1;
+        }
         sleep(POLL).await;
-    }
-    let mut raised: BTreeMap<String, usize> = BTreeMap::new();
-    while let Ok(alert) = alerts.try_recv() {
-        *raised.entry(alert.get("alert").cloned().unwrap_or_default()).or_default() += 1;
     }
     println!("{minutes} minutes, {drops} drops, longest unpriced {longest:?}, alerts {raised:?}");
 }
