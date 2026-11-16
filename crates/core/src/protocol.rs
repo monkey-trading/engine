@@ -463,11 +463,15 @@ pub enum ProtocolVersion {
     /// accepted, where an earlier version refused every assignment for a turn that had ended. A turn
     /// applied after its end holds the office, for the operator's share, until a later turn applies.
     V71,
+    /// The engine keeps the set of each turn whose assignment it refused, until a later turn is in
+    /// effect, so a promotion of that turn after its end is not refused for a set a later adoption
+    /// pruned.
+    V72,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V71;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V72;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

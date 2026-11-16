@@ -24,7 +24,8 @@
 //! - From `V71` a promotion the schedule finalises after its turn's end, which it can do in the last
 //!   drawn turn while nobody has drawn the next, applies when mirrored unless a later turn is in
 //!   effect, from the set that drew the turn, which stays until a later turn supersedes it; a
-//!   promotion's member holds the office until the next turn applies.
+//!   promotion's member holds the office until the next turn applies. From `V72` the set of a refused
+//!   assignment stays too (`DailyTurns::refused`).
 //!
 //! A mirror that contradicts the log (before `V51` or staking, a reference already credited, a set
 //! out of order or malformed) is refused as `ElectionRejected`, as an election's is, and holds the
@@ -71,6 +72,10 @@ pub struct DailyTurns {
     pub in_effect: Option<TurnAssignment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub taken: Option<TakenTurn>,
+    /// From `V72`, the set of each turn's first refused assignment, for each turn not before the turn
+    /// in effect; the set is kept for the turn's promotion.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub refused: BTreeMap<u64, u32>,
 }
 
 /// A rotation set the schedule adopted, as mirrored.
@@ -256,7 +261,7 @@ impl Engine {
 
     /// Mirrors the schedule's `RotationSetAdopted` event: records the set, and forgets each set no
     /// turn that has yet to end can draw from (`still_drawable`), but from `V71` the set that drew
-    /// the turn in effect (`prune_sets`).
+    /// the turn in effect, and from `V72` those of refused turns (`prune_sets`).
     pub(crate) fn adopt_rotation_set(&mut self, adoption: &RegistryRotationSet, events: &mut Vec<Event>) {
         let RegistryRotationSet { set, epoch, effective_at, ref members, block, ref chain_ref, .. } = *adoption;
         let reason = self.turns_mirror_refusal(chain_ref).or_else(|| {
@@ -329,6 +334,7 @@ impl Engine {
     /// the set that drew the turn in effect, whatever its age, and still forgets the others: the
     /// schedule promotes in the last drawn turn from the set that drew it, even once its day is over,
     /// so that set stays until a later turn supersedes the turn.
+    /// From `V72` it keeps the sets of the refused turns too (`DailyTurns::refused`).
     fn prune_sets(&mut self) {
         if self.protocol_version < ProtocolVersion::V71 {
             while !self.still_drawable() {
@@ -337,10 +343,11 @@ impl Engine {
             return;
         }
         let cutoff = self.now.saturating_sub(DRAW_LEAD_MS + DAY_MS);
-        let kept = self.daily_turns.in_effect.map(|in_effect| in_effect.set);
+        let in_effect = self.daily_turns.in_effect.map(|in_effect| in_effect.set);
+        let kept = |set: u32| Some(set) == in_effect || self.daily_turns.refused.values().any(|kept| *kept == set);
         let ids: Vec<u32> = self.daily_turns.sets.keys().copied().collect();
         for pair in ids.windows(2) {
-            if self.daily_turns.sets[&pair[1]].effective_at <= cutoff && kept != Some(pair[0]) {
+            if self.daily_turns.sets[&pair[1]].effective_at <= cutoff && !kept(pair[0]) {
                 self.daily_turns.sets.remove(&pair[0]);
             }
         }
@@ -349,7 +356,8 @@ impl Engine {
     /// Mirrors the schedule's `TurnAssigned` event: records the assignment, whose key applies from
     /// its boundary or from now when that is later, unless its key had no seven days' notice in a
     /// mirrored set, or its turn is over, which credits it as refused; from `V71` a promotion of an
-    /// ended turn that no later turn in effect superseded is not refused for that.
+    /// ended turn that no later turn in effect superseded is not refused for that, and from `V72` the
+    /// set of a turn's first refused assignment is kept for it.
     pub(crate) fn assign_turn(&mut self, assignment: &RegistryTurn, events: &mut Vec<Event>) {
         let RegistryTurn { turn, set, position, reason, candidate, admin_key, block, ref chain_ref } = *assignment;
         let refusal = self.turns_mirror_refusal(chain_ref).or_else(|| {
@@ -371,6 +379,11 @@ impl Engine {
         let applies_at = start.max(self.now);
         if let Some(refused) = self.turn_refusal(turn, set, reason, candidate, admin_key, applies_at) {
             events.push(Event::TurnRefused { turn, position, cause: reason, candidate, admin_key, reason: refused });
+            // The schedule can promote a turn no later turn in effect superseded, from the set that drew it.
+            let promotable = self.daily_turns.in_effect.is_none_or(|in_effect| in_effect.turn <= turn);
+            if self.protocol_version >= ProtocolVersion::V72 && promotable {
+                self.daily_turns.refused.entry(turn).or_insert(set);
+            }
             return;
         }
         let accepted = TurnAssignment { turn, position, reason, set, candidate, admin_key, applies_at };
@@ -424,6 +437,8 @@ impl Engine {
         }
         self.daily_turns.assigned.retain(|turn, _| *turn > due.turn);
         self.daily_turns.in_effect = Some(due);
+        // A turn in effect supersedes the refused ones before it.
+        self.daily_turns.refused.retain(|turn, _| *turn >= due.turn);
     }
 
     /// Records that this node's enclave, running `release`, took the turn in effect, `turn`.
@@ -462,6 +477,7 @@ impl Engine {
         self.daily_turns.assigned.clear();
         self.daily_turns.in_effect = None;
         self.daily_turns.taken = None;
+        self.daily_turns.refused.clear();
     }
 
     /// Why a schedule mirror under `chain_ref` cannot apply, if it cannot: an election's reasons,
