@@ -94,6 +94,10 @@ this crate and reproduce the signed state roots exactly.
   (`src/staking/office.rs`)
 - From protocol `V51`, daily operator turns (`src/turns.rs`): a registry that names a schedule adopts
   a rotation set at each election close and draws a turn for each 22:30 UTC boundary from it. The
+  development-only `short-turns` feature makes a turn five minutes, with a boundary every five
+  minutes, a draw lead of one turn and one turn's notice of a set's keys (`TURN_MS`,
+  `SET_NOTICE_MS`): its logs replay only under the same feature, and a `production` node build does
+  not compile with it. The
   schedule's finalised `RotationSetAdopted` and `TurnAssigned` events arrive as `adopt_rotation_set`
   and `assign_turn` commands on the staking mirror, each credited once. A turn's admin key signs from
   its boundary, or from its mirror when that is later; a turn whose key no set mirrored seven days
@@ -438,10 +442,12 @@ this crate and reproduce the signed state roots exactly.
 - `tests/parameter_votes/volume_tiers.rs` — `V59` activated by a vote, a voted volume tier table held to its launch bounds without a notice, a voted relisting held at every tier, and from `V64` a voted table's margin floors held at or above launch, and from `V66` a voted table's limits held at or below launch
 - `tests/parameter_votes/weekend.rs` — `V60`: a voted weekend margin with no listing notice, held to its listing's range, the operator's weekend margin notice refused while rotation is on, the fast path refusing to move it, and a fast-path margin raise past it
 - `tests/parameter_votes/house_loss.rs` — `V62`: a voted change to the house loss threshold, refused above launch's or off its level, applied below it, with no notice
-- `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, the turn's time in office, and the set in effect, which V65's votes need
+- `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, the turn's time in office, and the set in effect, which V65's votes need; with the `short-turns` feature, five-minute turns and one turn's notice
 - `src/turns/office.rs` — the turn in effect's member and the time its office ends, for the operator's share
+- `src/turns/length.rs` — a turn's length, boundary offset, draw lead and set notice: a day's, or with the `short-turns` feature five minutes'
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
 - `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
+- `tests/short_turns.rs` — a `short-turns` build only: a boundary every five minutes, 22:30 UTC among them, each turn's key handed over at its boundary, a key named less than a turn before it applies refused, and a turn ended five minutes after its boundary
 - `tests/daily_turns/late_promotion.rs` — `V71`: a promotion mirrored after its turn's end applies from its mirror, with no turn or an earlier one in effect too, and its member takes the turn; the set that drew the turn survives later adoptions; a promotion a later turn superseded, a draw or a skip of an ended turn, a key no set names and one without seven days' notice stay refused; the same before `V71`; and, from `V72`, the sets of refused draws, also of a later turn, surviving later adoptions for their turns' promotions until a later turn is in effect, and an installation clearing them
 - `tests/operator_share/faults.rs` — `V70`: a proven fault's haircut on the member's share, its linear restoration, a fault mid-epoch, a restart, the haircut's range, a daily turn's member, refused mirrors, the recorded contract's bounds, and replay
 - `tests/operator_share/daily_turns.rs` — `V51`: a member earns from its `TurnTaken` to its turn's end, and no one before or after; from `V53`, the account before the first turn only until that turn applies; from `V71`, a promoted member earns past its turn's nominal end, until the next turn applies, mirrored before or after it
@@ -691,6 +697,9 @@ level a lapse leaves them at, reduce-only, and replay.
 
 ```bash
 cargo test -p engine-core
+# A short-turns development build's five-minute turns; the other turn and reference-log tests hold
+# day-long turns, which such a build does not have
+cargo test -p engine-core --features short-turns --test short_turns
 ```
 
 Two suites guard replay and accounting:

@@ -299,7 +299,10 @@ With a schedule named, each election close while rotation is on adopts every eli
 the rotation set, weighted by delegated stake, seven days plus the finality margin before the set
 takes effect; each close's set waits out its own notice, however many wait. Without a quorum the
 latest set stands, less the members no longer eligible. Anyone draws turn `n`, which starts at 22:30 UTC on day `n` of the Unix
-epoch, from a day before that boundary until it: `cast send $SCHEDULE 'draw(uint64)' $n`. Draw each
+epoch, from a day before that boundary until it: `cast send $SCHEDULE 'draw(uint64)' $n`. Turns are
+a day long: `cast call $SCHEDULE 'turnLength()(uint64)'` answers 86400, and a production node refuses
+a schedule that answers anything else (`custody_chain_inconsistent`). Shorter turns exist only in
+development builds (the `short-turns` feature), which a production build refuses to compile. Draw each
 turn as soon as its deadline passes, so the engine mirrors it well before its boundary; a turn not
 drawn by its boundary is not drawn at all, and the member before it stays named.
 

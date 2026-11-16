@@ -9,6 +9,11 @@ repository.workspace = true
 # This crate must stay deterministic: no clocks, no randomness, no floats, no
 # HashMap iteration. Anyone replaying the public event log against this code
 # must reproduce the same state roots bit for bit.
+[features]
+# Five-minute operator turns, for development stacks only (`turns::TURN_MS`). A log written under it
+# replays only under it, and a `production` node build refuses it.
+short-turns = []
+
 [dependencies]
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true

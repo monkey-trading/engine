@@ -8,6 +8,7 @@ use engine_core::governance::{GovernanceConfig, command_hash};
 use engine_core::protocol::ProtocolVersion;
 
 use super::*;
+use crate::seed_relay::schedule::TURN_SECS;
 
 const SCHEDULE: Address = Address::repeat_byte(0x5c);
 const VOTE: Address = Address::repeat_byte(0x5f);
@@ -58,9 +59,9 @@ async fn the_turn_the_registry_names_the_operator_by_reaches_the_engine_with_the
     // Blocks are twelve seconds apart: the turn started with block 1, before the window's end.
     for chain in &chains {
         let mut state = chain.0.lock().unwrap();
-        state.schedule.named_turn_until = Some(86_400 + 12);
+        state.schedule.named_turn_until = Some(TURN_SECS + 12);
         // A later turn the schedule has drawn is not the one that names the operator now.
-        state.schedule.turns_run_until = 2 * 86_400 + 600;
+        state.schedule.turns_run_until = 2 * TURN_SECS + 600;
     }
     vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
     assert_eq!(node.read(|e| e.governance().turns_from).await, Some(12_000));
@@ -75,20 +76,20 @@ async fn the_turn_the_registry_names_the_operator_by_reaches_the_engine_with_the
 #[tokio::test]
 async fn a_drawn_turn_yet_to_start_reaches_the_engine_when_none_names_the_operator() {
     // Blocks are twelve seconds apart and the window ends at block 10, at 120 s.
-    let boundary_s = 600;
+    let boundary_s = 300;
     let dir = scratch("vote-upcoming-turn");
     let node = governed_node(&dir).await;
     let chains = vote_chains(Some(SCHEDULE));
-    chains.iter().for_each(|chain| chain.0.lock().unwrap().schedule.turns_run_until = 86_400 + boundary_s);
+    chains.iter().for_each(|chain| chain.0.lock().unwrap().schedule.turns_run_until = TURN_SECS + boundary_s);
     vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
-    assert_eq!(progress_turns(&dir), [Some(Some(600_000))]);
-    assert_eq!(node.read(|e| e.governance().turns_from).await, Some(600_000));
+    assert_eq!(progress_turns(&dir), [Some(Some(300_000))]);
+    assert_eq!(node.read(|e| e.governance().turns_from).await, Some(300_000));
     node.stop().await;
     // A last drawn turn that began before the block is not upcoming: the registry would name it.
     let dir = scratch("vote-started-turn");
     let node = governed_node(&dir).await;
     let chains = vote_chains(Some(SCHEDULE));
-    chains.iter().for_each(|chain| chain.0.lock().unwrap().schedule.turns_run_until = 86_400 + 12);
+    chains.iter().for_each(|chain| chain.0.lock().unwrap().schedule.turns_run_until = TURN_SECS + 12);
     vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
     assert_eq!(progress_turns(&dir), [Some(None)]);
     node.stop().await;
@@ -98,7 +99,7 @@ async fn a_drawn_turn_yet_to_start_reaches_the_engine_when_none_names_the_operat
     let chains = vote_chains(Some(SCHEDULE));
     for chain in &chains {
         let mut state = chain.0.lock().unwrap();
-        state.schedule.turns_run_until = 86_400 + boundary_s;
+        state.schedule.turns_run_until = TURN_SECS + boundary_s;
         state.schedule.named = Address::ZERO;
     }
     vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
@@ -111,7 +112,7 @@ async fn before_v67_no_frontier_carries_a_drawn_turn_yet_to_start() {
     let dir = scratch("vote-upcoming-turn-v65");
     let node = governed_node_at(&dir, ProtocolVersion::V65).await;
     let chains = vote_chains(Some(SCHEDULE));
-    chains.iter().for_each(|chain| chain.0.lock().unwrap().schedule.turns_run_until = 86_400 + 600);
+    chains.iter().for_each(|chain| chain.0.lock().unwrap().schedule.turns_run_until = TURN_SECS + 300);
     vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
     assert_eq!(progress_turns(&dir), [Some(None)]);
     node.stop().await;
@@ -123,7 +124,7 @@ async fn before_v65_or_without_the_registry_bound_no_frontier_carries_the_regist
     let dir = scratch("vote-named-turn-v56");
     let node = governed_node_at(&dir, ProtocolVersion::V56).await;
     let chains = vote_chains(Some(SCHEDULE));
-    chains.iter().for_each(|chain| chain.0.lock().unwrap().schedule.named_turn_until = Some(86_400 + 12));
+    chains.iter().for_each(|chain| chain.0.lock().unwrap().schedule.named_turn_until = Some(TURN_SECS + 12));
     vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
     assert!(node.read(|e| e.staking().and_then(|staking| staking.completed_through)).await.is_some());
     assert!(chains[0].0.lock().unwrap().schedule.turn_reads.is_empty());
@@ -137,7 +138,7 @@ async fn before_v65_or_without_the_registry_bound_no_frontier_carries_the_regist
         let mut state = chain.0.lock().unwrap();
         state.staking_deployed_at = Some(1_000);
         state.schedule.vote = Some((VOTE, None));
-        state.schedule.named_turn_until = Some(86_400 + 12);
+        state.schedule.named_turn_until = Some(TURN_SECS + 12);
     }
     vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
     assert!(chains[0].0.lock().unwrap().schedule.turn_reads.is_empty());
@@ -152,16 +153,17 @@ fn the_registrys_rotation_state_decodes_as_the_named_turns_boundary() {
         let state = rotationStateReturn { enabled: true, release: B256::ZERO, generation, until };
         rotationStateCall::abi_encode_returns(&state).into()
     };
-    assert_eq!(decode_named_turn(&answer(0, 86_400 + 60)).unwrap(), None, "no turn names the operator");
-    assert_eq!(decode_named_turn(&answer(3, 86_400 + 60)).unwrap(), Some(60_000));
-    assert!(decode_named_turn(&answer(3, 60)).is_err(), "a turn that ends within its first day");
+    assert_eq!(decode_named_turn(&answer(0, TURN_SECS + 60)).unwrap(), None, "no turn names the operator");
+    assert_eq!(decode_named_turn(&answer(3, TURN_SECS + 60)).unwrap(), Some(60_000));
+    assert!(decode_named_turn(&answer(3, 60)).is_err(), "a turn that ends within its first turn");
     assert!(decode_named_turn(&alloy::primitives::Bytes::from_static(b"no")).is_err());
 }
 
 #[tokio::test]
 async fn a_failing_upcoming_turn_read_stalls_the_poll_with_no_frontier_until_it_succeeds() {
     use super::super::fakes::schedule::TurnsRunUntilFault::{Refused, Undecodable};
-    // The upcoming turn's end: a day plus ten minutes, so its boundary is 600 s, after the window.
+    // The upcoming turn's end: a turn plus five minutes, so its boundary is 300 s, after the window and
+    // within a draw lead of it.
     type Fault = fn(&mut ChainState);
     let cases: [(&str, Fault); 4] = [
         // The poll's binding check reads the schedule first; the turn lookup's read is the second.
@@ -176,7 +178,7 @@ async fn a_failing_upcoming_turn_read_stalls_the_poll_with_no_frontier_until_it_
         let chains = vote_chains(Some(SCHEDULE));
         for chain in &chains {
             let mut state = chain.0.lock().unwrap();
-            state.schedule.turns_run_until = 86_400 + 600;
+            state.schedule.turns_run_until = TURN_SECS + 300;
             fail(&mut state);
         }
         let mut watcher = vote_watcher(&chains, &dir);
@@ -190,11 +192,11 @@ async fn a_failing_upcoming_turn_read_stalls_the_poll_with_no_frontier_until_it_
             let mut state = chain.0.lock().unwrap();
             state.schedule.named_reads_answered = None;
             state.schedule.turns_run_until_fault = None;
-            state.schedule.turns_run_until = 86_400 + 600;
+            state.schedule.turns_run_until = TURN_SECS + 300;
         }
         watcher.poll(&node.tx).await.unwrap();
-        assert_eq!(progress_turns(&dir), [Some(Some(600_000))], "{name}");
-        assert_eq!(node.read(|e| e.governance().turns_from).await, Some(600_000), "{name}");
+        assert_eq!(progress_turns(&dir), [Some(Some(300_000))], "{name}");
+        assert_eq!(node.read(|e| e.governance().turns_from).await, Some(300_000), "{name}");
         node.stop().await;
     }
 }
@@ -204,8 +206,8 @@ fn the_schedules_last_drawn_turn_decodes_as_its_boundary() {
     use crate::custody::registry::{decode_last_drawn_turn, turnsRunUntilCall};
     let answer = |until: u64| -> alloy::primitives::Bytes { turnsRunUntilCall::abi_encode_returns(&until).into() };
     assert_eq!(decode_last_drawn_turn(&answer(0)).unwrap(), None, "no turn drawn");
-    assert_eq!(decode_last_drawn_turn(&answer(86_400 + 60)).unwrap(), Some(60_000));
-    assert!(decode_last_drawn_turn(&answer(60)).is_err(), "a turn that ends within its first day");
+    assert_eq!(decode_last_drawn_turn(&answer(TURN_SECS + 60)).unwrap(), Some(60_000));
+    assert!(decode_last_drawn_turn(&answer(60)).is_err(), "a turn that ends within its first turn");
     assert!(decode_last_drawn_turn(&answer(u64::MAX)).is_err(), "an end past i64 milliseconds");
     assert!(decode_last_drawn_turn(&alloy::primitives::Bytes::from_static(b"no")).is_err());
 }

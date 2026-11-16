@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use anyhow::{Context, anyhow, ensure};
-use engine_core::turns::{DAY_MS, DailyTurns};
+use engine_core::turns::{DailyTurns, TURN_MS};
 use engine_core::types::AccountId;
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -68,14 +68,14 @@ impl<C: CheckpointChain> Predecessor<C> {
     }
 
     /// Refuses `turn` unless this release's log accepted its assignment: the engine refuses a turn
-    /// whose key no set gave seven days' notice, and a successor whose key the log never applies must
-    /// not take the keys, since this release cannot sequence again once it stops. The answer for the
-    /// turn admitted is kept, so a successor retrying after the stop, when the log is final and the
-    /// sequencer gone, is admitted under it. Once the sequencer is gone, the turns retained at the stop
-    /// answer for any other turn: the log accepted it, or will when the successor continuing it mirrors
-    /// the assignment, as the turn has not ended by trusted time, is at most `SOURCE_LOOKBACK` turns past
-    /// the last they know, and the set it was drawn from names its member with seven days' notice by its
-    /// boundary.
+    /// whose key no set gave its notice (`SET_NOTICE_MS`), and a successor whose key the log never
+    /// applies must not take the keys, since this release cannot sequence again once it stops. The
+    /// answer for the turn admitted is kept, so a successor retrying after the stop, when the log is
+    /// final and the sequencer gone, is admitted under it. Once the sequencer is gone, the turns
+    /// retained at the stop answer for any other turn: the log accepted it, or will when the successor
+    /// continuing it mirrors the assignment, as the turn has not ended by trusted time, is at most
+    /// `SOURCE_LOOKBACK` turns past the last they know, and the set it was drawn from names its member
+    /// with its notice by its boundary.
     /// Error cases:
     /// - the listener reads no log, the node is stopping with no turns retained, or the log has not
     ///   accepted the turn and, once stopped, would not
@@ -88,7 +88,7 @@ impl<C: CheckpointChain> Predecessor<C> {
             Ok(accepted) => accepted,
             Err(e) => match self.retained.lock().expect("the retained turns lock").as_ref() {
                 Some(retained) => {
-                    let ended = self.trusted.reached_ms().is_some_and(|reached| reached >= turn.boundary + DAY_MS);
+                    let ended = self.trusted.reached_ms().is_some_and(|reached| reached >= turn.boundary + TURN_MS);
                     logged(retained, number, key)
                         || (!ended
                             && super::assignment::within_lookback(retained, number)

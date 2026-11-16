@@ -13,6 +13,8 @@
 //! replays across the change of signer.
 
 mod nodes;
+#[cfg(feature = "short-turns")]
+mod short_turns;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -86,7 +88,7 @@ async fn run() -> anyhow::Result<()> {
         &chain.provider,
         chain.accounts[0],
         "SeedReceiver.sol/SeedReceiver.json",
-        &(chain.accounts[9], 1_606_824_023u64).abi_encode_params(),
+        &(chain.accounts[9], 1_606_824_023u64, DAY_SECS).abi_encode_params(),
     )
     .await;
     let (schedule, log_heads) = chain.deploy_schedule_with(receiver, RULE, 60).await;
@@ -98,7 +100,8 @@ async fn run() -> anyhow::Result<()> {
     let mut seats = Vec::new();
     for (i, (name, digest)) in [("A", DIGEST_A), ("B", DIGEST_B), ("C", DIGEST_C)].into_iter().enumerate() {
         let caller = chain.impersonated(&format!("promoted-caller-{name}")).await;
-        let deployment = Deployment { chain: &chain, services: &services, schedule, log_heads, staking_start_ms };
+        let deployment =
+            Deployment { chain: &chain, services: &services, schedule, log_heads, staking_start_ms, relayers: None };
         seats.push(Seat::new(name, (chain.accounts[2 + i], KEYS[i], digest), caller, &deployment)?);
     }
     adopt(&mut chain, &seats, schedule, &signing).await;

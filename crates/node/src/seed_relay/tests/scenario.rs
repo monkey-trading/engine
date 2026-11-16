@@ -306,11 +306,11 @@ pub(crate) async fn deploy_relay(
         arbitrum,
         receiver_deployer,
         "SeedReceiver.sol/SeedReceiver.json",
-        &(relay, GENESIS).abi_encode_params(),
+        &(relay, GENESIS, crate::seed_relay::schedule::TURN_SECS).abi_encode_params(),
     )
     .await;
     let forks = vec![alloy::primitives::FixedBytes::<4>::from(FULU)];
-    let args = (inbox, receiver, GENESIS, forks).abi_encode_params();
+    let args = (inbox, receiver, GENESIS, crate::seed_relay::schedule::TURN_SECS, forks).abi_encode_params();
     assert_eq!(deploy(&ethereum.client, deployer, "SeedRelay.sol/SeedRelay.json", &args).await, relay);
     (relay, receiver, inbox)
 }

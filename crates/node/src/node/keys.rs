@@ -26,6 +26,7 @@ use crate::tee::keys::{Head, KeySet};
 use crate::tee::sealing::{KeyStore, Release, file_for};
 use crate::tee::{Attestation, AttestationBundle, Attestor, EnclaveKey, attest_bundle};
 use crate::tls::TlsIdentity;
+use engine_core::turns::TURN_MS;
 use engine_core::types::{AccountId, Millis};
 
 mod platform;
@@ -368,10 +369,9 @@ pub(super) async fn cut_to_finalized_anchor(cfg: &NodeConfig, key: &Arc<EnclaveK
 pub(super) const RELEASE_CHECK_EVERY: Duration = Duration::from_secs(60);
 
 /// How long from a daily turn's boundary, by trusted time, a release the turn does not name waits for
-/// the turn's member to take its keys before `release_superseded` pages: the member starts at the
-/// boundary, fetches the published log and connects, which a routine daily handover finishes well
-/// within.
-pub(super) const TURN_HANDOVER_GRACE_MS: Millis = 15 * 60 * 1000;
+/// the turn's member to take its keys before `release_superseded` pages, which a routine handover
+/// finishes well within: fifteen minutes, or half a turn when that is shorter.
+pub(super) const TURN_HANDOVER_GRACE_MS: Millis = if TURN_MS / 2 < 900_000 { TURN_MS / 2 } else { 900_000 };
 
 /// The release the vault names at custody finality, whether or not its generation has folded the
 /// change: unlike `handover::current_release`, this read must not wait for the fold, since the

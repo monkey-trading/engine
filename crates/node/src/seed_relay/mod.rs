@@ -246,7 +246,7 @@ impl<C: SeedChains> SeedRelayer<C> {
             self.missing = true;
             error!(
                 alert = "seed_missing",
-                "turn {turn}'s seed was not on Arbitrum by its draw deadline, a day before its boundary: the turn \
+                "turn {turn}'s seed was not on Arbitrum by its draw deadline, a turn before its boundary: the turn \
                  draws from the last relayed seed hashed with its number"
             );
         } else if self.missing && !view.seeds[0].is_zero() {

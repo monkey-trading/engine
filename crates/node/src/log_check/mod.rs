@@ -14,7 +14,7 @@
 //! the last verified head, as the log's `TurnTaken` commands and mirrored promotions record (`Takings`). The verified head is
 //! sealed with the keys, so a restart restores it once the recovered log holds that checkpoint, and an
 //! approved upgrade carries it to the next release; a host that restores an older copy only delays
-//! payouts. The check bounds how long a withheld branch can pay nothing: a day plus the switch. It does
+//! payouts. The check bounds how long a withheld branch can pay nothing: a turn plus the switch. It does
 //! not bound delay or censorship.
 
 pub(crate) mod answer;
@@ -338,7 +338,7 @@ impl Takings {
 /// The latest turn that had begun by `ts`, `None` before the first one's boundary.
 fn turn_begun_by(ts: Millis) -> Option<u64> {
     let turn =
-        u64::try_from(ts.checked_sub(engine_core::turns::BOUNDARY_OFFSET_MS)?.div_euclid(engine_core::turns::DAY_MS))
+        u64::try_from(ts.checked_sub(engine_core::turns::BOUNDARY_OFFSET_MS)?.div_euclid(engine_core::turns::TURN_MS))
             .ok()?;
     engine_core::turns::boundary(turn).filter(|boundary| *boundary <= ts).map(|_| turn)
 }

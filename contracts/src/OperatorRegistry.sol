@@ -737,7 +737,7 @@ contract OperatorRegistry {
             turn = named.prior;
             // Short of a stop, the registry named the earlier turn's member at the draw, so the source
             // held an assignment of it.
-            if (back == HOLDER_LOOKBACK || turn == 0 || current.since >= turns.boundary(turn) + 1 days) {
+            if (back == HOLDER_LOOKBACK || turn == 0 || current.since >= turns.boundary(turn + 1)) {
                 return candidate == named.source;
             }
             named = turns.turnOf(turn);

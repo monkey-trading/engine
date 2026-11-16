@@ -112,7 +112,9 @@ contract SeedRelay is SeedSchedule {
     error InvalidForkProof();
     error InvalidSeedProof();
 
-    constructor(IInbox inbox_, address receiver_, uint64 genesisTime, bytes4[] memory forks) SeedSchedule(genesisTime) {
+    constructor(IInbox inbox_, address receiver_, uint64 genesisTime, uint64 turnLength_, bytes4[] memory forks)
+        SeedSchedule(genesisTime, turnLength_)
+    {
         if (address(inbox_) == address(0) || receiver_ == address(0)) revert ZeroAddress();
         if (forks.length == 0) revert NoForks();
         inbox = inbox_;

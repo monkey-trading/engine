@@ -10,7 +10,7 @@
 //! A read under which no promotion can pass holds only until a drawn turn could let one: with a set of
 //! no other member, until the later of the next turn boundary after its block and `E`; with no turn
 //! naming the operator, or no schedule, until `2 x DELTA` past the first boundary a drawn turn could
-//! start at (a day after the earliest rotation set takes effect), since no slot can be witnessed before
+//! start at (a draw lead after the earliest rotation set takes effect), since no slot can be witnessed before
 //! a turn names it.
 
 use engine_core::types::AccountId;

@@ -18,7 +18,7 @@ use crate::liveness::chain::rotationStateCall;
 const PROMOTED: u8 = 2;
 /// How many signer epochs past finality a rebuilt copy reads keys for at most.
 const UNFINAL_EPOCHS: u64 = 64;
-/// How many turns drawn for a promoted member in the promotion's generation, one a day, are followed
+/// How many turns drawn for a promoted member in the promotion's generation, one a turn, are followed
 /// back to the promotion at most: past them the read fails, and the seal stays as it is.
 const CARRIED_TURNS: usize = 64;
 

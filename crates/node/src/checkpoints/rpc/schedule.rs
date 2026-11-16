@@ -79,7 +79,7 @@ impl CheckpointRpc {
         // reach, as at a boundary finality trails, is not ended by anything the block shows.
         let raw = self.call(registry, rotationStateCall {}.abi_encode(), block).await?;
         let state = rotationStateCall::abi_decode_returns(&raw).context("decoding the registry's rotation state")?;
-        let ends = u64::try_from(boundary + engine_core::turns::DAY_MS).ok().map(|ms| ms / 1000);
+        let ends = u64::try_from(boundary + engine_core::turns::TURN_MS).ok().map(|ms| ms / 1000);
         if Some(state.until) == ends && state.generation == 0 {
             return Ok(None);
         }

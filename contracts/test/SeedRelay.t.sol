@@ -270,13 +270,13 @@ contract SeedRelayTest is Test {
 
     function test_RevertWhen_TheDeploymentNamesNothingToTrust() public {
         vm.expectRevert(SeedRelay.ZeroAddress.selector);
-        new SeedRelay(IInbox(address(0)), address(receiver), genesis, forks(FULU, FULU));
+        new SeedRelay(IInbox(address(0)), address(receiver), genesis, 1 days, forks(FULU, FULU));
         vm.expectRevert(SeedRelay.ZeroAddress.selector);
-        new SeedRelay(inbox, address(0), genesis, forks(FULU, FULU));
+        new SeedRelay(inbox, address(0), genesis, 1 days, forks(FULU, FULU));
         vm.expectRevert(SeedRelay.NoForks.selector);
-        new SeedRelay(inbox, address(receiver), genesis, new bytes4[](0));
+        new SeedRelay(inbox, address(receiver), genesis, 1 days, new bytes4[](0));
         vm.expectRevert(abi.encodeWithSelector(SeedRelay.ForkNotAccepted.selector, bytes4(0)));
-        new SeedRelay(inbox, address(receiver), genesis, forks(FULU, bytes4(0)));
+        new SeedRelay(inbox, address(receiver), genesis, 1 days, forks(FULU, bytes4(0)));
     }
 
     // ── Helpers ──
@@ -285,8 +285,8 @@ contract SeedRelayTest is Test {
     /// relay's address before the relay exists.
     function deploy(uint64 genesis_, bytes4[] memory forks_) internal returns (SeedRelay, SeedReceiver) {
         address next = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
-        SeedReceiver receiver_ = new SeedReceiver(next, genesis_);
-        SeedRelay relay_ = new SeedRelay(inbox, address(receiver_), genesis_, forks_);
+        SeedReceiver receiver_ = new SeedReceiver(next, genesis_, 1 days);
+        SeedRelay relay_ = new SeedRelay(inbox, address(receiver_), genesis_, 1 days, forks_);
         assertEq(address(relay_), next);
         return (relay_, receiver_);
     }
@@ -360,7 +360,7 @@ contract SeedRelayTest is Test {
 /// `SeedRelay`'s header hashing, for a test to record a synthetic header's root.
 contract HeaderRoot is SeedRelay {
     constructor(IInbox inbox_, address receiver_, uint64 genesis_, bytes4[] memory forks_)
-        SeedRelay(inbox_, receiver_, genesis_, forks_)
+        SeedRelay(inbox_, receiver_, genesis_, 1 days, forks_)
     {}
 
     function rootOf(BeaconBlockHeader calldata header) external pure returns (bytes32) {

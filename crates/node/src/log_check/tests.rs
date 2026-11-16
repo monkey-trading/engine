@@ -13,6 +13,22 @@ const A2: B256 = B256::repeat_byte(0xa2);
 /// B's member on another release.
 const B2: B256 = B256::repeat_byte(0xb2);
 
+/// A turn has begun from its boundary to the next, at every turn length: a short-turns build's
+/// five-minute turns as well as a day's.
+#[test]
+fn a_turn_has_begun_from_its_boundary_until_the_next() {
+    // The turn starting at 22:30 UTC on 2026-11-06, a boundary at either length.
+    let at: Millis = 1_794_004_200_000;
+    let turn = u64::try_from((at - engine_core::turns::BOUNDARY_OFFSET_MS) / engine_core::turns::TURN_MS).unwrap();
+    let start = engine_core::turns::boundary(turn).unwrap();
+    assert_eq!(start, at);
+    assert_eq!(turn_begun_by(start), Some(turn));
+    assert_eq!(turn_begun_by(start - 1), Some(turn - 1));
+    assert_eq!(turn_begun_by(start + engine_core::turns::TURN_MS - 1), Some(turn));
+    assert_eq!(turn_begun_by(start + engine_core::turns::TURN_MS), Some(turn + 1));
+    assert_eq!(turn_begun_by(engine_core::turns::BOUNDARY_OFFSET_MS - 1), None, "before the first boundary");
+}
+
 #[test]
 fn a_range_names_the_member_in_office_at_its_start_and_each_that_took_a_turn_in_it() {
     let takings = takings(0, &[(10, A), (20, B), (30, B), (40, C)]);

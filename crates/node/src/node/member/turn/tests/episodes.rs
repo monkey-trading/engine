@@ -4,6 +4,16 @@
 use super::*;
 use crate::test_support::{Alert, capture_alerts_and_resolutions};
 
+/// The grace windows that hold `standby_follow_failed` and `release_superseded` back from a turn's
+/// boundary end within half the turn, whatever its length: five and fifteen minutes with day-long
+/// turns, and half of a short-turns build's five minutes, so its turns still page.
+#[test]
+fn the_handover_grace_windows_end_within_half_a_turn() {
+    let half = engine_core::turns::TURN_MS / 2;
+    assert_eq!(COMING_UP, half.min(5 * 60_000));
+    assert_eq!(crate::node::keys::TURN_HANDOVER_GRACE_MS, half.min(15 * 60_000));
+}
+
 /// A failing stint pages `standby_follow_failed` once, naming the operator; once the member follows
 /// another operator, the resolution names the one the page did.
 #[tokio::test]

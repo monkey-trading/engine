@@ -12,6 +12,7 @@ alloy::sol! {
     function schedule() external view returns (address);
     function rotationState() external view returns (bool enabled, bytes32 release, uint64 generation, uint64 until);
     function turnsRunUntil() external view returns (uint64);
+    function turnLength() external view returns (uint64);
     function vault() external view returns (address);
 }
 
@@ -62,11 +63,15 @@ pub(in crate::custody::tests) struct Schedule {
     pub(in crate::custody::tests) turn_reads: Vec<BlockRef>,
     /// A fault proof contract and the vault its `vault()` answers, `None` where it has no code.
     pub(in crate::custody::tests) fault_proof: Option<(Address, Option<Address>)>,
+    /// The turn length, in seconds, the schedule's `turnLength()` answers; `None`, the default, answers
+    /// the build's.
+    pub(in crate::custody::tests) turn_length: Option<u64>,
 }
 
 impl ChainState {
     /// A contract call's answer: a vote contract's schedule, a fault proof contract's vault, the
-    /// registry's rotation state, the schedule's last drawn turn, or the vault's and the log heads' epochs.
+    /// registry's rotation state, the schedule's last drawn turn and turn length, or the vault's and the
+    /// log heads' epochs.
     /// Error cases:
     /// - any call `Epochs::answer` refuses
     pub(super) fn answer_call(&mut self, at: BlockRef, to: Address, data: &[u8]) -> anyhow::Result<Bytes> {
@@ -93,6 +98,10 @@ impl ChainState {
                     Some(TurnsRunUntilFault::Undecodable) => Ok(Bytes::from_static(b"no")),
                     None => Ok(turnsRunUntilCall::abi_encode_returns(&self.schedule.turns_run_until).into()),
                 }
+            }
+            _ if data == turnLengthCall {}.abi_encode() => {
+                let build = crate::seed_relay::schedule::TURN_SECS;
+                Ok(turnLengthCall::abi_encode_returns(&self.schedule.turn_length.unwrap_or(build)).into())
             }
             (_, Some((fault_proof, recorded))) if to == fault_proof && data == vaultCall {}.abi_encode() => {
                 Ok(recorded.map(|vault| vaultCall::abi_encode_returns(&vault).into()).unwrap_or_default())
