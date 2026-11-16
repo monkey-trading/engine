@@ -182,11 +182,12 @@ async fn run() -> anyhow::Result<()> {
     let last_head = chain.view(log_heads, headsCall { epoch: latched_seq.signerEpoch }).await;
     seats[0].kill().await?;
     let killed = Instant::now();
-    // From here the test mines, a block a second, and looks for the promotion between blocks every
+    // From here nothing mines but the test, a block a second, and it looks for the promotion between blocks every
     // tenth of a second: it stops mining at the promotion's block, so finality, two blocks behind the
     // head, cannot reach it. Nothing then mines until the checks below have run, so the vault's
     // finalized view still names A's key, and what a node sends waits in the pool, where they see it.
     mining.abort();
+    chain.rpc("evm_setAutomine", json!([false])).await;
     let epoch = timeout(window + Duration::from_secs(120), async {
         loop {
             for seat in &mut seats[1..] {
@@ -195,7 +196,6 @@ async fn run() -> anyhow::Result<()> {
             for _ in 0..10 {
                 let epoch = chain.view(vault, signerEpochCall {}).await;
                 if epoch > 1 {
-                    chain.rpc("evm_setAutomine", json!([false])).await;
                     return anyhow::Ok(epoch);
                 }
                 sleep(Duration::from_millis(100)).await;

@@ -42,9 +42,18 @@ pub(super) struct Rig {
     pub poster: JoinHandle<anyhow::Result<()>>,
     tasks: Vec<JoinHandle<()>>,
     /// Whether the members' followers go on following the operator's stream.
-    following: Arc<AtomicBool>,
+    following: Following,
     /// Their threads, joined at `stop`, which fails the scenario if one panicked.
     followers: Vec<std::thread::JoinHandle<()>>,
+}
+
+/// Whether the followers go on: they stop once it is dropped, with the rig, however it ends.
+struct Following(Arc<AtomicBool>);
+
+impl Drop for Following {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 /// The synthetic log the operator sequences: each seq's cumulative prefix and stamp.
@@ -173,11 +182,11 @@ impl Rig {
             .with_liveness(gate.clone(), signed.clone(), watch::channel(None).1),
         );
         let origin = format!("http://{}", crate::api::serve_tests::serve_signing(stream).await);
-        let following = Arc::new(AtomicBool::new(true));
+        let following = Following(Arc::new(AtomicBool::new(true)));
         let mut followers = Vec::new();
         for member in members.iter().enumerate().filter(|(i, _)| *i != operator).map(|(_, m)| m) {
             let (copy, enclave, cfg, following) =
-                (member.copy.clone(), AccountId(signing.address()), cfg.clone(), following.clone());
+                (member.copy.clone(), AccountId(signing.address()), cfg.clone(), following.0.clone());
             let followed =
                 Followed { origin: origin.clone(), enclave, mirrors: Vec::new(), danger_accept_invalid_certs: false };
             // The directory is made here, on the test's thread, which owns its removal; one per follower.
@@ -225,7 +234,7 @@ impl Rig {
 
     /// Stops every part.
     pub(super) fn stop(self) {
-        self.following.store(false, Ordering::SeqCst);
+        drop(self.following);
         for follower in self.followers {
             follower.join().expect("a member's follower panicked");
         }

@@ -26,8 +26,6 @@ use crate::standby_key::chain::Promotion;
 pub(super) const BUDGET: Duration = Duration::from_secs(60);
 /// How long one member gets to answer a round.
 const ASK: Duration = Duration::from_secs(5);
-/// How many rounds of `Entries` answers the fetch takes at most.
-const ROUNDS: usize = 64;
 
 /// A source of the gap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -121,7 +119,8 @@ pub(super) async fn from_members(
     deadline: Instant,
 ) -> (u64, Option<AccountId>) {
     let mut taken = 0;
-    for _ in 0..ROUNDS {
+    // Rounds go on while one extends the copy and the deadline allows: a whole log is many pages.
+    loop {
         // From the copy's last entry, past its tip's command when a page ended among the entries
         // that follow it, so the next page goes on from there; from the log's first for an empty copy.
         let after = follower.head();
@@ -177,11 +176,11 @@ pub(super) async fn from_members(
             return (taken, None);
         }
     }
-    (taken, None)
 }
 
 /// Takes what `operator`'s archive and its mirrors hold past the copy's tip, or all of it for an empty
-/// copy: every entry of the completed segments after the command at the tip, through the copy's seal chain as a handover's tail.
+/// copy: every entry of the completed segments after the command at the tip, a segment at a time through
+/// the copy's seal chain as a handover's tail.
 /// Returns how many entries the copy took.
 /// Error cases:
 /// - the archive cannot be read, a segment differs from its listing or does not parse, or its entries
@@ -189,17 +188,35 @@ pub(super) async fn from_members(
 async fn archive(follower: &mut Follower, operator: &crate::standby::Followed) -> anyhow::Result<u64> {
     use crate::standby::archive::{archive_client, check_listing, fetch_archive_bytes, fetch_manifest};
     let (archive, origins) = (archive_client(operator.danger_accept_invalid_certs)?, operator.origins());
-    // An empty copy takes the whole log.
-    let tip = follower.replica().last_seq();
     let listings = fetch_manifest(&archive, &origins).await?;
-    let mut lines = Vec::new();
-    for listed in listings.iter().filter(|listed| tip.is_none_or(|tip| listed.last_seq >= tip)) {
-        let bytes = fetch_archive_bytes(&archive, &origins, &listed.file, Some(listed)).await?;
-        check_listing(listed, &bytes)?;
-        past_tip(&bytes, listed.first_seq, tip, &mut lines)?;
+    let mut taken = 0;
+    // One segment at a time: memory holds one, and what is taken stays taken if a later one fails.
+    for listed in &listings {
+        let tip = follower.replica().last_seq();
+        if tip.is_some_and(|tip| listed.last_seq < tip) {
+            continue;
+        }
+        let step = async {
+            let bytes = fetch_archive_bytes(&archive, &origins, &listed.file, Some(listed)).await?;
+            check_listing(listed, &bytes)?;
+            let mut lines = Vec::new();
+            past_tip(&bytes, listed.first_seq, tip, &mut lines)?;
+            if lines.is_empty() {
+                return anyhow::Ok(0);
+            }
+            follower.take_entries(tip.map(Offset::start_of), &lines).map_err(|e| e.context(TailRefused))
+        };
+        match step.await {
+            Ok(count) => taken += count,
+            Err(e) if taken > 0 && e.downcast_ref::<TailRefused>().is_none() => {
+                warn!("the archive's later segments were not taken: {e:#}");
+                break;
+            }
+            Err(e) => return Err(e),
+        }
     }
-    anyhow::ensure!(!lines.is_empty(), "the archive holds nothing past the copy's tip, {tip:?}");
-    follower.take_entries(tip.map(Offset::start_of), &lines).map_err(|e| e.context(TailRefused))
+    anyhow::ensure!(taken > 0, "the archive holds nothing past the copy's tip");
+    Ok(taken)
 }
 
 /// Appends to `lines` the JSON lines of the segment `bytes`, which starts at `first_seq`, that follow the

@@ -42,6 +42,9 @@ pub(crate) struct Follower {
     /// from beyond the entries it keeps.
     dir: std::path::PathBuf,
     manifest: tokio::sync::watch::Receiver<Manifest>,
+    /// The signers the vault recorded, whose seals a log taken from its first entry may carry before any
+    /// checkpoint of the copy names them.
+    signers: BTreeSet<AccountId>,
 }
 
 impl Follower {
@@ -86,6 +89,7 @@ impl Follower {
         (posted, keep): (Option<(u64, B256)>, &[u64]),
         mut observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
+        let recorded = signers.clone();
         let fresh = || {
             let mut replica = LiveReplay::new(domain, signers.clone());
             keep.iter().for_each(|seq| replica.keep(*seq));
@@ -129,7 +133,15 @@ impl Follower {
         let (published, manifest) = tokio::sync::watch::channel(Manifest::default());
         let mut writer = writer;
         writer.publish_on(published);
-        Ok(Self { writer, copied, replica, link: None, opened, dir: dir.to_owned(), manifest })
+        Ok(Self { writer, copied, replica, link: None, opened, dir: dir.to_owned(), manifest, signers: recorded })
+    }
+
+    /// Drops the entries the copy held when it was opened, once the copy may take others the link has not
+    /// recorded: a link given them would serve a ring with a hole in it.
+    fn forget_opened(&mut self) {
+        if self.link.is_none() {
+            self.opened.clear();
+        }
     }
 
     /// The replica.
@@ -180,6 +192,7 @@ impl Follower {
         // signs from its promotion's block, before the set this replica was built with names it.
         self.copied.admit(followed.enclave);
         self.replica.admit(followed.enclave);
+        self.forget_opened();
         let link = self.link.as_ref();
         follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica), link).await
     }
@@ -197,6 +210,7 @@ impl Follower {
         budget: Duration,
         work: impl Future<Output = T>,
     ) -> (T, anyhow::Result<()>) {
+        self.forget_opened();
         let (ended, until) = tokio::sync::watch::channel(false);
         let work = async move {
             let output = work.await;
@@ -288,7 +302,11 @@ impl Follower {
                 ensure!(self.replica.last_seq() == Some(after.seq), "the tail follows {after}, not the copy's tip");
                 self.copied.begin_after(after);
             }
-            None => ensure!(self.replica.last_seq().is_none(), "the entries start the log, but the copy holds some"),
+            None => {
+                ensure!(self.replica.last_seq().is_none(), "the entries start the log, but the copy holds some");
+                // The log's first commands may be sealed by a key an earlier signer change replaced.
+                self.signers.iter().for_each(|signer| self.copied.admit(*signer));
+            }
         }
         let mut previous = after;
         let mut taken = 0;
@@ -299,6 +317,10 @@ impl Follower {
             if let Step::Extends(link) = self.copied.check(offset, &entry)? {
                 self.replica.apply(&entry).map_err(|e| e.context(ReplicaRefused))?;
                 self.writer.append(&entry).context("appending a tail entry to the copy")?;
+                match &self.link {
+                    Some(link) => link.appended(offset, &entry),
+                    None => self.forget_opened(),
+                }
                 self.copied.extend(offset, entry, link);
                 taken += 1;
             }

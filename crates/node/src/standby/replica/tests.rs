@@ -164,11 +164,10 @@ async fn a_reopened_follower_serves_the_entries_it_replayed() {
     assert_eq!(copy.entries_after(Some(Offset::start_of(1))), held, "the reopened copy serves what it holds");
 }
 
-/// What a follower took after its link was made is not among the entries the link's ring was given, and
-/// is served from the copy's log on disk: the link reads the copy through the manifest its writer
-/// publishes.
+/// What a follower takes after its link was made joins the entries the link's ring was given, so the ring
+/// serves them without a hole.
 #[tokio::test]
-async fn a_followers_link_serves_the_entries_it_took_from_its_log() {
+async fn a_followers_link_serves_the_entries_it_took_without_a_hole() {
     let operator = scratch_dir("replica-served-log-operator");
     crate::standby::tests::ticks(&operator, 6).await;
     let dir = scratch_dir("replica-served-log-copy");
@@ -191,8 +190,8 @@ async fn a_followers_link_serves_the_entries_it_took_from_its_log() {
         })
         .filter(|(offset, _)| *offset > after)
         .collect();
-    assert_eq!(copy.entries_after(Some(after)), Vec::new(), "the ring was not given what the copy took");
-    assert_eq!(copy.entries(Some(after)).await, taken, "the copy's log serves it");
+    assert_eq!(copy.entries_after(Some(after)), taken, "the ring was given what the copy took");
+    assert_eq!(copy.entries(Some(after)).await, taken);
 }
 
 /// Entries that start the log take onto an empty copy and onto no other.
@@ -214,6 +213,60 @@ async fn entries_from_the_first_take_onto_an_empty_copy_only() {
     assert!(format!("{refused:#}").contains("start the log"), "{refused:#}");
     drop(follower);
     assert_eq!(log_entries(&dir), log_entries(&operator), "the empty copy took the whole log");
+}
+
+/// A copy that took entries before it was linked links with no ring to serve from, rather than one with a
+/// hole between what it held at its opening and what it took since: the link serves the page from the copy's
+/// log on disk, which chains.
+#[tokio::test]
+async fn a_link_made_after_the_copy_took_entries_serves_them_from_its_log_not_from_a_ring_with_a_hole() {
+    let operator = scratch_dir("replica-hole-operator");
+    crate::standby::tests::ticks(&operator, 6).await;
+    let dir = scratch_dir("replica-hole-copy");
+    crate::standby::tests::copy_log(&operator, &dir);
+    crate::standby::tests::ticks(&operator, 9).await;
+    let mut follower =
+        Follower::open(&dir, SEGMENT_COMMANDS, DOMAIN, signer(), [signer()].into(), None, |_| {}).unwrap();
+    let after = follower.head().unwrap();
+    let (tip, _) = follower.tip().unwrap();
+    assert!(follower.take_tail(Offset::start_of(tip), &lines_after(&operator, tip)).unwrap() > 0);
+    let copy = crate::liveness::link::Copy::default();
+    follower.link_with(copy.clone());
+    assert_eq!(copy.entries_after(Some(after)), Vec::new(), "no ring is served across the entries it lacks");
+    let mut previous = None;
+    let expected: Vec<(Offset, LogEntry)> = log_entries(&operator)
+        .into_iter()
+        .map(|entry| {
+            let offset = offset_of(previous, &entry).unwrap();
+            previous = Some(offset);
+            (offset, entry)
+        })
+        .filter(|(offset, _)| *offset > after)
+        .collect();
+    assert_eq!(copy.entries(Some(after)).await, expected, "the copy's log serves them");
+}
+
+/// An empty copy takes the log's first entries, sealed by a key an earlier signer change replaced, once
+/// the vault's recorded signers are admitted, and its replica holds them.
+#[tokio::test]
+async fn an_empty_copy_admits_the_recorded_signers_for_the_first_entries() {
+    let operator = scratch_dir("replica-first-signers-operator");
+    crate::standby::tests::ticks(&operator, 4).await;
+    let mut whole = Vec::new();
+    for entry in log_entries(&operator) {
+        whole.extend(serde_json::to_vec(&entry).unwrap());
+        whole.push(b'\n');
+    }
+    // The followed enclave is another key than the one that sealed the log; the vault records both.
+    let followed = AccountId([0x77; 20]);
+    let open = |name: &str, signers: std::collections::BTreeSet<AccountId>| {
+        let dir = scratch_dir(name);
+        Follower::open(&dir, SEGMENT_COMMANDS, DOMAIN, followed, signers, None, |_| {}).unwrap()
+    };
+    let mut unrecorded = open("replica-first-signers-bare", [followed].into());
+    assert!(unrecorded.take_entries(None, &whole).is_err(), "a seal of an unrecorded key extends nothing");
+    let mut recorded = open("replica-first-signers-recorded", [followed, signer()].into());
+    assert!(recorded.take_entries(None, &whole).unwrap() > 0);
 }
 
 // ── Helpers ──

@@ -196,19 +196,43 @@ async fn an_archived_segment_gives_an_empty_copy_every_line_and_a_trailing_one_t
     assert_eq!(all, bytes, "an empty copy takes the whole segment");
     let mut after = Vec::new();
     past_tip(&bytes, 0, Some(2), &mut after).unwrap();
-    let kept: Vec<&LogEntry> = after.split(|b| *b == b'\n').filter(|l| !l.is_empty()).map(|_| &entries[0]).collect();
-    let expected = entries
+    let mut seq = 0;
+    let expected: Vec<LogEntry> = entries
         .iter()
-        .scan(0, |seq, entry| {
+        .filter(|entry| {
             if let LogEntry::Command(command) = entry {
-                *seq = command.sequenced.seq;
+                seq = command.sequenced.seq;
             }
-            Some((*seq, entry))
+            if matches!(entry, LogEntry::Command(_)) { seq > 2 } else { seq >= 2 }
         })
-        .filter(|(seq, entry)| if matches!(entry, LogEntry::Command(_)) { *seq > 2 } else { *seq >= 2 })
-        .count();
-    assert_eq!(kept.len(), expected, "a trailing copy takes the entries past its tip's command");
-    assert!(!after.is_empty() && after.len() < bytes.len());
+        .cloned()
+        .collect();
+    let taken: Vec<LogEntry> =
+        after.split(|b| *b == b'\n').filter(|l| !l.is_empty()).map(|l| serde_json::from_slice(l).unwrap()).collect();
+    assert_eq!(taken, expected, "a trailing copy takes the entries past its tip's command, in order");
+    assert!(!taken.is_empty() && taken.len() < entries.len());
+}
+
+/// A gap of many pages is taken through every one: the fetch goes on while a round extends the copy, not
+/// for a fixed number of rounds.
+#[tokio::test]
+async fn a_gap_of_more_than_sixty_four_pages_is_taken_whole() {
+    let (full, empty) = (scratch_dir("gap-long-full"), scratch_dir("gap-long-empty"));
+    ticks(&full, 80).await;
+    let mut follower = open(&empty);
+    let member = SetMember {
+        candidate: AccountId([1; 20]),
+        endpoint: "paging:1".into(),
+        standby: None,
+        admin_key: AccountId([1; 20]),
+        held: false,
+    };
+    let entries = with_offsets(&full);
+    assert!(entries.len() > 70, "the log is longer than the old round bound");
+    let (taken, refused) =
+        from_members(&Paging(entries.clone()), &[member], &mut follower, Instant::now() + BUDGET).await;
+    assert!(refused.is_none());
+    assert_eq!(taken as usize, entries.len(), "every page was taken");
 }
 
 // ── Helpers ──
