@@ -292,6 +292,8 @@ fn startable(name: &str) -> NodeConfig {
     let data = crate::test_support::scratch_dir(&format!("{name}-data"));
     cfg.node.log_dir = data.join("log");
     cfg.alerts.outbox.dir = data.join("alerts");
+    // A started node binds its metrics listener; the default port may be held by a node already running.
+    cfg.metrics.listen = "127.0.0.1:0".parse().unwrap();
     cfg
 }
 
