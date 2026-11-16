@@ -27,14 +27,16 @@ use crate::test_support::{ANVIL_CONFIG, keep_scratch, scratch_dir};
 /// How long a node gets to serve its API after it starts.
 const SERVE_WAIT: Duration = Duration::from_secs(120);
 
-/// What every member's config names alike: the chain and its contracts, the stand-ins, and the
-/// genesis staking start, which each copy of the log must share.
+/// What a member's config names: the chain and its contracts, the stand-ins, and the genesis staking
+/// start, which each copy of the log must share, and its checkpoint and log-head relayers: Anvil's
+/// accounts 8 and 5 for every member when `relayers` is `None`, or its own pair.
 pub(super) struct Deployment<'a> {
     pub chain: &'a Chain,
     pub services: &'a Services,
     pub schedule: Address,
     pub log_heads: Address,
     pub staking_start_ms: i64,
+    pub relayers: Option<(Address, Address)>,
 }
 
 /// A member as the leg runs it: its candidate, admin key and release, its node's addresses,
@@ -182,7 +184,8 @@ fn write_config(
     caller: Address,
     admin: &SigningKey,
 ) -> anyhow::Result<()> {
-    let Deployment { chain, services, schedule, log_heads, staking_start_ms } = deployment;
+    let Deployment { chain, services, schedule, log_heads, staking_start_ms, relayers } = deployment;
+    let (checkpoint_relayer, log_head_relayer) = relayers.unwrap_or((chain.accounts[8], chain.accounts[5]));
     let path_of = |name: &str| dir.join(name).to_string_lossy().into_owned();
     let source: toml::Value = toml::from_str(&std::fs::read_to_string(ANVIL_CONFIG)?)?;
     let mut cfg = serde_json::to_value(source)?;
@@ -227,12 +230,12 @@ fn write_config(
     let table = cfg.as_object_mut().context("config table")?;
     table.insert(
         "checkpoints".into(),
-        json!({ "rpc_url": chain.url, "relayer": format!("{:#x}", chain.accounts[8]),
+        json!({ "rpc_url": chain.url, "relayer": format!("{checkpoint_relayer:#x}"),
                 "retry_interval": "80ms", "rpc_timeout": "3s" }),
     );
     table.insert(
         "log_heads".into(),
-        json!({ "contract": format!("{log_heads:#x}"), "relayer": format!("{:#x}", chain.accounts[5]), "interval": "1h" }),
+        json!({ "contract": format!("{log_heads:#x}"), "relayer": format!("{log_head_relayer:#x}"), "interval": "1h" }),
     );
     table.insert("liveness".into(), json!({ "caller": format!("{caller:#x}"), "min_balance": "0.01" }));
     table.insert(

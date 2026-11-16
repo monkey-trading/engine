@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
 use engine_core::eip712::B256;
+use engine_core::turns::TURN_MS;
 use engine_core::types::AccountId;
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::net::TcpStream;
@@ -34,9 +35,15 @@ const ASK_TIMEOUT: Duration = if cfg!(test) { Duration::from_secs(5) } else { Du
 /// How long after a round no member answered the node asks again.
 const RETRY: Duration = if cfg!(test) { Duration::from_millis(200) } else { Duration::from_secs(60) };
 /// How long a check may stay due before it pages: withdrawals approved since the last verified head
-/// wait for it.
-const PENDING_ALERT_AFTER: Duration =
-    if cfg!(test) { Duration::from_millis(600) } else { Duration::from_secs(30 * 60) };
+/// wait for it. Thirty minutes, or half a turn when that is shorter, since the next turn's check
+/// restarts the count.
+const PENDING_ALERT_AFTER: Duration = if cfg!(test) {
+    Duration::from_millis(600)
+} else if TURN_MS / 2 < 30 * 60_000 {
+    Duration::from_millis(TURN_MS.unsigned_abs() / 2)
+} else {
+    Duration::from_secs(30 * 60)
+};
 
 /// The operator node's asking for the checks its sequencer publishes as due.
 pub(crate) struct Asker<C> {

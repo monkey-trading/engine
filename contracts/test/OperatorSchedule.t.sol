@@ -381,7 +381,7 @@ contract OperatorScheduleTest is ScheduleTest {
         vm.expectRevert(OperatorSchedule.UnauthorizedGovernance.selector);
         schedule.setSeedReceiver(forked);
         address noCode = makeAddr("no code");
-        vm.expectRevert();
+        vm.expectRevert(bytes(""));
         vm.prank(address(governance));
         schedule.setSeedReceiver(SeedReceiver(noCode));
         // A receiver that numbers turns by another length would answer other turns' seeds.

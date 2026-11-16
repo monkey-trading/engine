@@ -7,6 +7,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use engine_core::turns::TURN_MS;
 use engine_core::types::{AccountId, Millis};
 use tracing::{Instrument, info, info_span, warn};
 
@@ -27,8 +28,8 @@ use crate::tee::sealing::file_for;
 /// How long one follow stint runs before the member checks its turn again.
 const STINT: Duration = if cfg!(test) { Duration::from_secs(2) } else { Duration::from_secs(15) };
 /// How long after a turn's boundary its member may take to serve, during which a member following it
-/// expects failed stints and pages none.
-pub(crate) const COMING_UP: Millis = 5 * 60_000;
+/// expects failed stints and pages none: five minutes, or half a turn when that is shorter.
+pub(crate) const COMING_UP: Millis = if TURN_MS / 2 < 300_000 { TURN_MS / 2 } else { 300_000 };
 /// How long the stint that catches the copy up after the start's reads runs before the tail.
 const CATCH_UP: Duration = if cfg!(test) { Duration::from_millis(500) } else { Duration::from_secs(1) };
 /// How long a trusted time sample bounds time from, before the member takes another.

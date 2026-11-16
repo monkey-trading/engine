@@ -8,9 +8,9 @@ use engine_core::turns::{BOUNDARY_OFFSET_MS, DRAW_LEAD_MS, TURN_MS};
 /// A turn, in seconds: the schedule's `turnLength`.
 pub(crate) const TURN_SECS: u64 = TURN_MS.unsigned_abs() / 1000;
 /// A turn's boundary past a multiple of the turn: 22:30 UTC's.
-const BOUNDARY_OFFSET: u64 = BOUNDARY_OFFSET_MS.unsigned_abs() / 1000;
+pub(crate) const BOUNDARY_OFFSET: u64 = BOUNDARY_OFFSET_MS.unsigned_abs() / 1000;
 /// How long before its boundary a turn's seed is final: a turn.
-const DRAW_LEAD: u64 = DRAW_LEAD_MS.unsigned_abs() / 1000;
+pub(crate) const DRAW_LEAD: u64 = DRAW_LEAD_MS.unsigned_abs() / 1000;
 /// How long before the draw deadline the seed's epoch ends: two turns.
 const RELAY_WINDOW: u64 = 2 * TURN_SECS;
 /// A beacon slot, and an epoch of 32 of them.

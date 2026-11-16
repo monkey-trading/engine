@@ -469,7 +469,7 @@ jobs:
       - name: Test the short-turns build's turns
         run: |
           cargo test -p engine-core --features short-turns --locked --test short_turns
-          cargo test -p engine-node --features short-turns --locked --lib -- seed_relay::schedule liveness::chain::tests custody::tests::staking
+          cargo test -p engine-node --features short-turns --locked --lib -- seed_relay::schedule liveness::chain::tests custody::tests::staking the_handover_grace_windows
       - name: Run the short turns dev scenario
         run: ./scripts/dev-short-turns.sh
 

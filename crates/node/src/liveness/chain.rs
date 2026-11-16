@@ -11,6 +11,7 @@ use engine_core::types::AccountId;
 use futures_util::future::{BoxFuture, try_join3};
 use futures_util::{StreamExt, TryStreamExt, stream};
 
+use crate::seed_relay::schedule::DRAW_LEAD;
 use crate::standby_key::chain::{
     AgreedBlock, StandbyDomain, candidateOfCall, checkpointSignerCall, heldTurnCall, promotableCall, signerEpochCall,
     standbyHolderCall, turnAtCall,
@@ -20,8 +21,6 @@ use crate::standby_key::chain::{
 const MEMBER_READS: usize = 8;
 /// `OperatorRegistry.NOTICE`: a rotation set adopted now takes effect no sooner.
 const SET_NOTICE_SECS: u64 = 7 * 86_400;
-/// A turn is drawn from the set in effect at its draw deadline, a turn before its boundary.
-const DRAW_LEAD_SECS: u64 = engine_core::turns::DRAW_LEAD_MS.unsigned_abs() / 1000;
 
 sol! {
     function rotationState() external view returns (bool enabled, bytes32 release, uint64 generation, uint64 until);
@@ -224,7 +223,7 @@ async fn read_view(block: &impl AgreedBlock, domain: &LivenessDomain) -> anyhow:
 pub(crate) fn first_turnable(time: u64, effective: Option<u64>) -> u64 {
     let effective = effective.unwrap_or(time.saturating_add(SET_NOTICE_SECS));
     let boundary = crate::seed_relay::schedule::next_boundary;
-    boundary(effective.saturating_add(DRAW_LEAD_SECS).saturating_sub(1)).max(boundary(time))
+    boundary(effective.saturating_add(DRAW_LEAD).saturating_sub(1)).max(boundary(time))
 }
 
 /// When the earliest set `schedule` could draw a turn from takes effect, at `block`: the set in effect,
@@ -417,8 +416,8 @@ mod tests {
         let boundary = crate::seed_relay::schedule::next_boundary(time);
         assert_eq!(boundary - time, 52_200);
         assert_eq!(first_turnable(time, Some(0)), boundary, "a set in effect long since");
-        assert_eq!(first_turnable(time, Some(boundary - DRAW_LEAD_SECS)), boundary, "in effect at the deadline");
-        assert_eq!(first_turnable(time, Some(boundary - DRAW_LEAD_SECS + 1)), boundary + 86_400, "just past it");
+        assert_eq!(first_turnable(time, Some(boundary - DRAW_LEAD)), boundary, "in effect at the deadline");
+        assert_eq!(first_turnable(time, Some(boundary - DRAW_LEAD + 1)), boundary + 86_400, "just past it");
         assert_eq!(first_turnable(time, None), boundary + 8 * 86_400, "none in effect or waiting");
     }
 
@@ -431,7 +430,7 @@ mod tests {
         // 08:00 UTC, a boundary: the next is five minutes on.
         let time = 1_800_000_000;
         let boundary = crate::seed_relay::schedule::next_boundary(time);
-        assert_eq!((boundary - time, DRAW_LEAD_SECS), (300, 300));
+        assert_eq!((boundary - time, DRAW_LEAD), (300, 300));
         assert_eq!(first_turnable(time, Some(0)), boundary, "a set in effect long since");
         assert_eq!(first_turnable(time, Some(time)), boundary, "in effect at the deadline");
         assert_eq!(first_turnable(time, Some(time + 1)), boundary + 300, "just past it");

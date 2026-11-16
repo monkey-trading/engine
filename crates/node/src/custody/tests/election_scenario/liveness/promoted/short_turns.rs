@@ -20,7 +20,6 @@ use anyhow::{Context, ensure};
 use engine_core::auth::Operator;
 use engine_core::command::{AdminCommand, AdminRequest};
 use engine_core::event::Event;
-use engine_core::turns::{BOUNDARY_OFFSET_MS, TURN_MS};
 use engine_core::types::AccountId;
 use k256::ecdsa::SigningKey;
 use serde_json::Value;
@@ -37,6 +36,7 @@ use crate::custody::tests::election_scenario::liveness::{
 };
 use crate::custody::tests::election_scenario::{DEPLOYER_DIGEST, DIGEST_A, DIGEST_B, address};
 use crate::log::CheckpointDomain;
+use crate::seed_relay::schedule::{BOUNDARY_OFFSET, TURN_SECS};
 use crate::sequencer::replay_path_with_attested;
 use crate::sequencer::withdrawal_scenario::client::Client;
 use crate::sequencer::withdrawal_scenario::services::Services;
@@ -46,11 +46,9 @@ use crate::tee::sealing::{KeyStore, MockSealer};
 
 alloy::sol! {
     function memberAt(uint32 setId, bytes32 seed, uint64 turn, uint16 position) external view returns (address);
+    function checkpointSignerAt(uint64 seq) external view returns (address);
 }
 
-/// A turn and its boundary's offset past a multiple of it, in seconds: five minutes and zero.
-const TURN: u64 = TURN_MS.unsigned_abs() / 1000;
-const OFFSET: u64 = BOUNDARY_OFFSET_MS.unsigned_abs() / 1000;
 /// The switch budget the schedule asserts: short enough that its take window, at the bounds' shortest
 /// interval, spans less than a five-minute turn.
 const SWITCH_BUDGET_SECS: u64 = 20;
@@ -69,7 +67,7 @@ async fn dev_scenario_five_minute_turns_hand_over_and_promote() {
 /// Error cases:
 /// - any chain, node or client step, or a behavioural check, fails
 async fn run() -> anyhow::Result<()> {
-    ensure!(TURN == 300, "a short-turns build has five-minute turns, not {TURN} s");
+    ensure!(TURN_SECS == 300, "a short-turns build has five-minute turns, not {TURN_SECS} s");
     let signing = Arc::new(EnclaveKey::generate());
     let deployer = SigningKey::from_slice(&[0x41; 32])?;
     let mut chain =
@@ -81,7 +79,7 @@ async fn run() -> anyhow::Result<()> {
         &chain.provider,
         chain.accounts[0],
         "SeedReceiver.sol/SeedReceiver.json",
-        &(chain.accounts[9], 1_606_824_023u64, TURN).abi_encode_params(),
+        &(chain.accounts[9], 1_606_824_023u64, TURN_SECS).abi_encode_params(),
     )
     .await;
     let (schedule, log_heads) = chain.deploy_schedule_with(receiver, RULE, SWITCH_BUDGET_SECS).await;
@@ -91,23 +89,28 @@ async fn run() -> anyhow::Result<()> {
     let staking_start_ms = now_ms() + 300_000;
     let mut seats = Vec::new();
     for (i, (name, digest)) in [("A", DIGEST_A), ("B", DIGEST_B), ("C", DIGEST_C)].into_iter().enumerate() {
+        // Each member posts through relayers of its own, as every member's node does.
         let caller = chain.impersonated(&format!("short-turns-caller-{name}")).await;
-        let deployment = Deployment { chain: &chain, services: &services, schedule, log_heads, staking_start_ms };
+        let checkpoints = chain.impersonated(&format!("short-turns-checkpoints-{name}")).await;
+        let heads = chain.impersonated(&format!("short-turns-heads-{name}")).await;
+        let relayers = Some((checkpoints, heads));
+        let deployment =
+            Deployment { chain: &chain, services: &services, schedule, log_heads, staking_start_ms, relayers };
         seats.push(Seat::new(name, (chain.accounts[2 + i], KEYS[i], digest), caller, &deployment)?);
     }
     adopt(&mut chain, &seats, schedule, &signing).await;
 
     // The turn in effect now, drawn for A at its deadline, with a boundary at least a minute off; then
     // the chain runs on true time.
-    let mut turn = (now_s() - OFFSET) / TURN;
+    let mut turn = (now_s() - BOUNDARY_OFFSET) / TURN_SECS;
     if boundary(turn + 1) < now_s() + LEAD_SECS {
         sleep(Duration::from_secs(boundary(turn + 1) + 5 - now_s())).await;
         turn += 1;
     }
     let seed = seed_picking(&chain, schedule, turn, seats[0].candidate).await?;
-    chain.mine_at(boundary(turn) - TURN - 10).await;
+    chain.mine_at(boundary(turn) - TURN_SECS - 10).await;
     relay(&chain, receiver, turn, seed).await;
-    chain.mine_at(boundary(turn) - TURN).await;
+    chain.mine_at(boundary(turn) - TURN_SECS).await;
     chain.send(chain.accounts[1], schedule, drawCall { turn }.abi_encode()).await;
     let drawn = chain.view(schedule, turnOfCall { turn }).await;
     ensure!(drawn.candidate == seats[0].candidate, "turn {turn} names {}", drawn.candidate);
@@ -135,8 +138,8 @@ async fn run() -> anyhow::Result<()> {
         a.get("/v1/operator").await.ok()?["rotation_set"]["logged_at"].as_i64()
     })
     .await?;
-    let noticed = u64::try_from(logged_ms / 1000)? + TURN;
-    let first = ((noticed.max(now_s() + TURN + LEAD_SECS) - OFFSET).div_ceil(TURN)).max(turn + 1);
+    let noticed = u64::try_from(logged_ms / 1000)? + TURN_SECS;
+    let first = ((noticed.max(now_s() + TURN_SECS + LEAD_SECS) - BOUNDARY_OFFSET).div_ceil(TURN_SECS)).max(turn + 1);
     // Both seeds are relayed now, before the first deadline: the second's is the first's boundary.
     for (next, holder) in [(first, 1), (first + 1, 2)] {
         let seed = seed_picking(&chain, schedule, next, seats[holder].candidate).await?;
@@ -144,7 +147,7 @@ async fn run() -> anyhow::Result<()> {
     }
     let mut previous = (0, seats[0].admin.clone());
     for (next, holder) in [(first, 1), (first + 1, 2)] {
-        wait_chain(&chain, boundary(next) - TURN).await?;
+        wait_chain(&chain, boundary(next) - TURN_SECS).await?;
         chain.send(chain.accounts[1], schedule, drawCall { turn: next }.abi_encode()).await;
         let drawn = chain.view(schedule, turnOfCall { turn: next }).await;
         ensure!(drawn.candidate == seats[holder].candidate, "turn {next} names {}", drawn.candidate);
@@ -182,7 +185,6 @@ async fn run() -> anyhow::Result<()> {
         (latch.member == c_candidate).then_some(())
     })
     .await?;
-    let checkpoint_before = chain.view(vault, latestSeqCall {}).await;
     seats[2].kill().await?;
     let window = Duration::from_secs(RULE.0 * (u64::from(RULE.2) + 1) + RULE.1);
     let epoch = until("a promotion", window + Duration::from_secs(120), &mut seats[..2], async || {
@@ -205,7 +207,8 @@ async fn run() -> anyhow::Result<()> {
     println!("PASS: {} serves from its copy under its standby key, and its admin key signs", seats[p].name);
     until("the promoted member's first checkpoint", Duration::from_secs(120), &mut seats, async || {
         let seq = chain.view(vault, latestSeqCall {}).await;
-        (seq > checkpoint_before).then_some(seq)
+        let by = chain.view(vault, checkpointSignerAtCall { seq }).await;
+        (AccountId(by.into()) == signer).then_some(seq)
     })
     .await?;
     println!("PASS: {}'s first checkpoint under its standby key landed", seats[p].name);
@@ -227,7 +230,7 @@ async fn run() -> anyhow::Result<()> {
 
 /// The boundary of `turn`, in seconds.
 fn boundary(turn: u64) -> u64 {
-    turn * TURN + OFFSET
+    turn * TURN_SECS + BOUNDARY_OFFSET
 }
 
 /// A seed whose draw of `turn` from the set in effect picks `candidate` first.
