@@ -268,13 +268,18 @@ async fn a_gap_of_more_than_sixty_four_pages_is_taken_whole() {
 /// then gives the log.
 struct Busy {
     log: Vec<(Offset, LogEntry)>,
-    busy_for: std::sync::atomic::AtomicU32,
+    busy_for: std::sync::Mutex<u32>,
 }
 
 impl Asking for Busy {
     async fn ask(&self, endpoint: &str, request: &Request) -> anyhow::Result<Reply> {
-        use std::sync::atomic::Ordering;
-        if self.busy_for.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1)).is_ok() {
+        let busy = {
+            let mut left = self.busy_for.lock().unwrap();
+            let busy = *left > 0;
+            *left = left.saturating_sub(1);
+            busy
+        };
+        if busy {
             return Ok(Reply::Refused { reason: "busy answering entries and vouches: ask again".into() });
         }
         Paging(self.log.clone()).ask(endpoint, request).await
@@ -300,12 +305,12 @@ async fn a_busy_donor_is_asked_again_and_a_donor_that_stays_busy_ends_the_fetch(
     let log = with_offsets(&full);
     tokio::time::pause();
     let started = Instant::now();
-    let busy = Busy { log: log.clone(), busy_for: 3.into() };
+    let busy = Busy { log: log.clone(), busy_for: std::sync::Mutex::new(3) };
     let (taken, refused) = from_members(&busy, &[one_member()], &mut open(&empty), started + BUDGET).await;
     assert!(taken as usize == log.len() && refused.is_none(), "taken {taken}, refused {refused:?}");
     assert!(started.elapsed() >= BUSY_WAIT * 3, "the fetch waited between asks: {:?}", started.elapsed());
     let started = Instant::now();
-    let stuck = Busy { log, busy_for: u32::MAX.into() };
+    let stuck = Busy { log, busy_for: std::sync::Mutex::new(u32::MAX) };
     let (taken, _) =
         from_members(&stuck, &[one_member()], &mut open(&scratch_dir("gap-busy-stuck")), started + BUDGET).await;
     assert_eq!(taken, 0);
@@ -338,7 +343,7 @@ async fn a_long_gap_leaves_the_promotions_fixed_head_in_the_replica() {
         if kept {
             keep_fixed(&mut follower, &promotion);
         }
-        let asking = Busy { log: log.clone(), busy_for: 0.into() };
+        let asking = Busy { log: log.clone(), busy_for: std::sync::Mutex::new(0) };
         let (taken, _) =
             from_members(&asking, std::slice::from_ref(&member), &mut follower, Instant::now() + BUDGET).await;
         assert!(taken as usize == log.len(), "the whole log was taken");
