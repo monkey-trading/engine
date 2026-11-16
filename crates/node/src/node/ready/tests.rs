@@ -1,7 +1,8 @@
 //! A member's start from its replica reads nothing from the chain and samples no trusted time: run with
 //! every chain endpoint and every time server unreachable, the node sequences its first command under
-//! what the member read before connecting, as a rotating member does in production: with `[log_heads]`
-//! heads, and the generation its turn's keys are sealed in, its first command is `TurnTaken`.
+//! what the member read before connecting, as a rotating member does in production: with rotation on
+//! and the generation its turn's keys are sealed in, its first command is `TurnTaken`. A member with
+//! `[log_heads]` waits on the liveness rule's first read, so that start is not run without a chain.
 
 use std::time::Duration;
 
@@ -18,7 +19,7 @@ use crate::clock::Clock;
 use crate::config::{CustodyProvider, FinalityTag, RpcProviderSection};
 use crate::custody::ContractTerms;
 use crate::log::{CheckpointDomain, CheckpointParent, LogEntry};
-use crate::log_heads::{Head, StartupHeads};
+use crate::log_heads::Head;
 use crate::node::member::Replica;
 use crate::node::secrets::Delivered;
 use crate::standby::Follower;
@@ -83,15 +84,8 @@ async fn run_member(
     let data = scratch_dir(name);
     let log = data.join("log");
     let mut cfg = unreachable(&data, &log);
-    // A rotating member: rotation on, `[log_heads]`, and a log that assigns its key a turn.
+    // A rotating member: rotation on and a log that assigns its key a turn.
     cfg.operator.rotation_enabled = true;
-    cfg.log_heads = Some(
-        toml::from_str(
-            "contract = '0x0000000000000000000000000000000000000003'\n\
-             relayer = '0x0000000000000000000000000000000000000002'",
-        )
-        .unwrap(),
-    );
     let turn = write_member_log(&mut cfg).await;
     let key = EnclaveKey::test_key();
     let signer = AccountId(key.address());
@@ -127,7 +121,7 @@ async fn run_member(
         anchor: Some(anchor),
         emission_budget: None,
         staking_terms,
-        heads: Some(StartupHeads { epoch: 1, current: Some(head), newest: Some((1, head)) }),
+        heads: None,
         generations: BTreeMap::from([(turn, GENERATION)]),
         sample: sample_around(&crate::clock::SystemClock),
         certificates: None,
