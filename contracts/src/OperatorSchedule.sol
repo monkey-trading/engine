@@ -45,7 +45,8 @@ import {Vault} from "./Vault.sol";
 /// its order, which the key holder hands the keys to, in a new generation and with no signer change.
 /// Once `heartbeatMisses + 1` slots after the later of the boundary's slot and the signer change's are
 /// all marked with no assignment of the turn latched, in a set of two or more members, `promote` may run
-/// even while heads post.
+/// even while heads post. The rule and the window in force always leave the first skip's member a take
+/// before that promotion (`_skipsFirst`).
 /// @notice Every assignment of a turn, drawn, skipped to or promoted, is kept by its position with its
 /// releases and generations, and `turns` follows the latest.
 /// @dev Seeds come from `seedReceiver`, which the registry's timelock replaces when an Ethereum fork
@@ -152,6 +153,10 @@ contract OperatorSchedule is SeedSchedule {
     /// + headTolerance`, in seconds; and the most blocks `arbBlockHash` reaches back.
     uint256 private constant MAX_DETECTION = 600;
     uint256 private constant MAX_HEAD_BLOCKS = 256;
+    /// @dev How long before a promotion falls due the operator's node stops signing (its fence), in
+    /// seconds: a skip's member signs its first head before it. The node's `liveness::DELTA`; a change
+    /// to either changes both.
+    uint256 private constant STOP_MARGIN = 15;
 
     bytes32 private constant VOUCH_DOMAIN = keccak256("engine.standby-vouch.v1");
 
@@ -282,7 +287,8 @@ contract OperatorSchedule is SeedSchedule {
     /// @param liveness_ The heartbeat rule in force, within `minimums_` and `maximums_`.
     /// @param takeWindow_ The take window in force and its bounds, whose minimum exceeds the switch
     /// budget plus one interval plus a head's inclusion, which `headTolerance` bounds, at every interval
-    /// and tolerance the heartbeat rule's bounds allow.
+    /// and tolerance the heartbeat rule's bounds allow, and whose value leaves a skip's member a take
+    /// before the untaken-turn promotion under `liveness_` (`_skipsFirst`).
     /// @param switchBudget_ The handover's asserted switch budget, in seconds.
     /// @param blockMillis_ The pinned Arbitrum block time, in milliseconds.
     constructor(
@@ -310,6 +316,7 @@ contract OperatorSchedule is SeedSchedule {
             minimum == 0 || takeWindow_.slots < minimum || takeWindow_.slots > takeWindow_.maximum
                 || (minimum - 1) * minimums_.heartbeatInterval <= switchBudget_ + maximums_.headTolerance
                 || uint256(takeWindow_.maximum) * minimums_.heartbeatInterval > turnLength
+                || !_skipsFirst(liveness_, takeWindow_.slots)
         ) revert InvalidTakeWindow();
         takeWindow = takeWindow_;
     }
@@ -398,21 +405,26 @@ contract OperatorSchedule is SeedSchedule {
         }
     }
 
-    /// @notice Sets the heartbeat rule, within the deployment's bounds: only the registry's timelock,
-    /// and only while no turn names the operator, so no count runs across a change.
-    function setLiveness(Liveness calldata liveness_) external {
+    /// @notice Sets the heartbeat rule, within the deployment's bounds and leaving a skip's member a take
+    /// before the untaken-turn promotion under the take window in force (`_skipsFirst`): only the
+    /// registry's timelock, and only while no turn names the operator, so no count runs across a change.
+    function setLiveness(Liveness memory liveness_) external {
         _governWithNoTurn();
         _checkLiveness(liveness_);
+        if (!_skipsFirst(liveness_, takeWindow.slots)) revert InvalidLiveness();
         liveness = liveness_;
         emit LivenessChanged(liveness_);
     }
 
-    /// @notice Sets the take window, within its bounds: only the registry's timelock, and only while no
-    /// turn names the operator.
+    /// @notice Sets the take window, within its bounds and leaving a skip's member a take before the
+    /// untaken-turn promotion under the heartbeat rule in force (`_skipsFirst`): only the registry's
+    /// timelock, and only while no turn names the operator.
     function setTakeWindow(uint16 slots) external {
         _governWithNoTurn();
         TakeWindow storage window = takeWindow;
-        if (slots < window.minimum || slots > window.maximum) revert InvalidTakeWindow();
+        if (slots < window.minimum || slots > window.maximum || !_skipsFirst(liveness, slots)) {
+            revert InvalidTakeWindow();
+        }
         window.slots = slots;
         emit TakeWindowChanged(slots);
     }
@@ -989,6 +1001,18 @@ contract OperatorSchedule is SeedSchedule {
                 || rule.headBlocks > MAX_HEAD_BLOCKS || uint256(rule.headBlocks) * blockMillis >= interval * 1000
                 || misses * interval <= switchBudget
         ) revert InvalidLiveness();
+    }
+
+    /// @dev Whether, under `rule` and a take window of `slots`, a turn's first skip comes due early enough
+    /// for its member to take the turn before the untaken-turn promotion: from the same slot, the skip
+    /// is due `slots + 1` slots on and the promotion `heartbeatMisses + 2`, and the take between them
+    /// needs, as the window's minimum does, the switch budget plus one interval plus a head's inclusion,
+    /// which `headTolerance` bounds, its head signed before the member's node stops at `STOP_MARGIN`:
+    /// `(heartbeatMisses - slots) * heartbeatInterval > switchBudget + max(headTolerance, STOP_MARGIN)`.
+    function _skipsFirst(Liveness memory rule, uint256 slots) private view returns (bool) {
+        uint256 misses = rule.heartbeatMisses;
+        uint256 margin = rule.headTolerance > STOP_MARGIN ? rule.headTolerance : STOP_MARGIN;
+        return misses > slots && (misses - slots) * rule.heartbeatInterval > switchBudget + margin;
     }
 
     /// @dev Reverts unless the registry's timelock calls while no turn names the operator.

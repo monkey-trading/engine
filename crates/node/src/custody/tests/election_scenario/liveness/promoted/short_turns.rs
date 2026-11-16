@@ -49,9 +49,10 @@ alloy::sol! {
     function checkpointSignerAt(uint64 seq) external view returns (address);
 }
 
-/// The switch budget the schedule asserts: short enough that its take window, at the bounds' shortest
-/// interval, spans less than a five-minute turn.
-const SWITCH_BUDGET_SECS: u64 = 20;
+/// The switch budget the schedule asserts, as the other three-miss scenarios': short enough that its
+/// take window, at the bounds' shortest interval, spans less than a five-minute turn, and that the rule's
+/// misses leave a skip's member a take before the untaken-turn promotion.
+const SWITCH_BUDGET_SECS: u64 = 5;
 /// The least time left before a deadline that the scenario still relays or draws for.
 const LEAD_SECS: u64 = 60;
 /// How long a member gets past its boundary to take the keys and log `TurnTaken`.

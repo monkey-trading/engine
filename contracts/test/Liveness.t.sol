@@ -21,12 +21,14 @@ contract LivenessRuleTest is LivenessTest {
         return OperatorSchedule.Liveness(interval, tolerance, misses, blocks);
     }
 
-    function _build(
+    /// @dev A schedule with `rule` under `lo`, `hi` and `budget`, with the least take window they admit,
+    /// called externally, so an expected revert is caught at this call.
+    function build(
         OperatorSchedule.Liveness memory rule,
         OperatorSchedule.Liveness memory lo,
         OperatorSchedule.Liveness memory hi,
         uint64 budget
-    ) internal returns (OperatorSchedule) {
+    ) external returns (OperatorSchedule) {
         return new OperatorSchedule(
             registry, receiver, logHeads, rule, lo, hi, _fitting(lo, hi, budget), budget, BLOCK_MILLIS
         );
@@ -42,8 +44,8 @@ contract LivenessRuleTest is LivenessTest {
         uint64 budget
     ) internal {
         vm.expectRevert(OperatorSchedule.InvalidLiveness.selector);
-        _build(rule, lo, hi, budget);
-        OperatorSchedule built = _build(accepted, lo, hi, budget);
+        this.build(rule, lo, hi, budget);
+        OperatorSchedule built = this.build(accepted, lo, hi, budget);
         (uint64 interval, uint64 tolerance, uint16 misses, uint16 blocks) = built.liveness();
         assertEq(interval, accepted.heartbeatInterval);
         assertEq(tolerance, accepted.headTolerance);
@@ -51,40 +53,62 @@ contract LivenessRuleTest is LivenessTest {
         assertEq(blocks, accepted.headBlocks);
     }
 
+    /// @dev Expects a schedule with `rule` to be refused for the rule, and `passing` to pass the rule's
+    /// own checks, under `lo`, `hi` and `budget`: when no take window those bounds admit leaves its
+    /// misses a skip's take before the untaken-turn promotion, it is refused for the window instead.
+    function _refusedThenPasses(
+        OperatorSchedule.Liveness memory rule,
+        OperatorSchedule.Liveness memory passing,
+        OperatorSchedule.Liveness memory lo,
+        OperatorSchedule.Liveness memory hi,
+        uint64 budget
+    ) internal {
+        vm.expectRevert(OperatorSchedule.InvalidLiveness.selector);
+        this.build(rule, lo, hi, budget);
+        try this.build(passing, lo, hi, budget) {}
+        catch (bytes memory reason) {
+            assertEq(bytes4(reason), OperatorSchedule.InvalidTakeWindow.selector, "the rule's own checks refused it");
+        }
+    }
+
     function test_EachFieldStaysWithinItsDeploymentBounds() public {
-        OperatorSchedule.Liveness memory lo = _rule(30, 5, 3, 10);
-        OperatorSchedule.Liveness memory hi = _rule(120, 60, 9, 200);
+        // A least window of four slots, under which a skip's member keeps its take while `(misses - 4) *
+        // interval` exceeds the 20 s budget and the larger of the tolerance and the 15 s stop margin: five
+        // misses at 60 s, or six at 30 s, under a tolerance below 40 s.
+        OperatorSchedule.Liveness memory lo = _rule(30, 5, 5, 10);
+        OperatorSchedule.Liveness memory hi = _rule(90, 60, 9, 200);
         // Each refused rule breaks one bound and keeps every invariant.
-        _refusedThenAccepted(_rule(29, 5, 5, 10), _rule(30, 5, 5, 10), lo, hi, SWITCH_BUDGET);
-        _refusedThenAccepted(_rule(121, 30, 3, 200), _rule(120, 30, 3, 200), lo, hi, SWITCH_BUDGET);
+        _refusedThenAccepted(_rule(29, 5, 6, 10), _rule(30, 5, 6, 10), lo, hi, SWITCH_BUDGET);
+        _refusedThenAccepted(_rule(91, 30, 5, 200), _rule(90, 30, 5, 200), lo, hi, SWITCH_BUDGET);
         _refusedThenAccepted(_rule(60, 4, 5, 200), _rule(60, 5, 5, 200), lo, hi, SWITCH_BUDGET);
-        _refusedThenAccepted(_rule(120, 61, 3, 200), _rule(120, 60, 3, 200), lo, hi, SWITCH_BUDGET);
-        _refusedThenAccepted(_rule(90, 30, 2, 200), _rule(90, 30, 3, 200), lo, hi, SWITCH_BUDGET);
+        _refusedThenAccepted(_rule(85, 61, 5, 200), _rule(85, 60, 5, 200), lo, hi, SWITCH_BUDGET);
+        _refusedThenAccepted(_rule(90, 30, 4, 200), _rule(90, 30, 5, 200), lo, hi, SWITCH_BUDGET);
         _refusedThenAccepted(_rule(30, 5, 10, 10), _rule(30, 5, 9, 10), lo, hi, SWITCH_BUDGET);
         _refusedThenAccepted(_rule(60, 30, 5, 9), _rule(60, 30, 5, 10), lo, hi, SWITCH_BUDGET);
         _refusedThenAccepted(_rule(60, 30, 5, 201), _rule(60, 30, 5, 200), lo, hi, SWITCH_BUDGET);
     }
 
     function test_TheRuleKeepsItsInvariants() public {
-        // Bounds wide enough that only the invariant under test refuses.
+        // Bounds wide enough that only the invariant under test refuses the rule; so wide that no take
+        // window leaves a skip's take, so each passing rule is refused for the window alone.
         OperatorSchedule.Liveness memory lo = _rule(1, 0, 1, 1);
         OperatorSchedule.Liveness memory hi = _rule(600, 600, 100, 300);
         // At least two misses.
-        _refusedThenAccepted(_rule(60, 30, 1, 200), _rule(60, 30, 2, 200), lo, hi, 0);
+        _refusedThenPasses(_rule(60, 30, 1, 200), _rule(60, 30, 2, 200), lo, hi, 0);
         // Detection, (misses + 1) * interval + tolerance, within ten minutes.
-        _refusedThenAccepted(_rule(60, 1, 9, 200), _rule(60, 0, 9, 200), lo, hi, 0);
+        _refusedThenPasses(_rule(60, 1, 9, 200), _rule(60, 0, 9, 200), lo, hi, 0);
         // The tolerance under one interval.
-        _refusedThenAccepted(_rule(60, 60, 5, 200), _rule(60, 59, 5, 200), lo, hi, 0);
+        _refusedThenPasses(_rule(60, 60, 5, 200), _rule(60, 59, 5, 200), lo, hi, 0);
         // The held-head window within `arbBlockHash`'s 256 blocks.
-        _refusedThenAccepted(_rule(120, 30, 2, 257), _rule(120, 30, 2, 256), lo, hi, 0);
+        _refusedThenPasses(_rule(120, 30, 2, 257), _rule(120, 30, 2, 256), lo, hi, 0);
         // The held-head window under one interval at the pinned block time: 240 blocks of 250 ms is 60 s.
-        _refusedThenAccepted(_rule(60, 30, 5, 240), _rule(60, 30, 5, 239), lo, hi, 0);
+        _refusedThenPasses(_rule(60, 30, 5, 240), _rule(60, 30, 5, 239), lo, hi, 0);
         // The miss window above the switch budget: 2 * 60 s is not above 120 s.
-        _refusedThenAccepted(_rule(60, 30, 2, 200), _rule(61, 30, 2, 200), lo, hi, SWITCH_BUDGET);
+        _refusedThenPasses(_rule(60, 30, 2, 200), _rule(61, 30, 2, 200), lo, hi, 120);
     }
 
     function test_TheTimelockChangesTheRuleWhileNoTurnNamesTheOperator() public {
-        OperatorSchedule.Liveness memory slower = _rule(90, 30, 4, 200);
+        OperatorSchedule.Liveness memory slower = _rule(90, 30, 5, 200);
         vm.expectEmit(address(schedule));
         emit OperatorSchedule.LivenessChanged(slower);
         vm.prank(address(governance));
@@ -92,7 +116,7 @@ contract LivenessRuleTest is LivenessTest {
         (uint64 interval, uint64 tolerance, uint16 misses, uint16 blocks) = schedule.liveness();
         assertEq(interval, 90);
         assertEq(tolerance, 30);
-        assertEq(misses, 4);
+        assertEq(misses, 5);
         assertEq(blocks, 200);
 
         // A rule breaking an invariant is refused: the tolerance is not under the interval.
@@ -116,12 +140,12 @@ contract LivenessRuleTest is LivenessTest {
         _startTurn();
         vm.expectRevert(OperatorSchedule.TurnNamesTheOperator.selector);
         vm.prank(address(governance));
-        schedule.setLiveness(_rule(90, 30, 4, 200));
+        schedule.setLiveness(_rule(90, 30, 5, 200));
         // Turned off, the drawn turns still name the operator until an installation past them.
         _setRotation(false);
         vm.expectRevert(OperatorSchedule.TurnNamesTheOperator.selector);
         vm.prank(address(governance));
-        schedule.setLiveness(_rule(90, 30, 4, 200));
+        schedule.setLiveness(_rule(90, 30, 5, 200));
     }
 
     function test_NoSlotIsWitnessedWhileNoTurnNamesTheOperator() public {

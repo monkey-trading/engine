@@ -18,7 +18,7 @@ abstract contract ScheduleTest is RegistryTest {
     /// 2026-11-05.
     uint256 internal constant START = 1_794_000_000;
     /// @dev Test values only: the switch budget and block time #593 and the runbook pin.
-    uint64 internal constant SWITCH_BUDGET = 120;
+    uint64 internal constant SWITCH_BUDGET = 20;
     uint64 internal constant BLOCK_MILLIS = 250;
 
     address internal relay = makeAddr("relay");

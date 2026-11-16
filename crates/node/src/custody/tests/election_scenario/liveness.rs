@@ -73,8 +73,10 @@ sol! {
 
 const DIGEST_C: [u8; 48] = [0xc1; 48];
 /// The heartbeat rule the scenario deploys, short enough to run in minutes: 30 s slots, 20 s tolerance,
-/// 3 misses, 10 blocks, under a 60 s switch budget.
+/// 3 misses, 10 blocks, under a 5 s switch budget, which leaves a skip's member a take before the
+/// untaken-turn promotion.
 const RULE: (u64, u64, u16, u16) = (30, 20, 3, 10);
+const SWITCH_BUDGET_SECS: u64 = 5;
 const KEYS: [[u8; 32]; 3] = [[0x42; 32], [0x55; 32], [0x56; 32]];
 const STAKES: [u64; 3] = [50_000, 30_000, 20_000];
 const DAY_SECS: u64 = 86_400;
@@ -130,7 +132,7 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
         &(chain.accounts[9], 1_606_824_023u64, DAY_SECS).abi_encode_params(),
     )
     .await;
-    let (schedule, log_heads) = chain.deploy_schedule_with(receiver, RULE, 60).await;
+    let (schedule, log_heads) = chain.deploy_schedule_with(receiver, RULE, SWITCH_BUDGET_SECS).await;
     chain.schedule = Some(schedule);
     let members: Vec<Member> = [(chain.accounts[2], 0), (chain.accounts[3], 1), (chain.accounts[4], 2)]
         .into_iter()

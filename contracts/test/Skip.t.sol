@@ -508,16 +508,98 @@ contract SkipScheduleTest is SkipTest {
         vm.expectRevert(OperatorSchedule.InvalidTakeWindow.selector);
         schedule.setTakeWindow(9);
         vm.expectEmit(address(schedule));
-        emit OperatorSchedule.TakeWindowChanged(8);
+        emit OperatorSchedule.TakeWindowChanged(4);
         vm.prank(address(governance));
-        schedule.setTakeWindow(8);
+        schedule.setTakeWindow(4);
         (slots,,) = schedule.takeWindow();
-        assertEq(slots, 8);
+        assertEq(slots, 4);
 
         _startInOrder();
         vm.prank(address(governance));
         vm.expectRevert(OperatorSchedule.TurnNamesTheOperator.selector);
         schedule.setTakeWindow(3);
+    }
+
+    /// Under the rule in force, 60 s slots, 30 s tolerance and five misses, and the 10 s budget, a window
+    /// of four slots leaves a skip's member one slot, more than the budget and the tolerance, before the
+    /// untaken-turn promotion; five, within the bounds, leave it none and are refused, as is a rule of four
+    /// misses under the window of four in force, while six misses are accepted.
+    function test_TheWindowAndTheRuleLeaveASkipsMemberATakeBeforeTheUntakenTurnPromotion() public {
+        vm.startPrank(address(governance));
+        vm.expectRevert(OperatorSchedule.InvalidTakeWindow.selector);
+        schedule.setTakeWindow(5);
+        schedule.setTakeWindow(4);
+        vm.expectRevert(OperatorSchedule.InvalidLiveness.selector);
+        schedule.setLiveness(OperatorSchedule.Liveness(60, 30, 4, 200));
+        schedule.setLiveness(OperatorSchedule.Liveness(60, 30, 6, 200));
+        vm.stopPrank();
+        (,, uint16 misses,) = schedule.liveness();
+        assertEq(misses, 6);
+    }
+
+    /// The constructor refuses a window whose skip, with a take's time, is not due before the untaken-turn
+    /// promotion under the rule it deploys: the default rule's eight-slot least window that a 120 s budget
+    /// gives at the bounds' shortest interval, and, at the boundary, a take of exactly one interval past
+    /// the budget and the larger of the tolerance and the operator's stop margin.
+    function test_TheConstructorRefusesAWindowWhoseSkipComesAfterTheUntakenTurnPromotion() public {
+        OperatorSchedule.Liveness memory lo = OperatorSchedule.Liveness(30, 5, 2, 10);
+        OperatorSchedule.Liveness memory hi = OperatorSchedule.Liveness(120, 60, 9, 256);
+        vm.expectRevert(OperatorSchedule.InvalidTakeWindow.selector);
+        this.build(lo, hi, OperatorSchedule.TakeWindow(8, 8, 16), 120);
+        lo = OperatorSchedule.Liveness(60, 5, 2, 10);
+        hi = OperatorSchedule.Liveness(120, 30, 9, 240);
+        // A minimum of three meets its own check at a 30 s budget: 2 * 60 s is above 30 + 30 s.
+        vm.expectRevert(OperatorSchedule.InvalidTakeWindow.selector);
+        this.build(lo, hi, OperatorSchedule.TakeWindow(4, 3, 8), 30);
+        (uint16 slots,,) = this.build(lo, hi, OperatorSchedule.TakeWindow(4, 3, 8), 29).takeWindow();
+        assertEq(slots, 4);
+        // Under a head tolerance below the operator's 15 s stop margin, the margin bounds the take.
+        OperatorSchedule.Liveness memory tight = OperatorSchedule.Liveness(60, 5, 5, 200);
+        vm.expectRevert(OperatorSchedule.InvalidTakeWindow.selector);
+        this.buildUnder(tight, lo, hi, OperatorSchedule.TakeWindow(4, 3, 8), 45);
+        (slots,,) = this.buildUnder(tight, lo, hi, OperatorSchedule.TakeWindow(4, 3, 8), 44).takeWindow();
+        assertEq(slots, 4);
+    }
+
+    /// The window's maximum bounds it on its own, inclusively: under five misses at 60 s and a 30 s
+    /// tolerance, four slots leave a skip's take (one slot, above the 10 s budget and the tolerance),
+    /// so a window of four is refused only for passing a maximum of three, which is itself accepted.
+    function test_TheTakeWindowsMaximumBoundsItInclusively() public {
+        OperatorSchedule.Liveness memory rule = OperatorSchedule.Liveness(60, 30, 5, 200);
+        OperatorSchedule.Liveness memory lo = OperatorSchedule.Liveness(60, 5, 2, 10);
+        OperatorSchedule.Liveness memory hi = OperatorSchedule.Liveness(120, 30, 9, 240);
+        vm.expectRevert(OperatorSchedule.InvalidTakeWindow.selector);
+        this.buildUnder(rule, lo, hi, OperatorSchedule.TakeWindow(4, 2, 3), 10);
+        OperatorSchedule capped = this.buildUnder(rule, lo, hi, OperatorSchedule.TakeWindow(3, 2, 3), 10);
+        vm.startPrank(address(governance));
+        vm.expectRevert(OperatorSchedule.InvalidTakeWindow.selector);
+        capped.setTakeWindow(4);
+        capped.setTakeWindow(2);
+        capped.setTakeWindow(3);
+        vm.stopPrank();
+        (uint16 slots,,) = capped.takeWindow();
+        assertEq(slots, 3);
+    }
+
+    /// @dev `_build`, called externally, so an expected revert is caught at this call.
+    function build(
+        OperatorSchedule.Liveness memory lo,
+        OperatorSchedule.Liveness memory hi,
+        OperatorSchedule.TakeWindow memory window,
+        uint64 budget
+    ) external returns (OperatorSchedule) {
+        return _build(lo, hi, window, budget);
+    }
+
+    /// @dev `build` under the heartbeat rule `rule`.
+    function buildUnder(
+        OperatorSchedule.Liveness memory rule,
+        OperatorSchedule.Liveness memory lo,
+        OperatorSchedule.Liveness memory hi,
+        OperatorSchedule.TakeWindow memory window,
+        uint64 budget
+    ) external returns (OperatorSchedule) {
+        return new OperatorSchedule(registry, receiver, logHeads, rule, lo, hi, window, budget, BLOCK_MILLIS);
     }
 
     function test_TheTakeWindowsMinimumExceedsTheSwitchBudgetAnIntervalAndInclusion() public {
@@ -589,7 +671,7 @@ contract SkipScheduleTest is SkipTest {
         uint64 budget
     ) internal {
         vm.expectRevert(OperatorSchedule.InvalidTakeWindow.selector);
-        _build(lo, hi, window, budget);
+        this.build(lo, hi, window, budget);
     }
 }
 
@@ -707,6 +789,33 @@ contract UntakenTurnTest is SkipTest {
             _post(_incumbentHead());
         }
         _nextSlot(5, 240);
+    }
+
+    /// At every window the timelock can set under the rule in force, a turn left untaken while the
+    /// incumbent beats comes due for a skip early enough that the skip's member takes it, in the switch
+    /// budget, one interval and a head's inclusion, before the untaken-turn promotion is due, as
+    /// `skipDueAt` and `promotionDueAt` read them; windows that would not are refused.
+    function test_EveryWindowTheTimelockCanSetPutsASkipsTakeBeforeTheUntakenTurnPromotion() public {
+        (uint64 interval, uint64 tolerance,,) = schedule.liveness();
+        (,, uint16 maximum) = schedule.takeWindow();
+        uint256 accepted;
+        for (uint16 slots = 2; slots <= maximum; ++slots) {
+            uint256 state = vm.snapshotState();
+            vm.prank(address(governance));
+            try schedule.setTakeWindow(slots) {
+                ++accepted;
+                _startInOrder();
+                _beatingThrough(MISSES + 3);
+                uint64 skipDue = schedule.skipDueAt();
+                assertEq(skipDue, (_boundarySlot() + slots + 1) * INTERVAL, "the skip's count from the boundary");
+                uint256 margin = tolerance > 15 ? tolerance : 15;
+                assertGt(schedule.promotionDueAt() - skipDue, BUDGET + interval + margin, "no take before it");
+            } catch (bytes memory reason) {
+                assertEq(bytes4(reason), OperatorSchedule.InvalidTakeWindow.selector);
+            }
+            vm.revertToState(state);
+        }
+        assertEq(accepted, 3, "the windows of two to four slots");
     }
 
     function test_AnUntakenTurnIsPromotedPastTheBeatingIncumbent() public {

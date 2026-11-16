@@ -18,18 +18,20 @@ sol! {
 }
 
 /// The heartbeat rule the scenarios deploy with, as the forge tests' defaults: 60 s slots, 30 s
-/// tolerance, 5 misses, 200 blocks; its bounds; the switch budget and the pinned block time.
+/// tolerance, 5 misses, 200 blocks; its bounds, whose longest tolerance each deployment replaces with its
+/// rule's own; the switch budget and the pinned block time.
 const LIVENESS: (u64, u64, u16, u16) = (60, 30, 5, 200);
 const MINIMUMS: (u64, u64, u16, u16) = (30, 5, 2, 10);
 const MAXIMUMS: (u64, u64, u16, u16) = (120, 60, 9, 256);
-const SWITCH_BUDGET_SECS: u64 = 120;
+const SWITCH_BUDGET_SECS: u64 = 20;
 const BLOCK_MILLIS: u64 = 250;
 
-/// The least take window (#596) the bounds and `switch_budget` admit, as its minimum, its value and
-/// half its maximum: one slot past the minimum's first exceeds the budget plus the longest tolerance at
-/// the shortest interval.
-fn take_window(switch_budget: u64) -> (u16, u16, u16) {
-    let least = u16::try_from((switch_budget + MAXIMUMS.1) / MINIMUMS.0 + 2).expect("a take window in slots");
+/// The least take window (#596) the bounds, a longest tolerance of `tolerance` and `switch_budget`
+/// admit, as its minimum, its value and half its maximum: one slot past the minimum's first exceeds the
+/// budget plus the longest tolerance at the shortest interval. Under the scenarios' rules its misses
+/// leave a skip's member a take before the untaken-turn promotion, which the schedule requires.
+fn take_window(switch_budget: u64, tolerance: u64) -> (u16, u16, u16) {
+    let least = u16::try_from((switch_budget + tolerance) / MINIMUMS.0 + 2).expect("a take window in slots");
     (least, least, 2 * least)
 }
 
@@ -51,8 +53,8 @@ impl Chain {
         let from = self.accounts[0];
         let log_heads =
             deploy(&self.provider, from, "LogHeads.sol/LogHeads.json", &(self.vault,).abi_encode_params()).await;
-        let window = take_window(switch_budget);
-        let args = (self.registry, receiver, log_heads, rule, MINIMUMS, MAXIMUMS, window, switch_budget, BLOCK_MILLIS);
+        let (window, maximums) = (take_window(switch_budget, rule.1), (MAXIMUMS.0, rule.1, MAXIMUMS.2, MAXIMUMS.3));
+        let args = (self.registry, receiver, log_heads, rule, MINIMUMS, maximums, window, switch_budget, BLOCK_MILLIS);
         let schedule =
             deploy(&self.provider, from, "OperatorSchedule.sol/OperatorSchedule.json", &args.abi_encode_params()).await;
         (schedule, log_heads)

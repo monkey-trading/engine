@@ -30,9 +30,9 @@ use serde_json::json;
 use tokio::time::{sleep, timeout};
 
 use super::{
-    BOUNDARY_OFFSET_SECS, DAY_SECS, DIGEST_C, KEYS, RULE, SET_CLOSE_SECS, STAKES, Turn, checkpointSignerCall, drawCall,
-    etch_arb_sys, headsCall, latchesCall, receiveSeedCall, relayAliasCall, seedEpochCall, setRegistryCall,
-    setScheduleCall, setVaultCall, signerEpochCall, turnOfCall,
+    BOUNDARY_OFFSET_SECS, DAY_SECS, DIGEST_C, KEYS, RULE, SET_CLOSE_SECS, STAKES, SWITCH_BUDGET_SECS, Turn,
+    checkpointSignerCall, drawCall, etch_arb_sys, headsCall, latchesCall, receiveSeedCall, relayAliasCall,
+    seedEpochCall, setRegistryCall, setScheduleCall, setVaultCall, signerEpochCall, turnOfCall,
 };
 use crate::checkpoints::scenario::deploy;
 use crate::clock::now_ms;
@@ -92,7 +92,7 @@ async fn run() -> anyhow::Result<()> {
         &(chain.accounts[9], 1_606_824_023u64, DAY_SECS).abi_encode_params(),
     )
     .await;
-    let (schedule, log_heads) = chain.deploy_schedule_with(receiver, RULE, 60).await;
+    let (schedule, log_heads) = chain.deploy_schedule_with(receiver, RULE, SWITCH_BUDGET_SECS).await;
     chain.schedule = Some(schedule);
     let domain = engine_core::eip712::domain(31337, AccountId(chain.vault.into()));
     let services = Services::start(&chain.url, Arc::default(), domain).await?;

@@ -9,7 +9,9 @@ import {ScheduleTest} from "./helpers/ScheduleTest.sol";
 /// The schedule on five-minute turns, as a development stack deploys it: a turn starts every five
 /// minutes and names its member for five, and the take window spans at most a turn.
 contract ShortTurnsTest is ScheduleTest {
-    /// @dev A switch budget and heartbeat rule that fit a five-minute turn: test values only.
+    /// @dev A switch budget and heartbeat rule that fit a five-minute turn: test values only. Seven
+    /// misses at 20 s leave a skip's member a take before the untaken-turn promotion under the four-slot
+    /// window those bounds give: (7 - 4) * 20 s exceeds the budget and the 15 s stop margin.
     uint64 internal constant BUDGET = 30;
 
     address internal alice = makeAddr("alice");
@@ -119,7 +121,7 @@ contract ShortTurnsTest is ScheduleTest {
             registry,
             receiver_,
             heads,
-            OperatorSchedule.Liveness(20, 5, 3, 40),
+            OperatorSchedule.Liveness(20, 5, 7, 40),
             _shortMinimums(),
             _shortMaximums(),
             window,
@@ -133,6 +135,6 @@ contract ShortTurnsTest is ScheduleTest {
     }
 
     function _shortMaximums() internal pure returns (OperatorSchedule.Liveness memory) {
-        return OperatorSchedule.Liveness(30, 10, 5, 40);
+        return OperatorSchedule.Liveness(30, 10, 7, 40);
     }
 }
