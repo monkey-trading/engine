@@ -409,6 +409,8 @@ mod origin_tests;
 #[cfg(test)]
 mod proof_tests;
 #[cfg(test)]
+pub(crate) mod serve_tests;
+#[cfg(test)]
 mod signing_bench;
 #[cfg(test)]
 mod signing_tests;

@@ -237,12 +237,12 @@ impl World {
             rig.stop();
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let cfg = self.cfg_of(index);
+        let cfg = Arc::new(self.cfg_of(index));
         let trusted = TrustedClock::new(self.clock.clone(), self.samples.subscribe(), Duration::from_secs(10));
         let time = (self.samples.subscribe(), self.clock.clone() as Arc<dyn Clock>);
         let keys = (self.release(index), generation);
         let rig =
-            Rig::start(&cfg, &self.signing, (self.domain, keys), trusted, time, &self.log, &self.members, index).await;
+            Rig::start(cfg, &self.signing, (self.domain, keys), trusted, time, &self.log, &self.members, index).await;
         self.rig = Some((rig, index));
     }
 

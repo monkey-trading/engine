@@ -24,6 +24,7 @@ use crate::liveness::{Gate, Released};
 use crate::log::CheckpointDomain;
 use crate::log_heads::{Head, HeadsRpc, Heartbeat, Hold, Poster};
 use crate::sequencer::Request;
+use crate::standby::{Followed, Follower};
 use crate::tee::EnclaveKey;
 use crate::trusted_time::{Sample, TrustedClock};
 
@@ -40,6 +41,19 @@ pub(super) struct Rig {
     relayer: Address,
     pub poster: JoinHandle<anyhow::Result<()>>,
     tasks: Vec<JoinHandle<()>>,
+    /// Whether the members' followers go on following the operator's stream.
+    following: Following,
+    /// Their threads, joined at `stop`, which fails the scenario if one panicked.
+    followers: Vec<std::thread::JoinHandle<()>>,
+}
+
+/// Whether the followers go on: they stop once it is dropped, with the rig, however it ends.
+struct Following(Arc<AtomicBool>);
+
+impl Drop for Following {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 /// The synthetic log the operator sequences: each seq's cumulative prefix and stamp.
@@ -51,7 +65,7 @@ impl Rig {
     /// time from `samples` of `clock`, and the other members' links.
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn start(
-        cfg: &NodeConfig,
+        cfg: Arc<NodeConfig>,
         signing: &Arc<EnclaveKey>,
         (domain, keys): (LivenessDomain, (B256, u64)),
         trusted: TrustedClock,
@@ -60,6 +74,7 @@ impl Rig {
         members: &[Member],
         operator: usize,
     ) -> Self {
+        let cfg = &cfg;
         let checkpoints = cfg.checkpoints.as_ref().unwrap();
         let heads_cfg = cfg.log_heads.as_ref().unwrap();
         let vault = AccountId(domain.standby.vault.0.0);
@@ -153,19 +168,58 @@ impl Rig {
                 let _ = server.run().await;
             }));
         }
-        // The members' streams: each signed head reaches their copies as the operator signs it.
-        let mut heads = signed.clone();
-        let copies: Vec<_> =
-            members.iter().enumerate().filter(|(i, _)| *i != operator).map(|(_, m)| m.copy.clone()).collect();
-        tasks.push(tokio::spawn(async move {
-            while heads.changed().await.is_ok() {
-                let Some(head) = heads.borrow_and_update().clone() else { continue };
-                copies.iter().for_each(|copy| copy.signed_head(head.clone()));
-            }
-        }));
+        // The members' streams: the operator's API serves its signed heads, and each other member
+        // follows it with the production follower, which asks for heads and takes the ones its enclave
+        // signed into the member's copy.
+        let stream = Arc::new(
+            crate::api::Signing::new(
+                signing.clone(),
+                cfg.custody.chain_id,
+                vault,
+                Duration::from_secs(1),
+                trusted.clone(),
+            )
+            .with_liveness(gate.clone(), signed.clone(), watch::channel(None).1),
+        );
+        let origin = format!("http://{}", crate::api::serve_tests::serve_signing(stream).await);
+        let following = Following(Arc::new(AtomicBool::new(true)));
+        let mut followers = Vec::new();
+        for member in members.iter().enumerate().filter(|(i, _)| *i != operator).map(|(_, m)| m) {
+            let (copy, enclave, cfg, following) =
+                (member.copy.clone(), AccountId(signing.address()), cfg.clone(), following.0.clone());
+            let followed =
+                Followed { origin: origin.clone(), enclave, mirrors: Vec::new(), danger_accept_invalid_certs: false };
+            // The directory is made here, on the test's thread, which owns its removal; one per follower.
+            static FOLLOWERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let dir = crate::test_support::scratch_dir(&format!(
+                "liveness-follower-{}",
+                FOLLOWERS.fetch_add(1, Ordering::SeqCst)
+            ));
+            // The follower holds the replica's single-threaded state: it runs on a thread of its own.
+            followers.push(std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                runtime.block_on(async move {
+                    let mut follower = Follower::open(
+                        &dir,
+                        crate::test_support::SEGMENT_COMMANDS,
+                        checkpoint_domain,
+                        enclave,
+                        [enclave].into(),
+                        None,
+                        |_| {},
+                    )
+                    .unwrap();
+                    follower.link_with(copy);
+                    while following.load(Ordering::SeqCst) {
+                        let _ = follower.stint(&cfg, &followed, Duration::from_secs(2)).await;
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                });
+            }));
+        }
         let (sequencer_tx, _) = mpsc::channel::<Request>(1);
         let poster = tokio::spawn(poster.run(tip_rx, sequencer_tx));
-        Self { gate, benchmark, hold, released, tip, relayer: heads_cfg.relayer, poster, tasks }
+        Self { followers, gate, benchmark, hold, released, tip, relayer: heads_cfg.relayer, poster, tasks, following }
     }
 
     /// Takes the operator's relayer's funds, so its posts fail.
@@ -180,6 +234,10 @@ impl Rig {
 
     /// Stops every part.
     pub(super) fn stop(self) {
+        drop(self.following);
+        for follower in self.followers {
+            follower.join().expect("a member's follower panicked");
+        }
         self.poster.abort();
         self.tasks.iter().for_each(JoinHandle::abort);
     }

@@ -4,8 +4,9 @@
 //! - `Status`: the seq and cumulative prefix its copy durably holds, and the newest head of the asked
 //!   signer epoch it has seen, signed by its standby key over the asker's fresh nonce. The operator
 //!   asks for it as a member's confirmation, and any node asks for it before it sequences;
-//! - `Entries`: the copy's latest entries after a seq, which a promoted member fetches a gap with,
-//!   checking every one against its own copy's seal chain;
+//! - `Entries`: the copy's entries after an entry, or from its first, from the ring of its latest or else
+//!   its log on disk, which a promoted member fetches a gap with, checking every one against its own copy's
+//!   seal chain;
 //! - `Vouch`: a vouch for a candidate's standby key (`standby_key::vouch::answer`), signed with this
 //!   member's standby key while the schedule lists it as promotable;
 //! - `Attestation`: the latest vouch request quoted for its standby key, whose `engine.standby.v1`
@@ -52,7 +53,7 @@ use crate::trusted_time::TrustedClock;
 /// How many of the copy's latest entries a member keeps to answer `Entries` from.
 pub(crate) const RECENT_ENTRIES: usize = 16_384;
 /// The most bytes of entries one answer carries, under the frame limit.
-const ENTRIES_BYTES: usize = 768 * 1024;
+const ENTRIES_BYTES: usize = if cfg!(test) { 32 * 1024 } else { 768 * 1024 };
 /// How many signer epochs' newest heads a member keeps.
 const SEEN_EPOCHS: usize = 4;
 /// How many heads seen past the copy's latest command a member keeps to check as the copy reaches them.
@@ -81,8 +82,8 @@ const REBIND: Duration = if cfg!(test) { Duration::from_millis(100) } else { Dur
 pub(crate) enum Request {
     /// Its status under the asker's signer epoch, over the asker's fresh nonce.
     Status { epoch: u64, nonce: B256 },
-    /// Its copy's entries after the entry at `after`.
-    Entries { after: Offset },
+    /// Its copy's entries after the entry at `after`, or from its first for `None`.
+    Entries { after: Option<Offset> },
     /// A vouch for a standby key.
     Vouch { request: Box<VouchRequest> },
     /// Its standby key's attestation.
@@ -151,6 +152,8 @@ struct CopyState {
     /// The latest vouch request the member quoted for its standby key, which it answers `Attestation`
     /// with.
     attestation: Option<VouchRequest>,
+    /// The copy's log on disk, which answers an `Entries` question the ring does not.
+    durable_log: Option<entries::DurableLog>,
 }
 
 /// A signer epoch and the key a head of it was seen under: a reorg can hand an epoch number to another
@@ -243,6 +246,7 @@ impl Copy {
         state.links.clear();
         state.ahead.clear();
         state.recent.clear();
+        state.durable_log = None;
         (state.durable, state.sealer) = (None, None);
     }
 
@@ -329,34 +333,6 @@ impl Copy {
             sealer: state.sealer.unwrap_or(AccountId([0; 20])),
             seen: state.seen.get(&(epoch, key)).copied(),
         })
-    }
-
-    /// The copy's retained entries after the entry at `after`, oldest first, up to `ENTRIES_BYTES` of
-    /// JSON. Empty unless the copy retains the entry at `after` or the one right after it: a gap in
-    /// what is retained would leave the asker with entries it cannot chain.
-    pub(crate) fn entries_after(&self, after: Offset) -> Vec<(Offset, LogEntry)> {
-        let state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(start) = state.recent.iter().position(|(offset, _)| *offset > after) else { return Vec::new() };
-        // `after` is any peer's: the offsets right after it saturate rather than overflow.
-        let next = [after.next(), Offset::start_of(after.seq.saturating_add(1))];
-        let joined = match start {
-            0 => next.contains(&state.recent[0].0),
-            _ => state.recent[start - 1].0 == after,
-        };
-        if !joined {
-            return Vec::new();
-        }
-        let mut bytes = 0;
-        state
-            .recent
-            .iter()
-            .skip(start)
-            .take_while(|(_, entry)| {
-                bytes += serde_json::to_vec(entry).map_or(usize::MAX / 2, |encoded| encoded.len());
-                bytes <= ENTRIES_BYTES
-            })
-            .cloned()
-            .collect()
     }
 }
 
@@ -471,7 +447,7 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
                 let signature = self.standby.sign(status.digest(chain_id, vault, self.member, &nonce.0));
                 Ok(Reply::Status { member: self.member, status, signature })
             }
-            Request::Entries { after } => Ok(Reply::Entries { entries: self.copy.entries_after(*after) }),
+            Request::Entries { after } => Ok(Reply::Entries { entries: self.copy.entries(*after).await }),
             Request::Attestation => Ok(Reply::Attestation { request: self.copy.attestation(self.standby.address())? }),
             Request::Vouch { request } => {
                 let voucher = Voucher {
@@ -491,9 +467,12 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
 
 mod ask;
 mod attested;
+mod entries;
 mod state;
 pub(crate) use ask::{Asking, Tcp, describe, verified_status};
 pub(crate) mod slots;
 
+#[cfg(test)]
+mod durable_tests;
 #[cfg(test)]
 mod tests;

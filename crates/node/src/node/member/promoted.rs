@@ -74,7 +74,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             // A refused entry may have left the replica ahead of the copy: it is built again from the copy.
             warn!(?source, "the copy refused a source's entries for the gap: asking the others on a rebuilt replica");
             refused.insert(source);
-            (follower, stats, history, marks) = self.open(None).await?;
+            (follower, stats, history, marks) =
+                self.open_admitting(None, None, &[promotion.head_seq, promotion.checkpoint_seq]).await?;
         }
         // The vault's checkpoint at the copy's tip may be one no member received: the copy's state
         // there anchors the start when its root is the vault's.

@@ -1,8 +1,8 @@
+use super::serve_tests::serve_history;
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::net::SocketAddr;
-use std::num::NonZeroU32;
 use std::path::Path;
 use std::time::Duration;
 
@@ -17,7 +17,6 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use crate::clock::Clock;
 use crate::clock::SystemClock;
 use crate::clock::test_clock::TestClock;
-use crate::config::RateLimit;
 use crate::history::{HistoryEvent, INDEX_FILE, account_of};
 use crate::log::{LogEntry, MANIFEST, Manifest, Offset, SegmentedLog, segment_seq};
 use crate::sequencer::fixture_tests::finished_genesis;
@@ -301,7 +300,7 @@ async fn serve(node: &TestSequencer, dir: &Path) -> SocketAddr {
 }
 
 /// A mock attestation of a fresh key's address, with zero config and TLS key hashes.
-fn mock_attestation() -> Arc<Attestation> {
+pub(super) fn mock_attestation() -> Arc<Attestation> {
     let bundle = AttestationBundle {
         enclave_address: EnclaveKey::generate().address(),
         config_sha256: [0; 32],
@@ -328,41 +327,6 @@ async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
         limits: Arc::new(ApiLimits::new(&dev_config().api)),
         history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
-        marks: crate::test_support::marks_reader(),
-        stats: crate::test_support::stats(),
-        emission_budget: None,
-        staking_terms: None,
-        collateral: None,
-        listing: Default::default(),
-        operators: None,
-        operator_hostname: None,
-        signing: crate::test_support::signing(),
-    })
-    .await
-}
-
-/// Serves the API with only `history` behind it, so it outlives any sequencer. Its per-client rate
-/// lets one client page a long log an event at a time.
-async fn serve_history(history: Reader) -> SocketAddr {
-    let mut api = dev_config().api;
-    let ample = NonZeroU32::new(1_000_000).unwrap();
-    api.per_ip = RateLimit { per_second: ample, burst: ample };
-    serve_state(ApiState {
-        protocol: engine_core::protocol::ProtocolVersion::V23,
-        access: None,
-        tx: mpsc::channel(1).0,
-        stream: broadcast::channel(1).0,
-        attestation: mock_attestation(),
-        auth: ClientAuth::Unsigned,
-        operator: dev_config().operator().unwrap(),
-        mock_custody: false,
-        payouts_enabled: false,
-        clock: Arc::new(SystemClock),
-        log_dir: PathBuf::new(),
-        manifest: watch::channel(Manifest::default()).1,
-        backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
-        limits: Arc::new(ApiLimits::new(&api)),
-        history,
         marks: crate::test_support::marks_reader(),
         stats: crate::test_support::stats(),
         emission_budget: None,

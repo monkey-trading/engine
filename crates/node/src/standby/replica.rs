@@ -19,8 +19,9 @@ use super::open_copy_replayed;
 use super::operator::Followed;
 use crate::config::NodeConfig;
 use crate::history::marks::fold::MarkFold;
-use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, LogWriter, Offset, offset_of};
+use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, LogWriter, Manifest, Offset, offset_of};
 use crate::log_check::answer::CheckedHeads;
+use crate::log_heads::Head;
 use crate::sequencer::ReplayedLog;
 use crate::sequencer::replay::LiveReplay;
 use crate::stats::Stats;
@@ -38,6 +39,13 @@ pub(crate) struct Follower {
     /// The newest entries the copy held when it was opened, with their offsets, for the member link
     /// to serve once one links the copy.
     opened: VecDeque<(Offset, LogEntry)>,
+    /// The copy's directory and the manifest its writer publishes, which the member link reads the copy
+    /// from beyond the entries it keeps.
+    dir: std::path::PathBuf,
+    manifest: tokio::sync::watch::Receiver<Manifest>,
+    /// The signers the vault recorded, whose seals a log taken from its first entry may carry before any
+    /// checkpoint of the copy names them.
+    signers: BTreeSet<AccountId>,
 }
 
 impl Follower {
@@ -82,6 +90,7 @@ impl Follower {
         (posted, keep): (Option<(u64, B256)>, &[u64]),
         mut observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
+        let recorded = signers.clone();
         let fresh = || {
             let mut replica = LiveReplay::new(domain, signers.clone());
             keep.iter().for_each(|seq| replica.keep(*seq));
@@ -122,7 +131,24 @@ impl Follower {
                 Ok(())
             })
             .context("the copy does not replay")?;
-        Ok(Self { writer, copied, replica, link: None, opened })
+        let (published, manifest) = tokio::sync::watch::channel(Manifest::default());
+        let mut writer = writer;
+        writer.publish_on(published);
+        Ok(Self { writer, copied, replica, link: None, opened, dir: dir.to_owned(), manifest, signers: recorded })
+    }
+
+    /// Drops the entries the copy held when it was opened, once the copy may take others the link has not
+    /// recorded: a link given them would serve a ring with a hole in it.
+    fn forget_opened(&mut self) {
+        if self.link.is_none() {
+            self.opened.clear();
+        }
+    }
+
+    /// Keeps the replica's link and checkpoint at `seq` past its retention windows once taken (see
+    /// `LiveReplay::keep`).
+    pub(crate) fn keep(&mut self, seq: u64) {
+        self.replica.keep(seq);
     }
 
     /// The replica.
@@ -173,6 +199,7 @@ impl Follower {
         // signs from its promotion's block, before the set this replica was built with names it.
         self.copied.admit(followed.enclave);
         self.replica.admit(followed.enclave);
+        self.forget_opened();
         let link = self.link.as_ref();
         follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica), link).await
     }
@@ -190,6 +217,7 @@ impl Follower {
         budget: Duration,
         work: impl Future<Output = T>,
     ) -> (T, anyhow::Result<()>) {
+        self.forget_opened();
         let (ended, until) = tokio::sync::watch::channel(false);
         let work = async move {
             let output = work.await;
@@ -248,6 +276,7 @@ impl Follower {
     /// retains, its head as durable, and the entries it held when it was opened, to serve.
     pub(crate) fn link_with(&mut self, link: crate::liveness::link::Copy) {
         link.rebuilt();
+        link.logged(self.dir.clone(), self.manifest.clone());
         link.served(std::mem::take(&mut self.opened));
         for retained in self.replica.retained_links() {
             link.linked(retained.seq, retained.link, retained.sealer);
@@ -268,10 +297,25 @@ impl Follower {
     ///   differently or does not extend it, or the replica refuses one (`ReplicaRefused`)
     /// - the copy cannot be written or synced
     pub(crate) fn take_tail(&mut self, after: Offset, bytes: &[u8]) -> anyhow::Result<u64> {
-        ensure!(self.replica.last_seq() == Some(after.seq), "the tail follows {after}, not the copy's tip");
-        self.copied.begin_after(after);
-        let mut previous = Some(after);
-        let mut taken = 0;
+        self.take_entries(Some(after), bytes)
+    }
+
+    /// `take_tail`, or for `None` the whole log onto an empty copy, from its first command.
+    /// Error cases:
+    /// - as `take_tail`, or `None` for a copy that holds a command
+    pub(crate) fn take_entries(&mut self, after: Option<Offset>, bytes: &[u8]) -> anyhow::Result<u64> {
+        match after {
+            Some(after) => {
+                ensure!(self.replica.last_seq() == Some(after.seq), "the tail follows {after}, not the copy's tip");
+                self.copied.begin_after(after);
+            }
+            None => ensure!(self.replica.last_seq().is_none(), "the entries start the log, but the copy holds some"),
+        }
+        // A page may be sealed by a key an earlier signer change replaced, before the checkpoint that names
+        // it: a copy opened again between pages has lost that admission.
+        self.signers.iter().for_each(|signer| self.copied.admit(*signer));
+        let mut previous = after;
+        let (mut taken, mut last) = (0, None);
         for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
             let entry: LogEntry = serde_json::from_slice(line).context("a tail line is not a log entry")?;
             let offset = offset_of(previous, &entry)?;
@@ -279,11 +323,31 @@ impl Follower {
             if let Step::Extends(link) = self.copied.check(offset, &entry)? {
                 self.replica.apply(&entry).map_err(|e| e.context(ReplicaRefused))?;
                 self.writer.append(&entry).context("appending a tail entry to the copy")?;
+                match &self.link {
+                    Some(link) => {
+                        link.appended(offset, &entry);
+                        if let LogEntry::Command(command) = &entry {
+                            link.linked(
+                                command.sequenced.seq,
+                                self.replica.head_link(),
+                                command.seal.as_ref().map(|seal| seal.signer),
+                            );
+                            last = Some((
+                                Head { seq: command.sequenced.seq, link: self.replica.head_link() },
+                                command.seal.as_ref().map(|seal| seal.signer),
+                            ));
+                        }
+                    }
+                    None => self.forget_opened(),
+                }
                 self.copied.extend(offset, entry, link);
                 taken += 1;
             }
         }
         self.writer.sync().context("syncing the copy")?;
+        if let (Some(link), Some((head, sealer))) = (&self.link, last) {
+            link.durable(head, sealer);
+        }
         Ok(taken)
     }
 

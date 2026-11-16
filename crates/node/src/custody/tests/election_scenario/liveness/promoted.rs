@@ -7,7 +7,8 @@
 //! it then never sees paid, and is killed. It checks that the callers promote the next member, whose
 //! node starts from its copy under its standby key and fills an order within its start budget, printed,
 //! of the promotion and within `(heartbeatMisses + 1) x heartbeatInterval` plus that budget of A's
-//! last head; that its first checkpoint lands once the promotion is final; that it vouches for its
+//! last head; that it posts no checkpoint while the promotion is not final, finality held a block short, and
+//! that its first checkpoint, over the one the promotion fixed, lands once it is; that it vouches for its
 //! replacement standby key with the signer key it now holds; that it reissues A's
 //! authorization under the promotion's epoch, which pays once while A's reverts; and that its log
 //! replays across the change of signer.
@@ -116,13 +117,7 @@ async fn run() -> anyhow::Result<()> {
     }
     let drawn = draw_for(&chain, (schedule, receiver), turn, seats[0].candidate).await?;
     chain.mine_at(now_s()).await;
-    let miner = chain.provider.clone();
-    let mining = tokio::spawn(async move {
-        loop {
-            let _ = miner.request::<_, String>("evm_mine", ()).await;
-            sleep(Duration::from_secs(1)).await;
-        }
-    });
+    let mut mining = mine(&chain);
     let sealer = MockSealer { launch_digest: DIGEST_A };
     KeyStore::create(
         &seats[0].dir.join("keys"),
@@ -186,15 +181,50 @@ async fn run() -> anyhow::Result<()> {
 
     // A dies. The callers witness its missed slots and promote the next member.
     let last_head = chain.view(log_heads, headsCall { epoch: latched_seq.signerEpoch }).await;
-    let checkpoint_before = chain.view(vault, latestSeqCall {}).await;
     seats[0].kill().await?;
     let killed = Instant::now();
-    let epoch = until("a promotion", window + Duration::from_secs(120), &mut seats[1..], async || {
-        let epoch = chain.view(vault, signerEpochCall {}).await;
-        (epoch > 1).then_some(epoch)
+    // From here nothing mines but the test, a block a second, and it looks for the promotion between blocks every
+    // tenth of a second: it stops mining at the promotion's block, so finality, two blocks behind the
+    // head, cannot reach it. Nothing then mines until the checks below have run, so the vault's
+    // finalized view still names A's key, and what a node sends waits in the pool, where they see it.
+    mining.abort();
+    chain.rpc("evm_setAutomine", json!([false])).await;
+    let epoch = timeout(window + Duration::from_secs(120), async {
+        loop {
+            for seat in &mut seats[1..] {
+                seat.check()?;
+            }
+            for _ in 0..10 {
+                let epoch = chain.view(vault, signerEpochCall {}).await;
+                if epoch > 1 {
+                    return anyhow::Ok(epoch);
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+            chain.rpc("evm_mine", json!([])).await;
+        }
     })
-    .await?;
+    .await
+    .context("waiting for a promotion")??;
     let promoted_at = Instant::now();
+    // The block the promotion landed in, and finality's room: a block is final once two follow it.
+    let head = block_number(&chain).await;
+    let mut promotion_block = head;
+    while promotion_block > 0
+        && chain.view_at(vault, signerEpochCall {}, &format!("{:#x}", promotion_block - 1)).await >= epoch
+    {
+        promotion_block -= 1;
+    }
+    ensure!(
+        head <= promotion_block + 1,
+        "{} blocks followed the promotion: finality could not be held",
+        head - promotion_block
+    );
+    ensure!(
+        chain.view_at(vault, signerEpochCall {}, "finalized").await < epoch,
+        "the promotion is already final: finality could not be held behind it"
+    );
+    let held = chain.view(vault, latestSeqCall {}).await;
     let signer = AccountId(chain.view(vault, checkpointSignerCall {}).await.into());
     let p = seats.iter().position(|seat| seat.standby == signer).context("the vault names no member's standby key")?;
     println!(
@@ -231,13 +261,41 @@ async fn run() -> anyhow::Result<()> {
     );
     ensure!(since_head <= window + START_BUDGET, "the first fill came {since_head:?} after A's last head");
 
-    // Its first checkpoint lands once the promotion is final, signed by its standby key.
+    // While finality is held it posts no checkpoint, though it trades and its relayer is funded: nothing
+    // of its relayer's is in the pool, and with one block after the promotion, which is still not final,
+    // nothing of its relayer's lands.
+    sleep(Duration::from_secs(20)).await;
+    seats[p].check()?;
+    let relayer = format!("{:#x}", chain.accounts[8]);
+    let sent_by_relayer = async || {
+        let pool = chain.rpc_result("txpool_content", json!([])).await;
+        let sent = pool["pending"].as_object().into_iter().chain(pool["queued"].as_object()).flatten();
+        sent.clone().any(|(from, _)| from.eq_ignore_ascii_case(&relayer))
+    };
+    ensure!(!sent_by_relayer().await, "the promoted member sent a checkpoint before its promotion was final");
+    if head == promotion_block {
+        chain.rpc("evm_mine", json!([])).await;
+    }
+    sleep(Duration::from_secs(8)).await;
+    seats[p].check()?;
+    ensure!(
+        chain.view_at(vault, signerEpochCall {}, "finalized").await < epoch,
+        "the promotion became final with one block after it"
+    );
+    ensure!(chain.view(vault, latestSeqCall {}).await == held, "a checkpoint landed before the promotion was final");
+    ensure!(!sent_by_relayer().await, "the promoted member sent a checkpoint before its promotion was final");
+    println!("PASS: {} posted no checkpoint while its promotion was not final", seats[p].name);
+
+    // Finality released, its first checkpoint extends the one the promotion fixed (the vault accepts a
+    // checkpoint only over its latest), signed by its standby key.
+    chain.rpc("evm_setAutomine", json!([true])).await;
+    mining = mine(&chain);
     until("the promoted member's first checkpoint", Duration::from_secs(120), &mut seats, async || {
         let seq = chain.view(vault, latestSeqCall {}).await;
-        (seq > checkpoint_before).then_some(seq)
+        (seq > held).then_some(seq)
     })
     .await?;
-    println!("PASS: {}'s first checkpoint landed once the promotion was final", seats[p].name);
+    println!("PASS: {}'s first checkpoint landed once the promotion was final, over the one it fixed", seats[p].name);
 
     // The promotion consumed its standby key: it vouches for the replacement with the signer key it
     // now holds, which a set of no other member needs, before asking another member.
@@ -283,6 +341,23 @@ async fn run() -> anyhow::Result<()> {
     ensure!(replayed.checkpoint_signers == signers, "the replay names {:?}", replayed.checkpoint_signers);
     println!("PASS: {}'s log replays across the change of signer, each checkpoint by an attested key", seats[p].name);
     Ok(())
+}
+
+/// The chain's latest block number.
+async fn block_number(chain: &Chain) -> u64 {
+    let number = chain.rpc_result("eth_blockNumber", json!([])).await;
+    u64::from_str_radix(number.as_str().unwrap_or("0x0").trim_start_matches("0x"), 16).unwrap_or(0)
+}
+
+/// A block a second on the chain, until the task is aborted.
+fn mine(chain: &Chain) -> tokio::task::JoinHandle<()> {
+    let miner = chain.provider.clone();
+    tokio::spawn(async move {
+        loop {
+            let _ = miner.request::<_, String>("evm_mine", ()).await;
+            sleep(Duration::from_secs(1)).await;
+        }
+    })
 }
 
 /// True time on this host, in whole seconds: the chain follows it once the turns are drawn.
