@@ -728,7 +728,7 @@ an index: load only the rule whose hint matches the current action.
   venues streaming, or `reconnect_max` more after a full outage, then a second connection to each venue with each
   connection stalled and dropped in turn and every market priced throughout, and with `--soak` the manual soak before each release
   (`feeds/tests/venue_soak.rs`): the template's crypto connections to the live venues for 30 minutes, each dropped in
-  turn and then all at once, every two minutes, each market priced within 10 s of each drop; `dev-loss-trigger.sh`, the house loss
+  turn and then all at once, every two minutes, no market unpriced for longer than 10 s; `dev-loss-trigger.sh`, the house loss
   trigger's dev scenario from `V62` against the same stand-ins (`feeds/tests/loss_trigger.rs`, production's zero threshold
   and a 30 s cooldown): BTC at level 2 on the move that puts the house behind on the day, and back down after the cooldown
   once it is ahead, twice, then a replay and restart; `dev-cme-feeds.sh`, the CME Group feed dev scenario against

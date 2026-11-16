@@ -14,8 +14,8 @@
 # With --soak [minutes] it runs the manual soak instead, before each release and never in CI: the
 # same markets from the live venues, over every connection the production template opens for them,
 # for 30 minutes unless given, dropping each connection alone in turn, then all of them, every two
-# minutes. Every market is priced within 10 s of each drop and never unpriced for longer between
-# them. Needs Cargo and the venues' public feeds.
+# minutes. No market is unpriced for longer than 10 s, through a drop or between them, and each
+# time one is the soak prints for how long. Needs Cargo and the venues' public feeds.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 test="feeds::tests::venue_load::dev_scenario_venue_load"

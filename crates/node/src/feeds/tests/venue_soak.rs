@@ -1,10 +1,10 @@
 //! The manual soak: BTC-USD and ETH-USD priced from the live venues over every connection the
 //! production template opens for them, at its feed timings, with the node's monitor watching, for
 //! `SOAK_MINUTES` (30 unless set). Every `DROP_EVERY` it drops connections, as a network fault or a
-//! restart does, each reopened at once: each connection alone in turn, then all of them. Every market
-//! is priced within `DEADLINE` of each drop and is never unpriced for longer than `DEADLINE` between
-//! them. It needs the venues, so it runs before each release, by `scripts/dev-venue-load.sh --soak`,
-//! and never in CI.
+//! restart does, each reopened at once: each connection alone in turn, then all of them. No market is
+//! unpriced for longer than `DEADLINE`, through a drop or between them, and each time one is it
+//! prints for how long. It needs the venues, so it runs before each release, by
+//! `scripts/dev-venue-load.sh --soak`, and never in CI.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -28,8 +28,8 @@ use crate::test_support::{capture_alerts_and_resolutions, dev_config, scratch_di
 /// How often connections are dropped.
 const DROP_EVERY: Duration = Duration::from_secs(120);
 
-/// How often each market's price is read between drops.
-const POLL: Duration = Duration::from_millis(250);
+/// How often each market's price is read.
+const POLL: Duration = Duration::from_millis(100);
 
 /// The template's connections that quote `MARKETS`, the crypto venues' public feeds, each keeping
 /// only those markets' symbols.
@@ -71,7 +71,7 @@ async fn soak_live_venues() {
 
     let end = Instant::now() + Duration::from_secs(60 * minutes);
     let (mut drops, mut next_drop) = (0, Instant::now() + DROP_EVERY);
-    let (mut unpriced_since, mut longest) = (BTreeMap::new(), Duration::ZERO);
+    let (mut unpriced_since, mut longest) = (BTreeMap::<MarketId, Instant>::new(), Duration::ZERO);
     while Instant::now() < end {
         if Instant::now() >= next_drop {
             let dropped: Vec<usize> = match drops % (connections.len() + 1) {
@@ -83,17 +83,19 @@ async fn soak_live_venues() {
                 feeds[at].abort();
                 feeds[at] = spawn(&connections[at], timing, &tx);
             }
-            wait_priced(&tx, &MARKETS, DEADLINE, &format!("drop {drops} of {named:?}")).await;
+            println!("drop {drops}: {named:?}");
             (drops, next_drop) = (drops + 1, next_drop + DROP_EVERY);
-            unpriced_since.clear();
         }
         for market in MARKETS {
             if priced(&tx, market).await {
-                let run = unpriced_since.remove(&market).map(|since: Instant| since.elapsed());
-                longest = longest.max(run.unwrap_or_default());
+                if let Some(since) = unpriced_since.remove(&market) {
+                    let run = since.elapsed();
+                    println!("market {market} unpriced for {run:?}");
+                    longest = longest.max(run);
+                }
             } else {
                 let since = *unpriced_since.entry(market).or_insert_with(Instant::now);
-                assert!(since.elapsed() <= DEADLINE, "market {market} unpriced for over {DEADLINE:?} between drops");
+                assert!(since.elapsed() <= DEADLINE, "market {market} unpriced for over {DEADLINE:?}");
             }
         }
         sleep(POLL).await;
@@ -102,5 +104,5 @@ async fn soak_live_venues() {
     while let Ok(alert) = alerts.try_recv() {
         *raised.entry(alert.get("alert").cloned().unwrap_or_default()).or_default() += 1;
     }
-    println!("{minutes} minutes, {drops} drops, longest unpriced between drops {longest:?}, alerts {raised:?}");
+    println!("{minutes} minutes, {drops} drops, longest unpriced {longest:?}, alerts {raised:?}");
 }

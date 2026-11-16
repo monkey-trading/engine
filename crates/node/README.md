@@ -1506,8 +1506,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   a second connection to each venue, each connection stalled and dropped in turn, every market
   priced throughout
 - `src/feeds/tests/venue_soak.rs` — the manual soak: the template's crypto connections to the live
-  venues, each dropped in turn and then all at once, every market priced within the deadline of each
-  drop and never unpriced longer between them; ignored, and run only by `dev-venue-load.sh --soak`
+  venues, each dropped in turn and then all at once, no market unpriced for longer than the deadline
+  and each time one is printed; ignored, and run only by `dev-venue-load.sh --soak`
 - `src/feeds/tests/silent.rs` — silent and stale symbols resubscribed until they quote: a stale
   product alone while the other quotes on, a later episode alone too, one still stale alone then on
   a new connection, a halted product alone each time, and a Kraken symbol on each new connection
