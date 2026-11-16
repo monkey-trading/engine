@@ -1,7 +1,8 @@
 //! `V51`: under daily turns the operator's share counts a member's time in office from its
 //! `TurnTaken` to the end of its turn. The time between a turn's boundary and its member's
 //! `TurnTaken`, and an incumbent's time past its turn, go to stakers. From `V53` the account in office
-//! before any turn is in effect holds it only until the first turn applies.
+//! before any turn is in effect holds it only until the first turn applies. From `V71` a promoted
+//! member whose turn applied only after its end holds the office until the next turn applies.
 
 use engine_core::staking::TimeInOffice;
 use engine_core::turns::{DAY_MS, RegistryRotationSet, RegistryTurn, SetMember, TurnReason, boundary};
@@ -10,6 +11,9 @@ use super::*;
 
 const HOUR_MS: Millis = 60 * 60 * 1000;
 const MEMBER: AccountId = AccountId([0xd1; 20]);
+/// A second member of set 1, which a promotion moves a turn to.
+const PROMOTED: AccountId = AccountId([0xd2; 20]);
+const PROMOTED_SEED: u8 = 0x6b;
 
 /// `at` under `V51` with rotation on and a set naming `MEMBER` under `key()` mirrored now.
 fn with_set(excess: u128) -> Harness {
@@ -20,7 +24,11 @@ fn with_set(excess: u128) -> Harness {
 fn with_set_under(version: ProtocolVersion, excess: u128) -> Harness {
     let mut h = at(version, excess);
     switch(&mut h, true);
-    let members = vec![SetMember { candidate: MEMBER, admin_key: key(), weight: TokenUnits(1) }];
+    let promoted = Client::new(PROMOTED_SEED).account;
+    let members = vec![
+        SetMember { candidate: MEMBER, admin_key: key(), weight: TokenUnits(1) },
+        SetMember { candidate: PROMOTED, admin_key: promoted, weight: TokenUnits(1) },
+    ];
     let (block, chain_ref) = (h.log.len() as u64, "0xset:1".to_owned());
     let effective_at = h.ts + NOTICE_MS;
     let adoption = RegistryRotationSet { set: 1, epoch: 1, effective_at, quorum: true, members, block, chain_ref };
@@ -69,7 +77,17 @@ fn epoch_with_boundary(h: &Harness) -> (Millis, u64) {
 
 #[test]
 fn a_member_earns_from_its_turn_taken_to_the_end_of_its_turn() {
-    let mut h = with_set(1_000_000_000);
+    earns_to_the_end_of_its_turn(ProtocolVersion::V51);
+}
+
+/// `V71` leaves a drawn turn's office ending at its turn's end, with no later turn drawn.
+#[test]
+fn a_drawn_member_still_earns_only_to_the_end_of_its_turn_under_v71() {
+    earns_to_the_end_of_its_turn(ProtocolVersion::V71);
+}
+
+fn earns_to_the_end_of_its_turn(version: ProtocolVersion) {
+    let mut h = with_set_under(version, 1_000_000_000);
     let (start, turn) = epoch_with_boundary(&h);
     let begins = boundary(turn).unwrap();
     assign(&mut h, turn);
@@ -150,4 +168,89 @@ fn before_any_turn_the_account_in_office_holds_it_only_until_the_first_turn_appl
         expected.sort();
         assert_eq!(shares(&events), expected, "{version:?}");
     }
+}
+
+#[test]
+fn a_promotion_applied_after_its_turns_end_earns_until_a_later_turn_applies_from_v71() {
+    for version in [ProtocolVersion::V69, ProtocolVersion::V71] {
+        let mut h = with_set_under(version, 1_000_000_000);
+        let (start, turn) = epoch_with_boundary(&h);
+        let ends = boundary(turn).unwrap() + DAY_MS;
+        assign(&mut h, turn);
+        h.advance_to(start);
+        h.cmd(Command::Tick);
+        // The drawn member holds the turn to its end, with no later turn drawn.
+        h.advance_to(boundary(turn).unwrap());
+        h.cmd(Command::TurnTaken { turn, release: alloy_primitives::B256::repeat_byte(7) });
+        h.advance_to(ends + 10 * 60_000);
+        h.cmd(Command::Tick);
+        // The schedule finalises the turn's promotion of the second member only now.
+        let (block, chain_ref) = (h.log.len() as u64, "0xturn:late".to_owned());
+        let (reason, admin_key) = (TurnReason::Promotion, Client::new(PROMOTED_SEED).account);
+        let promotion =
+            RegistryTurn { turn, set: 1, position: 1, reason, candidate: PROMOTED, admin_key, block, chain_ref };
+        let events = h.cmd(Command::AssignTurn(promotion));
+        if version == ProtocolVersion::V69 {
+            assert!(matches!(events.last(), Some(Event::TurnRefused { .. })), "{events:?}");
+            continue;
+        }
+        assert!(matches!(events.last(), Some(Event::TurnAssigned { .. })), "{events:?}");
+        let release = alloy_primitives::B256::repeat_byte(8);
+        let taken = h.cmd(Command::TurnTaken { turn, release });
+        assert_eq!(taken.last(), Some(&Event::TurnTaken { turn, candidate: PROMOTED, release }));
+        let served = |h: &Harness| office(h).served.get(&PROMOTED).copied().unwrap_or(0);
+        let (config, before, taken_at) = (h.engine.staking().unwrap().config, served(&h), h.ts);
+
+        // Half an hour on, a later turn is mirrored that applies at once. Ten minutes later the next
+        // command finds it due: the promoted member earns up to its application, not to that command.
+        h.advance(30 * 60_000);
+        let (block, chain_ref) = (h.log.len() as u64, "0xturn:next".to_owned());
+        let next = RegistryTurn {
+            turn: turn + 1,
+            set: 1,
+            position: 0,
+            reason: TurnReason::Skip,
+            candidate: MEMBER,
+            admin_key: key(),
+            block,
+            chain_ref,
+        };
+        let events = h.cmd(Command::AssignTurn(next));
+        assert!(matches!(events.last(), Some(Event::TurnAssigned { .. })), "{events:?}");
+        let applies_at = h.ts;
+        h.advance(10 * 60_000);
+        assert_eq!(config.epochs_elapsed(taken_at), config.epochs_elapsed(h.ts), "a close runs in between");
+        h.cmd(Command::Tick);
+        assert_eq!(h.engine.daily_turns().in_effect.map(|turn| turn.turn), Some(turn + 1));
+        assert_eq!(served(&h) - before, applies_at - taken_at);
+    }
+}
+
+#[test]
+fn a_promotion_mirrored_before_its_turns_end_also_holds_the_office_past_it_from_v71() {
+    let mut h = with_set_under(ProtocolVersion::V71, 1_000_000_000);
+    let (start, turn) = epoch_with_boundary(&h);
+    let ends = boundary(turn).unwrap() + DAY_MS;
+    assign(&mut h, turn);
+    h.advance_to(start);
+    h.cmd(Command::Tick);
+    h.advance_to(boundary(turn).unwrap());
+    h.cmd(Command::TurnTaken { turn, release: alloy_primitives::B256::repeat_byte(7) });
+    // The promotion is mirrored five minutes before the turn's end and taken five minutes after it.
+    h.advance_to(ends - 5 * 60_000);
+    let (block, chain_ref) = (h.log.len() as u64, "0xturn:in-time".to_owned());
+    let (reason, admin_key) = (TurnReason::Promotion, Client::new(PROMOTED_SEED).account);
+    let promotion =
+        RegistryTurn { turn, set: 1, position: 1, reason, candidate: PROMOTED, admin_key, block, chain_ref };
+    let events = h.cmd(Command::AssignTurn(promotion));
+    assert!(matches!(events.last(), Some(Event::TurnAssigned { .. })), "{events:?}");
+    h.advance_to(ends + 5 * 60_000);
+    let release = alloy_primitives::B256::repeat_byte(9);
+    h.cmd(Command::TurnTaken { turn, release });
+    let config = h.engine.staking().unwrap().config;
+    let (before, taken_at) = (office(&h).served.get(&PROMOTED).copied().unwrap_or(0), h.ts);
+    h.advance(30 * 60_000);
+    assert_eq!(config.epochs_elapsed(taken_at), config.epochs_elapsed(h.ts), "a close runs in between");
+    h.cmd(Command::Tick);
+    assert_eq!(office(&h).served.get(&PROMOTED).copied().unwrap_or(0) - before, 30 * 60_000);
 }

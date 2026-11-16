@@ -21,10 +21,16 @@
 //!   operator's share counts the member's time in office from then to the end of its turn; time
 //!   before a member takes its turn, or after its turn has ended, goes to stakers. From `V53` the
 //!   account in office before any turn is in effect holds it only until the first turn applies.
+//! - From `V71` a promotion the schedule finalises after its turn's end, which it can do in the last
+//!   drawn turn while nobody has drawn the next, applies when mirrored unless a later turn is in
+//!   effect, from the set that drew the turn, which stays until a later turn supersedes it; a
+//!   promotion's member holds the office until the next turn applies.
 //!
 //! A mirror that contradicts the log (before `V51` or staking, a reference already credited, a set
 //! out of order or malformed) is refused as `ElectionRejected`, as an election's is, and holds the
 //! watcher.
+
+mod office;
 
 use std::collections::BTreeMap;
 
@@ -249,7 +255,8 @@ impl Engine {
     }
 
     /// Mirrors the schedule's `RotationSetAdopted` event: records the set, and forgets each set no
-    /// turn that has yet to end can draw from (`still_drawable`).
+    /// turn that has yet to end can draw from (`still_drawable`), but from `V71` the set that drew
+    /// the turn in effect (`prune_sets`).
     pub(crate) fn adopt_rotation_set(&mut self, adoption: &RegistryRotationSet, events: &mut Vec<Event>) {
         let RegistryRotationSet { set, epoch, effective_at, ref members, block, ref chain_ref, .. } = *adoption;
         let reason = self.turns_mirror_refusal(chain_ref).or_else(|| {
@@ -279,9 +286,7 @@ impl Engine {
         let noticed = self.carried_notice(members);
         let recorded = RotationSet { epoch, effective_at, logged_at: self.now, members: members.clone(), noticed };
         self.daily_turns.sets.insert(set, recorded);
-        while !self.still_drawable() {
-            self.daily_turns.sets.pop_first();
-        }
+        self.prune_sets();
         events.push(Event::RotationSetAdopted { set, epoch, effective_at });
     }
 
@@ -320,9 +325,31 @@ impl Engine {
         next.effective_at > self.now.saturating_sub(DRAW_LEAD_MS + DAY_MS)
     }
 
+    /// Forgets each set no turn that has yet to end can draw from, oldest first. From `V71` it keeps
+    /// the set that drew the turn in effect, whatever its age, and still forgets the others: the
+    /// schedule promotes in the last drawn turn from the set that drew it, even once its day is over,
+    /// so that set stays until a later turn supersedes the turn.
+    fn prune_sets(&mut self) {
+        if self.protocol_version < ProtocolVersion::V71 {
+            while !self.still_drawable() {
+                self.daily_turns.sets.pop_first();
+            }
+            return;
+        }
+        let cutoff = self.now.saturating_sub(DRAW_LEAD_MS + DAY_MS);
+        let kept = self.daily_turns.in_effect.map(|in_effect| in_effect.set);
+        let ids: Vec<u32> = self.daily_turns.sets.keys().copied().collect();
+        for pair in ids.windows(2) {
+            if self.daily_turns.sets[&pair[1]].effective_at <= cutoff && kept != Some(pair[0]) {
+                self.daily_turns.sets.remove(&pair[0]);
+            }
+        }
+    }
+
     /// Mirrors the schedule's `TurnAssigned` event: records the assignment, whose key applies from
     /// its boundary or from now when that is later, unless its key had no seven days' notice in a
-    /// mirrored set, or its turn is over, which credits it as refused.
+    /// mirrored set, or its turn is over, which credits it as refused; from `V71` a promotion of an
+    /// ended turn that no later turn in effect superseded is not refused for that.
     pub(crate) fn assign_turn(&mut self, assignment: &RegistryTurn, events: &mut Vec<Event>) {
         let RegistryTurn { turn, set, position, reason, candidate, admin_key, block, ref chain_ref } = *assignment;
         let refusal = self.turns_mirror_refusal(chain_ref).or_else(|| {
@@ -342,7 +369,7 @@ impl Engine {
         self.credit_registry_mirror(chain_ref, block);
         let start = boundary(turn).expect("checked above");
         let applies_at = start.max(self.now);
-        if let Some(refused) = self.turn_refusal(turn, set, candidate, admin_key, applies_at) {
+        if let Some(refused) = self.turn_refusal(turn, set, reason, candidate, admin_key, applies_at) {
             events.push(Event::TurnRefused { turn, position, cause: reason, candidate, admin_key, reason: refused });
             return;
         }
@@ -351,17 +378,24 @@ impl Engine {
         events.push(Event::TurnAssigned { turn, position, reason, candidate, admin_key, applies_at });
     }
 
-    /// Why a credited assignment cannot apply its key at `applies_at`, if it cannot.
+    /// Why a credited assignment cannot apply its key at `applies_at`, if it cannot. From `V71` a
+    /// promotion applies after its turn's end while no later turn is in effect: the schedule keeps the
+    /// last drawn turn naming its member past its day, and finalises a promotion in it, or in the
+    /// turn's last minutes, only then.
     fn turn_refusal(
         &self,
         turn: u64,
         set: u32,
+        reason: TurnReason,
         candidate: AccountId,
         admin_key: AccountId,
         applies_at: Millis,
     ) -> Option<String> {
         // A turn before the one in effect has ended too: the one in effect started at its end or later.
-        if turn_end(turn) <= self.now {
+        let promoted = self.protocol_version >= ProtocolVersion::V71
+            && reason == TurnReason::Promotion
+            && self.daily_turns.in_effect.is_none_or(|in_effect| in_effect.turn <= turn);
+        if turn_end(turn) <= self.now && !promoted {
             Some(format!("turn {turn} ended before its assignment was mirrored"))
         } else {
             self.daily_turns.set_refusal(set, candidate, admin_key, applies_at)
@@ -413,31 +447,6 @@ impl Engine {
         let in_effect = in_effect.expect("checked above");
         self.daily_turns.taken = Some(TakenTurn { turn, position: in_effect.position, release });
         events.push(Event::TurnTaken { turn, candidate: in_effect.candidate, release });
-    }
-
-    /// From `V51`, while a turn is in effect, its member while it holds the turn it took, with the end
-    /// of that turn; `None` before its `TurnTaken` or past the turn's end. Turning rotation off leaves
-    /// drawn turns standing, and their members earning, as the registry still names them. The outer
-    /// `None` means no turn has applied, so the earlier rule names the account in office.
-    pub(crate) fn turn_office(&self) -> Option<Option<(AccountId, Millis)>> {
-        if self.protocol_version < ProtocolVersion::V51 {
-            return None;
-        }
-        let in_effect = self.daily_turns.in_effect?;
-        let taken = self
-            .daily_turns
-            .taken
-            .is_some_and(|taken| (taken.turn, taken.position) == (in_effect.turn, in_effect.position));
-        Some(taken.then(|| (in_effect.candidate, turn_end(in_effect.turn))))
-    }
-
-    /// From `V53`, when the first accepted turn waiting to apply does, which ends the office of the
-    /// account in it before any turn is in effect; `Millis::MAX` before `V53` or with none waiting.
-    pub(crate) fn first_turn_applies_at(&self) -> Millis {
-        if self.protocol_version < ProtocolVersion::V53 {
-            return Millis::MAX;
-        }
-        self.daily_turns.assigned.values().map(|assigned| assigned.applies_at).min().unwrap_or(Millis::MAX)
     }
 
     /// From `V51`, whether a mirrored turn is in effect or waits to apply: until an installation ends

@@ -99,7 +99,10 @@ this crate and reproduce the signed state roots exactly.
   its boundary, or from its mirror when that is later; a turn whose key no set mirrored seven days
   earlier names is credited and refused (`turn_refused`), keeping the key in effect. The member's node
   logs `turn_taken` with its first command in the turn, and while turns run the operator's share
-  counts its time in office from then to the end of its turn. From `V53` a member's notice carries
+  counts its time in office from then to the end of its turn. From `V71` a promotion finalised after
+  its turn's nominal end applies when mirrored, while no later turn is in effect, and its member holds
+  the office until the next turn applies, and the set that drew the turn in effect is kept for it
+  (`tests/daily_turns/late_promotion.rs`). From `V53` a member's notice carries
   across the sets that name it unchanged, and the account in office before turns run holds it only
   until the first turn applies
 - From protocol `V52`, a listed market's spread and margin bands move only as a listing notice of at
@@ -435,10 +438,12 @@ this crate and reproduce the signed state roots exactly.
 - `tests/parameter_votes/weekend.rs` — `V60`: a voted weekend margin with no listing notice, held to its listing's range, the operator's weekend margin notice refused while rotation is on, the fast path refusing to move it, and a fast-path margin raise past it
 - `tests/parameter_votes/house_loss.rs` — `V62`: a voted change to the house loss threshold, refused above launch's or off its level, applied below it, with no notice
 - `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, the turn's time in office, and the set in effect, which V65's votes need
+- `src/turns/office.rs` — the turn in effect's member and the time its office ends, for the operator's share
 - `tests/daily_turns.rs` — `V51`: mirror refusals and crediting, kept sets, a drawn key from its boundary, a reassignment or promotion from its mirror, a key without notice refused, the refused signed rotation, `TurnTaken`, and the due key
 - `tests/daily_turns/notice.rs` — `V53`: a member's notice carried across a late-mirrored set, refused under seven days and applied at exactly seven, and kept after its first set is pruned
+- `tests/daily_turns/late_promotion.rs` — `V71`: a promotion mirrored after its turn's end applies from its mirror, with no turn or an earlier one in effect too, and its member takes the turn; the set that drew the turn survives later adoptions; a promotion a later turn superseded, a draw or a skip of an ended turn, a key no set names and one without seven days' notice stay refused; and the same before `V71`
 - `tests/operator_share/faults.rs` — `V70`: a proven fault's haircut on the member's share, its linear restoration, a fault mid-epoch, a restart, the haircut's range, a daily turn's member, refused mirrors, the recorded contract's bounds, and replay
-- `tests/operator_share/daily_turns.rs` — `V51`: a member earns from its `TurnTaken` to its turn's end, and no one before or after; from `V53`, the account before the first turn only until that turn applies
+- `tests/operator_share/daily_turns.rs` — `V51`: a member earns from its `TurnTaken` to its turn's end, and no one before or after; from `V53`, the account before the first turn only until that turn applies; from `V71`, a promoted member earns past its turn's nominal end, until the next turn applies, mirrored before or after it
 - `tests/operator_install.rs` — `V48`: the timelock's installed operator: refusals, the seven-day log notice with no finalised frontier, replaced rotations, and the refused signed rotation
 - `tests/operator_share.rs` — `V47`: the operator's fifth of a distribution, with rotation on and off, an epoch that distributes nothing, a built-up sweep, an operator that also stakes, and the leaf's claim and exit proofs
 - `tests/operator_share/elections.rs` — who earns the share as elections, handovers, cancellations and signed rotations move the operator in effect
@@ -614,7 +619,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V69` parts (`v15.rs` to `v69.rs`)
+  `V15` to `V71` parts (`v15.rs` to `v71.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1205,6 +1210,20 @@ new until the contract is recorded, so earlier logs replay unchanged. Its log is
 session, which activates V70 by vote, takes a turn, mirrors its member's fault and closes an epoch, is
 in `examples/reference_log/v70.rs`.
 
+
+Protocol V71 applies a promotion the schedule finalised after its turn's nominal end. The schedule keeps
+the last drawn turn naming its member past its day when nobody drew the next, and finalises a promotion
+in that turn, or in its last minutes, only after the 22:30 UTC boundary that ends it; the engine refused
+every assignment of an ended turn, so the promoted member's key never applied and its `TurnTaken` was
+never logged, while the failed operator's key stayed the operator. From V71 a promotion for a turn that
+no later turn in effect has superseded applies when it is mirrored, from its mirror. A draw or a skip of
+an ended turn, and a promotion a later turn superseded, stay refused. A promotion holds the office,
+for the operator's share, until the next turn applies (the earliest accepted turn waiting to apply),
+whichever side of its turn's end it was mirrored on, where a drawn turn holds it to its end. The set that
+drew the turn in effect is kept past its usual pruning, as the schedule promotes from it, until a later
+turn supersedes the turn; the sets no turn can draw from are still forgotten. A set an earlier version had
+already pruned when V71 activated is not restored, so a promotion that needs one stays refused. Its log is `v71.jsonl`, and its session is in
+`examples/reference_log/v71.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

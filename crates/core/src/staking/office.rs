@@ -14,7 +14,8 @@
 //! From `V51`, once a daily turn has applied, the account in office is the turn's member from its
 //! `TurnTaken` to the end of its turn (`turns`), so the time before a member takes its turn, and an
 //! incumbent's time past its turn, are no one's. From `V53`, before any turn is in effect, the account
-//! in office holds it only until the first accepted turn applies.
+//! in office holds it only until the first accepted turn applies. From `V71`, a turn applied only after
+//! its end (a late promotion) holds the office until the next turn applies, not to its nominal end.
 //!
 //! From `V70`, a proven fault's haircut withholds its integral from the member's time in office, and
 //! the close pays the member only the time it kept (`operator_faults`).
