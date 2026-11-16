@@ -170,7 +170,7 @@ impl Rig {
             )
             .with_liveness(gate.clone(), signed.clone(), watch::channel(None).1),
         );
-        let origin = format!("http://{}", crate::api::tests::serve_signing(stream).await);
+        let origin = format!("http://{}", crate::api::serve_tests::serve_signing(stream).await);
         let following = Arc::new(AtomicBool::new(true));
         for member in members.iter().enumerate().filter(|(i, _)| *i != operator).map(|(_, m)| m) {
             let (copy, enclave, cfg, following) =
