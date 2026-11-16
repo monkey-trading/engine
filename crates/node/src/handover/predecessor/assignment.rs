@@ -75,20 +75,25 @@ impl<C: CheckpointChain> Predecessor<C> {
 
     /// Reads the latest assignment again just before the stop and, once stopped, before the keys go: a
     /// skip or a promotion that landed since the admission refuses this successor, so a release still
-    /// sequencing goes on, and a stopped one admits the member now named instead. Nothing to check
-    /// without a reader, or while no turn names the operator and the request binds none.
+    /// sequencing goes on, and a stopped one admits the member now named instead. Returns the assignment
+    /// read, the one `binding` names; `None` without a reader, or while no turn names the operator and
+    /// the request binds none.
     /// Error cases:
     /// - the read fails, or the assignment is no longer the one `binding` names for `release`
-    pub(super) async fn revalidate(&self, binding: Option<&Binding>, release: &Release) -> anyhow::Result<()> {
-        let Some(assignments) = &self.assignments else { return Ok(()) };
+    pub(super) async fn revalidate(
+        &self,
+        binding: Option<&Binding>,
+        release: &Release,
+    ) -> anyhow::Result<Option<Assigned>> {
+        let Some(assignments) = &self.assignments else { return Ok(None) };
         let assigned =
             assignments.assigned().await.context("reading the turn's latest assignment before the keys go")?;
         let moved = || "the turn's assignment moved since the admission: this release serves the member now named";
         match assigned {
-            Some(assigned) => ensure_bound(&assigned, binding, release).context(moved()),
+            Some(assigned) => ensure_bound(&assigned, binding, release).context(moved()).map(|()| Some(assigned)),
             None => {
                 ensure!(binding.is_none(), "{}: the latest agreed block names no turn", moved());
-                Ok(())
+                Ok(None)
             }
         }
     }

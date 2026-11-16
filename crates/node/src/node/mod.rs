@@ -28,6 +28,8 @@ use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, super
 mod handover;
 mod keys;
 mod liveness;
+#[cfg(test)]
+pub(crate) use liveness::forget;
 pub(crate) mod log_check;
 mod marks;
 pub(crate) mod member;
@@ -480,7 +482,7 @@ async fn serve_node(
     match supervised.handing_over {
         Some(reply) => {
             let _ = reply.send(published.final_head());
-            handed_over(supervised.handover).await?;
+            let gave = handed_over(supervised.handover, gave).await?;
             liveness::forget(cfg, store.as_deref());
             Ok(Ended::HandedOver(gave))
         }

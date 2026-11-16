@@ -409,7 +409,9 @@ of the range, as after its own upgrade, and at a boundary its holder holds on th
 attested verification, bound to the boundary, the turn assignment and the vault's signer epoch, from a
 member of the turn's order that sequenced none of the commands since the last verified head under any
 release, nor runs a release that did, as the log's `TurnTaken` commands record, or was promoted after
-the `TurnTaken` in office, as the mirrored promotions record, asked first to last in
+the `TurnTaken` in office, as the mirrored promotions record, nor handed the keys on past that head, as
+the keys themselves record, since a skip a reorg removed is never mirrored (a promotion's standby keys,
+or an older copy of the keys a host restores, carry no such record past what they held), asked first to last in
 questions the holder's enclave signs, which a member answers only from the checkpoints it verified
 under that signer; an approval made during a turn therefore waits for the next boundary, a day at most
 plus the switch, payouts stay anchored to the roots the vault accepted as before, a member of the set
@@ -437,7 +439,10 @@ defaults, at most 10 under the deployment bounds), each promotion adds the promo
 and each member in the order that fails to start adds one more detection window; a turn's member takes
 it with its first head under its assignment, which `LogHeads` latches, and once `takeWindow` witnessed
 slots (2 by default; the deployment's minimum exceeds the handover's switch budget plus one interval
-plus a head's inclusion, which the head tolerance bounds, at every interval the bounds allow) pass after
+plus a head's inclusion, which the head tolerance bounds, at every interval the bounds allow, and the
+switch budget covers the measured switch plus the holder's and the successor's reads of the turn's
+latest assignment after the stop, each thirteen round trips to the custody providers in turn, fourteen
+while a provider's tip is past the agreed block) pass after
 the latest of the boundary's slot, the assignment's and the last signer change's with no latch,
 anyone skips the turn to the next listed member in its order that has held no assignment of the turn,
 other than the one whose release signed the signer epoch's newest head, which holds the keys, in a new generation with no signer change, never past

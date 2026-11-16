@@ -494,5 +494,6 @@ fn the_stint_alert_decision_keeps_the_two_alerts_apart() {
     assert_eq!(stint_action(&Ok(None), false, false), StintAction::Quiet);
 }
 
+mod connect;
 mod durable;
 mod heads;

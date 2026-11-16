@@ -11,11 +11,16 @@
 //!   answers from the checkpoints its replica verified (`answer`).
 //!
 //! A check counts only from a release that sequenced none of the covered range, the commands after
-//! the last verified head, as the log's `TurnTaken` commands and mirrored promotions record (`Takings`). The verified head is
-//! sealed with the keys, so a restart restores it once the recovered log holds that checkpoint, and an
-//! approved upgrade carries it to the next release; a host that restores an older copy only delays
-//! payouts. The check bounds how long a withheld branch can pay nothing: a turn plus the switch. It does
-//! not bound delay or censorship.
+//! the last verified head, as the log's `TurnTaken` commands and mirrored promotions record
+//! (`Takings`), and as the keys record each release that handed them on past that head (`Holder`):
+//! a skip a reorg removed is never mirrored, so its member's commands are named by the keys alone.
+//! The verified head is sealed with the keys, so a restart restores it once the recovered log holds
+//! that checkpoint, and an approved upgrade carries it to the next release; a host that restores an
+//! older copy only delays payouts. The holders travel with the keys alone: a promotion's standby
+//! keys carry none, and an older copy a host restores carries those it held then, so a reorged
+//! skip's member that handed the keys on since is named by nothing, and the log's records alone
+//! attribute its commands. The check bounds how long a withheld branch can pay nothing: a turn plus
+//! the switch. It does not bound delay or censorship.
 
 pub(crate) mod answer;
 pub(crate) mod ask;
@@ -33,6 +38,7 @@ use sha2::{Digest as _, Sha256};
 use crate::checkpoints::Assigned;
 use crate::handover::Evidence;
 use crate::log::CheckpointDomain;
+use crate::tee::keys::KeySet;
 
 /// A checkpoint of the log a check verified: its seq, the cumulative command prefix after its
 /// command, and its state root.
@@ -42,6 +48,18 @@ pub struct VerifiedHead {
     pub seq: u64,
     pub link: B256,
     pub root: B256,
+}
+
+/// A release that held the keys and handed them on while the gate applied, with the candidates its
+/// operator key sat for in the log's turns and the last command it sequenced, the handed-over head: the
+/// keys carry it until a verified head reaches that command, since a member a skip named sequences
+/// before the log mirrors the skip, which a reorg can remove for good.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Holder {
+    pub through: u64,
+    pub release: B256,
+    pub candidates: BTreeSet<AccountId>,
 }
 
 /// A check the operator's node waits for: the turn in effect it holds on through, the checkpoint to
@@ -77,6 +95,17 @@ impl Sequencers {
         self.candidates.contains(&candidate) || self.releases.contains(&release)
     }
 
+    /// These sequencers with each of `holders` that may have sequenced a command of the range from
+    /// `first` (`Takings::first`): its last command is at or after it. One whose commands all precede
+    /// the range, as a holding's before the latest `TurnTaken` while nothing is verified, is not in it.
+    pub(crate) fn with_holders(mut self, holders: &[Holder], first: u64) -> Self {
+        for holder in holders.iter().filter(|holder| holder.through >= first) {
+            self.candidates.extend(holder.candidates.iter().copied());
+            self.releases.insert(holder.release);
+        }
+        self
+    }
+
     /// The members of `assigned`, the schedule's assignments of the in-office turn and the turns after
     /// it, that a promotion or a skip made after the in-office holder's assignment: in a later turn, or
     /// in the in-office turn at a later position, since a turn's positions only advance. With no
@@ -105,11 +134,12 @@ pub(crate) struct Reassigned {
 pub(crate) fn own_check_read(
     previous: Option<VerifiedHead>,
     takings: &Takings,
+    holders: &[Holder],
     head: VerifiedHead,
     (release, candidates): (B256, &BTreeSet<AccountId>),
     read: Option<&Reassigned>,
 ) -> Option<VerifiedHead> {
-    let checked = own_check(previous, takings, head, (release, candidates));
+    let checked = own_check(previous, takings, holders, head, (release, candidates));
     let Some(read) = read.filter(|_| checked != previous) else { return checked };
     let sequenced = takings.sequenced(previous.map(|previous| previous.seq), head.seq);
     // A reassignment in a turn that began after the range's last command sequenced none of it, and one
@@ -291,10 +321,7 @@ impl Takings {
     /// who sequenced the first of them: the operator before the log's first `TurnTaken`, which no record
     /// names, or the holder before a snapshot's base.
     pub(crate) fn sequenced(&self, after: Option<u64>, through: u64) -> Option<Sequencers> {
-        let first = match after {
-            Some(after) => after.saturating_add(1),
-            None => self.by_seq.range(..=through).next_back().map_or(0, |(seq, _)| *seq),
-        };
+        let first = self.first(after, through);
         let from = self.from?;
         let (since, in_office) = self.by_seq.range(..=first).next_back().map(|(seq, taking)| (*seq, *taking))?;
         if from > first {
@@ -318,6 +345,15 @@ impl Takings {
         let from_in_office = promoted.filter(|(turn, _)| named(*turn)).map(|(_, candidate)| *candidate);
         sequencers.candidates.extend(from_in_office);
         Some(sequencers)
+    }
+
+    /// The first command of the range `sequenced` attributes: the one after `after`, or, with nothing
+    /// verified, the latest `TurnTaken` at or before `through`.
+    pub(crate) fn first(&self, after: Option<u64>, through: u64) -> u64 {
+        match after {
+            Some(after) => after.saturating_add(1),
+            None => self.by_seq.range(..=through).next_back().map_or(0, |(seq, _)| *seq),
+        }
     }
 
     /// Drops the records no range after `verified` needs: those before the latest at or before the
@@ -346,25 +382,36 @@ fn turn_begun_by(ts: Millis) -> Option<u64> {
 /// The verified head after this node's own verification of the log through `head`, at a handover or
 /// a promoted member's resume: `head` when neither `release` nor any of `candidates`, the candidates
 /// this node's operator key sits for (`own_candidates`), sequenced the commands after `previous`
-/// through it, as `takings` records; otherwise `previous`, and a following member's check is asked
-/// for as at a boundary without a handover. So the same member's other release, as after an upgrade,
-/// never counts as the check, however its start was made.
+/// through it, as `takings` and the keys' `holders` record; otherwise `previous`, and a following
+/// member's check is asked for as at a boundary without a handover. So the same member's other
+/// release, as after an upgrade, never counts as the check, however its start was made.
 pub(crate) fn own_check(
     previous: Option<VerifiedHead>,
     takings: &Takings,
+    holders: &[Holder],
     head: VerifiedHead,
     (release, candidates): (B256, &BTreeSet<AccountId>),
 ) -> Option<VerifiedHead> {
     if previous.is_some_and(|previous| previous.seq >= head.seq) {
         return previous;
     }
-    let sequenced = takings.sequenced(previous.map(|previous| previous.seq), head.seq);
+    let after = previous.map(|previous| previous.seq);
+    let first = takings.first(after, head.seq);
+    let sequenced = takings.sequenced(after, head.seq).map(|sequencers| sequencers.with_holders(holders, first));
     let independent = |sequencers: &Sequencers| {
         !sequencers.releases.contains(&release) && sequencers.candidates.is_disjoint(candidates)
     };
     match sequenced {
         Some(sequencers) if independent(&sequencers) => Some(head),
         _ => previous,
+    }
+}
+
+/// Seals `head` in `keys` as the verified head, dropping the holders whose last command it reaches.
+pub(crate) fn seal_verified(keys: &mut KeySet, head: Option<VerifiedHead>) {
+    keys.log_check = head;
+    if let Some(head) = head {
+        keys.holders.retain(|holder| holder.through > head.seq);
     }
 }
 

@@ -91,12 +91,14 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let mut ready = read.await?;
         ready.reassigned = Some(reassigned);
         prepared.posted = ready.heads.and_then(|heads| heads.newest).map(|(_, head)| head);
-        // The reads took time: one short stint catches the copy up to the incumbent, so the tail
-        // stays short. A replica that refuses an entry must be rebuilt; any other failure leaves the
-        // tail to cover the gap.
+        // The reads took time: following the incumbent once more catches the copy up and keeps the tail
+        // short, for `CATCH_UP` in all, connecting included, so an incumbent that stalls its handshake
+        // delays the take by no more than that. A replica that refuses an entry must be rebuilt; any
+        // other failure leaves the tail to cover the gap.
         if let Some(operator) = operator {
-            match follower.stint(self.cfg, operator, CATCH_UP).await {
-                Ok(_) => {}
+            let pause = tokio::time::sleep(CATCH_UP);
+            match follower.follow_during(self.cfg, operator, CATCH_UP, pause).await.1 {
+                Ok(()) => {}
                 Err(e) if e.downcast_ref::<ReplicaRefused>().is_some() => return Err(e),
                 Err(e) => warn!("catching the copy up before the tail failed: {e:#}"),
             }

@@ -166,4 +166,13 @@ impl StandbyReader<VaultRpc> {
 }
 
 #[cfg(test)]
+impl<R: VaultReader + Send + Sync> StandbyReader<R> {
+    /// A reader over `providers`, for `log_heads` on `chain_id`.
+    pub(crate) fn over(providers: Vec<(String, R)>, log_heads: Address, chain_id: u64) -> Self {
+        let quorum = Quorum::new(providers).expect("a quorum of providers").named("standby_keys", false);
+        Self { quorum, log_heads, chain_id, session: Mutex::new(()) }
+    }
+}
+
+#[cfg(test)]
 mod tests;

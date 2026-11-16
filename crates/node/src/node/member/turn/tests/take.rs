@@ -145,6 +145,45 @@ async fn a_failed_read_opening_the_copy_at_a_turn_is_retried_and_the_tail_asked_
     assert_eq!(member.metrics.full_replays.get(), 1, "the copy was replayed other than once");
 }
 
+/// A take's tries count only the holding they were counting: once another holding is taken, as after a
+/// skip moved a failing taker to following or at a later turn, failures start afresh, so its first
+/// failure is retried rather than left to the start; tries at one holding, following between them as a
+/// failed read of the latest assignment reads, still run out; and a wait logs once until a try fails.
+#[test]
+fn a_take_abandoned_for_another_holding_carries_no_failures_into_it() {
+    let long_ago = std::time::Instant::now().checked_sub(RETRY_FOR).expect("an instant RETRY_FOR back");
+    let failing = |holding| {
+        let mut tries = Tries::default();
+        tries.at(holding);
+        tries.failing_since = Some(long_ago);
+        tries
+    };
+    // A later turn's holding, or another one of the same turn.
+    for next in [(13, 8), (12, 22)] {
+        let mut tries = failing((12, 21));
+        tries.at(next);
+        assert!(!tries.failed(false), "{next:?}: its first failure fell back on the abandoned take's");
+    }
+    // The same holding's failures past `RETRY_FOR` run out, following between its tries or not.
+    let mut tries = failing((12, 21));
+    tries.at((12, 21));
+    assert!(tries.failed(false), "failures past RETRY_FOR did not fall back");
+    // Refusals at one holding count toward `TAIL_ATTEMPTS` across its tries.
+    let mut tries = Tries::default();
+    tries.at((12, 21));
+    assert!((1..TAIL_ATTEMPTS).all(|_| !tries.failed(true)), "refusals ran out early");
+    tries.at((12, 21));
+    assert!(tries.failed(true), "refusals at one holding did not run out across its tries");
+    // A wait is new once, until a try fails or another holding is taken.
+    let mut tries = Tries::default();
+    tries.at((12, 21));
+    assert!(tries.waits() && !tries.waits(), "a wait logged other than once");
+    tries.failed(false);
+    assert!(tries.waits(), "a wait after a failed try was not new");
+    tries.at((13, 8));
+    assert!(tries.waits(), "a wait at another holding was not new");
+}
+
 /// Only a replica that refused an entry, or a copy a handover began changing, is rebuilt.
 #[test]
 fn only_a_refused_entry_or_a_part_changed_copy_rebuilds_the_replica() {

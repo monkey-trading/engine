@@ -27,10 +27,12 @@ use crate::tee::sealing::{KeyStore, Release, file_for};
 use crate::tee::{Attestation, AttestationBundle, Attestor, EnclaveKey, attest_bundle};
 use crate::tls::TlsIdentity;
 use engine_core::turns::TURN_MS;
-use engine_core::types::{AccountId, Millis};
+use engine_core::types::Millis;
 
 mod platform;
 pub(super) use platform::{attestor_for, sealer};
+mod takeover;
+pub(super) use takeover::cut_to_finalized_anchor;
 
 /// The operator's one-off choices for a start of a release that has no sealed keys.
 #[derive(Clone, Debug, Default)]
@@ -115,11 +117,13 @@ async fn obtain(
 ) -> anyhow::Result<(EnclaveKey, TlsIdentity, Option<KeyStore>)> {
     let floor = floor.unwrap_or(Millis::MIN);
     let sampled = async { crate::handover::turns::sampled_now(cfg).await.map(|reached| reached.max(floor)) };
-    obtain_with(cfg, start, attestor, vault_reader(cfg)?.as_ref(), sampled, metrics).await
+    let assignments = crate::handover::assigned::for_config(cfg, "start_assignments")?;
+    obtain_with(cfg, start, attestor, (vault_reader(cfg)?.as_ref(), assignments), sampled, metrics).await
 }
 
-/// `obtain`, reading the vault through `vault`, when the config names one, and the time trusted time
-/// has reached through `reached`, which it awaits only while rotation is on and a daily turn is drawn.
+/// `obtain`, reading the vault through `vault`, when the config names one, the turn's latest assignment
+/// through `assignments`, with `[log_heads]` (#596), and the time trusted time has reached through
+/// `reached`, which it awaits only while rotation is on and a daily turn is drawn.
 /// Error cases:
 /// - a flag is given without `[tee.sealing]`, or real attestation runs without it
 /// - the stand-in measurement is missing under the mock TEE, or given under real attestation
@@ -133,7 +137,7 @@ async fn obtain_with(
     cfg: &NodeConfig,
     start: &KeyStart,
     attestor: &dyn Attestor,
-    vault: Option<&impl CheckpointChain>,
+    (vault, assignments): (Option<&impl CheckpointChain>, Option<crate::handover::assigned::Reader>),
     reached: impl Future<Output = anyhow::Result<Millis>>,
     metrics: &Metrics,
 ) -> anyhow::Result<(EnclaveKey, TlsIdentity, Option<KeyStore>)> {
@@ -186,7 +190,7 @@ async fn obtain_with(
         Some(vault) if cfg.operator.rotation_enabled => crate::handover::turns::at_start(vault, reached).await?,
         _ => None,
     };
-    let turn = crate::handover::assigned::own_skip(cfg, turn, &release).await?;
+    let turn = crate::handover::assigned::own_skip(assignments.as_deref(), turn, &release).await;
     if let Some(turn) = &turn {
         crate::handover::turns::ensure_turn_names(turn, &release)
             .context("refusing this release's keys: a daily turn names another release")?;
@@ -218,14 +222,16 @@ async fn obtain_with(
         let vault = vault.context("--predecessor needs [checkpoints]: the vault names the key")?;
         // Trusted time has reached a turn's boundary when the schedule names this release for it.
         let reached = turn.as_ref().map(|turn| turn.boundary);
-        crate::handover::take(cfg, address, sealer.as_ref(), attestor, vault, reached, metrics).await?
+        let parts = (sealer.as_ref(), attestor);
+        crate::handover::take_with(cfg, address, parts, vault, reached, metrics, assignments).await?
     } else if let (Some(vault), Some(turn)) = (vault, &turn) {
         // No sealed keys and no flag, and the schedule names this release for the turn trusted time
         // has reached: take the keys from the operator the turn takes over from, or, when that one
         // never took its own turn, from the one before it.
         let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
         crate::node::member::before_whole_log_take(cfg, start)?;
-        crate::handover::turns::take_keys(cfg, vault, &at, turn, sealer.as_ref(), attestor, metrics).await?
+        let parts = (sealer.as_ref(), attestor);
+        crate::handover::turns::take_keys(cfg, vault, (&at, turn), parts, metrics, assignments).await?
     } else if let Some(vault) = vault {
         // No sealed keys and no flag: while the registry has rotation on and the vault names this
         // release — so an election has taken effect naming this node the operator — take the keys
@@ -249,7 +255,8 @@ async fn obtain_with(
                     "the vault names this release through an election in effect: taking the keys from the \
                      operator it replaced"
                 );
-                crate::handover::take(cfg, &source.endpoint, sealer.as_ref(), attestor, vault, None, metrics).await?
+                let parts = (sealer.as_ref(), attestor);
+                crate::handover::take_with(cfg, &source.endpoint, parts, vault, None, metrics, assignments).await?
             }
             None => bail!("{}", refusal(dir, generation)),
         }
@@ -273,96 +280,6 @@ pub(super) fn certificates(cfg: &NodeConfig, start: &KeyStart) -> anyhow::Result
     let store = CertificateStore::open(&sealing.dir, sealer, cfg.file_sha256)
         .inspect_err(|e| error!(alert = "sealed_certificates_unreadable", "refusing to serve: {e:#}"))?;
     Ok(Some(Arc::new(store)))
-}
-
-/// On a takeover's first start under the new signer, cuts the log to the vault's finalized
-/// checkpoint. The standby's copy kept the outgoing operator's later published checkpoints past
-/// the vault's latest; their signatures are unpostable now, and writable recovery admits only
-/// what the vault accepted, so the unposted tail goes before recovery opens the log. A
-/// `takeover.json` marker makes the cut resumable: a crash mid-cut is repaired on the next start.
-/// Error cases:
-/// - a promotion's record names this key, the chain or log cannot be read, or the cut cannot complete
-pub(super) async fn cut_to_finalized_anchor(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::Result<()> {
-    use crate::checkpoints::{CheckpointChain, View};
-    // A promoted member's copy keeps every command the promotion fixed: it resumes from the copy
-    // (`member::promoted`), and no start cuts it back to the anchor.
-    if let Some(sealing) = &cfg.tee.sealing
-        && crate::node::member::promoted::Record::load(&sealing.dir)?
-            .is_some_and(|record| record.key == AccountId(key.address()))
-    {
-        bail!(
-            "a promotion made this key the vault's signer from this copy (promotion.json): it resumes from the \
-             copy as a member, never cut back to the vault's anchor"
-        );
-    }
-    let Some(chain) = crate::handover::vault_reader(cfg)? else { return Ok(()) };
-    let dir = cfg.node.log_dir.as_path();
-    let marker = dir.join("takeover.json");
-    let repair = |e: &anyhow::Error| -> anyhow::Error {
-        match std::fs::read(&marker) {
-            Ok(bytes) => match serde_json::from_slice::<crate::checkpoints::Takeover>(&bytes) {
-                Ok(takeover) => {
-                    if let Err(cut) = crate::log::truncate_to_checkpoint(dir, takeover.seq, &takeover.root) {
-                        return anyhow::anyhow!("{e:#}; and repairing the interrupted cut failed: {cut:#}");
-                    }
-                    let _ = std::fs::remove_file(&marker);
-                    anyhow::anyhow!("{e:#}; repaired the interrupted cut: start again")
-                }
-                Err(_) => anyhow::anyhow!("{e:#}"),
-            },
-            Err(_) => anyhow::anyhow!("{e:#}"),
-        }
-    };
-    let state = chain.state(View::Finalized).await.map_err(|e| repair(&e))?;
-    if state.signer != AccountId(key.address()) {
-        return Ok(());
-    }
-    let Some((anchor_seq, anchor_root)) = state.checkpoint else { return Ok(()) };
-    // Only a tail another key signed is cut: a node's own unposted checkpoints are its poster's
-    // queued work, which an ordinary restart must keep.
-    let mut last: Option<(u64, String, AccountId)> = None;
-    let scan = crate::log::SegmentedLog::open(dir, |entry| {
-        if let crate::log::LogEntry::Checkpoint(checkpoint) = &entry {
-            last = Some((checkpoint.seq, checkpoint.root.clone(), checkpoint.signer.parse()?));
-        }
-        Ok(())
-    });
-    let last = match scan {
-        Ok(_) => last,
-        Err(e) => {
-            let repaired = repair(&e);
-            // Retry once after the repair.
-            crate::log::SegmentedLog::open(dir, |entry| {
-                if let crate::log::LogEntry::Checkpoint(checkpoint) = &entry {
-                    last = Some((checkpoint.seq, checkpoint.root.clone(), checkpoint.signer.parse()?));
-                }
-                Ok(())
-            })?;
-            if last.is_none() {
-                return Err(repaired);
-            }
-            last
-        }
-    };
-    let last = last.as_ref();
-    if last.is_some_and(|(_, _, signer)| *signer == state.signer) {
-        return Ok(());
-    }
-    if last.is_some_and(|(seq, root, _)| *seq > anchor_seq || *root != anchor_root) {
-        std::fs::write(
-            &marker,
-            serde_json::to_string(&crate::checkpoints::Takeover {
-                seq: anchor_seq,
-                root: anchor_root.clone(),
-                signer: state.signer,
-            })
-            .context("encoding the takeover marker")?,
-        )
-        .context("writing the takeover marker")?;
-        crate::log::truncate_to_checkpoint(dir, anchor_seq, &anchor_root).map_err(|e| repair(&e))?;
-        std::fs::remove_file(&marker).context("removing the takeover marker")?;
-    }
-    Ok(())
 }
 
 /// How often a running node with sealed keys reads the vault's current release.
@@ -465,7 +382,7 @@ pub(crate) fn check_predecessor_head(
     store: Option<&KeyStore>,
     last_seq: Option<u64>,
     last_checkpoint: Option<&Checkpoint>,
-    check: impl FnOnce(Option<VerifiedHead>, &Head) -> Option<VerifiedHead>,
+    check: impl FnOnce(Option<VerifiedHead>, &[crate::log_check::Holder], &Head) -> Option<VerifiedHead>,
 ) -> anyhow::Result<()> {
     let Some(head) = store.and_then(|store| store.keys().predecessor_head) else { return Ok(()) };
     let ends_at_head =
@@ -479,7 +396,8 @@ pub(crate) fn check_predecessor_head(
     );
     let store = store.expect("a head comes from a store");
     let update = |keys: &mut KeySet| {
-        keys.log_check = check(keys.log_check, &head);
+        let checked = check(keys.log_check, &keys.holders, &head);
+        crate::log_check::seal_verified(keys, checked);
         keys.predecessor_head = None;
     };
     store.update(update).context("forgetting the predecessor's checkpoint")

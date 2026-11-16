@@ -439,4 +439,5 @@ fn head_at(seq: u64) -> VerifiedHead {
 }
 
 mod handover;
+mod holders;
 mod pages;

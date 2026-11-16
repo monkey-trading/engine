@@ -132,3 +132,5 @@ fn reader(providers: [(u64, Address); 3], calls: &Arc<StdMutex<Vec<u64>>>) -> St
 fn hash(number: u64) -> B256 {
     B256::from(U256::from(number))
 }
+
+mod latency;

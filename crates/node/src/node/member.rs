@@ -15,6 +15,7 @@ use tracing::info;
 
 use crate::checkpoints::CheckpointRpc;
 use crate::config::{NodeConfig, TimeSection};
+use crate::handover::assigned::Assigned;
 use crate::history::HistoryPlan;
 use crate::log_check::answer::{Answering, CheckedHeads};
 use crate::log_heads::{Head, PostedHeads};
@@ -52,12 +53,16 @@ pub(super) enum Ended {
 /// and its reach never falls below that time, so a later sample with a wider radius cannot give it
 /// back the turn it handed over. Its log's last command, with the key that sealed it, is what its
 /// member link answers until its replica is built: a successor's start check, in a set of two, has no
-/// other member to ask.
+/// other member to ask. With a reader of the latest agreed block, `to` is the assignment the successor
+/// bound, as the holder read it last before the keys went (#596): a skip a reorg later removes gives
+/// the drawn turn back by it, whatever the member reads after.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[must_use = "a handover's record names whom the turn went to"]
 pub(crate) struct Handed {
     pub generation: Option<u64>,
     pub reached: Option<Millis>,
     pub head: Option<(Head, AccountId)>,
+    pub to: Option<Assigned>,
 }
 
 impl Handed {
@@ -65,7 +70,7 @@ impl Handed {
     /// its log ending at `last`, a command those keys sealed.
     pub(super) fn of(store: Option<&KeyStore>, reached: Option<Millis>, last: Option<Head>) -> Self {
         let sealer = store.and_then(|store| store.keys().enclave_key().ok()).map(|key| AccountId(key.address()));
-        Self { generation: store.map(KeyStore::generation), reached, head: last.zip(sealer) }
+        Self { generation: store.map(KeyStore::generation), reached, head: last.zip(sealer), to: None }
     }
 
     /// What a run that ended before it sequenced gives away: the generation `store` sealed, if any.
@@ -289,7 +294,6 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
     /// Records what a confirmed handover gave away, which this member never holds again.
     pub(super) fn handed_over(&mut self, handed: Handed) {
         self.handed = Some(handed);
-        self.fallback.handing = true;
     }
 
     /// `until_turn`, or `Turn::Stop` once a shutdown signal arrives.

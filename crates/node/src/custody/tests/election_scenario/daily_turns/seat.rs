@@ -176,7 +176,7 @@ pub(super) struct Holder {
     /// The member's index in the scenario's list.
     pub(super) member: usize,
     pub(super) node: Node,
-    listener: JoinHandle<anyhow::Result<()>>,
+    listener: JoinHandle<anyhow::Result<Option<crate::handover::assigned::Assigned>>>,
     drains: mpsc::Receiver<DrainReply>,
 }
 

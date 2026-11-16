@@ -60,6 +60,8 @@ pub(crate) struct ChainState {
     pub held: Vec<Address>,
     /// The turn drawn before the one in effect, and the members that held an assignment of it.
     pub prior: (u64, Vec<Address>),
+    /// The turn in effect's source, zero for none.
+    pub source: Address,
     /// The epoch's stored head: seq, signing time, posted-at.
     pub head: (u64, u64, u64),
     /// How long each call takes to answer.
@@ -101,6 +103,7 @@ impl Default for ChainState {
             members: Vec::new(),
             held: Vec::new(),
             prior: (0, Vec::new()),
+            source: Address::ZERO,
             head: (0, 0, 0),
             latency: std::time::Duration::ZERO,
             holders: Vec::new(),
@@ -204,7 +207,7 @@ fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8
             generation: chain.generation,
             prior: chain.prior.0,
             seed: B256::ZERO,
-            source: Address::ZERO,
+            source: chain.source,
         };
         turnAtCall::abi_encode_returns(&turnAtReturn { turn: chain.turn, _1: named })
     } else if to == SCHEDULE && is::<setOfCall>(data) {

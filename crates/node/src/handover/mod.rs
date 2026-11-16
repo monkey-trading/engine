@@ -85,8 +85,8 @@ use messages::{Challenge, Confirm, Reply, Request};
 #[cfg(test)]
 pub(crate) mod stand_in;
 mod successor;
-pub(crate) use successor::take;
 #[cfg(test)]
+pub(crate) use successor::take;
 pub(crate) use successor::take_with;
 pub(crate) mod tail;
 pub(crate) mod turns;

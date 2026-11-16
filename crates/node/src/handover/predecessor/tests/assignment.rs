@@ -2,18 +2,22 @@
 //! keys before the finalised schedule shows the skip, under the skip's generation, once the holder's
 //! log shows the skip's set naming it with notice; a skip or a promotion at each phase of a transfer —
 //! at the admission, before the stop, after the stop before the keys go, after the keys go before the
-//! confirmation — leaves the keys with the holder, which goes on serving the member now named; and a
-//! promotion racing the boundary leaves the drawn member without them.
+//! confirmation — leaves the keys with the holder, which goes on serving the member now named; a
+//! promotion racing the boundary leaves the drawn member without them; and a drawn member that handed
+//! its turn to a skip a reorg then removed takes it back, with the log the skip's member continued.
 
 use super::*;
 
 use engine_core::auth::Operator;
 use engine_core::eip712::B256;
 
+use super::tail::write_log_through;
+use crate::checkpoints::HandoverSource;
 use crate::handover::assigned::tests::skip;
 use crate::handover::assigned::{Assigned, Reason};
 use crate::sequencer::Request;
 use crate::sequencer::tests::operator::{recover_turns, turn_log};
+use crate::test_support::log_entries;
 
 /// The generation the drawn turn holds, a skip's, and a later skip's.
 const DRAWN: u64 = 9;
@@ -87,7 +91,9 @@ async fn a_skips_member_takes_the_keys_under_the_skip_before_the_finalised_sched
     let answer = exchange.answer_drain(Ok(head));
     let store = exchange.take_bound().await.expect("the skip's member took the keys");
     assert_eq!((store.release(), store.generation()), (exchange.upgrade(), SKIPPED), "sealed in the skip's generation");
-    timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
+    let bound = exchange.skip_to_successor(turn, key, 1, SKIPPED);
+    let to = timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
+    assert_eq!(to, Some(bound), "the run ends with the skip bound");
     assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
     assert_eq!(exchange.assignments.reads.load(Ordering::SeqCst), 5, "each side read it before each step");
 }
@@ -237,4 +243,146 @@ async fn a_holder_whose_skip_was_reorged_away_hands_the_keys_to_the_drawn_member
     let _answer = exchange.answer_drain(Ok(head));
     let store = exchange.take_bound().await.expect("the drawn member took the keys");
     assert_eq!(store.generation(), DRAWN);
+    let to = timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
+    assert_eq!(to, Some(drawn), "the run ends with the draw bound");
+}
+
+/// A drawn member, A, took its turn late and handed the keys to B, a skip's member; a reorg then removes
+/// the skip while B sequences on. A's confirmed handover deleted its sealed copy, so its restart opens no
+/// keys beside B's; its start's take of the turn finds B, the holder of the newest head, and takes the
+/// keys back through B's own listener, binding the draw, with the log B continued past what A handed
+/// over, sealed in the draw's generation, and B's run ends with the draw bound.
+#[tokio::test]
+async fn a_restarted_drawn_member_takes_the_continuing_log_back_from_a_reorged_skips_member() {
+    let (engine, _run, turn, key, boundary) = logged("handover-reorged-log");
+    let mut exchange = Exchange::start_logged("handover-reorged", Some(engine.clone())).await;
+    let a = Release { launch_digest: RELEASE, config_sha256: PREDECESSOR_CONFIG };
+    exchange.schedule_successor(turn, key, boundary);
+    {
+        let mut scheduled = exchange.scheduled.lock().unwrap();
+        let drawn = scheduled.as_mut().unwrap();
+        (drawn.release, drawn.generation) = (a.id(), DRAWN);
+    }
+    exchange.store.reseal(DRAWN).unwrap();
+    exchange.reach(boundary + 600_000);
+
+    // A hands the keys to B under the skip, and deletes its sealed copy at the confirmation.
+    let skipped = exchange.skip_to_successor(turn, key, 1, SKIPPED);
+    exchange.assignments.set(Some(skipped));
+    let handed = write_log_tail(&exchange.successor_log, 9, &exchange.old.enclave_key().unwrap());
+    let _answer = exchange.answer_drain(Ok(handed));
+    let b_store = Arc::new(exchange.take_bound().await.expect("the skip's member took the keys"));
+    let to = timeout(Duration::from_secs(5), &mut exchange.run).await.expect("A's listener ended").unwrap().unwrap();
+    assert_eq!(to, Some(skipped));
+    let mut a_cfg = successor_config("handover-reorged-a").0;
+    a_cfg.file_sha256 = PREDECESSOR_CONFIG;
+    a_cfg.tee.sealing.as_mut().unwrap().dir = exchange.predecessor_dir.clone();
+    crate::node::forget(&a_cfg, Some(&exchange.store));
+
+    // The skip is reorged away; B sequences on past the handed-over head and serves the drawn member.
+    let key_b = exchange.old.enclave_key().unwrap();
+    let handed = log_entries(&exchange.successor_log);
+    let continued = write_log_through(&exchange.successor_log, &[9, 15], &key_b);
+    assert_eq!(log_entries(&exchange.successor_log)[..handed.len()], handed, "B's log rewrote what A handed over");
+    let (b_listener, b_drains) = listener_over(&exchange, b_store, Some(engine.clone())).await;
+    let b_address = b_listener.listener.local_addr().unwrap().to_string();
+    let b_run = tokio::spawn(b_listener.run());
+    let _b_answer = answer_drains(b_drains, continued.clone());
+    // The latest agreed block shows the draw, B's release signing the newest head, and B in the set with
+    // no assignment of the turn, the reorg having removed its skip, and its archive unreachable; the
+    // finalised turn names no source. Only the newest head's holder leads A to B.
+    let drawn = Assigned {
+        reason: Reason::Draw,
+        head_release: Some(exchange.upgrade().id()),
+        ..skip(turn, 0, 0xc1, a.id(), DRAWN)
+    };
+    exchange.assignments.set(Some(drawn));
+    let unreachable = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string();
+    let b = HandoverSource {
+        candidate: AccountId([0xc1; 20]),
+        release: exchange.upgrade().id(),
+        api_hostname: unreachable,
+        handover_endpoint: b_address,
+    };
+    *exchange.assignments.members.lock().unwrap() =
+        vec![crate::handover::discovery::Registered { source: b, held: None }];
+
+    // A restarts: no copy of its keys opens, and its start's take of the turn takes them, with the log, from B.
+    let sealer = MockSealer { launch_digest: RELEASE };
+    let reopened = KeyStore::open(&exchange.predecessor_dir, &sealer, PREDECESSOR_CONFIG, DRAWN).unwrap();
+    assert!(reopened.is_none(), "the copy A handed over opened again");
+    let vault = Vault {
+        signer: AccountId(key_b.address()),
+        current: exchange.current.clone(),
+        synced: exchange.synced.clone(),
+        rotation: exchange.rotation.clone(),
+        scheduled: exchange.scheduled.clone(),
+    };
+    let reader: Arc<dyn crate::handover::assigned::Assignments> = exchange.assignments.clone();
+    let at = vault.observe(View::Finalized, &[]).await.unwrap();
+    let scheduled = exchange.scheduled.lock().unwrap().clone().expect("the turn is drawn");
+    assert!(scheduled.source.is_none());
+    let parts = (&sealer as &dyn crate::tee::sealing::Sealer, &MockAttestor as &dyn crate::tee::Attestor);
+    let taken =
+        crate::handover::turns::take_keys(&a_cfg, &vault, (&at, &scheduled), parts, &exchange.metrics, Some(reader))
+            .await
+            .expect("A took its keys back from B");
+    assert_eq!((taken.release(), taken.generation()), (a, DRAWN), "sealed outside the draw's generation");
+    assert_eq!(taken.keys().predecessor_head, Some(continued), "the keys came with another final checkpoint");
+    let a_log = log_entries(&a_cfg.node.log_dir);
+    assert_eq!(a_log, log_entries(&exchange.successor_log), "A's log is not B's");
+    assert!(a_log.len() > handed.len() && a_log[..handed.len()] == handed, "A's log lost what it handed over");
+    let to = timeout(Duration::from_secs(5), b_run).await.expect("B's listener ended").unwrap().unwrap();
+    assert_eq!(to, Some(drawn), "B's run ends with the draw bound");
+}
+
+/// A listener handing over `store`'s keys from the successor's log, against `exchange`'s vault, trusted
+/// time and latest assignments, checking turns against `engine`'s log: the listener and its stop
+/// requests.
+async fn listener_over(
+    exchange: &Exchange,
+    store: Arc<KeyStore>,
+    engine: Option<mpsc::Sender<Request>>,
+) -> (Predecessor<Vault>, mpsc::Receiver<oneshot::Sender<anyhow::Result<Head>>>) {
+    let (drain, drains) = mpsc::channel(1);
+    // Its node signs its checkpoints: the receiver keeps the last value its dropped sender sent.
+    let signing = watch::channel(true).1;
+    let samples = exchange.samples.subscribe();
+    let listener = Predecessor {
+        listener: TcpListener::bind("127.0.0.1:0").await.unwrap(),
+        domain: exchange.domain(),
+        provider: TeeProvider::Mock,
+        processor: None,
+        kds_base: "https://kds.test".into(),
+        signer: AccountId(store.keys().enclave_key().unwrap().address()),
+        store,
+        attestor: Box::new(MockAttestor),
+        vault: Vault {
+            signer: AccountId([0; 20]),
+            current: exchange.current.clone(),
+            synced: exchange.synced.clone(),
+            rotation: exchange.rotation.clone(),
+            scheduled: exchange.scheduled.clone(),
+        },
+        log_dir: exchange.successor_log.clone(),
+        trusted: TrustedClock::new(Arc::new(SystemClock), samples, Duration::from_secs(1)),
+        drain,
+        signing,
+        secrets: None,
+        engine: engine.as_ref().map(mpsc::Sender::downgrade),
+        logged: std::sync::Mutex::new(None),
+        retained: std::sync::Mutex::new(None),
+        tail_evidence: Default::default(),
+        assignments: Some(exchange.assignments.clone()),
+    };
+    (listener, drains)
+}
+
+/// Answers every stop request on `drains` with `head`.
+fn answer_drains(mut drains: mpsc::Receiver<oneshot::Sender<anyhow::Result<Head>>>, head: Head) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(reply) = drains.recv().await {
+            let _ = reply.send(Ok(head.clone()));
+        }
+    })
 }

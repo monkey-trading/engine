@@ -291,7 +291,7 @@ fn watch_promotion(
 /// log complete, not that one enclave alone holds its keys, so a predecessor keeps no copy a host could
 /// reopen beside its successor. A failure is logged; the generation it held is the successor's either
 /// way.
-pub(super) fn forget(cfg: &NodeConfig, store: Option<&KeyStore>) {
+pub(crate) fn forget(cfg: &NodeConfig, store: Option<&KeyStore>) {
     let (Some(store), Some(sealing)) = (store, cfg.tee.sealing.as_ref()) else { return };
     let path = crate::tee::sealing::file_for(&sealing.dir, &store.release(), store.generation());
     let removed = std::fs::remove_file(&path)

@@ -233,12 +233,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/standby/tests/mod.rs` — copy appends that verify frames and refuse a wrong signer, truncation
   at the resume checkpoint, stream resumption at the copy's last command, and a follow that stops at a
   cut-back operator or a heartbeat behind the copy with the copy unchanged; `src/standby/tests/durable.rs`
-  the durable head a stint records for the member link
+  the durable head a stint records for the member link; `src/standby/tests/connect.rs` a stint whose
+  `until` passes while it still connects, which ends then with the copy unchanged
 - `src/standby/follow.rs` — one follow stint: the signed stream at the copy's last command, each frame
   verified against the followed enclave, each new entry applied to a replica, when there is one,
   before the copy takes it (`ReplicaRefused` otherwise); with a member link, the copy synced every
   200 ms and its durable head (the last command it appended, with the key that sealed it), entries and
-  the stream's signed heads recorded for it
+  the stream's signed heads recorded for it; a stint `until` ends, ends while it still connects too
 - `src/standby/operator.rs` — the operator a follower follows: under rotation the registry's candidate
   in effect at `https://` its registered API hostname, verified against the vault's signer at the
   latest block; without rotation the one `[standby]` names; a `--standby` node's, with `[standby]`'s
@@ -286,7 +287,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `tests/exemptions.rs` (reads under which no promotion can pass, and how long each holds),
   `tests/copies.rs` (a reopened predecessor beside its successor) and
   `tests/rounds.rs` (the vault's signer before any exemption, a retired signer, confirmations per set,
-  rounds while reads fail, a full set read within an interval, a former holder's tail, a promoted
+  rounds while reads fail, a full set read within an interval, a former holder's tail, the turn's
+  source's tail, a promoted
   operator's blocked reads, the incumbent beside an orphaned holder)
 - `src/liveness/link.rs` — the member link: statuses, entries, vouches and its standby key's
   attestation a member answers on its handover endpoint while it follows, and the operator's log checks
@@ -354,13 +356,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   log assigns this node's key, which its `TurnTaken` waits on; `src/node/turn_keys/tests.rs` covers it
 - `src/node/handover.rs` — the registry's rotation switch checked against the config at start, and the
   incumbent's election watcher
-- `src/node/keys.rs` — this start's enclave keys and their attestation, and the check that the log
+- `src/node/keys.rs` — this start's enclave keys and their attestation, read with the turn's latest
+  assignment through one reader at the start (#596), and the check that the log
   reaches the final checkpoint of the release that handed the keys over, sealing the boundary's log
   check that start makes in the same write; a member sets its copy
   aside (`<log_dir>.aside`, `node::member::before_whole_log_take`) before any whole-log take, a
   turn's or an election's, since its copy's segment files are its own writer's
 - `src/node/keys/platform.rs` — the platform a start runs on: the attestor its quotes come from and
   the sealer its keys are sealed under, the mock TEE's stand-in measurement included
+- `src/node/keys/takeover.rs` — a takeover's first start under the new signer: the log cut back to the
+  vault's finalized checkpoint, resumable from its `takeover.json` marker
 - `src/node/keys/tests.rs` — sealed, new, refused, and unsealed keys, the vault's current release,
   the stand-in measurement, the first start's head check, and the release watch, which reads the
   keys' current generation
@@ -402,7 +407,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   following for a stint before retrying, each attempt's lines in a `take{turn}` span; each source's
   refusal of the tip pages naming the turn, and each is classified, a later source's failure hiding
   none (`turn/tries.rs`), and after three refusals, or five minutes of failures no source refused
-  (the start's reads, or no source answering), it leaves its turn to a whole-log start; opening the
+  (the start's reads, or no source answering), counted per holding it takes (turn and generation), it
+  leaves its turn to a whole-log start; a take that waits on an unfinal epoch or a latest block behind
+  the boundary follows the incumbent through the wait; opening the
   copy's replica, the incumbent a stale copy follows and the take itself are in `turn/open.rs`; after a
   confirmed handover it never
   holds again the generation it gave away, and its trusted reach, and the next start's, never falls
@@ -412,8 +419,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   bootstrap and posted-head paging, `episodes.rs` its alerts' episodes, and `stop.rs` a shutdown during a replica's build; `src/node/member/turn/skip.rs` is the
   member's turn under the latest agreed block's skips (#596): it takes a turn a skip names it for
   before the skip is final, follows rather than takes one a skip or a promotion moved past it, asks
-  the operator whose head is newest first, and follows that operator every other failed stint;
-  `tests/take/skip.rs` there covers each
+  the operator whose head is newest first, follows that operator every other failed stint, and takes
+  back, in the same run, a turn it handed to a skip's member (`Handed::to`) that the latest view no
+  longer names; `tests/take/skip.rs` there covers each, with a take that waits, on a latest block behind
+  the boundary or after a failed stint, following the incumbent, and the tries kept per holding taken
 - `src/node/secrets.rs` — this start's delivered secrets: opening the sealed bundle, asking a
   predecessor, holding for what the node cannot run without, setting the rest into the config and
   the alert routes, `secret_missing`, and the listener handed back to a member's own operator key
@@ -445,7 +454,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
 - `src/sequencer/claims.rs` — MONKEY and USDC claim proofs retained for recently asking accounts at each new checkpoint, so one is served at the checkpoint the vault accepted
 - `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, reissue requests, the account payouts read, and the boundary's log check's hold on each release
-- `src/sequencer/log_check.rs` — the sequencer's side of the boundary's log check: the verified head, restored from the sealed keys only when the log holds its checkpoint and dropped from them once the gate no longer applies, the log's `TurnTaken` records attributing each range, the check due once this node holds on through a turn of its operator key, under this release or its member's earlier one, that its verified head does not reach (with the checkpoint it writes after its `TurnTaken`), `log_check_unattributable` while the records cannot say who sequenced that range, `log_check_unavailable` while the gate holds payouts on a node set up to take no turns, the check republished after each sequenced batch, a member's verification taken only for the check due and from a member and release outside its range, and the boundary an unpaid approval waits for, the turn in effect's while its member's handover is still to come; `src/sequencer/log_check/tests.rs` covers a held turn's check, its target whether the checkpoint or the `TurnTaken` is noted first, a one-member set, rotation off, a reissue on a signer change and on request, a restart, and a handover's check; `src/sequencer/log_check/tests/handover.rs` the head a start after a handover seals only while the gate applies; `src/sequencer/log_check/tests/pages.rs` the unattributable and unavailable alerts, the run loop withdrawing a check rotation ends, and an upgrade that keeps asking for its member's check
+- `src/sequencer/log_check.rs` — the sequencer's side of the boundary's log check: the verified head, restored from the sealed keys only when the log holds its checkpoint and dropped from them once the gate no longer applies, the log's `TurnTaken` records and the holders the keys name attributing each range, the check due once this node holds on through a turn of its operator key, under this release or its member's earlier one, that its verified head does not reach (with the checkpoint it writes after its `TurnTaken`), `log_check_unattributable` while the records cannot say who sequenced that range, `log_check_unavailable` while the gate holds payouts on a node set up to take no turns, the check republished after each sequenced batch, this release named a holder in the sealed keys at a handover's stop while the gate applies (the stop refused while the record cannot be sealed, and, with the gate off, until the gate's records are dropped from the keys), a member's verification taken only for the check due and from a member and release outside its range, and the boundary an unpaid approval waits for, the turn in effect's while its member's handover is still to come; `src/sequencer/log_check/tests.rs` covers a held turn's check, its target whether the checkpoint or the `TurnTaken` is noted first, a one-member set, rotation off, a reissue on a signer change and on request, a restart, and a handover's check; `src/sequencer/log_check/tests/handover.rs` the head a start after a handover seals only while the gate applies; `src/sequencer/log_check/tests/holders.rs` the holder a handover's stop names while the gate applies, a stop refused while its record cannot be sealed or, with the gate off, records remain, restored, excluded from the check due, dropped by a verification that reaches it and once the gate stops applying; `src/sequencer/log_check/tests/pages.rs` the unattributable and unavailable alerts, the run loop withdrawing a check rotation ends, and an upgrade that keeps asking for its member's check
 - `src/sequencer/payout_schedule.rs` — complete unpaid approval order, bounded epoch and requested reissue scheduling, and the hold behind unloaded recovered approvals
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
 - `src/sequencer/payout_tests/` — `promotion.rs`: an unpaid authorization reissued across a promotion; the account payouts read across signing, reissue, payment and an unfinished restart load, paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
@@ -847,8 +856,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   found only for the domain, TLS key, and ACME directory it was issued for, and what the host can do
   with its file; `src/tee/certificates/tests.rs` covers it
 - `src/tee/keys.rs` — the key set a restart keeps and an upgrade hands over: the signing key, the
-  TLS key, the ACME account, the predecessor's final checkpoint, and the head the last boundary's log
-  check verified, and an earlier release's certificate, read but never handed over
+  TLS key, the ACME account, the predecessor's final checkpoint, the head the last boundary's log
+  check verified with the releases that handed the keys on past it, and an earlier release's
+  certificate, read but never handed over
 - `src/tee/sealing.rs` — the sealed key file, AES-256-GCM under the platform's derived key, the
   reseal into a daily turn's new generation, and the mock TEE's public stand-in for sealing;
   `src/tee/sealing/tests.rs` covers it
@@ -925,12 +935,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   its own writer cut falls back to the whole log once it sets the copy aside, and an older reader,
   following or with no copy, is refused before the stop; `src/handover/predecessor/tail.rs` holds
   the predecessor's checks on a request for the keys: the versions every successor reads, and a tail
-  request's tip, on its log and still retained; `src/handover/predecessor/assignment.rs` holds its
+  request's tip, on its log and still retained; `src/handover/predecessor/checks.rs` its checks before
+  it stops: the tail's fit, its own log's acceptance of the daily turn a successor takes, and a peer's
+  platform no weaker than its own (`no_weaker`); `src/handover/predecessor/assignment.rs` holds its
   checks against the latest agreed block's assignment (#596): the binding a request names, a skip's
   member under the log's notice rule, read again before and after the stop, with `tests/assignment.rs`
   covering a skip's take, refusals, a skip or a promotion at each phase of a transfer, a promotion
-  racing the boundary, the stopped holder's lookback and a reorged skip; `tests/entries.rs` holds the
-  log-writing helpers the predecessor tests share
+  racing the boundary, the stopped holder's lookback, a reorged skip, and the drawn member that handed
+  its turn to a reorged skip's member taking the keys back after a restart, through its start's take of
+  the turn, from that member as the newest head's holder, with the log it extended; `tests/entries.rs`
+  holds the log-writing helpers the predecessor tests share
 - `src/handover/assigned.rs` — the turn in effect's current assignment at the latest block the custody
   quorum agrees on (#596), with the release of the signer epoch's newest head and whether a release
   move revised it, and the binding a handover's request carries and both sides read again before each
@@ -1154,7 +1168,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   pending one is awaited rather than replaced, and the lock is held inside each blocking write
 - `src/log_heads/read.rs` — the latest posted log head, read for a member that follows the operator
   in effect
-- `src/log_check/mod.rs` — the boundary's log check: the verified head, the statement a member's
+- `src/log_check/mod.rs` — the boundary's log check: the verified head, the holders the keys name past
+  it, each release that handed them on while the gate applied, the statement a member's
   quote binds and its report data, the digest the operator's enclave signs over its question, the
   gate's condition (rotation on and a turn in effect whose set names two or more members), the log's
   `TurnTaken` records that attribute a range to the members and releases that sequenced it (with no
@@ -1349,7 +1364,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/sizing.rs` — read sizes that adapt to a provider's limits
 - `src/custody/standby_keys.rs` — the standby key's reads through its own quorum, at the latest block
   a strict majority agrees on, one session at a time; `src/custody/standby_keys/tests.rs` covers the
-  agreed block, its time, and a minority, split or wrong-chain answer
+  agreed block, its time, and a minority, split or wrong-chain answer, and
+  `src/custody/standby_keys/tests/latency.rs` the round trips one latest assignment read makes, two of
+  which every handover's switch holds after the stop
 - `src/custody/credit.rs` — crediting or reserving one deposit once, and the sequencer round trips it needs
 - `src/custody/pending.rs` — bounded, backed-off log-derived retries of deposits left pending by source failures
 - `src/custody/quorum.rs` — strict-majority reads at common block heights, provider alerts, and

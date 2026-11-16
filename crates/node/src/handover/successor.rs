@@ -31,24 +31,10 @@ use crate::tee::keys::{Head, KeySet};
 use crate::tee::sealing::{KeyStore, Platform, Release, Sealer};
 use crate::tee::{Attestor, EnclaveKey};
 
-/// This release's keys, taken from the release whose handover listener is at `address`, reading the
-/// vault through `vault`, and sealed for this release in the vault's generation of it. The keys are
-/// accepted only if the vault already names their signing key, and names this release at finality or
-/// from the turn the finalised schedule names for it at `reached_ms`, a time true time has certainly
-/// reached (`turns`): a handover never brings in a key a host-run enclave chose. The log
-/// segments past the restored tip ride with the keys, each bound to its listing inside the
-/// ciphertext: every segment is hash-checked and chained to the tip before the confirmation goes
-/// out, and the last must reach the handed-over checkpoint. Without the predecessor's signed
-/// acknowledgement the keys are not sealed, and the start fails under `handover_unconfirmed`: the
-/// predecessor may still run.
+/// `take_with`, reading the latest assignment through `cfg`'s own reader.
 /// Error cases:
-/// - `[tee.sealing]` is missing, or this enclave cannot quote
-/// - the predecessor cannot be reached in time, refuses, or its quote does not bind the keys it sent
-/// - the keys do not decrypt, carry no final checkpoint, or name a signer the vault does not, or the
-///   vault's current release is another one
-/// - a segment differs from its listing, breaks the chain from the tip, or the log does not reach
-///   the handed-over checkpoint
-/// - the keys cannot be sealed, or the predecessor does not acknowledge the confirmation
+/// - as `take_with`, or the custody section or the vault address is malformed
+#[cfg(test)]
 pub(crate) async fn take(
     cfg: &NodeConfig,
     address: &str,
@@ -62,10 +48,26 @@ pub(crate) async fn take(
     take_with(cfg, address, (sealer, attestor), vault, reached_ms, metrics, assignments).await
 }
 
-/// `take`, binding the request to the latest assignment `assignments` reads, when it names this
-/// release, and reading it again before the keys are sealed (#596).
+/// This release's keys, taken from the release whose handover listener is at `address`, reading the
+/// vault through `vault`, and sealed for this release in the vault's generation of it. The keys are
+/// accepted only if the vault already names their signing key, and names this release at finality or
+/// from the turn the finalised schedule names for it at `reached_ms`, a time true time has certainly
+/// reached (`turns`): a handover never brings in a key a host-run enclave chose. The log
+/// segments past the restored tip ride with the keys, each bound to its listing inside the
+/// ciphertext: every segment is hash-checked and chained to the tip before the confirmation goes
+/// out, and the last must reach the handed-over checkpoint. Without the predecessor's signed
+/// acknowledgement the keys are not sealed, and the start fails under `handover_unconfirmed`: the
+/// predecessor may still run. The request binds the latest assignment `assignments` reads, when it
+/// names this release, read again before the keys are sealed (#596).
 /// Error cases:
-/// - as `take`, or the latest assignment cannot be read, or moved before the keys were sealed
+/// - `[tee.sealing]` is missing, or this enclave cannot quote
+/// - the predecessor cannot be reached in time, refuses, or its quote does not bind the keys it sent
+/// - the keys do not decrypt, carry no final checkpoint, or name a signer the vault does not, or the
+///   vault's current release is another one
+/// - a segment differs from its listing, breaks the chain from the tip, or the log does not reach
+///   the handed-over checkpoint
+/// - the keys cannot be sealed, or the predecessor does not acknowledge the confirmation
+/// - the latest assignment cannot be read, or moved before the keys were sealed
 pub(crate) async fn take_with(
     cfg: &NodeConfig,
     address: &str,

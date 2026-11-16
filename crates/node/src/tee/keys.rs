@@ -48,6 +48,10 @@ pub(crate) struct KeySet {
     /// and an approved upgrade carries to the next release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_check: Option<crate::log_check::VerifiedHead>,
+    /// The releases that handed these keys on past that head while the gate applied (`log_check`):
+    /// none counts as a check of a range it may have sequenced.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holders: Vec<crate::log_check::Holder>,
 }
 
 /// An ACME account and the directory it is registered with.
@@ -85,6 +89,7 @@ impl fmt::Debug for KeySet {
             .field("certificate", &self.certificate.as_ref().map(|certificate| &certificate.directory_url))
             .field("predecessor_head", &self.predecessor_head)
             .field("log_check", &self.log_check)
+            .field("holders", &self.holders)
             .finish_non_exhaustive()
     }
 }
@@ -104,6 +109,7 @@ impl KeySet {
             handover_tails: Vec::new(),
             handover_tail: None,
             log_check: None,
+            holders: Vec::new(),
         })
     }
 
