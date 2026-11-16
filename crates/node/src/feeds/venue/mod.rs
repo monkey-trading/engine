@@ -38,6 +38,7 @@ mod setup;
 pub use setup::tls_config;
 mod status;
 use setup::{next_attempt, next_backoff};
+pub use status::run_reporting;
 mod stale;
 #[cfg(test)]
 pub(super) use stale::STALE_GRACE;
@@ -151,8 +152,6 @@ struct VenueFeed {
     down: bool,
     /// Whether the current connection has sequenced a fresh quote.
     quoted: bool,
-    /// Whether a connection is open, from its subscription to its loss.
-    link_up: bool,
     /// When each symbol last had a fresh quote sequenced, counted from the task's start, the
     /// venue's last recovery, or the last time the engine took no quote for it, and kept across
     /// routine reconnects.
@@ -194,7 +193,6 @@ struct VenueFeed {
     delayed: bool,
     /// The books a ping's answer may re-date (see `standing`).
     standing: StandingBooks,
-    /// Where the connection publishes what its symbols are doing.
     report: status::Report,
 }
 
@@ -226,7 +224,6 @@ impl VenueFeed {
             tx,
             down: false,
             quoted: false,
-            link_up: false,
             last_quote,
             silent: BTreeSet::new(),
             stale: StaleRuns::default(),
@@ -259,7 +256,7 @@ impl VenueFeed {
         loop {
             self.quoted = false;
             let Err(error) = self.relay().await;
-            self.link_up = false;
+            self.report.up = false;
             self.settle().await;
             if self.tx.is_closed() {
                 // The supervisor logs what the task returns, so it is redacted as a log line is.
@@ -309,7 +306,7 @@ impl VenueFeed {
             .context("subscribe timed out")?
             .context("subscribe")?;
         info!(venue = self.conn.venue.name(), feed = self.conn.url.as_str(), "venue connected");
-        self.link_up = true;
+        self.report.up = true;
         let mut waiting_since = Instant::now();
         self.connected_afresh();
         // The engine's quote from an earlier connection says nothing of what this one sequenced.
@@ -493,23 +490,6 @@ pub async fn run(
     tx: mpsc::Sender<Request>,
 ) -> anyhow::Result<()> {
     VenueFeed::new(conn, credentials, timing, tls, tx).run().await
-}
-
-/// As `run`, publishing what the connection's symbols are doing to `status` as its `index`th
-/// connection.
-/// Error cases:
-/// - the sequencer has gone away
-pub async fn run_reporting(
-    conn: VenueConnection,
-    credentials: Credentials,
-    timing: Timing,
-    tls: Arc<ClientConfig>,
-    tx: mpsc::Sender<Request>,
-    (status, index): (crate::feeds::status::FeedStatus, usize),
-) -> anyhow::Result<()> {
-    let mut feed = VenueFeed::new(conn, credentials, timing, tls, tx);
-    feed.report = status::Report::new(status, index);
-    feed.run().await
 }
 
 #[cfg(test)]

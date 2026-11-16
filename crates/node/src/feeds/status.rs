@@ -17,6 +17,8 @@ pub(crate) enum SymbolState {
     NotExpected,
     /// Quoting, and its quotes count.
     Quoting,
+    /// The connection quotes the symbol, but its books are too old by their venue's time to count.
+    Stale,
     /// The connection is up but this symbol has sent no fresh quote for the silence timeout.
     Silent,
     /// The connection's stream runs further behind than the delay bound, so its quotes do not count.

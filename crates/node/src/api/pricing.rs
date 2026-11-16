@@ -138,6 +138,7 @@ pub(crate) fn pricing(market: &MarketState, now: Millis, venues: &[VenueStatus])
 /// The source state a connection's own report names, when it names a cause.
 fn feed_cause(state: Option<SymbolState>) -> Option<SourceState> {
     match state? {
+        SymbolState::Stale => Some(SourceState::Stale),
         SymbolState::Silent => Some(SourceState::Silent),
         SymbolState::Delayed => Some(SourceState::Delayed),
         SymbolState::Down => Some(SourceState::Down),

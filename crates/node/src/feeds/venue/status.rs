@@ -4,19 +4,40 @@
 
 use crate::clock::now_ms;
 use crate::feeds::status::{Connection, FeedStatus, SymbolState, SymbolStatus};
-use crate::feeds::venue::VenueFeed;
+use crate::feeds::venue::{Credentials, Timing, VenueConnection, VenueFeed};
+use crate::sequencer::Request;
+use tokio::sync::mpsc;
 
 /// Where a connection publishes: the shared snapshots, and its place among them.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Report {
     status: FeedStatus,
     index: usize,
+    /// Whether a connection is open, from its subscription to its loss.
+    pub(super) up: bool,
 }
 
 impl Report {
     pub(super) fn new(status: FeedStatus, index: usize) -> Self {
-        Self { status, index }
+        Self { status, index, up: false }
     }
+}
+
+/// As `run`, publishing what the connection's symbols are doing to `status` as its `index`th
+/// connection.
+/// Error cases:
+/// - the sequencer has gone away
+pub async fn run_reporting(
+    conn: VenueConnection,
+    credentials: Credentials,
+    timing: Timing,
+    tls: std::sync::Arc<rustls::ClientConfig>,
+    tx: mpsc::Sender<Request>,
+    (status, index): (FeedStatus, usize),
+) -> anyhow::Result<()> {
+    let mut feed = VenueFeed::new(conn, credentials, timing, tls, tx);
+    feed.report = Report::new(status, index);
+    feed.run().await
 }
 
 impl VenueFeed {
@@ -26,12 +47,14 @@ impl VenueFeed {
         self.instruments
             .iter()
             .map(|(symbol, instrument)| {
-                let state = if self.down || !self.link_up {
+                let state = if self.down || !self.report.up {
                     SymbolState::Down
                 } else if self.delayed {
                     SymbolState::Delayed
                 } else if self.silent.contains(symbol) {
                     SymbolState::Silent
+                } else if self.stale.alerted(symbol) {
+                    SymbolState::Stale
                 } else if self.is_held(symbol) || self.closed(instrument.market, now) {
                     SymbolState::NotExpected
                 } else {
@@ -72,10 +95,18 @@ mod tests {
         let mut feed = kraken_feed(&[(1, "BTC/USD"), (2, "ETH/USD")], Duration::from_secs(1));
         let status = FeedStatus::default();
         feed.report = Report::new(status.clone(), 0);
-        feed.link_up = true;
+        feed.report.up = true;
         let state = |status: &FeedStatus, symbol: &str| {
             published(status).into_iter().find(|(name, _)| name == symbol).map(|(_, state)| state)
         };
+        feed.publish_status();
+        assert_eq!(state(&status, "BTC/USD"), Some(SymbolState::Quoting));
+        // A run of books too old to count, once alerted, shows as stale until a current book ends it.
+        feed.stale.read("BTC/USD", 5_000, 1_000, tokio::time::Instant::now());
+        feed.stale.newly_stale("BTC/USD", Duration::ZERO);
+        feed.publish_status();
+        assert_eq!(state(&status, "BTC/USD"), Some(SymbolState::Stale));
+        feed.stale.end("BTC/USD");
         feed.publish_status();
         assert_eq!(state(&status, "BTC/USD"), Some(SymbolState::Quoting));
         feed.silent.insert("BTC/USD".into());
@@ -94,13 +125,13 @@ mod tests {
         );
         assert_eq!(status.venues()[0].venue, "kraken");
         // The connection drops while no outage is alerted: the venue is down, not quoting.
-        (feed.down, feed.delayed, feed.link_up) = (false, false, false);
+        (feed.down, feed.delayed, feed.report.up) = (false, false, false);
         feed.silent.clear();
         feed.idle.clear();
         feed.publish_status();
         assert_eq!(state(&status, "BTC/USD"), Some(SymbolState::Down));
         // The venue recovers.
-        feed.link_up = true;
+        feed.report.up = true;
         (feed.down, feed.delayed) = (false, false);
         feed.silent.clear();
         feed.idle.clear();

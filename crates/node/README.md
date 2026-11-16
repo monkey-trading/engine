@@ -2631,7 +2631,7 @@ Markets in reduce-only, closed or unpriced refuse orders of their own and are no
 `reduce_only` and `pricing` of `GET /v1/markets`. `trusted_time.state` is `starting` (before the first
 sample), `sampled`, or `held` with a `cause` of `no_sample` or `drift`; `last_sample_ms` is when the
 latest sample was taken. Each venue's `state`, and each of its symbols' (`market` is the market it
-quotes), is `not_expected`, `quoting`, `silent`, `delayed`, `down` or `off`, in that order, and a venue shows the worst
+quotes), is `not_expected`, `quoting`, `stale` (its books are too old by the venue's time to count), `silent`, `delayed`, `down` or `off`, in that order, and a venue shows the worst
 of its symbols: one that quotes anything is `quoting` however many contracts of it are idle. `unpriced_markets` lists the markets open for trading that have no price, with the
 `reason` and the source counts of their `pricing`. The sequencer does nothing for any of it: the holds are read from what the node already keeps (trusted
 time's sample, the log-sync gauge, the poster's rollback latch), each connection's task publishes its
