@@ -470,7 +470,6 @@ pub(crate) async fn vouch_view_at(
     own: Option<AccountId>,
 ) -> anyhow::Result<VouchView> {
     let (release, approved) = registration_at(block, domain, candidate).await?;
-    let candidate = Address::from(candidate.0);
     let signer = call(block, "standby_signer", domain.vault, checkpointSignerCall {}).await?;
     let own_promotable = match own {
         Some(own) => {
