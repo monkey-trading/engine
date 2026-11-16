@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use engine_core::Fixed;
 use engine_core::types::{MarketId, Millis};
 
+use super::follow::Staged;
 use super::{Resolution, Retentions};
 
 /// One folded bucket: its market, resolution and window start, and its open, high, low and close.
@@ -22,6 +23,8 @@ pub(crate) struct MarkFold {
     retentions: Retentions,
     buckets: [BTreeMap<(Millis, MarketId), [Fixed; 4]>; 4],
     newest: Option<Millis>,
+    /// What a following member fetched from the provider, for the cache to seed once it can write.
+    staged: Staged,
 }
 
 impl Default for MarkFold {
@@ -34,7 +37,7 @@ impl Default for MarkFold {
 impl MarkFold {
     /// An empty fold keeping each resolution for its retention in `retentions`.
     pub(crate) fn new(retentions: Retentions) -> Self {
-        Self { retentions, buckets: Default::default(), newest: None }
+        Self { retentions, buckets: Default::default(), newest: None, staged: Staged::default() }
     }
 
     /// Folds `mark`, `market`'s mark at sequenced time `ts`, into its bucket at every resolution, as
@@ -61,6 +64,16 @@ impl MarkFold {
                 }
             }
         }
+    }
+
+    /// Holds `staged`, the provider history a following member fetched, beside the folded marks.
+    pub(crate) fn stage(&mut self, staged: Staged) {
+        self.staged = staged;
+    }
+
+    /// The provider history staged, leaving none.
+    pub(crate) fn take_staged(&mut self) -> Staged {
+        std::mem::take(&mut self.staged)
     }
 
     /// Every folded bucket, each resolution's oldest first, and the newest mark's time; `None` when

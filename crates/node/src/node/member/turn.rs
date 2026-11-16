@@ -17,6 +17,7 @@ use crate::handover::tail::{Taken, take_tail};
 use crate::history::HistoryPlan;
 use crate::history::marks::Retentions;
 use crate::history::marks::fold::MarkFold;
+use crate::history::marks::follow::Following;
 use crate::log::{CheckpointDomain, MANIFEST};
 use crate::node::member::standby::{Kept, Standby};
 use crate::node::member::{Member, PostedHead, Replica, Sampling, Turn};
@@ -80,7 +81,24 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// - none past a configuration error: failed reads, stints and handovers are retried
     pub(crate) async fn until_turn(&mut self) -> anyhow::Result<Turn> {
         let mut standby = None;
-        let turn = self.follow_until_turn(&mut standby).await;
+        // The provider history the node's charts need, fetched while the member follows: nothing of it waits
+        // for the turn (#884).
+        let following = crate::history::marks::follow::Following::start(self.cfg)
+            .inspect_err(|e| warn!("the member's provider backfill does not start: {e:#}"))
+            .ok()
+            .flatten();
+        let turn = self.follow_until_turn(&mut standby, following.as_ref()).await;
+        let staged = match following {
+            Some(following) => Some(following.finish().await),
+            None => None,
+        };
+        let turn = match (turn, staged) {
+            (Ok(Turn::Replica(start)), Some(staged)) => {
+                start.replica.marks.borrow_mut().stage(staged);
+                Ok(Turn::Replica(start))
+            }
+            (turn, _) => turn,
+        };
         // The member link frees the handover endpoint before the node binds it.
         if let Some(standby) = standby {
             standby.stop().await;
@@ -92,11 +110,18 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// started as the operator when a promotion makes its standby key the vault's signer (`promoted`).
     /// Error cases:
     /// - as `until_turn`
-    async fn follow_until_turn(&mut self, standby: &mut Option<Standby>) -> anyhow::Result<Turn> {
+    async fn follow_until_turn(
+        &mut self,
+        standby: &mut Option<Standby>,
+        following: Option<&Following>,
+    ) -> anyhow::Result<Turn> {
         let mut follower: Option<Opened> = None;
         let mut followed: Option<(Followed, Option<u64>)> = None;
         let mut tries = Tries::default();
         loop {
+            if let (Some(following), Some((replica, ..))) = (following, &follower) {
+                following.observe(replica.replica().engine());
+            }
             match self.keep_standby(standby, &mut follower, followed.as_ref().map(|(operator, _)| operator)).await {
                 Ok(Kept::Start(start)) => return Ok(Turn::Replica(start)),
                 Ok(Kept::Wait) => {
