@@ -341,8 +341,10 @@ async fn serve_node(
     }
     if let (Some(store), Some(vault)) = (turn_store, turn_vault) {
         let (release, every) = (store.release(), keys::RELEASE_CHECK_EVERY);
+        // What a member's start published from the latest agreed block stands until finality reaches it.
+        let started = (release, ready.as_ref().map(|ready| ready.generations.clone()).unwrap_or_default());
         let watch =
-            turn_keys::watch_turn_generations(vault, release, operator.address, tx.clone(), turn_generations, every);
+            turn_keys::watch_turn_generations(vault, started, operator.address, tx.clone(), turn_generations, every);
         tasks.spawn(async move { ("turn generations", watch.await) });
     }
     if store.is_some() && cfg.operator.rotation_enabled {
