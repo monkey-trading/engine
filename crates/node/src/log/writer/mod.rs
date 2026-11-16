@@ -5,7 +5,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Context;
+use anyhow::{Context, ensure};
 use tokio::sync::watch;
 use tracing::{info, warn};
 
@@ -185,6 +185,7 @@ impl LogWriter {
     /// - a withdrawal or checkpoint comes before any command in this segment
     /// - the write to the buffer or file fails
     pub fn append(&mut self, entry: &LogEntry) -> anyhow::Result<Offset> {
+        ensure!(!self.listing_unsettled, "the open segment's listing may be durable, so nothing is appended to it");
         let offset = offset_of(self.last, entry)?;
         if let Some(seq) = command_seq(entry)
             && self.open.as_ref().is_none_or(|(segment, _)| segment.commands >= self.segment_commands)
