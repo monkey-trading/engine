@@ -270,7 +270,9 @@ vault_epoch() { cast call "$vault" "signerEpoch()(uint64)" --rpc-url "$rpc"; }
 # first line, the cumulative command-prefix digest on the second. The vault's first signer epoch
 # is 1 (0 is reserved).
 posted_head() { cast call "$logheads" "heads(uint64)(uint64,bytes32,uint64,uint64,uint64)" "$(vault_epoch)" --rpc-url "$rpc"; }
-posted_seq() { posted_head | head -n 1 | tr -d '[:space:]'; }
+# The whole answer is read before its first line is taken: `head` closing the pipe early would end
+# `cast` with a broken pipe, which `pipefail` turns into a failed scenario.
+posted_seq() { posted_head | sed -n 1p | tr -d '[:space:]'; }
 # The greatest seq the log on disk holds.
 last_log_seq() { jq -s 'map(.seq) | max' "$work"/log/[0-9]*.jsonl; }
 

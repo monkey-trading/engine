@@ -199,7 +199,7 @@ wait_for_stored_checkpoint() {
 step "boot once to read the enclave address and pin it"
 start_node boot
 wait_for_log boot 'enclave, config, and TLS key attested'
-enclave="$(sed -n 's/.*enclave=\(0x[0-9a-fA-F]\{40\}\).*/\1/p' "$work/boot.log" | head -n 1)"
+enclave="$(sed -n '/enclave=0x/{s/.*enclave=\(0x[0-9a-fA-F]\{40\}\).*/\1/p;q;}' "$work/boot.log")"
 [[ -n "$enclave" ]] || fail "no enclave address in the attestation line"
 wait_for_log boot 'first trusted time sample: sequencing started'
 stop_node
