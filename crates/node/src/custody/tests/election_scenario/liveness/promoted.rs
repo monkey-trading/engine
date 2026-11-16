@@ -189,8 +189,10 @@ async fn run() -> anyhow::Result<()> {
     .await?;
     let promoted_at = Instant::now();
     // Finality is held behind the promotion: no block comes until the checks below have run, so the
-    // vault's finalized view still names A's key, and the chain moves only by what a node sends.
+    // vault's finalized view still names A's key, and what a node sends waits in the pool, where the
+    // checks see it.
     mining.abort();
+    chain.rpc("evm_setAutomine", json!([false])).await;
     ensure!(
         chain.view_at(vault, signerEpochCall {}, "finalized").await < epoch,
         "the promotion is already final: finality could not be held behind it"
@@ -236,11 +238,18 @@ async fn run() -> anyhow::Result<()> {
     sleep(Duration::from_secs(20)).await;
     seats[p].check()?;
     ensure!(chain.view(vault, latestSeqCall {}).await == held, "a checkpoint landed before the promotion was final");
-    ensure!(chain.view(vault, checkpointSignerCall {}).await == Address::from(signer.0));
+    let pool = chain.rpc_result("txpool_content", json!([])).await;
+    let relayer = format!("{:#x}", chain.accounts[8]);
+    let sent = pool["pending"].as_object().into_iter().chain(pool["queued"].as_object()).flatten();
+    ensure!(
+        sent.clone().all(|(from, _)| !from.eq_ignore_ascii_case(&relayer)),
+        "the promoted member sent a checkpoint before its promotion was final: {pool}"
+    );
     println!("PASS: {} posted no checkpoint while its promotion was not final", seats[p].name);
 
     // Finality released, its first checkpoint extends the one the promotion fixed (the vault accepts a
     // checkpoint only over its latest), signed by its standby key.
+    chain.rpc("evm_setAutomine", json!([true])).await;
     mining = mine(&chain);
     until("the promoted member's first checkpoint", Duration::from_secs(120), &mut seats, async || {
         let seq = chain.view(vault, latestSeqCall {}).await;
