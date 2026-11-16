@@ -160,6 +160,11 @@ impl LiveReplay {
         &self.replay.engine
     }
 
+    /// The `TurnTaken` commands and mirrored reassignments the entries applied so far record.
+    pub(crate) fn takings(&self) -> &crate::log_check::Takings {
+        &self.replay.takings
+    }
+
     /// The state root of the entries applied so far.
     #[cfg(test)]
     pub(crate) fn state_root(&mut self) -> [u8; 32] {

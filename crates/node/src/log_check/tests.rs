@@ -181,17 +181,17 @@ fn the_nodes_own_check_counts_for_nothing_when_the_schedule_promoted_its_member_
     let at = |position, release, reassigned| Assigned { turn: 2, position, candidate: candidate(release), reassigned };
     let own =
         |read: &Reassigned| own_check_read(Some(head(20)), &recorded, &[], head(34), (B2, &member(B)), Some(read));
-    let read = Reassigned { assigned: vec![at(0, A, false), at(1, B, true)] };
+    let read = Reassigned { assigned: vec![at(0, A, false), at(1, B, true)], from: 2 };
     assert_eq!(own(&read), Some(head(20)), "B's member checked its own work");
     // Without a record of the promotion, the log's records alone count it.
     assert_eq!(own_check_read(Some(head(20)), &recorded, &[], head(34), (B2, &member(B)), None), Some(head(34)));
     // Another member's promotion, or a draw of this one, says nothing of it.
-    assert_eq!(own(&Reassigned { assigned: vec![at(0, B, false), at(1, C, true)] }), Some(head(34)));
+    assert_eq!(own(&Reassigned { assigned: vec![at(0, B, false), at(1, C, true)], from: 2 }), Some(head(34)));
     // A reassignment in a turn that began after the range's last command sequenced none of it.
     let begin = |turn: u64| engine_core::turns::boundary(turn).unwrap();
     recorded.stamped(10, begin(2) + 1);
     recorded.stamped(34, begin(3) - 1);
-    let later = Reassigned { assigned: vec![at(0, A, false), Assigned { turn: 3, ..at(1, B, true) }] };
+    let later = Reassigned { assigned: vec![at(0, A, false), Assigned { turn: 3, ..at(1, B, true) }], from: 2 };
     let own =
         |read: &Reassigned| own_check_read(Some(head(20)), &recorded, &[], head(34), (B2, &member(B)), Some(read));
     assert_eq!(own(&later), Some(head(34)), "a turn that began after the range named its member");
@@ -452,3 +452,5 @@ fn sequencers(releases: &[B256]) -> Sequencers {
 fn head(seq: u64) -> VerifiedHead {
     VerifiedHead { seq, link: B256::repeat_byte(seq as u8), root: B256::repeat_byte(!(seq as u8)) }
 }
+
+mod coverage;

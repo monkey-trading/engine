@@ -386,7 +386,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/node/log_check.rs` — a node's part in the boundary's log check: the check the first start after
   a handover makes and seals (none when this release, or the member its operator key sits for,
   sequenced part of the range, as after the member's own upgrade, or the schedule promoted or skipped to
-  that member in a turn the range spans, which keeps the head the keys carried), the check a promoted start seals through the checkpoint the promotion fixed, under the
+  that member in a turn the range spans, or the schedule read misses the range's in-office turn, which
+  keeps the head the keys carried), the check a promoted start seals through the checkpoint the promotion fixed, under the
   same exclusion, the sequencer's setup with the sealed keys of a node that takes turns, and its
   supervised asking task
 - `src/node/member.rs` — a rotation-set member's life: following the operator in effect between its
@@ -1178,8 +1179,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   for a turn that had begun by the range's end), and the
   node's own check at a handover or a promoted start, which a
   member's other release never makes for a range it sequenced, nor its member when the schedule, read
-  before the start, promoted or skipped to it after the in-office assignment; `src/log_check/tests.rs` covers the
-  attribution, the own check, an upgrade, and what the quote and the question bind
+  before the start, promoted or skipped to it after the in-office assignment, or that read missed the
+  in-office turn; `src/log_check/tests.rs` covers the attribution, the own check, an upgrade, and what
+  the quote and the question bind, and `src/log_check/tests/coverage.rs` the own check against a read
+  that does or does not cover a checkpoint older than eight turns
 - `src/log_check/ask.rs` — the operator's asking: the members of the turn's order, first to last,
   but its own candidate, those with no handover endpoint, members and releases in the range and members
   the schedule promoted or skipped to in a turn the range spans, each
