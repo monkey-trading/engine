@@ -272,7 +272,6 @@ async fn run() -> anyhow::Result<()> {
         sent.clone().any(|(from, _)| from.eq_ignore_ascii_case(&relayer))
     };
     ensure!(!sent_by_relayer().await, "the promoted member sent a checkpoint before its promotion was final");
-    chain.rpc("evm_setAutomine", json!([true])).await;
     if head == promotion_block {
         chain.rpc("evm_mine", json!([])).await;
     }
@@ -288,6 +287,7 @@ async fn run() -> anyhow::Result<()> {
 
     // Finality released, its first checkpoint extends the one the promotion fixed (the vault accepts a
     // checkpoint only over its latest), signed by its standby key.
+    chain.rpc("evm_setAutomine", json!([true])).await;
     mining = mine(&chain);
     until("the promoted member's first checkpoint", Duration::from_secs(120), &mut seats, async || {
         let seq = chain.view(vault, latestSeqCall {}).await;
