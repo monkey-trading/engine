@@ -647,9 +647,10 @@ at once while it served one product's book, snapshot and updates, from a source 
 behind its own, and kept the connection's other product current. Prices stayed safe because each
 quote carries the venue's own time: the engine counted none older than `max_age_ms`, and re-dating
 moves a book's stamp on only by the time since it was read, so the market lost that venue rather
-than taking its old price. Such reads spanning 2 s raise `venue_stale` and resubscribe the product,
-alone on its connection where the venue takes that and on a new connection if it stays stale, again
-after each 2 s more of such reads, with backoff. A
+than taking its old price. Books arriving already older than they count for when the venue sent them
+(their age less the time since the connection's newest answered ping went out), across 2 s, raise
+`venue_stale` and resubscribe the product, alone on its connection where the venue takes that and on
+a new connection if it stays stale, again after each 2 s more of such books, with backoff. A
 production market needs two sources fresh, so a delay past the bound on either leaves it without a
 price. Every part of this rests on the monotonic clock's rate, as do
 the Roughtime round trips that place trusted time and with them `time.max_drift`. The enclave image

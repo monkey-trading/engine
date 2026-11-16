@@ -3,13 +3,17 @@
 //! whenever one shows it again since the last attempt or the connection's opening (a silent one by
 //! `timing.timeout` more of silence, a stale one by its reads from then spanning the grace `stale`
 //! sets) and a backoff has run since the last attempt, doubling from `timing.reconnect_min` to
-//! `timing.reconnect_max` and starting again once none is. Where the venue takes a resubscription
-//! of some symbols alone (Coinbase), the first attempt of each episode on a connection resubscribes
-//! them alone, so the other symbols quote on through it; a further attempt on the same connection
-//! replaces the connection, since a venue streaming a symbol from a source behind its own was seen
-//! to reach a current one on a new connection. A venue that takes none replaces the connection on
-//! every attempt.
+//! `timing.reconnect_max` and starting again once none is.
+//!
+//! Where the venue takes a resubscription of some symbols alone (Coinbase), an attempt resubscribes
+//! them alone, so the connection's other symbols quote on through it. Only when each has already
+//! been resubscribed alone on this connection in its episode and one still reads stale is the
+//! connection replaced, since a venue streaming a symbol from a source behind its own was seen to
+//! reach a current one on a new connection; a symbol that is only silent, as a halted product is, is
+//! resubscribed alone again rather than at the other symbols' cost. A venue that takes no
+//! resubscription alone replaces the connection on every attempt.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -22,20 +26,20 @@ use crate::feeds::venue::transport::Link;
 use crate::feeds::venue::{Timing, VenueFeed};
 
 /// The last resubscription and the current connection's opening, the backoff the attempt after next
-/// waits, and whether this episode has resubscribed alone on this connection.
+/// waits, and the symbols resubscribed alone on this connection in their current episode.
 #[derive(Debug)]
 pub(super) struct Resubscription {
     /// The last attempt and the backoff from it to the next, while symbols have needed one since.
     last: Option<(Instant, Duration)>,
     connected: Option<Instant>,
     wait: Duration,
-    alone: bool,
+    alone: BTreeSet<String>,
 }
 
 impl Resubscription {
     /// No attempt made, and the backoff at its start.
     pub(super) fn new(timing: &Timing) -> Self {
-        Resubscription { last: None, connected: None, wait: timing.reconnect_min, alone: false }
+        Resubscription { last: None, connected: None, wait: timing.reconnect_min, alone: BTreeSet::new() }
     }
 
     /// Since when a silent symbol's silence counts towards the next attempt: the later of the last
@@ -44,13 +48,15 @@ impl Resubscription {
         self.last.map(|(at, _)| at).max(self.connected)
     }
 
-    /// Whether to resubscribe at `now`, while symbols need it (`needed`): once one has shown it
-    /// again since the last attempt (`shown`), or none was made, and the backoff from the last has
-    /// run. Each attempt doubles the backoff for the one after; once none needs it, the episode
-    /// ends, and the backoff and the alone attempt start again.
-    pub(super) fn due(&mut self, needed: bool, shown: bool, now: Instant, timing: &Timing) -> bool {
-        if !needed {
-            (self.last, self.wait, self.alone) = (None, timing.reconnect_min, false);
+    /// Whether to resubscribe at `now` the symbols that need it (`needed`): once one has shown it
+    /// again since the last attempt or connection (`shown`), and, after an attempt, once the backoff
+    /// from it has run. Each attempt doubles the backoff for the one after. A symbol that no longer
+    /// needs it ends its episode, and may be resubscribed alone again; once none needs it, the
+    /// backoff starts again.
+    pub(super) fn due(&mut self, needed: &[String], shown: bool, now: Instant, timing: &Timing) -> bool {
+        self.alone.retain(|symbol| needed.contains(symbol));
+        if needed.is_empty() {
+            (self.last, self.wait) = (None, timing.reconnect_min);
             return false;
         }
         if !shown || self.last.is_some_and(|(at, wait)| now.duration_since(at) < wait) {
@@ -63,13 +69,17 @@ impl Resubscription {
 
     /// Records a connection opened at `now`, on which nothing has been resubscribed alone.
     pub(super) fn connected(&mut self, now: Instant) {
-        (self.connected, self.alone) = (Some(now), false);
+        self.connected = Some(now);
+        self.alone.clear();
     }
 
-    /// Whether an attempt may resubscribe alone, as the first of its episode on this connection,
-    /// marking it made.
-    fn take_alone(&mut self) -> bool {
-        !std::mem::replace(&mut self.alone, true)
+    /// Whether to resubscribe `symbols` alone rather than replace the connection, noting them
+    /// resubscribed alone: while one has not been yet on this connection in its episode, or none
+    /// reads stale (`stale`).
+    fn take_alone(&mut self, symbols: &[String], stale: bool) -> bool {
+        let unspent = symbols.iter().any(|symbol| !self.alone.contains(symbol));
+        self.alone.extend(symbols.iter().cloned());
+        unspent || !stale
     }
 }
 
@@ -81,8 +91,9 @@ impl VenueFeed {
         self.stale.restart();
     }
 
-    /// Resubscribes `symbols`: alone on `link` where the venue takes that and this episode has not
-    /// yet on this connection, so the other symbols quote on; otherwise by replacing the connection.
+    /// Resubscribes `symbols`: alone on `link` where the venue takes that, unless each has been
+    /// already on this connection in its episode and one reads stale (see the module), so the other
+    /// symbols quote on; otherwise by replacing the connection.
     /// Error cases:
     /// - the connection is to be replaced
     /// - the resubscription cannot be sent within `timing.timeout`
@@ -93,7 +104,9 @@ impl VenueFeed {
         symbols: &[String],
     ) -> anyhow::Result<()> {
         let names: Vec<&str> = symbols.iter().map(String::as_str).collect();
-        let Some(messages) = adapter.resubscription(&names).filter(|_| self.resubscription.take_alone()) else {
+        let stale = symbols.iter().any(|symbol| self.stale.alerted(symbol));
+        let Some(messages) = adapter.resubscription(&names).filter(|_| self.resubscription.take_alone(symbols, stale))
+        else {
             bail!("resubscribing {names:?}, silent or stale");
         };
         let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
@@ -118,44 +131,51 @@ mod tests {
         }
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn attempts_repeat_while_shown_again_each_after_a_doubling_backoff() {
-        let timing = timing();
-        let mut resubscription = Resubscription::new(&timing);
-        let start = Instant::now();
-        let after = |ms: u64| start + Duration::from_millis(ms);
-        assert!(resubscription.due(true, true, start, &timing));
-        // Backoffs of 0.5 s, 1 s, then 2 s, the cap.
-        for (from, to) in [(0, 500), (500, 1_500), (1_500, 3_500), (3_500, 5_500)] {
-            assert!(!resubscription.due(true, true, after(to - 1), &timing), "attempted before {to} ms");
-            assert!(resubscription.due(true, true, after(to), &timing), "no attempt at {to} ms after {from} ms");
-        }
-        // A need not shown again since the last attempt waits however long.
-        assert!(!resubscription.due(true, false, after(60_000), &timing));
-        // Once none needs it, the backoff starts again and the next need is met at once.
-        assert!(!resubscription.due(false, false, after(60_001), &timing));
-        assert!(resubscription.due(true, true, after(60_001), &timing));
-        assert!(!resubscription.due(true, true, after(60_500), &timing));
-        assert!(resubscription.due(true, true, after(60_501), &timing));
+    /// The symbols named, as `due` takes those that need resubscribing.
+    fn named(symbols: &[&str]) -> Vec<String> {
+        symbols.iter().map(|symbol| (*symbol).to_owned()).collect()
     }
 
     #[tokio::test(start_paused = true)]
-    async fn each_episode_on_a_connection_may_resubscribe_alone_once() {
+    async fn attempts_repeat_while_shown_again_each_after_a_doubling_backoff() {
         let timing = timing();
+        let (eth, none) = (named(&["ETH-USD"]), named(&[]));
         let mut resubscription = Resubscription::new(&timing);
         let start = Instant::now();
-        assert!(resubscription.due(true, true, start, &timing));
-        assert!(resubscription.take_alone());
-        // The episode's next attempt on the same connection replaces it.
-        assert!(resubscription.due(true, true, start + Duration::from_secs(1), &timing));
-        assert!(!resubscription.take_alone());
-        // A new connection may resubscribe alone once again.
+        let after = |ms: u64| start + Duration::from_millis(ms);
+        assert!(resubscription.due(&eth, true, start, &timing));
+        // Backoffs of 0.5 s, 1 s, then 2 s, the cap.
+        for (from, to) in [(0, 500), (500, 1_500), (1_500, 3_500), (3_500, 5_500)] {
+            assert!(!resubscription.due(&eth, true, after(to - 1), &timing), "attempted before {to} ms");
+            assert!(resubscription.due(&eth, true, after(to), &timing), "no attempt at {to} ms after {from} ms");
+        }
+        // A need not shown again since the last attempt waits however long.
+        assert!(!resubscription.due(&eth, false, after(60_000), &timing));
+        // Once none needs it, the backoff starts again and the next need is met at once.
+        assert!(!resubscription.due(&none, false, after(60_001), &timing));
+        assert!(resubscription.due(&eth, true, after(60_001), &timing));
+        assert!(!resubscription.due(&eth, true, after(60_500), &timing));
+        assert!(resubscription.due(&eth, true, after(60_501), &timing));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_symbol_is_resubscribed_alone_until_it_reads_stale_after_its_own_alone_attempt() {
+        let timing = timing();
+        let (sol, sol_eth, eth) = (named(&["SOL-USD"]), named(&["SOL-USD", "ETH-USD"]), named(&["ETH-USD"]));
+        let mut resubscription = Resubscription::new(&timing);
+        let start = Instant::now();
+        // SOL is only silent, as a halted product is: alone every time.
+        assert!(resubscription.due(&sol, true, start, &timing));
+        assert!(resubscription.take_alone(&sol, false) && resubscription.take_alone(&sol, false));
+        // ETH goes stale during SOL's episode: its own first attempt is alone, its next replaces.
+        resubscription.due(&sol_eth, true, start + Duration::from_secs(1), &timing);
+        assert!(resubscription.take_alone(&sol_eth, true));
+        assert!(!resubscription.take_alone(&sol_eth, true));
+        // A new connection, or ETH's episode ending, gives ETH an alone attempt again.
         resubscription.connected(start + Duration::from_secs(2));
-        assert!(resubscription.take_alone() && !resubscription.take_alone());
-        // So may a new episode on the same connection.
-        assert!(!resubscription.due(false, false, start + Duration::from_secs(3), &timing));
-        assert!(resubscription.due(true, true, start + Duration::from_secs(3), &timing));
-        assert!(resubscription.take_alone());
+        assert!(resubscription.take_alone(&sol_eth, true) && !resubscription.take_alone(&sol_eth, true));
+        assert!(!resubscription.due(&sol, false, start + Duration::from_secs(3), &timing));
+        assert!(resubscription.take_alone(&eth, true));
     }
 
     #[tokio::test(start_paused = true)]
@@ -167,7 +187,7 @@ mod tests {
         resubscription.connected(start);
         assert_eq!(resubscription.since(), Some(start));
         let attempt = start + Duration::from_secs(10);
-        assert!(resubscription.due(true, true, attempt, &timing));
+        assert!(resubscription.due(&named(&["ETH-USD"]), true, attempt, &timing));
         assert_eq!(resubscription.since(), Some(attempt));
         let reconnected = attempt + Duration::from_secs(1);
         resubscription.connected(reconnected);

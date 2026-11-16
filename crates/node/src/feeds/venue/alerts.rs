@@ -37,8 +37,9 @@ impl VenueFeed {
         }
     }
 
-    /// Alerts once for each symbol whose books keep reading too old to count across the shorter of
-    /// `STALE_GRACE` and `timing.timeout` (see `stale`), and once for each that has gone
+    /// Alerts once for each symbol whose books keep arriving already too old to count when the venue
+    /// sent them, across the shorter of `STALE_GRACE` and `timing.timeout` (see `stale`), and once
+    /// for each that has gone
     /// `timing.timeout` without a fresh quote sequenced, across reconnects: one the venue accepted
     /// but never publishes, or whose quotes arrive stale or too far ahead of the host clock, or
     /// reach the engine late. An outage already alerted stands for every symbol's silence. A symbol
@@ -96,7 +97,7 @@ impl VenueFeed {
                 shown |= newly_silent || silent_again || (stale && self.stale.spans(symbol, grace));
             }
         }
-        if !self.resubscription.due(!needed.is_empty(), shown, now, &self.timing) {
+        if !self.resubscription.due(&needed, shown, now, &self.timing) {
             return Vec::new();
         }
         // What the resubscription brings is judged afresh.

@@ -4,10 +4,10 @@
 //! connection, and a ping is answered in stream order, behind what was sent before it. A subscription
 //! can be served from a source behind the venue's own, its snapshot and updates stamped that far in
 //! the past, as Coinbase served one product on a connection on 16 November 2026 while the other
-//! stayed current and its pings were answered at once; and a product's subscriptions already made
-//! can fall behind while they stream.
+//! stayed current and its pings were answered at once; a product's subscriptions already made can
+//! fall behind while they stream; and a product can halt, its book no longer changing.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -44,12 +44,13 @@ pub struct Product {
     pub depth: usize,
 }
 
-/// How far behind the venue's own time each product's next subscriptions are served, in order, and
-/// from when, and how far, each product's subscriptions made before then are.
+/// How far behind the venue's own time each product's next subscriptions are served, in order, from
+/// when, and how far, each product's subscriptions made before then are, and the products halted.
 #[derive(Debug, Default)]
 struct Lags {
     planned: BTreeMap<&'static str, VecDeque<Duration>>,
     live: BTreeMap<&'static str, (Instant, Duration)>,
+    halted: BTreeSet<&'static str>,
 }
 
 /// The endpoint, serving each connection until it closes or this is dropped.
@@ -94,6 +95,12 @@ impl CoinbaseVenue {
     /// behind the venue's own time, in order; one past them is current.
     pub fn behind(&self, product: &'static str, lags: &[Duration]) {
         self.behind.lock().expect("the lags").planned.entry(product).or_default().extend(lags);
+    }
+
+    /// Halts `product`: its book no longer changes, so every subscription of it, on any connection,
+    /// gets its snapshot and no update after.
+    pub fn halt(&self, product: &'static str) {
+        self.behind.lock().expect("the lags").halted.insert(product);
     }
 
     /// Serves every subscription of `product` already made, on any connection, from a source `lag`
@@ -157,14 +164,18 @@ impl Subscribed {
         answer
     }
 
-    /// An update to each product's top: a bid at its mid is set on odd `tick`s and cleared on
-    /// even ones, so its mid moves every time. Each is stamped as far behind as its subscription
-    /// is served, or as `behind` has set since it was made.
+    /// An update to the top of each product not halted: a bid at its mid is set on odd `tick`s and
+    /// cleared on even ones, so its mid moves every time. Each is stamped as far behind as its
+    /// subscription is served, or as `behind` has set since it was made.
     fn updates(&mut self, tick: u64, behind: &Behind) -> Vec<String> {
-        let live = behind.lock().expect("the lags").live.clone();
+        let (live, halted) = {
+            let lags = behind.lock().expect("the lags");
+            (lags.live.clone(), lags.halted.clone())
+        };
         let products: Vec<(Product, Duration)> = self
             .products
             .values()
+            .filter(|(product, _, _)| !halted.contains(product.id))
             .map(|(product, lag, made)| {
                 let set_since = live.get(product.id).filter(|(set_at, _)| set_at >= made);
                 (*product, set_since.map_or(*lag, |(_, live)| *live))

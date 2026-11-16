@@ -14,7 +14,7 @@ use crate::feeds::coinbase::{resubscriptions, subscriptions};
 use crate::feeds::kraken;
 use crate::feeds::tests::coinbase_support::{BTC, CoinbaseVenue, ETH};
 use crate::feeds::tests::fake::{WAIT, accept, fast, kraken_book, listen, next_alert, spawn_feed, stream};
-use crate::feeds::venue::{STALE_GRACE, Timing};
+use crate::feeds::venue::Timing;
 use crate::sequencer::Request;
 use crate::test_support::{Alert, capture_alerts_and_resolutions};
 
@@ -100,13 +100,18 @@ async fn a_product_streamed_stale_is_resubscribed_alone_while_the_other_quotes_o
     let subscribed = Instant::now();
     fresh_quote(&mut quotes, 1).await;
 
-    // ETH reads ten minutes old: the cause is alerted once its reads span the grace, well inside
-    // the silence timeout (the margin covers reading both snapshots in a debug build), and ETH alone
-    // is subscribed afresh.
-    let stale = next_for(&mut alerts, "alert", "venue_stale", "ETH-USD").await;
-    assert!(subscribed.elapsed() < STALE_GRACE + Duration::from_secs(2), "detected after {:?}", subscribed.elapsed());
-    // Ten minutes, less how far behind the stream's own pings put it.
-    assert!((599.0..=601.0).contains(&stale_age(&stale)), "{stale:?}");
+    // ETH reads ten minutes old: the cause is alerted once its reads span the grace, before the
+    // silence count could alert, and ETH alone is subscribed afresh.
+    let stale = loop {
+        let alert = next_alert(&mut alerts).await;
+        assert_ne!((alert["alert"].as_str(), alert["symbol"].as_str()), ("venue_symbol_silent", "ETH-USD"));
+        if (alert["alert"].as_str(), alert["symbol"].as_str()) == ("venue_stale", "ETH-USD") {
+            break alert;
+        }
+    };
+    assert!(subscribed.elapsed() < coinbase_timing().timeout, "detected after {:?}", subscribed.elapsed());
+    // Ten minutes, less at most how far behind the stream's own pings put it.
+    assert!((590.0..=601.0).contains(&stale_age(&stale)), "{stale:?}");
     let resubscribed = [venue.next_received().await, venue.next_received().await];
     assert_eq!(resubscribed, [(0, eth_alone()[0].clone()), (0, eth_alone()[1].clone())]);
     // Its fresh book ends the episode on the same connection, while BTC quotes on.
@@ -169,6 +174,30 @@ async fn a_product_still_stale_after_resubscribing_alone_is_resubscribed_on_a_ne
     );
     next_for(&mut resolved, "alert_resolved", "venue_symbol_silent", "ETH-USD").await;
     fresh_quote(&mut quotes, 2).await;
+}
+
+#[tokio::test]
+async fn a_halted_product_is_resubscribed_alone_again_without_replacing_the_connection() {
+    let (_guard, _alerts, mut resolved) = capture_alerts_and_resolutions();
+    let mut venue = CoinbaseVenue::start(&[BTC, ETH]).await;
+    // ETH's book stopped changing ten minutes ago: each snapshot is that old, and nothing follows.
+    venue.behind(ETH.id, &[BEHIND; 4]);
+    venue.halt(ETH.id);
+    let timing = Timing { timeout: Duration::from_secs(2), ..coinbase_timing() };
+    let (rx, _feed) = spawn_feed(Venue::Coinbase, &venue.url, &PRODUCTS, timing);
+    let mut quotes = sequenced(rx);
+
+    // Silent with no book read stale across the grace: ETH is resubscribed alone each time, and
+    // BTC's connection stays up.
+    let mut sent = Vec::new();
+    for _ in 0..5 {
+        sent.push(venue.next_received().await);
+    }
+    let [unsubscribe, subscribe] = [eth_alone()[0].clone(), eth_alone()[1].clone()];
+    let both = subscriptions(&["BTC-USD", "ETH-USD"])[0].clone();
+    assert_eq!(sent, [(0, both), (0, unsubscribe.clone()), (0, subscribe.clone()), (0, unsubscribe), (0, subscribe)]);
+    fresh_quote(&mut quotes, 1).await;
+    assert!(resolved.try_recv().is_err(), "an alert resolved while ETH stayed halted");
 }
 
 #[tokio::test]
