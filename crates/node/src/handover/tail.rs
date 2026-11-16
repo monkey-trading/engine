@@ -34,6 +34,7 @@ use tracing::{info, warn};
 
 use crate::checkpoints::{CheckpointChain, View};
 use crate::config::NodeConfig;
+use crate::handover::assigned::{Assigned, Assignments, Bound};
 use crate::handover::successor::{Answered, ask, confirm};
 use crate::handover::{padded, receive_bytes, send_bytes};
 use crate::log::{CheckpointDomain, LogEntry, Manifest, Offset, offset_of};
@@ -87,6 +88,8 @@ pub(crate) struct Prepared {
     pub signer: AccountId,
     /// The latest posted log head, with `[log_heads]`, which the copy must hold.
     pub posted: Option<crate::log_heads::Head>,
+    /// The turn's assignment the request binds, read again before the keys are sealed (#596).
+    pub bound: Bound,
 }
 
 impl Prepared {
@@ -104,7 +107,23 @@ impl Prepared {
         let observation = vault.observe(View::Finalized, &[]).await?;
         let (generation, _) =
             crate::handover::turns::named_generation(vault, &observation, release, reached_ms).await?;
-        Ok(Self { generation, signer: observation.state.signer, posted })
+        Ok(Self { generation, signer: observation.state.signer, posted, bound: Bound::none() })
+    }
+
+    /// What a skip's member reads before it connects (#596): the generation `assigned`, the latest
+    /// agreed block's assignment naming it, holds, which the finalised schedule shows only a finality
+    /// period on, and the vault's signer at finality, which a skip leaves as it was; bound to
+    /// `assigned`, read again through `assignments`.
+    /// Error cases:
+    /// - the vault cannot be read
+    pub(crate) async fn assigned(
+        vault: &impl CheckpointChain,
+        assigned: &Assigned,
+        assignments: std::sync::Arc<dyn Assignments>,
+    ) -> anyhow::Result<Self> {
+        let observation = vault.observe(View::Finalized, &[]).await?;
+        let bound = Bound::of(assigned, assignments);
+        Ok(Self { generation: assigned.binding.generation, signer: observation.state.signer, posted: None, bound })
     }
 }
 
@@ -310,7 +329,7 @@ pub(crate) async fn take_tail(
     let tip = Tip { seq, link };
     follower.sync()?;
     // The tip alone names what the copy holds: its segment files are its own writer's.
-    let asked = ask(cfg, address, attestor, &platform, None, Some(&tip));
+    let asked = ask(cfg, address, attestor, &platform, (None, Some(&tip)), prepared.bound.binding.as_ref());
     let answered = match operator {
         Some(operator) => {
             let (answered, followed) = follower.follow_during(cfg, operator, FOLLOW_WHILE_ASKED, asked).await;
@@ -343,7 +362,8 @@ pub(crate) async fn take_tail(
     let entries = follower.take_tail(after, &bytes).map_err(|e| e.context(CopyChanged))?;
     ensure_tail_head(follower, &head, prepared.posted).map_err(|e| e.context(CopyChanged))?;
     info!(entries, bytes = listing.bytes, after = tip.seq, head_seq = head.seq, "took the tail past the copy's tip");
-    let store = KeyStore::create(&sealing.dir, sealer, cfg.file_sha256, prepared.generation, keys)?;
+    let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
+    let store = prepared.bound.seal(&release, (&sealing.dir, sealer), prepared.generation, keys).await?;
     info!(
         enclave = %enclave.address_hex(),
         predecessor_launch_digest = %hex::encode(peer.launch_digest),

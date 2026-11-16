@@ -179,13 +179,13 @@ async fn obtain_with(
             None => None,
         },
     };
-    // From a daily turn's boundary the vault names its member's release before finality shows it:
-    // the turn the finalised schedule names at trusted time is the only holding named, and its
-    // generation is this release's when it names this one (`handover::turns`).
+    // From a daily turn's boundary the vault names its member's release before finality shows it, as the turn
+    // the finalised schedule names at trusted time does, or a skip of it naming this release (#596).
     let turn = match vault {
         Some(vault) if cfg.operator.rotation_enabled => crate::handover::turns::at_start(vault, reached).await?,
         _ => None,
     };
+    let turn = crate::handover::assigned::own_skip(cfg, turn, &release).await?;
     if let Some(turn) = &turn {
         crate::handover::turns::ensure_turn_names(turn, &release)
             .context("refusing this release's keys: a daily turn names another release")?;
@@ -383,17 +383,13 @@ async fn named_release(vault: &impl CheckpointChain) -> anyhow::Result<CurrentRe
     vault.current_release(&finalized).await
 }
 
-/// Raises `release_superseded` (Critical) once the vault's current release at finality is no longer
-/// the release and generation `store`'s keys are sealed in, reading it every `every`: a restart would
-/// then find no keys to open, so they must be handed to the release the vault names before this node
-/// stops. The read does not wait for the vault's generation to fold
-/// the change: the running release is superseded from the block the change reads at finality, and
-/// the fold can lag that by anyone's `syncRelease`. From a daily turn's boundary by `trusted` time,
-/// the finalised schedule naming this release in the keys' generation for that turn names it too, as
-/// the vault does from then (`handover::turns`); a turn naming another release, or this one in another
-/// generation, pages only once `TURN_HANDOVER_GRACE_MS` has passed since its boundary, as the turn's
-/// member takes the keys from this node meanwhile, or this node seals them in the turn's generation as
-/// it takes the turn (`sequencer::turns`). A failed read is retried.
+/// Raises `release_superseded` (Critical) once the vault's current release at finality, read every `every`,
+/// is no longer the release and generation `store`'s keys are sealed in: a restart would find no keys to open,
+/// so they must go to the release named before this node stops, superseded from the block the change reads
+/// at finality, not from the vault's fold of it; a failed read is retried. From a turn's boundary by `trusted`
+/// time, the finalised schedule's turn names it (`handover::turns`), or the latest agreed block's skip (#596);
+/// a turn naming another holding pages only `TURN_HANDOVER_GRACE_MS` past its boundary, as its member takes
+/// the keys or this node seals them in the turn's generation (`sequencer::turns`).
 /// Error cases:
 /// - none; it runs until the node stops
 pub(super) async fn watch_release(
@@ -401,6 +397,7 @@ pub(super) async fn watch_release(
     store: Arc<KeyStore>,
     every: Duration,
     trusted: crate::trusted_time::TrustedClock,
+    assignments: Option<Arc<dyn crate::handover::assigned::Assignments>>,
 ) -> anyhow::Result<()> {
     let (mut superseded, mut waiting) = (false, false);
     let mut tick = tokio::time::interval(every);
@@ -421,9 +418,12 @@ pub(super) async fn watch_release(
             continue;
         }
         let (named, handing_over) = match crate::handover::turns::names(&vault, &sealed, generation, reached).await {
-            Some((named, boundary)) => {
-                (named, reached.is_some_and(|reached| reached < boundary.saturating_add(TURN_HANDOVER_GRACE_MS)))
+            Some((false, boundary)) => {
+                let latest = crate::handover::assigned::names_holding(assignments.as_deref(), sealed.id(), generation);
+                let Some(latest) = latest.await else { continue };
+                (latest, reached.is_some_and(|reached| reached < boundary.saturating_add(TURN_HANDOVER_GRACE_MS)))
             }
+            Some((true, _)) => (true, false),
             None => (current.id == sealed.id() && current.generation == generation, false),
         };
         if !named && handing_over {

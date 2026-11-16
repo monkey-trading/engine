@@ -211,6 +211,8 @@ pub(crate) struct Member<'a, C = CheckpointRpc, H = PostedHeads, T = Roughtime> 
     /// Its answers to the operator's log checks while it follows, without `[tee.sealing.handover]`
     /// none.
     answering: Option<Arc<Answering>>,
+    /// What it reads a turn's reassignments through, and whom it follows past them (#596).
+    fallback: turn::Fallback,
 }
 
 impl<'a> Member<'a> {
@@ -226,6 +228,7 @@ impl<'a> Member<'a> {
         let checked = CheckedHeads::default();
         let quoting = attestor_for(cfg.tee.provider, &GuestClock::default())?;
         let answering = Answering::new(cfg, quoting, sealer.platform()?, checked.clone())?.map(Arc::new);
+        let fallback = turn::Fallback::for_config(cfg)?;
         Ok(Self {
             cfg,
             metrics,
@@ -242,6 +245,7 @@ impl<'a> Member<'a> {
             stopping: Arc::default(),
             checked,
             answering,
+            fallback,
         })
     }
 }
@@ -276,6 +280,7 @@ impl<'a, T: Sampling> Member<'a, CheckpointRpc, PostedHeads, T> {
             stopping: Arc::default(),
             checked,
             answering: answering.map(Arc::new),
+            fallback: Default::default(),
         }
     }
 }
@@ -284,6 +289,7 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
     /// Records what a confirmed handover gave away, which this member never holds again.
     pub(super) fn handed_over(&mut self, handed: Handed) {
         self.handed = Some(handed);
+        self.fallback.handing = true;
     }
 
     /// `until_turn`, or `Turn::Stop` once a shutdown signal arrives.

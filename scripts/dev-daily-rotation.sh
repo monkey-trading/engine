@@ -26,6 +26,12 @@
 # the last member's log replays to its roots. Last, governance turns rotation off and, once the last turn ends, installs that turn's
 # own candidate under another release, after which the finalized schedule names no turn. It runs no
 # ACME; tls::acme::tests::sealed checks that a member's next turn reuses its certificate.
+# Then the successor-fallback leg (#596), on its own Anvil chain with a two-slot take window: with B
+# stopped, the holder A trades through the window and the members' callers skip the turn to C, whose
+# head latches it; B taking the keys late from C latches nothing once a skip names D, passing over C,
+# whose release signed the newest head, and D's head latches within a slot; across a paused chain no skip or promotion is due
+# in the first resumed block; and with A refusing every successor, A stops by its own clock before the
+# promotion past it, which lands within the bound, and A's checkpoint is refused.
 # Needs Anvil, Forge, Python 3, Cargo, and installed Soldeer dependencies. No external RPC or keys are used.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,3 +39,6 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 CARGO_INCREMENTAL=0 cargo test --locked --manifest-path "$root/Cargo.toml" -p engine-node --lib -- \
   --ignored --exact --nocapture \
   custody::tests::election_scenario::daily_turns::dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary
+CARGO_INCREMENTAL=0 cargo test --locked --manifest-path "$root/Cargo.toml" -p engine-node --lib -- \
+  --ignored --exact --nocapture \
+  custody::tests::election_scenario::liveness::fallback::dev_scenario_a_down_successor_falls_back_to_the_next_member

@@ -274,6 +274,7 @@ impl Fixture {
             stopping: Default::default(),
             checked: Default::default(),
             answering: None,
+            fallback: Default::default(),
         }
     }
 

@@ -1,6 +1,6 @@
 //! A member's tries at its turn: a failed take keeps its replica unless the take began changing the
 //! copy, a refused tip pages naming the turn, and after `TAIL_ATTEMPTS` refusals the member leaves
-//! its turn to a whole-log start, which sets the copy aside.
+//! its turn to a whole-log start, which sets the copy aside; `skip.rs`, its tries under a skip (#596).
 
 use super::*;
 use tokio::task::JoinHandle;
@@ -168,3 +168,5 @@ fn assert_left_to_the_start(dir: &std::path::Path) {
     assert!(dir.join(MANIFEST).exists(), "the wait moved the copy");
     assert!(!dir.with_extension("aside").exists(), "the wait set the copy aside before the start's take");
 }
+
+mod skip;

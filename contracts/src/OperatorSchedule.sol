@@ -38,8 +38,15 @@ import {Vault} from "./Vault.sol";
 /// epoch's latest head and of the signer change that started it, anyone may `promote`: the vault's
 /// signer moves at once, in a new epoch, to the vouched standby key of the next member in the turn's
 /// order that qualifies, and the promotion becomes the turn's assignment in a new generation.
-/// @notice Every assignment of a turn, drawn or promoted, is kept by its position with its releases
-/// and generations, and `turns` follows the latest.
+/// @notice A turn's member takes it with its first log head under its assignment, which `LogHeads`
+/// latches. Once `takeWindow` slots after the latest of the boundary's slot, the assignment's and the
+/// signer change's are all marked with no latch for it, anyone may `skip` the turn to the next member in
+/// its order, which the key holder hands the keys to, in a new generation and with no signer change.
+/// Once `heartbeatMisses + 1` slots after the later of the boundary's slot and the signer change's are
+/// all marked with no assignment of the turn latched, in a set of two or more members, `promote` may run
+/// even while heads post.
+/// @notice Every assignment of a turn, drawn, skipped to or promoted, is kept by its position with its
+/// releases and generations, and `turns` follows the latest.
 /// @dev Seeds come from `seedReceiver`, which the registry's timelock replaces when an Ethereum fork
 /// needs a new relay and receiver. A turn the receiver has no seed for, because no seed was relayed at
 /// or before it, draws from `keccak256(abi.encode(seedAnchor, turn))`, where `seedAnchor` is the last
@@ -64,7 +71,7 @@ contract OperatorSchedule is SeedSchedule {
     /// @notice A drawn turn. `candidate`, `position`, `reason` and `generation` are its latest
     /// assignment's; `setId`, `prior` (the turn drawn before it, zero for the first), `seed` and
     /// `source` (the operator the registry named at the draw, which hands the member the keys) are
-    /// the draw's. `reason` is 0 for a draw and 2 for a promotion.
+    /// the draw's. `reason` is 0 for a draw, 1 for a skip and 2 for a promotion.
     struct Turn {
         address candidate;
         uint16 position;
@@ -124,10 +131,20 @@ contract OperatorSchedule is SeedSchedule {
         uint64 at;
     }
 
+    /// @notice The take window: how many complete marked slots a turn's current assignment may go
+    /// unlatched before anyone may skip it, and the bounds the timelock changes it within, fixed at
+    /// deployment.
+    struct TakeWindow {
+        uint16 slots;
+        uint16 minimum;
+        uint16 maximum;
+    }
+
     /// @notice How many positions a draw tries before it refuses the turn.
     uint16 public constant MAX_DRAW_POSITIONS = 64;
 
     uint8 internal constant DRAWN = 0;
+    uint8 internal constant SKIPPED = 1;
     uint8 internal constant PROMOTED = 2;
 
     /// @dev The longest detection the liveness bounds allow, `(heartbeatMisses + 1) * heartbeatInterval
@@ -155,6 +172,9 @@ contract OperatorSchedule is SeedSchedule {
     Liveness public liveness;
     Liveness public livenessMinimums;
     Liveness public livenessMaximums;
+
+    /// @notice The take window in force, and its bounds.
+    TakeWindow public takeWindow;
 
     /// @notice Each witnessed slot's mark. A mark counts for slot `k` only while `at / heartbeatInterval
     /// == k`, so one made under another interval never counts.
@@ -200,8 +220,8 @@ contract OperatorSchedule is SeedSchedule {
         address[] adminKeys,
         uint256[] weights
     );
-    /// @notice Turn `turn` was assigned from set `setId` at `position`, for `reason` (0 a draw, 2 a
-    /// promotion), naming `candidate` with the `adminKey` the set adopted and the `release` it
+    /// @notice Turn `turn` was assigned from set `setId` at `position`, for `reason` (0 a draw, 1 a
+    /// skip, 2 a promotion), naming `candidate` with the `adminKey` the set adopted and the `release` it
     /// registered then, under `generation`.
     event TurnAssigned(
         uint64 indexed turn,
@@ -217,6 +237,7 @@ contract OperatorSchedule is SeedSchedule {
     event TurnGenerationMoved(uint64 indexed turn, uint64 generation);
     event SeedReceiverChanged(address indexed receiver);
     event LivenessChanged(Liveness liveness);
+    event TakeWindowChanged(uint16 slots);
     event SlotWitnessed(uint64 indexed slot, uint64 blockNumber);
     /// @notice The vault's signer moved to `candidate`'s `standbyKey` in `signerEpoch`, as turn
     /// `turn`'s assignment at `position`, fixing the outgoing epoch's latest head and the vault's
@@ -255,8 +276,13 @@ contract OperatorSchedule is SeedSchedule {
     error VouchExpired(uint64 expiry);
     error ReleaseNotApproved(bytes32 release);
     error InvalidVouch(address voucher);
+    error InvalidTakeWindow();
+    error SkipNotDue(uint64 dueAt);
 
     /// @param liveness_ The heartbeat rule in force, within `minimums_` and `maximums_`.
+    /// @param takeWindow_ The take window in force and its bounds, whose minimum exceeds the switch
+    /// budget plus one interval plus a head's inclusion, which `headTolerance` bounds, at every interval
+    /// and tolerance the heartbeat rule's bounds allow.
     /// @param switchBudget_ The handover's asserted switch budget, in seconds.
     /// @param blockMillis_ The pinned Arbitrum block time, in milliseconds.
     constructor(
@@ -266,6 +292,7 @@ contract OperatorSchedule is SeedSchedule {
         Liveness memory liveness_,
         Liveness memory minimums_,
         Liveness memory maximums_,
+        TakeWindow memory takeWindow_,
         uint64 switchBudget_,
         uint64 blockMillis_
     ) SeedSchedule(receiver_.beaconGenesisTime()) {
@@ -278,6 +305,13 @@ contract OperatorSchedule is SeedSchedule {
         livenessMaximums = maximums_;
         _checkLiveness(liveness_);
         liveness = liveness_;
+        uint256 minimum = takeWindow_.minimum;
+        if (
+            minimum == 0 || takeWindow_.slots < minimum || takeWindow_.slots > takeWindow_.maximum
+                || (minimum - 1) * minimums_.heartbeatInterval <= switchBudget_ + maximums_.headTolerance
+                || uint256(takeWindow_.maximum) * minimums_.heartbeatInterval > 1 days
+        ) revert InvalidTakeWindow();
+        takeWindow = takeWindow_;
     }
 
     modifier onlyRegistry() {
@@ -335,7 +369,7 @@ contract OperatorSchedule is SeedSchedule {
         bytes32 seed = _seed(turn);
         (uint16 position, Member memory member) = _pick(setId, seed, turn);
         candidate = member.candidate;
-        bytes32 release = registry.candidateOf(candidate).release;
+        bytes32 release = _releaseOf(candidate);
         OperatorRegistry.Operator memory named = registry.namedOperator();
         uint64 generation = _generation(candidate, release, named);
         turns[turn] = Turn(candidate, position, DRAWN, setId, generation, lastDrawnTurn, seed, named.candidate);
@@ -350,7 +384,7 @@ contract OperatorSchedule is SeedSchedule {
     function releaseMoved(address candidate) external onlyRegistry {
         (uint64 inEffect, Turn memory current) = turnAt(uint64(block.timestamp));
         uint64 last = lastDrawnTurn;
-        bytes32 release = registry.candidateOf(candidate).release;
+        bytes32 release = _releaseOf(candidate);
         uint64 generation = 0;
         if (inEffect != 0 && current.candidate == candidate) {
             generation = _reserve();
@@ -365,11 +399,20 @@ contract OperatorSchedule is SeedSchedule {
     /// @notice Sets the heartbeat rule, within the deployment's bounds: only the registry's timelock,
     /// and only while no turn names the operator, so no count runs across a change.
     function setLiveness(Liveness calldata liveness_) external {
-        if (msg.sender != address(registry.governance())) revert UnauthorizedGovernance();
-        if (registry.operatorGeneration() != 0) revert TurnNamesTheOperator();
+        _governWithNoTurn();
         _checkLiveness(liveness_);
         liveness = liveness_;
         emit LivenessChanged(liveness_);
+    }
+
+    /// @notice Sets the take window, within its bounds: only the registry's timelock, and only while no
+    /// turn names the operator.
+    function setTakeWindow(uint16 slots) external {
+        _governWithNoTurn();
+        TakeWindow storage window = takeWindow;
+        if (slots < window.minimum || slots > window.maximum) revert InvalidTakeWindow();
+        window.slots = slots;
+        emit TakeWindowChanged(slots);
     }
 
     /// @notice Marks the current slot, once, with its block time and Arbitrum block: anyone may call
@@ -395,7 +438,8 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @notice Moves the vault's signer to the standby key of the next member in the turn's order,
-    /// once the operator has missed `heartbeatMisses` witnessed slots: anyone may call. The member is
+    /// once the operator has missed `heartbeatMisses` witnessed slots, or no member has taken the turn
+    /// in `heartbeatMisses + 1` (see `promotionDueAt`): anyone may call. The member is
     /// the first after the current assignment's position, in `memberAt`'s order, that the registry
     /// lists under the admin key its set adopted, that holds a promotable standby key, and that has
     /// held no assignment of the turn. The promotion becomes the turn's assignment in a new
@@ -416,10 +460,12 @@ contract OperatorSchedule is SeedSchedule {
         Turn storage named = turns[turn];
         Member memory member;
         address key;
-        (position, member, key) = _nextQualified(turn, named);
+        bool found;
+        (found, position, member, key) = _next(turn, named, true, 0);
+        if (!found) revert NoQualifiedPosition(turn);
         Assignment memory promoted = _promoted(vault, epoch, member, named.setId, key);
         uint64 generation = vault.reserveGeneration();
-        _carryNext(turn, member.candidate, generation, named.generation);
+        _carryNext(turn, member.candidate, generation, named.generation, standbyOf[member.candidate].release);
         (named.candidate, named.position, named.reason, named.generation) =
         (member.candidate, position, PROMOTED, generation);
         _assign(turn, position, promoted, standbyOf[member.candidate].release, generation);
@@ -440,15 +486,73 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @notice The earliest block time at which `promote`'s count could pass, from the heads, the
-    /// signer change and the marks on chain now, assuming every later slot is marked: with `s` the
-    /// later of the slots of the signer epoch's latest head and of the signer change, and `u` the
-    /// latest unmarked complete slot after `s` among the `heartbeatMisses` before the current one,
-    /// `(max(s, u) + heartbeatMisses + 1) * heartbeatInterval`. At or before now while the count
-    /// passes; `type(uint64).max` while no turn names the operator.
+    /// signer change, the latches and the marks on chain now, assuming every later slot is marked: the
+    /// earlier of two paths. Missed heads: with `s` the later of the slots of the signer epoch's latest
+    /// head and of the signer change, and `u` the latest unmarked complete slot after `s` among the
+    /// `heartbeatMisses` before the current one, `(max(s, u) + heartbeatMisses + 1) * heartbeatInterval`.
+    /// An untaken turn, while its current assignment is unlatched in a set of two or more members: the
+    /// same with `s` the later of the slots of the turn's boundary and of the signer change, and
+    /// `heartbeatMisses + 1` slots in place of `heartbeatMisses`, so the incumbent's heads, which bind its
+    /// own earlier assignment, do not move it. Neither path reads who qualifies for the promotion, so no
+    /// change to a listing, a release or a standby key moves the time earlier; with no member qualifying,
+    /// `promote` is refused and the governance fallback applies. A head can latch only
+    /// the current assignment, and a promotion past a latched one restarts both counts at its signer
+    /// change, where the missed-head path passes first, so an unlatched current assignment stands for
+    /// no assignment of the turn latched. At or before now while a count passes; `type(uint64).max`
+    /// while no turn names the operator.
     function promotionDueAt() external view returns (uint64) {
         if (registry.operatorGeneration() == 0) return type(uint64).max;
         Vault vault = _vault();
         return _dueAt(vault, vault.signerEpoch());
+    }
+
+    /// @notice Moves the turn in effect from its current assignment, which no head has latched, to the
+    /// next member in its order, once `skipDueAt` has passed: anyone may call. The member is the first
+    /// after the current position, in `memberAt`'s order, that the registry lists under the admin key
+    /// its set adopted, that has held no assignment of the turn, and whose registered release did not
+    /// sign the signer epoch's newest head (`LogHeads.headRelease`): that member holds the keys the
+    /// skip's member takes, in another generation; it needs no standby key, and the vault's signer stays. The skip
+    /// becomes the turn's assignment in a new generation, and a turn drawn after it continues that
+    /// generation when it names the same member, or takes a new one when it continued the skipped
+    /// assignment's. Refused while no turn names the operator (`NoTurn`), before `skipDueAt`, which never
+    /// passes once a head latched the current assignment, while it is a promotion, or while the guardian
+    /// has retired the signer, when no head can latch (`SkipNotDue`), and
+    /// when no position qualifies (`NoQualifiedPosition`). A head included before it in the same block
+    /// latches the assignment, so the skip reverts; one included after binds a superseded assignment and
+    /// latches nothing.
+    /// @return turn The turn skipped in.
+    /// @return position The skip's assignment's position.
+    function skip() external returns (uint64 turn, uint16 position) {
+        if (registry.operatorGeneration() == 0) revert NoTurn();
+        uint64 dueAt;
+        (turn, dueAt) = _skipDue();
+        Turn storage named = turns[turn];
+        if (block.timestamp < dueAt) revert SkipNotDue(dueAt);
+        Member memory member;
+        bool found;
+        (found, position, member,) = _next(turn, named, false, logHeads.headRelease(_vault().signerEpoch()));
+        if (!found) revert NoQualifiedPosition(turn);
+        bytes32 release = _releaseOf(member.candidate);
+        uint64 generation = _reserve();
+        _carryNext(turn, member.candidate, generation, named.generation, release);
+        (named.candidate, named.position, named.reason, named.generation) =
+        (member.candidate, position, SKIPPED, generation);
+        Assignment memory skipped = _drawn(member, named.setId);
+        skipped.reason = SKIPPED;
+        _assign(turn, position, skipped, release, generation);
+    }
+
+    /// @notice The earliest block time at which `skip` could pass for the turn in effect's current
+    /// assignment, assuming every later slot is marked: with `s` the latest of the slots of the turn's
+    /// boundary, of the assignment and of the signer change, and `u` the latest unmarked complete slot
+    /// after `s` among the `takeWindow` before the current one, `(max(s, u) + takeWindow + 1) *
+    /// heartbeatInterval`, so an unmarked slot, as in a chain outage, or a signer the timelock installs
+    /// gives the member a fresh window. `type(uint64).max` while no turn names the operator, once a head
+    /// latched the assignment, while it is a promotion, whose member the missed-head count passes if it
+    /// never beats, and while the guardian has retired the signer, when no head can latch.
+    function skipDueAt() external view returns (uint64 dueAt) {
+        if (registry.operatorGeneration() == 0) return type(uint64).max;
+        (, dueAt) = _skipDue();
     }
 
     /// @notice The digest a vouching key signs, with no message prefix, for `candidate`'s standby
@@ -507,10 +611,9 @@ contract OperatorSchedule is SeedSchedule {
         key = record.key;
         if (key == address(0)) return key;
         bytes32 release = record.release;
-        if (
-            registry.candidateOf(candidate).release != release || !_approved(candidate, release)
-                || _vault().wasSigner(key)
-        ) return address(0);
+        if (_releaseOf(candidate) != release || !_approved(candidate, release) || _vault().wasSigner(key)) {
+            return address(0);
+        }
     }
 
     /// @notice Turn `turn`'s assignment at `position`, and its releases and generations in order.
@@ -723,12 +826,14 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @dev The first position after the turn's current assignment, in `_pick`'s order, whose member
-    /// the registry lists under the admin key the set adopted, holds a promotable standby key, and
-    /// has held no assignment of the turn; with that key.
-    function _nextQualified(uint64 turn, Turn storage named)
+    /// the registry lists under the admin key the set adopted and that has held no assignment of the
+    /// turn: with `standby`, for a promotion, that holds a promotable standby key, returned with it;
+    /// without, for a skip, whose registered release is not `held`, the release of the signer epoch's
+    /// newest head, unless that is zero. `found` is false when no position does.
+    function _next(uint64 turn, Turn storage named, bool standby, bytes32 held)
         private
         view
-        returns (uint16 position, Member memory member, address key)
+        returns (bool found, uint16 position, Member memory member, address key)
     {
         Member[] storage members = sets[named.setId].members;
         bytes32 seed = named.seed;
@@ -736,10 +841,20 @@ contract OperatorSchedule is SeedSchedule {
         for (position = named.position + 1; position < end; ++position) {
             member = members[_index(members, seed, turn, position)];
             if (heldTurn[turn][member.candidate] || !_listed(member)) continue;
+            if (!standby) {
+                if (held == 0 || _releaseOf(member.candidate) != held) {
+                    return (true, position, member, key);
+                }
+                continue;
+            }
             key = promotable(member.candidate);
-            if (key != address(0)) return (position, member, key);
+            if (key != address(0)) return (true, position, member, key);
         }
-        revert NoQualifiedPosition(turn);
+    }
+
+    /// @dev The release the registry records for `candidate`.
+    function _releaseOf(address candidate) private view returns (bytes32) {
+        return registry.candidateOf(candidate).release;
     }
 
     /// @dev Whether the registry lists `member` under the admin key its set adopted.
@@ -787,22 +902,61 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @dev The time from which a promotion's count passes, as `promotionDueAt` states, for signer
-    /// epoch `epoch`: it scans at most `heartbeatMisses` slots.
-    function _dueAt(Vault vault, uint64 epoch) private view returns (uint64) {
+    /// epoch `epoch`, while a turn names the operator: each path scans at most `heartbeatMisses + 1`
+    /// slots.
+    function _dueAt(Vault vault, uint64 epoch) private view returns (uint64 due) {
         Liveness memory rule = liveness;
         uint64 interval = rule.heartbeatInterval;
         uint64 misses = rule.heartbeatMisses;
-        uint64 since = vault.signerSince() / interval;
+        uint64 changed = vault.signerSince() / interval;
+        uint64 since = changed;
         (,,,, uint64 postedAt) = logHeads.heads(epoch);
         if (postedAt / interval > since) since = postedAt / interval;
+        due = _counted(since, misses, interval);
+        (uint64 turn, Turn memory named) = turnAt(uint64(block.timestamp));
+        if (sets[named.setId].members.length < 2 || _latched(turn, named.position)) return due;
+        since = boundary(turn) / interval;
+        if (changed > since) since = changed;
+        uint64 untaken = _counted(since, misses + 1, interval);
+        if (untaken < due) due = untaken;
+    }
+
+    /// @dev The earliest block time at which `count` complete slots after slot `since` are all marked,
+    /// assuming every later slot is: the latest unmarked one among the `count` complete slots before the
+    /// current one, if after `since`, restarts the count.
+    function _counted(uint64 since, uint64 count, uint64 interval) private view returns (uint64) {
         uint64 current = uint64(block.timestamp) / interval;
-        for (uint64 slot = current - 1; slot > since && slot + misses >= current; --slot) {
+        for (uint64 slot = current - 1; slot > since && slot + count >= current; --slot) {
             if (!_marked(slot, interval)) {
                 since = slot;
                 break;
             }
         }
-        return (since + misses + 1) * interval;
+        return (since + count + 1) * interval;
+    }
+
+    /// @dev The turn in effect and the time from which a skip of its current assignment passes, as
+    /// `skipDueAt` states, while a turn names the operator.
+    function _skipDue() private view returns (uint64 turn, uint64) {
+        Turn memory named;
+        (turn, named) = turnAt(uint64(block.timestamp));
+        Vault vault = _vault();
+        if (named.reason == PROMOTED || _latched(turn, named.position) || vault.checkpointSigner() == address(0)) {
+            return (turn, type(uint64).max);
+        }
+        uint64 interval = liveness.heartbeatInterval;
+        uint64 since = boundary(turn) / interval;
+        uint64 at = assignments[turn][named.position].at / interval;
+        if (at > since) since = at;
+        at = vault.signerSince() / interval;
+        if (at > since) since = at;
+        return (turn, _counted(since, takeWindow.slots, interval));
+    }
+
+    /// @dev Whether a head latched turn `turn`'s assignment at `position`.
+    function _latched(uint64 turn, uint16 position) private view returns (bool) {
+        (uint64 at,,,,) = logHeads.latches(turn, position);
+        return at != 0;
     }
 
     /// @dev Whether a witness marked `slot` under `interval`.
@@ -828,6 +982,12 @@ contract OperatorSchedule is SeedSchedule {
                 || rule.headBlocks > MAX_HEAD_BLOCKS || uint256(rule.headBlocks) * blockMillis >= interval * 1000
                 || misses * interval <= switchBudget
         ) revert InvalidLiveness();
+    }
+
+    /// @dev Reverts unless the registry's timelock calls while no turn names the operator.
+    function _governWithNoTurn() private view {
+        if (msg.sender != address(registry.governance())) revert UnauthorizedGovernance();
+        if (registry.operatorGeneration() != 0) revert TurnNamesTheOperator();
     }
 
     function _approved(address candidate, bytes32 release) private view returns (bool) {
@@ -878,18 +1038,18 @@ contract OperatorSchedule is SeedSchedule {
         return _vault().reserveGeneration();
     }
 
-    /// @dev A turn drawn after `turn` before its promotion took its generation from the holder the draw
-    /// expected: the promoted member's continues the promotion's `generation`, as a repeat turn
-    /// continues its holder's, and one that continued the outgoing holder's (`outgoing`) takes a new
-    /// generation, since that holder no longer holds the keys.
-    function _carryNext(uint64 turn, address promoted, uint64 generation, uint64 outgoing) private {
+    /// @dev A turn drawn after `turn` before its promotion or skip took its generation from the holder
+    /// the draw expected: the new member's continues the reassignment's `generation` on its `release`,
+    /// as a repeat turn continues its holder's, and one that continued the outgoing assignment's
+    /// (`outgoing`) takes a new generation, since that assignment's member does not hold the keys.
+    function _carryNext(uint64 turn, address member, uint64 generation, uint64 outgoing, bytes32 release) private {
         uint64 last = lastDrawnTurn;
         if (last == turn) return;
         Turn storage next = turns[last];
-        if (next.candidate == promoted) {
-            _move(last, generation, standbyOf[promoted].release);
+        if (next.candidate == member) {
+            _move(last, generation, release);
         } else if (next.generation == outgoing) {
-            _move(last, _reserve(), registry.candidateOf(next.candidate).release);
+            _move(last, _reserve(), _releaseOf(next.candidate));
         }
     }
 

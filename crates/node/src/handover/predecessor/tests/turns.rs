@@ -43,7 +43,7 @@ impl Logged {
 impl Exchange {
     /// The finalised schedule names the successor's release for `turn` under `key` from `boundary`,
     /// while the finalised vault still names the predecessor's release.
-    fn schedule_successor(&self, turn: u64, key: AccountId, boundary: i64) {
+    pub(super) fn schedule_successor(&self, turn: u64, key: AccountId, boundary: i64) {
         let running = Release { launch_digest: RELEASE, config_sha256: PREDECESSOR_CONFIG };
         *self.current.lock().unwrap() = CurrentRelease { id: running.id(), generation: GENERATION };
         *self.scheduled.lock().unwrap() = Some(ScheduledTurn {
@@ -68,7 +68,7 @@ impl Exchange {
     }
 
     /// Trusted time on both sides: the predecessor's sample and the successor's have reached `ms`.
-    fn reach(&mut self, ms: i64) {
+    pub(super) fn reach(&mut self, ms: i64) {
         let at = std::time::Instant::now();
         self.samples.send_replace(Some(Sample { at, earliest_ms: ms, latest_ms: ms + 1_000 }));
         self.reached = Some(ms);
@@ -263,6 +263,13 @@ async fn after_an_unconfirmed_handover_the_next_turns_member_is_admitted_under_t
         let err = exchange.take().await.err().unwrap_or_else(|| panic!("{what}: keys left for a turn the log refuses"));
         assert!(format!("{err:#}").contains(&format!("has not accepted turn {next}")), "{what}: {err:#}");
     }
+    // A turn more than the lookback past the last the stopped log knows gets nothing, its set aside.
+    let far = turn + 1 + crate::handover::turns::SOURCE_LOOKBACK as u64;
+    exchange.reach(engine_core::turns::boundary(far).unwrap());
+    exchange.schedule_set_member(far, key, 1);
+    let err = exchange.take().await.err().expect("keys left for a turn past the lookback");
+    assert!(format!("{err:#}").contains(&format!("has not accepted turn {far}")), "{err:#}");
+    exchange.reach(next_boundary);
     exchange.schedule_set_member(next, key, 1);
     let store = exchange.take().await.expect("the next turn's member is admitted under the retained turns");
     assert_eq!((store.release(), store.generation()), (exchange.upgrade(), TURN_GENERATION));

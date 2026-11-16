@@ -33,6 +33,7 @@ sol! {
     function promotionDueAt() external view returns (uint64);
     function currentSetId() external view returns (uint32);
     function pendingSetId() external view returns (uint32);
+    function skipDueAt() external view returns (uint64);
     function setOf(uint32 setId)
         external
         view
@@ -45,6 +46,7 @@ sol! {
     function registerStandby(address key, uint64 nonce, uint64 expiry, bytes vouch) external;
     function witness() external returns (bool marked);
     function promote() external returns (uint64 turn, uint16 position);
+    function skip() external returns (uint64 turn, uint16 position);
 }
 
 /// The schedule's heartbeat rule, in its own units.
@@ -103,6 +105,9 @@ pub(crate) struct View {
     pub rule: Rule,
     /// `promotionDueAt`: the earliest block time any promotion could pass, in seconds.
     pub due_at: u64,
+    /// `skipDueAt`: the earliest block time the turn in effect's current assignment may be skipped, in
+    /// seconds; `u64::MAX` once a head latched it (#596).
+    pub skip_due_at: u64,
     /// The latest marked slot, and the Arbitrum block that marked it.
     pub marked_slot: u64,
     pub marked_block: u64,
@@ -170,6 +175,7 @@ async fn read_view(block: &impl AgreedBlock, domain: &LivenessDomain) -> anyhow:
     let rotation = call(block, "liveness_rotation", registry, rotationStateCall {}).await?;
     let rule = call(block, "liveness_rule", schedule, livenessCall {}).await?;
     let due_at = call(block, "liveness_due_at", schedule, promotionDueAtCall {}).await?;
+    let skip_due_at = call(block, "liveness_skip_due_at", schedule, skipDueAtCall {}).await?;
     let mark = call(block, "liveness_mark", schedule, latestMarkCall {}).await?;
     let found = call(block, "liveness_turn", schedule, turnAtCall { timestamp: block.time() }).await?;
     let stored = call(block, "liveness_head", domain.log_heads, headsCall { epoch }).await?;
@@ -197,6 +203,7 @@ async fn read_view(block: &impl AgreedBlock, domain: &LivenessDomain) -> anyhow:
             blocks: rule.headBlocks,
         },
         due_at,
+        skip_due_at,
         marked_slot: mark.slot,
         marked_block: mark.blockNumber,
         named,

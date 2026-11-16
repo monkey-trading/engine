@@ -57,6 +57,24 @@ fn a_read_calls_for_a_witness_while_the_slot_is_unmarked_and_a_promotion_once_du
     assert!(calls(&view, None, 0).is_empty(), "no turn names the operator");
 }
 
+/// A skip once `skipDueAt` passes, by the later of the block's time and the caller's clock (#596); a
+/// latched assignment reads as never due.
+#[test]
+fn a_read_calls_for_a_skip_once_the_take_window_has_passed() {
+    let mut view = view(ChainState::default());
+    view.marked_slot = view.time / 60;
+    assert!(calls(&view, None, 0).is_empty(), "a latched assignment is never skipped");
+    view.skip_due_at = view.time + 1;
+    assert!(calls(&view, None, 0).is_empty(), "the window has a second to run");
+    assert_eq!(calls(&view, None, view.time + 1), vec![Call::Skip], "due by the caller's clock");
+    view.skip_due_at = view.time;
+    assert_eq!(calls(&view, None, 0), vec![Call::Skip]);
+    view.due_at = view.time;
+    assert_eq!(calls(&view, None, 0), vec![Call::Promote, Call::Skip], "the chain takes whichever passes");
+    view.generation = 0;
+    assert!(calls(&view, None, 0).is_empty(), "no turn names the operator");
+}
+
 #[test]
 fn a_witness_follows_the_current_slot_across_an_interval_change_and_a_quiet_chain() {
     let mut view = view(ChainState::default());
@@ -141,7 +159,8 @@ fn a_read_calls_for_a_relay_once_the_chains_head_is_stale_and_a_newer_one_was_si
 
 #[tokio::test(start_paused = true)]
 async fn the_caller_witnesses_promotes_and_relays_from_its_own_account() {
-    let chain = Arc::new(FakeChain::new(ChainState { due_at: 1_800_000_000, ..Default::default() }));
+    let state = ChainState { due_at: 1_800_000_000, skip_due_at: 1_800_000_000, ..Default::default() };
+    let chain = Arc::new(FakeChain::new(state));
     let copy = Copy::default();
     let relay = signed(1, 3);
     copy.signed_head(relay.clone());
@@ -161,6 +180,7 @@ async fn the_caller_witnesses_promotes_and_relays_from_its_own_account() {
     let calls = sent.calls.lock().unwrap().clone();
     assert!(calls.contains(&(DOMAIN.standby.schedule, witnessCall {}.abi_encode())), "{calls:?}");
     assert!(calls.contains(&(DOMAIN.standby.schedule, promoteCall {}.abi_encode())));
+    assert!(calls.contains(&(DOMAIN.standby.schedule, skipCall {}.abi_encode())), "{calls:?}");
     let relayed = relay.head.calldata(&relay.signature).unwrap();
     assert!(calls.contains(&(DOMAIN.log_heads, relayed)), "the stream's head goes to LogHeads");
 }

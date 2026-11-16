@@ -18,11 +18,12 @@ use tracing::{error, info};
 
 use crate::checkpoints::{CheckpointChain, View};
 use crate::config::NodeConfig;
+use crate::handover::assigned::{Binding, Bound};
 use crate::handover::evidence::{self, Peer, Quoting};
 use crate::handover::tail::{TailRefused, Tip, tail_report_data, version_name};
 use crate::handover::{
-    Challenge, Confirm, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, confirm_digest, confirmed_digest,
-    keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
+    Challenge, Confirm, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, bound_report_data, confirm_digest,
+    confirmed_digest, keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
 };
 use crate::log::{CheckpointDomain, LogEntry, Manifest, SegmentInfo, segment_seq};
 use crate::metrics::Metrics;
@@ -57,13 +58,32 @@ pub(crate) async fn take(
     reached_ms: Option<engine_core::types::Millis>,
     metrics: &Metrics,
 ) -> anyhow::Result<KeyStore> {
+    let assignments = crate::handover::assigned::for_config(cfg, "successor_assignments")?;
+    take_with(cfg, address, (sealer, attestor), vault, reached_ms, metrics, assignments).await
+}
+
+/// `take`, binding the request to the latest assignment `assignments` reads, when it names this
+/// release, and reading it again before the keys are sealed (#596).
+/// Error cases:
+/// - as `take`, or the latest assignment cannot be read, or moved before the keys were sealed
+pub(crate) async fn take_with(
+    cfg: &NodeConfig,
+    address: &str,
+    (sealer, attestor): (&dyn Sealer, &dyn Attestor),
+    vault: &impl CheckpointChain,
+    reached_ms: Option<engine_core::types::Millis>,
+    metrics: &Metrics,
+    assignments: Option<std::sync::Arc<dyn crate::handover::assigned::Assignments>>,
+) -> anyhow::Result<KeyStore> {
     let sealing = cfg.tee.sealing.as_ref().context("--predecessor needs [tee.sealing]")?;
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let platform = sealer.platform()?;
     let dir = cfg.node.log_dir.as_path();
     let log_tip = manifest_tip(dir);
+    let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
+    let bound = Bound::read(assignments, &release).await?;
     let Answered { mut stream, request, mut keys, peer } =
-        ask(cfg, address, attestor, &platform, log_tip, None).await?;
+        ask(cfg, address, attestor, &platform, (log_tip, None), bound.binding.as_ref()).await?;
     let head = keys.predecessor_head.clone().context("the keys carry no final checkpoint")?;
     let tails = std::mem::take(&mut keys.handover_tails);
     // The vault names the key before anything is written: a handover never lands the log of a
@@ -78,11 +98,13 @@ pub(crate) async fn take(
         "the handed-over key {} is not the vault's signer {named}",
         enclave.address_hex()
     );
-    let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
-    let (generation, _) = crate::handover::turns::named_generation(vault, &observation, &release, reached_ms).await?;
+    let generation = match bound.skip_generation() {
+        Some(generation) => generation,
+        None => crate::handover::turns::named_generation(vault, &observation, &release, reached_ms).await?.0,
+    };
     let signers = crate::handover::vault_signers(vault, &observation).await?;
     take_segments(&mut stream, dir, domain, &tails, log_tip, &head, signers, metrics).await?;
-    let store = KeyStore::create(&sealing.dir, sealer, cfg.file_sha256, generation, keys)?;
+    let store = bound.seal(&release, (&sealing.dir, sealer), generation, keys).await?;
     info!(
         enclave = %enclave.address_hex(),
         predecessor_launch_digest = %hex::encode(peer.launch_digest),
@@ -104,9 +126,10 @@ pub(super) struct Answered {
 }
 
 /// Connects to the predecessor at `address`, binds a request to its challenge — naming `tip` for a
-/// tail handover, and `log_tip` for whole segments — under this enclave's quote, and opens the keys
-/// its quote-bound answer carries. The predecessor's certificates are checked at the host's time,
-/// before trusted time runs: the vault naming the key bounds what this accepts.
+/// tail handover, and `log_tip` for whole segments, and `binding`, the turn's assignment it takes, when
+/// it read one (#596) — under this enclave's quote, and opens the keys its quote-bound answer carries.
+/// The predecessor's certificates are checked at the host's time, before trusted time runs: the vault
+/// naming the key bounds what this accepts.
 /// Error cases:
 /// - the predecessor cannot be reached in time, refuses, or its quote does not bind the keys it sent
 /// - this enclave cannot quote, or the keys do not decrypt
@@ -115,8 +138,8 @@ pub(super) async fn ask(
     address: &str,
     attestor: &dyn Attestor,
     platform: &Platform,
-    log_tip: Option<u64>,
-    tip: Option<&Tip>,
+    (log_tip, tip): (Option<u64>, Option<&Tip>),
+    binding: Option<&Binding>,
 ) -> anyhow::Result<Answered> {
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let (secret, public) = Kx::gen_keypair();
@@ -137,6 +160,10 @@ pub(super) async fn ask(
         Some(tip) => tail_report_data(domain, &challenge, &public, &cfg.file_sha256, &reads, tip),
         None => request_report_data(domain, &challenge, &public, &cfg.file_sha256, &reads),
     };
+    let request = match binding {
+        Some(binding) => bound_report_data(domain, &request, binding),
+        None => request,
+    };
     let evidence = evidence::produce(&Quoting::from(&cfg.tee), attestor, platform, request).await?;
     let config_sha256 = hex::encode(cfg.file_sha256);
     let request_message = Request {
@@ -146,6 +173,7 @@ pub(super) async fn ask(
         tail: tip.cloned(),
         reads,
         secrets_only: false,
+        binding: binding.copied(),
         evidence,
     };
     send(&mut stream, &request_message).await?;

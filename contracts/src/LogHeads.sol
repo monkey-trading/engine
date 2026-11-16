@@ -24,7 +24,8 @@ import {Vault} from "./Vault.sol";
 /// a host cannot bank heads and post them late. The schedule counts missed heartbeats from the
 /// latest head's `postedAt`. Otherwise heads are hourly `engine.log-head.v1` anchors.
 /// @notice The first head binding a turn's current assignment latches it: once, immutably, the
-/// block time, signer epoch, member, release and generation.
+/// block time, signer epoch, member, release and generation. Each epoch's newest v2 head's release
+/// names the enclave holding the keys, whichever assignment it binds.
 /// Trust: the same single accepted operator dependency as the vault's checkpoints — the attested
 /// enclave key the vault names. There is no admin: the vault reference is immutable, and a new
 /// vault deployment pairs with a new LogHeads.
@@ -83,6 +84,10 @@ contract LogHeads {
 
     /// The latch of each turn's assignment, by its position; empty until the first head binding it.
     mapping(uint64 turn => mapping(uint16 position => Latch)) public latches;
+
+    /// The release of each signer epoch's newest v2 head: the enclave that signed it, which holds the
+    /// keys whatever assignment it binds, so a member taking a turn asks it first (#596).
+    mapping(uint64 epoch => bytes32 release) public headRelease;
 
     event HeadPosted(uint64 indexed epoch, uint64 indexed seq, bytes32 link);
     event HeadPostedV2(
@@ -158,6 +163,7 @@ contract LogHeads {
         OperatorSchedule schedule = registry.schedule();
         uint64 bound = _checkFresh(schedule, heads[epoch], head);
         heads[epoch] = Head(head.seq, head.link, head.signedAt, bound, uint64(block.timestamp));
+        headRelease[epoch] = head.release;
         emit HeadPostedV2(epoch, head.seq, head.link, head.turn, head.position, head.hold, head.signedAt);
         _latch(schedule, epoch, release, head);
     }

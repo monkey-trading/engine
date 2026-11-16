@@ -27,7 +27,9 @@ contract LivenessRuleTest is LivenessTest {
         OperatorSchedule.Liveness memory hi,
         uint64 budget
     ) internal returns (OperatorSchedule) {
-        return new OperatorSchedule(registry, receiver, logHeads, rule, lo, hi, budget, BLOCK_MILLIS);
+        return new OperatorSchedule(
+            registry, receiver, logHeads, rule, lo, hi, _fitting(lo, hi, budget), budget, BLOCK_MILLIS
+        );
     }
 
     /// @dev Expects a schedule with `rule` to be refused, and `accepted` to deploy, both under

@@ -60,6 +60,23 @@ fn a_range_names_each_member_promoted_after_the_turn_taken_in_office() {
     assert_eq!(survived.sequenced(Some(20), 32).unwrap().candidates, candidates(&[A, B]));
 }
 
+/// A skip's member, like a promoted one, sequences from its take before the mirror and its `TurnTaken`
+/// (#596): a range through the mirror names it, accepted or refused.
+#[test]
+fn a_range_names_each_member_skipped_to_after_the_turn_taken_in_office() {
+    let candidates = |releases: &[B256]| releases.iter().map(|release| candidate(*release)).collect::<BTreeSet<_>>();
+    for accepted in [true, false] {
+        let mut skipped = takings(0, &[(10, A)]);
+        skipped.command(35, &[reassignment(B, accepted, TurnReason::Skip)]);
+        assert_eq!(skipped.sequenced(Some(20), 40).unwrap().candidates, candidates(&[A, B]), "accepted {accepted}");
+        assert!(skipped.sequenced(Some(20), 40).unwrap().include(candidate(B), B2));
+    }
+    // A draw's mirror names no one past the `TurnTaken` in office.
+    let mut drawn = takings(0, &[(10, A)]);
+    drawn.command(35, &[reassignment(B, true, TurnReason::Draw)]);
+    assert_eq!(drawn.sequenced(Some(20), 40).unwrap().candidates, candidates(&[A]));
+}
+
 #[test]
 fn records_that_start_past_a_range_attribute_none_of_it() {
     // A replay from a snapshot sees the commands from its base on, so it cannot say who sequenced
@@ -206,7 +223,12 @@ fn turn_taken(release: B256) -> Event {
 
 /// The mirror of a promotion of `release`'s member, accepted or refused.
 fn promotion(release: B256, accepted: bool) -> Event {
-    let (candidate, admin_key, cause) = (candidate(release), candidate(release), TurnReason::Promotion);
+    reassignment(release, accepted, TurnReason::Promotion)
+}
+
+/// The mirror of a reassignment for `cause` to `release`'s member, accepted or refused.
+fn reassignment(release: B256, accepted: bool, cause: TurnReason) -> Event {
+    let (candidate, admin_key) = (candidate(release), candidate(release));
     match accepted {
         true => Event::TurnAssigned { turn: 1, position: 1, reason: cause, candidate, admin_key, applies_at: 0 },
         false => Event::TurnRefused { turn: 1, position: 1, cause, candidate, admin_key, reason: "ended".into() },
