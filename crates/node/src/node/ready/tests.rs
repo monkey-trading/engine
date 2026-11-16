@@ -109,7 +109,7 @@ async fn run_member(
         signer,
         [signer].into(),
         (Some(stats.clone()), None, None),
-        Some((head.seq, head.link)),
+        (Some((head.seq, head.link)), &[]),
         |entry| {
             history.observe(entry);
             Ok(())
@@ -344,7 +344,12 @@ async fn write_member_log(cfg: &mut NodeConfig) -> u64 {
         applied.await.unwrap();
     };
     let (member, candidate) = (cfg.operator().unwrap().address, AccountId([0xc1; 20]));
-    let progress = Command::StakingProgress { block: 10, block_hash: B256::repeat_byte(1), block_time: Some(START) };
+    let progress = Command::StakingProgress {
+        block: 10,
+        block_hash: B256::repeat_byte(1),
+        block_time: Some(START),
+        named_turn: None,
+    };
     let switch =
         Command::SwitchRotation { enabled: true, election_cancelled: false, block: 11, chain_ref: "0x01:0".into() };
     let members = vec![SetMember { candidate, admin_key: member, weight: engine_core::emissions::TokenUnits(1) }];
