@@ -467,11 +467,16 @@ pub enum ProtocolVersion {
     /// effect, so a promotion of that turn after its end is not refused for a set a later adoption
     /// pruned.
     V72,
+    /// The engine forgets a rotation set by the block time the staking mirror has completed, when that
+    /// is earlier than the sequenced time, and forgets none before the mirror records one, so a mirror
+    /// that lags the chain keeps a set until the draws from it are mirrored, where an earlier version
+    /// counted from the sequenced time alone.
+    V73,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V72;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V73;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

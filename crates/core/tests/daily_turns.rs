@@ -4,7 +4,8 @@
 //! mirrored set refused, `RotateOperator` refused while rotation is on, and `TurnTaken` accepted only
 //! for the turn in effect; from `V53`, a member's notice kept across sets that name it unchanged
 //! (`daily_turns/notice.rs`); from `V71`, a promotion mirrored after its turn ended
-//! (`daily_turns/late_promotion.rs`), and from `V72` also one whose draw was refused.
+//! (`daily_turns/late_promotion.rs`), and from `V72` also one whose draw was refused; from `V73`, sets
+//! forgotten by the staking mirror's block time (`daily_turns/lagging_mirror.rs`).
 
 mod common;
 
@@ -415,3 +416,6 @@ mod notice;
 
 #[path = "daily_turns/late_promotion.rs"]
 mod late_promotion;
+
+#[path = "daily_turns/lagging_mirror.rs"]
+mod lagging_mirror;

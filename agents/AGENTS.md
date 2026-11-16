@@ -75,7 +75,7 @@ an index: load only the rule whose hint matches the current action.
   member's `TurnTaken`, from which the operator's share counts its time in office to its turn's end,
   `tests/daily_turns.rs`; from `V53`, a member's notice carried across sets that name it unchanged,
   and no office past the first turn's application for the account in it before turns run; from `V71` a promotion mirrored
-  after its turn's end applies while no later turn is in effect, and from `V72` the set of a refused draw is kept for it, `tests/daily_turns/late_promotion.rs`; the
+  after its turn's end applies while no later turn is in effect, and from `V72` the set of a refused draw is kept for it, `tests/daily_turns/late_promotion.rs`; from `V73` a set is forgotten by the staking mirror's completed block time, `tests/daily_turns/lagging_mirror.rs`; the
   development-only `short-turns` feature makes a turn five minutes, its draw lead one turn and a set's
   notice one turn (`turns::TURN_MS`, `tests/short_turns.rs`), and a `production` node build refuses it), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with

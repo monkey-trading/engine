@@ -25,7 +25,8 @@
 //!   drawn turn while nobody has drawn the next, applies when mirrored unless a later turn is in
 //!   effect, from the set that drew the turn, which stays until a later turn supersedes it; a
 //!   promotion's member holds the office until the next turn applies. From `V72` the set of a refused
-//!   assignment stays too (`DailyTurns::refused`).
+//!   assignment stays too (`DailyTurns::refused`), and from `V73` a set is forgotten by the block time
+//!   the staking mirror has completed, so a lagging mirror keeps it until the draws from it arrive.
 //!
 //! A mirror that contradicts the log (before `V51` or staking, a reference already credited, a set
 //! out of order or malformed) is refused as `ElectionRejected`, as an election's is, and holds the
@@ -329,7 +330,10 @@ impl Engine {
     /// the set that drew the turn in effect, whatever its age, and still forgets the others: the
     /// schedule promotes in the last drawn turn from the set that drew it, even once its turn is over,
     /// so that set stays until a later turn supersedes the turn.
-    /// From `V72` it keeps the sets of the refused turns too (`DailyTurns::refused`).
+    /// From `V72` it keeps the sets of the refused turns too (`DailyTurns::refused`). From `V73` it
+    /// counts from the block time the staking mirror has completed, when that is earlier than the
+    /// sequenced time, since every schedule event stamped before it has been mirrored, and forgets
+    /// nothing before the mirror records one: a lagging mirror keeps a set until its draws arrive.
     fn prune_sets(&mut self) {
         if self.protocol_version < ProtocolVersion::V71 {
             while !self.still_drawable() {
@@ -337,7 +341,14 @@ impl Engine {
             }
             return;
         }
-        let cutoff = self.now.saturating_sub(DRAW_LEAD_MS + TURN_MS);
+        let reached = if self.protocol_version >= ProtocolVersion::V73 {
+            let frontier = self.staking.as_ref().and_then(|staking| staking.completed_through);
+            frontier.and_then(|frontier| frontier.time)
+        } else {
+            Some(self.now)
+        };
+        let Some(reached) = reached.map(|reached| reached.min(self.now)) else { return };
+        let cutoff = reached.saturating_sub(DRAW_LEAD_MS + TURN_MS);
         let in_effect = self.daily_turns.in_effect.map(|in_effect| in_effect.set);
         let kept = |set: u32| Some(set) == in_effect || self.daily_turns.refused.values().any(|kept| *kept == set);
         let ids: Vec<u32> = self.daily_turns.sets.keys().copied().collect();
