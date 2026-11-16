@@ -114,6 +114,15 @@ pub(super) fn subscriptions(symbols: &[&str]) -> Vec<String> {
     vec![json!({ "type": "subscribe", "product_ids": symbols, "channels": ["level2_batch"] }).to_string()]
 }
 
+/// The messages that resubscribe the `level2_batch` books of `symbols` alone on an open connection:
+/// an unsubscribe, then a subscribe, which the feed answers with a fresh snapshot of each while the
+/// connection's other products stream on.
+pub(super) fn resubscriptions(symbols: &[&str]) -> Vec<String> {
+    let unsubscribe =
+        json!({ "type": "unsubscribe", "product_ids": symbols, "channels": ["level2_batch"] }).to_string();
+    [vec![unsubscribe], subscriptions(symbols)].concat()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,6 +191,14 @@ mod tests {
         // An update before its product's snapshot has nothing to apply to.
         let mut books = Books::new(&["BTC-USD"]);
         assert!(matches!(books.read(&update(at, &[["buy", "64979.0", "1"]]), NOW), Err(Refusal::Connection(_))));
+    }
+
+    #[test]
+    fn a_resubscription_unsubscribes_then_subscribes_only_its_products() {
+        let sent: Vec<serde_json::Value> =
+            resubscriptions(&["ETH-USD"]).iter().map(|text| serde_json::from_str(text).unwrap()).collect();
+        let message = |kind: &str| json!({ "type": kind, "product_ids": ["ETH-USD"], "channels": ["level2_batch"] });
+        assert_eq!(sent, [message("unsubscribe"), message("subscribe")]);
     }
 
     #[test]

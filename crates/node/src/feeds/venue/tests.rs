@@ -373,6 +373,22 @@ fn a_cme_read_waits_at_least_two_heartbeat_intervals_and_any_other_the_timeout()
     assert_eq!(kraken.read_timeout(Duration::from_secs(10)), Duration::from_secs(10));
 }
 
+#[test]
+fn coinbase_on_either_host_resubscribes_one_product_alone_and_kraken_does_not() {
+    let connection = |venue| VenueConnection {
+        venue,
+        url: String::new(),
+        api_key_env: None,
+        api_key_secret: None,
+        oauth: None,
+        symbols: Vec::new(),
+    };
+    let alone = |venue| Adapter::new(&connection(venue), None, &["BTC-USD", "ETH-USD"]).resubscription(&["ETH-USD"]);
+    assert_eq!(alone(Venue::Coinbase), Some(crate::feeds::coinbase::resubscriptions(&["ETH-USD"])));
+    assert_eq!(alone(Venue::CoinbaseExchange), Some(crate::feeds::coinbase_exchange::resubscriptions(&["ETH-USD"])));
+    assert_eq!(alone(Venue::Kraken), None);
+}
+
 // ── Helpers ──
 
 /// A Kraken feed for `symbols` that is never run, for calling its alert paths directly.

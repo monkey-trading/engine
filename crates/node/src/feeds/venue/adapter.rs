@@ -54,10 +54,12 @@ impl Adapter {
     }
 
     /// The messages that resubscribe `symbols` alone on an open connection, sending each a fresh
-    /// book while the connection's other symbols stream on, for a venue that takes them: Coinbase.
+    /// book while the connection's other symbols stream on, for a venue that takes them: Coinbase,
+    /// on either host.
     pub(super) fn resubscription(&self, symbols: &[&str]) -> Option<Vec<String>> {
         match self {
             Adapter::Coinbase(_) => Some(coinbase::resubscriptions(symbols)),
+            Adapter::CoinbaseExchange(_) => Some(coinbase_exchange::resubscriptions(symbols)),
             _ => None,
         }
     }
