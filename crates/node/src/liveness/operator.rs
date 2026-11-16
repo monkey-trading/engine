@@ -1,8 +1,9 @@
 //! The operator's side of the liveness rule. Every `POLL` it reads the chain at the latest agreed
 //! block and, while a turn names the operator and its set has another member:
 //! - asks each other member for its status, over a fresh nonce, and takes a status that recovers to
-//!   the member's promotable standby key, names this signer epoch, and holds a link this log holds at
-//!   that seq, as that member's confirmation;
+//!   the member's promotable standby key, or, while it has none, to the key whose attestation this
+//!   enclave verified (`attested`), names this signer epoch, and holds a link this log holds at that
+//!   seq, as that member's confirmation;
 //! - lets the poster sign at the newest confirmed seq only (`Signing::Confirmed`);
 //! - holds sequencing until a start check passes: a member whose copy holds a command answered, or,
 //!   with this log empty at genesis, any member did, an empty copy's included, and none holds a seq
@@ -27,21 +28,20 @@ use std::time::Duration;
 
 use alloy::primitives::{Address, B256};
 use engine_core::types::AccountId;
-use futures_util::future::BoxFuture;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, error, info, warn};
 
-use crate::liveness::chain::{
-    LivenessDomain, Member, View, first_turnable, members, set_effective, vault_signer, view,
-};
+use crate::config::TeeProvider;
+use crate::liveness::chain::{Member, View, first_turnable};
 use crate::liveness::fence::Fence;
 use crate::liveness::link::Asking;
 use crate::liveness::operator::fencing::{AbortOnDrop, FenceState, fence_tick, lock};
 use crate::liveness::{Gate, Released, Signable, VaultSigner};
 use crate::seed_relay::schedule::next_boundary;
 use crate::sequencer::Request as SequencerRequest;
-use crate::standby_key::chain::{AgreedBlock, StandbyChain, StandbyDomain};
+use crate::standby_key::chain::StandbyChain;
+use crate::tee::sealing::Platform;
 use crate::trusted_time::TrustedClock;
 
 /// How often the operator reads the chain and asks the members.
@@ -63,16 +63,30 @@ pub(crate) enum Signing {
     Nothing,
     /// The log's tip: the rule does not apply, or the set has no other member, whose signer epoch and
     /// set it names (`None` with no turn naming the operator): a head is signed at the tip only under
-    /// that read's turn, so a change of set the rule has not read signs nothing unconfirmed.
-    Tip(Option<(u64, u32)>),
+    /// that read's turn, so a change of set the rule has not read signs nothing unconfirmed, and only
+    /// before the time in milliseconds from which another set may apply (`Signable::until`).
+    Tip(Option<(u64, u32)>, u64),
     /// The newest seq a member confirmed.
     Confirmed(Signable),
+}
+
+impl Signing {
+    /// The time in milliseconds from which nothing is signed at it: its own boundary from which another
+    /// set may apply, whatever later read renewed the gate's.
+    pub(crate) fn until(&self) -> u64 {
+        match self {
+            Signing::Nothing => 0,
+            Signing::Tip(_, until) => *until,
+            Signing::Confirmed(signable) => signable.until,
+        }
+    }
 }
 
 /// What one round of statuses shows against this log.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Assessment {
-    /// How many members answered with a verified status of a copy holding a command.
+    /// How many members answered with a verified status of a copy holding a command, which this log's
+    /// prefix ring checks.
     pub answered: usize,
     /// How many answered with a verified status of a copy holding none.
     pub empty: usize,
@@ -100,16 +114,6 @@ pub(super) type Holders = BTreeMap<AccountId, Option<AccountId>>;
 /// What the rounds carry from one to the next: the released heads' stamps, the newest confirmation and
 /// the standby keys' holders.
 type Rounds<'a> = (&'a mut Stamps, &'a mut Option<(Scope, Signable)>, &'a mut Holders);
-
-/// One read of the chain at the latest agreed block.
-enum Read {
-    /// The vault names no registry, or the registry no schedule, at a block of time `time`, where it
-    /// names `signer`.
-    Unscheduled { time: u64, signer: AccountId },
-    /// The view under `schedule`, and, while a turn names the operator, its set's members; otherwise
-    /// the first boundary a drawn turn could start at (`turnable`).
-    Scheduled { schedule: Address, view: Box<View>, listed: Option<Vec<Member>>, turnable: u64 },
-}
 
 /// The operator's liveness rule.
 pub(crate) struct Operator<C, A> {
@@ -139,6 +143,9 @@ pub(crate) struct Operator<C, A> {
     /// For a promoted operator, the block its start read the promotion at: an older latest block, as a
     /// lagging provider majority serves, still names the outgoing key, so it counts as no read.
     pub floor: u64,
+    /// This enclave's attestation provider and sealed platform, which a member's standby key's
+    /// attestation is checked against; `None` without sealed keys, when only promotable keys count.
+    pub platform: Option<(TeeProvider, Platform)>,
 }
 
 impl<C: StandbyChain, A: Asking> Operator<C, A> {
@@ -349,20 +356,25 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             self.start_check(assessment, tip.head.seq, genesis, episodes);
         }
         // A member's copy matching this log at its durable seq holds every earlier seq too: the head is
-        // signed at the newest released tip at or below it, whose stamp this rule kept.
+        // signed at the newest released tip at or below it, whose stamp this rule kept. It signs nothing
+        // from the read's next boundary, from which another set may apply, until a round under a read
+        // past it gives it that read's.
+        let until = next_boundary(view.time).saturating_mul(1000);
         if let Some((seq, member)) = assessment.confirmed {
             self.gate.confirm(seq);
             if let Some((_, released)) = stamps.range(..=seq).next_back()
                 && confirmed.is_none_or(|(was, at)| was != scope || at.released.head.seq < released.head.seq)
             {
                 let confirmer = Address::from(member.0);
-                let signable = Signable { released: *released, confirmer, scope: Some((scope.0, scope.2)) };
+                let signable = Signable { released: *released, confirmer, scope: Some((scope.0, scope.2)), until };
                 *confirmed = Some((scope, signable));
             }
         }
         let current = confirmed.filter(|(was, _)| *was == scope).map(|(_, signable)| signable);
         // Until the start check passes the node stays stopped, heads included, so a promotion can pass it.
-        let signing = current.filter(|_| self.gate.start_checked()).map_or(Signing::Nothing, Signing::Confirmed);
+        let signing = current
+            .filter(|_| self.gate.start_checked())
+            .map_or(Signing::Nothing, |signable| Signing::Confirmed(Signable { until, ..signable }));
         self.signing.send_if_modified(|was| std::mem::replace(was, signing) != signing);
         // The log runs unconfirmed from the first command past the newest confirmed seq, as the earliest
         // released head past it shows (within a poll): with none yet, the next command starts that run
@@ -412,35 +424,8 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         state.fence.exempt(until);
         self.deadline(&state.fence);
         self.gate.exempt(holds.saturating_mul(1000));
-        let tip = Signing::Tip(scope);
+        let tip = Signing::Tip(scope, holds.saturating_mul(1000));
         self.signing.send_if_modified(|signing| std::mem::replace(signing, tip) != tip);
-    }
-
-    /// The vault's registry and schedule at the latest agreed block, the view under them, and, while
-    /// a turn names the operator, its set's members: `cached` when it lists that set of that schedule,
-    /// read at the block otherwise.
-    /// Error cases:
-    /// - a read fails
-    fn read(&self, cached: Option<(SetId, Vec<Member>)>) -> BoxFuture<'_, anyhow::Result<Read>> {
-        Box::pin(async move {
-            let block = self.chain.latest().await?;
-            let Some(standby) = StandbyDomain::at_if_scheduled(&block, self.chain_id, self.vault).await? else {
-                let signer = vault_signer(&block, self.vault).await?;
-                return Ok(Read::Unscheduled { time: block.time(), signer });
-            };
-            let domain = LivenessDomain { standby, log_heads: self.log_heads };
-            let view = view(&block, &domain).await?;
-            let listed = match (view.named.filter(|_| view.turn_names_operator()), cached) {
-                (Some(named), Some((id, listed))) if id == (standby.schedule, named.set, named.turn) => Some(listed),
-                (Some(named), _) => Some(members(&block, &standby, (named.set, named.turn, named.prior)).await?),
-                (None, _) => None,
-            };
-            let turnable = match &listed {
-                Some(_) => next_boundary(view.time),
-                None => first_turnable(view.time, set_effective(&block, standby.schedule).await?),
-            };
-            Ok(Read::Scheduled { schedule: standby.schedule, view: Box::new(view), listed, turnable })
-        })
     }
 
     /// Opens sequencing once a member holding a command answered, or at `genesis` any member, and none
@@ -489,9 +474,12 @@ fn resolve(open: &mut bool, alert: &'static str, line: &str) {
 
 mod assess;
 pub(crate) use assess::assess;
+mod attested;
 mod fencing;
 mod limits;
 use limits::{lagging, refused, unturned};
+mod read;
+use read::Read;
 mod stamps;
 use stamps::Stamps;
 mod statuses;

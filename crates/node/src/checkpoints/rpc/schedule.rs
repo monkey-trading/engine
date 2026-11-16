@@ -9,7 +9,11 @@ use anyhow::{Context, ensure};
 use engine_core::types::{AccountId, Millis};
 
 use crate::checkpoints::rpc::{candidateOfCall, registryCall};
-use crate::checkpoints::{CheckpointRpc, HandoverSource, Observation, ScheduledTurn, View};
+use crate::checkpoints::{Assigned, CheckpointRpc, HandoverSource, Observation, ScheduledTurn, View};
+use crate::standby_key::chain::assignmentOfCall;
+
+/// The reason a turn's draw records, as `OperatorSchedule.DRAWN` declares it.
+const DRAWN: u8 = 0;
 
 sol! {
     function schedule() external view returns (address);
@@ -134,6 +138,40 @@ impl CheckpointRpc {
             sources.push(self.handover_source_of(registry, member, block).await?);
         }
         Ok(sources)
+    }
+
+    /// See `CheckpointChain::reassignments`: a read of each turn's latest assignment, and, of a turn
+    /// whose latest is not its draw, of each assignment up to it, over the turns since the last verified
+    /// head's, which each check that counts moves on.
+    /// Error cases:
+    /// - the vault follows no registry, or a call or its decoding fails
+    pub(super) async fn read_reassignments(&self, turns: std::ops::Range<u64>) -> anyhow::Result<Vec<Assigned>> {
+        let block = BlockId::latest();
+        let vault = Address::from(self.domain.vault.0);
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), block).await?)?;
+        ensure!(!registry.is_zero(), "the vault follows no operator registry");
+        let schedule =
+            scheduleCall::abi_decode_returns(&self.call(registry, scheduleCall {}.abi_encode(), block).await?)?;
+        let mut assigned = Vec::new();
+        if schedule.is_zero() {
+            return Ok(assigned);
+        }
+        for turn in turns {
+            let raw = self.call(schedule, turnOfCall { turn }.abi_encode(), block).await?;
+            let latest = turnOfCall::abi_decode_returns(&raw).context("decoding the schedule's turn")?;
+            if latest.reason == DRAWN {
+                continue;
+            }
+            for position in 0..=latest.position {
+                let raw = self.call(schedule, assignmentOfCall { turn, position }.abi_encode(), block).await?;
+                let at = assignmentOfCall::abi_decode_returns(&raw).context("decoding the schedule's assignment")?._0;
+                if !at.candidate.is_zero() {
+                    let (candidate, reassigned) = (AccountId(at.candidate.0.0), at.reason != DRAWN);
+                    assigned.push(Assigned { turn, position, candidate, reassigned });
+                }
+            }
+        }
+        Ok(assigned)
     }
 
     /// See `CheckpointChain::handover_source_at`.

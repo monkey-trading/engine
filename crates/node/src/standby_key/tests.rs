@@ -13,7 +13,7 @@ use super::chain::{
     AgreedBlock, AssignmentReturn, CandidateReturn, RevisionReturn, StandbyChain, StandbyDomain, TurnReturn,
     assignmentOfCall, assignmentOfReturn, candidateOfCall, checkpointSignerCall, in_effect, promotableCall,
     promotion_of, registryCall, releaseApprovedCall, scheduleCall, signerAtEpochCall, signerEpochCall, signers_from,
-    standbyHolderCall, turnAtCall, turnAtReturn,
+    standbyHolderCall, turnAtCall, turnAtReturn, turnOfCall,
 };
 use super::*;
 use crate::liveness::chain::{rotationStateCall, rotationStateReturn};
@@ -37,6 +37,9 @@ const CONFIG: [u8; 32] = [0xc1; 32];
 /// The tests' trusted time, and the latest block's time.
 const NOW_MS: Millis = 1_800_000_000_000;
 
+/// A turn's latest assignment: its member, position, reason and generation.
+type Named = (Address, u16, u8, u64);
+
 /// What the fake chain answers at its latest block.
 struct ChainState {
     /// The latest block's time, in seconds.
@@ -57,6 +60,10 @@ struct ChainState {
     /// generation.
     turn: u64,
     named: (Address, u16, u8, u64),
+    /// The turn drawn before the one in effect, and each earlier turn's latest assignment as `named`
+    /// with the turn drawn before it.
+    prior: u64,
+    turns: BTreeMap<u64, (Named, u64)>,
     assignments: BTreeMap<(u64, u16), (AssignmentReturn, Vec<RevisionReturn>)>,
     /// The release and generation the registry names for the operator in effect.
     rotation: (B256, u64),
@@ -133,6 +140,8 @@ impl FakeChain {
             holders: BTreeMap::new(),
             turn: 0,
             named: (Address::ZERO, 0, 0, 0),
+            prior: 0,
+            turns: BTreeMap::new(),
             assignments: BTreeMap::new(),
             rotation: (B256::ZERO, 0),
             unfinal: false,
@@ -191,6 +200,15 @@ impl FakeChain {
             chain.named = (address(candidate), promotion.position, 2, promotion.generation);
             chain.assignments.insert((promotion.turn, promotion.position), (assignment, vec![revision]));
             chain.rotation = (B256::from(release().id()), promotion.generation);
+        });
+    }
+
+    /// Starts the turn after the one in effect, a day on, drawn for `candidate` in `generation`.
+    fn draw_next(&self, candidate: AccountId, generation: u64) {
+        self.set(|chain| {
+            chain.turns.insert(chain.turn, (chain.named, chain.prior));
+            (chain.time, chain.prior, chain.turn) = (chain.time + 86_400, chain.turn, chain.turn + 1);
+            chain.named = (address(candidate), 0, 0, generation);
         });
     }
 }
@@ -273,11 +291,24 @@ fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8
             reason,
             setId: 1,
             generation,
-            prior: 0,
+            prior: chain.prior,
             seed: B256::ZERO,
             source: Address::ZERO,
         };
         turnAtCall::abi_encode_returns(&turnAtReturn { turn: chain.turn, _1: named })
+    } else if to == SCHEDULE && is::<turnOfCall>(data) {
+        let turn = turnOfCall::abi_decode(data)?.turn;
+        let ((candidate, position, reason, generation), prior) = chain.turns.get(&turn).copied().unwrap_or_default();
+        turnOfCall::abi_encode_returns(&TurnReturn {
+            candidate,
+            position,
+            reason,
+            setId: 1,
+            generation,
+            prior,
+            seed: B256::ZERO,
+            source: Address::ZERO,
+        })
     } else if to == VAULT && is::<signerAtEpochCall>(data) {
         let epoch = signerAtEpochCall::abi_decode(data)?.epoch;
         signerAtEpochCall::abi_encode_returns(&chain.history.get(&epoch).copied().unwrap_or_default())

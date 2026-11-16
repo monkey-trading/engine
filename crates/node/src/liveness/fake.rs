@@ -15,8 +15,8 @@ use crate::liveness::chain::{
 };
 use crate::standby_key::chain::{
     AgreedBlock, CandidateReturn, StandbyChain, StandbyDomain, TurnReturn, candidateOfCall, checkpointSignerCall,
-    heldTurnCall, promotableCall, registryCall, scheduleCall, signerEpochCall, standbyHolderCall, turnAtCall,
-    turnAtReturn,
+    heldTurnCall, promotableCall, registryCall, releaseApprovedCall, scheduleCall, signerEpochCall, standbyHolderCall,
+    turnAtCall, turnAtReturn,
 };
 
 pub(crate) const VAULT: Address = Address::repeat_byte(0x7a);
@@ -66,6 +66,8 @@ pub(crate) struct ChainState {
     pub latency: std::time::Duration,
     /// The candidate that registered each standby key, by key.
     pub holders: Vec<(Address, Address)>,
+    /// Whether the timelock approved every candidate's registered release (`release`).
+    pub approved: bool,
 }
 
 /// A chain whose latest block's answers a test sets.
@@ -102,6 +104,7 @@ impl Default for ChainState {
             head: (0, 0, 0),
             latency: std::time::Duration::ZERO,
             holders: Vec::new(),
+            approved: true,
         }
     }
 }
@@ -224,6 +227,8 @@ fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8
             apiHostname: String::new(),
             handoverEndpoint: endpoint.cloned().unwrap_or_default(),
         })
+    } else if to == REGISTRY && is::<releaseApprovedCall>(data) {
+        releaseApprovedCall::abi_encode_returns(&chain.approved)
     } else if to == SCHEDULE && is::<promotableCall>(data) {
         let candidate = promotableCall::abi_decode(data)?.candidate;
         let key = chain.members.iter().find(|(member, ..)| *member == candidate).map(|(.., key)| *key);

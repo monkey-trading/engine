@@ -514,7 +514,8 @@ owner's decision: a trusted-time halt stops the signed stream, so a tip no membe
 could never be confirmed, and requiring it would promote a member through every such halt), so it can trail the log's tip by
 the commands no member received before the hold, at most one interval's worth, which stay exposed as
 any unconfirmed command is, while a hold stamps nothing past them; a standby key's registration is sent by the candidate's own account, so a candidate that does
-not send it is not promotable; from V56, while rotation is on, the governed parameters, listings,
+not send it is not promotable, though the operator takes its member's confirmations on that key once
+its enclave verifies the key's attestation; from V56, while rotation is on, the governed parameters, listings,
 close-spread adoptions, the access policy and protocol activation change only by a proposal the
 rotation set passes with more than two thirds of its snapshotted weight on the vote contract, which
 the engine mirrors from finalised events, so the operator's own commands for them are refused; from

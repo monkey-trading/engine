@@ -23,7 +23,11 @@ use crate::trusted_time::TrustedClock;
 
 /// The checks a start records: after a handover, the handed-over checkpoint (`after_handover`); for a
 /// start a promotion made, the vault's checkpoint at `promoted`, the seq the promotion fixed, which the
-/// member's replica verified as it followed (`after_promotion`).
+/// member's replica verified as it followed (`after_promotion`). Both attribute the range from the log's
+/// records alone, as a member's start reads no chain between the incumbent's stop and its first command:
+/// a promotion or skip of this node's member within the finality window before the start, which the
+/// log has yet to mirror, is not seen here, while an asked check also reads the schedule
+/// (`log_check::ask`).
 /// Error cases:
 /// - see `after_handover` and `after_promotion`
 pub(crate) fn after_start(

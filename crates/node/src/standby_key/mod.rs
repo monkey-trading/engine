@@ -7,9 +7,10 @@
 //!
 //! The seal opens only while the schedule, read at the latest block a strict majority of the custody
 //! providers agrees on (`chain`), lists the key as the candidate's promotable standby key, or as the
-//! signer a promotion installed that is still its turn's latest assignment, under the signer epoch it
-//! started and the generation it reserved, until the key is resealed as the turn's keys under that
-//! generation. In every other state the key holds no authority, and a start seals a new one in its
+//! signer a promotion installed that is still its turn's latest assignment, or carried into the same
+//! member's next drawn turn, under the signer epoch it started and the generation it reserved, until
+//! the key is resealed as the turn's keys under that generation. In every other state the key holds
+//! no authority, and a start seals a new one in its
 //! place, which the candidate registers. On promotion the node keeps the key in memory and reseals it
 //! as the turn's keys (`KeyStore`) under the promotion's generation, so a restart opens it as those;
 //! the standby seal is deleted only once that file is durable.
@@ -257,6 +258,11 @@ impl StandbyKeys {
     /// New standby keys sealed in `dir` under the mock sealer, for tests outside this module.
     pub(crate) fn for_test(dir: &Path) -> Self {
         Self::sealed_for_test(dir, [0x11; 48], [0xc1; 32])
+    }
+
+    /// The signing key, for tests that sign as the member's link does.
+    pub(crate) fn signing_for_test(&self) -> EnclaveKey {
+        self.keys.enclave_key().unwrap()
     }
 
     /// New standby keys sealed in `dir` for the release of `launch_digest` and a config file hashing

@@ -24,6 +24,9 @@ const RELEASE: B256 = B256::repeat_byte(0x5e);
 const GENERATION: u64 = 7;
 const TRUE_MS: Millis = 1_800_000_000_000;
 
+/// A permission to sign at a seq, lapsing at a time in milliseconds.
+type Permission<'a> = &'a dyn Fn(u64, u64) -> Signing;
+
 /// The poster's inputs a test drives.
 struct Drive {
     released: watch::Sender<Released>,
@@ -32,6 +35,7 @@ struct Drive {
     gate: Gate,
     signed: watch::Receiver<Option<SignedHead>>,
     clock: Arc<TestClock>,
+    trusted: TrustedClock,
     tip: watch::Sender<Head>,
     task: JoinHandle<anyhow::Result<()>>,
 }
@@ -183,7 +187,12 @@ async fn a_confirmation_from_another_set_signs_no_head() {
     assert!(chain.posts_v2().is_empty(), "set 1's confirmation signed a head for a turn of set 2");
     let released = Released { head: at(5), stamp: stamp(5) };
     let confirmer = Address::repeat_byte(0xc2);
-    drive.signing.send_replace(Signing::Confirmed(Signable { released, confirmer, scope: Some((1, 2)) }));
+    drive.signing.send_replace(Signing::Confirmed(Signable {
+        released,
+        confirmer,
+        scope: Some((1, 2)),
+        until: u64::MAX,
+    }));
     tokio::time::sleep(Duration::from_secs(30)).await;
     assert_eq!(chain.posts_v2().last().map(|(_, head)| head.confirmer), Some(confirmer), "set 2's member's");
     drive.stop().await;
@@ -198,14 +207,53 @@ async fn a_tip_from_another_set_signs_no_head() {
     chain.change_turn(|turn| turn.set = 2);
     let drive = spawn(chain.clone(), Some((RELEASE, GENERATION)));
     drive.release(5);
-    drive.signing.send_replace(Signing::Tip(Some((1, 1))));
+    drive.signing.send_replace(Signing::Tip(Some((1, 1)), u64::MAX));
     drive.clock.advance(Duration::from_secs(1));
     tokio::time::sleep(Duration::from_secs(30)).await;
     assert!(chain.posts_v2().is_empty(), "set 1's exemption signed the tip for a turn of set 2");
-    drive.signing.send_replace(Signing::Tip(Some((1, 2))));
+    drive.signing.send_replace(Signing::Tip(Some((1, 2)), u64::MAX));
     tokio::time::sleep(Duration::from_secs(30)).await;
     assert_eq!(chain.posts_v2().last().map(|(_, head)| head.confirmer), Some(Address::ZERO), "set 2's tip");
     drive.stop().await;
+}
+
+/// A confirmation, or a one-member set's exemption, signs a head only before its own boundary from which
+/// another set may apply, as it lets checkpoints pass: once a read past that boundary renewed the gate
+/// for a set whose members have yet to answer, and with the poster's own turn read still pinned before
+/// it, no head goes out at the old permission until a round gives the permission the next boundary.
+#[tokio::test(start_paused = true)]
+async fn past_its_boundary_a_permission_signs_no_head_whatever_read_renewed_the_gate() {
+    let confirmed = |seq, until| {
+        let (released, confirmer) = (Released { head: at(seq), stamp: stamp(seq) }, Address::repeat_byte(0xc1));
+        Signing::Confirmed(Signable { released, confirmer, scope: Some((1, 1)), until })
+    };
+    let exempt = |_, until| Signing::Tip(Some((1, 1)), until);
+    let cases: [(&str, Permission<'_>); 2] = [("a confirmation", &confirmed), ("an exempt tip", &exempt)];
+    for (case, signing) in cases {
+        let chain = FakeChain::new(None);
+        chain.name_turn(turn(GENERATION));
+        let drive = spawn(chain.clone(), Some((RELEASE, GENERATION)));
+        let boundary = u64::try_from(TRUE_MS).unwrap() + 60_000;
+        drive.gate.deadline(Some(u64::MAX - 1), &drive.trusted);
+        // A read past the boundary renewed the gate for the next day's set.
+        drive.gate.holds_until(boundary + 86_400_000);
+        drive.release(5);
+        drive.signing.send_replace(signing(5, boundary));
+        drive.clock.advance(Duration::from_secs(1));
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        assert_eq!(chain.posts_v2().len(), 1, "{case}: before the boundary");
+        // Past it by trusted time's upper bound: nothing at the old permission, at a newer seq included.
+        drive.clock.advance(Duration::from_secs(60));
+        drive.release(6);
+        drive.signing.send_replace(signing(6, boundary));
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert_eq!(chain.posts_v2().len(), 1, "{case}: a head past the boundary");
+        // A round under a read that names this set past the boundary gives it the next one.
+        drive.signing.send_replace(signing(6, boundary + 86_400_000));
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        assert_eq!(chain.posts_v2().last().map(|(_, head)| head.head), Some(at(6)), "{case}: once renewed");
+        drive.stop().await;
+    }
 }
 
 /// A node whose start check has not passed stays stopped, heads included: with a member's
@@ -329,7 +377,12 @@ impl Drive {
     fn confirm(&self, seq: u64, member: u8) {
         let released = Released { head: at(seq), stamp: stamp(seq) };
         let confirmer = Address::repeat_byte(member);
-        self.signing.send_replace(Signing::Confirmed(Signable { released, confirmer, scope: Some((1, 1)) }));
+        self.signing.send_replace(Signing::Confirmed(Signable {
+            released,
+            confirmer,
+            scope: Some((1, 1)),
+            until: u64::MAX,
+        }));
     }
 
     /// How the poster ended within `within`, its inputs kept open meanwhile; `None` if it ran on.
@@ -395,14 +448,14 @@ fn spawn_retrying(chain: FakeChain, keys: Option<HeldKeys>, retry: Duration) -> 
         freeze: crate::log_heads::FreezeLatch::default(),
         confirmed: None,
         anchored: None,
-        trusted: Some(trusted),
+        trusted: Some(trusted.clone()),
         prefix_ring: Default::default(),
         stall_intervals: 2,
         heartbeat: Some(heartbeat),
     };
     let (sequencer, _from_poster) = tokio::sync::mpsc::channel(8);
     let task = tokio::spawn(poster.run(rx, sequencer));
-    Drive { released, signing, hold, gate, signed, clock, tip, task }
+    Drive { released, signing, hold, gate, signed, clock, trusted, tip, task }
 }
 
 /// Turn 20,400 at position 2 in `generation`, on a 60 s interval, read at block 100.

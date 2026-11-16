@@ -38,6 +38,7 @@ use crate::liveness::operator::Signing;
 use crate::log::CheckpointDomain;
 use crate::log_heads::v2::{Assignment, Inputs, next};
 use crate::log_heads::{Head, HeadV2, HeadsChain, HeadsRpc, Hold};
+use crate::seed_relay::schedule::next_boundary;
 use crate::tee::EnclaveKey;
 use crate::tee::sealing::Release;
 
@@ -375,8 +376,11 @@ async fn enclave_head(
     assert_eq!(posted_epoch, epoch);
     let turn = heads.turn().await.unwrap().expect("a turn names the operator");
     let bound = Assignment::held(&turn, Some(keys));
+    // The permission is good until the next turn boundary after the read's time, as the liveness rule
+    // gives it, `reached` standing for the read's time.
+    let until = next_boundary(u64::try_from(reached).unwrap() / 1000).saturating_mul(1000);
     let inputs = Inputs {
-        signing: Signing::Tip(Some((epoch, turn.set))),
+        signing: Signing::Tip(Some((epoch, turn.set)), until),
         tip: released,
         hold: Hold::Live,
         parent,

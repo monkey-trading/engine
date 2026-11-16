@@ -9,7 +9,9 @@ async fn a_set_with_no_other_member_is_exempt() {
     rig.chain.set(|chain| chain.members.retain(|(candidate, ..)| *candidate == Address::repeat_byte(OPERATOR)));
     settle().await;
     assert!(rig.gate.sequences());
-    assert!(matches!(*rig.signing.borrow(), Signing::Tip(Some((1, _)))), "at the tip, under its epoch and set");
+    assert!(matches!(*rig.signing.borrow(), Signing::Tip(Some((1, _)), _)), "at the tip, under its epoch and set");
+    let boundary = next_boundary(rig.chain.0.lock().unwrap().time).saturating_mul(1000);
+    assert_eq!(rig.signing.borrow().until(), boundary, "the tip signs nothing from the next boundary");
     rig.task.abort();
 }
 
@@ -94,7 +96,7 @@ async fn an_exempt_read_holds_only_until_the_next_turn_boundary() {
         rig.chain.set(exempting);
         settle().await;
         assert!(rig.gate.sequences() && rig.gate.signs(), "{case}: exempt");
-        assert!(matches!(*rig.signing.borrow(), Signing::Tip(_)), "{case}");
+        assert!(matches!(*rig.signing.borrow(), Signing::Tip(..)), "{case}");
         rig.chain.set(|chain| chain.down = true);
         // The upper bound is 3 s past true time at the sample, and runs 500 ppm fast after it: with
         // the boundary 52,200 s on, it reaches the boundary less DELTA after about 52,156 s.

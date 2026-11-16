@@ -8,6 +8,8 @@
 //!   checking every one against its own copy's seal chain;
 //! - `Vouch`: a vouch for a candidate's standby key (`standby_key::vouch::answer`), signed with this
 //!   member's standby key while the schedule lists it as promotable;
+//! - `Attestation`: the latest vouch request quoted for its standby key, whose `engine.standby.v1`
+//!   quote the operator checks (`vouch::admit`) to take the member's statuses before it is registered;
 //! - the operator's log check (`log_check::Ask`), which carries no tag, answered as a following member
 //!   answers it on the same endpoint (`log_check::answer`).
 //!
@@ -83,6 +85,8 @@ pub(crate) enum Request {
     Entries { after: Offset },
     /// A vouch for a standby key.
     Vouch { request: Box<VouchRequest> },
+    /// Its standby key's attestation.
+    Attestation,
 }
 
 /// A member's answer.
@@ -101,6 +105,10 @@ pub(crate) enum Reply {
     },
     Vouch {
         reply: VouchReply,
+    },
+    /// The latest vouch request quoted for its standby key.
+    Attestation {
+        request: Box<VouchRequest>,
     },
     /// Why it does not answer.
     Refused {
@@ -140,6 +148,9 @@ struct CopyState {
     diverged: BTreeMap<SignerEpoch, u64>,
     /// The enclave the copy follows: the heads it sees, on the stream or the chain, are of its epochs.
     following: Option<AccountId>,
+    /// The latest vouch request the member quoted for its standby key, which it answers `Attestation`
+    /// with.
+    attestation: Option<VouchRequest>,
 }
 
 /// A signer epoch and the key a head of it was seen under: a reorg can hand an epoch number to another
@@ -435,7 +446,7 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
             },
         };
         let permit = match request {
-            Request::Status { .. } => Ok(None),
+            Request::Status { .. } | Request::Attestation => Ok(None),
             Request::Entries { .. } | Request::Vouch { .. } => heavy.try_acquire().map(Some),
         };
         // A heavy answer keeps its permit until it is sent.
@@ -461,6 +472,7 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
                 Ok(Reply::Status { member: self.member, status, signature })
             }
             Request::Entries { after } => Ok(Reply::Entries { entries: self.copy.entries_after(*after) }),
+            Request::Attestation => Ok(Reply::Attestation { request: self.copy.attestation(self.standby.address())? }),
             Request::Vouch { request } => {
                 let voucher = Voucher {
                     provider: self.provider,
@@ -478,6 +490,7 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
 }
 
 mod ask;
+mod attested;
 mod state;
 pub(crate) use ask::{Asking, Tcp, describe, verified_status};
 pub(crate) mod slots;

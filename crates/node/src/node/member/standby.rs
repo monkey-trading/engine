@@ -369,6 +369,8 @@ impl Standby {
             Ok(request) => request,
             Err(e) => return warn!("quoting the standby key for a vouch failed: {e:#}"),
         };
+        // The operator takes this member's statuses on it until the registration lands.
+        self.copy.attested(&request);
         let Some(registration) = self.vouched(&request, operator).await else {
             return warn!(key = %self.keys.address(), "no operator or member vouched for the standby key: asking again later");
         };

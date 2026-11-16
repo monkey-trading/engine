@@ -193,3 +193,101 @@ async fn the_registry_operator_is_read_at_the_pinned_finalized_block_only_while_
     assert!(rpc.registry_operator_at(&unpinned).await.is_err());
     server.abort();
 }
+
+/// The schedule's reassignments over a range of turns, read at the latest block: a turn its draw alone
+/// holds is read no further; one a promotion or a skip followed gives each of its assignments, the
+/// draw's marked as none, and skips the positions it never assigned. A registry with no schedule gives
+/// none, and a vault with no registry cannot answer.
+#[tokio::test]
+async fn reassignments_name_each_assignment_of_the_turns_a_promotion_or_skip_followed() {
+    use crate::checkpoints::Assigned;
+    use crate::checkpoints::rpc::schedule::{TurnReturn, scheduleCall, turnOfCall};
+    use crate::standby_key::chain::{AssignmentReturn, assignmentOfCall, assignmentOfReturn};
+    const VAULT: Address = Address::repeat_byte(0x11);
+    const REGISTRY: Address = Address::repeat_byte(0x22);
+    const SCHEDULE: Address = Address::repeat_byte(0x33);
+    let member = |byte: u8| Address::repeat_byte(byte);
+    /// The registry and schedule the vault and registry name.
+    type Named = Arc<Mutex<(Address, Address)>>;
+    async fn answer(State(named): State<Named>, Json(request): Json<Value>) -> Json<Value> {
+        let (registry, schedule) = *named.lock().unwrap();
+        let call = &request["params"][0];
+        let input = hex::decode(&call["input"].as_str().or(call["data"].as_str()).unwrap()[2..]).unwrap();
+        let to: Address = call["to"].as_str().unwrap().parse().unwrap();
+        assert_eq!(request["params"][1], "latest", "a reassignment is read at the latest block");
+        let turn = |candidate, position, reason| TurnReturn {
+            candidate,
+            position,
+            reason,
+            setId: 1,
+            generation: 7,
+            prior: 0,
+            seed: B256::ZERO,
+            source: Address::ZERO,
+        };
+        let assigned = |candidate, reason| AssignmentReturn {
+            candidate,
+            adminKey: candidate,
+            setId: 1,
+            reason,
+            standbyKey: Address::ZERO,
+            signerEpoch: 0,
+            headSeq: 0,
+            headLink: B256::ZERO,
+            checkpointSeq: 0,
+            checkpointRoot: B256::ZERO,
+            at: 0,
+        };
+        let result = match (to, <[u8; 4]>::try_from(&input[..4]).unwrap()) {
+            (VAULT, registryCall::SELECTOR) => registryCall::abi_encode_returns(&registry),
+            (REGISTRY, scheduleCall::SELECTOR) => scheduleCall::abi_encode_returns(&schedule),
+            (SCHEDULE, turnOfCall::SELECTOR) => {
+                turnOfCall::abi_encode_returns(&match turnOfCall::abi_decode(&input).unwrap().turn {
+                    7 => turn(Address::repeat_byte(0xe1), 0, 0),
+                    8 => turn(Address::repeat_byte(0xb1), 3, 2),
+                    9 => turn(Address::repeat_byte(0xd1), 2, 1),
+                    other => panic!("turn {other} read"),
+                })
+            }
+            (SCHEDULE, assignmentOfCall::SELECTOR) => {
+                let asked = assignmentOfCall::abi_decode(&input).unwrap();
+                let at = match (asked.turn, asked.position) {
+                    (8, 1) => assigned(Address::repeat_byte(0xa1), 0),
+                    (8, 3) => assigned(Address::repeat_byte(0xb1), 2),
+                    (9, 0) => assigned(Address::repeat_byte(0xc1), 0),
+                    (9, 2) => assigned(Address::repeat_byte(0xd1), 1),
+                    (7, _) => panic!("a turn its draw alone holds was read further"),
+                    _ => assigned(Address::ZERO, 0),
+                };
+                assignmentOfCall::abi_encode_returns(&assignmentOfReturn { _0: at, _1: Vec::new() })
+            }
+            other => panic!("unexpected read {other:?}"),
+        };
+        Json(json!({"jsonrpc":"2.0","id":request["id"],"result":format!("0x{}", hex::encode(result))}))
+    }
+    let named: Named = Arc::new(Mutex::new((REGISTRY, SCHEDULE)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new().route("/", post(answer)).with_state(named.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let cfg: CheckpointSection = toml::from_str(&format!(
+        "rpc_url='http://{address}'\nrelayer='0x{}'\nretry_interval='1ms'\nrpc_timeout='2s'",
+        "01".repeat(20)
+    ))
+    .unwrap();
+    let domain = CheckpointDomain { chain_id: 31337, vault: engine_core::types::AccountId(VAULT.0.0) };
+    let rpc = CheckpointRpc::read_only(&cfg, domain, Address::ZERO, FinalityTag::Finalized, 0).unwrap();
+    let at = |turn, position, byte, reassigned| Assigned {
+        turn,
+        position,
+        candidate: engine_core::types::AccountId(member(byte).0.0),
+        reassigned,
+    };
+    let expected = [at(8, 1, 0xa1, false), at(8, 3, 0xb1, true), at(9, 0, 0xc1, false), at(9, 2, 0xd1, true)];
+    assert_eq!(rpc.reassignments(7..10).await.unwrap(), expected);
+    *named.lock().unwrap() = (REGISTRY, Address::ZERO);
+    assert_eq!(rpc.reassignments(7..10).await.unwrap(), [], "a registry with no schedule reassigned none");
+    *named.lock().unwrap() = (Address::ZERO, SCHEDULE);
+    assert!(rpc.reassignments(7..10).await.is_err(), "a vault with no registry answered");
+    server.abort();
+}

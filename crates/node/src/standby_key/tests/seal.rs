@@ -216,6 +216,61 @@ async fn a_crash_before_the_reseal_reopens_the_key_and_the_reseal_makes_it_the_t
     assert_resealed_once(&dir, key);
 }
 
+/// The schedule carries a promotion into its member's next drawn turn (`_carryNext`), and each later
+/// draw of the member keeps that generation (`_generation`): past one boundary or several, the key is
+/// still the vault's signer in the promotion's generation, so a crash before the reseal reopens it as
+/// the promotion's rather than seal a new key over the only copy. A drawn turn in another generation, or
+/// drawn for another member, at the last boundary or one before it, leaves it no authority.
+#[tokio::test]
+async fn a_crash_before_the_reseal_reopens_the_key_past_the_boundaries_into_its_members_drawn_turns() {
+    for draws in [1, 3] {
+        let dir = scratch_dir("standby-carried");
+        let chain = FakeChain::new();
+        let key = fresh_in(&dir).await.address();
+        chain.promote(CANDIDATE, key);
+        (0..draws).for_each(|_| chain.draw_next(CANDIDATE, PROMOTION.generation));
+        let keys = promoted(start(&dir, &chain).await.unwrap());
+        keys.reseal(PROMOTION.generation).unwrap();
+        assert_resealed_once(&dir, key);
+    }
+    let other = AccountId([0x77; 20]);
+    let (carried, fresh) = ((CANDIDATE, PROMOTION.generation), (CANDIDATE, PROMOTION.generation + 1));
+    for (case, draws) in [
+        ("a fresh generation", vec![fresh]),
+        ("another member", vec![(other, PROMOTION.generation)]),
+        ("a fresh generation before the last draw", vec![carried, fresh, carried]),
+        ("another member before the last draw", vec![carried, (other, PROMOTION.generation), carried]),
+    ] {
+        let dir = scratch_dir("standby-not-carried");
+        let chain = FakeChain::new();
+        let key = fresh_in(&dir).await.address();
+        chain.promote(CANDIDATE, key);
+        draws.iter().for_each(|(drawn, generation)| chain.draw_next(*drawn, *generation));
+        let (keys, generated) = standby(start(&dir, &chain).await.unwrap());
+        assert!(generated && keys.address() != key, "{case}: the key opened past the boundary");
+    }
+}
+
+/// A promotion continued through more drawn turns than the walk follows is not proven unusable: the
+/// start fails and the seal stays, while one at the limit still opens.
+#[tokio::test]
+async fn a_promotion_carried_past_the_walks_limit_keeps_the_seal() {
+    for (draws, opens) in [(64, true), (65, false)] {
+        let dir = scratch_dir("standby-carried-far");
+        let chain = FakeChain::new();
+        let key = fresh_in(&dir).await.address();
+        chain.promote(CANDIDATE, key);
+        (0..draws).for_each(|_| chain.draw_next(CANDIDATE, PROMOTION.generation));
+        match start(&dir, &chain).await {
+            Ok(opened) => assert!(opens && promoted(opened).address() == key, "{draws} draws opened the key"),
+            Err(e) => assert!(!opens && format!("{e:#}").contains("drawn turns back"), "{draws} draws: {e:#}"),
+        }
+        let sealed = ReleaseFile::new(&dir, STANDBY, sealer(), CONFIG).unwrap().read().unwrap().expect("the seal");
+        let sealed: KeySet = serde_json::from_slice(&sealed).unwrap();
+        assert_eq!(AccountId(sealed.enclave_key().unwrap().address()), key, "{draws} draws replaced the seal");
+    }
+}
+
 #[tokio::test]
 async fn a_crash_during_the_reseal_leaves_a_partial_file_the_reseal_replaces() {
     let dir = scratch_dir("standby-crash-during");

@@ -6,6 +6,8 @@ use super::*;
 const A: B256 = B256::repeat_byte(0xa1);
 const B: B256 = B256::repeat_byte(0xb1);
 const C: B256 = B256::repeat_byte(0xc1);
+const D: B256 = B256::repeat_byte(0xd1);
+const E: B256 = B256::repeat_byte(0xe1);
 /// A's member on another release, as after an upgrade.
 const A2: B256 = B256::repeat_byte(0xa2);
 /// B's member on another release.
@@ -75,6 +77,70 @@ fn a_range_names_each_member_skipped_to_after_the_turn_taken_in_office() {
     let mut drawn = takings(0, &[(10, A)]);
     drawn.command(35, &[reassignment(B, true, TurnReason::Draw)]);
     assert_eq!(drawn.sequenced(Some(20), 40).unwrap().candidates, candidates(&[A]));
+}
+
+/// Finality can hold a promotion's mirror past the range its member sequenced in: a promotion mirrored
+/// past the range names its member when its turn is the one in office at the range's start or a later
+/// one, whether or not a `TurnTaken` in the range names that turn; a late mirror of a promotion in an
+/// earlier turn, whose member's commands all precede the `TurnTaken` in office, names none.
+#[test]
+fn a_promotion_mirrored_past_the_range_names_its_member_from_the_turn_in_office_on() {
+    let taken = |turn, release| Event::TurnTaken { turn, candidate: candidate(release), release };
+    let promoted = |turn, release| Event::TurnAssigned {
+        turn,
+        position: 1,
+        reason: TurnReason::Promotion,
+        candidate: candidate(release),
+        admin_key: candidate(release),
+        applies_at: 0,
+    };
+    // A takes turn 2 at 10. B, promoted in turn 2, sequences 21 to 25; turn 3's drawn member never takes
+    // it, and D, promoted in turn 3, sequences 26 to 30; C takes turn 4 at 31, and a check covers the
+    // range through 34. The mirrors land past it: B's at 35, D's at 36, and at 37 a late one of E's
+    // promotion in turn 1, whose commands all precede A's `TurnTaken`.
+    let mut late = Takings::default();
+    late.command(10, &[taken(2, A)]);
+    late.command(31, &[taken(4, C)]);
+    late.command(35, &[promoted(2, B)]);
+    late.command(36, &[promoted(3, D)]);
+    late.command(37, &[promoted(1, E)]);
+    let names = late.sequenced(Some(20), 34).unwrap();
+    assert!(names.candidates.contains(&candidate(B)), "B's mirror past the range named none of its commands");
+    assert!(names.candidates.contains(&candidate(D)), "a promotion in a turn no `TurnTaken` names was missed");
+    assert!(!names.candidates.contains(&candidate(E)), "an earlier turn's promotion named a member of none of it");
+    for member_of in [B, D] {
+        let own = own_check(Some(head(20)), &late, head(34), (A2, &member(member_of)));
+        assert_eq!(own, Some(head(20)), "{member_of}'s member checked its own work");
+    }
+    assert_eq!(own_check(Some(head(20)), &late, head(34), (E, &member(E))), Some(head(34)), "E sequenced none");
+}
+
+/// A member the schedule promoted or skipped to after the in-office holder's assignment may have
+/// sequenced part of the range before the log mirrored it, in the holder's turn or a later one; one
+/// reassigned earlier in the holder's turn ended before the holder's `TurnTaken`, and a draw is no
+/// reassignment. With no assignment of the holder's in its turn, each of that turn's counts.
+#[test]
+fn reassignments_after_the_in_office_assignment_name_their_members() {
+    let at =
+        |turn, position, release, reassigned| Assigned { turn, position, candidate: candidate(release), reassigned };
+    // Turn 2's draw named A; B was promoted at position 1, C at 3, whose `TurnTaken` is in office, and D
+    // at 4. Turn 3's draw named E, and A was skipped to at 2.
+    let assigned = [
+        at(2, 0, A, false),
+        at(2, 1, B, true),
+        at(2, 3, C, true),
+        at(2, 4, D, true),
+        at(3, 0, E, false),
+        at(3, 2, A, true),
+    ];
+    let in_office = |release| Sequencers {
+        candidates: BTreeSet::new(),
+        releases: BTreeSet::new(),
+        in_office: (2, candidate(release)),
+    };
+    let names = |releases: &[B256]| releases.iter().map(|release| candidate(*release)).collect::<BTreeSet<_>>();
+    assert_eq!(in_office(C).reassigned(&assigned), names(&[D, A]), "after C's assignment, and in turn 3");
+    assert_eq!(in_office(E).reassigned(&assigned), names(&[B, C, D, A]), "E holds no assignment of turn 2");
 }
 
 #[test]
@@ -245,11 +311,13 @@ fn member(release: B256) -> BTreeSet<AccountId> {
     BTreeSet::from([candidate(release)])
 }
 
-/// Who sequenced a range in which each of `releases` took a turn by its member.
+/// Who sequenced a range in which each of `releases` took turn 1 by its member, the first in office at
+/// its start.
 fn sequencers(releases: &[B256]) -> Sequencers {
     Sequencers {
         candidates: releases.iter().map(|release| candidate(*release)).collect(),
         releases: releases.iter().copied().collect(),
+        in_office: (1, candidate(releases[0])),
     }
 }
 

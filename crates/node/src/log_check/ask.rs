@@ -1,8 +1,9 @@
 //! The operator's side of the boundary's log check: once its sequencer publishes a check due, its node
 //! asks the members of the turn's order, first position first, for an attested verification of the
 //! checkpoint, signing each question with its enclave key, skipping its own candidate, each member that
-//! sequenced the covered range under any release, each release that did, and each member with no
-//! handover endpoint, and gives the first it admits to the sequencer. A round that no member answers is
+//! sequenced the covered range under any release, each release that did, each member the schedule
+//! promoted or skipped to in a turn the range spans, and each member with no handover endpoint, and
+//! gives the first it admits to the sequencer. A round that no member answers is
 //! tried again; a check that stays due pages `log_check_pending`.
 
 use std::sync::Arc;
@@ -139,7 +140,15 @@ impl<C: CheckpointChain> Asker<C> {
             Statement { signer_epoch, boundary, turn: due.turn, position: due.position, set: due.set, head: due.head };
         let order = self.vault.turn_order(&at, due.turn).await.context("reading the turn's order")?;
         let mut failures = Vec::new();
+        // A member the schedule promoted or skipped to after the in-office assignment may have sequenced
+        // part of the range before the log mirrored it: it is not asked.
+        let since = due.excluded.in_office.0;
+        let reassigned = due.excluded.reassigned(&self.vault.reassignments(since..due.turn.saturating_add(1)).await?);
         for member in qualifying(&order, due) {
+            if reassigned.contains(&member.candidate) {
+                failures.push(format!("{}: promoted or skipped to in a turn the range spans", member.candidate));
+                continue;
+            }
             let asked = timeout(ASK_TIMEOUT, self.ask(member, &statement, &due.excluded)).await;
             match asked.unwrap_or_else(|_| Err(anyhow!("no answer in {ASK_TIMEOUT:?}"))) {
                 Ok(release) => {

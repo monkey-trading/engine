@@ -266,8 +266,9 @@ an index: load only the rule whose hint matches the current action.
   upgrade, and at a boundary the operator holds on through, its node writes a checkpoint after
   `TurnTaken` and asks the turn's order (`turn_order`), first to last, in questions its enclave signs,
   for a quote-bound verification of it from a member that sequenced none of the range since the last
-  verified head under any release, nor runs a release that did, as the log's `TurnTaken` commands
-  record (Warning `log_check_pending` after 30 minutes, `log_check_unavailable` on a node set up to
+  verified head under any release, nor runs a release that did, as the log's `TurnTaken` commands and
+  mirrored promotions and skips record, nor was promoted or skipped to after the assignment in office,
+  as the schedule reads at the latest block (Warning `log_check_pending` after 30 minutes, `log_check_unavailable` on a node set up to
   take no turns, and `log_check_unattributable` while those records cannot say who sequenced the
   range, as after a snapshot start), which a following member answers on its handover endpoint from
   the checkpoints its replica verified under the question's signer; the verified head is sealed with
@@ -287,9 +288,11 @@ an index: load only the rule whose hint matches the current action.
   poster posts `engine.log-head.v2` heads (`log_heads/v2.rs`) at least twice per heartbeat interval,
   held through a benchmark-sync hold or trusted-time halt; with another member in the turn's set the
   operator's rule (`liveness/operator.rs`) asks the members' handover endpoints for their copies'
-  signed statuses (`liveness/link.rs`), signs heads and checkpoints only at a confirmed seq
-  (`sequencer/liveness.rs`), refuses to sequence before a start check (an empty log at genesis starts
-  unconfirmed), stops commands once its log has run an interval of sequenced time from the first
+  signed statuses (`liveness/link.rs`), taking a member's status on its promotable standby key or, with
+  none, on the key whose attestation its enclave verified (`liveness/operator/attested.rs`), signs heads
+  and checkpoints only at a confirmed seq and only before the boundary from which another set may
+  apply (`sequencer/liveness.rs`), refuses to sequence before a start check (an empty log at genesis
+  starts unconfirmed, and a copy older than its prefix ring counts as no answer), stops commands once its log has run an interval of sequenced time from the first
   command past the newest confirmation, and fences answers, heads and commands by its own
   clock before the earliest promotion (`liveness/fence.rs`, `api/signing.rs`), with `/v1/operator`
   naming its enclave and the vault's signer epoch; every member between its turns answers on its
