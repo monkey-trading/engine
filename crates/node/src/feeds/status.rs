@@ -59,18 +59,26 @@ impl FeedStatus {
         }
     }
 
-    /// Every venue with the symbols of all its connections, in venue order.
+    /// Every venue, in venue order. A venue's connections are one source: a symbol that several of
+    /// them carry (a redundant second connection) is listed once, in the best state any of them reports,
+    /// since the source counts while one of them is current.
     pub(crate) fn venues(&self) -> Vec<VenueStatus> {
-        let mut venues: BTreeMap<String, Vec<SymbolStatus>> = BTreeMap::new();
+        type Carried = BTreeMap<(MarketId, Option<String>), SymbolStatus>;
+        let mut venues: BTreeMap<String, (usize, Carried)> = BTreeMap::new();
         for ((venue, _), connection) in self.lock().iter() {
-            venues.entry(venue.clone()).or_default().extend(connection.symbols.iter().cloned());
+            let (connections, carried) = venues.entry(venue.clone()).or_default();
+            *connections += 1;
+            for symbol in &connection.symbols {
+                let held = carried.entry((symbol.market, symbol.contract.clone())).or_insert_with(|| symbol.clone());
+                held.state = held.state.min(symbol.state);
+            }
         }
         venues
             .into_iter()
-            .map(|(venue, symbols)| VenueStatus {
-                state: symbols.iter().map(|symbol| symbol.state).max().unwrap_or(SymbolState::Quoting),
-                venue,
-                symbols,
+            .map(|(venue, (connections, carried))| {
+                let symbols: Vec<SymbolStatus> = carried.into_values().collect();
+                let state = symbols.iter().map(|symbol| symbol.state).max().unwrap_or(SymbolState::Quoting);
+                VenueStatus { venue, connections, state, symbols }
             })
             .collect()
     }
@@ -84,6 +92,8 @@ impl FeedStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct VenueStatus {
     pub venue: String,
+    /// How many connections carry it.
+    pub connections: usize,
     /// The worst state of any of its symbols.
     pub state: SymbolState,
     pub symbols: Vec<SymbolStatus>,
@@ -97,6 +107,10 @@ mod tests {
         SymbolStatus { symbol: name.into(), market, contract: None, state }
     }
 
+    fn contract(name: &str, contract: &str, state: SymbolState) -> SymbolStatus {
+        SymbolStatus { contract: Some(contract.into()), ..symbol(name, 1, state) }
+    }
+
     #[test]
     fn a_venue_that_quotes_anything_shows_as_quoting_whatever_its_idle_contracts() {
         let status = FeedStatus::default();
@@ -105,13 +119,36 @@ mod tests {
             0,
             Connection {
                 symbols: vec![
-                    symbol("ESZ6", 1, SymbolState::Quoting),
-                    symbol("ESH7", 1, SymbolState::NotExpected),
-                    symbol("ESM7", 1, SymbolState::NotExpected),
+                    contract("ESZ6", "Z6", SymbolState::Quoting),
+                    contract("ESH7", "H7", SymbolState::NotExpected),
+                    contract("ESM7", "M7", SymbolState::NotExpected),
                 ],
             },
         );
         assert_eq!(status.venues()[0].state, SymbolState::Quoting);
+    }
+
+    #[test]
+    fn two_connections_of_one_source_list_a_shared_symbol_once_in_its_best_state() {
+        let status = FeedStatus::default();
+        let both = |first: SymbolState, second: SymbolState| {
+            status.publish("coinbase", 0, Connection { symbols: vec![symbol("BTC-USD", 1, first)] });
+            status.publish(
+                "coinbase",
+                1,
+                Connection { symbols: vec![symbol("BTC-USD", 1, second), symbol("ETH-USD", 2, SymbolState::Quoting)] },
+            );
+            status.venues()
+        };
+        let venues = both(SymbolState::Down, SymbolState::Quoting);
+        assert_eq!((venues.len(), venues[0].connections, venues[0].symbols.len()), (1, 2, 2));
+        assert_eq!((venues[0].state, venues[0].symbols[0].state), (SymbolState::Quoting, SymbolState::Quoting));
+        // Only when every connection fails the symbol does the source.
+        let venues = both(SymbolState::Down, SymbolState::Silent);
+        assert_eq!(venues[0].symbols[0].state, SymbolState::Silent);
+        assert_eq!(venues[0].state, SymbolState::Silent);
+        let venues = both(SymbolState::Down, SymbolState::Down);
+        assert_eq!(venues[0].symbols[0].state, SymbolState::Down);
     }
 
     #[test]

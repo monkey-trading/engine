@@ -2632,7 +2632,9 @@ Markets in reduce-only, closed or unpriced refuse orders of their own and are no
 sample), `sampled`, or `held` with a `cause` of `no_sample` or `drift`; `last_sample_ms` is when the
 latest sample was taken. Each venue's `state`, and each of its symbols' (`market` is the market it
 quotes), is `not_expected`, `quoting`, `stale` (its books are too old by the venue's time to count), `silent`, `delayed`, `down` or `off`, in that order, and a venue shows the worst
-of its symbols: one that quotes anything is `quoting` however many contracts of it are idle. `unpriced_markets` lists the markets open for trading that have no price, with the
+of its symbols: one that quotes anything is `quoting` however many contracts of it are idle. A venue is one source however many
+connections carry it (`connections`): a symbol two of them carry is listed once, in the best state either reports,
+and a market's `pricing` names the source once, `down` only while every connection is. `unpriced_markets` lists the markets open for trading that have no price, with the
 `reason` and the source counts of their `pricing`. The sequencer does nothing for any of it: the holds are read from what the node already keeps (trusted
 time's sample, the log-sync gauge, the poster's rollback latch), each connection's task publishes its
 symbols once a check interval, and every `status=1` connection shares one read of the API's copy of the

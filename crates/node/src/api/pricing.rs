@@ -183,6 +183,7 @@ mod tests {
     fn a_futures_market_reads_its_front_contracts_symbol_not_the_worst_of_all_of_them() {
         let venues = [VenueStatus {
             venue: "cme".into(),
+            connections: 1,
             state: SymbolState::Silent,
             symbols: vec![
                 symbol("ESH7", "H7", SymbolState::NotExpected),

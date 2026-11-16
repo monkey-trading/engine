@@ -165,3 +165,32 @@ fn a_rollback_latch_set_by_the_poster_shows_as_a_hold_from_the_first_read_that_s
     assert_eq!(view.holds.iter().map(|h| h.cause).collect::<Vec<_>>(), [Cause::LogRollback]);
     assert!(!view.takes_orders);
 }
+
+#[test]
+fn a_source_read_over_two_connections_is_named_once_and_down_only_when_both_are() {
+    let mut engine = engine();
+    quote(&mut engine, T0 + 100, &[("coinbase", "100000"), ("kraken", "100000")]);
+    quote(&mut engine, T0 + 4_100, &[("kraken", "100000")]);
+    let feeds = FeedStatus::default();
+    let sources = |feeds: &FeedStatus| {
+        let view = serde_json::to_value(pricing(&engine.markets()[&1], engine.now(), &feeds.venues())).unwrap();
+        view["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| (s["source"].as_str().unwrap().to_owned(), s["state"].clone()))
+            .collect::<Vec<_>>()
+    };
+    feeds.publish("coinbase", 0, symbol(SymbolState::Down));
+    feeds.publish("coinbase", 1, symbol(SymbolState::Quoting));
+    // One connection is down and the other reports nothing wrong: the source is stale, listed once.
+    assert_eq!(sources(&feeds), [("coinbase".into(), json!("stale")), ("kraken".into(), json!("counts"))]);
+    feeds.publish("coinbase", 1, symbol(SymbolState::Down));
+    assert_eq!(sources(&feeds), [("coinbase".into(), json!("down")), ("kraken".into(), json!("counts"))]);
+    // A source the engine holds no quote from is listed once too, however many connections carry it.
+    let mut fresh = self::engine();
+    quote(&mut fresh, T0 + 100, &[("kraken", "100000")]);
+    let view = serde_json::to_value(pricing(&fresh.markets()[&1], fresh.now(), &feeds.venues())).unwrap();
+    let names: Vec<_> = view["sources"].as_array().unwrap().iter().map(|s| s["source"].as_str().unwrap()).collect();
+    assert_eq!(names, ["kraken", "coinbase"]);
+}

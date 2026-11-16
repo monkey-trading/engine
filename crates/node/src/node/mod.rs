@@ -22,7 +22,6 @@ use crate::alerts::Routing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
 use crate::clock::{Clock, SystemClock};
 use crate::config::{AuthMode, CustodyProvider, NodeConfig};
-use crate::feeds;
 mod shutdown;
 use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
 mod handover;
@@ -58,8 +57,7 @@ use crate::sequencer::turns::TurnSealing;
 use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
 use crate::telemetry::Telemetry;
 use crate::tls::acme::{CertificateTask, Sealed};
-use crate::tls::serve;
-use crate::{custody::Custody, monitor, trusted_time, verify::Relay};
+use crate::{custody::Custody, feeds, monitor, tls::serve, trusted_time, verify::Relay};
 use preflight::authorize;
 
 /// How long a start that failed with a delivered key in play stays up for its repair.
