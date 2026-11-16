@@ -176,17 +176,7 @@ async fn backfill_due(
     if engine_now == 0 {
         return Ok(());
     }
-    let coverage = Coverage {
-        depths: (
-            Millis::try_from(cfg.depth_1m.as_millis()).context("backfill depth_1m")?,
-            Millis::try_from(cfg.depth_1h.as_millis()).context("backfill depth_1h")?,
-            Millis::try_from(cfg.depth_1d.as_millis()).context("backfill depth_1d")?,
-        ),
-        retentions: {
-            let r = store.retentions();
-            (r.s1, r.m1, r.h1, r.d1)
-        },
-    };
+    let coverage = coverage(cfg, store.retentions())?;
     let done = store.backfilled().context("reading backfilled markets")?;
     for market in listed {
         // A market is done when the recorded backfill covers the depths and retentions the config
@@ -213,6 +203,18 @@ async fn backfill_due(
         return Ok(());
     }
     Ok(())
+}
+
+/// What a backfill under `cfg` covers once `retentions` have pruned it.
+/// Error cases:
+/// - a depth is out of range
+pub(crate) fn coverage(cfg: &BackfillSection, r: crate::history::marks::Retentions) -> anyhow::Result<Coverage> {
+    let ms =
+        |depth: Duration, name: &str| Millis::try_from(depth.as_millis()).with_context(|| format!("backfill {name}"));
+    Ok(Coverage {
+        depths: (ms(cfg.depth_1m, "depth_1m")?, ms(cfg.depth_1h, "depth_1h")?, ms(cfg.depth_1d, "depth_1d")?),
+        retentions: (r.s1, r.m1, r.h1, r.d1),
+    })
 }
 
 /// The markets the engine lists now, in id order, with the engine's time: the admitted stamp the

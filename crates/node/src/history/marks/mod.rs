@@ -11,6 +11,7 @@
 
 mod backfill;
 pub(crate) mod fold;
+pub(crate) mod follow;
 pub(crate) mod run;
 pub(crate) mod store;
 

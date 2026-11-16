@@ -10,6 +10,7 @@ use rusqlite::TransactionBehavior;
 use tracing::{info, warn};
 
 use crate::history::marks::fold::MarkFold;
+use crate::history::marks::follow::Staged;
 use crate::history::marks::store::{ChainAnchors, Store, discard_file, store};
 
 /// How many folded buckets one merge transaction takes, so no one write holds the cache for long.
@@ -27,7 +28,7 @@ impl Store {
     /// followed, merged `MERGE_CHUNK` at a time. Its readers are ready once it returns.
     /// Error cases:
     /// - the prior cache cannot be read or discarded, or a merge or the clear fails
-    pub(crate) fn catch_up(&mut self, prior: Option<&Path>, folded: Option<MarkFold>) -> anyhow::Result<()> {
+    pub(crate) fn catch_up(&mut self, prior: Option<&Path>, mut folded: Option<MarkFold>) -> anyhow::Result<()> {
         if let Some(prior) = prior {
             let imported = self.import_prior(prior).context("importing the prior marks cache")?;
             if let Err(e) = self.validate_chains() {
@@ -37,6 +38,10 @@ impl Store {
             discard_file(prior).with_context(|| format!("discarding the prior marks cache {}", prior.display()))?;
             info!(imported, "imported the prior marks cache");
         }
+        if let Some(staged) = folded.as_mut().map(MarkFold::take_staged) {
+            // Under the folded marks, as a running node's backfill goes in before the live marks.
+            self.take_staged(staged).context("seeding the provider history the member fetched while following")?;
+        }
         if let Some((buckets, newest)) = folded.and_then(MarkFold::into_buckets) {
             for chunk in buckets.chunks(MERGE_CHUNK) {
                 self.observe_buckets(chunk, newest).context("merging the marks the replica folded while following")?;
@@ -44,6 +49,20 @@ impl Store {
             info!(buckets = buckets.len(), "merged the marks the replica folded while following");
         }
         self.ready.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    /// Seeds the provider history a member fetched while it followed, and records each market's
+    /// backfill as complete, so the marks task fetches none of it again.
+    /// Error cases:
+    /// - the seed or a marker cannot be written
+    fn take_staged(&mut self, staged: Staged) -> anyhow::Result<()> {
+        let Some(newest) = staged.done.iter().map(|done| done.at).max() else { return Ok(()) };
+        let seeded = self.seed(&staged.rows, newest)?;
+        for done in &staged.done {
+            self.mark_backfilled(done.market, done.source.venue.name(), &done.source.symbol, done.at, done.coverage)?;
+        }
+        info!(seeded, markets = staged.done.len(), "seeded the provider history fetched while following");
         Ok(())
     }
 

@@ -224,49 +224,81 @@ pub async fn seed_market(
     store: &mut Store,
     live: &mut Live,
 ) -> anyhow::Result<usize> {
-    ensure!(source.venue == Venue::Coinbase, "no candles adapter for {}", source.venue.name());
     let mut seeded = 0;
-    for (resolution, depth) in
-        [(Resolution::M1, cfg.depth_1m), (Resolution::H1, cfg.depth_1h), (Resolution::D1, cfg.depth_1d)]
-    {
-        let depth_ms = Millis::try_from(depth.as_millis()).context("backfill depth")?;
-        let pages = windows(now, depth_ms, resolution.ms());
-        ensure!(
-            pages.len() <= MAX_PAGES,
-            "the {resolution:?} depth asks for {} pages, over the {MAX_PAGES}-page bound",
-            pages.len()
-        );
-        let mut rows = Vec::new();
-        for (start, end) in pages {
-            for candle in http
-                .fetch_with(&source.symbol, (resolution.ms() / 1_000) as u32, start, end, Some(FLUSH_EVERY), || {
-                    service_live(live, store)
-                })
-                .await?
-            {
-                // A conforming endpoint answers within the window; a bucket past `now` is the
-                // endpoint's noise, not history, and is never seeded.
-                if candle.ts > now {
-                    continue;
-                }
-                rows.push(Seed {
-                    market,
-                    resolution,
-                    ts: resolution.bucket(candle.ts),
-                    open: candle.open,
-                    high: candle.high,
-                    low: candle.low,
-                    close: candle.close,
-                });
-            }
-            tokio::time::sleep(PAGE_PACE).await;
-            // The run loop's service between pages too, for the last page of a resolution and
-            // the pace itself.
-            service_live(live, store)?;
-        }
+    for (resolution, depth) in depths(cfg) {
+        let rows = fetch_rows(http, source, (market, resolution, depth), now, || service_live(live, store)).await?;
         seeded += store.seed(&rows, now).context(StoreFault)?;
     }
     Ok(seeded)
+}
+
+/// Fetches every backfillable resolution of `market` as `seed_market` does, but writes nothing: a
+/// member that follows holds no key to write the cache with, so it keeps the rows for its start.
+/// Error cases:
+/// - a page fetch fails
+pub async fn fetch_market(
+    http: &Candles,
+    source: &Source,
+    market: MarketId,
+    cfg: &BackfillSection,
+    now: Millis,
+) -> anyhow::Result<Vec<Seed>> {
+    let mut rows = Vec::new();
+    for (resolution, depth) in depths(cfg) {
+        rows.extend(fetch_rows(http, source, (market, resolution, depth), now, || Ok(())).await?);
+    }
+    Ok(rows)
+}
+
+/// The resolutions the provider backfills, with the depth the config asks of each.
+fn depths(cfg: &BackfillSection) -> [(Resolution, Duration); 3] {
+    [(Resolution::M1, cfg.depth_1m), (Resolution::H1, cfg.depth_1h), (Resolution::D1, cfg.depth_1d)]
+}
+
+/// One resolution's seed rows for `market` back `depth` from `now`, paged and paced, calling
+/// `between` as the fetch makes progress.
+/// Error cases:
+/// - a page fetch fails, the depth is over the page bound, or `between` fails
+async fn fetch_rows(
+    http: &Candles,
+    source: &Source,
+    (market, resolution, depth): (MarketId, Resolution, Duration),
+    now: Millis,
+    mut between: impl FnMut() -> anyhow::Result<()>,
+) -> anyhow::Result<Vec<Seed>> {
+    ensure!(source.venue == Venue::Coinbase, "no candles adapter for {}", source.venue.name());
+    let depth_ms = Millis::try_from(depth.as_millis()).context("backfill depth")?;
+    let pages = windows(now, depth_ms, resolution.ms());
+    ensure!(
+        pages.len() <= MAX_PAGES,
+        "the {resolution:?} depth asks for {} pages, over the {MAX_PAGES}-page bound",
+        pages.len()
+    );
+    let mut rows = Vec::new();
+    for (start, end) in pages {
+        let granularity = (resolution.ms() / 1_000) as u32;
+        for candle in http.fetch_with(&source.symbol, granularity, start, end, Some(FLUSH_EVERY), &mut between).await? {
+            // A conforming endpoint answers within the window; a bucket past `now` is the
+            // endpoint's noise, not history, and is never seeded.
+            if candle.ts > now {
+                continue;
+            }
+            rows.push(Seed {
+                market,
+                resolution,
+                ts: resolution.bucket(candle.ts),
+                open: candle.open,
+                high: candle.high,
+                low: candle.low,
+                close: candle.close,
+            });
+        }
+        tokio::time::sleep(PAGE_PACE).await;
+        // The run loop's service between pages too, for the last page of a resolution and
+        // the pace itself.
+        between()?;
+    }
+    Ok(rows)
 }
 
 /// The run loop's live-sample service, shared with a backfill's slow fetches: drain the queue

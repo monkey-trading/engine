@@ -29,6 +29,57 @@ async fn a_member_follows_the_operator_in_effect_and_moves_at_the_boundary() {
     assert!(matches!(turn.unwrap(), Turn::Hold), "the member did not hold its turn once its keys were sealed");
 }
 
+/// A member fetches its provider history while it follows, before its turn: its candles requests reach
+/// the endpoint with the operator's stream still the only thing it has taken (#884).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_member_fetches_the_provider_history_while_it_follows() {
+    use crate::history::marks::follow::tests::{backfill, candles_server};
+    let hits = Arc::new(AtomicUsize::new(0));
+    let mut fixture = Fixture::start("member-backfill", true).await;
+    let cfg = backfill(candles_server(hits.clone()).await);
+    fixture.cfg.history.marks = Some(toml::from_str("").unwrap());
+    fixture.cfg.history.marks.as_mut().unwrap().backfill = Some(cfg);
+    fixture.cfg.feeds = crate::config::FeedsSection {
+        provider: crate::config::FeedProvider::Venues,
+        interval: std::time::Duration::from_millis(250),
+        mock_mids: Vec::new(),
+        venues: Some(crate::config::VenuesSection {
+            timeout: std::time::Duration::from_secs(10),
+            reconnect_min: std::time::Duration::from_millis(500),
+            reconnect_max: std::time::Duration::from_secs(30),
+            stale_after: std::time::Duration::from_secs(1),
+            min_quote_spacing: std::time::Duration::from_millis(10),
+            ping_interval: std::time::Duration::from_secs(1),
+            max_delay: std::time::Duration::from_secs(2),
+            connections: vec![crate::config::VenueConnection {
+                venue: crate::config::Venue::Coinbase,
+                url: "wss://advanced-trade-ws.coinbase.com".to_owned(),
+                api_key_env: None,
+                api_key_secret: None,
+                oauth: None,
+                symbols: vec![crate::config::VenueSymbol { market: 1, symbol: "BTC-USD".to_owned(), contract: None }],
+            }],
+        }),
+    };
+    let operator = fixture.operator(true).await;
+    fixture.registry.name(&operator.host);
+    fixture.time.set(FIRST + 1);
+    let mut member = fixture.member();
+    let drive = async {
+        crate::test_support::wait_for("the candles requests", async {
+            while hits.load(Ordering::SeqCst) < 3 {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        // Still before the member's own turn.
+        fixture.seal_own_turn();
+        fixture.time.set(OWN + 1);
+    };
+    let (turn, ()) = tokio::join!(member.until_turn(), drive);
+    assert!(matches!(turn.unwrap(), Turn::Hold));
+}
+
 /// An empty copy is bootstrapped from the archive before the member follows: the stand-in stream
 /// serves no history from the start of the log, so the copy holds it only through the archive.
 #[tokio::test]

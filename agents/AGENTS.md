@@ -149,7 +149,8 @@ an index: load only the rule whose hint matches the current action.
   market's index-mark history served signed and paged at `/v1/markets/{id}/marks` with per-entry
   `log_derived`/`seeded_from_provider` provenance; recovery seeds it from the log's replay through a sink
   in the replay, the sequencer's live mark reports keep it current, and an optional Coinbase candles
-  backfill (`[history.marks.backfill]`) seeds depth a fresh log cannot have; each bucket names the one
+  backfill (`[history.marks.backfill]`) seeds depth a fresh log cannot have, a following member's fetched
+  while it follows (`history/marks/follow.rs`) and seeded with its folded marks once it starts; each bucket names the one
   below it, and the tag it carried, under a row tag keyed per cache file, and committed in-memory
   per-pair chain heads and pinned rewritten rows anchor the index at recovery re-derivation, so a
   host that deletes, reorders, rolls back, or replays an older version of a row in the cache mid-run
