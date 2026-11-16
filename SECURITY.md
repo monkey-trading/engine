@@ -442,7 +442,9 @@ slots (2 by default; the deployment's minimum exceeds the handover's switch budg
 plus a head's inclusion, which the head tolerance bounds, at every interval the bounds allow, and the
 switch budget covers the measured switch plus the holder's and the successor's reads of the turn's
 latest assignment after the stop, each thirteen round trips to the custody providers in turn, fourteen
-while a provider's tip is past the agreed block) pass after
+while a provider's tip is past the agreed block, and the window and the heartbeat rule in force always
+leave the first skip's member that take, its first head signed before its node stops 15 s ahead of a
+promotion, before the untaken-turn promotion) pass after
 the latest of the boundary's slot, the assignment's and the last signer change's with no latch,
 anyone skips the turn to the next listed member in its order that has held no assignment of the turn,
 other than the one whose release signed the signer epoch's newest head, which holds the keys, in a new generation with no signer change, never past

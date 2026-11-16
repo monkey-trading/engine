@@ -32,7 +32,8 @@ pub(crate) mod link;
 pub(crate) mod operator;
 
 /// The stop rule's margin: the bound assumed on how far Arbitrum block timestamps lead true time
-/// (10 s, pinned in the runbook), plus the enclave's time to stop (5 s).
+/// (10 s, pinned in the runbook), plus the enclave's time to stop (5 s). `OperatorSchedule`'s
+/// `STOP_MARGIN` keeps a skip's take before it; a change to either changes both.
 pub(crate) const DELTA: Duration = Duration::from_secs(15);
 /// The slowest rate, in parts per million, the drift assumption lets the enclave's monotonic clock run
 /// against true time; the fence widens monotonic time by it.

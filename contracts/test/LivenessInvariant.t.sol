@@ -262,8 +262,10 @@ contract LivenessRuleFuzzTest is LivenessTest {
     /// @dev The documented bounds, restated: the deployment's minimums and maximums (30..120 s, 5..60 s,
     /// 2..9 misses, 10..256 blocks), at least two misses, detection in ten minutes, the tolerance under
     /// one interval, the held-head window within 256 blocks and under one interval at 250 ms a block,
-    /// and the miss window above the 120 s switch budget.
-    function _holds(uint64 interval, uint64 tolerance, uint16 misses, uint16 blocks) internal pure returns (bool) {
+    /// the miss window above the 20 s switch budget, and the misses past the take window in force giving
+    /// a skip's member more than the budget and the larger of the tolerance and the operator's 15 s stop
+    /// margin before the untaken-turn promotion.
+    function _holds(uint64 interval, uint64 tolerance, uint16 misses, uint16 blocks) internal view returns (bool) {
         if (interval < 30 || interval > 120) return false;
         if (tolerance < 5 || tolerance > 60) return false;
         if (misses < 2 || misses > 9) return false;
@@ -274,6 +276,9 @@ contract LivenessRuleFuzzTest is LivenessTest {
         uint256 windowMillis = uint256(blocks) * 250;
         if (windowMillis >= uint256(interval) * 1000) return false;
         if (uint256(interval) * misses <= SWITCH_BUDGET) return false;
+        (uint16 slots,,) = schedule.takeWindow();
+        uint256 margin = tolerance > 15 ? tolerance : 15;
+        if (misses <= slots || uint256(misses - slots) * interval <= SWITCH_BUDGET + margin) return false;
         return true;
     }
 

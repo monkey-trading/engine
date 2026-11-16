@@ -482,7 +482,12 @@ misses it is promoted at once.
   switch budget covers the daily rotation scenario's measured switch plus two reads of the turn's latest
   assignment after the stop, the holder's and the successor's, each thirteen round trips to the custody
   providers one after another, fourteen while a provider's tip is past the agreed block: at 100 ms a
-  round trip, up to 2.8 s on top of the measured switch. Skips
+  round trip, up to 2.8 s on top of the measured switch. The schedule refuses a window
+  (`setTakeWindow`), or a heartbeat rule (`setLiveness`), that would leave the first skip's member no
+  such take before the untaken-turn promotion: `(heartbeatMisses - takeWindow) * heartbeatInterval`
+  must exceed the switch budget plus the larger of `headTolerance` and the 15 s before a promotion at
+  which the member's node stops signing, so to lengthen the window past that, raise `heartbeatMisses`
+  first. Skips
   act at sequencer confirmation: the member named takes the keys, and the key holder admits it, from the
   turn's assignment at the custody quorum's latest agreed block, not finality, and the holder's log must
   show the skip's set naming the member with seven days' notice; a skip's member upgrading to another
