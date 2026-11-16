@@ -280,6 +280,19 @@ fn a_market_goes_unpriced_once_its_quotes_age_past_the_rules() {
     assert_eq!(market(&engine, BTC).price, Err(Unpriced::Index(PriceError::Stale { fresh: 0, needed: 2 })));
 }
 
+/// With nothing sequenced the engine's time stands still, so a sample judges prices at the host clock
+/// once it is later: a market whose quotes the host clock has aged past the rules is unpriced.
+#[test]
+fn a_market_is_unpriced_at_the_host_clock_while_nothing_is_sequenced() {
+    let mut engine = dev_engine();
+    sequence(&mut engine, T0, prices(BTC, &[("venue-a", T0), ("venue-b", T0)]));
+    let at = |host_ms| Sample::at(&engine, host_ms).markets.into_iter().find(|market| market.id == BTC).unwrap().price;
+    assert_eq!(at(T0 + 1_000), Ok(()));
+    assert_eq!(at(T0 + 1_001), Err(Unpriced::Index(PriceError::Stale { fresh: 0, needed: 2 })));
+    // A host clock behind the engine's time judges at the engine's.
+    assert_eq!(at(T0 - 60_000), Ok(()));
+}
+
 #[test]
 fn no_price_alerts_once_after_the_threshold_and_resolves_when_priced() {
     let after = Duration::from_secs(5);
