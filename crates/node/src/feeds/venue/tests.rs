@@ -17,7 +17,7 @@ use crate::feeds::venue::quotes::counts;
 use crate::feeds::venue::setup::next_backoff;
 use crate::metrics::Metrics;
 use crate::sequencer::Request;
-use crate::test_support::capture_alerts;
+use crate::test_support::{capture_alerts, capture_field};
 use crate::throttle::REALERT_AFTER;
 
 #[tokio::test(start_paused = true)]
@@ -52,6 +52,30 @@ async fn a_vendor_key_echoed_back_never_reaches_an_alert() {
         assert_eq!(alert["alert"].as_str(), name);
         assert!(!message.contains("vendor-secret") && message.contains("<redacted>"), "{alert:?}");
     }
+}
+
+/// Each failed attempt of an outage after its alert says why at info, once a window with a count.
+#[tokio::test(start_paused = true)]
+async fn failed_attempts_in_an_outage_are_logged_at_info_once_a_window() {
+    let (_guard, mut lines) = capture_field("message");
+    let mut feed = kraken_feed(&[(1, "BTC/USD")], WAIT);
+
+    let retry = Duration::from_secs(1);
+    ["refused", "dns failed", "tls failed"].into_iter().for_each(|error| feed.dropped(&anyhow::anyhow!(error), retry));
+    tokio::time::advance(REALERT_AFTER).await;
+    feed.dropped(&anyhow::anyhow!("connect timed out"), retry);
+
+    let info: Vec<String> = std::iter::from_fn(|| lines.try_recv().ok())
+        .filter(|line| line["level"] == "INFO")
+        .map(|line| line["message"].clone())
+        .collect();
+    assert_eq!(
+        info,
+        [
+            "venue still down (0 more failed attempts since the last): dns failed",
+            "venue still down (1 more failed attempts since the last): connect timed out",
+        ]
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -190,10 +214,10 @@ async fn a_recovery_gives_every_symbol_a_full_silence_window() {
     feed.delivered("BTC/USD");
     tokio::time::advance(window - Duration::from_millis(1)).await;
     feed.delivered("BTC/USD");
-    assert!(!feed.check_silent());
+    assert!(feed.check_silent().is_empty());
     assert!(alerts.try_recv().is_err());
     tokio::time::advance(Duration::from_millis(1)).await;
-    assert!(feed.check_silent());
+    assert_eq!(feed.check_silent(), ["ETH/USD"]);
     let alert = next_alert(&mut alerts).await;
     assert_eq!((alert["alert"].as_str(), alert["symbol"].as_str()), ("venue_symbol_silent", "ETH/USD"));
 }
@@ -230,7 +254,7 @@ async fn venue_alerts_keep_one_key_per_subject_and_resolve_under_it() {
     feed.dropped(&anyhow::anyhow!("refused"), Duration::from_secs(1));
     feed.delivered("BTC/USD");
     tokio::time::advance(window).await;
-    assert!(feed.check_silent());
+    assert!(!feed.check_silent().is_empty());
     feed.delivered("ETH/USD");
     feed.clock_ahead(1, 60_000);
     feed.refuse("unparseable", "{");
@@ -293,7 +317,7 @@ async fn an_unnamed_contract_alerts_and_a_held_symbol_is_not_silent() {
     feed.confirmed(Confirmation { unnamed: vec!["ETH/USD".into()], ..Confirmation::default() });
     assert!(feed.is_held("ETH/USD"));
     tokio::time::advance(window).await;
-    assert!(feed.check_silent());
+    assert!(!feed.check_silent().is_empty());
     feed.confirmed(Confirmation { idle: vec!["BTC/USD".into()], ..Confirmation::default() });
     assert!(feed.is_held("BTC/USD") && !feed.is_held("ETH/USD"));
 

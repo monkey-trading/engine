@@ -3,6 +3,7 @@
 
 mod cme;
 pub(super) mod cme_support;
+mod coinbase_support;
 mod delay;
 mod emission;
 pub(super) mod fake;
@@ -16,6 +17,7 @@ mod redate;
 mod rwa;
 pub(super) mod rwa_support;
 mod scenario;
+mod silent;
 mod toxicity;
 mod vendors;
 

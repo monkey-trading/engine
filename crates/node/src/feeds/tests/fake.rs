@@ -257,7 +257,7 @@ pub fn quote(venue: Venue, mid: &str, ts: Millis) -> SourceQuote {
 }
 
 /// RFC 3339 with microseconds, as Coinbase and Kraken write times.
-fn rfc3339(ts: Millis) -> String {
+pub fn rfc3339(ts: Millis) -> String {
     DateTime::from_timestamp_millis(ts).expect("time in range").to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 

@@ -50,6 +50,15 @@ impl Adapter {
         }
     }
 
+    /// The messages that resubscribe `symbols` alone on an open connection, sending each a fresh
+    /// book while the connection's other symbols stream on, for a venue that takes them: Coinbase.
+    pub(super) fn resubscription(&self, symbols: &[&str]) -> Option<Vec<String>> {
+        match self {
+            Adapter::Coinbase(_) => Some(coinbase::resubscriptions(symbols)),
+            _ => None,
+        }
+    }
+
     /// How long a read may wait for the venue's next message: `timeout`, or for CME, which sends only
     /// a heartbeat every 10 seconds while a closure leaves it nothing else to send, at least two of
     /// its heartbeat intervals, so a late heartbeat does not end a working connection.

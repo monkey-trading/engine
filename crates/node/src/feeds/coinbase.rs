@@ -177,6 +177,15 @@ pub(super) fn subscriptions(symbols: &[&str]) -> Vec<String> {
     vec![json!({ "type": "subscribe", "product_ids": symbols, "channel": "level2" }).to_string()]
 }
 
+/// The messages that resubscribe the `level2` books of `symbols` alone on an open connection: an
+/// unsubscribe, then a subscribe, which Coinbase answers with a fresh snapshot of each while the
+/// connection's other products stream on. A subscribe alone, for a product already subscribed,
+/// is acknowledged with no snapshot.
+pub(super) fn resubscriptions(symbols: &[&str]) -> Vec<String> {
+    let unsubscribe = json!({ "type": "unsubscribe", "product_ids": symbols, "channel": "level2" }).to_string();
+    [vec![unsubscribe], subscriptions(symbols)].concat()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,5 +343,18 @@ mod tests {
     fn the_subscription_names_every_symbol_on_the_level2_channel() {
         let sent: serde_json::Value = serde_json::from_str(&subscriptions(&["BTC-USD", "ETH-USD"])[0]).unwrap();
         assert_eq!(sent, json!({ "type": "subscribe", "product_ids": ["BTC-USD", "ETH-USD"], "channel": "level2" }));
+    }
+
+    #[test]
+    fn a_resubscription_unsubscribes_then_subscribes_only_its_products() {
+        let sent: Vec<serde_json::Value> =
+            resubscriptions(&["ETH-USD"]).iter().map(|text| serde_json::from_str(text).unwrap()).collect();
+        assert_eq!(
+            sent,
+            [
+                json!({ "type": "unsubscribe", "product_ids": ["ETH-USD"], "channel": "level2" }),
+                json!({ "type": "subscribe", "product_ids": ["ETH-USD"], "channel": "level2" }),
+            ]
+        );
     }
 }

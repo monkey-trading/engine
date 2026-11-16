@@ -32,9 +32,15 @@ use quotes::Pending;
 mod receive;
 mod replace;
 use replace::Replacing;
+mod resubscribe;
+use resubscribe::Resubscription;
 mod setup;
 pub use setup::tls_config;
 use setup::{next_attempt, next_backoff};
+mod stale;
+#[cfg(test)]
+pub(super) use stale::STALE_GRACE;
+use stale::StaleRuns;
 mod transport;
 use transport::Incoming;
 mod validation;
@@ -150,6 +156,10 @@ struct VenueFeed {
     last_quote: BTreeMap<String, Instant>,
     /// Symbols alerted as silent that have not quoted since.
     silent: BTreeSet<String>,
+    /// Each symbol's run of books read too old to count (see `stale`).
+    stale: StaleRuns,
+    /// When silent and stale symbols are next resubscribed (see `resubscribe`).
+    resubscription: Resubscription,
     /// Symbols the current connection has sequenced quotes for since its last confirmation.
     unconfirmed: BTreeSet<String>,
     /// The one confirmation awaited (see `confirm`).
@@ -171,6 +181,8 @@ struct VenueFeed {
     sent: BTreeMap<String, (Fixed, Millis)>,
     refusals: Throttle,
     clock_alerts: Throttle,
+    /// The failed attempts of an outage, each logged at most once per `REALERT_AFTER`.
+    retries: Throttle,
     /// The current connection's pings.
     delay: DelayProbe,
     /// Since when frames have been refused as too far behind, without one counting.
@@ -211,6 +223,8 @@ impl VenueFeed {
             quoted: false,
             last_quote,
             silent: BTreeSet::new(),
+            stale: StaleRuns::default(),
+            resubscription: Resubscription::new(&timing),
             unconfirmed: BTreeSet::new(),
             confirming: None,
             held_back: BTreeMap::new(),
@@ -220,6 +234,7 @@ impl VenueFeed {
             sent: BTreeMap::new(),
             refusals: Throttle::default(),
             clock_alerts: Throttle::default(),
+            retries: Throttle::default(),
             delay: DelayProbe::default(),
             refused_since: None,
             delayed: false,
@@ -262,7 +277,8 @@ impl VenueFeed {
     /// - no message arrives within that read timeout, whatever its market's hours
     /// - the connection sequences no fresh quote within `timing.timeout` while a market it quotes
     ///   is open, or the venue closes it or asks for a reconnect
-    /// - a symbol goes silent, so the connection is replaced to resubscribe it
+    /// - a symbol stays silent or stale past a resubscription, so the connection is replaced to
+    ///   resubscribe it (see `resubscribe`)
     /// - a ping goes unanswered for `timing.timeout`, or cannot be sent within it
     /// - its bearer token cannot be had, or expires before a replacement on a fresh one takes over
     ///   (see `auth` and `replace`)
@@ -284,6 +300,9 @@ impl VenueFeed {
             .context("subscribe")?;
         info!(venue = self.conn.venue.name(), feed = self.conn.url.as_str(), "venue connected");
         let mut waiting_since = Instant::now();
+        self.connected_afresh();
+        // Whether this connection has resubscribed symbols alone (see `resubscribe`).
+        let mut resubscribed_alone = false;
         // The engine's quote from an earlier connection says nothing of what this one sequenced.
         self.sent.clear();
         // Ask at once, so the first quotes are judged against the markets' hours.
@@ -373,6 +392,8 @@ impl VenueFeed {
                     match self.switch(replaced, &mut link, &mut adapter) {
                         Some(books) => {
                             (read_deadline, waiting_since) = (Instant::now() + read_timeout, Instant::now());
+                            resubscribed_alone = false;
+                            self.connected_afresh();
                             (rollover, retry) = (self.rollover(), self.timing.reconnect_min);
                             for text in books {
                                 self.receive(&mut adapter, &mut link, &text, &mut buffered).await?;
@@ -387,8 +408,9 @@ impl VenueFeed {
                     }
                 }
                 _ = checks.tick() => {
-                    if self.check_silent() {
-                        bail!("resubscribing after a symbol went silent");
+                    let resubscribing = self.check_silent();
+                    if !resubscribing.is_empty() {
+                        self.resubscribe(&adapter, &mut link, &resubscribing, &mut resubscribed_alone).await?;
                     }
                     // The count waits while no market the connection quotes is open.
                     if !self.expects_quotes(now_ms()) {

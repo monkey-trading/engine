@@ -327,7 +327,10 @@ an index: load only the rule whose hint matches the current action.
   `feeds/venue/delay.rs`
   bounds how far behind a connection's stream can be from its pings on the monotonic clock, past
   which its frames count as no quote, `feeds/venue/standing.rs` re-sequences a quiet book on
-  Coinbase, Kraken and Bitstamp connections for up to 5 s, stamped at the answered ping, and
+  Coinbase, Kraken and Bitstamp connections for up to 5 s, stamped at the answered ping,
+  `feeds/venue/stale.rs` raises `venue_stale` for a symbol whose books read too old to count for
+  2 s, `feeds/venue/resubscribe.rs` resubscribes silent and stale symbols again with backoff until
+  they quote, alone on the connection first on Coinbase, and
   `sequencer/quotes.rs` holds each quote to that bound at its stamp) and a mock, Prometheus metrics
   on an operator
   listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its

@@ -41,6 +41,8 @@ impl VenueFeed {
                 bail!("resyncing: {reason}");
             }
         };
+        // A book's age by its venue time shows a venue streaming it from behind, current stream or not.
+        books.iter().for_each(|book| self.note_age(&book.symbol, book.ts, now));
         // The adapter has kept what the message changes; only the quotes wait for the stream.
         if !self.stream_current() {
             books.iter().for_each(|book| self.standing.forget(&book.symbol));
