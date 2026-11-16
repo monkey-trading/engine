@@ -1,5 +1,5 @@
-//! A venue task's alerts: outages, silent symbols, a clock ahead of the host's, and refused
-//! messages, each raised once per episode and resolved when it ends. Every alert names its
+//! A venue task's alerts: outages, silent and stale symbols, a clock ahead of the host's, and
+//! refused messages, each raised once per episode and resolved when it ends. Every alert names its
 //! connection (`feed`, the endpoint URL), so the connections of one venue keep their own episodes.
 
 use std::time::Duration;
@@ -48,7 +48,7 @@ impl VenueFeed {
     /// stale, once one has newly gone silent, stayed silent for `timing.timeout` since the last
     /// attempt or connection, or read stale across the grace since then, and the backoff allows;
     /// none during an outage, whose no-fresh-quote count replaces the connection.
-    pub(super) fn check_silent(&mut self) -> Vec<String> {
+    pub(super) fn check_quoting(&mut self) -> Vec<String> {
         let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
         let now = Instant::now();
         let now_ms = now_ms();
@@ -73,7 +73,7 @@ impl VenueFeed {
                 let age = Duration::from_millis(u64::try_from(age_ms).unwrap_or(u64::MAX));
                 warn!(
                     alert = "venue_stale",
-                    venue, feed, symbol, market, "venue quotes read {age:?} old: too old to count"
+                    venue, feed, symbol, market, "venue quotes {age:?} old when sent: too old to count"
                 );
             }
             if self.down {
@@ -90,7 +90,9 @@ impl VenueFeed {
             let (silent, stale) = (self.silent.contains(symbol), self.stale.alerted(symbol));
             if silent || stale {
                 needed.push(symbol.clone());
-                let silent_again = silent && since.is_none_or(|since| now.duration_since(since) >= self.timing.timeout);
+                // Silent across a whole window of its own count, and since the last attempt or connection.
+                let silent_again =
+                    silent && quiet && since.is_none_or(|since| now.duration_since(since) >= self.timing.timeout);
                 shown |= newly_silent || silent_again || (stale && self.stale.spans(symbol, grace));
             }
         }

@@ -2,14 +2,18 @@
 //! behind its own while the other symbols on the connection are current and its pings are answered
 //! at once, as Coinbase did on 16 November 2026, so the delay bound (see `delay`) sees a current
 //! stream. Each such book carries the venue's own time, so the engine never counts its quote, but
-//! the symbol's market goes without this venue until it is resubscribed (see `resubscribe`). A run
-//! of reads too old to count that spans the shorter of `STALE_GRACE` and `timing.timeout` raises
-//! `venue_stale` and starts that resubscription; the next read young enough to count ends it. The
-//! run is timed by its reads, so an old book followed by none, as a quiet book's snapshot can be, is
-//! left to the silence count (see `alerts`), which takes its re-dated quotes into account. Each
-//! resubscription and new connection times every run afresh from its next read, so the next
-//! attempt waits on what the new subscription sends, and its snapshot, which a large book's
-//! transfer makes a second or two old when read, is not taken for the old source's.
+//! the symbol's market goes without this venue until it is resubscribed (see `resubscribe`).
+//!
+//! A book read after the newest answered ping was sent after that ping went out (see `delay`), so its
+//! age less the time since that ping went out is how old, at least, the venue's book already was
+//! when the venue sent it. A read counts as stale by that alone: neither a large snapshot's transfer,
+//! which makes it a second or two old when read, nor a stream the host holds back reads as a venue
+//! streaming from behind. A run of such reads that spans the shorter of `STALE_GRACE` and
+//! `timing.timeout` raises `venue_stale` and starts that resubscription; the next read that is not
+//! stale ends it. The run is timed by its reads, so an old book followed by none, as a quiet book's
+//! snapshot can be, is left to the silence count (see `alerts`), which takes its re-dated quotes
+//! into account. Each resubscription and new connection times every run afresh from its next read,
+//! so the next attempt waits on what follows it.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -20,10 +24,9 @@ use tracing::info;
 
 use crate::feeds::venue::VenueFeed;
 
-/// How long a symbol's books may read too old to count before the venue counts as streaming it
-/// stale: past the second or so over which a new subscription's snapshot, and the updates queued
-/// behind it, read late (Coinbase's BTC-USD and ETH-USD snapshots arrive about 2 s old, and the
-/// updates after them are current within a second).
+/// How long a symbol's books may read stale before the venue counts as streaming it from behind: a
+/// few reads' worth, so one late burst does not set off a resubscription, and well inside the
+/// silence count's `timing.timeout`.
 pub(in crate::feeds) const STALE_GRACE: Duration = Duration::from_secs(2);
 
 /// Each symbol's current run of reads too old to count.
@@ -94,18 +97,21 @@ impl Run {
 }
 
 impl VenueFeed {
-    /// Notes the age of `symbol`'s book stamped `ts`, read at host time `now`, against the oldest a
-    /// quote counts at (see `quotes::counts`), resolving `venue_stale` when it ends an alerted run.
+    /// Notes how old, at least, `symbol`'s book stamped `ts` and read at host time `now` was when the
+    /// venue sent it (see the module), against the oldest a quote counts at (see `quotes::counts`),
+    /// resolving `venue_stale` when it ends an alerted run. Before any ping is answered, the whole
+    /// age counts.
     pub(super) fn note_age(&mut self, symbol: &str, ts: Millis, now: Millis) {
         let Some(market) = self.instruments.get(symbol).map(|instrument| instrument.market) else { return };
         let stale_after = Millis::try_from(self.timing.stale_after.as_millis()).unwrap_or(Millis::MAX);
         let bound_ms = self.max_age.get(&market).map_or(stale_after, |max_age| stale_after.min(*max_age));
-        if self.stale.read(symbol, now.saturating_sub(ts), bound_ms, Instant::now()) {
+        let read_at = Instant::now();
+        let behind =
+            self.delay.behind(read_at).map_or(0, |behind| Millis::try_from(behind.as_millis()).unwrap_or(Millis::MAX));
+        let sent_age = now.saturating_sub(ts).saturating_sub(behind);
+        if self.stale.read(symbol, sent_age, bound_ms, read_at) {
             let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
-            info!(
-                alert_resolved = "venue_stale",
-                venue, feed, symbol, market, "venue quotes young enough to count again"
-            );
+            info!(alert_resolved = "venue_stale", venue, feed, symbol, market, "venue quotes current again");
         }
     }
 }

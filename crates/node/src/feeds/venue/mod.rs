@@ -277,8 +277,8 @@ impl VenueFeed {
     /// - no message arrives within that read timeout, whatever its market's hours
     /// - the connection sequences no fresh quote within `timing.timeout` while a market it quotes
     ///   is open, or the venue closes it or asks for a reconnect
-    /// - a symbol stays silent or stale past a resubscription, so the connection is replaced to
-    ///   resubscribe it (see `resubscribe`)
+    /// - a symbol goes silent or stale, or stays so past a resubscription of it alone, so the
+    ///   connection is replaced to resubscribe it (see `resubscribe`)
     /// - a ping goes unanswered for `timing.timeout`, or cannot be sent within it
     /// - its bearer token cannot be had, or expires before a replacement on a fresh one takes over
     ///   (see `auth` and `replace`)
@@ -301,8 +301,6 @@ impl VenueFeed {
         info!(venue = self.conn.venue.name(), feed = self.conn.url.as_str(), "venue connected");
         let mut waiting_since = Instant::now();
         self.connected_afresh();
-        // Whether this connection has resubscribed symbols alone (see `resubscribe`).
-        let mut resubscribed_alone = false;
         // The engine's quote from an earlier connection says nothing of what this one sequenced.
         self.sent.clear();
         // Ask at once, so the first quotes are judged against the markets' hours.
@@ -392,7 +390,6 @@ impl VenueFeed {
                     match self.switch(replaced, &mut link, &mut adapter) {
                         Some(books) => {
                             (read_deadline, waiting_since) = (Instant::now() + read_timeout, Instant::now());
-                            resubscribed_alone = false;
                             self.connected_afresh();
                             (rollover, retry) = (self.rollover(), self.timing.reconnect_min);
                             for text in books {
@@ -408,9 +405,9 @@ impl VenueFeed {
                     }
                 }
                 _ = checks.tick() => {
-                    let resubscribing = self.check_silent();
+                    let resubscribing = self.check_quoting();
                     if !resubscribing.is_empty() {
-                        self.resubscribe(&adapter, &mut link, &resubscribing, &mut resubscribed_alone).await?;
+                        self.resubscribe(&adapter, &mut link, &resubscribing).await?;
                     }
                     // The count waits while no market the connection quotes is open.
                     if !self.expects_quotes(now_ms()) {

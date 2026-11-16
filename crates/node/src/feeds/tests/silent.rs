@@ -63,16 +63,25 @@ async fn next_for(alerts: &mut mpsc::UnboundedReceiver<Alert>, key: &str, name: 
     }
 }
 
-/// Waits for a quote for `market` stamped within a second of the host clock, failing after `WAIT`.
+/// Waits for a quote for `market` stamped within a second of the host clock, failing after `WAIT`
+/// or when the feed stops.
 async fn fresh_quote(quotes: &mut mpsc::UnboundedReceiver<(MarketId, Millis)>, market: MarketId) {
     let fresh = async {
-        while let Some((quoted, ts)) = quotes.recv().await {
+        loop {
+            let (quoted, ts) = quotes.recv().await.expect("the feed stopped");
             if quoted == market && now_ms() - ts <= 1_000 {
                 return;
             }
         }
     };
     timeout(WAIT, fresh).await.expect("no fresh quote in time");
+}
+
+/// How old, in seconds, a `venue_stale` alert says the venue's quotes were when sent.
+fn stale_age(alert: &Alert) -> f64 {
+    let message = &alert["message"];
+    let age = message.strip_prefix("venue quotes ").and_then(|rest| rest.split_once("s old when sent"));
+    age.and_then(|(age, _)| age.parse().ok()).unwrap_or_else(|| panic!("no age in {message:?}"))
 }
 
 /// The messages a resubscription of ETH-USD alone sends.
@@ -96,12 +105,38 @@ async fn a_product_streamed_stale_is_resubscribed_alone_while_the_other_quotes_o
     // is subscribed afresh.
     let stale = next_for(&mut alerts, "alert", "venue_stale", "ETH-USD").await;
     assert!(subscribed.elapsed() < STALE_GRACE + Duration::from_secs(2), "detected after {:?}", subscribed.elapsed());
-    assert!(stale["message"].starts_with("venue quotes read 600"), "{stale:?}");
+    // Ten minutes, less how far behind the stream's own pings put it.
+    assert!((599.0..=601.0).contains(&stale_age(&stale)), "{stale:?}");
     let resubscribed = [venue.next_received().await, venue.next_received().await];
     assert_eq!(resubscribed, [(0, eth_alone()[0].clone()), (0, eth_alone()[1].clone())]);
     // Its fresh book ends the episode on the same connection, while BTC quotes on.
     next_for(&mut resolved, "alert_resolved", "venue_stale", "ETH-USD").await;
     fresh_quote(&mut quotes, 2).await;
+    fresh_quote(&mut quotes, 1).await;
+    assert_eq!(venue.drain(), [], "the feed sent more, or connected again");
+}
+
+#[tokio::test]
+async fn each_stale_episode_on_a_connection_resubscribes_alone_first() {
+    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
+    let mut venue = CoinbaseVenue::start(&[BTC, ETH]).await;
+    venue.behind(ETH.id, &[BEHIND]);
+    let (rx, _feed) = spawn_feed(Venue::Coinbase, &venue.url, &PRODUCTS, coinbase_timing());
+    let mut quotes = sequenced(rx);
+    assert_eq!(venue.next_received().await, (0, subscriptions(&["BTC-USD", "ETH-USD"])[0].clone()));
+
+    // ETH's episode: resubscribed alone, and current again.
+    let resubscribed = [venue.next_received().await, venue.next_received().await];
+    assert_eq!(resubscribed, [(0, eth_alone()[0].clone()), (0, eth_alone()[1].clone())]);
+    next_for(&mut resolved, "alert_resolved", "venue_stale", "ETH-USD").await;
+    fresh_quote(&mut quotes, 2).await;
+    // BTC's, later on the same connection, is resubscribed alone too, not by a new connection.
+    venue.set_lag(BTC.id, BEHIND);
+    next_for(&mut alerts, "alert", "venue_stale", "BTC-USD").await;
+    let btc_alone = resubscriptions(&["BTC-USD"]);
+    let resubscribed = [venue.next_received().await, venue.next_received().await];
+    assert_eq!(resubscribed, [(0, btc_alone[0].clone()), (0, btc_alone[1].clone())]);
+    next_for(&mut resolved, "alert_resolved", "venue_stale", "BTC-USD").await;
     fresh_quote(&mut quotes, 1).await;
     assert_eq!(venue.drain(), [], "the feed sent more, or connected again");
 }

@@ -214,36 +214,71 @@ async fn a_recovery_gives_every_symbol_a_full_silence_window() {
     feed.delivered("BTC/USD");
     tokio::time::advance(window - Duration::from_millis(1)).await;
     feed.delivered("BTC/USD");
-    assert!(feed.check_silent().is_empty());
+    assert!(feed.check_quoting().is_empty());
     assert!(alerts.try_recv().is_err());
     tokio::time::advance(Duration::from_millis(1)).await;
-    assert_eq!(feed.check_silent(), ["ETH/USD"]);
+    assert_eq!(feed.check_quoting(), ["ETH/USD"]);
     let alert = next_alert(&mut alerts).await;
     assert_eq!((alert["alert"].as_str(), alert["symbol"].as_str()), ("venue_symbol_silent", "ETH/USD"));
 }
 
-/// After a resubscription a stale symbol is judged on what the new subscription sends: its snapshot,
-/// read late, sets off no attempt, and reads still too old to count across the grace do.
+/// After a resubscription a stale symbol is judged on what the new subscription sends. The old
+/// source's updates in flight go on reading stale; the new snapshot, read seconds after the newest
+/// answered ping went out because its transfer held the pongs back, was sent current and ends the
+/// run; and reads from a source still behind start a new one, which sets off the next attempt once
+/// it spans the grace.
 #[tokio::test(start_paused = true)]
 async fn a_resubscribed_stale_symbol_is_judged_on_what_the_new_subscription_sends() {
     let (_guard, _alerts) = capture_alerts();
     let mut feed = kraken_feed(&[(1, "BTC/USD"), (2, "ETH/USD")], Duration::from_secs(10));
     let read = |feed: &mut VenueFeed, age_ms: Millis| feed.note_age("ETH/USD", now_ms() - age_ms, now_ms());
+    let answered = |feed: &mut VenueFeed| {
+        let ping = feed.delay.sent(Instant::now(), now_ms());
+        feed.delay.answered(&ping);
+    };
+    answered(&mut feed);
     read(&mut feed, 600_000);
     tokio::time::advance(STALE_GRACE).await;
+    answered(&mut feed);
     read(&mut feed, 600_000);
-    assert_eq!(feed.check_silent(), ["ETH/USD"]);
+    assert_eq!(feed.check_quoting(), ["ETH/USD"]);
 
-    // The new snapshot reads 2 s late, a second on; the backoff has long run.
-    tokio::time::advance(Duration::from_secs(1)).await;
+    // An update in flight from the old source, then the new snapshot 2.1 s on, 2 s old.
+    tokio::time::advance(Duration::from_millis(20)).await;
+    read(&mut feed, 600_000);
+    tokio::time::advance(Duration::from_millis(2_100)).await;
     read(&mut feed, 2_000);
-    tokio::time::advance(STALE_GRACE / 2).await;
-    assert!(feed.check_silent().is_empty());
-    // What follows it stays ten minutes old: once that spans the grace from the snapshot, ETH again.
+    assert!(feed.check_quoting().is_empty());
+    // Ten minutes old again, with pings answered at once: once that spans the grace, ETH again.
+    answered(&mut feed);
     read(&mut feed, 600_000);
-    tokio::time::advance(STALE_GRACE / 2).await;
+    tokio::time::advance(STALE_GRACE).await;
+    answered(&mut feed);
     read(&mut feed, 600_000);
-    assert_eq!(feed.check_silent(), ["ETH/USD"]);
+    assert_eq!(feed.check_quoting(), ["ETH/USD"]);
+}
+
+/// A silent symbol is tried again only after a whole window of its own count, so one whose count an
+/// outage's end restarted waits it out.
+#[tokio::test(start_paused = true)]
+async fn a_silent_symbol_is_retried_only_after_a_window_of_its_own_count() {
+    let (_guard, _alerts) = capture_alerts();
+    let window = Duration::from_millis(300);
+    let mut feed = kraken_feed(&[(1, "BTC/USD"), (2, "ETH/USD")], window);
+    tokio::time::advance(window).await;
+    feed.delivered("BTC/USD");
+    assert_eq!(feed.check_quoting(), ["ETH/USD"]);
+
+    // An outage, whose end restarts every count, ETH's included, while ETH stays silent.
+    feed.down = true;
+    assert!(feed.check_quoting().is_empty());
+    tokio::time::advance(window * 2).await;
+    feed.delivered("BTC/USD");
+    tokio::time::advance(window - Duration::from_millis(1)).await;
+    feed.delivered("BTC/USD");
+    assert!(feed.check_quoting().is_empty());
+    tokio::time::advance(Duration::from_millis(1)).await;
+    assert_eq!(feed.check_quoting(), ["ETH/USD"]);
 }
 
 #[test]
@@ -278,7 +313,7 @@ async fn venue_alerts_keep_one_key_per_subject_and_resolve_under_it() {
     feed.dropped(&anyhow::anyhow!("refused"), Duration::from_secs(1));
     feed.delivered("BTC/USD");
     tokio::time::advance(window).await;
-    assert!(!feed.check_silent().is_empty());
+    assert!(!feed.check_quoting().is_empty());
     feed.delivered("ETH/USD");
     feed.clock_ahead(1, 60_000);
     feed.refuse("unparseable", "{");
@@ -341,7 +376,7 @@ async fn an_unnamed_contract_alerts_and_a_held_symbol_is_not_silent() {
     feed.confirmed(Confirmation { unnamed: vec!["ETH/USD".into()], ..Confirmation::default() });
     assert!(feed.is_held("ETH/USD"));
     tokio::time::advance(window).await;
-    assert!(!feed.check_silent().is_empty());
+    assert!(!feed.check_quoting().is_empty());
     feed.confirmed(Confirmation { idle: vec!["BTC/USD".into()], ..Confirmation::default() });
     assert!(feed.is_held("BTC/USD") && !feed.is_held("ETH/USD"));
 
