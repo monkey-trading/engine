@@ -56,6 +56,8 @@ const SWITCH_BUDGET_SECS: u64 = 20;
 const LEAD_SECS: u64 = 60;
 /// How long a member gets past its boundary to take the keys and log `TurnTaken`.
 const TAKE_WAIT: Duration = Duration::from_secs(120);
+/// How long a node that has just taken the keys gets to open sequencing to an admin request.
+const ADMIN_WAIT: Duration = Duration::from_secs(60);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires Anvil, compiled contracts and a short-turns build; scripts/dev-short-turns.sh runs it"]
@@ -164,10 +166,8 @@ async fn run() -> anyhow::Result<()> {
         })
         .await?;
         ensure!(operator == serde_json::json!(key), "turn {next}'s operator is {operator}");
-        let applied = admin(&client, &seats[holder].admin, vault, true).await?;
-        ensure!(applied.iter().any(|event| matches!(event, Event::AdminApplied)), "{applied:?}");
-        let refused = admin(&client, &previous.1, vault, false).await;
-        ensure!(refused.as_ref().is_err_and(|e| e.to_string().contains("401")), "{refused:?}");
+        ensure!(signs(&client, &seats[holder].admin, vault, true).await?, "turn {next}'s key is refused");
+        ensure!(!signs(&client, &previous.1, vault, false).await?, "the previous turn's key signs");
         println!(
             "PASS: at turn {next}'s boundary {} took the keys by itself, logged TurnTaken, and its key signs while {}'s \
              is refused",
@@ -202,8 +202,7 @@ async fn run() -> anyhow::Result<()> {
         (view["turn"]["reason"] == "promotion" && view["turn"]["candidate"] == candidate).then_some(())
     })
     .await?;
-    let applied = admin(&promoted, &seats[p].admin, vault, false).await?;
-    ensure!(applied.iter().any(|event| matches!(event, Event::AdminApplied)), "{applied:?}");
+    ensure!(signs(&promoted, &seats[p].admin, vault, false).await?, "the promoted member's key is refused");
     println!("PASS: {} serves from its copy under its standby key, and its admin key signs", seats[p].name);
     until("the promoted member's first checkpoint", Duration::from_secs(120), &mut seats, async || {
         let seq = chain.view(vault, latestSeqCall {}).await;
@@ -266,6 +265,26 @@ async fn wait_chain(chain: &Chain, at: u64) -> anyhow::Result<()> {
     })
     .await
     .with_context(|| format!("the chain did not reach {at}"))
+}
+
+/// Whether `client`'s node applies setting every market reduce-only, or lifting it, under `key`'s
+/// signature: `true` once it applies, `false` once the node refuses the signature (401). A node that
+/// has just taken the keys answers 503 until its sequencing opens, which is retried.
+/// Error cases:
+/// - neither answer comes within `ADMIN_WAIT`, or the node answers anything else
+async fn signs(client: &Client, key: &SigningKey, vault: Address, reduce_only: bool) -> anyhow::Result<bool> {
+    let answered = tokio::time::timeout(ADMIN_WAIT, async {
+        loop {
+            match admin(client, key, vault, reduce_only).await {
+                Ok(events) if events.iter().any(|event| matches!(event, Event::AdminApplied)) => return Ok(true),
+                Ok(events) => anyhow::bail!("the admin request was answered {events:?}"),
+                Err(e) if e.to_string().contains("401") => return Ok(false),
+                Err(e) if e.to_string().contains("503") => sleep(Duration::from_millis(500)).await,
+                Err(e) => return Err(e),
+            }
+        }
+    });
+    answered.await.context("the node neither applied nor refused the admin request")?
 }
 
 /// Sets every market reduce-only, or lifts it, under `key`'s signature through `client`'s admin route.
