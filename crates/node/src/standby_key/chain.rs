@@ -424,10 +424,8 @@ pub(crate) async fn vouch_view(
     vouch_view_at(&chain.latest().await?, domain, candidate, own).await
 }
 
-/// `candidate`'s registered release at `block`, `None` while it is not registered, and whether the timelock
-/// approved it for the candidate.
-/// Error cases:
-/// - a read fails
+/// `candidate`'s registered release at `block` (`None` while unregistered), and whether the timelock
+/// approved it for the candidate. Error cases: a read fails.
 pub(crate) async fn registration_at(
     block: &impl AgreedBlock,
     domain: &StandbyDomain,
