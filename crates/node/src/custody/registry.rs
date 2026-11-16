@@ -52,8 +52,12 @@ sol! {
     function schedule() external view returns (address);
     function rotationState() external view returns (bool enabled, bytes32 release, uint64 generation, uint64 until);
     function turnsRunUntil() external view returns (uint64);
+    function turnLength() external view returns (uint64);
     function vault() external view returns (address);
 }
+
+/// A turn, in seconds: the schedule's turn ends a turn after its boundary.
+const TURN_SECS: u64 = engine_core::turns::TURN_MS.unsigned_abs() / 1000;
 
 /// The topics of the registry events the engine mirrors.
 pub(super) const SIGNATURES: [B256; 3] =
@@ -206,15 +210,15 @@ pub(super) fn rotation_state_call() -> alloy::primitives::Bytes {
 }
 
 /// The boundary, in milliseconds, of the drawn turn the registry's `rotationState()` answer `out` names
-/// the operator by, a day before its end; `None` when no turn names it.
+/// the operator by, a turn before its end; `None` when no turn names it.
 /// Error cases:
-/// - data that does not decode, or a turn end before a day or past `i64` milliseconds
+/// - data that does not decode, or a turn end before a turn or past `i64` milliseconds
 pub(super) fn decode_named_turn(out: &alloy::primitives::Bytes) -> anyhow::Result<Option<engine_core::types::Millis>> {
     let state = rotationStateCall::abi_decode_returns(out).context("decoding the registry's rotation state")?;
     if state.generation == 0 {
         return Ok(None);
     }
-    let since = state.until.checked_sub(86_400).and_then(millis);
+    let since = state.until.checked_sub(TURN_SECS).and_then(millis);
     since.map(Some).with_context(|| format!("the named turn's end {} is out of range", state.until))
 }
 
@@ -223,10 +227,10 @@ pub(super) fn turns_run_until_call() -> alloy::primitives::Bytes {
     turnsRunUntilCall {}.abi_encode().into()
 }
 
-/// The boundary, in milliseconds, of the last turn the schedule has drawn, a day before the end its
+/// The boundary, in milliseconds, of the last turn the schedule has drawn, a turn before the end its
 /// `turnsRunUntil()` answer `out` gives; `None` before any is drawn.
 /// Error cases:
-/// - data that does not decode, or a turn end before a day or past `i64` milliseconds
+/// - data that does not decode, or a turn end before a turn or past `i64` milliseconds
 pub(super) fn decode_last_drawn_turn(
     out: &alloy::primitives::Bytes,
 ) -> anyhow::Result<Option<engine_core::types::Millis>> {
@@ -234,8 +238,23 @@ pub(super) fn decode_last_drawn_turn(
     if until == 0 {
         return Ok(None);
     }
-    let since = until.checked_sub(86_400).and_then(millis);
+    let since = until.checked_sub(TURN_SECS).and_then(millis);
     since.map(Some).with_context(|| format!("the last drawn turn's end {until} is out of range"))
+}
+
+/// The call that reads the schedule's `turnLength()`, which `SeedSchedule` fixed at deployment.
+pub(super) fn turn_length_call() -> alloy::primitives::Bytes {
+    turnLengthCall {}.abi_encode().into()
+}
+
+/// Why a schedule whose `turnLength()` answer is `out` cannot be mirrored, if it cannot: its turns are
+/// not this build's (`engine_core::turns::TURN_MS`), so the engine would read its turn numbers as other
+/// times than the chain's.
+/// Error cases:
+/// - data that does not decode
+pub(super) fn turn_length_refusal(out: &alloy::primitives::Bytes) -> anyhow::Result<Option<String>> {
+    let length = turnLengthCall::abi_decode_returns(out).context("decoding the schedule's turn length")?;
+    Ok((length != TURN_SECS).then(|| format!("its turns last {length} s, and this build's {TURN_SECS} s")))
 }
 
 /// The topics of the fault proof contract's events the engine mirrors.

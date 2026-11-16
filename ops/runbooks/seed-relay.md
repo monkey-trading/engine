@@ -3,7 +3,9 @@
 Each daily operator turn is seeded by the RANDAO mix at the end of one Ethereum beacon epoch. The
 schedule fixes that epoch from the turn number: turn `n` starts at its boundary, 22:30 UTC on day `n`
 of the Unix epoch; its draw deadline is a day earlier; and its seed is the mix of the epoch that holds
-the time two days before the draw deadline. `SeedRelay` on Ethereum proves the mix from an EIP-4788
+the time two days before the draw deadline. `SeedRelay` and `SeedReceiver` are deployed with a turn
+length of a day (86400): a shorter one, with the draw deadline a turn earlier and the epoch two turns
+before it, is for development stacks only, whose engines a production build refuses. `SeedRelay` on Ethereum proves the mix from an EIP-4788
 beacon block root and sends it to `SeedReceiver` on Arbitrum through Arbitrum's inbox. From the draw
 deadline the receiver's answer for the turn is final: the relayed mix, or, if none arrived, the last
 relayed seed hashed with the turn number.

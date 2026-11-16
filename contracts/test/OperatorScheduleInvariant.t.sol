@@ -106,7 +106,7 @@ contract ScheduleHandler is Test {
     /// @dev One call in four swaps in a receiver with no relays, as an Ethereum fork would.
     function swapReceiver(uint256 seed) external observed {
         if (seed % 4 != 0) return;
-        SeedReceiver fresh = new SeedReceiver(makeAddr(string(abi.encode("relay", receivers++))), 1606824023);
+        SeedReceiver fresh = new SeedReceiver(makeAddr(string(abi.encode("relay", receivers++))), 1606824023, 1 days);
         vm.prank(governance);
         schedule.setSeedReceiver(fresh);
     }
@@ -282,7 +282,7 @@ contract ScheduleHandler is Test {
     }
 
     function _nextTurn() internal view returns (uint64) {
-        return uint64((block.timestamp - schedule.BOUNDARY_OFFSET()) / 1 days + 1);
+        return uint64((block.timestamp - schedule.boundaryOffset()) / 1 days + 1);
     }
 
     function _digest(uint256 seed) internal pure returns (bytes memory) {

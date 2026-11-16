@@ -132,16 +132,26 @@ impl<V: VaultReader> DepositWatcher<V> {
             }
         }
         // So must the schedule's registry: the schedule's events mirror only from the registry's own.
+        // Its turns must be this build's too: a schedule of another length names turn numbers whose
+        // boundaries the engine would place elsewhere.
         if let (Some((schedule, false)), Some((registry, _))) = (self.schedule, self.registry) {
             let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
-            match self.vault.schedule_registry(BlockRef { number: to, hash }).await.map_err(PollError::rpc)? {
+            let at = BlockRef { number: to, hash };
+            match self.vault.schedule_registry(at).await.map_err(PollError::rpc)? {
                 None => info!(to, "the schedule is not deployed at this window's end"),
                 Some(recorded) if recorded != registry => {
                     return Err(PollError::inconsistent(anyhow!(
                         "the schedule {schedule} records registry {recorded}, not the configured {registry}"
                     )));
                 }
-                Some(_) => self.schedule = Some((schedule, true)),
+                Some(_) => {
+                    let call = crate::custody::registry::turn_length_call();
+                    let out = self.vault.contract_call(at, schedule, call).await.map_err(PollError::rpc)?;
+                    if let Some(reason) = crate::custody::registry::turn_length_refusal(&out).map_err(PollError::rpc)? {
+                        return Err(PollError::inconsistent(anyhow!("the schedule {schedule} is refused: {reason}")));
+                    }
+                    self.schedule = Some((schedule, true));
+                }
             }
         }
         // So must the vote contract's schedule: its proposals vote by the schedule's sets.

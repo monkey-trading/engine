@@ -72,7 +72,7 @@ contract SeedReceiverInvariantTest is Test {
     SeedReceiverHandler internal handler;
 
     function setUp() public {
-        receiver = new SeedReceiver(makeAddr("relay"), 1606824023);
+        receiver = new SeedReceiver(makeAddr("relay"), 1606824023, 1 days);
         handler = new SeedReceiverHandler(receiver);
         targetContract(address(handler));
     }

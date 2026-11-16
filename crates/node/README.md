@@ -61,7 +61,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the frequency the hardware reports
 - A `production` cargo feature that refuses mock TEE, custody, and feed providers, an API
   without `[api.tls.acme]`, and a genesis market quoted by fewer venues than its `min_sources`, at
-  config load
+  config load, and does not compile with `short-turns`
+- A development-only `short-turns` cargo feature: five-minute operator turns, which the seed relay's
+  schedule, the liveness rule's boundaries and the handover's turn ends all follow, and a staking
+  mirror that refuses a schedule whose `turnLength()` is not the build's
 - Trusted time: every stamp is checked against signed Roughtime readings that independent servers
   agree on, and nothing, genesis included, is stamped before the first; sequencing halts with a
   Critical alert when the host clock is beyond the drift bound, or 60 seconds after the last
@@ -866,7 +869,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   sends through its signing endpoint, replacing a pending relay at its nonce;
   `src/seed_relay/ethereum/tests.rs` runs it over stub endpoints
 - `src/seed_relay/header.rs` — the beacon block header and its SSZ root
-- `src/seed_relay/schedule.rs` — `SeedSchedule`'s turns, draw deadlines and seed epochs
+- `src/seed_relay/schedule.rs` — `SeedSchedule`'s turns, draw deadlines and seed epochs, at the
+  build's turn length
 - `src/seed_relay/ssz.rs` — SSZ merkleization and branches; `src/seed_relay/ssz/tests.rs` covers them
 - `src/seed_relay/state.rs` — the Fulu `BeaconState`'s fields, and the branches to its fork version
   and an epoch's mix; `src/seed_relay/state/tests.rs` covers them, with mainnet fields and their roots
@@ -1248,7 +1252,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   C as the node binary's own start on a chain running on true time, A killed under load, the callers'
   promotion, the promoted member's first fill within its start budget, its first checkpoint, A's
   authorization reissued and paid once, and the replay across the change of signer;
-  `promoted/nodes.rs` the members' configs, sealed standby keys and child processes
+  `promoted/nodes.rs` the members' configs, sealed standby keys and child processes;
+  `promoted/short_turns.rs`, in a `short-turns` build, the same nodes on five-minute turns that
+  `scripts/dev-short-turns.sh` runs: two boundaries at which the member takes the keys by itself, the
+  promotion past the killed incumbent, and the promoted member's replay
 - `src/custody/tests/election_scenario/liveness/fallback.rs` — the successor-fallback leg (#596) that
   `scripts/dev-daily-rotation.sh` runs on the same parts: a skip through the take window, a late take
   whose head latches nothing past a skip that passes over the key holder, a paused chain across a
@@ -3402,6 +3409,12 @@ cargo test -p engine-node trusted_time::tests::scenario
 
 # The production build's tests: it refuses the dev config the other tests load
 cargo test -p engine-node --features production --lib production_build
+
+# A short-turns development build (five-minute operator turns, which a production build refuses to
+# compile): the node's turn timings, and the scenario on real nodes, two boundaries handing the keys
+# over by themselves and a promotion past the killed incumbent (about twenty minutes)
+cargo test -p engine-node --features short-turns --lib -- seed_relay::schedule liveness::chain::tests custody::tests::staking
+./scripts/dev-short-turns.sh
 
 # Dev scenario: the Pebble ACME test CA certifies a dev node's attested key over TLS-ALPN-01 and the
 # node renews it without a restart; a stopped CA raises certificate_expiring

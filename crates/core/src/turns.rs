@@ -31,6 +31,8 @@
 //! out of order or malformed) is refused as `ElectionRejected`, as an election's is, and holds the
 //! watcher.
 
+mod length;
+pub use length::*;
 mod office;
 
 use std::collections::BTreeMap;
@@ -41,20 +43,12 @@ use crate::eip712::B256;
 use crate::emissions::TokenUnits;
 use crate::engine::Engine;
 use crate::event::Event;
-use crate::operator_bounds::NOTICE_MS;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MAX_STAMP_MS, Millis};
 
-/// A turn's length: one day.
-pub const DAY_MS: Millis = 24 * 60 * 60 * 1000;
-/// A turn's boundary within its day: 22:30 UTC.
-pub const BOUNDARY_OFFSET_MS: Millis = (22 * 60 + 30) * 60 * 1000;
 /// The most members a set may name: the registry's `CANDIDATE_LIMIT` and the one place beyond it the
 /// operator in effect may take.
 pub const MAX_SET_MEMBERS: usize = 101;
-/// How long before its boundary a turn's draw deadline falls, the schedule's `DRAW_LEAD`: the turn
-/// is drawn from the set in effect then.
-pub const DRAW_LEAD_MS: Millis = DAY_MS;
 
 /// The mirrored schedule: the sets the engine keeps, the turns mirrored and not yet applied, the
 /// assignment whose key is in effect, and whether its member has taken it. Left out of the
@@ -190,7 +184,7 @@ impl DailyTurns {
 
     /// Why an assignment from `set` naming `candidate` with `admin_key` cannot apply its key at
     /// `applies_at`, if it cannot: the set is not kept, does not name them, or the log's notice of
-    /// that key began less than seven days before, from `V53` at the first of the unbroken run of
+    /// that key began less than `SET_NOTICE_MS` before, from `V53` at the first of the unbroken run of
     /// mirrored sets that named them.
     pub fn set_refusal(
         &self,
@@ -199,7 +193,7 @@ impl DailyTurns {
         admin_key: AccountId,
         applies_at: Millis,
     ) -> Option<String> {
-        let notice = |recorded: &RotationSet| recorded.noticed_at(candidate) + NOTICE_MS <= applies_at;
+        let notice = |recorded: &RotationSet| recorded.noticed_at(candidate) + SET_NOTICE_MS <= applies_at;
         match self.sets.get(&set) {
             None => Some(format!("set {set} is not among the sets mirrored")),
             Some(recorded) if !recorded.names(candidate, admin_key) => {
@@ -207,11 +201,11 @@ impl DailyTurns {
             }
             Some(recorded) if !notice(recorded) => Some(match recorded.noticed.get(&candidate) {
                 None => format!(
-                    "set {set} was logged at {}, less than seven days before the turn applies at {applies_at}",
+                    "set {set} was logged at {}, less than {SET_NOTICE} before the turn applies at {applies_at}",
                     recorded.logged_at
                 ),
                 Some(noticed) => format!(
-                    "set {set} names the key the log has named since {noticed}, less than seven days before the \
+                    "set {set} names the key the log has named since {noticed}, less than {SET_NOTICE} before the \
                      turn applies at {applies_at}"
                 ),
             }),
@@ -241,16 +235,17 @@ impl RotationSet {
     }
 }
 
-/// When `turn` starts: 22:30 UTC on its day of the Unix epoch, or `None` past the latest stamp.
+/// When `turn` starts: 22:30 UTC on its day of the Unix epoch, a turn past the last boundary with
+/// shorter turns, or `None` past the latest stamp.
 pub fn boundary(turn: u64) -> Option<Millis> {
-    let ms = Millis::try_from(turn).ok()?.checked_mul(DAY_MS)?.checked_add(BOUNDARY_OFFSET_MS)?;
+    let ms = Millis::try_from(turn).ok()?.checked_mul(TURN_MS)?.checked_add(BOUNDARY_OFFSET_MS)?;
     (ms <= MAX_STAMP_MS).then_some(ms)
 }
 
 /// When `turn` ends: the next turn's boundary.
 fn turn_end(turn: u64) -> Millis {
-    // Accepted turns have a boundary, and a day past it stays within `i64`.
-    boundary(turn).expect("an accepted turn has a boundary") + DAY_MS
+    // Accepted turns have a boundary, and a turn past it stays within `i64`.
+    boundary(turn).expect("an accepted turn has a boundary") + TURN_MS
 }
 
 impl Engine {
@@ -321,18 +316,18 @@ impl Engine {
     }
 
     /// Whether the oldest set kept may still be drawn from: a turn draws from the set in effect at its
-    /// deadline, `DRAW_LEAD_MS` before its boundary, and ends a day after its boundary, so a turn
+    /// deadline, `DRAW_LEAD_MS` before its boundary, and ends a turn after its boundary, so a turn
     /// that has yet to end has its deadline less than that long ago, and the oldest set is past
     /// drawing once the set after it took effect earlier still. The newest set always is.
     fn still_drawable(&self) -> bool {
         let mut sets = self.daily_turns.sets.values();
         let (Some(_), Some(next)) = (sets.next(), sets.next()) else { return true };
-        next.effective_at > self.now.saturating_sub(DRAW_LEAD_MS + DAY_MS)
+        next.effective_at > self.now.saturating_sub(DRAW_LEAD_MS + TURN_MS)
     }
 
     /// Forgets each set no turn that has yet to end can draw from, oldest first. From `V71` it keeps
     /// the set that drew the turn in effect, whatever its age, and still forgets the others: the
-    /// schedule promotes in the last drawn turn from the set that drew it, even once its day is over,
+    /// schedule promotes in the last drawn turn from the set that drew it, even once its turn is over,
     /// so that set stays until a later turn supersedes the turn.
     /// From `V72` it keeps the sets of the refused turns too (`DailyTurns::refused`).
     fn prune_sets(&mut self) {
@@ -342,7 +337,7 @@ impl Engine {
             }
             return;
         }
-        let cutoff = self.now.saturating_sub(DRAW_LEAD_MS + DAY_MS);
+        let cutoff = self.now.saturating_sub(DRAW_LEAD_MS + TURN_MS);
         let in_effect = self.daily_turns.in_effect.map(|in_effect| in_effect.set);
         let kept = |set: u32| Some(set) == in_effect || self.daily_turns.refused.values().any(|kept| *kept == set);
         let ids: Vec<u32> = self.daily_turns.sets.keys().copied().collect();
@@ -354,7 +349,7 @@ impl Engine {
     }
 
     /// Mirrors the schedule's `TurnAssigned` event: records the assignment, whose key applies from
-    /// its boundary or from now when that is later, unless its key had no seven days' notice in a
+    /// its boundary or from now when that is later, unless its key had no `SET_NOTICE_MS` notice in a
     /// mirrored set, or its turn is over, which credits it as refused; from `V71` a promotion of an
     /// ended turn that no later turn in effect superseded is not refused for that, and from `V72` the
     /// set of a turn's first refused assignment is kept for it.
@@ -364,7 +359,7 @@ impl Engine {
             let zero = AccountId([0; 20]);
             if candidate == zero || admin_key == zero {
                 Some("a turn names a nonzero candidate and key".into())
-            } else if boundary(turn).is_none_or(|start| start > MAX_STAMP_MS - DAY_MS) {
+            } else if boundary(turn).is_none_or(|start| start > MAX_STAMP_MS - TURN_MS) {
                 Some(format!("turn {turn} has no boundary within the latest stamp"))
             } else {
                 None

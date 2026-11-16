@@ -202,6 +202,33 @@ async fn a_schedule_recording_another_registry_stalls_the_poll_before_any_mirror
 }
 
 #[tokio::test]
+async fn a_schedule_of_another_turn_length_stalls_the_poll_before_any_mirror() {
+    let dir = scratch("schedule-turn-length");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let account = AccountId([0x0a; 20]);
+    let chains = schedule_chains(SCHEDULE, Some(REGISTRY), account);
+    let build = engine_core::turns::TURN_MS.unsigned_abs() / 1000;
+    // A day's turns under a short-turns build, and five minutes' under any other.
+    let other = if build == 86_400 { 300 } else { 86_400 };
+    for chain in &chains {
+        chain.0.lock().unwrap().schedule.turn_length = Some(other);
+    }
+    let error = schedule_watcher(&chains, &dir, Some(SCHEDULE)).poll(&node.tx).await.unwrap_err();
+    let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
+    let refused = format!("the schedule {SCHEDULE} is refused: its turns last {other} s, and this build's {build} s");
+    assert!(cause.to_string().contains(&refused), "{cause}");
+    assert_eq!(mirrored(&node, account).await, (TokenUnits(0), vec![]), "an event mirrored");
+    // At the build's turn length, the same window binds it and its events mirror.
+    for chain in &chains {
+        chain.0.lock().unwrap().schedule.turn_length = Some(build);
+    }
+    schedule_watcher(&chains, &dir, Some(SCHEDULE)).poll(&node.tx).await.unwrap();
+    assert_eq!(mirrored(&node, account).await, (TokenUnits(500), vec![1]));
+    node.stop().await;
+}
+
+#[tokio::test]
 async fn a_schedule_event_before_the_schedule_is_read_to_name_the_registry_stalls_the_poll() {
     let dir = scratch("schedule-unbound-event");
     let node = Node::start_confirmed(&dir);

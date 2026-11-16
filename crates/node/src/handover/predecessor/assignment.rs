@@ -14,7 +14,7 @@
 //! holder goes on serving the member now named.
 
 use anyhow::{Context, bail, ensure};
-use engine_core::turns::{DAY_MS, DailyTurns};
+use engine_core::turns::{DailyTurns, TURN_MS};
 use engine_core::types::Millis;
 
 use crate::checkpoints::{CheckpointChain, Observation};
@@ -94,9 +94,10 @@ impl<C: CheckpointChain> Predecessor<C> {
     }
 
     /// Refuses a skip's member unless this release's log shows its set naming its candidate with the
-    /// adopted admin key seven days before it applies, at the later of its boundary and trusted time
-    /// `reached`, and its turn has not ended: from the sequencer while it runs, and once it has stopped
-    /// from the turns retained at the stop, for a turn at most `SOURCE_LOOKBACK` past the last they know.
+    /// adopted admin key its notice before it applies (`SET_NOTICE_MS`), at the later of its boundary
+    /// and trusted time `reached`, and its turn has not ended: from the sequencer while it runs, and
+    /// once it has stopped from the turns retained at the stop, for a turn at most `SOURCE_LOOKBACK`
+    /// past the last they know.
     /// Error cases:
     /// - the turn has ended, or the log refuses the set, candidate or key, or the listener reads no
     ///   log, or has stopped with no turns retained or the turn past the lookback
@@ -104,7 +105,7 @@ impl<C: CheckpointChain> Predecessor<C> {
         let Assigned { set, candidate, admin_key, boundary, .. } = *assigned;
         let turn = assigned.binding.turn;
         let reached = reached.unwrap_or(boundary);
-        ensure!(reached < boundary.saturating_add(DAY_MS), "turn {turn} has ended: its skip names no holding now");
+        ensure!(reached < boundary.saturating_add(TURN_MS), "turn {turn} has ended: its skip names no holding now");
         let applies = boundary.max(reached);
         let refusal = match self
             .query(move |engine| engine.daily_turns().set_refusal(set, candidate, admin_key, applies))

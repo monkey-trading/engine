@@ -381,7 +381,9 @@ the drawer choose by ordering its draw around it, and nothing in the node draws,
 draws leaves the member before it named;
 a turn's key signs from its boundary only when a set mirrored at least seven days earlier names it,
 from V53 counting from the first of the unbroken run of mirrored sets that named its candidate with
-that key; a node activates its build's newest protocol version at boot, and an older build cannot
+that key; turns are a day long: the `short-turns` feature, which makes them five minutes and a set's
+notice one turn for development stacks, is development-only, a `production` build does not compile
+with it, and a production node refuses to mirror a schedule whose `turnLength()` is not a day; a node activates its build's newest protocol version at boot, and an older build cannot
 read the log after that, so every member of the rotation sets must run a release that implements a
 version before any member's node activates it;
 the vault names the turn's release, in the generation the schedule fixed, from the boundary without a

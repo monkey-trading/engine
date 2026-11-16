@@ -126,7 +126,7 @@ contract OperatorScheduleTest is ScheduleTest {
             assertEq(schedule.currentSetId(), i + 1);
             assertEq(schedule.pendingSetId(), i < 2 ? i + 2 : 0);
             // The one turn whose deadline falls while this set is in effect draws its member.
-            uint64 turn = uint64((effectiveAt[i] - schedule.BOUNDARY_OFFSET() - 1) / 1 days + 2);
+            uint64 turn = uint64((effectiveAt[i] - schedule.boundaryOffset() - 1) / 1 days + 2);
             assertGe(schedule.drawDeadline(turn), effectiveAt[i]);
             assertEq(_draw(turn), members[i]);
             assertEq(schedule.turnOf(turn).setId, i + 1);
@@ -299,7 +299,7 @@ contract OperatorScheduleTest is ScheduleTest {
         _relay(turn, keccak256("seed"));
         _draw(turn);
         // An Ethereum fork's new receiver has no relay yet.
-        SeedReceiver forked = new SeedReceiver(makeAddr("forked relay"), GENESIS);
+        SeedReceiver forked = new SeedReceiver(makeAddr("forked relay"), GENESIS, 1 days);
         vm.prank(address(governance));
         schedule.setSeedReceiver(forked);
         _draw(turn + 1);
@@ -318,7 +318,7 @@ contract OperatorScheduleTest is ScheduleTest {
         bytes32 seed = keccak256("seed");
         _relay(turn, seed);
         _draw(turn);
-        SeedReceiver forked = new SeedReceiver(makeAddr("forked relay"), GENESIS);
+        SeedReceiver forked = new SeedReceiver(makeAddr("forked relay"), GENESIS, 1 days);
         vm.prank(address(governance));
         schedule.setSeedReceiver(forked);
         assertEq(schedule.seedAnchor(), seed);
@@ -334,7 +334,7 @@ contract OperatorScheduleTest is ScheduleTest {
 
     function test_AReceiverReplacedBeforeAnyDrawLeavesNoFallback() public {
         _rotateOne(alice);
-        SeedReceiver forked = new SeedReceiver(makeAddr("forked relay"), GENESIS);
+        SeedReceiver forked = new SeedReceiver(makeAddr("forked relay"), GENESIS, 1 days);
         vm.prank(address(governance));
         schedule.setSeedReceiver(forked);
         assertEq(schedule.seedAnchor(), bytes32(0));
@@ -376,7 +376,7 @@ contract OperatorScheduleTest is ScheduleTest {
     }
 
     function test_OnlyTheTimelockReplacesTheReceiver() public {
-        SeedReceiver forked = new SeedReceiver(makeAddr("forked relay"), GENESIS);
+        SeedReceiver forked = new SeedReceiver(makeAddr("forked relay"), GENESIS, 1 days);
         vm.expectRevert(OperatorSchedule.UnauthorizedGovernance.selector);
         schedule.setSeedReceiver(forked);
         address noCode = makeAddr("no code");
@@ -566,7 +566,7 @@ contract OperatorScheduleTest is ScheduleTest {
 
         // The turn whose window holds the set's effective time draws from the set before it,
         // whenever in its window it is drawn.
-        uint64 turn = uint64((effectiveAt - schedule.BOUNDARY_OFFSET()) / 1 days + 1);
+        uint64 turn = uint64((effectiveAt - schedule.boundaryOffset()) / 1 days + 1);
         assertLt(schedule.drawDeadline(turn), effectiveAt);
         assertEq(schedule.setAt(schedule.drawDeadline(turn)), 1);
         vm.warp(effectiveAt - 1);

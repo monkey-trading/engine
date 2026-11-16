@@ -11,24 +11,25 @@ import {SeedSchedule} from "./SeedSchedule.sol";
 import {Vault} from "./Vault.sol";
 
 /// @title OperatorSchedule
-/// @notice Names the operator by daily turns, for a registry that names this schedule. Every election
-/// close while rotation is on adopts a rotation set, which takes effect seven days plus the finality
-/// margin after its close, and no earlier than the set adopted before it; sets waiting to take effect
-/// queue in close order. With a quorum the set is the close's eligible candidates weighted by their
-/// votes; without one it is the latest adopted set less the members no longer eligible or registered
-/// under another admin key, their weights unchanged. A set holds each member's admin key as adopted.
-/// An empty set replaces one with members, and no turn is drawn from it.
-/// @notice Anyone draws turn `n` from its draw deadline, a day before its boundary at 22:30 UTC on day
-/// `n`, until that boundary. The seed and the set, the one in effect at the deadline, are fixed by
-/// then, so the moment of the draw picks neither. Position by position, the turn's seed picks a member
-/// with probability proportional to its weight, with replacement, and the first one the registry lists
-/// under the admin key the set adopted takes the turn; after 64 positions a scan of every member, from
-/// an index the seed fixes, takes the first available, so a turn goes undrawn only when no member is
-/// available. Availability is read at the draw: a deregistration or a withdrawn approval landing in the
-/// window lets whoever draws choose by drawing before or after it. A member the registry names at the
-/// draw, on the release it runs, keeps the generation the vault holds for it; any other member, and a
-/// member whose release moves, takes a new one from the vault, so a node never reopens keys sealed for
-/// an earlier holding.
+/// @notice Names the operator by turns, a day long in production (`SeedSchedule`), for a registry that
+/// names this schedule. Every election close while rotation is on adopts a rotation set, which takes
+/// effect seven days plus the finality margin after its close, and no earlier than the set adopted
+/// before it; sets waiting to take effect queue in close order. With a quorum the set is the close's
+/// eligible candidates weighted by their votes; without one it is the latest adopted set less the
+/// members no longer eligible or registered under another admin key, their weights unchanged. A set
+/// holds each member's admin key as adopted. An empty set replaces one with members, and no turn is
+/// drawn from it.
+/// @notice Anyone draws turn `n` from its draw deadline, a turn before its boundary (with day-long
+/// turns, 22:30 UTC on day `n`), until that boundary. The seed and the set, the one in effect at the
+/// deadline, are fixed by then, so the moment of the draw picks neither. Position by position, the
+/// turn's seed picks a member with probability proportional to its weight, with replacement, and the
+/// first one the registry lists under the admin key the set adopted takes the turn; after 64 positions
+/// a scan of every member, from an index the seed fixes, takes the first available, so a turn goes
+/// undrawn only when no member is available. Availability is read at the draw: a deregistration or a
+/// withdrawn approval landing in the window lets whoever draws choose by drawing before or after it. A
+/// member the registry names at the draw, on the release it runs, keeps the generation the vault holds
+/// for it; any other member, and a member whose release moves, takes a new one from the vault, so a
+/// node never reopens keys sealed for an earlier holding.
 /// @notice A turn names its member from its boundary, and the last turn drawn keeps naming its member
 /// after it ends until another turn starts or the registry's timelock installs an operator. Turning
 /// rotation off stops draws and adoptions; turns already drawn stand.
@@ -295,7 +296,7 @@ contract OperatorSchedule is SeedSchedule {
         TakeWindow memory takeWindow_,
         uint64 switchBudget_,
         uint64 blockMillis_
-    ) SeedSchedule(receiver_.beaconGenesisTime()) {
+    ) SeedSchedule(receiver_.beaconGenesisTime(), receiver_.turnLength()) {
         registry = registry_;
         seedReceiver = receiver_;
         logHeads = logHeads_;
@@ -309,7 +310,7 @@ contract OperatorSchedule is SeedSchedule {
         if (
             minimum == 0 || takeWindow_.slots < minimum || takeWindow_.slots > takeWindow_.maximum
                 || (minimum - 1) * minimums_.heartbeatInterval <= switchBudget_ + maximums_.headTolerance
-                || uint256(takeWindow_.maximum) * minimums_.heartbeatInterval > 1 days
+                || uint256(takeWindow_.maximum) * minimums_.heartbeatInterval > turnLength
         ) revert InvalidTakeWindow();
         takeWindow = takeWindow_;
     }
@@ -705,13 +706,13 @@ contract OperatorSchedule is SeedSchedule {
         (uint64 turn, Turn memory named) = turnAt(timestamp);
         if (turn == 0) return (address(0), 0, 0, 0);
         since = boundary(turn);
-        return (named.candidate, named.generation, since, since + 1 days);
+        return (named.candidate, named.generation, since, boundary(turn + 1));
     }
 
     /// @notice When the last drawn turn ends, zero before any is drawn.
     function turnsRunUntil() external view returns (uint64) {
         uint64 last = lastDrawnTurn;
-        return last == 0 ? 0 : boundary(last) + 1 days;
+        return last == 0 ? 0 : boundary(last + 1);
     }
 
     /// @notice The operator the registry named when `turn` was drawn, which hands its member the keys;

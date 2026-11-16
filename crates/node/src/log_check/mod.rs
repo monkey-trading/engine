@@ -14,7 +14,7 @@
 //! the last verified head, as the log's `TurnTaken` commands and mirrored promotions record (`Takings`). The verified head is
 //! sealed with the keys, so a restart restores it once the recovered log holds that checkpoint, and an
 //! approved upgrade carries it to the next release; a host that restores an older copy only delays
-//! payouts. The check bounds how long a withheld branch can pay nothing: a day plus the switch. It does
+//! payouts. The check bounds how long a withheld branch can pay nothing: a turn plus the switch. It does
 //! not bound delay or censorship.
 
 pub(crate) mod answer;

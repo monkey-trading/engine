@@ -341,7 +341,7 @@ contract LivenessRuleTest is LivenessTest {
         vm.warp(target - 12 days);
         _setRotation(true);
         _closeNext();
-        uint64 later = uint64((target - schedule.BOUNDARY_OFFSET()) / 1 days);
+        uint64 later = uint64((target - schedule.boundaryOffset()) / 1 days);
         _draw(later);
         vm.warp(target);
         assertTrue(registry.operatorGeneration() != 0);

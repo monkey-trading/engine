@@ -34,13 +34,18 @@ abstract contract ScheduleTest is RegistryTest {
     function _deploySchedule() internal {
         vm.warp(START);
         _deployRegistry();
-        receiver = new SeedReceiver(relay, GENESIS);
+        receiver = new SeedReceiver(relay, GENESIS, _turnLength());
         schedule = _newSchedule();
         logHeads = schedule.logHeads();
         privateKeyOf[vault.checkpointSigner()] = uint256(keccak256(abi.encodePacked("enclave")));
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setVault, (address(vault))));
         _govern(address(vault), abi.encodeCall(Vault.setRegistry, (address(registry))));
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setSchedule, (schedule)));
+    }
+
+    /// @dev The turn length the schedule takes from its receiver: a day, as in production.
+    function _turnLength() internal pure virtual returns (uint64) {
+        return 1 days;
     }
 
     /// @dev A schedule for the current registry and receiver, with log heads for the current vault and
@@ -138,7 +143,7 @@ abstract contract ScheduleTest is RegistryTest {
 
     /// @dev The turn drawable now: the one whose boundary comes next.
     function _nextTurn() internal view returns (uint64) {
-        return uint64((block.timestamp - schedule.BOUNDARY_OFFSET()) / 1 days + 1);
+        return uint64((block.timestamp - schedule.boundaryOffset()) / schedule.turnLength() + 1);
     }
 
     function _relay(uint64 turn, bytes32 seed) internal {

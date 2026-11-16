@@ -72,6 +72,11 @@ pub use secrets::{SecretName, SecretUrl, SecretValue, SecretsSection};
 const PRODUCTION_BUILD: bool = true;
 #[cfg(not(feature = "production"))]
 const PRODUCTION_BUILD: bool = false;
+/// A production build has day-long turns, whichever crate turned `engine-core`'s `short-turns` on.
+const _: () = assert!(
+    !PRODUCTION_BUILD || engine_core::turns::TURN_MS == engine_core::turns::DAY_MS,
+    "a production build refuses the short-turns feature"
+);
 
 /// 100 ms, the default and the least `api.quote_interval`.
 pub(crate) const MIN_QUOTE_INTERVAL: Duration = Duration::from_millis(100);

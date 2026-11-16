@@ -4,15 +4,15 @@ pragma solidity 0.8.36;
 import {SeedSchedule} from "./SeedSchedule.sol";
 
 /// @title SeedReceiver
-/// @notice Records on Arbitrum the seeds `SeedRelay` proves on Ethereum, one per daily operator turn,
-/// and answers each turn's final seed from its draw deadline on.
+/// @notice Records on Arbitrum the seeds `SeedRelay` proves on Ethereum, one per operator turn, and
+/// answers each turn's final seed from its draw deadline on.
 /// @dev A seed is accepted only in a retryable ticket from the relay, which arrives from the relay's
 /// address with Arbitrum's L1-to-L2 alias applied; only for the epoch `SeedSchedule` fixes for its
 /// turn; and only before that turn's draw deadline. A turn with no relayed seed by then draws from
 /// the last seed relayed for an earlier turn, hashed with its own turn number: every turn before it
 /// has passed its own deadline, so that answer cannot change either. Who could stop every relay
 /// until a deadline can choose between a turn's mix and that fallback, which is why the schedule
-/// leaves a relay two days. No key administers this contract.
+/// leaves a relay two turns. No key administers this contract.
 contract SeedReceiver is SeedSchedule {
     /// @notice What Arbitrum adds to an Ethereum contract's address as the sender of its L1-to-L2
     /// messages (Arbitrum's `AddressAliasHelper`).
@@ -40,7 +40,7 @@ contract SeedReceiver is SeedSchedule {
     error SeedNotFinal(uint64 turn, uint64 deadline);
     error NoRelayedSeed(uint64 turn);
 
-    constructor(address relay_, uint64 genesisTime) SeedSchedule(genesisTime) {
+    constructor(address relay_, uint64 genesisTime, uint64 turnLength_) SeedSchedule(genesisTime, turnLength_) {
         if (relay_ == address(0)) revert ZeroAddress();
         relay = relay_;
         unchecked {

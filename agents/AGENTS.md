@@ -75,7 +75,9 @@ an index: load only the rule whose hint matches the current action.
   member's `TurnTaken`, from which the operator's share counts its time in office to its turn's end,
   `tests/daily_turns.rs`; from `V53`, a member's notice carried across sets that name it unchanged,
   and no office past the first turn's application for the account in it before turns run; from `V71` a promotion mirrored
-  after its turn's end applies while no later turn is in effect, and from `V72` the set of a refused draw is kept for it, `tests/daily_turns/late_promotion.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
+  after its turn's end applies while no later turn is in effect, and from `V72` the set of a refused draw is kept for it, `tests/daily_turns/late_promotion.rs`; the
+  development-only `short-turns` feature makes a turn five minutes, its draw lead one turn and a set's
+  notice one turn (`turns::TURN_MS`, `tests/short_turns.rs`), and a `production` node build refuses it), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), from `V70` cut by a proven fault's haircut, which starts at the recorded penalty and falls linearly to nothing, the withheld part going to stakers (`operator_faults.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
@@ -331,7 +333,10 @@ an index: load only the rule whose hint matches the current action.
   listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its
   `production` cargo feature refuses mock TEE, custody, and feed providers, an API without
   `[api.tls.acme]`, a genesis market fewer venues quote than its `min_sources`, and a secret read
-  from the environment, at config load; release images build with it. `engine ct-watch` (`ct_watch/`)
+  from the environment, at config load, and does not compile with the development-only `short-turns`
+  feature, whose five-minute turns every turn timing in the node follows (the seed relay's schedule,
+  the liveness rule's boundaries, the handover's turn ends), and whose staking mirror refuses a
+  schedule of another `turnLength()`; release images build with it. `engine ct-watch` (`ct_watch/`)
   is a separate process outside the enclave,
   holding no key of the node's: it verifies the node's attestation, follows RFC 6962 logs (bounded
   reads, tree head signatures checked, no consistency proofs), and raises `unattested_certificate`
@@ -420,8 +425,11 @@ an index: load only the rule whose hint matches the current action.
   (`signerAtEpoch`) and the assignment's revision each names (`OperatorSchedule.revisionOf`, one read
   per head), and emits `FaultProven` naming the member once per assignment, so a promotion's new
   epoch pairs with nothing before it.
-  `src/SeedSchedule.sol` fixes each daily operator turn's seed epoch
-  (the beacon epoch holding the time two days before its draw deadline, which is a day before its 22:30 UTC boundary);
+  `src/SeedSchedule.sol` fixes each operator turn's seed epoch, for the `turnLength` fixed at deployment (a day
+  in production; a divisor of a day of at least five minutes for a development stack, whose turns `OperatorSchedule`
+  takes from its receiver)
+  (the beacon epoch holding the time two turns before its draw deadline, which is a turn before its boundary, 22:30 UTC
+  with day-long turns);
   `src/SeedRelay.sol` on Ethereum proves that epoch's RANDAO mix from an EIP-4788 beacon block root, its
   header, and SSZ branches to the state's `fork.current_version` (one of the versions it was deployed
   with) and to `randao_mixes`, and sends it through Arbitrum's inbox as a retryable ticket;
@@ -667,6 +675,11 @@ an index: load only the rule whose hint matches the current action.
   start budget (printed), its first checkpoint once the promotion is final, its replacement standby key
   vouched for by its own signer key, A's authorization reissued and paid once, and its log replayed
   across the change of signer;
+  `dev-short-turns.sh`, the short-turns scenario (#850) on a `short-turns` build, the node binary's own
+  start for A, B and C on a chain running on true time with five-minute turns: two boundaries at which
+  the turn's member takes the keys by itself, logs `TurnTaken` and its admin key signs while the previous
+  turn's is refused, the incumbent killed and the next member's standby key promoted, and the promoted
+  member's log replayed across the change of signer;
   `dev-operator-faults.sh`, the operator faults scenario on Anvil, from `V70`: B's enclave, restarted
   by its host from an older copy of its log during B's turn, signs heads of two histories at one seq,
   anyone proves them to `FaultProof`, the next closes cut B's share by the decaying haircut, a later turn
@@ -755,7 +768,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking, launch values, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation, parameter votes and operator faults dev scenarios (`dev-daily-rotation`), the enclave key
+  deposit finality scenarios, the MONKEY staking, launch values, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation, parameter votes and operator faults dev scenarios (`dev-daily-rotation`), the short-turns build's clippy, turn tests and dev scenario (`dev-short-turns`), the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
@@ -1030,6 +1043,12 @@ Run from the repo root:
   parts' callers, head poster, rule and member links with handovers modelled by moving the keys)
 - Minute-scale liveness dev scenario: `./scripts/dev-liveness.sh` (Anvil, Forge and installed Soldeer
   dependencies; about thirty minutes of wall time; CI runs it in the `dev-daily-rotation` job)
+- Short turns, development builds only: `cargo test -p engine-core --features short-turns --test
+  short_turns`, and the node's turn timings with `cargo test -p engine-node --features short-turns --lib
+  -- seed_relay::schedule liveness::chain::tests custody::tests::staking`; a short-turns build fails the
+  other reference-log and turn tests, which hold day-long turns. Its dev scenario:
+  `./scripts/dev-short-turns.sh` (Anvil, Forge and installed Soldeer dependencies; about twenty minutes
+  of wall time; CI runs it in the `dev-short-turns` job with the feature build's clippy and tests)
 - Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens
   read through the custody quorum into `/v1/operators`, the closed epochs in `/v1/monkey/distributions`
   across a delegation and a restart, and each saved answer verified with `engine verify-response`)

@@ -15,7 +15,7 @@ contract SeedReceiverTest is Test {
     SeedReceiver internal receiver;
 
     function setUp() public {
-        receiver = new SeedReceiver(relay, GENESIS);
+        receiver = new SeedReceiver(relay, GENESIS, 1 days);
     }
 
     function test_TheScheduleFixesMainnetTurnsToEpochsADayApart() public view {
@@ -59,7 +59,7 @@ contract SeedReceiverTest is Test {
     function test_TheAliasIsTheRelayPlusArbitrumsOffset() public {
         assertEq(receiver.relayAlias(), address(uint160(relay) + uint160(0x1111000000000000000000000000000000001111)));
         // An address past the offset's complement wraps, as Arbitrum's alias does.
-        SeedReceiver high = new SeedReceiver(address(type(uint160).max), GENESIS);
+        SeedReceiver high = new SeedReceiver(address(type(uint160).max), GENESIS, 1 days);
         assertEq(high.relayAlias(), address(uint160(0x1111000000000000000000000000000000001110)));
     }
 
@@ -175,11 +175,58 @@ contract SeedReceiverTest is Test {
         }
     }
 
+    function test_RevertWhen_TheTurnLengthIsUnderFiveMinutesOrNoDivisorOfADay() public {
+        uint64[5] memory refused = [uint64(0), 4 minutes, 299, 7 minutes, 2 days];
+        for (uint256 i = 0; i < refused.length; ++i) {
+            vm.expectRevert(abi.encodeWithSelector(SeedSchedule.InvalidTurnLength.selector, refused[i]));
+            new SeedReceiver(relay, GENESIS, refused[i]);
+        }
+        assertEq(new SeedReceiver(relay, GENESIS, 5 minutes).turnLength(), 5 minutes);
+        assertEq(receiver.turnLength(), 1 days);
+        assertEq(receiver.boundaryOffset(), 22 hours + 30 minutes);
+    }
+
+    /// A five-minute turn starts every five minutes, 22:30 UTC among them; it is drawn a turn ahead from
+    /// the mix of the epoch two turns before that, and a relay is refused from its deadline.
+    function test_FiveMinuteTurnsKeepTheScheduleInTurns() public {
+        SeedReceiver short = new SeedReceiver(relay, GENESIS, 5 minutes);
+        assertEq(short.boundaryOffset(), 0);
+        uint64 turn = 1794004200 / 5 minutes;
+        assertEq(short.boundary(turn), 1794004200, "22:30 UTC on 2026-11-06 is a boundary");
+        assertEq(short.drawDeadline(turn), 1794004200 - 5 minutes);
+        assertEq(short.seedEpoch(turn), (1794004200 - 15 minutes - GENESIS) / 384);
+        vm.warp(short.drawDeadline(turn) - 1);
+        (uint64 epoch, address aliased) = (short.seedEpoch(turn), short.relayAlias());
+        vm.prank(aliased);
+        short.receiveSeed(turn, epoch, bytes32(uint256(7)));
+        assertEq(short.seedOf(turn), bytes32(uint256(7)));
+        vm.warp(short.drawDeadline(turn + 1));
+        epoch = short.seedEpoch(turn + 1);
+        vm.expectRevert(abi.encodeWithSelector(SeedReceiver.DrawDeadlinePassed.selector, turn + 1, block.timestamp));
+        vm.prank(aliased);
+        short.receiveSeed(turn + 1, epoch, bytes32(uint256(8)));
+    }
+
+    /// At every turn length a deployment may take, a turn ends where the next starts, a turn later, and
+    /// each 22:30 UTC is a boundary.
+    function testFuzz_TurnsTileEachDayAtEveryLength(uint256 divisor, uint64 turn, uint64 day) public {
+        uint64[3] memory lengths = [uint64(5 minutes), 1 hours, 1 days];
+        uint64 length = lengths[bound(divisor, 0, lengths.length - 1)];
+        SeedReceiver schedule = new SeedReceiver(relay, GENESIS, length);
+        turn = uint64(bound(turn, 0, type(uint64).max / 1 days - 2));
+        assertEq(schedule.boundary(turn + 1) - schedule.boundary(turn), length);
+        assertEq(schedule.drawDeadline(turn + 1), schedule.boundary(turn));
+        day = uint64(bound(day, 0, 1_000_000));
+        uint64 halfPastTen = day * 1 days + 22 hours + 30 minutes;
+        uint64 named = (halfPastTen - schedule.boundaryOffset()) / length;
+        assertEq(schedule.boundary(named), halfPastTen);
+    }
+
     function test_RevertWhen_TheRelayIsZero() public {
         vm.expectRevert(SeedReceiver.ZeroAddress.selector);
-        new SeedReceiver(address(0), GENESIS);
+        new SeedReceiver(address(0), GENESIS, 1 days);
         vm.expectRevert(SeedSchedule.ZeroGenesisTime.selector);
-        new SeedReceiver(relay, 0);
+        new SeedReceiver(relay, 0, 1 days);
     }
 
     function deliver(uint64 turn, bytes32 seed) internal {

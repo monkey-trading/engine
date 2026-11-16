@@ -6,7 +6,7 @@ use crate::engine::Engine;
 use crate::event::Event;
 use crate::governance::is_governed;
 use crate::protocol::ProtocolVersion;
-use crate::turns::{DAY_MS, boundary};
+use crate::turns::{DRAW_LEAD_MS, boundary};
 use crate::types::Millis;
 
 impl Engine {
@@ -93,9 +93,9 @@ impl Engine {
     }
 
     /// Whether a frontier at `block_time` may name a turn that begins at `since`: from the epoch to the
-    /// block's time, from `V67` to a day after it, for a turn drawn and not yet started.
+    /// block's time, from `V67` to a draw lead after it, for a turn drawn and not yet started.
     pub(crate) fn turn_names_at(&self, since: Millis, block_time: Option<Millis>) -> bool {
-        let ahead = if self.protocol_version >= ProtocolVersion::V67 { DAY_MS } else { 0 };
+        let ahead = if self.protocol_version >= ProtocolVersion::V67 { DRAW_LEAD_MS } else { 0 };
         block_time.is_some_and(|time| (0..=time.saturating_add(ahead)).contains(&since))
     }
 }

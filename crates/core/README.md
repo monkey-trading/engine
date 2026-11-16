@@ -94,6 +94,10 @@ this crate and reproduce the signed state roots exactly.
   (`src/staking/office.rs`)
 - From protocol `V51`, daily operator turns (`src/turns.rs`): a registry that names a schedule adopts
   a rotation set at each election close and draws a turn for each 22:30 UTC boundary from it. The
+  development-only `short-turns` feature makes a turn five minutes, with a boundary every five
+  minutes, a draw lead of one turn and one turn's notice of a set's keys (`TURN_MS`,
+  `SET_NOTICE_MS`): its logs replay only under the same feature, and a `production` node build does
+  not compile with it. The
   schedule's finalised `RotationSetAdopted` and `TurnAssigned` events arrive as `adopt_rotation_set`
   and `assign_turn` commands on the staking mirror, each credited once. A turn's admin key signs from
   its boundary, or from its mirror when that is later; a turn whose key no set mirrored seven days
@@ -691,6 +695,9 @@ level a lapse leaves them at, reduce-only, and replay.
 
 ```bash
 cargo test -p engine-core
+# A short-turns development build's five-minute turns; the other turn and reference-log tests hold
+# day-long turns, which such a build does not have
+cargo test -p engine-core --features short-turns --test short_turns
 ```
 
 Two suites guard replay and accounting:

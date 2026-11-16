@@ -65,7 +65,7 @@ impl World {
             &chain.provider,
             chain.accounts[0],
             "SeedReceiver.sol/SeedReceiver.json",
-            &(chain.accounts[9], 1_606_824_023u64).abi_encode_params(),
+            &(chain.accounts[9], 1_606_824_023u64, crate::seed_relay::schedule::TURN_SECS).abi_encode_params(),
         )
         .await;
         let from = chain.accounts[0];
