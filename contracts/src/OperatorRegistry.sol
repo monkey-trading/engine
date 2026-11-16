@@ -715,12 +715,13 @@ contract OperatorRegistry {
     /// starts, a member of the last drawn turn holds one. From then on, a member that held any
     /// assignment of the turn in effect or of the last drawn turn; the candidate whose release signed
     /// the newest head of the vault's signer epoch, whose enclave holds the keys; and, walking back from
-    /// the turn in effect, each turn's source and the members of the turn drawn before it that may hold
-    /// the keys: once a head latched that turn's latest assignment, or it is a promotion, only its
-    /// member; otherwise any member that held an assignment of it, which a take before a skip leaves
-    /// the keys with, and the walk goes on to it, since no member took the keys from its source. The
-    /// walk stops where the registry named an operator of its own after the earlier turn ended, by an
-    /// installation or an election while rotation was off, and at the source of the turn
+    /// the turn in effect, the members of the turn drawn before each turn that may hold the keys: once a
+    /// head latched that earlier turn's latest assignment, or it is a promotion, only its member, and the
+    /// walk ends; otherwise any member that held an assignment of it, which a take before a skip leaves
+    /// the keys with, the later turn's source among them, and the walk goes on to it, since no member
+    /// took the keys from its source. The walk stops, and the source of the last turn it reached may hold
+    /// the keys, at the first drawn turn, where the registry named an operator of its own after the
+    /// earlier turn ended, by an installation or an election while rotation was off, and
     /// `HOLDER_LOOKBACK` turns back. False without a schedule.
     function holdsTurn(address candidate) public view returns (bool) {
         OperatorSchedule turns = schedule;
@@ -733,10 +734,11 @@ contract OperatorRegistry {
         bytes32 release = candidates[candidate].release;
         if (release != 0 && release == heads.headRelease(vault.signerEpoch())) return true;
         for (uint256 back = 0;; ++back) {
-            if (candidate == named.source) return true;
             turn = named.prior;
+            // Short of a stop, the registry named the earlier turn's member at the draw, so the source
+            // held an assignment of it.
             if (back == HOLDER_LOOKBACK || turn == 0 || current.since >= turns.boundary(turn) + 1 days) {
-                return false;
+                return candidate == named.source;
             }
             named = turns.turnOf(turn);
             (uint64 latchedAt,,,,) = heads.latches(turn, named.position);
