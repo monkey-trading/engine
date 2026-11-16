@@ -255,11 +255,11 @@ impl VenueConnection {
 }
 
 impl VenuesSection {
-    /// Checks the values that would otherwise fail silently: a venue's connections quoting one
-    /// instrument twice, a symbol that could mean two instruments, a feed missing its credentials,
-    /// or one the host could forge. Two venues of one source name, as Coinbase's Advanced Trade and
-    /// Exchange feeds are, may quote the same instrument: the engine holds the later-stamped of
-    /// their quotes as that one source.
+    /// Checks the values that would otherwise fail silently: one connection quoting one instrument
+    /// twice, a symbol that could mean two instruments, a feed missing its credentials, or one the
+    /// host could forge. Two connections of one source name, as a venue read on two connections or
+    /// Coinbase's Advanced Trade and Exchange feeds are, may quote the same instrument: the engine
+    /// holds the later-stamped of their quotes as that one source.
     /// Error cases:
     /// - `timeout`, `reconnect_min`, `stale_after`, or `ping_interval` is zero, `reconnect_min`
     ///   exceeds `reconnect_max`, or `ping_interval` is not under `max_delay`
@@ -271,7 +271,7 @@ impl VenuesSection {
     /// - an OAuth login missing for CME or given for another venue, or its token URL not `https://`
     ///   on the venue's own domain
     /// - a CME symbol that does not name, as `<product>:<YYYYMM>`, the contract it quotes
-    /// - a symbol listed twice on one connection, or a market and contract, or a URL, listed twice
+    /// - a symbol, or a market and contract, listed twice on one connection, or a URL listed twice
     ///   for one venue
     pub(super) fn validate(&self) -> anyhow::Result<()> {
         ensure!(
@@ -285,7 +285,6 @@ impl VenuesSection {
             "ping_interval must be non-zero and shorter than max_delay"
         );
         ensure!(!self.connections.is_empty(), "no connections");
-        let mut instruments = BTreeSet::new();
         let mut endpoints = BTreeSet::new();
         for conn in &self.connections {
             let name = conn.venue.name();
@@ -302,7 +301,7 @@ impl VenuesSection {
                 "{name} names both api_key_env and api_key_secret"
             );
             ensure!(!conn.symbols.is_empty(), "{name} has no symbols");
-            let mut symbols = BTreeSet::new();
+            let (mut symbols, mut instruments) = (BTreeSet::new(), BTreeSet::new());
             for s in &conn.symbols {
                 ensure!(symbols.insert(s.symbol.as_str()), "{name} lists symbol {} twice", s.symbol);
                 if conn.venue == Venue::Cme {
@@ -311,7 +310,7 @@ impl VenuesSection {
                 }
                 let contract = s.contract.as_deref().map(|c| format!(" contract {c}")).unwrap_or_default();
                 ensure!(
-                    instruments.insert((conn.venue, s.market, s.contract.as_deref())),
+                    instruments.insert((s.market, s.contract.as_deref())),
                     "{name} lists market {}{contract} twice",
                     s.market
                 );

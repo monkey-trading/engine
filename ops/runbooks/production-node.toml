@@ -228,8 +228,9 @@ ping_interval = "500ms"
 max_delay = "2s"
 
 # Crypto: Coinbase and Kraken, public feeds with no key. Each market needs both (min_sources = 2).
-# Coinbase is read on two hosts, Advanced Trade and Exchange, quoted as the one source `coinbase`:
-# the engine holds the later-stamped of the two, so either keeps Coinbase's leg while the other fails.
+# Coinbase is read on two hosts, Advanced Trade and Exchange, quoted as the one source `coinbase`,
+# and Kraken on two connections, quoted as `kraken`: the engine holds the later-stamped of a source's
+# quotes, so either connection keeps its venue's leg while the other fails.
 [[feeds.venues.connections]]
 venue = "coinbase"
 url = "wss://advanced-trade-ws.coinbase.com"
@@ -416,6 +417,13 @@ symbols = [{ market = 40, symbol = "AAPL" }] # OWNER: add markets 41 to 59, and 
 venue = "coinbase_exchange"
 url = "wss://ws-feed.exchange.coinbase.com"
 symbols = [{ market = 1, symbol = "BTC-USD" }, { market = 2, symbol = "ETH-USD" }, { market = 3, symbol = "SOL-USD" }]
+
+# Kraken's second connection, for the crypto markets above. Kraken ignores the query, which gives the
+# connection a URL, and so alerts, of its own.
+[[feeds.venues.connections]]
+venue = "kraken"
+url = "wss://ws.kraken.com/v2?connection=2"
+symbols = [{ market = 1, symbol = "BTC/USD" }, { market = 2, symbol = "ETH/USD" }, { market = 3, symbol = "SOL/USD" }]
 
 # Trusted time: a strict majority of these independent servers must agree. The attestation binds
 # this file, so a verifier checks the keys against a published copy.

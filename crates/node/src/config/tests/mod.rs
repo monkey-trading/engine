@@ -401,17 +401,12 @@ fn the_committed_venue_feeds_price_both_crypto_markets_from_coinbase_and_kraken(
 #[test]
 fn venue_settings_that_would_fail_silently_are_refused() {
     type Edit = fn(&mut VenuesSection);
-    let cases: [(&str, Edit); 13] = [
+    let cases: [(&str, Edit); 12] = [
         ("non-zero", |v| v.timeout = Duration::ZERO),
         ("non-zero", |v| v.reconnect_min = Duration::ZERO),
         ("non-zero", |v| v.stale_after = Duration::ZERO),
         ("exceeds reconnect_max", |v| v.reconnect_max = v.reconnect_min / 2),
         ("no connections", |v| v.connections.clear()),
-        ("coinbase lists market 1 twice", |v| {
-            let mut again = v.connections[0].clone();
-            again.url.push_str("/again");
-            v.connections.push(again)
-        }),
         ("must be wss://", |v| v.connections[0].url = "ws://advanced-trade-ws.coinbase.com".into()),
         ("must be on coinbase.com", |v| v.connections[0].url = "wss://ws.kraken.com/v2".into()),
         ("must be on coinbase.com", |v| v.connections[0].url = "wss://coinbase.com.example.net".into()),
@@ -426,6 +421,22 @@ fn venue_settings_that_would_fail_silently_are_refused() {
         let err = format!("{:#}", cfg.validate().unwrap_err());
         assert!(err.contains(expected), "expected {expected:?}, got {err}");
     }
+}
+
+/// A venue read on two connections, each with its own URL, is redundancy: both may quote the same
+/// instruments, as one source. The same URL twice is refused, since a venue's alerts name a
+/// connection by it.
+#[test]
+fn a_venue_may_be_read_on_two_connections_with_their_own_urls() {
+    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+    let venues = cfg.feeds.venues.as_mut().unwrap();
+    let kraken = venues.connections.iter().find(|conn| conn.venue == Venue::Kraken).unwrap().clone();
+    venues.connections.push(VenueConnection { url: format!("{}?connection=2", kraken.url), ..kraken.clone() });
+    cfg.validate().unwrap();
+
+    cfg.feeds.venues.as_mut().unwrap().connections.last_mut().unwrap().url = kraken.url.clone();
+    let err = format!("{:#}", cfg.validate().unwrap_err());
+    assert!(err.contains("kraken lists url wss://ws.kraken.com/v2 twice"), "{err}");
 }
 
 #[test]
