@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use alloy::primitives::B256;
+use alloy::primitives::{B256, U256};
 use axum::extract::State;
 use axum::{Json, Router, routing::post};
 use serde_json::{Value, json};
@@ -12,7 +12,7 @@ use crate::checkpoints::rpc::CandidateReturn;
 use crate::checkpoints::{CheckpointChain, LifecycleEvidence, VaultState};
 use crate::config::{CheckpointSection, FinalityTag};
 use crate::log::CheckpointDomain;
-use crate::standby_key::chain::{AssignmentReturn, assignmentOfReturn};
+use crate::standby_key::chain::{RevisionReturn, assignmentOfCall, revisionOfReturn};
 
 const VAULT: Address = Address::repeat_byte(0x11);
 const REGISTRY: Address = Address::repeat_byte(0x22);
@@ -20,7 +20,7 @@ const SCHEDULE: Address = Address::repeat_byte(0x33);
 const PINNED: B256 = B256::repeat_byte(0x44);
 
 /// The chain a stand-in node answers for: the registry and schedule the vault and registry name, and
-/// the most `assignmentOf` reads it has had in flight at once.
+/// the most assignment reads it has had in flight at once.
 struct Chain {
     named: Mutex<(Address, Address)>,
     in_flight: AtomicUsize,
@@ -29,9 +29,11 @@ struct Chain {
 
 /// The members of a turn's assignments before its latest, read at the pinned finalized block: turn 8 was
 /// drawn for A at position 0, skipped past an unassigned position to B at 2, then to C at 3, its latest,
-/// which is not read; turn 7, its draw alone at position 2, is read no further. A registry with no
-/// schedule, or a vault with no registry, gives none, and an observation finality has not fixed, or
-/// one pinned to no block, is refused.
+/// which is not read; turn 7, its draw alone at position 2, is read no further. Each assignment's
+/// revision history is longer than the stand-in answers `assignmentOf` for, as an RPC's limits refuse a
+/// member's repeated release moves, and the members read are the same. A registry with no schedule, or a
+/// vault with no registry, gives none, and an observation finality has not fixed, or one pinned to no
+/// block, is refused.
 #[tokio::test]
 async fn the_members_a_turns_latest_assignment_superseded_are_read_in_the_order_made() {
     let (rpc, chain, server) = serve().await;
@@ -84,9 +86,9 @@ async fn serve() -> (CheckpointRpc, Arc<Chain>, tokio::task::JoinHandle<()>) {
     (rpc, chain, server)
 }
 
-/// Answers the vault's, registry's and schedule's reads at the pinned block, panicking on any other;
-/// an `assignmentOf` answer of turn 9 takes 10 ms for each position below 10, and member 0x91's
-/// registration 60 ms.
+/// Answers the vault's, registry's and schedule's reads at the pinned block, panicking on any other,
+/// and refuses every `assignmentOf` as over its response limit; an assignment's member of turn 9 takes
+/// 10 ms for each position below 10, and member 0x91's registration 60 ms.
 async fn answer(State(chain): State<Arc<Chain>>, Json(request): Json<Value>) -> Json<Value> {
     let (registry, schedule) = *chain.named.lock().unwrap();
     let call = &request["params"][0];
@@ -119,26 +121,31 @@ async fn answer(State(chain): State<Arc<Chain>>, Json(request): Json<Value>) -> 
                 other => panic!("turn {other} read"),
             })
         }
-        (SCHEDULE, assignmentOfCall::SELECTOR) => {
-            let asked = assignmentOfCall::abi_decode(&input).unwrap();
+        (SCHEDULE, revisionOfCall::SELECTOR) => {
+            let asked = revisionOfCall::abi_decode(&input).unwrap();
+            assert_eq!(asked.index, U256::ZERO, "a revision past the first was read");
             if asked.turn == 9 {
                 let now = chain.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
                 chain.most.fetch_max(now, Ordering::SeqCst);
                 tokio::time::sleep(Duration::from_millis(10 * u64::from(10 - asked.position))).await;
                 chain.in_flight.fetch_sub(1, Ordering::SeqCst);
             }
-            let made = match (asked.turn, asked.position) {
-                (8, 0) => assigned(0xa1, DRAWN),
-                (8, 1) => assigned(0, DRAWN),
-                (8, 2) => assigned(0xb1, 1),
+            let member = match (asked.turn, asked.position) {
+                (8, 0) => 0xa1,
+                (8, 1) => 0,
+                (8, 2) => 0xb1,
                 (8, 3) | (9, 9) => panic!("the latest assignment was read"),
                 (7, _) => panic!("a turn its draw alone holds was read further"),
-                (9, 0) => assigned(0x91, DRAWN),
-                (9, 6) => assigned(0x92, 1),
-                (9, _) => assigned(0, DRAWN),
+                (9, 0) => 0x91,
+                (9, 6) => 0x92,
+                (9, _) => 0,
                 other => panic!("assignment {other:?} read"),
             };
-            assignmentOfCall::abi_encode_returns(&assignmentOfReturn { _0: made, _1: Vec::new() })
+            revisionOfCall::abi_encode_returns(&first_revision(member))
+        }
+        (SCHEDULE, assignmentOfCall::SELECTOR) => {
+            let error = json!({"code": -32000, "message": "response size exceeded"});
+            return Json(json!({"jsonrpc":"2.0","id":request["id"],"error":error}));
         }
         other => panic!("unexpected read {other:?}"),
     };
@@ -159,21 +166,12 @@ fn turn(byte: u8, position: u16, reason: u8) -> TurnReturn {
     }
 }
 
-/// An assignment of member `byte`, the zero address for `0`, for `reason`.
-fn assigned(byte: u8, reason: u8) -> AssignmentReturn {
-    let candidate = Address::repeat_byte(byte);
-    AssignmentReturn {
-        candidate,
-        adminKey: candidate,
-        setId: 1,
-        reason,
-        standbyKey: Address::ZERO,
-        signerEpoch: 0,
-        headSeq: 0,
-        headLink: B256::ZERO,
-        checkpointSeq: 0,
-        checkpointRoot: B256::ZERO,
-        at: 0,
+/// The first revision of an assignment of member `byte`, the zero address and no revision for `0`.
+fn first_revision(byte: u8) -> revisionOfReturn {
+    let generation = u64::from(byte != 0);
+    revisionOfReturn {
+        candidate: Address::repeat_byte(byte),
+        revision: RevisionReturn { release: B256::repeat_byte(byte), generation },
     }
 }
 

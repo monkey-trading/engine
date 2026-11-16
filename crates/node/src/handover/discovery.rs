@@ -7,7 +7,7 @@
 //! source and the holders of earlier turns (`turns::sources`). A head's release is a first guess and
 //! never proof: each operator is asked in turn, and only the one that hands the keys over holds them.
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 use anyhow::Context;
 use engine_core::types::AccountId;
 use futures_util::{StreamExt, TryStreamExt, stream};
@@ -15,7 +15,7 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use crate::checkpoints::{CheckpointChain, HandoverSource, Observation, ScheduledTurn};
 use crate::handover::assigned::{Assigned, Assignments, call};
 use crate::liveness::chain::setOfCall;
-use crate::standby_key::chain::{AgreedBlock, StandbyDomain, assignmentOfCall, candidateOfCall, heldTurnCall};
+use crate::standby_key::chain::{AgreedBlock, StandbyDomain, candidateOfCall, heldTurnCall, revisionOfCall};
 
 /// How many of a set's members, or of the turn's assignments, are read at once.
 const MEMBER_READS: usize = 8;
@@ -107,9 +107,9 @@ pub(crate) fn ordered(
 }
 
 /// The members of `assigned`'s set at `block`, each with its registration and the position of its
-/// assignment of `assigned`'s turn, if it held one, in the set's order: the assignments are read at
-/// each position up to the current one, at most the draw's positions and the set's size, `MEMBER_READS`
-/// at a time.
+/// assignment of `assigned`'s turn, if it held one, in the set's order: each assignment's member is read
+/// at each position up to the current one, at most the draw's positions and the set's size, `MEMBER_READS`
+/// at a time, through `revisionOf`, whose cost does not grow with the assignment's revisions.
 /// Error cases:
 /// - a call fails or does not decode, or the vault names no schedule
 pub(crate) async fn members(
@@ -123,8 +123,10 @@ pub(crate) async fn members(
     let (set, turn, current) = (assigned.set, assigned.binding.turn, assigned.binding.position);
     let listed = call(block, "discovery_set", domain.schedule, setOfCall { setId: set }).await?;
     let assignment_at = |position| async move {
-        let made = call(block, "discovery_assignment", domain.schedule, assignmentOfCall { turn, position }).await?;
-        anyhow::Ok((made._0.candidate, position))
+        let index = U256::ZERO;
+        let made =
+            call(block, "discovery_assignment", domain.schedule, revisionOfCall { turn, position, index }).await?;
+        anyhow::Ok((made.candidate, position))
     };
     let made: Vec<(Address, u16)> =
         stream::iter(0..=current).map(assignment_at).buffered(MEMBER_READS).try_collect().await?;

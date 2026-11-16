@@ -9,7 +9,7 @@ use crate::handover::discovery::Registered;
 use crate::liveness::chain::{rotationStateReturn, setOfCall, setOfReturn};
 use crate::standby_key::chain::{
     AssignmentReturn, CandidateReturn, RevisionReturn, TurnReturn, assignmentOfReturn, candidateOfCall, heldTurnCall,
-    registryCall, scheduleCall, turnAtReturn,
+    registryCall, revisionOfCall, revisionOfReturn, scheduleCall, turnAtReturn,
 };
 
 pub(crate) const VAULT: Address = Address::repeat_byte(0x7a);
@@ -226,6 +226,9 @@ async fn an_epoch_with_no_v2_head_names_no_head_release() {
     assert_eq!(read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap().unwrap().head_release, None);
 }
 
+/// Each assignment's member is read through `revisionOf`'s first revision: the block answers no
+/// `assignmentOf`, which an assignment whose member moved its release over and over makes too large for
+/// an RPC to answer, and the members read are the same.
 #[tokio::test]
 async fn a_set_reads_each_member_with_its_registration_and_its_assignments_position() {
     let mut block = Scripted::scheduled();
@@ -239,21 +242,9 @@ async fn a_set_reads_each_member_with_its_registration_and_its_assignments_posit
             3 => a,
             _ => Address::ZERO,
         };
-        let made = AssignmentReturn {
-            candidate,
-            adminKey: Address::ZERO,
-            setId: 2,
-            reason: 0,
-            standbyKey: Address::ZERO,
-            signerEpoch: 0,
-            headSeq: 0,
-            headLink: B256::ZERO,
-            checkpointSeq: 0,
-            checkpointRoot: B256::ZERO,
-            at: 0,
-        };
-        let call = assignmentOfCall { turn: TURN, position };
-        block.answer(SCHEDULE, call, &assignmentOfReturn { _0: made, _1: Vec::new() });
+        let revision = RevisionReturn { release: B256::repeat_byte(candidate.0[0]), generation: 7 };
+        let call = revisionOfCall { turn: TURN, position, index: U256::ZERO };
+        block.answer(SCHEDULE, call, &revisionOfReturn { candidate, revision });
     }
     for (candidate, held, host) in [(a, true, "a.test"), (b, false, "b.test"), (c, true, "c.test")] {
         let registered = CandidateReturn {
