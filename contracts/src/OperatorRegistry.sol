@@ -5,12 +5,14 @@ import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {TimelockController} from "@openzeppelin-contracts/governance/TimelockController.sol";
 import {ECDSA} from "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
 
+import {LogHeads} from "./LogHeads.sol";
 import {OperatorSchedule} from "./OperatorSchedule.sol";
 import {Staking} from "./Staking.sol";
 
 /// @dev The vault the liveness clock reads: the registry asks it when a checkpoint last posted.
 interface IVault {
     function lastCheckpointAt() external view returns (uint64);
+    function signerEpoch() external view returns (uint64);
 }
 
 /// @title OperatorRegistry
@@ -155,6 +157,13 @@ contract OperatorRegistry {
     uint256 private constant BPS = 10_000;
     uint256 private constant MAX_HOSTNAME_BYTES = 253;
     uint256 private constant MAX_ENDPOINT_BYTES = 512;
+    /// @dev `OperatorSchedule.Turn.reason` for a promotion.
+    uint8 private constant PROMOTED = 2;
+
+    /// @dev How many drawn turns back from the turn in effect `holdsTurn` walks: as far as a member
+    /// taking a turn looks for the keys (the node's `SOURCE_LOOKBACK`), a week of turns no member took,
+    /// past which the governance fallback applies.
+    uint256 private constant HOLDER_LOOKBACK = 7;
 
     /// @notice The staking contract this registry deployed, whose delegations vote.
     Staking public immutable staking;
@@ -416,9 +425,8 @@ contract OperatorRegistry {
 
     /// @notice Removes the caller's candidacy; its self-bond stays locked for one cooldown. The
     /// operator in effect while no turn names one, a candidate elected and waiting to take effect,
-    /// and, while a turn names the operator or drawn turns run, a member that held any assignment of
-    /// the turn in effect or of the last drawn turn, or may hold the keys the turn in effect's member
-    /// takes (`OperatorSchedule.holdsTurn`), cannot leave.
+    /// and, while a turn names the operator or drawn turns run, a member that holds a turn or may hold
+    /// the keys the turn in effect's member takes (`holdsTurn`) cannot leave.
     function deregister() external {
         Candidate memory registered = candidates[msg.sender];
         if (registered.adminKey == address(0)) revert NotRegistered();
@@ -702,6 +710,46 @@ contract OperatorRegistry {
         return source;
     }
 
+    /// @notice Whether `candidate` holds a turn of the schedule, or may hold the keys the turn in
+    /// effect's member takes; `deregister` refuses such a member while turns run. Before any turn
+    /// starts, a member of the last drawn turn holds one. From then on, a member that held any
+    /// assignment of the turn in effect or of the last drawn turn; the candidate whose release signed
+    /// the newest head of the vault's signer epoch, whose enclave holds the keys; and, walking back from
+    /// the turn in effect, each turn's source and the members of the turn drawn before it that may hold
+    /// the keys: once a head latched that turn's latest assignment, or it is a promotion, only its
+    /// member; otherwise any member that held an assignment of it, which a take before a skip leaves
+    /// the keys with, and the walk goes on to it, since no member took the keys from its source. The
+    /// walk stops where the registry named an operator of its own after the earlier turn ended, by an
+    /// installation or an election while rotation was off, and at the source of the turn
+    /// `HOLDER_LOOKBACK` turns back. False without a schedule.
+    function holdsTurn(address candidate) public view returns (bool) {
+        OperatorSchedule turns = schedule;
+        if (address(turns) == address(0)) return false;
+        (uint64 turn, OperatorSchedule.Turn memory named) = turns.turnAt(uint64(block.timestamp));
+        if (_held(turns, turns.lastDrawnTurn(), candidate)) return true;
+        if (turn == 0) return false;
+        if (_held(turns, turn, candidate)) return true;
+        LogHeads heads = turns.logHeads();
+        bytes32 release = candidates[candidate].release;
+        if (release != 0 && release == heads.headRelease(vault.signerEpoch())) return true;
+        for (uint256 back = 0;; ++back) {
+            if (candidate == named.source) return true;
+            turn = named.prior;
+            if (back == HOLDER_LOOKBACK || turn == 0 || current.since >= turns.boundary(turn) + 1 days) {
+                return false;
+            }
+            named = turns.turnOf(turn);
+            (uint64 latchedAt,,,,) = heads.latches(turn, named.position);
+            if (latchedAt != 0 || named.reason == PROMOTED) return candidate == named.candidate;
+            if (_held(turns, turn, candidate)) return true;
+        }
+    }
+
+    /// @dev Whether `candidate` held any assignment of `turn` in `turns`.
+    function _held(OperatorSchedule turns, uint64 turn, address candidate) private view returns (bool) {
+        return turns.heldTurn(turn, candidate);
+    }
+
     /// @dev The operator in effect, pending one settled.
     function _inEffect() private view returns (Operator memory) {
         if (pending.effectiveAt != 0 && block.timestamp >= pending.effectiveAt) {
@@ -744,7 +792,7 @@ contract OperatorRegistry {
     function _holdsRunningTurn(address candidate, bool turnNamed) private view returns (bool) {
         OperatorSchedule turns = schedule;
         if (address(turns) == address(0)) return false;
-        return (turnNamed || turns.turnsRunUntil() > block.timestamp) && turns.holdsTurn(candidate);
+        return (turnNamed || turns.turnsRunUntil() > block.timestamp) && holdsTurn(candidate);
     }
 
     /// @dev The operator elections name: a pending promotion from the moment it is made, a pending

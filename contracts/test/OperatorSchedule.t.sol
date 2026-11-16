@@ -656,7 +656,7 @@ contract OperatorScheduleTest is ScheduleTest {
         registry.closeEpoch();
     }
 
-    function test_TheOperatorBeforeTheTurnsMayLeaveOnceTurnsNameOthers() public {
+    function test_TheOperatorBeforeTheTurnsMayLeaveOnceTheFirstMemberTookTheKeys() public {
         // The deployment's operator registers without votes, so the set names alice alone.
         _candidate(deployerKey, MIN_BOND, 0);
         uint32 setId = _rotateOne(alice);
@@ -677,6 +677,19 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(registry.candidateOf(deployerKey).adminKey, address(0));
     }
 
+    function test_TheOperatorBeforeTheTurnsStaysWhileNoMemberTookTheKeys() public {
+        _candidate(deployerKey, MIN_BOND, 0);
+        _rotateOne(alice);
+        uint64 turn = _nextTurn() + 1;
+        _relay(turn, keccak256("seed"));
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        _draw(turn + 1);
+        vm.warp(schedule.boundary(turn + 1));
+        assertEq(registry.namedOperator().candidate, alice);
+        _assertCannotLeave(deployerKey, "alice took no keys from it");
+    }
+
     function test_AMemberMayLeaveOnceAnInstallationEndsTheTurns() public {
         _rotateOne(alice);
         uint64 turn = _nextTurn() + 1;
@@ -689,7 +702,7 @@ contract OperatorScheduleTest is ScheduleTest {
         _assertCannotLeave(alice, "named after its turn ends");
         vm.prank(address(governance));
         registry.installOperator(carol, _key(carol), _digest(7), CONFIG);
-        assertTrue(schedule.holdsTurn(alice));
+        assertTrue(registry.holdsTurn(alice));
         vm.prank(alice);
         registry.deregister();
         assertEq(registry.candidateOf(alice).adminKey, address(0));
@@ -748,7 +761,7 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(registry.namedOperator().candidate, deployerKey);
 
         vm.warp(since);
-        assertTrue(schedule.holdsTurn(deployerKey), "the source of the turn in effect");
+        assertTrue(registry.holdsTurn(deployerKey), "the source of the turn in effect");
         (uint64 started, OperatorSchedule.Turn memory inEffect) = schedule.turnAt(since);
         assertEq(started, turn);
         assertEq(inEffect.candidate, alice);
@@ -773,9 +786,9 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(schedule.turnsRunUntil(), since + 2 days);
         assertEq(schedule.sourceOf(turn + 1), alice);
         assertEq(schedule.sourceOf(turn), deployerKey, "the first turn takes the keys from the operator before it");
-        assertTrue(schedule.holdsTurn(alice));
-        assertTrue(schedule.holdsTurn(bob));
-        assertFalse(schedule.holdsTurn(carol));
+        assertTrue(registry.holdsTurn(alice));
+        assertTrue(registry.holdsTurn(bob));
+        assertFalse(registry.holdsTurn(carol));
     }
 
     function test_TheVaultFollowsTheTurnAtItsBoundaryWithoutATransaction() public {

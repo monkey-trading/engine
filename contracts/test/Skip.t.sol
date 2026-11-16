@@ -336,14 +336,14 @@ contract SkipScheduleTest is SkipTest {
         assertEq(latched, bob);
         vm.warp(schedule.boundary(turn + 1));
         assertEq(schedule.sourceOf(turn + 1), alice, "the draw's source stays");
-        assertTrue(schedule.holdsTurn(bob), "bob holds the keys carol takes");
+        assertTrue(registry.holdsTurn(bob), "bob holds the keys carol takes");
         vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
         vm.prank(bob);
         registry.deregister();
     }
 
-    /// Dave's turn is drawn while alice is named; the skip names bob, who takes the keys late and is
-    /// skipped past to carol, who never takes them, so at dave's boundary bob holds them.
+    /// Dave's turn is drawn while alice is named; the skip names bob, who takes the keys but posts no
+    /// head before a skip past him to carol, who never takes them, so at dave's boundary bob holds them.
     function test_ASupersededHolderCannotLeaveBeforeTheNextTurnsMemberTakesTheKeys() public {
         address[] memory order = new address[](3);
         (order[0], order[1], order[2]) = (alice, bob, carol);
@@ -351,21 +351,47 @@ contract SkipScheduleTest is SkipTest {
         _draw(turn + 1);
         _marked(TAKE);
         schedule.skip();
-        OperatorSchedule.Turn memory skipped = schedule.turnOf(turn);
         _marked(TAKE);
         schedule.skip();
         assertEq(schedule.turnOf(turn).candidate, carol);
-        // Bob's late head binds the assignment carol's skip superseded: it latches nothing.
-        vm.warp(block.timestamp + 20);
-        LogHeads.HeadV2 memory late = _nextHead();
-        (late.position, late.generation, late.release) = (1, skipped.generation, registry.candidateOf(bob).release);
-        _post(late);
-        (uint64 lateAt,,,,) = logHeads.latches(turn, 1);
-        assertEq(lateAt, 0);
         vm.warp(schedule.boundary(turn + 1));
-        assertTrue(schedule.holdsTurn(bob), "bob holds the keys dave takes");
+        assertTrue(registry.holdsTurn(bob), "bob holds the keys dave takes");
         vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
         vm.prank(bob);
+        registry.deregister();
+    }
+
+    /// Alice holds the keys at the end of her turn; bob's turn after it is drawn while bob is named, and
+    /// dave's while bob is; neither bob nor carol, skipped to, takes them, so at dave's boundary alice,
+    /// the source of the turn before it, still holds them.
+    function test_TheSourceOfAnUntakenSkippedTurnCannotLeave() public {
+        address[] memory members = new address[](4);
+        uint256[] memory stakes = new uint256[](4);
+        (members[0], members[1], members[2], members[3]) = (alice, bob, carol, dave);
+        (stakes[0], stakes[1], stakes[2], stakes[3]) = (40_000e18, 30_000e18, 20_000e18, 10_000e18);
+        setId = _rotate(members, stakes);
+        uint64 first = _nextTurn() + 1;
+        address[] memory one = new address[](1);
+        one[0] = alice;
+        _relayOrder(first, one);
+        turn = first + 1;
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (bob, carol);
+        seed = _relayOrder(turn, order);
+        _relayPicking(turn + 1, setId, dave);
+        _draw(first);
+        vm.warp(schedule.boundary(first));
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        _draw(turn + 1);
+        assertEq(schedule.sourceOf(turn + 1), bob);
+        _marked(TAKE);
+        schedule.skip();
+        assertEq(schedule.turnOf(turn).candidate, carol);
+        vm.warp(schedule.boundary(turn + 1));
+        assertTrue(registry.holdsTurn(alice), "no member of bob's turn took alice's keys");
+        vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
+        vm.prank(alice);
         registry.deregister();
     }
 
