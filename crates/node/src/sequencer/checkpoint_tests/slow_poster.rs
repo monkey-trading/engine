@@ -249,7 +249,7 @@ impl SlowNode {
             retry: RETRY,
             pending_deposits_critical_after: Duration::from_secs(24 * 60 * 60),
             post_withheld: Default::default(),
-            surplus_raised: Default::default(),
+            episodes: Default::default(),
             relayer_gas: None,
         };
         let (tx, rx) = mpsc::channel(64);

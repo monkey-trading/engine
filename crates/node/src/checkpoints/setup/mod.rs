@@ -270,7 +270,7 @@ async fn connect_with(
         retry: checkpoints.retry_interval,
         pending_deposits_critical_after: evm.stall_critical_after,
         post_withheld: Default::default(),
-        surplus_raised: Default::default(),
+        episodes: Default::default(),
         relayer_gas: checkpoints.relayer_gas.as_ref().map(|gas| RelayerGas {
             relayer: checkpoints.relayer,
             min_balance: gas.min_balance,

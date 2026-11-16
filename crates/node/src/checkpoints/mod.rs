@@ -205,9 +205,8 @@ pub(crate) struct Poster<R> {
     /// Whether the `checkpoint_withheld` episode for a diverged collateral view is open, so only
     /// the post that ends it logs the resolve.
     pub post_withheld: std::sync::atomic::AtomicBool,
-    /// Whether the `collateral_surplus` episode is open, so only the check that finds the vault
-    /// clear again logs the resolve.
-    pub surplus_raised: std::sync::atomic::AtomicBool,
+    /// The alert episodes the reconciliation has raised, so a clear check logs no resolution.
+    pub episodes: crate::episodes::Episodes,
     /// The relayer's gas balance, watched when `[checkpoints.relayer_gas]` is set.
     pub relayer_gas: Option<RelayerGas>,
 }
@@ -350,6 +349,7 @@ impl<R: CheckpointChain> Poster<R> {
                         }
                         Err(error) => {
                             unconfirmed |= error.is::<Conflict>();
+                            self.episodes.raise("checkpoint_post_failed");
                             span.in_scope(|| warn!(alert = "checkpoint_post_failed", "checkpoint remains queued: {error:#}"));
                             // A failed post must not hide a finalized pause or retired signer.
                             let halt = if error.is::<Conflict>() { Ok(None) } else { self.observe_halt(&page).instrument(span.clone()).await };

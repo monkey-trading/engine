@@ -86,6 +86,7 @@ pub struct OperatorsReader<R> {
     vote: Option<Address>,
     every: Duration,
     reads: watch::Sender<Option<Arc<Read>>>,
+    episodes: crate::episodes::Episodes,
 }
 
 impl OperatorsReader<VaultRpc> {
@@ -120,7 +121,20 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
     ) -> (Self, OperatorsFeed) {
         let (reads, rx) = watch::channel(None);
         let feed = OperatorsFeed { reads: rx, stale_after };
-        (Self { quorum, chain_id: chain.0, usdc: chain.1, registry, lens, vote: None, every, reads }, feed)
+        (
+            Self {
+                quorum,
+                chain_id: chain.0,
+                usdc: chain.1,
+                registry,
+                lens,
+                vote: None,
+                every,
+                reads,
+                episodes: Default::default(),
+            },
+            feed,
+        )
     }
 
     /// Reads the list every interval, forever. A failed read is a Warning and leaves the list in place
@@ -146,13 +160,18 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
                     candidates = list.candidate_count(),
                     "operator list read at a final block"
                 );
-                info!(alert_resolved = "operators_read_failed", "the operator list reads again");
+                if self.episodes.clear("operators_read_failed") {
+                    info!(alert_resolved = "operators_read_failed", "the operator list reads again");
+                }
                 self.reads.send_replace(Some(Arc::new(Read { list: Arc::new(list), at: Instant::now() })));
             }
-            Err(error) => warn!(
-                alert = "operators_read_failed",
-                "the operator list cannot be read at a final block; the last one stays up until it is stale: {error:#}"
-            ),
+            Err(error) => {
+                self.episodes.raise("operators_read_failed");
+                warn!(
+                    alert = "operators_read_failed",
+                    "the operator list cannot be read at a final block; the last one stays up until it is stale: {error:#}"
+                );
+            }
         }
     }
 
@@ -221,10 +240,13 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
             None => None,
             Some(vote) => match self.read_proposals(vote, at, block.time_ms).await {
                 Ok(proposals) => {
-                    info!(alert_resolved = "proposals_read_failed", "the open proposals read again");
+                    if self.episodes.clear("proposals_read_failed") {
+                        info!(alert_resolved = "proposals_read_failed", "the open proposals read again");
+                    }
                     Some(proposals)
                 }
                 Err(error) => {
+                    self.episodes.raise("proposals_read_failed");
                     warn!(
                         alert = "proposals_read_failed",
                         "the open proposals cannot be read at a final block; the operator list marks them unavailable: {error:#}"

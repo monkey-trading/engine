@@ -11,6 +11,7 @@ use crate::checkpoints::{
     ApprovalId, CheckpointChain, Conflict, Health, LatestCheckpoint, LifecycleEvidence, Poster, VaultState, View, Work,
     signature,
 };
+use crate::episodes::Episodes;
 
 /// The first vault deposit the finalized checkpoint has not credited, and since when it has been
 /// seen so.
@@ -40,23 +41,25 @@ fn verdict(state: &VaultState, paid: Fixed, credited: Option<Fixed>, work: &Work
 
 /// Raises the Critical `vault_withdrawals_halted` for each way the finalized vault refuses
 /// withdrawal claims, one episode per `cause`, and resolves each that has cleared.
-fn report_halt(evidence: &LifecycleEvidence) {
+fn report_halt(episodes: &Episodes, evidence: &LifecycleEvidence) {
     if evidence.withdrawals_paused {
+        episodes.raise("halted_paused");
         error!(
             alert = "vault_withdrawals_halted",
             cause = "paused",
             "withdrawal authorizations stopped: the vault's withdrawals are paused until its guardian's pause ends or its timelock lifts it"
         );
-    } else {
+    } else if episodes.clear("halted_paused") {
         info!(alert_resolved = "vault_withdrawals_halted", cause = "paused", "the vault's withdrawals are not paused");
     }
     if evidence.signer_retired() {
+        episodes.raise("halted_retired");
         error!(
             alert = "vault_withdrawals_halted",
             cause = "signer_retired",
             "withdrawal authorizations stopped: the vault's guardian retired its signer, and only its timelock installs one"
         );
-    } else {
+    } else if episodes.clear("halted_retired") {
         info!(alert_resolved = "vault_withdrawals_halted", cause = "signer_retired", "the vault has a signer");
     }
 }
@@ -149,7 +152,7 @@ impl<R: CheckpointChain> Poster<R> {
         if !(agrees && authority && evidence.halts_withdrawals()) {
             return Ok(None);
         }
-        report_halt(&evidence);
+        report_halt(&self.episodes, &evidence);
         Ok(Some(evidence))
     }
 
@@ -275,7 +278,7 @@ impl<R: CheckpointChain> Poster<R> {
                 latest.signer == finalized.signer && latest.withdrawals_paused == finalized.withdrawals_paused,
                 "the vault's signer or withdrawal pause is not finalized"
             );
-            report_halt(finalized);
+            report_halt(&self.episodes, finalized);
         }
         // No finalized checkpoint has reached this worker's known chain yet. The finalized
         // lifecycle still reaches the sequencer — a retirement seen before the first finalized
@@ -309,6 +312,7 @@ impl<R: CheckpointChain> Poster<R> {
         // The empty bootstrap ledger proves prefix zero without a scan. Every other unscanned
         // prefix remains unknown; a newer checkpoint cannot lend it canonical receipt coverage.
         if !work.has_proven_prefix() {
+            self.episodes.raise("collateral_pending_deposits");
             warn!(
                 alert = "collateral_pending_deposits",
                 "withdrawals paused: the finalized checkpoint's custody prefix lacks sequenced canonical receipt coverage"
@@ -347,11 +351,18 @@ impl<R: CheckpointChain> Poster<R> {
             health => health,
         };
         if health == Health::Healthy {
-            info!(alert_resolved = "collateral_mismatch", "vault collateral reconciles");
-            info!(alert_resolved = "checkpoint_post_failed", "checkpoint is posted");
-            info!(alert_resolved = "collateral_pending_deposits", "vault deposits are covered");
+            if self.episodes.clear("collateral_mismatch") {
+                info!(alert_resolved = "collateral_mismatch", "vault collateral reconciles");
+            }
+            if self.episodes.clear("checkpoint_post_failed") {
+                info!(alert_resolved = "checkpoint_post_failed", "checkpoint is posted");
+            }
+            if self.episodes.clear("collateral_pending_deposits") {
+                info!(alert_resolved = "collateral_pending_deposits", "vault deposits are covered");
+            }
             self.resume_posting();
         } else if overpaid {
+            self.episodes.raise("collateral_mismatch");
             error!(
                 alert = "collateral_mismatch",
                 distributions_paid = %state.distributions_paid,
@@ -359,11 +370,13 @@ impl<R: CheckpointChain> Poster<R> {
                 "withdrawals paused: the vault paid more in distributions than the engine allocated"
             );
         } else if let Some((id, _)) = overdue {
+            self.episodes.raise("collateral_mismatch");
             error!(
                 alert = "collateral_mismatch",
                 "withdrawals paused: vault deposit {id} is still uncredited after the catch-up deadline"
             );
         } else {
+            self.episodes.raise("collateral_mismatch");
             error!(
                 alert = "collateral_mismatch",
                 distributions_paid = %state.distributions_paid,
@@ -374,12 +387,12 @@ impl<R: CheckpointChain> Poster<R> {
         let compensated = state.balance.raw().checked_add(state.distributions_paid.raw()).map(Fixed::from_raw);
         let held = state.deposited.raw().checked_sub(paid.raw()).map(Fixed::from_raw);
         if held.is_some_and(|held| compensated.is_some_and(|sum| sum > held)) {
-            self.surplus_raised.store(true, Ordering::Relaxed);
+            self.episodes.raise("collateral_surplus");
             warn!(
                 alert = "collateral_surplus",
                 "the vault holds USDC no deposit brought in; anyone may book 10 USDC or more of it as house capital with bookSurplus"
             );
-        } else if health == Health::Healthy && self.surplus_raised.swap(false, Ordering::Relaxed) {
+        } else if health == Health::Healthy && self.episodes.clear("collateral_surplus") {
             info!(alert_resolved = "collateral_surplus", "the vault holds no unbooked USDC");
         }
         Ok((Some(cp.seq), health, finalized_observation.lifecycle))

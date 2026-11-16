@@ -114,6 +114,38 @@ async fn a_log_that_fails_keeps_its_position_and_alerts_once_it_has_been_unread_
 }
 
 #[tokio::test]
+async fn a_recovered_log_and_attestation_resolve_once_and_healthy_polls_resolve_nothing() {
+    let (_guard, mut router) = capture_until_dropped();
+    let mut h = harness("ct-flow-resolve-once", Vec::new(), Some(0), true).await;
+    let resolved = |router: &mut crate::alerts::Router, name: &str| {
+        router.take().into_iter().filter(|line| line.name == name && line.severity.is_none()).count()
+    };
+    h.node.attest([5; 32]);
+    for pass in 0..4 {
+        h.pass(T0 + pass * 1_000).await;
+    }
+    assert_eq!(resolved(&mut router, "ct_log_unreachable"), 0, "no outage was open");
+    h.log.set_fault(Fault::ServerError);
+    h.pass(T0 + 3_600_000).await;
+    h.log.set_fault(Fault::None);
+    let mut count = 0;
+    for pass in 0..4 {
+        h.pass(T0 + 3_660_000 + pass * 1_000).await;
+        count += resolved(&mut router, "ct_log_unreachable");
+    }
+    assert_eq!(count, 1, "the recovery resolves the outage once");
+    h.node.serve(StatusCode::OK, r#"{"quote": 1}"#);
+    h.attestation_at(T0 + 3_700_000).await;
+    h.node.attest([5; 32]);
+    let mut count = 0;
+    for pass in 0..4 {
+        h.attestation_at(T0 + 3_760_000 + pass * 1_000).await;
+        count += resolved(&mut router, "attestation_unverified");
+    }
+    assert_eq!(count, 1, "the first verified poll after a rejection resolves it, the rest nothing");
+}
+
+#[tokio::test]
 async fn an_entry_that_does_not_parse_neither_blinds_the_log_nor_hides_a_certificate_for_the_domain() {
     let (_guard, mut router) = capture_until_dropped();
     let foreign = cert(&[DOMAIN], "Issuer");

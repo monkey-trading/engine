@@ -282,7 +282,7 @@ impl Scenario {
             retry: self.section.retry_interval,
             pending_deposits_critical_after: Duration::from_secs(1),
             post_withheld: Default::default(),
-            surplus_raised: Default::default(),
+            episodes: Default::default(),
             relayer_gas: None,
         };
         let emission_budget = poster.chain.emission_budget().await.unwrap();

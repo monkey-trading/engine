@@ -53,29 +53,48 @@ async fn only_a_shortfall_or_a_ledger_difference_pauses_and_a_surplus_warns() {
 }
 
 #[tokio::test]
-async fn a_surplus_resolves_once_when_it_clears_and_a_clear_vault_logs_no_resolution() {
-    let (_guard, mut alerts, mut resolved) = crate::test_support::capture_alerts_and_resolutions();
+async fn an_alert_resolves_once_when_its_episode_ends_and_a_clear_vault_resolves_nothing_more() {
+    let (_guard, _alerts, mut resolved) = crate::test_support::capture_alerts_and_resolutions();
     let (poster, work, _key) = poster();
-    let mut resolutions = || {
-        std::iter::from_fn(|| resolved.try_recv().ok())
-            .filter(|log| log["alert_resolved"] == "collateral_surplus")
-            .count()
+    let mut drained = std::collections::HashMap::<String, usize>::new();
+    let mut resolutions = |name: &str| {
+        for log in std::iter::from_fn(|| resolved.try_recv().ok()) {
+            *drained.entry(log["alert_resolved"].to_owned()).or_default() += 1;
+        }
+        drained.remove(name).unwrap_or(0)
     };
+    let names = ["collateral_surplus", "collateral_mismatch", "checkpoint_post_failed", "collateral_pending_deposits"];
+    // Several polls of a clear vault: the first after a start ends what a previous run may have
+    // left open, and no later one has an episode to end.
+    poster.reconcile(&work).await.unwrap();
+    for name in names {
+        assert_eq!(resolutions(name), 1, "{name}: a start resolves what an earlier run left open");
+    }
     for _ in 0..5 {
         poster.reconcile(&work).await.unwrap();
     }
-    assert_eq!(resolutions(), 0, "no episode was open");
+    for name in names {
+        assert_eq!(resolutions(name), 0, "{name}: no episode was open");
+    }
+    // A surplus resolves once, however many polls follow it.
     poster.chain.state.lock().unwrap().balance += Fixed::ONE;
     for _ in 0..3 {
         poster.reconcile(&work).await.unwrap();
     }
-    assert_eq!(resolutions(), 0, "a standing surplus resolves nothing");
-    assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_surplus"));
+    assert_eq!(resolutions("collateral_surplus"), 0, "a standing surplus resolves nothing");
     poster.chain.state.lock().unwrap().balance -= Fixed::ONE;
     for _ in 0..5 {
         poster.reconcile(&work).await.unwrap();
     }
-    assert_eq!(resolutions(), 1, "the transition from raised to clear resolves once");
+    assert_eq!(resolutions("collateral_surplus"), 1);
+    // So does a shortfall.
+    poster.chain.state.lock().unwrap().balance -= Fixed::ONE;
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), Health::Diverged));
+    poster.chain.state.lock().unwrap().balance += Fixed::ONE;
+    for _ in 0..5 {
+        poster.reconcile(&work).await.unwrap();
+    }
+    assert_eq!(resolutions("collateral_mismatch"), 1);
 }
 
 #[tokio::test(start_paused = true)]

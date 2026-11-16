@@ -71,7 +71,7 @@ fn extending(reads: impl Fn(&VaultState, &Work) -> Vec<(View, VaultState)>, pers
         retry,
         pending_deposits_critical_after,
         post_withheld,
-        surplus_raised,
+        episodes,
         relayer_gas,
         ..
     } = poster;
@@ -86,7 +86,7 @@ fn extending(reads: impl Fn(&VaultState, &Work) -> Vec<(View, VaultState)>, pers
             retry,
             pending_deposits_critical_after,
             post_withheld,
-            surplus_raised,
+            episodes,
             relayer_gas,
         },
         work,

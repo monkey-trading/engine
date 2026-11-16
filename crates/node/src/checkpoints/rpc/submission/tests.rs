@@ -74,7 +74,7 @@ async fn long_pending_survives_restart_without_another_send_or_finality_release(
         retry: Duration::from_millis(10),
         pending_deposits_critical_after: Duration::from_secs(1),
         post_withheld: Default::default(),
-        surplus_raised: Default::default(),
+        episodes: Default::default(),
         relayer_gas: None,
     };
     let work = Work {
