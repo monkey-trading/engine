@@ -119,10 +119,12 @@ config hash is what the timelock approves, so every change after approval is a n
 6. **Run the standby** ([standby.md](standby.md)) so the candidate is ready for a promotion. A
    candidate that wins an election instead takes the keys by handover (below).
 
-A candidate cannot leave while it is the operator in effect, or elected and waiting. Otherwise
-`cast send $REGISTRY 'deregister()'` removes it and frees the bond one cooldown later. A candidate
-changes its release without leaving, as in section 5, steps 2 and 3: an election names the release
-the candidacy holds when the epoch closes.
+A candidate cannot leave while it is the operator in effect, or elected and waiting, nor, while
+daily turns run, while it holds the turn in effect or the next drawn one, or the keys the turn in
+effect's member takes from it: as that turn's source, or as the last member of the turn before it
+(the schedule's `holdsTurn`). Otherwise `cast send $REGISTRY 'deregister()'` removes it and frees
+the bond one cooldown later. A candidate changes its release without leaving, as in section 5,
+steps 2 and 3: an election names the release the candidacy holds when the epoch closes.
 
 ## 2. The incumbent registers too
 

@@ -715,10 +715,13 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @notice Whether `candidate` has held any assignment of the turn in effect or of the last drawn
-    /// turn, or is the turn in effect's source, which hands its member the keys.
+    /// turn, or is the turn in effect's source or the member of the latest assignment of the turn drawn
+    /// before it: either hands the turn's member the keys, the latter when a promotion or skip made
+    /// after the draw moved them.
     function holdsTurn(address candidate) external view returns (bool) {
         (uint64 inEffect, Turn memory current) = turnAt(uint64(block.timestamp));
-        return heldTurn[inEffect][candidate] || heldTurn[lastDrawnTurn][candidate] || candidate == current.source;
+        return heldTurn[inEffect][candidate] || heldTurn[lastDrawnTurn][candidate] || candidate == current.source
+            || candidate == turns[current.prior].candidate;
     }
 
     /// @notice The operator the registry named when `turn` was drawn, which hands its member the keys;

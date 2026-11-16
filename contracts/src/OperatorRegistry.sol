@@ -417,7 +417,8 @@ contract OperatorRegistry {
     /// @notice Removes the caller's candidacy; its self-bond stays locked for one cooldown. The
     /// operator in effect while no turn names one, a candidate elected and waiting to take effect,
     /// and, while a turn names the operator or drawn turns run, the member of the turn in effect, its
-    /// source, or the member of the last drawn turn cannot leave.
+    /// source, the member of the turn drawn before it, or the member of the last drawn turn cannot
+    /// leave (`OperatorSchedule.holdsTurn`).
     function deregister() external {
         Candidate memory registered = candidates[msg.sender];
         if (registered.adminKey == address(0)) revert NotRegistered();

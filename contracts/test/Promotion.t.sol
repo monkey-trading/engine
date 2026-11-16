@@ -288,6 +288,52 @@ contract PromotionTest is LivenessTest {
         assertTrue(schedule.holdsTurn(promoted));
     }
 
+    /// Carol's turn is drawn while alice is named, so alice is its source; bob's promotion then moves
+    /// the keys carol takes at her boundary to him.
+    function test_APromotedHolderCannotLeaveBeforeTheNextTurnsMemberTakesTheKeys() public {
+        _promoteAfterTheNextDraw();
+        vm.warp(schedule.boundary(turn + 1));
+        assertEq(schedule.sourceOf(turn + 1), alice, "the draw's source stays");
+        assertTrue(schedule.holdsTurn(bob), "bob holds the keys carol takes");
+        vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
+        vm.prank(bob);
+        registry.deregister();
+    }
+
+    /// Bob stays through carol's turn, as a source does, even once she has taken his keys, and may leave
+    /// once the turn after it starts.
+    function test_APromotedHolderMayLeaveOnceTheTurnAfterTheNextStarts() public {
+        _promoteAfterTheNextDraw();
+        _relayPicking(turn + 2, setId, dave);
+        vm.warp(schedule.boundary(turn + 1));
+        // Carol's first head, signed with the keys she took from bob, latches her assignment.
+        _beat();
+        (uint64 latchedAt,, address latched,,) = logHeads.latches(turn + 1, schedule.turnOf(turn + 1).position);
+        assertEq(latchedAt, block.timestamp);
+        assertEq(latched, carol);
+        vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
+        vm.prank(bob);
+        registry.deregister();
+        _draw(turn + 2);
+        vm.warp(schedule.boundary(turn + 2));
+        assertFalse(schedule.holdsTurn(bob));
+        vm.prank(bob);
+        registry.deregister();
+        assertEq(registry.candidateOf(bob).adminKey, address(0));
+    }
+
+    /// @dev Starts `turn` for alice, draws `turn + 1` for carol, and promotes bob in `turn`.
+    function _promoteAfterTheNextDraw() internal {
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (alice, bob);
+        _startTurn(order, carol);
+        _draw(turn + 1);
+        assertEq(schedule.turnOf(turn + 1).candidate, carol);
+        _lapse();
+        schedule.promote();
+        assertEq(schedule.turnOf(turn).candidate, bob);
+    }
+
     function test_AReleaseMoveAppendsARevisionAndErasesNone() public {
         _startTurn();
         (, OperatorSchedule.Revision[] memory drawn) = _assignment(turn, 0);

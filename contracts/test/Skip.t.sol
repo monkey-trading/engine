@@ -4,6 +4,7 @@ pragma solidity 0.8.36;
 import {console} from "forge-std/Test.sol";
 
 import {LogHeads} from "../src/LogHeads.sol";
+import {OperatorRegistry} from "../src/OperatorRegistry.sol";
 import {OperatorSchedule} from "../src/OperatorSchedule.sol";
 import {LivenessTest} from "./helpers/LivenessTest.sol";
 
@@ -314,6 +315,25 @@ contract SkipScheduleTest is SkipTest {
         (, OperatorSchedule.Revision[] memory revisions) = schedule.assignmentOf(turn + 1, next.position);
         assertEq(revisions[revisions.length - 1].generation, skipped);
         assertEq(revisions[revisions.length - 1].release, registry.candidateOf(bob).release);
+    }
+
+    /// Carol's turn is drawn while alice is named, so alice is its source; the skip then names bob, who
+    /// takes the keys and hands them to carol at her boundary.
+    function test_ASkippedToHolderCannotLeaveBeforeTheNextTurnsMemberTakesTheKeys() public {
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (alice, bob);
+        _startTurn(order, carol);
+        _draw(turn + 1);
+        assertEq(schedule.turnOf(turn + 1).candidate, carol);
+        _marked(TAKE);
+        schedule.skip();
+        assertEq(schedule.turnOf(turn).candidate, bob);
+        vm.warp(schedule.boundary(turn + 1));
+        assertEq(schedule.sourceOf(turn + 1), alice, "the draw's source stays");
+        assertTrue(schedule.holdsTurn(bob), "bob holds the keys carol takes");
+        vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
+        vm.prank(bob);
+        registry.deregister();
     }
 
     function test_TheTimelockSetsTheTakeWindowWithinItsBoundsWhileNoTurnNamesTheOperator() public {
