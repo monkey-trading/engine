@@ -209,7 +209,8 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
     chain.mine_at(at + 60).await;
     node.wait("the proven fault to mirror", move |e| e.operator_faults().haircuts.contains_key(&b)).await;
     let since = node.query(move |e| e.operator_faults().haircuts[&b]).await;
-    assert_eq!(node.query(move |e| e.haircut_bps(b, e.now())).await, PENALTY.initial_bps);
+    // Read at the mirror's own time: the engine's clock may have ticked on since, and the haircut decays.
+    assert_eq!(node.query(move |e| e.haircut_bps(b, since)).await, PENALTY.initial_bps);
     println!("PASS: anyone proved the two heads; FaultProven names B and B's haircut starts at 50% at {since}");
 
     // 4. Each close cuts B's part by the haircut's average over its time in office then: about 46% at

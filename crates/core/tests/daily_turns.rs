@@ -3,7 +3,8 @@
 //! reassignment or promotion after its boundary from its mirror, a key without seven days' notice in a
 //! mirrored set refused, `RotateOperator` refused while rotation is on, and `TurnTaken` accepted only
 //! for the turn in effect; from `V53`, a member's notice kept across sets that name it unchanged
-//! (`daily_turns/notice.rs`).
+//! (`daily_turns/notice.rs`); from `V71`, a promotion mirrored after its turn ended
+//! (`daily_turns/late_promotion.rs`).
 
 mod common;
 
@@ -411,3 +412,6 @@ fn an_election_is_refused_once_the_schedule_adopted_a_set() {
 
 #[path = "daily_turns/notice.rs"]
 mod notice;
+
+#[path = "daily_turns/late_promotion.rs"]
+mod late_promotion;

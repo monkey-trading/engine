@@ -458,11 +458,16 @@ pub enum ProtocolVersion {
     /// penalty and falls linearly to nothing over its decay; the withheld part goes to stakers
     /// (`operator_faults`).
     V70,
+    /// A promotion the schedule finalised after its turn's nominal end applies when it is mirrored, as
+    /// long as no later turn is in effect, so the promoted member's key signs and its `TurnTaken` is
+    /// accepted, where an earlier version refused every assignment for a turn that had ended. A turn
+    /// applied after its end holds the office, for the operator's share, until a later turn applies.
+    V71,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V70;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V71;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {
