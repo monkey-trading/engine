@@ -152,6 +152,11 @@ contract OperatorSchedule is SeedSchedule {
     uint256 private constant MAX_DETECTION = 600;
     uint256 private constant MAX_HEAD_BLOCKS = 256;
 
+    /// @dev How many drawn turns back from the turn in effect `holdsTurn` walks, as far as a member taking
+    /// a turn looks for the keys (the node's `SOURCE_LOOKBACK`): a week of turns no member took, past
+    /// which the governance fallback applies.
+    uint256 private constant HOLDER_LOOKBACK = 7;
+
     bytes32 private constant VOUCH_DOMAIN = keccak256("engine.standby-vouch.v1");
 
     /// @notice The registry whose closes adopt sets and whose listing a drawn member needs.
@@ -714,14 +719,26 @@ contract OperatorSchedule is SeedSchedule {
         return last == 0 ? 0 : boundary(last) + 1 days;
     }
 
-    /// @notice Whether `candidate` has held any assignment of the turn in effect or of the last drawn
-    /// turn, or is the turn in effect's source or the member of the latest assignment of the turn drawn
-    /// before it: either hands the turn's member the keys, the latter when a promotion or skip made
-    /// after the draw moved them.
+    /// @notice Whether `candidate` holds the turn in effect or the last drawn one, or may hold the keys
+    /// the turn in effect's member takes: it held any assignment of either turn, or, walking back from
+    /// the turn in effect, it is the turn's source, or the source held the turn drawn before it, so no
+    /// installation came between, and the candidate held any assignment of that turn, which a promotion
+    /// or skip after the draw, or a take before a skip, leaves the keys with. The walk goes on to that
+    /// turn while its latest assignment is a draw or skip no head latched, so no member took the keys
+    /// from its source, to the source of the turn `HOLDER_LOOKBACK` turns back at most.
     function holdsTurn(address candidate) external view returns (bool) {
-        (uint64 inEffect, Turn memory current) = turnAt(uint64(block.timestamp));
-        return heldTurn[inEffect][candidate] || heldTurn[lastDrawnTurn][candidate] || candidate == current.source
-            || candidate == turns[current.prior].candidate;
+        (uint64 turn,) = turnAt(uint64(block.timestamp));
+        if (heldTurn[turn][candidate] || heldTurn[lastDrawnTurn][candidate]) return true;
+        Turn storage named = turns[turn];
+        for (uint256 back = 0;; ++back) {
+            address source = named.source;
+            if (candidate == source) return true;
+            turn = named.prior;
+            if (back == HOLDER_LOOKBACK || turn == 0 || !heldTurn[turn][source]) return false;
+            if (heldTurn[turn][candidate]) return true;
+            named = turns[turn];
+            if (named.reason == PROMOTED || _latched(turn, named.position)) return false;
+        }
     }
 
     /// @notice The operator the registry named when `turn` was drawn, which hands its member the keys;

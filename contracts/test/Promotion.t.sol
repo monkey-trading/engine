@@ -322,6 +322,95 @@ contract PromotionTest is LivenessTest {
         assertEq(registry.candidateOf(bob).adminKey, address(0));
     }
 
+    /// Carol never takes her turn, so bob keeps the keys into the turn after it, until its member takes
+    /// them.
+    function test_APromotedHolderStaysThroughATurnNoMemberTook() public {
+        _promoteAfterTheNextDraw();
+        _relayPicking(turn + 2, setId, dave);
+        _relayPicking(turn + 3, setId, alice);
+        _draw(turn + 2);
+        vm.warp(schedule.boundary(turn + 2));
+        assertTrue(schedule.holdsTurn(bob), "no member took bob's keys");
+        vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
+        vm.prank(bob);
+        registry.deregister();
+        // Dave's first head, signed with the keys he took from bob, latches his assignment.
+        _beat();
+        (, uint64 epoch, address latched,,) = logHeads.latches(turn + 2, schedule.turnOf(turn + 2).position);
+        assertEq(epoch, 2);
+        assertEq(latched, dave);
+        _draw(turn + 3);
+        vm.warp(schedule.boundary(turn + 3));
+        assertFalse(schedule.holdsTurn(bob));
+        vm.prank(bob);
+        registry.deregister();
+        assertEq(registry.candidateOf(bob).adminKey, address(0));
+    }
+
+    /// A promotion in carol's turn moves the signer to another standby key, so the keys the turn after
+    /// it takes are no longer bob's.
+    function test_APromotionInTheNextTurnFreesThePromotedHolder() public {
+        _promoteAfterTheNextDraw();
+        _relayPicking(turn + 2, setId, dave);
+        _draw(turn + 2);
+        _lapse();
+        (uint64 promotedIn,) = schedule.promote();
+        assertEq(promotedIn, turn + 1);
+        vm.warp(schedule.boundary(turn + 2));
+        assertFalse(schedule.holdsTurn(bob));
+        vm.prank(bob);
+        registry.deregister();
+        assertEq(registry.candidateOf(bob).adminKey, address(0));
+    }
+
+    /// No member takes the keys bob holds for a week of turns: he stays while a member taking a turn
+    /// looks back to him, seven turns, and may leave at the eighth.
+    function test_APromotedHolderStaysForAtMostAWeekOfUntakenTurns() public {
+        _promoteAfterTheNextDraw();
+        address[3] memory others = [dave, alice, carol];
+        for (uint64 next = turn + 2; next <= turn + 8; ++next) {
+            _relayPicking(next, setId, others[next % 3]);
+        }
+        for (uint64 next = turn + 2; next <= turn + 7; ++next) {
+            _draw(next);
+        }
+        vm.warp(schedule.boundary(turn + 7));
+        assertTrue(schedule.holdsTurn(bob), "seven turns back");
+        _draw(turn + 8);
+        vm.warp(schedule.boundary(turn + 8));
+        assertFalse(schedule.holdsTurn(bob), "eight turns back");
+        vm.prank(bob);
+        registry.deregister();
+    }
+
+    /// Once the turns end, the timelock installs dave, who holds the keys the next drawn turn's member
+    /// takes; bob, the last turn's promoted member, holds none of them.
+    function test_AnInstallationFreesTheLastTurnsPromotedMember() public {
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (alice, bob);
+        _startTurn(order);
+        _lapse();
+        schedule.promote();
+        assertEq(schedule.turnOf(turn).candidate, bob);
+        vm.prank(address(governance));
+        registry.setRotation(false);
+        vm.warp(schedule.turnsRunUntil());
+        vm.prank(address(governance));
+        registry.installOperator(dave, _key(dave), _digest(7), CONFIG);
+        vm.prank(address(governance));
+        registry.setRotation(true);
+        uint64 later = _nextTurn() + 1;
+        _relayPicking(later, setId, carol);
+        _draw(later);
+        assertEq(schedule.sourceOf(later), dave);
+        vm.warp(schedule.boundary(later));
+        assertTrue(schedule.holdsTurn(dave), "the installed operator hands carol the keys");
+        assertFalse(schedule.holdsTurn(bob));
+        vm.prank(bob);
+        registry.deregister();
+        assertEq(registry.candidateOf(bob).adminKey, address(0));
+    }
+
     /// @dev Starts `turn` for alice, draws `turn + 1` for carol, and promotes bob in `turn`.
     function _promoteAfterTheNextDraw() internal {
         address[] memory order = new address[](2);

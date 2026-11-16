@@ -668,6 +668,7 @@ contract OperatorScheduleTest is ScheduleTest {
         _draw(turn);
         vm.warp(schedule.boundary(turn));
         _assertCannotLeave(deployerKey, "the source of the turn in effect");
+        _latch(turn);
         _draw(turn + 1);
         vm.warp(schedule.boundary(turn + 1));
         assertEq(registry.namedOperator().candidate, alice);
@@ -858,6 +859,7 @@ contract OperatorScheduleTest is ScheduleTest {
         _draw(turn + 1);
         vm.warp(schedule.boundary(turn + 1));
         _assertCannotLeave(alice, "the source of the turn in effect");
+        _latch(turn + 1);
         _draw(turn + 2);
         vm.warp(schedule.boundary(turn + 2));
         _assertCannotLeave(bob, "in effect");
@@ -992,6 +994,17 @@ contract OperatorScheduleTest is ScheduleTest {
         for (uint256 i = 0; i < logs.length; ++i) {
             if (logs[i].topics[0] == OperatorSchedule.TurnGenerationMoved.selector) ++count;
         }
+    }
+
+    /// @dev Stands in for the first head of `turn`'s current assignment, which latches it: its member
+    /// took the keys.
+    function _latch(uint64 turn) internal {
+        OperatorSchedule.Turn memory named = schedule.turnOf(turn);
+        vm.mockCall(
+            address(logHeads),
+            abi.encodeWithSelector(logHeads.latches.selector, turn, named.position),
+            abi.encode(uint64(block.timestamp), vault.signerEpoch(), named.candidate, bytes32(0), named.generation)
+        );
     }
 
     function _assertCannotLeave(address member, string memory why) internal {

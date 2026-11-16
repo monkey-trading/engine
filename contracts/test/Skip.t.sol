@@ -318,7 +318,7 @@ contract SkipScheduleTest is SkipTest {
     }
 
     /// Carol's turn is drawn while alice is named, so alice is its source; the skip then names bob, who
-    /// takes the keys and hands them to carol at her boundary.
+    /// takes the keys carol takes at her boundary.
     function test_ASkippedToHolderCannotLeaveBeforeTheNextTurnsMemberTakesTheKeys() public {
         address[] memory order = new address[](2);
         (order[0], order[1]) = (alice, bob);
@@ -328,9 +328,42 @@ contract SkipScheduleTest is SkipTest {
         _marked(TAKE);
         schedule.skip();
         assertEq(schedule.turnOf(turn).candidate, bob);
+        // Bob's first head latches the skip's assignment.
+        vm.warp(block.timestamp + 20);
+        _beat();
+        (, uint64 epoch, address latched,,) = logHeads.latches(turn, 1);
+        assertEq(epoch, 1);
+        assertEq(latched, bob);
         vm.warp(schedule.boundary(turn + 1));
         assertEq(schedule.sourceOf(turn + 1), alice, "the draw's source stays");
         assertTrue(schedule.holdsTurn(bob), "bob holds the keys carol takes");
+        vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
+        vm.prank(bob);
+        registry.deregister();
+    }
+
+    /// Dave's turn is drawn while alice is named; the skip names bob, who takes the keys late and is
+    /// skipped past to carol, who never takes them, so at dave's boundary bob holds them.
+    function test_ASupersededHolderCannotLeaveBeforeTheNextTurnsMemberTakesTheKeys() public {
+        address[] memory order = new address[](3);
+        (order[0], order[1], order[2]) = (alice, bob, carol);
+        _startTurn(order, dave);
+        _draw(turn + 1);
+        _marked(TAKE);
+        schedule.skip();
+        OperatorSchedule.Turn memory skipped = schedule.turnOf(turn);
+        _marked(TAKE);
+        schedule.skip();
+        assertEq(schedule.turnOf(turn).candidate, carol);
+        // Bob's late head binds the assignment carol's skip superseded: it latches nothing.
+        vm.warp(block.timestamp + 20);
+        LogHeads.HeadV2 memory late = _nextHead();
+        (late.position, late.generation, late.release) = (1, skipped.generation, registry.candidateOf(bob).release);
+        _post(late);
+        (uint64 lateAt,,,,) = logHeads.latches(turn, 1);
+        assertEq(lateAt, 0);
+        vm.warp(schedule.boundary(turn + 1));
+        assertTrue(schedule.holdsTurn(bob), "bob holds the keys dave takes");
         vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
         vm.prank(bob);
         registry.deregister();
