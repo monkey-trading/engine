@@ -3245,7 +3245,7 @@ Run `./scripts/dev-corporate-actions.sh` for the isolated local scenario. It use
 operator key, an in-process sequencer with controlled trusted time and a loopback TLS API: long and
 short positions plus a resting order, a signed dividend, a signed four-for-one split, a market order
 before a new quote, shutdown/recovery and public replay. Its withholding input is synthetic test
-data. The CI test job runs this script. V23 activation requires the preceding V19, V20, V21 and V22
+data. CI's `dev-scenario-tests` job runs this script. V23 activation requires the preceding V19, V20, V21 and V22
 implementations and their immutable reference logs; rollback after activation requires a build that
 understands V23 or a fresh log. On a node run from `config/dev.toml`, the mock feed rescales each
 market's walk by the split ratio for quotes stamped at or after a scheduled split's opening, and a

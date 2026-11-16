@@ -51,8 +51,9 @@ Load on request before creating a branch, committing, pushing, or opening or upd
 ## Local checks before push
 
 Before a push that opens or updates a PR, check only what the change affects. On the PR, CI runs
-every job the changed paths can affect, and skips the rest; the PR's merge group in the merge queue,
-and a push to `main`, run every job.
+every job the changed paths can affect, and skips the rest; the PR's merge group in the merge queue
+does the same for its changes against `main`, and always runs the Rust and contracts checks; a push
+to `main` and the nightly run each run every job.
 
 - Take the validation commands of the `.github/workflows/` jobs the changed paths trigger — format
   check, build or lint, and the tests covering the change — and run them scoped to the affected
