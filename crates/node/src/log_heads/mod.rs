@@ -44,7 +44,7 @@ const MIN_READ_EVERY: Duration = Duration::from_millis(100);
 /// A rollback freeze latch shared between the log-head poster and the sequencer. The poster sets
 /// it the moment it detects a rollback, before its `Freeze` request dequeues behind work already
 /// queued, so nothing is stamped after the detection — the ordinary request queue cannot delay it.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct FreezeLatch(Arc<AtomicBool>);
 
 impl FreezeLatch {

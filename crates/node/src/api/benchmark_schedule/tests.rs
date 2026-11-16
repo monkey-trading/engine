@@ -146,6 +146,7 @@ fn state() -> (ApiState, mpsc::Receiver<Request>) {
         stats: crate::test_support::stats(),
         emission_budget: None,
         staking_terms: None,
+        status: Default::default(),
         collateral: None,
         listing: Default::default(),
         operators: None,

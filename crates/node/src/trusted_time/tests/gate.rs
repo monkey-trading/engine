@@ -207,3 +207,23 @@ fn sampled(at: Instant) -> TimeGate {
     gate.update(sample(at));
     gate
 }
+
+#[test]
+fn the_trusted_clocks_state_names_whether_and_why_trusted_time_holds() {
+    let clock = Arc::new(TestClock::at(TRUE_MS));
+    let (samples, receiver) = watch::channel(None);
+    let trusted = TrustedClock::new(clock.clone(), receiver, MAX_DRIFT);
+    assert_eq!(trusted.state(), TimeState::Starting);
+    let sample = Sample { at: clock.instant(), earliest_ms: TRUE_MS - 1_000, latest_ms: TRUE_MS + 1_000 };
+    samples.send_replace(Some(sample));
+    let sampled = TimeState::Sampled { last_sample_ms: TRUE_MS - 1_000 };
+    assert_eq!(trusted.state(), sampled);
+    // The value moves only with a new sample, not with the time since.
+    clock.advance(SECOND * 5);
+    assert_eq!(trusted.state(), sampled);
+    clock.skew(60_000);
+    assert_eq!(trusted.state(), TimeState::Held { cause: HeldCause::Drift, last_sample_ms: TRUE_MS - 1_000 });
+    clock.skew(0);
+    clock.advance(NO_SAMPLE_GRACE + SECOND);
+    assert_eq!(trusted.state(), TimeState::Held { cause: HeldCause::NoSample, last_sample_ms: TRUE_MS - 1_000 });
+}

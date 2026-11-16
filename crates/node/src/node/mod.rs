@@ -22,7 +22,6 @@ use crate::alerts::Routing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
 use crate::clock::{Clock, SystemClock};
 use crate::config::{AuthMode, CustodyProvider, NodeConfig};
-use crate::feeds;
 mod shutdown;
 use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
 mod handover;
@@ -58,8 +57,7 @@ use crate::sequencer::turns::TurnSealing;
 use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
 use crate::telemetry::Telemetry;
 use crate::tls::acme::{CertificateTask, Sealed};
-use crate::tls::serve;
-use crate::{custody::Custody, monitor, trusted_time, verify::Relay};
+use crate::{custody::Custody, feeds, monitor, tls::serve, trusted_time, verify::Relay};
 use preflight::authorize;
 
 /// How long a start that failed with a delivered key in play stays up for its repair.
@@ -255,6 +253,7 @@ async fn serve_node(
     seq_cfg.history_sealing = history.sealing();
     seq_cfg.log_heads = log_heads_setup.as_ref().map(|setup| setup.publisher());
     let published = crate::handover::Published::new(stream_tx.subscribe(), log.last_seq(), log.last_checkpoint());
+    let status = crate::status::Status::watching(seq_cfg.log_heads.as_ref(), &metrics);
     let mut seq = Sequencer::recover_from(log, seq_cfg, key.clone(), stream_tx.clone(), withdrawals_tx)
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // Before activation and genesis sequence, so the record sees every command the log will hold.
@@ -378,7 +377,7 @@ async fn serve_node(
     let operator_hostname = ticker::start_operator_hostname(cfg, &mut tasks, trusted())?;
     // The monitor exports quote times only for the sources this config still feeds.
     let sources = feeds::configured_sources(&cfg.feeds);
-    price_feeds::spawn(&mut tasks, cfg.feeds.clone(), delivered, &tx)?;
+    price_feeds::spawn(&mut tasks, cfg.feeds.clone(), delivered, &tx, &status.feeds)?;
 
     let sealed = certificates.map(|certificates| Sealed { store: store.clone(), certificates, trusted: trusted() });
     let trusted_clock = trusted();
@@ -438,6 +437,7 @@ async fn serve_node(
         stats,
         emission_budget,
         staking_terms,
+        status,
         collateral: served,
         listing: Default::default(),
         operators: ticker::start_operators(&cfg.custody, &cfg.api, &mut tasks)?,

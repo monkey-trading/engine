@@ -36,7 +36,9 @@ mod resubscribe;
 use resubscribe::Resubscription;
 mod setup;
 pub use setup::tls_config;
+mod status;
 use setup::{next_attempt, next_backoff};
+pub use status::run_reporting;
 mod stale;
 #[cfg(test)]
 pub(super) use stale::STALE_GRACE;
@@ -191,6 +193,7 @@ struct VenueFeed {
     delayed: bool,
     /// The books a ping's answer may re-date (see `standing`).
     standing: StandingBooks,
+    report: status::Report,
 }
 
 impl VenueFeed {
@@ -239,6 +242,7 @@ impl VenueFeed {
             refused_since: None,
             delayed: false,
             standing: StandingBooks::default(),
+            report: status::Report::default(),
         }
     }
 
@@ -248,9 +252,11 @@ impl VenueFeed {
     /// - the sequencer has gone away
     async fn run(mut self) -> anyhow::Result<()> {
         let mut backoff = self.timing.reconnect_min;
+        self.publish_status();
         loop {
             self.quoted = false;
             let Err(error) = self.relay().await;
+            self.report.up = false;
             self.settle().await;
             if self.tx.is_closed() {
                 // The supervisor logs what the task returns, so it is redacted as a log line is.
@@ -258,6 +264,7 @@ impl VenueFeed {
             }
             let (wait, next) = next_attempt(backoff, self.quoted, &self.timing);
             self.dropped(&error, wait);
+            self.publish_status();
             sleep(wait).await;
             backoff = next;
         }
@@ -299,6 +306,7 @@ impl VenueFeed {
             .context("subscribe timed out")?
             .context("subscribe")?;
         info!(venue = self.conn.venue.name(), feed = self.conn.url.as_str(), "venue connected");
+        self.report.up = true;
         let mut waiting_since = Instant::now();
         self.connected_afresh();
         // The engine's quote from an earlier connection says nothing of what this one sequenced.
@@ -405,6 +413,7 @@ impl VenueFeed {
                     }
                 }
                 _ = checks.tick() => {
+                    self.publish_status();
                     let resubscribing = self.check_quoting();
                     if !resubscribing.is_empty() {
                         self.resubscribe(&adapter, &mut link, &resubscribing).await?;
@@ -472,6 +481,7 @@ impl VenueFeed {
 /// with `credentials`.
 /// Error cases:
 /// - the sequencer has gone away
+#[cfg(test)]
 pub async fn run(
     conn: VenueConnection,
     credentials: Credentials,

@@ -277,6 +277,7 @@ impl Scenario {
             stats: crate::test_support::stats(),
             emission_budget: Some(TokenUnits(DEV_PERIOD_BUDGET)),
             staking_terms: None,
+            status: Default::default(),
             payouts_enabled: true,
             collateral: None,
             listing: Default::default(),

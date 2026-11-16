@@ -18,6 +18,7 @@ mod coinbase;
 mod coinbase_exchange;
 mod kraken;
 mod massive;
+pub(crate) mod status;
 mod tradermade;
 pub mod venue;
 

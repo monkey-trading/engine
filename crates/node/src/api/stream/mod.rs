@@ -35,8 +35,10 @@ use crate::log::{LogReader, Manifest, Offset};
 use crate::sequencer::StreamMsg;
 mod quotes;
 mod signed;
+mod status;
 use quotes::Quotes;
 use signed::Framing;
+use status::StatusFeed;
 
 /// Most messages read from disk per blocking call.
 const BACKFILL_BATCH: usize = 256;
@@ -61,6 +63,9 @@ pub struct StreamParams {
     /// `log_head` message, a member's follower's way to relay them: framed, or bare while trusted time
     /// does not bound the host clock, when the connection stays open for them.
     heads: Option<u8>,
+    /// With `signed=1`, `1` also sends the server's operating state as a signed `status` frame at the
+    /// start and on each change.
+    status: Option<u8>,
 }
 
 /// One subscriber's messages, in offset order, each once.
@@ -173,6 +178,13 @@ pub async fn stream(
         (Some(1), _) => return Err(ApiError::BadRequest("heads=1 needs signed=1".into())),
         (Some(_), _) => return Err(ApiError::BadRequest("heads must be 1".into())),
     };
+    let status = match (params.status, params.signed) {
+        (None, _) => false,
+        (Some(1), Some(1)) => true,
+        (Some(1), _) => return Err(ApiError::BadRequest("status=1 needs signed=1".into())),
+        (Some(_), _) => return Err(ApiError::BadRequest("status must be 1".into())),
+    };
+    let status = status.then(|| StatusFeed::new(&s, s.limits.quote_interval));
     let signed = match (params.signed, params.challenge.as_deref()) {
         (None, None) => None,
         (Some(1), Some(challenge)) => {
@@ -208,7 +220,7 @@ pub async fn stream(
                 Some((framing, quotes, inbox)) => (Some(framing), Some((quotes, inbox))),
                 None => (None, None),
             };
-            forward(socket, feed, send_timeout, framing, quotes).await;
+            forward(socket, feed, send_timeout, framing, (quotes, status)).await;
             drop(place);
         }
         .instrument(span)
@@ -224,7 +236,7 @@ async fn forward<S>(
     feed: Feed,
     send_timeout: Duration,
     framing: Option<Framing>,
-    quotes: Option<(Quotes, watch::Sender<String>)>,
+    (quotes, status): (Option<(Quotes, watch::Sender<String>)>, Option<StatusFeed>),
 ) where
     S: Sink<Message> + Stream<Item = Result<Message, Error>> + Unpin,
 {
@@ -235,7 +247,7 @@ async fn forward<S>(
             // Sends the close reply queued when the close was read.
             let _ = timeout(send_timeout, sink.close()).await;
         },
-        () = send_feed(&mut sink, feed, send_timeout, framing, quotes) => {}
+        () = send_feed(&mut sink, feed, send_timeout, framing, (quotes, status)) => {}
     }
 }
 
@@ -267,7 +279,7 @@ async fn send_feed<S: Sink<Message> + Unpin>(
     mut feed: Feed,
     send_timeout: Duration,
     mut framing: Option<Framing>,
-    mut quotes: Option<Quotes>,
+    (mut quotes, mut status): (Option<Quotes>, Option<StatusFeed>),
 ) {
     loop {
         let next = feed.next();
@@ -287,6 +299,7 @@ async fn send_feed<S: Sink<Message> + Unpin>(
                     continue;
                 }
                 texts = next_quotes(&mut quotes) => texts,
+                texts = next_status(&mut status) => texts,
             };
             // Quotes exist only on a signed connection.
             for text in texts {
@@ -360,6 +373,14 @@ async fn next_quotes(quotes: &mut Option<Quotes>) -> Vec<String> {
     }
 }
 
+/// The connection's next status message; never, without `status=1`.
+async fn next_status(status: &mut Option<StatusFeed>) -> Vec<String> {
+    match status {
+        Some(status) => status.next().await,
+        None => pending().await,
+    }
+}
+
 /// Sends `text`, the message at `offset` or a heartbeat; `false` once the subscriber has
 /// disconnected or stopped reading for `send_timeout`.
 async fn send_text<S: Sink<Message> + Unpin>(
@@ -416,5 +437,7 @@ fn read_batch(
     Ok((Some(reader), batch))
 }
 
+#[cfg(test)]
+mod status_tests;
 #[cfg(test)]
 mod tests;
