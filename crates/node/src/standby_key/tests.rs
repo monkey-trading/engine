@@ -37,6 +37,9 @@ const CONFIG: [u8; 32] = [0xc1; 32];
 /// The tests' trusted time, and the latest block's time.
 const NOW_MS: Millis = 1_800_000_000_000;
 
+/// A turn's latest assignment: its member, position, reason and generation.
+type Named = (Address, u16, u8, u64);
+
 /// What the fake chain answers at its latest block.
 struct ChainState {
     /// The latest block's time, in seconds.
@@ -60,7 +63,7 @@ struct ChainState {
     /// The turn drawn before the one in effect, and each earlier turn's latest assignment as `named`
     /// with the turn drawn before it.
     prior: u64,
-    turns: BTreeMap<u64, ((Address, u16, u8, u64), u64)>,
+    turns: BTreeMap<u64, (Named, u64)>,
     assignments: BTreeMap<(u64, u16), (AssignmentReturn, Vec<RevisionReturn>)>,
     /// The release and generation the registry names for the operator in effect.
     rotation: (B256, u64),

@@ -373,8 +373,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   counts both
 - `src/node/log_check.rs` — a node's part in the boundary's log check: the check the first start after
   a handover makes and seals (none when this release, or the member its operator key sits for,
-  sequenced part of the range, as after the member's own upgrade, which keeps the head the keys
-  carried), the check a promoted start seals through the checkpoint the promotion fixed, under the
+  sequenced part of the range, as after the member's own upgrade, or the schedule assigned that member
+  a turn the range spans, which keeps the head the keys carried), the check a promoted start seals through the checkpoint the promotion fixed, under the
   same exclusion, the sequencer's setup with the sealed keys of a node that takes turns, and its
   supervised asking task
 - `src/node/member.rs` — a rotation-set member's life: following the operator in effect between its
@@ -1066,7 +1066,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/history.rs` — accepted history from the finalized anchor, the signed-parent chain, and signer epochs
 - `src/checkpoints/lifecycle_tests/` — paid cash reconciliation, bounded claim polling, rotated authorities, and the vault's pause and retired signer observed, alerted and finalized
 - `src/checkpoints/reconciliation.rs` — finalized collateral health: shortfalls, deposit totals, payouts, surpluses, the credit deadline, and the vault's halt
-- `src/checkpoints/rpc/schedule.rs` — the daily turn the vault's registry's schedule names at a time, and a drawn turn's order (each distinct member its positions pick, with its registration), read at a finalized block
+- `src/checkpoints/rpc/schedule.rs` — the daily turn the vault's registry's schedule names at a time, and a drawn turn's order (each distinct member its positions pick, with its registration), read at a finalized block; and whether it assigned a member any of a range of turns, read at the latest block
 - `src/checkpoints/rpc/takeover.rs` — the standby's takeover signal, read at one finalized block
 - `src/checkpoints/rpc/observation.rs` — same-block balance, epoch, paid total, and bounded claim reads, and whether a claim can prove against a checkpoint
 - `src/checkpoints/rpc/authority.rs` — accepted historical signer identities for rotated nonce journals
@@ -1154,7 +1154,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   member's other release never makes for a range it sequenced; `src/log_check/tests.rs` covers the
   attribution, the own check, an upgrade, and what the quote and the question bind
 - `src/log_check/ask.rs` — the operator's asking: the members of the turn's order, first to last,
-  but its own candidate, those with no handover endpoint and members and releases in the range, each
+  but its own candidate, those with no handover endpoint, members and releases in the range and members
+  the schedule assigned a turn the range spans, each
   asked with a fresh challenge its enclave key signs, and a member's answer admitted only from the
   release it registered, under a policy and TCB no weaker than its own, binding what was asked,
   `log_check_pending` paging once a check stays due for 30 minutes, during a round that outlasts it

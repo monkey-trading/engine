@@ -24,6 +24,9 @@ const RELEASE: B256 = B256::repeat_byte(0x5e);
 const GENERATION: u64 = 7;
 const TRUE_MS: Millis = 1_800_000_000_000;
 
+/// A permission to sign at a seq, lapsing at a time in milliseconds.
+type Permission<'a> = &'a dyn Fn(u64, u64) -> Signing;
+
 /// The poster's inputs a test drives.
 struct Drive {
     released: watch::Sender<Released>,
@@ -225,7 +228,7 @@ async fn past_its_boundary_a_permission_signs_no_head_whatever_read_renewed_the_
         Signing::Confirmed(Signable { released, confirmer, scope: Some((1, 1)), until })
     };
     let exempt = |_, until| Signing::Tip(Some((1, 1)), until);
-    let cases: [(&str, &dyn Fn(u64, u64) -> Signing); 2] = [("a confirmation", &confirmed), ("an exempt tip", &exempt)];
+    let cases: [(&str, Permission<'_>); 2] = [("a confirmation", &confirmed), ("an exempt tip", &exempt)];
     for (case, signing) in cases {
         let chain = FakeChain::new(None);
         chain.name_turn(turn(GENERATION));
