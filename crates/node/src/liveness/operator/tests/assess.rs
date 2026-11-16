@@ -94,9 +94,9 @@ async fn the_start_check_passes_on_no_head_the_ring_no_longer_holds() {
     };
     rig.members.0.lock().unwrap().get_mut("member:1").unwrap().2 = Some(forked);
     settle().await;
-    assert!(!rig.gate.sequences(), "the start check passed on a head it could not check");
+    assert!(!rig.gate.start_checked(), "the start check passed on a head it could not check");
     rig.answer(Some(10));
     settle().await;
-    assert!(rig.gate.sequences(), "a checked answer passes it");
+    assert!(rig.gate.start_checked() && rig.gate.sequences(), "a checked answer passes it");
     rig.task.abort();
 }

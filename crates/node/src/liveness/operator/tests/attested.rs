@@ -11,6 +11,9 @@ use crate::test_support::scratch_dir;
 
 const QUOTING: Quoting<'static> = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "" };
 
+/// How a case sets the chain, given the attested key.
+type Change<'a> = &'a dyn Fn(&mut ChainState, Address);
+
 /// In a set of two whose other member's promotable key a promotion consumed, that member confirms this
 /// log on the replacement key its link attests, once the quote proves, for that member, the release
 /// its candidacy registered and the timelock approved, and the schedule never took the key: the start
@@ -32,7 +35,7 @@ async fn an_attestation_the_member_cannot_stand_on_confirms_nothing() {
     let other_release = |chain: &mut ChainState, _: Address| chain.release = B256::repeat_byte(0x99);
     let unapproved = |chain: &mut ChainState, _: Address| chain.approved = false;
     let taken = |chain: &mut ChainState, key: Address| chain.holders.push((key, Address::repeat_byte(MEMBER)));
-    let cases: [(&str, AccountId, &dyn Fn(&mut ChainState, Address)); 4] = [
+    let cases: [(&str, AccountId, Change<'_>); 4] = [
         ("another candidate's", AccountId([0x77; 20]), &|_, _| {}),
         ("another release", member, &other_release),
         ("an unapproved release", member, &unapproved),
