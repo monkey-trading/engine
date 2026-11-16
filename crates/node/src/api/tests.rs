@@ -3,7 +3,6 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::net::SocketAddr;
-use std::num::NonZeroU32;
 use std::path::Path;
 use std::time::Duration;
 
@@ -18,7 +17,6 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use crate::clock::Clock;
 use crate::clock::SystemClock;
 use crate::clock::test_clock::TestClock;
-use crate::config::RateLimit;
 use crate::history::{HistoryEvent, INDEX_FILE, account_of};
 use crate::log::{LogEntry, MANIFEST, Manifest, Offset, SegmentedLog, segment_seq};
 use crate::sequencer::fixture_tests::finished_genesis;
@@ -302,7 +300,7 @@ async fn serve(node: &TestSequencer, dir: &Path) -> SocketAddr {
 }
 
 /// A mock attestation of a fresh key's address, with zero config and TLS key hashes.
-fn mock_attestation() -> Arc<Attestation> {
+pub(super) fn mock_attestation() -> Arc<Attestation> {
     let bundle = AttestationBundle {
         enclave_address: EnclaveKey::generate().address(),
         config_sha256: [0; 32],

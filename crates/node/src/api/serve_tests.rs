@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 
-use super::tests::serve_state;
+use super::tests::{mock_attestation, serve_state};
 use super::*;
+use crate::clock::SystemClock;
 use crate::config::RateLimit;
 use crate::history::{INDEX_FILE, Reader};
 use crate::log::Manifest;
