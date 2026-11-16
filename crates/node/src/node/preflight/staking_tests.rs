@@ -9,7 +9,7 @@ use engine_core::Fixed;
 use engine_core::staking::StakingConfig;
 
 use crate::custody::StakingTerms;
-use crate::node::preflight::staking_preflight;
+use crate::node::preflight::{check_held, read_terms, staking_preflight};
 use crate::test_support::{Alert, capture_alerts};
 
 const DAY_MS: i64 = 86_400_000;
@@ -56,4 +56,25 @@ async fn startup_refuses_a_staking_config_the_contract_does_not_hold_and_an_unre
     let (unread, _) = terms(None);
     assert!(staking_preflight(Some(&unread), Some(&right), None).await.is_err());
     assert_eq!(alert_of(&mut alerts), ("checkpoint_startup_failed".into(), "ERROR".into()));
+}
+
+/// A member's start always reads the contract's terms when there is a contract, even with no config
+/// yet to compare, and keeps them: a config that enters the log after that read is then refused from the
+/// terms alone, with no read and the same alert.
+#[tokio::test]
+async fn terms_read_with_no_config_to_compare_check_a_later_config_without_reading() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (held, reads) = terms(Some((86_400, 2_419_200)));
+    assert!(read_terms(None, None, None).await.unwrap().is_none(), "no contract, no terms");
+    let kept = read_terms(Some(&held), None, None).await.unwrap().expect("the contract's terms");
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "read with no config to compare");
+
+    check_held(kept, Some(&config(DAY_MS, 28 * DAY_MS)), Some(&config(DAY_MS, 28 * DAY_MS))).unwrap();
+    assert!(alerts.try_recv().is_err());
+    let tail = check_held(kept, Some(&config(DAY_MS, DAY_MS)), None).unwrap_err();
+    assert!(tail.to_string().starts_with("the log: cooldown 86400000 ms differs"), "{tail:#}");
+    assert_eq!(alert_of(&mut alerts), ("staking_terms_mismatch".into(), "ERROR".into()));
+    let genesis = check_held(kept, None, Some(&config(1_800_000, 28 * DAY_MS))).unwrap_err();
+    assert!(genesis.to_string().starts_with("the config's genesis: epoch 1800000 ms differs"), "{genesis:#}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "a check of held terms read the contract again");
 }

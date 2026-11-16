@@ -230,3 +230,23 @@ async fn check_operator_hostname_refuses_a_mismatch_and_skips_without_acme() {
         .unwrap_err();
     assert!(format!("{err:#}").contains("other.example"), "{err:#}");
 }
+
+/// Collateral fetched for a chip and TCB is reused for the reuse time, and fetched again for another
+/// chip or TCB or once that time has passed.
+#[tokio::test]
+async fn collateral_is_reused_for_its_chip_and_tcb_until_the_reuse_time_passes() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let fetches = AtomicUsize::new(0);
+    let fetch = || async { Ok(format!("collateral {}", fetches.fetch_add(1, Ordering::SeqCst))) };
+    let tcb = engine_verify::Tcb::from_packed(0x0102_0304_0506_0708);
+    let (chip, other_chip) = ([1; 64], [2; 64]);
+    let cache = evidence::CollateralCache::new(std::time::Duration::from_millis(300));
+    assert_eq!(cache.json(chip, tcb, fetch).await.unwrap(), "collateral 0");
+    assert_eq!(cache.json(chip, tcb, fetch).await.unwrap(), "collateral 0", "refetched within the reuse time");
+    assert_eq!(cache.json(other_chip, tcb, fetch).await.unwrap(), "collateral 1", "another chip reused it");
+    let lower = engine_verify::Tcb::from_packed(0x0102_0304_0506_0700);
+    assert_eq!(cache.json(other_chip, lower, fetch).await.unwrap(), "collateral 2", "another TCB reused it");
+    tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+    assert_eq!(cache.json(other_chip, lower, fetch).await.unwrap(), "collateral 3", "kept past the reuse time");
+    assert!(cache.json(chip, tcb, || async { anyhow::bail!("down") }).await.is_err());
+}

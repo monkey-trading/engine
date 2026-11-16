@@ -2,28 +2,33 @@
 //! the answers it gives on its registered handover endpoint while it follows, which the handover
 //! listener takes over while it holds a turn. It attests a statement only when the question is signed
 //! by the enclave that signed the checkpoint, and its replica verified that checkpoint at the
-//! statement's seq with the same link and root, in the turn assignment taken there. It serves a few
-//! connections at once, each with a short deadline for its question, so an idle connection holds up
-//! no other.
+//! statement's seq with the same link and root, in the turn assignment taken there. It quotes once
+//! per question, answering a replay with the evidence it already produced, and at most
+//! `QUOTES_PER_MINUTE` times a minute. It serves a few connections at once, each with a short deadline
+//! for its question, so an idle connection holds up no other, and a full table makes room for a new
+//! connection by dropping the oldest that has not asked.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use engine_core::eip712::{self, Signature};
+use engine_core::eip712::{self, B256, Signature};
 use engine_core::types::AccountId;
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::timeout;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::config::{NodeConfig, TeeProvider};
-use crate::handover::evidence::{self, Quoting};
+use crate::handover::Evidence;
+use crate::handover::evidence::{self, CollateralCache, Quoting};
 use crate::handover::{receive, send};
+use crate::liveness::link::slots::{PeerSlot, Silent, SilentPlace, peer_key};
 use crate::log::CheckpointDomain;
 use crate::log_check::{Answer, Ask, Statement, VerifiedHead, ask_digest, report_data};
 use crate::tee::Attestor;
@@ -37,8 +42,17 @@ const REBIND: Duration = if cfg!(test) { Duration::from_millis(100) } else { Dur
 /// How many connections a member serves at once; one past them is closed unanswered, and the operator
 /// asks again.
 const CONNECTIONS: usize = 8;
-/// How many of them one address may hold, so no single peer keeps the operator's question out.
+/// How many of them one address (an IPv6 /64) may hold, so no single peer keeps the operator's
+/// question out.
 const PER_PEER: usize = 2;
+/// How long a connection waits for the place of the silent one it told to leave.
+const EVICTION_WAIT: Duration = Duration::from_millis(500);
+/// How many questions' evidence a member keeps to answer a replay with.
+const REPLAYS: usize = 64;
+/// How many quotes a member produces in a minute, whoever asks.
+const QUOTES_PER_MINUTE: usize = 30;
+/// How long collateral fetched for a chip and TCB is reused.
+const COLLATERAL_REUSE: Duration = Duration::from_secs(600);
 /// How long a connection has to send its question, which the operator sends as soon as it connects.
 const QUESTION_TIMEOUT: Duration = if cfg!(test) { Duration::from_millis(500) } else { Duration::from_secs(5) };
 
@@ -93,6 +107,45 @@ pub(crate) struct Answering {
     platform: Platform,
     config_sha256: [u8; 32],
     checked: CheckedHeads,
+    quoted: AsyncMutex<Quoted>,
+    collateral: CollateralCache,
+    connections: usize,
+    per_peer: usize,
+}
+
+/// The evidence a member produced for each recent challenge, and when it last quoted.
+#[derive(Default)]
+struct Quoted {
+    by_nonce: BTreeMap<[u8; 32], (B256, Evidence)>,
+    order: VecDeque<[u8; 32]>,
+    recent: VecDeque<Instant>,
+}
+
+impl Quoted {
+    /// Counts a quote at `now`.
+    /// Error cases:
+    /// - `QUOTES_PER_MINUTE` were produced in the last minute
+    fn admit(&mut self, now: Instant) -> anyhow::Result<()> {
+        while self.recent.front().is_some_and(|at| now.duration_since(*at) >= Duration::from_secs(60)) {
+            self.recent.pop_front();
+        }
+        anyhow::ensure!(
+            self.recent.len() < QUOTES_PER_MINUTE,
+            "this member has quoted {QUOTES_PER_MINUTE} times this minute"
+        );
+        self.recent.push_back(now);
+        Ok(())
+    }
+
+    fn remember(&mut self, nonce: [u8; 32], digest: B256, evidence: Evidence) {
+        self.by_nonce.insert(nonce, (digest, evidence));
+        self.order.push_back(nonce);
+        if self.order.len() > REPLAYS
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.by_nonce.remove(&oldest);
+        }
+    }
 }
 
 impl Answering {
@@ -120,6 +173,10 @@ impl Answering {
             platform,
             config_sha256: cfg.file_sha256,
             checked,
+            quoted: AsyncMutex::default(),
+            collateral: CollateralCache::new(COLLATERAL_REUSE),
+            connections: CONNECTIONS,
+            per_peer: PER_PEER,
         }))
     }
 
@@ -141,7 +198,7 @@ impl Answering {
         };
         info!(listen = %self.listen, "answering log checks while following");
         let (mut connection, mut serving) = (0_u64, FuturesUnordered::new());
-        let mut by_peer: BTreeMap<IpAddr, usize> = BTreeMap::new();
+        let (peers, silent) = (Arc::default(), Silent::default());
         loop {
             tokio::select! {
                 accepted = listener.accept() => {
@@ -152,38 +209,42 @@ impl Answering {
                             continue;
                         }
                     };
-                    let held = by_peer.get(&peer.ip()).copied().unwrap_or_default();
-                    if serving.len() >= CONNECTIONS || held >= PER_PEER {
-                        debug!(%peer, "closed a log check connection: {} are being served, {held} from this address", serving.len());
+                    let Some(slot) = PeerSlot::take(&peers, peer_key(peer.ip()), self.per_peer) else {
+                        debug!(%peer, "closed a log check connection: its address holds {} already", self.per_peer);
+                        continue;
+                    };
+                    // A full table: the oldest connection that has not asked yet gives its place up.
+                    if serving.len() >= self.connections
+                        && !(silent.evict_oldest() && timeout(EVICTION_WAIT, serving.next()).await.is_ok())
+                    {
+                        debug!(%peer, "closed a log check connection: {} are being served", serving.len());
                         continue;
                     }
-                    *by_peer.entry(peer.ip()).or_default() += 1;
                     connection += 1;
                     let span = info_span!("log_check", id = connection, peer = %peer);
+                    let place = silent.enter(connection);
                     serving.push(async move {
-                        if let Err(e) = self.serve(stream).await {
+                        let _held = slot;
+                        if let Err(e) = self.serve(stream, place).await {
                             warn!("a log check connection failed: {e:#}");
                         }
-                        peer.ip()
                     }.instrument(span));
                 }
-                Some(ip) = serving.next(), if !serving.is_empty() => {
-                    if let Some(held) = by_peer.get_mut(&ip) {
-                        *held -= 1;
-                        if *held == 0 {
-                            by_peer.remove(&ip);
-                        }
-                    }
-                }
+                Some(()) = serving.next(), if !serving.is_empty() => {}
             }
         }
     }
 
     /// Reads one operator's question and sends its answer.
     /// Error cases:
-    /// - the question does not arrive in time or does not parse, or the answer cannot be sent
-    async fn serve(&self, mut stream: TcpStream) -> anyhow::Result<()> {
-        let ask: Ask = timeout(QUESTION_TIMEOUT, receive(&mut stream)).await.context("no question in time")??;
+    /// - the question does not arrive in time or does not parse, a newer connection takes the place of
+    ///   this silent one, or the answer cannot be sent
+    async fn serve(&self, mut stream: TcpStream, place: SilentPlace) -> anyhow::Result<()> {
+        let ask: Ask = tokio::select! {
+            ask = timeout(QUESTION_TIMEOUT, receive(&mut stream)) => ask.context("no question in time")??,
+            () = place.evicted() => anyhow::bail!("a newer connection took this silent one's place"),
+        };
+        drop(place);
         self.respond(&mut stream, &ask).await
     }
 
@@ -212,12 +273,14 @@ impl Answering {
         }
     }
 
-    /// The quote over `ask`'s statement, produced only once the question is authenticated.
+    /// The quote over `ask`'s statement, produced only once the question is authenticated, and once
+    /// per challenge: a replay of the same question gets the evidence already produced.
     /// Error cases:
     /// - the challenge is not 32 bytes of hex, the replica has not verified that checkpoint or holds
     ///   another, the boundary is not the turn's, the question is not signed by the checkpoint's
-    ///   signer, or the quote cannot be produced
-    async fn attest(&self, ask: &Ask) -> anyhow::Result<crate::handover::Evidence> {
+    ///   signer, the challenge was answered for another question, `QUOTES_PER_MINUTE` were produced in
+    ///   the last minute, or the quote cannot be produced
+    async fn attest(&self, ask: &Ask) -> anyhow::Result<Evidence> {
         let nonce: [u8; 32] = hex::decode(&ask.nonce)
             .ok()
             .and_then(|nonce| nonce.try_into().ok())
@@ -227,17 +290,29 @@ impl Answering {
             .ok()
             .and_then(|signature| signature.try_into().ok())
             .context("the question's signature is not 65 bytes of hex")?;
-        let signer = eip712::recover(&ask_digest(self.domain, &nonce, &ask.statement), &Signature::from(signature));
+        let digest = ask_digest(self.domain, &nonce, &ask.statement);
+        let signer = eip712::recover(&digest, &Signature::from(signature));
         anyhow::ensure!(
             signer == Some(checked.signer),
             "the question is not signed by {}, which signed the checkpoint at seq {}",
             checked.signer,
             ask.statement.head.seq
         );
+        // Held across the quote, so replays sent in parallel wait for it and find its evidence.
+        let mut quoted = self.quoted.lock().await;
+        if let Some((asked, evidence)) = quoted.by_nonce.get(&nonce) {
+            anyhow::ensure!(*asked == digest, "this challenge was answered for another question");
+            return Ok(evidence.clone());
+        }
+        quoted.admit(Instant::now())?;
         let quoting =
             Quoting { provider: self.provider, processor: self.processor.as_deref(), kds_base: &self.kds_base };
         let bound = report_data(self.domain, &nonce, &ask.statement, &self.config_sha256);
-        evidence::produce(&quoting, self.attestor.as_ref(), &self.platform, bound).await
+        let evidence =
+            evidence::produce_with(&quoting, self.attestor.as_ref(), &self.platform, bound, Some(&self.collateral))
+                .await?;
+        quoted.remember(nonce, digest, evidence.clone());
+        Ok(evidence)
     }
 
     /// The checkpoint this member's replica verified for `statement`, in its turn assignment.

@@ -9,6 +9,7 @@ use engine_core::Fixed;
 use super::*;
 use crate::checkpoints::{CheckpointRpc, Observation, VaultState, View};
 use crate::config::{CustodyProvider, FinalityTag, RpcProviderSection};
+use crate::custody::ContractTerms;
 use crate::log::{CheckpointDomain, CheckpointParent, LogEntry};
 use crate::node::member::Replica;
 use crate::node::secrets::Delivered;
@@ -26,7 +27,44 @@ const DEAD: &str = "http://127.0.0.1:9";
 
 #[tokio::test]
 async fn a_member_starts_from_its_replica_without_reading_the_chain_or_sampling_time() {
-    let data = scratch_dir("ready-start");
+    let (log, last, metrics) = run_member("ready-start", None).await.expect("the member served");
+    assert_eq!(metrics.full_replays.get(), 0, "the start replayed the log");
+    let follows = |log: &std::path::Path| {
+        log_entries(log)
+            .into_iter()
+            .any(|entry| matches!(entry, LogEntry::Command(command) if command.sequenced.seq == last + 1))
+    };
+    crate::test_support::wait_for("the first command in the log", async {
+        while !follows(&log) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+}
+
+/// The staking terms a member read before it connected are kept, and the replica it serves from is
+/// checked against them with no further read: a staking config the log carries by then, as one the
+/// tail introduces, that the terms do not hold refuses the start, with every chain endpoint dead.
+#[tokio::test]
+async fn a_member_checks_the_final_replicas_staking_config_against_the_terms_it_read() {
+    let (_guard, mut alerts) = crate::test_support::capture_alerts();
+    let hour = crate::custody::StakingTerms::fixed(Some((3_600, 2_419_200))).read().await.unwrap();
+    let err = run_member("ready-final-staking", Some(hour)).await.err().expect("the member served");
+    assert!(format!("{err:#}").starts_with("the log: epoch 86400000 ms differs"), "{err:#}");
+    assert_eq!(alerts.try_recv().expect("the refusal raises an alert")["alert"], "staking_terms_mismatch");
+    // Terms the log's config holds let it serve.
+    let day = crate::custody::StakingTerms::fixed(Some((86_400, 2_419_200))).read().await.unwrap();
+    run_member("ready-final-staking-held", Some(day)).await.expect("the member served");
+}
+
+/// Serves a member over a replica of a fresh log, which read `staking_terms` before connecting, until
+/// its first command, returning its log directory, the replica's last seq and its metrics; the error
+/// the node stops on instead.
+async fn run_member(
+    name: &str,
+    staking_terms: Option<ContractTerms>,
+) -> anyhow::Result<(std::path::PathBuf, u64, Arc<Metrics>)> {
+    let data = scratch_dir(name);
     let log = data.join("log");
     let cfg = unreachable(&data, &log);
     write_log(&cfg).await;
@@ -47,6 +85,7 @@ async fn a_member_starts_from_its_replica_without_reading_the_chain_or_sampling_
         setup: Some(setup(&cfg, &data, &anchor, signer)),
         anchor: Some(anchor),
         emission_budget: None,
+        staking_terms,
         heads: None,
         generations: BTreeMap::new(),
         sample: sample_around(&crate::clock::SystemClock),
@@ -84,7 +123,10 @@ async fn a_member_starts_from_its_replica_without_reading_the_chain_or_sampling_
     );
     tokio::pin!(running);
     tokio::select! {
-        outcome = &mut running => panic!("the node stopped before its first command: {outcome:?}"),
+        outcome = &mut running => match outcome {
+            Err(e) => return Err(e),
+            Ok(ended) => panic!("the node stopped before its first command: {ended:?}"),
+        },
         () = crate::test_support::wait_for("the first command", async {
             loop {
                 if metrics.commands.get() > 0 {
@@ -94,18 +136,7 @@ async fn a_member_starts_from_its_replica_without_reading_the_chain_or_sampling_
             }
         }) => {}
     }
-    assert_eq!(metrics.full_replays.get(), 0, "the start replayed the log");
-    let follows = |log: &std::path::Path| {
-        log_entries(log)
-            .into_iter()
-            .any(|entry| matches!(entry, LogEntry::Command(command) if command.sequenced.seq == last + 1))
-    };
-    crate::test_support::wait_for("the first command in the log", async {
-        while !follows(&log) {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await;
+    Ok((log, last, metrics))
 }
 
 /// The sealed certificate opens before anything is read from the chain, so a store the host altered
