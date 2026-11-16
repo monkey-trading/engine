@@ -5,6 +5,7 @@ use alloy::primitives::Address;
 use engine_core::operator_faults::{FaultProofConfig, Penalty};
 
 use super::*;
+use crate::test_support::capture_alerts_and_resolutions;
 
 const SCHEDULE: Address = Address::repeat_byte(0x5c);
 const FAULT_PROOF: Address = Address::repeat_byte(0x5e);
@@ -52,6 +53,63 @@ async fn the_fault_proof_contract_over_the_vault_mirrors_its_proven_faults_once(
     node.stop().await;
 }
 
+#[tokio::test]
+async fn a_recorded_fault_proof_contract_with_no_code_pages_over_a_window_with_no_event() {
+    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
+    let dir = scratch("fault-proof-undeployed-recorded");
+    let node = penalising_node(&dir).await;
+    let mut watcher = fault_watcher(&quiet_chains(None), &dir);
+    watcher.poll(&node.tx).await.unwrap();
+    let alert = alerts.try_recv().expect("the undeployed contract pages");
+    assert_eq!(alert["alert"], "fault_proof_undeployed");
+    assert_eq!(alert["contract"], FAULT_PROOF.to_string());
+    assert_eq!(alert["level"], "WARN");
+    assert!(resolved.try_recv().is_err(), "resolved with no code");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_fault_proof_contract_the_log_does_not_record_pages_nobody_before_its_deployment() {
+    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
+    let dir = scratch("fault-proof-undeployed-unrecorded");
+    // Staking is initialised, but no `SetFaultProof` has applied: a catch-up over blocks before
+    // the deployment is no fault of the address.
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    fault_watcher(&quiet_chains(None), &dir).poll(&node.tx).await.unwrap();
+    assert!(alerts.try_recv().is_err(), "paged before the record");
+    assert!(resolved.try_recv().is_err());
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn the_page_resolves_once_the_contract_binds_to_the_vault() {
+    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
+    let dir = scratch("fault-proof-undeployed-resolves");
+    let node = penalising_node(&dir).await;
+    let chains = quiet_chains(None);
+    let mut watcher = fault_watcher(&chains, &dir);
+    watcher.poll(&node.tx).await.unwrap();
+    assert_eq!(alerts.try_recv().expect("paged")["alert"], "fault_proof_undeployed");
+    // The contract is deployed over the vault, and the chain moves on to a later window.
+    for chain in &chains {
+        let mut state = chain.0.lock().unwrap();
+        state.schedule.fault_proof = Some((FAULT_PROOF, Some(VAULT)));
+        state.head = 12;
+        state.final_block = Some(12);
+        state.withdrawal_block = Some(12);
+    }
+    watcher.poll(&node.tx).await.unwrap();
+    assert!(alerts.try_recv().is_err(), "paged again once bound");
+    let done = resolved.try_recv().expect("resolved");
+    assert_eq!(done["alert_resolved"], "fault_proof_undeployed");
+    assert_eq!(done["contract"], FAULT_PROOF.to_string());
+    // Bound for good: a later window reads nothing more.
+    watcher.poll(&node.tx).await.unwrap();
+    assert!(resolved.try_recv().is_err(), "resolved twice");
+    node.stop().await;
+}
+
 /// A node with staking initialised and the fault proof contract recorded.
 async fn penalising_node(dir: &Path) -> Node {
     let node = Node::start_confirmed(dir);
@@ -74,13 +132,21 @@ fn proven_ref() -> String {
 /// Chains whose registry names the schedule, which records the registry, and whose fault proof
 /// contract records `vault`, with a window holding the proven fault.
 fn fault_chains(vault: Option<Address>) -> [FakeChain; 3] {
+    let chains = quiet_chains(vault);
+    for chain in &chains {
+        chain.0.lock().unwrap().staking.push(proven());
+    }
+    chains
+}
+
+/// As `fault_chains`, with no event in the window.
+fn quiet_chains(vault: Option<Address>) -> [FakeChain; 3] {
     let chains = poll_chains(10);
     for chain in &chains {
         let mut state = chain.0.lock().unwrap();
         state.schedule.named = SCHEDULE;
         state.schedule.registry = Some(REGISTRY);
         state.schedule.fault_proof = Some((FAULT_PROOF, vault));
-        state.staking.push(proven());
     }
     chains
 }
