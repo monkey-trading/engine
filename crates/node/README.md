@@ -295,7 +295,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `src/liveness/link/state.rs` the copy's state, and which key a head that differs from it is evidence
   against;
   `src/liveness/link/slots.rs` its places, per peer address (IPv6 by /64), with the oldest connection
-  that has not asked giving its place up once all are taken; `src/liveness/link/tests.rs`
+  that has not asked giving its place up once all are taken; `src/liveness/link/entries.rs` an `Entries`
+  answer, from the ring of the copy's latest entries or else a bounded page of its log on disk, which also
+  serves an empty copy from its first entry; `src/liveness/link/tests.rs` and
+  `src/liveness/link/durable_tests.rs`
 - `src/liveness/caller.rs` — a member's liveness caller: witnesses, skips, promotions and relayed heads from its
   own account; `src/liveness/caller/tests.rs`
 - `src/liveness/fake.rs` — the fake chain the rule's tests set
@@ -732,6 +735,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   older logs replayed
 - `src/api/tests.rs` — API tests, including the dev scenarios of the resumable stream and archive,
   and of account history, and `Retry-After`
+- `src/api/serve_tests.rs` — the API served over only a history reader or only a signing's signed stream, which the
+  liveness scenario's followers connect to
 - `src/api/tests/catalog_archive.rs` — archive responses over the lazy catalog
 - `src/api/tests/collateral.rs` — the attestation collateral route's 404, 503, and served body
 - `src/history/mod.rs` — the history index: which events name an account, the startup check

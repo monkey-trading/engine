@@ -322,7 +322,7 @@ impl LogWriter {
     }
 
     /// Publishes the manifest on `manifest` from now on, starting with the one published so far: a
-    /// follower's writer, which published to no reader, becomes the sequencer's.
+    /// follower's writer, which published to no reader, becomes the sequencer's, or a member link's.
     pub(crate) fn publish_on(&mut self, manifest: watch::Sender<Manifest>) {
         manifest.send_replace(self.published());
         self.manifest = manifest;

@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use tokio::sync::watch;
-use tracing::debug;
+use tracing::warn;
 
 use super::{Copy, ENTRIES_BYTES};
 use crate::log::{LogEntry, LogReader, Manifest, Offset};
@@ -36,7 +36,10 @@ impl Copy {
             None => (!state.recent.is_empty()).then_some(0),
         };
         let Some(start) = start else { return Vec::new() };
+        // The next seq's command joins an asker's entry only when no entry between them can be missing,
+        // which a ring cannot tell: with the log on disk, the page is read from it instead.
         let joined = match start {
+            0 if state.durable_log.is_some() => follows_exactly(after, state.recent[0].0),
             0 => follows(after, state.recent[0].0),
             _ => Some(state.recent[start - 1].0) == after,
         };
@@ -55,11 +58,11 @@ impl Copy {
         match tokio::task::spawn_blocking(move || log.page(after)).await {
             Ok(Ok(page)) => page,
             Ok(Err(e)) => {
-                debug!("reading the copy's log for an entries question failed: {e:#}");
+                warn!(?after, "reading the copy's log for an entries question failed: {e:#}");
                 Vec::new()
             }
             Err(e) => {
-                debug!("the copy's log read did not finish: {e}");
+                warn!(?after, "the copy's log read did not finish: {e}");
                 Vec::new()
             }
         }
@@ -97,6 +100,11 @@ fn follows(after: Option<Offset>, first: Offset) -> bool {
         Some(after) => [after.next(), Offset::start_of(after.seq.saturating_add(1))].contains(&first),
         None => first == Offset::start_of(0),
     }
+}
+
+/// Whether `first` is the entry right after `after` within its seq, or the log's first for `None`.
+fn follows_exactly(after: Option<Offset>, first: Offset) -> bool {
+    after.map_or(first == Offset::start_of(0), |after| first == after.next())
 }
 
 /// The leading entries of `entries` that fit `ENTRIES_BYTES` of JSON.

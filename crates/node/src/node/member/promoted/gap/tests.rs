@@ -183,6 +183,34 @@ async fn a_member_gives_an_empty_copy_and_a_trailing_one_the_gap_from_its_log() 
     }
 }
 
+/// The archive's lines for a segment: all of them for an empty copy, and for one holding commands through
+/// `tip` the entries at its seq and later, but not the command at `tip` or any before it.
+#[tokio::test]
+async fn an_archived_segment_gives_an_empty_copy_every_line_and_a_trailing_one_those_past_its_tip() {
+    let dir = scratch_dir("gap-past-tip");
+    ticks(&dir, 6).await;
+    let entries = log_entries(&dir);
+    let bytes: Vec<u8> = entries.iter().flat_map(|e| [serde_json::to_vec(e).unwrap(), vec![b'\n']].concat()).collect();
+    let mut all = Vec::new();
+    past_tip(&bytes, 0, None, &mut all).unwrap();
+    assert_eq!(all, bytes, "an empty copy takes the whole segment");
+    let mut after = Vec::new();
+    past_tip(&bytes, 0, Some(2), &mut after).unwrap();
+    let kept: Vec<&LogEntry> = after.split(|b| *b == b'\n').filter(|l| !l.is_empty()).map(|_| &entries[0]).collect();
+    let expected = entries
+        .iter()
+        .scan(0, |seq, entry| {
+            if let LogEntry::Command(command) = entry {
+                *seq = command.sequenced.seq;
+            }
+            Some((*seq, entry))
+        })
+        .filter(|(seq, entry)| if matches!(entry, LogEntry::Command(_)) { *seq > 2 } else { *seq >= 2 })
+        .count();
+    assert_eq!(kept.len(), expected, "a trailing copy takes the entries past its tip's command");
+    assert!(!after.is_empty() && after.len() < bytes.len());
+}
+
 // ── Helpers ──
 
 /// Runs the test sequencer on `dir` for `count` ticks and stops it.

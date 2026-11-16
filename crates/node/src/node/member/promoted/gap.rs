@@ -196,24 +196,34 @@ async fn archive(follower: &mut Follower, operator: &crate::standby::Followed) -
     for listed in listings.iter().filter(|listed| tip.is_none_or(|tip| listed.last_seq >= tip)) {
         let bytes = fetch_archive_bytes(&archive, &origins, &listed.file, Some(listed)).await?;
         check_listing(listed, &bytes)?;
-        let mut seq = listed.first_seq.saturating_sub(1);
-        for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
-            let entry: crate::log::LogEntry = serde_json::from_slice(line).context("an archived entry")?;
-            if let crate::log::LogEntry::Command(command) = &entry {
-                seq = command.sequenced.seq;
-            }
-            let after_tip = match entry {
-                crate::log::LogEntry::Command(_) => tip.is_none_or(|tip| seq > tip),
-                _ => tip.is_none_or(|tip| seq >= tip),
-            };
-            if after_tip {
-                lines.extend_from_slice(line);
-                lines.push(b'\n');
-            }
-        }
+        past_tip(&bytes, listed.first_seq, tip, &mut lines)?;
     }
     anyhow::ensure!(!lines.is_empty(), "the archive holds nothing past the copy's tip, {tip:?}");
     follower.take_entries(tip.map(Offset::start_of), &lines).map_err(|e| e.context(TailRefused))
+}
+
+/// Appends to `lines` the JSON lines of the segment `bytes`, which starts at `first_seq`, that follow the
+/// command at `tip`: its later commands, and the entries at its seq or later; every line for an empty
+/// copy, whose `tip` is `None`.
+/// Error cases:
+/// - a line is not a log entry
+fn past_tip(bytes: &[u8], first_seq: u64, tip: Option<u64>, lines: &mut Vec<u8>) -> anyhow::Result<()> {
+    let mut seq = first_seq.saturating_sub(1);
+    for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+        let entry: crate::log::LogEntry = serde_json::from_slice(line).context("an archived entry")?;
+        if let crate::log::LogEntry::Command(command) = &entry {
+            seq = command.sequenced.seq;
+        }
+        let after_tip = match entry {
+            crate::log::LogEntry::Command(_) => tip.is_none_or(|tip| seq > tip),
+            _ => tip.is_none_or(|tip| seq >= tip),
+        };
+        if after_tip {
+            lines.extend_from_slice(line);
+            lines.push(b'\n');
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

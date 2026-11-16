@@ -43,6 +43,8 @@ pub(super) struct Rig {
     tasks: Vec<JoinHandle<()>>,
     /// Whether the members' followers go on following the operator's stream.
     following: Arc<AtomicBool>,
+    /// Their threads, joined at `stop`, which fails the scenario if one panicked.
+    followers: Vec<std::thread::JoinHandle<()>>,
 }
 
 /// The synthetic log the operator sequences: each seq's cumulative prefix and stamp.
@@ -172,16 +174,22 @@ impl Rig {
         );
         let origin = format!("http://{}", crate::api::serve_tests::serve_signing(stream).await);
         let following = Arc::new(AtomicBool::new(true));
+        let mut followers = Vec::new();
         for member in members.iter().enumerate().filter(|(i, _)| *i != operator).map(|(_, m)| m) {
             let (copy, enclave, cfg, following) =
                 (member.copy.clone(), AccountId(signing.address()), cfg.clone(), following.clone());
             let followed =
                 Followed { origin: origin.clone(), enclave, mirrors: Vec::new(), danger_accept_invalid_certs: false };
+            // The directory is made here, on the test's thread, which owns its removal; one per follower.
+            static FOLLOWERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let dir = crate::test_support::scratch_dir(&format!(
+                "liveness-follower-{}",
+                FOLLOWERS.fetch_add(1, Ordering::SeqCst)
+            ));
             // The follower holds the replica's single-threaded state: it runs on a thread of its own.
-            std::thread::spawn(move || {
+            followers.push(std::thread::spawn(move || {
                 let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
                 runtime.block_on(async move {
-                    let dir = crate::test_support::scratch_dir("liveness-follower");
                     let mut follower = Follower::open(
                         &dir,
                         crate::test_support::SEGMENT_COMMANDS,
@@ -198,11 +206,11 @@ impl Rig {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 });
-            });
+            }));
         }
         let (sequencer_tx, _) = mpsc::channel::<Request>(1);
         let poster = tokio::spawn(poster.run(tip_rx, sequencer_tx));
-        Self { gate, benchmark, hold, released, tip, relayer: heads_cfg.relayer, poster, tasks, following }
+        Self { followers, gate, benchmark, hold, released, tip, relayer: heads_cfg.relayer, poster, tasks, following }
     }
 
     /// Takes the operator's relayer's funds, so its posts fail.
@@ -218,6 +226,9 @@ impl Rig {
     /// Stops every part.
     pub(super) fn stop(self) {
         self.following.store(false, Ordering::SeqCst);
+        for follower in self.followers {
+            follower.join().expect("a member's follower panicked");
+        }
         self.poster.abort();
         self.tasks.iter().for_each(JoinHandle::abort);
     }

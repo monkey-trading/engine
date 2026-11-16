@@ -4,8 +4,9 @@
 //! - `Status`: the seq and cumulative prefix its copy durably holds, and the newest head of the asked
 //!   signer epoch it has seen, signed by its standby key over the asker's fresh nonce. The operator
 //!   asks for it as a member's confirmation, and any node asks for it before it sequences;
-//! - `Entries`: the copy's latest entries after a seq, which a promoted member fetches a gap with,
-//!   checking every one against its own copy's seal chain;
+//! - `Entries`: the copy's entries after an entry, or from its first, from the ring of its latest or else
+//!   its log on disk, which a promoted member fetches a gap with, checking every one against its own copy's
+//!   seal chain;
 //! - `Vouch`: a vouch for a candidate's standby key (`standby_key::vouch::answer`), signed with this
 //!   member's standby key while the schedule lists it as promotable;
 //! - `Attestation`: the latest vouch request quoted for its standby key, whose `engine.standby.v1`
@@ -52,7 +53,7 @@ use crate::trusted_time::TrustedClock;
 /// How many of the copy's latest entries a member keeps to answer `Entries` from.
 pub(crate) const RECENT_ENTRIES: usize = 16_384;
 /// The most bytes of entries one answer carries, under the frame limit.
-const ENTRIES_BYTES: usize = 768 * 1024;
+const ENTRIES_BYTES: usize = if cfg!(test) { 32 * 1024 } else { 768 * 1024 };
 /// How many signer epochs' newest heads a member keeps.
 const SEEN_EPOCHS: usize = 4;
 /// How many heads seen past the copy's latest command a member keeps to check as the copy reaches them.
