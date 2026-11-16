@@ -326,7 +326,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   confirmation to its first command holds no chain read and no time sample: the sealed certificate,
   opened first, the rotation check, the checkpoint setup with the vault's anchor checked against its
   replica, the MONKEY budget, the posted log heads, the generations of the turns it starts in (a promotion's
-  carried turn too), the schedule's reassignments its own log check reads, and last the trusted time
+  carried turn too), and last the trusted time
   sample; `src/node/ready/tests.rs` starts a node from a replica with every chain endpoint and time
   server unreachable, and refuses an altered certificate store before any chain read, with
   `tests/promoted.rs` for a promoted member's start from its copy and its staking check. Between the

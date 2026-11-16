@@ -1,7 +1,9 @@
 //! What a member's start reads before it connects for its turn's tail (#593): its sealed
 //! certificate, the registry's rotation switch, the checkpoint setup at the vault's finalized checkpoint with its anchor checked
 //! against the replica, the MONKEY emission budget and the staking config's match with the staking contract, the posted log heads, the generation the turn's
-//! keys are sealed in, and a trusted time sample. The start after the confirmation reads none of
+//! keys are sealed in (a promotion's carried turn too), and a trusted time sample; the schedule's
+//! reassignments its own log check reads are read beside them (`member/turn/open.rs`, `member/promoted.rs`).
+//! The start after the confirmation reads none of
 //! them again, so nothing between the handover and the member's first command reads the chain or
 //! samples time; only the revalidation point sits between them.
 

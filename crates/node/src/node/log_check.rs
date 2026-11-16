@@ -97,10 +97,11 @@ pub(crate) async fn read_unreadied(
 /// The checks a start records: after a handover, the handed-over checkpoint (`after_handover`); for a
 /// start a promotion made, the vault's checkpoint at `promoted`, the seq the promotion fixed, which the
 /// member's replica verified as it followed (`after_promotion`). Both attribute the range from the log's
-/// records and `read`, as a member's start reads no chain between the incumbent's stop and its first command:
-/// a promotion or skip of this node's member within the finality window before the start, which the
-/// log has yet to mirror, is not seen here, while an asked check also reads the schedule
-/// (`log_check::ask`).
+/// records and `read`, the schedule's reassignments the start read before it connected (`start_reads`):
+/// a promotion or skip of this node's member within the finality window before the start, which the log
+/// has yet to mirror, shows only there. A member's start reads no chain between the incumbent's stop and
+/// its first command, so a tail take reads them before it connects, and a start with none reads them
+/// itself.
 /// Error cases:
 /// - see `after_handover` and `after_promotion`
 pub(crate) fn after_start(
