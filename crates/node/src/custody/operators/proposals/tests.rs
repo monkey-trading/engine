@@ -130,6 +130,29 @@ async fn a_failed_proposals_read_serves_the_operator_list_with_them_unavailable(
 }
 
 #[tokio::test]
+async fn the_proposals_read_resolves_its_alert_once_per_failure_however_many_reads_follow() {
+    let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
+    let bad = || {
+        let mut bad = vec![proposal(1, 3_600, 86_400, false)];
+        bad[0].proposal.commandHash = B256::repeat_byte(1);
+        reading(bad).quorum
+    };
+    let mut reader = reading(vec![proposal(1, 3_600, 86_400, false)]);
+    for _ in 0..4 {
+        reader.read().await.unwrap();
+    }
+    assert_eq!(logs.count("alert_resolved=\"proposals_read_failed\""), 1, "only the start resolves");
+    reader.quorum = bad();
+    reader.read().await.unwrap();
+    assert_eq!(logs.warnings("proposals_read_failed"), 1);
+    reader.quorum = reading(vec![proposal(1, 3_600, 86_400, false)]).quorum;
+    for _ in 0..4 {
+        reader.read().await.unwrap();
+    }
+    assert_eq!(logs.count("alert_resolved=\"proposals_read_failed\""), 2, "the recovery resolves once");
+}
+
+#[tokio::test]
 async fn a_vote_contract_with_no_code_holds_no_proposal() {
     let list = json_of(&reading(Vec::new()).read().await.unwrap());
     assert_eq!(list["proposals"], json!({ "vote": format!("{VOTE:#x}"), "open": [], "truncated": false }));

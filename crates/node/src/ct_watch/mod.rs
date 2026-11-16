@@ -372,10 +372,13 @@ async fn poll_attestation(source: &AttestationSource, budget: Duration, store: &
         Poll::Verified(key) => {
             let now = (store.clock)();
             store.tracker.attested(&key, now);
-            info!(alert_resolved = "attestation_unverified", "the node's attestation verifies");
+            if store.tracker.episodes.clear("attestation_unverified") {
+                info!(alert_resolved = "attestation_unverified", "the node's attestation verifies");
+            }
         }
         Poll::Unreachable(e) => warn!("the node's attestation is unavailable: {e:#}"),
         Poll::Rejected(e) => {
+            store.tracker.episodes.raise("attestation_unverified");
             error!(alert = "attestation_unverified", "the node's attestation does not verify: {e:#}")
         }
     }

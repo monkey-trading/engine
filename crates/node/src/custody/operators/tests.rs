@@ -372,6 +372,29 @@ async fn a_failed_read_leaves_the_last_list_up_and_a_later_one_replaces_it() {
 }
 
 #[tokio::test]
+async fn the_list_read_resolves_its_alert_once_per_failure_however_many_reads_follow() {
+    let providers = honest(2);
+    let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
+    let (mut reader, _) = reader(providers.clone(), Duration::from_secs(60));
+    for _ in 0..4 {
+        reader.refresh().await;
+    }
+    assert_eq!(logs.count("alert_resolved=\"operators_read_failed\""), 1, "only the start resolves");
+    let down: Vec<_> = providers.iter().cloned().map(|provider| Provider { down: true, ..provider }).collect();
+    reader.quorum = Quorum::new(down.into_iter().enumerate().map(|(i, p)| (format!("p{i}"), p)).collect())
+        .unwrap()
+        .named("operators", false);
+    reader.refresh().await;
+    reader.quorum = Quorum::new(providers.into_iter().enumerate().map(|(i, p)| (format!("p{i}"), p)).collect())
+        .unwrap()
+        .named("operators", false);
+    for _ in 0..4 {
+        reader.refresh().await;
+    }
+    assert_eq!(logs.count("alert_resolved=\"operators_read_failed\""), 2, "the recovery resolves once");
+}
+
+#[tokio::test]
 async fn a_candidate_whose_endpoint_is_not_utf8_is_listed_and_the_others_still_read() {
     let mut providers = honest(3);
     for provider in &mut providers {

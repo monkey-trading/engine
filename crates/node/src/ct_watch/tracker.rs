@@ -18,6 +18,7 @@ use tracing::{error, info};
 
 use crate::ct_watch::leaf::{Certificate, covers};
 use crate::ct_watch::state::{Finding, LogProgress, MAX_ATTESTED, MAX_FINDINGS, State};
+use crate::episodes::Episodes;
 
 /// The watcher's state and the rules that move it.
 pub(super) struct Tracker {
@@ -36,6 +37,8 @@ pub(super) struct Tracker {
     /// Set until the first `settle`, which resolves again the alerts a previous run was resolving:
     /// the resolve may not have reached the outbox before a kill.
     resuming: bool,
+    /// Whether `attestation_unverified` is raised, so a verified poll resolves it once.
+    pub(super) episodes: Episodes,
 }
 
 impl Tracker {
@@ -82,6 +85,7 @@ impl Tracker {
             renamed,
             drops: Counter::default(),
             resuming: true,
+            episodes: Episodes::default(),
         }
     }
 
@@ -171,8 +175,9 @@ impl Tracker {
         let progress = self.state.logs.get_mut(&self.logs[log]).expect("every configured log has progress");
         progress.next_index = Some(next_index);
         if let Some(head_ms) = read_to_head {
+            let was_stale = now.saturating_sub(progress.caught_up_ms) >= self.stale_after_ms;
             progress.caught_up_ms = progress.caught_up_ms.max(head_ms.min(now));
-            if now.saturating_sub(progress.caught_up_ms) < self.stale_after_ms {
+            if was_stale && now.saturating_sub(progress.caught_up_ms) < self.stale_after_ms {
                 info!(alert_resolved = "ct_log_unreachable", log, "log read up to a recent signed tree head");
             }
         }
@@ -249,6 +254,7 @@ impl Tracker {
     pub(super) fn check_attestation(&mut self, now: u64) {
         let behind = now.saturating_sub(self.state.last_verified_ms);
         if behind >= self.grace_ms {
+            self.episodes.raise("attestation_unverified");
             error!(
                 alert = "attestation_unverified",
                 "no attestation of the node has verified for {}s; its keys are not being learned",

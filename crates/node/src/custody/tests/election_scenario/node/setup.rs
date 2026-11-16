@@ -42,6 +42,7 @@ pub(super) fn poster(
         retry: section.retry_interval,
         pending_deposits_critical_after: Duration::from_secs(1),
         post_withheld: Default::default(),
+        episodes: Default::default(),
         relayer_gas: None,
     }
 }
