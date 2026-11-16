@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use anyhow::Context;
 use engine_core::types::AccountId;
+use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
 use super::{RETRY_FOR, STINT, TAIL_ATTEMPTS};
@@ -144,10 +145,11 @@ const CAUGHT_UP: u64 = 4_096;
 const CATCH_UP_STINTS: usize = 10;
 
 /// Follows `operator` until `follower`'s copy is within `CAUGHT_UP` of its head, as its signed
-/// heartbeats name it, for at most `CATCH_UP_STINTS` stints; a failed stint ends it.
+/// heartbeats name it, for at most `CATCH_UP_STINTS` stints, each held to `STINT` with its connecting;
+/// a failed stint ends it.
 pub(super) async fn catch_up(cfg: &crate::config::NodeConfig, follower: &mut Follower, operator: &Followed) {
     for _ in 0..CATCH_UP_STINTS {
-        if let Err(e) = follower.stint(cfg, operator, STINT).await {
+        if let Err(e) = follower.follow_during(cfg, operator, STINT, sleep(STINT)).await.1 {
             warn!("catching the copy up before this member's turn failed: {e:#}");
             return;
         }
