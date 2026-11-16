@@ -6,6 +6,7 @@ import {Vm, console, stdError} from "forge-std/Test.sol";
 import {OperatorRegistry} from "../src/OperatorRegistry.sol";
 import {OperatorSchedule} from "../src/OperatorSchedule.sol";
 import {SeedReceiver} from "../src/SeedReceiver.sol";
+import {SeedSchedule} from "../src/SeedSchedule.sol";
 import {Vault} from "../src/Vault.sol";
 import {ScheduleTest} from "./helpers/ScheduleTest.sol";
 import {MockSeedReceiver} from "./mocks/MockSeedReceiver.sol";
@@ -126,7 +127,7 @@ contract OperatorScheduleTest is ScheduleTest {
             assertEq(schedule.currentSetId(), i + 1);
             assertEq(schedule.pendingSetId(), i < 2 ? i + 2 : 0);
             // The one turn whose deadline falls while this set is in effect draws its member.
-            uint64 turn = uint64((effectiveAt[i] - schedule.boundaryOffset() - 1) / 1 days + 2);
+            uint64 turn = uint64((effectiveAt[i] - schedule.boundary(0) - 1) / 1 days + 2);
             assertGe(schedule.drawDeadline(turn), effectiveAt[i]);
             assertEq(_draw(turn), members[i]);
             assertEq(schedule.turnOf(turn).setId, i + 1);
@@ -380,9 +381,14 @@ contract OperatorScheduleTest is ScheduleTest {
         vm.expectRevert(OperatorSchedule.UnauthorizedGovernance.selector);
         schedule.setSeedReceiver(forked);
         address noCode = makeAddr("no code");
-        vm.expectRevert(OperatorSchedule.ZeroAddress.selector);
+        vm.expectRevert();
         vm.prank(address(governance));
         schedule.setSeedReceiver(SeedReceiver(noCode));
+        // A receiver that numbers turns by another length would answer other turns' seeds.
+        SeedReceiver short = new SeedReceiver(makeAddr("forked relay"), GENESIS, 5 minutes);
+        vm.expectRevert(abi.encodeWithSelector(SeedSchedule.InvalidTurnLength.selector, uint64(5 minutes)));
+        vm.prank(address(governance));
+        schedule.setSeedReceiver(short);
         vm.expectEmit(address(schedule));
         emit OperatorSchedule.SeedReceiverChanged(address(forked));
         vm.prank(address(governance));
@@ -566,7 +572,7 @@ contract OperatorScheduleTest is ScheduleTest {
 
         // The turn whose window holds the set's effective time draws from the set before it,
         // whenever in its window it is drawn.
-        uint64 turn = uint64((effectiveAt - schedule.boundaryOffset()) / 1 days + 1);
+        uint64 turn = uint64((effectiveAt - schedule.boundary(0)) / 1 days + 1);
         assertLt(schedule.drawDeadline(turn), effectiveAt);
         assertEq(schedule.setAt(schedule.drawDeadline(turn)), 1);
         vm.warp(effectiveAt - 1);

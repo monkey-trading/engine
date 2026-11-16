@@ -127,7 +127,7 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
         &chain.provider,
         chain.accounts[0],
         "SeedReceiver.sol/SeedReceiver.json",
-        &(chain.accounts[9], 1_606_824_023u64, crate::seed_relay::schedule::TURN_SECS).abi_encode_params(),
+        &(chain.accounts[9], 1_606_824_023u64, DAY_SECS).abi_encode_params(),
     )
     .await;
     let (schedule, log_heads) = chain.deploy_schedule_with(receiver, RULE, 60).await;

@@ -208,7 +208,7 @@ async fn a_schedule_of_another_turn_length_stalls_the_poll_before_any_mirror() {
     init_staking(&node).await;
     let account = AccountId([0x0a; 20]);
     let chains = schedule_chains(SCHEDULE, Some(REGISTRY), account);
-    let build = engine_core::turns::TURN_MS.unsigned_abs() / 1000;
+    let build = crate::seed_relay::schedule::TURN_SECS;
     // A day's turns under a short-turns build, and five minutes' under any other.
     let other = if build == 86_400 { 300 } else { 86_400 };
     for chain in &chains {

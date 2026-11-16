@@ -143,7 +143,7 @@ abstract contract ScheduleTest is RegistryTest {
 
     /// @dev The turn drawable now: the one whose boundary comes next.
     function _nextTurn() internal view returns (uint64) {
-        return uint64((block.timestamp - schedule.boundaryOffset()) / schedule.turnLength() + 1);
+        return uint64((block.timestamp - schedule.boundary(0)) / schedule.turnLength() + 1);
     }
 
     function _relay(uint64 turn, bytes32 seed) internal {

@@ -8,11 +8,10 @@ use engine_core::governance::{GovernanceConfig, command_hash};
 use engine_core::protocol::ProtocolVersion;
 
 use super::*;
+use crate::seed_relay::schedule::TURN_SECS;
 
 const SCHEDULE: Address = Address::repeat_byte(0x5c);
 const VOTE: Address = Address::repeat_byte(0x5f);
-/// A turn, in seconds: a day, or five minutes in a `short-turns` build.
-const TURN_SECS: u64 = engine_core::turns::TURN_MS.unsigned_abs() / 1000;
 
 #[tokio::test]
 async fn a_vote_contract_recording_another_schedule_stalls_the_poll_before_any_mirror() {

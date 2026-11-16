@@ -100,7 +100,7 @@ impl ChainState {
                 }
             }
             _ if data == turnLengthCall {}.abi_encode() => {
-                let build = engine_core::turns::TURN_MS.unsigned_abs() / 1000;
+                let build = crate::seed_relay::schedule::TURN_SECS;
                 Ok(turnLengthCall::abi_encode_returns(&self.schedule.turn_length.unwrap_or(build)).into())
             }
             (_, Some((fault_proof, recorded))) if to == fault_proof && data == vaultCall {}.abi_encode() => {

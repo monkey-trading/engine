@@ -15,6 +15,7 @@ use engine_core::turns::{SetMember, TurnReason};
 use engine_core::types::AccountId;
 
 use crate::custody::evm::StakingEventKind;
+use crate::seed_relay::schedule::TURN_SECS;
 
 sol! {
     event RotationChanged(bool enabled, bool electionCancelled);
@@ -55,9 +56,6 @@ sol! {
     function turnLength() external view returns (uint64);
     function vault() external view returns (address);
 }
-
-/// A turn, in seconds: the schedule's turn ends a turn after its boundary.
-const TURN_SECS: u64 = engine_core::turns::TURN_MS.unsigned_abs() / 1000;
 
 /// The topics of the registry events the engine mirrors.
 pub(super) const SIGNATURES: [B256; 3] =

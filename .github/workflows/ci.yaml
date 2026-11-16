@@ -428,7 +428,8 @@ jobs:
         run: ./scripts/dev-operator-faults.sh
 
   # A development build with five-minute operator turns (`short-turns`), a feature set apart from every
-  # other job's, with its own cache: its clippy, its turn tests, and its scenario on real nodes.
+  # other job's: a production build's refusal of it, its clippy, its turn tests, and its scenario on
+  # real nodes.
   dev-short-turns:
     needs: changes
     if: needs.changes.outputs.scenarios == 'true'
@@ -441,11 +442,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: clippy
+      # The dependencies come from the shared cache the other jobs keep fresh; the engine's own crates
+      # compile under this job's features, so it saves nothing.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: engine-short-turns
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: true
+          shared-key: engine-lib
+          save-if: false
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
           version: v1.8.3
@@ -453,6 +455,15 @@ jobs:
       - name: Install contract dependencies
         working-directory: contracts
         run: forge soldeer install
+      - name: Refuse short turns in a production build
+        run: |
+          for features in production,short-turns production,engine-core/short-turns; do
+            if cargo check -p engine-node --features "$features" --locked 2> refused.log; then
+              echo "::error::a production build compiled with $features"
+              exit 1
+            fi
+            grep -q "a production build refuses the short-turns feature" refused.log || { cat refused.log; exit 1; }
+          done
       - name: Lint the short-turns build
         run: cargo clippy -p engine-core -p engine-node --features engine-node/short-turns --all-targets --locked -- -D warnings
       - name: Test the short-turns build's turns

@@ -62,8 +62,10 @@ the alert ends once both upcoming turns have their seeds. The message names the 
   the message names.
 - **"this node reads Fulu states only", "the relay refuses fork", or `ForkNotAccepted`**: Ethereum
   has forked. Relaying resumes only with a node release that reads the new fork's state and, unless
-  the relay was deployed with the new fork's version, a new relay and a receiver that names it. Both
-  are the owner's to schedule; until then every turn draws from the fallback.
+  the relay was deployed with the new fork's version, a new relay and a receiver that names it, both
+  with the schedule's turn length (`cast call $SCHEDULE 'turnLength()(uint64)'`, 86400) and beacon
+  genesis time (`'beaconGenesisTime()(uint64)'`); the schedule refuses a receiver of another turn
+  length. Both are the owner's to schedule; until then every turn draws from the fallback.
 - **"waited … for a block: replacing it at its nonce"**: the relayer's transaction stayed pending,
   usually because the base fee rose past its fee cap, and the relayer replaced it at the same nonce
   with fees a quarter higher. It keeps one relay in flight at a time, so nothing queues behind it.

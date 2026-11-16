@@ -14,6 +14,8 @@ contract MockSeedReceiver {
 
     Failure public failure;
     bytes32 public answer;
+    /// @dev The schedule's turn length, which `setSeedReceiver` requires.
+    uint64 public turnLength = 1 days;
 
     function fail(Failure failure_) external {
         failure = failure_;

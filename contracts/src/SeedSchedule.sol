@@ -32,8 +32,9 @@ abstract contract SeedSchedule {
     /// @notice A turn's length, in seconds: a day in production, and otherwise a divisor of a day of at
     /// least `MIN_TURN_LENGTH`. It is also the draw lead, and the relay window is two of it.
     uint64 public immutable turnLength;
-    /// @notice A turn's boundary, in seconds past a multiple of the turn length: 22:30 UTC modulo it.
-    uint64 public immutable boundaryOffset;
+    /// @dev A turn's boundary, in seconds past a multiple of the turn length: 22:30 UTC modulo it, which
+    /// `boundary(0)` answers.
+    uint64 internal immutable boundaryOffset;
 
     error ZeroGenesisTime();
     error InvalidTurnLength(uint64 turnLength);

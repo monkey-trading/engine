@@ -88,7 +88,7 @@ async fn run() -> anyhow::Result<()> {
         &chain.provider,
         chain.accounts[0],
         "SeedReceiver.sol/SeedReceiver.json",
-        &(chain.accounts[9], 1_606_824_023u64, crate::seed_relay::schedule::TURN_SECS).abi_encode_params(),
+        &(chain.accounts[9], 1_606_824_023u64, DAY_SECS).abi_encode_params(),
     )
     .await;
     let (schedule, log_heads) = chain.deploy_schedule_with(receiver, RULE, 60).await;

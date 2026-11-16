@@ -282,7 +282,7 @@ contract ScheduleHandler is Test {
     }
 
     function _nextTurn() internal view returns (uint64) {
-        return uint64((block.timestamp - schedule.boundaryOffset()) / 1 days + 1);
+        return uint64((block.timestamp - schedule.boundary(0)) / 1 days + 1);
     }
 
     function _digest(uint256 seed) internal pure returns (bytes memory) {

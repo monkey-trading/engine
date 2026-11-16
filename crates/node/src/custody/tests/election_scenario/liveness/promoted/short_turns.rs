@@ -6,8 +6,9 @@
 //! the next two turns are drawn for B and then C at their draw deadlines. It checks that at each of the
 //! two boundaries the turn's member takes the keys by itself, logs `TurnTaken` and its admin key signs
 //! while the previous turn's is refused; that with C, the incumbent, killed once its head latched its
-//! turn, the callers promote the next member, whose node serves from its copy under its standby key and
-//! whose admin key signs; and that its log replays across the change of signer.
+//! turn, the callers promote the next member, whose node serves from its copy under its standby key,
+//! whose admin key signs and whose first checkpoint lands; and that its log replays across the change of
+//! signer.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -26,7 +27,7 @@ use serde_json::Value;
 use tokio::time::sleep;
 
 use super::nodes::{Deployment, Seat};
-use super::{adopt, now_s, until};
+use super::{adopt, latestSeqCall, now_s, until};
 use crate::checkpoints::scenario::deploy;
 use crate::clock::now_ms;
 use crate::custody::tests::election_scenario::chain::Chain;
@@ -181,6 +182,7 @@ async fn run() -> anyhow::Result<()> {
         (latch.member == c_candidate).then_some(())
     })
     .await?;
+    let checkpoint_before = chain.view(vault, latestSeqCall {}).await;
     seats[2].kill().await?;
     let window = Duration::from_secs(RULE.0 * (u64::from(RULE.2) + 1) + RULE.1);
     let epoch = until("a promotion", window + Duration::from_secs(120), &mut seats[..2], async || {
@@ -201,6 +203,12 @@ async fn run() -> anyhow::Result<()> {
     let applied = admin(&promoted, &seats[p].admin, vault, false).await?;
     ensure!(applied.iter().any(|event| matches!(event, Event::AdminApplied)), "{applied:?}");
     println!("PASS: {} serves from its copy under its standby key, and its admin key signs", seats[p].name);
+    until("the promoted member's first checkpoint", Duration::from_secs(120), &mut seats, async || {
+        let seq = chain.view(vault, latestSeqCall {}).await;
+        (seq > checkpoint_before).then_some(seq)
+    })
+    .await?;
+    println!("PASS: {}'s first checkpoint under its standby key landed", seats[p].name);
 
     // The promoted member's log replays across the change of signer.
     for seat in &mut seats {

@@ -62,6 +62,32 @@ contract ShortTurnsTest is ScheduleTest {
         assertTrue(registry.holdsTurn(bob));
     }
 
+    /// The registry's holder walk stops at an installation made once the turn before it ended, five
+    /// minutes after its boundary: bob, who held that turn, holds nothing of the turn drawn after it.
+    function test_AnInstallationAtAFiveMinuteTurnsEndFreesItsMember() public {
+        uint32 setId = _rotateTwo(alice, bob);
+        uint64 turn = _nextTurn() + 1;
+        _relayPicking(turn, setId, bob);
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        vm.prank(address(governance));
+        registry.setRotation(false);
+        assertEq(schedule.turnsRunUntil(), schedule.boundary(turn) + 5 minutes);
+        vm.warp(schedule.turnsRunUntil());
+        vm.prank(address(governance));
+        registry.installOperator(alice, _key(alice), _digest(7), CONFIG);
+        vm.prank(address(governance));
+        registry.setRotation(true);
+        uint64 later = _nextTurn() + 1;
+        _relayPicking(later, setId, alice);
+        _draw(later);
+        assertEq(schedule.sourceOf(later), alice);
+        assertEq(schedule.turnOf(later).prior, turn);
+        vm.warp(schedule.boundary(later));
+        assertTrue(registry.holdsTurn(alice));
+        assertFalse(registry.holdsTurn(bob), "the walk stops at the installation after bob's turn ended");
+    }
+
     function test_RevertWhen_TheTakeWindowSpansMoreThanATurnAtTheShortestInterval() public {
         // Sixteen 20 s slots are 320 s: more than a five-minute turn, well within a day.
         OperatorSchedule.TakeWindow memory window = OperatorSchedule.TakeWindow(4, 4, 16);

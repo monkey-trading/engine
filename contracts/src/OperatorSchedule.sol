@@ -259,7 +259,6 @@ contract OperatorSchedule is SeedSchedule {
 
     error UnauthorizedRegistry();
     error UnauthorizedGovernance();
-    error ZeroAddress();
     error RotationOff();
     error NotDrawable(uint64 turn, uint64 opensAt, uint64 closesAt);
     error AlreadyDrawn(uint64 turn);
@@ -323,10 +322,12 @@ contract OperatorSchedule is SeedSchedule {
     /// @notice Replaces the seed receiver for every turn drawn from now on: the registry's timelock
     /// names a new one when an Ethereum fork needs a new relay. Until the new receiver has a seed
     /// relayed, turns draw from the fallback over the last drawn turn's seed, which this call fixes as
-    /// `seedAnchor`.
+    /// `seedAnchor`. The new receiver keeps the schedule's turn length.
     function setSeedReceiver(SeedReceiver receiver) external {
         if (msg.sender != address(registry.governance())) revert UnauthorizedGovernance();
-        if (address(receiver).code.length == 0) revert ZeroAddress();
+        // A receiver without code, or numbering turns by another length, is refused.
+        uint64 length = receiver.turnLength();
+        if (length != turnLength) revert InvalidTurnLength(length);
         seedReceiver = receiver;
         seedAnchor = turns[lastDrawnTurn].seed;
         emit SeedReceiverChanged(address(receiver));

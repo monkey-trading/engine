@@ -86,7 +86,7 @@ async fn dev_scenario_members_vote_parameter_changes_by_stake() {
         &chain.provider,
         chain.accounts[0],
         "SeedReceiver.sol/SeedReceiver.json",
-        &(chain.accounts[9], BEACON_GENESIS, crate::seed_relay::schedule::TURN_SECS).abi_encode_params(),
+        &(chain.accounts[9], BEACON_GENESIS, DAY_SECS).abi_encode_params(),
     )
     .await;
     let (schedule, _) = chain.deploy_schedule(receiver).await;

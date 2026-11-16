@@ -183,14 +183,14 @@ contract SeedReceiverTest is Test {
         }
         assertEq(new SeedReceiver(relay, GENESIS, 5 minutes).turnLength(), 5 minutes);
         assertEq(receiver.turnLength(), 1 days);
-        assertEq(receiver.boundaryOffset(), 22 hours + 30 minutes);
+        assertEq(receiver.boundary(0), 22 hours + 30 minutes);
     }
 
     /// A five-minute turn starts every five minutes, 22:30 UTC among them; it is drawn a turn ahead from
     /// the mix of the epoch two turns before that, and a relay is refused from its deadline.
     function test_FiveMinuteTurnsKeepTheScheduleInTurns() public {
         SeedReceiver short = new SeedReceiver(relay, GENESIS, 5 minutes);
-        assertEq(short.boundaryOffset(), 0);
+        assertEq(short.boundary(0), 0);
         uint64 turn = 1794004200 / 5 minutes;
         assertEq(short.boundary(turn), 1794004200, "22:30 UTC on 2026-11-06 is a boundary");
         assertEq(short.drawDeadline(turn), 1794004200 - 5 minutes);
@@ -218,7 +218,7 @@ contract SeedReceiverTest is Test {
         assertEq(schedule.drawDeadline(turn + 1), schedule.boundary(turn));
         day = uint64(bound(day, 0, 1_000_000));
         uint64 halfPastTen = day * 1 days + 22 hours + 30 minutes;
-        uint64 named = (halfPastTen - schedule.boundaryOffset()) / length;
+        uint64 named = (halfPastTen - schedule.boundary(0)) / length;
         assertEq(schedule.boundary(named), halfPastTen);
     }
 
