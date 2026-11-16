@@ -320,26 +320,93 @@ contract SkipScheduleTest is SkipTest {
     /// Carol's turn is drawn while alice is named, so alice is its source; the skip then names bob, who
     /// takes the keys carol takes at her boundary.
     function test_ASkippedToHolderCannotLeaveBeforeTheNextTurnsMemberTakesTheKeys() public {
-        address[] memory order = new address[](2);
-        (order[0], order[1]) = (alice, bob);
-        _startTurn(order, carol);
-        _draw(turn + 1);
-        assertEq(schedule.turnOf(turn + 1).candidate, carol);
-        _marked(TAKE);
-        schedule.skip();
-        assertEq(schedule.turnOf(turn).candidate, bob);
-        // Bob's first head latches the skip's assignment.
-        vm.warp(block.timestamp + 20);
-        _beat();
-        (, uint64 epoch, address latched,,) = logHeads.latches(turn, 1);
-        assertEq(epoch, 1);
-        assertEq(latched, bob);
+        _skipAfterTheNextDraw();
         vm.warp(schedule.boundary(turn + 1));
         assertEq(schedule.sourceOf(turn + 1), alice, "the draw's source stays");
         assertTrue(registry.holdsTurn(bob), "bob holds the keys carol takes");
         vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
         vm.prank(bob);
         registry.deregister();
+    }
+
+    /// Bob stays through carol's turn even once she has taken his keys and her first head names her
+    /// release, kept only by the latch of his assignment of the turn before it, and may leave once the
+    /// turn after carol's starts.
+    function test_ASkippedToHolderMayLeaveOnceTheTurnAfterTheNextStarts() public {
+        _skipAfterTheNextDraw();
+        _relayPicking(turn + 2, setId, dave);
+        vm.warp(schedule.boundary(turn + 1));
+        // Carol's first head, signed with the keys she took from bob, latches her assignment.
+        _beat();
+        (uint64 latchedAt,, address latched,,) = logHeads.latches(turn + 1, schedule.turnOf(turn + 1).position);
+        assertEq(latchedAt, block.timestamp);
+        assertEq(latched, carol);
+        assertEq(logHeads.headRelease(vault.signerEpoch()), registry.candidateOf(carol).release);
+        assertTrue(registry.holdsTurn(bob), "bob's head latched the turn before carol's");
+        vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
+        vm.prank(bob);
+        registry.deregister();
+        _draw(turn + 2);
+        vm.warp(schedule.boundary(turn + 2));
+        assertFalse(registry.holdsTurn(bob));
+        vm.prank(bob);
+        registry.deregister();
+        assertEq(registry.candidateOf(bob).adminKey, address(0));
+    }
+
+    /// Alice is the source of carol's turn, but she never took her own: bob, skipped to, took its keys
+    /// from its source and latched it, so at carol's boundary alice holds none of the keys carol takes.
+    function test_TheNextTurnsSourceASkipPassedMayLeaveAtItsBoundary() public {
+        _skipAfterTheNextDraw();
+        vm.warp(schedule.boundary(turn + 1));
+        assertEq(schedule.sourceOf(turn + 1), alice);
+        assertFalse(registry.holdsTurn(alice));
+        vm.prank(alice);
+        registry.deregister();
+        assertEq(registry.candidateOf(alice).adminKey, address(0));
+    }
+
+    /// Bob takes the turn before `turn` and is drawn for `turn` again, so he is the source of dave's turn
+    /// after it; a skip names carol, whose head latches `turn` with the keys she took from him. Dave never
+    /// takes his turn, so at the boundary of the turn after dave's the keys are carol's, and bob, the
+    /// source of an earlier turn the walk passes, may leave.
+    function test_AnEarlierTurnsSourceMayLeaveOnceALaterMemberTookTheKeys() public {
+        address[] memory members = new address[](4);
+        uint256[] memory stakes = new uint256[](4);
+        (members[0], members[1], members[2], members[3]) = (alice, bob, carol, dave);
+        (stakes[0], stakes[1], stakes[2], stakes[3]) = (40_000e18, 30_000e18, 20_000e18, 10_000e18);
+        setId = _rotate(members, stakes);
+        uint64 first = _nextTurn() + 1;
+        address[] memory one = new address[](1);
+        one[0] = bob;
+        _relayOrder(first, one);
+        turn = first + 1;
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (bob, carol);
+        seed = _relayOrder(turn, order);
+        _relayPicking(turn + 1, setId, dave);
+        _relayPicking(turn + 2, setId, alice);
+        _draw(first);
+        vm.warp(schedule.boundary(first));
+        _beat();
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        _draw(turn + 1);
+        assertEq(schedule.sourceOf(turn + 1), bob);
+        _marked(TAKE);
+        schedule.skip();
+        assertEq(schedule.turnOf(turn).candidate, carol);
+        vm.warp(block.timestamp + 20);
+        _beat();
+        (,, address latched,,) = logHeads.latches(turn, schedule.turnOf(turn).position);
+        assertEq(latched, carol);
+        _draw(turn + 2);
+        assertEq(schedule.sourceOf(turn + 2), dave);
+        vm.warp(schedule.boundary(turn + 2));
+        assertFalse(registry.holdsTurn(bob));
+        vm.prank(bob);
+        registry.deregister();
+        assertEq(registry.candidateOf(bob).adminKey, address(0));
     }
 
     /// Dave's turn is drawn while alice is named; the skip names bob, who takes the keys but posts no
@@ -393,6 +460,38 @@ contract SkipScheduleTest is SkipTest {
         vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
         vm.prank(alice);
         registry.deregister();
+    }
+
+    /// Alice draws the first turn and takes no keys, and bob's turn after it is drawn while she is named,
+    /// so she is its source; no member takes a turn from bob's on, and none of them is hers. She stays
+    /// while the walk stops at bob's turn, seven turns back, and may leave once it stops short of it.
+    function test_TheSourceSevenTurnsBackStaysUntilTheWalkStopsShortOfIt() public {
+        address[] memory members = new address[](4);
+        uint256[] memory stakes = new uint256[](4);
+        (members[0], members[1], members[2], members[3]) = (alice, bob, carol, dave);
+        (stakes[0], stakes[1], stakes[2], stakes[3]) = (40_000e18, 30_000e18, 20_000e18, 10_000e18);
+        setId = _rotate(members, stakes);
+        uint64 first = _nextTurn() + 1;
+        _relayPicking(first, setId, alice);
+        _relayPicking(first + 1, setId, bob);
+        address[3] memory others = [bob, carol, dave];
+        for (uint64 next = first + 2; next <= first + 9; ++next) {
+            _relayPicking(next, setId, others[next % 3]);
+        }
+        _draw(first);
+        vm.warp(schedule.boundary(first));
+        for (uint64 next = first + 1; next <= first + 8; ++next) {
+            _draw(next);
+        }
+        assertEq(schedule.sourceOf(first + 1), alice);
+        vm.warp(schedule.boundary(first + 8));
+        assertTrue(registry.holdsTurn(alice), "the source of the turn seven turns back");
+        _draw(first + 9);
+        vm.warp(schedule.boundary(first + 9));
+        assertFalse(registry.holdsTurn(alice));
+        vm.prank(alice);
+        registry.deregister();
+        assertEq(registry.candidateOf(alice).adminKey, address(0));
     }
 
     function test_TheTimelockSetsTheTakeWindowWithinItsBoundsWhileNoTurnNamesTheOperator() public {
@@ -454,6 +553,24 @@ contract SkipScheduleTest is SkipTest {
     function test_TheScheduleFitsEip170() public view {
         console.log("OperatorSchedule, bytes:", address(schedule).code.length);
         assertLe(address(schedule).code.length, 24_576, "EIP-170");
+    }
+
+    /// @dev Starts `turn` for alice, draws `turn + 1` for carol while alice is named, so alice is its
+    /// source, skips `turn` to bob, and posts bob's first head, which latches the skip's assignment.
+    function _skipAfterTheNextDraw() internal {
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (alice, bob);
+        _startTurn(order, carol);
+        _draw(turn + 1);
+        assertEq(schedule.turnOf(turn + 1).candidate, carol);
+        _marked(TAKE);
+        schedule.skip();
+        assertEq(schedule.turnOf(turn).candidate, bob);
+        vm.warp(block.timestamp + 20);
+        _beat();
+        (, uint64 epoch, address latched,,) = logHeads.latches(turn, 1);
+        assertEq(epoch, 1);
+        assertEq(latched, bob);
     }
 
     function _build(

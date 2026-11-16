@@ -17,7 +17,7 @@ use crate::handover::assigned::{Assigned, Assignments, call};
 use crate::liveness::chain::setOfCall;
 use crate::standby_key::chain::{AgreedBlock, StandbyDomain, assignmentOfCall, candidateOfCall, heldTurnCall};
 
-/// How many of a set's members are read at once.
+/// How many of a set's members, or of the turn's assignments, are read at once.
 const MEMBER_READS: usize = 8;
 
 /// A member of the turn's set as the latest agreed block registers it, and the position of its
@@ -108,7 +108,8 @@ pub(crate) fn ordered(
 
 /// The members of `assigned`'s set at `block`, each with its registration and the position of its
 /// assignment of `assigned`'s turn, if it held one, in the set's order: the assignments are read at
-/// each position up to the current one, at most the draw's positions and the set's size.
+/// each position up to the current one, at most the draw's positions and the set's size, `MEMBER_READS`
+/// at a time.
 /// Error cases:
 /// - a call fails or does not decode, or the vault names no schedule
 pub(crate) async fn members(
@@ -121,12 +122,15 @@ pub(crate) async fn members(
         StandbyDomain::at_if_scheduled(block, chain_id, vault).await?.context("the registry names no schedule")?;
     let (set, turn, current) = (assigned.set, assigned.binding.turn, assigned.binding.position);
     let listed = call(block, "discovery_set", domain.schedule, setOfCall { setId: set }).await?;
-    let mut positions = std::collections::BTreeMap::new();
-    for position in 0..=current {
+    let assignment_at = |position| async move {
         let made = call(block, "discovery_assignment", domain.schedule, assignmentOfCall { turn, position }).await?;
-        if !made._0.candidate.is_zero() {
-            positions.entry(made._0.candidate).or_insert(position);
-        }
+        anyhow::Ok((made._0.candidate, position))
+    };
+    let made: Vec<(Address, u16)> =
+        stream::iter(0..=current).map(assignment_at).buffered(MEMBER_READS).try_collect().await?;
+    let mut positions = std::collections::BTreeMap::new();
+    for (candidate, position) in made.into_iter().filter(|(candidate, _)| !candidate.is_zero()) {
+        positions.entry(candidate).or_insert(position);
     }
     let positions = &positions;
     let member = |candidate: Address| async move {

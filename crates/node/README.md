@@ -935,7 +935,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   approved upgrade, checked by the operator's signature; `src/handover/predecessor/secrets.rs` is
   the running release's, which refuses an election's successor; `src/handover/predecessor/tests/`'s
   `secrets.rs` covers both, against the switch in its `vault.rs`
-- `src/handover/turns.rs` — a daily turn's handover authorisation: the finalised schedule's member, once trusted time reaches the turn's boundary, in the generation the schedule fixed; and the operators the member takes the keys from, its turn's source and then each earlier turn's, a week back; `src/handover/turns/tests.rs` walks those sources
+- `src/handover/turns.rs` — a daily turn's handover authorisation: the finalised schedule's member, once trusted time reaches the turn's boundary, in the generation the schedule fixed; and the operators the member takes the keys from, its turn's source, then each earlier turn's latest member and source, a week back, then the members of those turns' earlier assignments; `src/handover/turns/tests.rs` walks those sources
 - `src/handover/hostname.rs` — the API hostname the registry records for the operator in effect, read at a finalized block every `api.operators_interval` for `GET /v1/operator`, under daily turns the member's of the turn in effect at trusted time from the finalised schedule, withdrawn with Warning `operator_hostname_read_failed` while it cannot be read, and the check that a certificate names the registered hostname, a member taking a turn its own; its tests cover the read, the turn in effect and the failure episode
 - `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence;
   `src/handover/tests/archive.rs` covers the published-log fetch ahead of a handover, which only an
@@ -1066,7 +1066,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/history.rs` — accepted history from the finalized anchor, the signed-parent chain, and signer epochs
 - `src/checkpoints/lifecycle_tests/` — paid cash reconciliation, bounded claim polling, rotated authorities, and the vault's pause and retired signer observed, alerted and finalized
 - `src/checkpoints/reconciliation.rs` — finalized collateral health: shortfalls, deposit totals, payouts, surpluses, the credit deadline, and the vault's halt
-- `src/checkpoints/rpc/schedule.rs` — the daily turn the vault's registry's schedule names at a time, and a drawn turn's order (each distinct member its positions pick, with its registration), read at a finalized block; and whom it promoted or skipped to in a range of turns, read at the latest block
+- `src/checkpoints/rpc/schedule.rs` — the daily turn the vault's registry's schedule names at a time, a drawn turn's order (each distinct member its positions pick, with its registration), and the members of a turn's assignments before its latest, read at a finalized block; and whom it promoted or skipped to in a range of turns, read at the latest block; `src/checkpoints/rpc/schedule/tests.rs` reads a turn's superseded members from a stand-in node
 - `src/checkpoints/rpc/takeover.rs` — the standby's takeover signal, read at one finalized block
 - `src/checkpoints/rpc/observation.rs` — same-block balance, epoch, paid total, and bounded claim reads, and whether a claim can prove against a checkpoint
 - `src/checkpoints/rpc/authority.rs` — accepted historical signer identities for rotated nonce journals

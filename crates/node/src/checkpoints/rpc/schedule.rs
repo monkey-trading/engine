@@ -7,6 +7,7 @@ use alloy::sol;
 use alloy::sol_types::SolCall;
 use anyhow::{Context, ensure};
 use engine_core::types::{AccountId, Millis};
+use futures_util::{StreamExt, TryStreamExt, stream};
 
 use crate::checkpoints::rpc::{candidateOfCall, registryCall};
 use crate::checkpoints::{Assigned, CheckpointRpc, HandoverSource, Observation, ScheduledTurn, View};
@@ -14,6 +15,9 @@ use crate::standby_key::chain::assignmentOfCall;
 
 /// The reason a turn's draw records, as `OperatorSchedule.DRAWN` declares it.
 const DRAWN: u8 = 0;
+
+/// How many of a turn's assignments, or of their members' registrations, are read at once.
+const ASSIGNMENT_READS: usize = 8;
 
 sol! {
     function schedule() external view returns (address);
@@ -193,6 +197,48 @@ impl CheckpointRpc {
         self.handover_source_of(registry, Address::from(candidate.0), block).await.map(Some)
     }
 
+    /// See `CheckpointChain::superseded_members`: the schedule's `assignmentOf` at each position below
+    /// the turn's latest, read only when its latest is not the draw, so at most the draw's positions
+    /// and the set's size, `ASSIGNMENT_READS` at a time.
+    /// Error cases:
+    /// - the observation is not finalized and pinned, or a call or its decoding fails
+    pub(super) async fn read_superseded_members(
+        &self,
+        at: &Observation,
+        turn: u64,
+    ) -> anyhow::Result<Vec<HandoverSource>> {
+        ensure!(at.view == View::Finalized, "the schedule requires a finalized observation");
+        let evidence = at.lifecycle.as_ref().context("the schedule requires a pinned canonical observation")?;
+        let block = BlockId::hash_canonical(evidence.block_hash);
+        let vault = Address::from(self.domain.vault.0);
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), block).await?)?;
+        if registry.is_zero() {
+            return Ok(Vec::new());
+        }
+        let schedule =
+            scheduleCall::abi_decode_returns(&self.call(registry, scheduleCall {}.abi_encode(), block).await?)?;
+        if schedule.is_zero() {
+            return Ok(Vec::new());
+        }
+        let raw = self.call(schedule, turnOfCall { turn }.abi_encode(), block).await?;
+        let latest = turnOfCall::abi_decode_returns(&raw).context("decoding the schedule's turn")?;
+        if latest.reason == DRAWN {
+            return Ok(Vec::new());
+        }
+        let assignment_at = |position| async move {
+            let raw = self.call(schedule, assignmentOfCall { turn, position }.abi_encode(), block).await?;
+            let made = assignmentOfCall::abi_decode_returns(&raw).context("decoding the schedule's assignment")?;
+            anyhow::Ok(made._0.candidate)
+        };
+        let made: Vec<Address> =
+            stream::iter(0..latest.position).map(assignment_at).buffered(ASSIGNMENT_READS).try_collect().await?;
+        stream::iter(made.into_iter().filter(|candidate| !candidate.is_zero()))
+            .map(|candidate| self.handover_source_of(registry, candidate, block))
+            .buffered(ASSIGNMENT_READS)
+            .try_collect()
+            .await
+    }
+
     /// `candidate`'s registration at `block`.
     /// Error cases:
     /// - the call or its decoding fails
@@ -224,3 +270,6 @@ impl CheckpointRpc {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

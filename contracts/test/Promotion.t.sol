@@ -421,6 +421,26 @@ contract PromotionTest is LivenessTest {
         assertEq(registry.candidateOf(alice).adminKey, address(0));
     }
 
+    /// Alice takes her turn, and carol's is drawn while alice is named, so alice is its source; alice
+    /// then fails and bob's promotion replaces her keys, so at carol's boundary she holds none of them.
+    function test_TheNextTurnsSourceAPromotionPassedMayLeaveAtItsBoundary() public {
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (alice, bob);
+        _startTurn(order, carol);
+        _beat();
+        _draw(turn + 1);
+        assertEq(schedule.sourceOf(turn + 1), alice);
+        _lapse();
+        schedule.promote();
+        assertEq(schedule.turnOf(turn).candidate, bob);
+        vm.warp(schedule.boundary(turn + 1));
+        assertTrue(registry.holdsTurn(bob), "bob holds the keys carol takes");
+        assertFalse(registry.holdsTurn(alice));
+        vm.prank(alice);
+        registry.deregister();
+        assertEq(registry.candidateOf(alice).adminKey, address(0));
+    }
+
     /// Once the turns end, the timelock installs alice afresh, who held the last turn before bob's
     /// promotion and holds the keys the next drawn turn's member takes; bob holds none of them.
     function test_AnInstallationFreesTheLastTurnsPromotedMember() public {
