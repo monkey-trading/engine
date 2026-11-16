@@ -52,6 +52,32 @@ async fn only_a_shortfall_or_a_ledger_difference_pauses_and_a_surplus_warns() {
     assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), Health::Healthy), "a later checkpoint credits them");
 }
 
+#[tokio::test]
+async fn a_surplus_resolves_once_when_it_clears_and_a_clear_vault_logs_no_resolution() {
+    let (_guard, mut alerts, mut resolved) = crate::test_support::capture_alerts_and_resolutions();
+    let (poster, work, _key) = poster();
+    let mut resolutions = || {
+        std::iter::from_fn(|| resolved.try_recv().ok())
+            .filter(|log| log["alert_resolved"] == "collateral_surplus")
+            .count()
+    };
+    for _ in 0..5 {
+        poster.reconcile(&work).await.unwrap();
+    }
+    assert_eq!(resolutions(), 0, "no episode was open");
+    poster.chain.state.lock().unwrap().balance += Fixed::ONE;
+    for _ in 0..3 {
+        poster.reconcile(&work).await.unwrap();
+    }
+    assert_eq!(resolutions(), 0, "a standing surplus resolves nothing");
+    assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_surplus"));
+    poster.chain.state.lock().unwrap().balance -= Fixed::ONE;
+    for _ in 0..5 {
+        poster.reconcile(&work).await.unwrap();
+    }
+    assert_eq!(resolutions(), 1, "the transition from raised to clear resolves once");
+}
+
 #[tokio::test(start_paused = true)]
 async fn the_first_deposit_left_uncredited_past_the_deadline_pauses_until_a_checkpoint_credits_it() {
     let (_guard, mut alerts) = crate::test_support::capture_alerts();

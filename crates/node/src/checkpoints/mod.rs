@@ -205,6 +205,9 @@ pub(crate) struct Poster<R> {
     /// Whether the `checkpoint_withheld` episode for a diverged collateral view is open, so only
     /// the post that ends it logs the resolve.
     pub post_withheld: std::sync::atomic::AtomicBool,
+    /// Whether the `collateral_surplus` episode is open, so only the check that finds the vault
+    /// clear again logs the resolve.
+    pub surplus_raised: std::sync::atomic::AtomicBool,
     /// The relayer's gas balance, watched when `[checkpoints.relayer_gas]` is set.
     pub relayer_gas: Option<RelayerGas>,
 }

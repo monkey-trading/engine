@@ -245,6 +245,7 @@ pub(super) async fn worker_status(mut work: Work, comparison: Comparison) -> (Op
         retry: Duration::from_millis(1),
         pending_deposits_critical_after: Duration::ZERO,
         post_withheld: Default::default(),
+        surplus_raised: Default::default(),
         relayer_gas: None,
     };
     let (work_tx, work_rx) = mpsc::channel(4);

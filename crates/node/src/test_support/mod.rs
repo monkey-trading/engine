@@ -448,6 +448,7 @@ pub fn poster<R>(chain: R, domain: crate::log::CheckpointDomain, signer: Account
         retry: Duration::from_millis(1),
         pending_deposits_critical_after: Duration::from_secs(1),
         post_withheld: Default::default(),
+        surplus_raised: Default::default(),
         relayer_gas: None,
     }
 }

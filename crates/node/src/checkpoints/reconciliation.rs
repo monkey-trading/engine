@@ -374,11 +374,12 @@ impl<R: CheckpointChain> Poster<R> {
         let compensated = state.balance.raw().checked_add(state.distributions_paid.raw()).map(Fixed::from_raw);
         let held = state.deposited.raw().checked_sub(paid.raw()).map(Fixed::from_raw);
         if held.is_some_and(|held| compensated.is_some_and(|sum| sum > held)) {
+            self.surplus_raised.store(true, Ordering::Relaxed);
             warn!(
                 alert = "collateral_surplus",
                 "the vault holds USDC no deposit brought in; anyone may book 10 USDC or more of it as house capital with bookSurplus"
             );
-        } else if health == Health::Healthy {
+        } else if health == Health::Healthy && self.surplus_raised.swap(false, Ordering::Relaxed) {
             info!(alert_resolved = "collateral_surplus", "the vault holds no unbooked USDC");
         }
         Ok((Some(cp.seq), health, finalized_observation.lifecycle))
