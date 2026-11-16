@@ -317,4 +317,14 @@ pub(crate) trait CheckpointChain: Send + Sync {
         let _ = (at, candidate);
         Ok(None)
     }
+
+    /// The members of drawn turn `turn`'s assignments before its latest, in the order they were made,
+    /// each with what its candidacy registered, at the already pinned finalized observation: a member
+    /// that took the keys before a skip passed it holds them until a later member takes them. Empty
+    /// when the draw alone assigned the turn; a chain with no schedule reads none.
+    /// Error cases: the observation is not finalized and pinned, or the chain cannot be read
+    async fn superseded_members(&self, at: &Observation, turn: u64) -> anyhow::Result<Vec<HandoverSource>> {
+        let _ = (at, turn);
+        Ok(Vec::new())
+    }
 }

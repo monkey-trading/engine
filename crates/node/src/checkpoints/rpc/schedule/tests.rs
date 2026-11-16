@@ -1,0 +1,172 @@
+use std::sync::{Arc, Mutex};
+
+use alloy::primitives::B256;
+use axum::extract::State;
+use axum::{Json, Router, routing::post};
+use serde_json::{Value, json};
+
+use super::*;
+use crate::checkpoints::rpc::CandidateReturn;
+use crate::checkpoints::{CheckpointChain, LifecycleEvidence, VaultState};
+use crate::config::{CheckpointSection, FinalityTag};
+use crate::log::CheckpointDomain;
+use crate::standby_key::chain::{AssignmentReturn, assignmentOfReturn};
+
+const VAULT: Address = Address::repeat_byte(0x11);
+const REGISTRY: Address = Address::repeat_byte(0x22);
+const SCHEDULE: Address = Address::repeat_byte(0x33);
+const PINNED: B256 = B256::repeat_byte(0x44);
+
+/// The registry and schedule the vault and registry name.
+type Named = Arc<Mutex<(Address, Address)>>;
+
+/// The members of a turn's assignments before its latest, read at the pinned finalized block: turn 8 was
+/// drawn for A at position 0, skipped past an unassigned position to B at 2, then to C at 3, its latest,
+/// which is not read; turn 7, its draw alone at position 2, is read no further. A registry with no
+/// schedule, or a vault with no registry, gives none, and an observation finality has not fixed, or
+/// one pinned to no block, is refused.
+#[tokio::test]
+async fn the_members_a_turns_latest_assignment_superseded_are_read_in_the_order_made() {
+    let named: Named = Arc::new(Mutex::new((REGISTRY, SCHEDULE)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new().route("/", post(answer)).with_state(named.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let cfg: CheckpointSection = toml::from_str(&format!(
+        "rpc_url='http://{address}'\nrelayer='0x{}'\nretry_interval='1ms'\nrpc_timeout='2s'",
+        "01".repeat(20)
+    ))
+    .unwrap();
+    let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(VAULT.0.0) };
+    let rpc = CheckpointRpc::read_only(&cfg, domain, Address::ZERO, FinalityTag::Finalized, 0).unwrap();
+    let finalized = observation(View::Finalized, Some(PINNED));
+    let members = rpc.superseded_members(&finalized, 8).await.unwrap();
+    assert_eq!(members, [registered(0xa1), registered(0xb1)]);
+    assert_eq!(rpc.superseded_members(&finalized, 7).await.unwrap(), []);
+    *named.lock().unwrap() = (REGISTRY, Address::ZERO);
+    assert_eq!(rpc.superseded_members(&finalized, 8).await.unwrap(), [], "a registry with no schedule");
+    *named.lock().unwrap() = (Address::ZERO, SCHEDULE);
+    assert_eq!(rpc.superseded_members(&finalized, 8).await.unwrap(), [], "a vault with no registry");
+    *named.lock().unwrap() = (REGISTRY, SCHEDULE);
+    assert!(rpc.superseded_members(&observation(View::Latest, Some(PINNED)), 8).await.is_err());
+    assert!(rpc.superseded_members(&observation(View::Finalized, None), 8).await.is_err());
+    server.abort();
+}
+
+// ── Helpers ──
+
+/// Answers the vault's, registry's and schedule's reads at the pinned block, panicking on any other.
+async fn answer(State(named): State<Named>, Json(request): Json<Value>) -> Json<Value> {
+    let (registry, schedule) = *named.lock().unwrap();
+    let call = &request["params"][0];
+    let input = hex::decode(&call["input"].as_str().or(call["data"].as_str()).unwrap()[2..]).unwrap();
+    let to: Address = call["to"].as_str().unwrap().parse().unwrap();
+    assert_eq!(request["params"][1]["blockHash"], format!("{PINNED:#x}"), "every read is at the pinned block");
+    let result = match (to, <[u8; 4]>::try_from(&input[..4]).unwrap()) {
+        (VAULT, registryCall::SELECTOR) => registryCall::abi_encode_returns(&registry),
+        (REGISTRY, scheduleCall::SELECTOR) => scheduleCall::abi_encode_returns(&schedule),
+        (REGISTRY, candidateOfCall::SELECTOR) => {
+            let byte = candidateOfCall::abi_decode(&input).unwrap().candidate.0[0];
+            candidateOfCall::abi_encode_returns(&CandidateReturn {
+                adminKey: Address::repeat_byte(byte + 1),
+                enclave: Address::ZERO,
+                bond: Default::default(),
+                release: B256::repeat_byte(byte),
+                registration: 1,
+                apiHostname: format!("{byte:x}.test"),
+                handoverEndpoint: format!("{byte:x}.test:7443"),
+            })
+        }
+        (SCHEDULE, turnOfCall::SELECTOR) => {
+            turnOfCall::abi_encode_returns(&match turnOfCall::abi_decode(&input).unwrap().turn {
+                7 => turn(0xe1, 2, DRAWN),
+                8 => turn(0xc1, 3, 1),
+                other => panic!("turn {other} read"),
+            })
+        }
+        (SCHEDULE, assignmentOfCall::SELECTOR) => {
+            let asked = assignmentOfCall::abi_decode(&input).unwrap();
+            let made = match (asked.turn, asked.position) {
+                (8, 0) => assigned(0xa1, DRAWN),
+                (8, 1) => assigned(0, DRAWN),
+                (8, 2) => assigned(0xb1, 1),
+                (8, 3) => panic!("the latest assignment was read"),
+                (7, _) => panic!("a turn its draw alone holds was read further"),
+                other => panic!("assignment {other:?} read"),
+            };
+            assignmentOfCall::abi_encode_returns(&assignmentOfReturn { _0: made, _1: Vec::new() })
+        }
+        other => panic!("unexpected read {other:?}"),
+    };
+    Json(json!({"jsonrpc":"2.0","id":request["id"],"result":format!("0x{}", hex::encode(result))}))
+}
+
+/// A turn whose latest assignment names member `byte` at `position` for `reason`.
+fn turn(byte: u8, position: u16, reason: u8) -> TurnReturn {
+    TurnReturn {
+        candidate: Address::repeat_byte(byte),
+        position,
+        reason,
+        setId: 1,
+        generation: 7,
+        prior: 0,
+        seed: B256::ZERO,
+        source: Address::ZERO,
+    }
+}
+
+/// An assignment of member `byte`, the zero address for `0`, for `reason`.
+fn assigned(byte: u8, reason: u8) -> AssignmentReturn {
+    let candidate = Address::repeat_byte(byte);
+    AssignmentReturn {
+        candidate,
+        adminKey: candidate,
+        setId: 1,
+        reason,
+        standbyKey: Address::ZERO,
+        signerEpoch: 0,
+        headSeq: 0,
+        headLink: B256::ZERO,
+        checkpointSeq: 0,
+        checkpointRoot: B256::ZERO,
+        at: 0,
+    }
+}
+
+/// Member `byte`'s handover data as `answer` registers it.
+fn registered(byte: u8) -> HandoverSource {
+    HandoverSource {
+        candidate: AccountId([byte; 20]),
+        release: [byte; 32],
+        api_hostname: format!("{byte:x}.test"),
+        handover_endpoint: format!("{byte:x}.test:7443"),
+    }
+}
+
+/// An observation in `view`, pinned to block `pinned` when there is one.
+fn observation(view: View, pinned: Option<B256>) -> Observation {
+    let zero = engine_core::Fixed::ZERO;
+    Observation {
+        view,
+        state: VaultState {
+            height: 100,
+            signer: AccountId([1; 20]),
+            checkpoint: None,
+            balance: zero,
+            deposits: 0,
+            deposited: zero,
+            distributions_paid: zero,
+        },
+        lifecycle: pinned.map(|block_hash| LifecycleEvidence {
+            height: 100,
+            block_hash,
+            signer: AccountId([1; 20]),
+            signer_epoch: 1,
+            withdrawals_paused: false,
+            total_withdrawn: zero,
+            checkpoint_seq: None,
+            checkpoint_root: None,
+            approvals: Vec::new(),
+        }),
+    }
+}

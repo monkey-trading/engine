@@ -193,6 +193,45 @@ impl CheckpointRpc {
         self.handover_source_of(registry, Address::from(candidate.0), block).await.map(Some)
     }
 
+    /// See `CheckpointChain::superseded_members`: the schedule's `assignmentOf` at each position below
+    /// the turn's latest, read only when its latest is not the draw, so at most the draw's positions
+    /// and the set's size.
+    /// Error cases:
+    /// - the observation is not finalized and pinned, or a call or its decoding fails
+    pub(super) async fn read_superseded_members(
+        &self,
+        at: &Observation,
+        turn: u64,
+    ) -> anyhow::Result<Vec<HandoverSource>> {
+        ensure!(at.view == View::Finalized, "the schedule requires a finalized observation");
+        let evidence = at.lifecycle.as_ref().context("the schedule requires a pinned canonical observation")?;
+        let block = BlockId::hash_canonical(evidence.block_hash);
+        let vault = Address::from(self.domain.vault.0);
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), block).await?)?;
+        let mut members = Vec::new();
+        if registry.is_zero() {
+            return Ok(members);
+        }
+        let schedule =
+            scheduleCall::abi_decode_returns(&self.call(registry, scheduleCall {}.abi_encode(), block).await?)?;
+        if schedule.is_zero() {
+            return Ok(members);
+        }
+        let raw = self.call(schedule, turnOfCall { turn }.abi_encode(), block).await?;
+        let latest = turnOfCall::abi_decode_returns(&raw).context("decoding the schedule's turn")?;
+        if latest.reason == DRAWN {
+            return Ok(members);
+        }
+        for position in 0..latest.position {
+            let raw = self.call(schedule, assignmentOfCall { turn, position }.abi_encode(), block).await?;
+            let made = assignmentOfCall::abi_decode_returns(&raw).context("decoding the schedule's assignment")?._0;
+            if !made.candidate.is_zero() {
+                members.push(self.handover_source_of(registry, made.candidate, block).await?);
+            }
+        }
+        Ok(members)
+    }
+
     /// `candidate`'s registration at `block`.
     /// Error cases:
     /// - the call or its decoding fails
@@ -224,3 +263,6 @@ impl CheckpointRpc {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -143,9 +143,10 @@ pub(crate) async fn names(
 /// The operators a member of `turn` may take the keys from, in the order it tries them: the turn's
 /// source, the operator the registry named when the turn was drawn, then, for each earlier drawn turn
 /// up to `SOURCE_LOOKBACK` turns back, the member of its latest assignment, which a promotion may have
-/// moved after this turn was drawn (#595), and its source, since a member that never took its turn
-/// leaves the keys with the one before it. Each distinct operator with a handover endpoint, never the
-/// member.
+/// moved after this turn was drawn (#595), the members of its earlier assignments, since a member that
+/// took the keys before a skip passed it keeps them, and its source, since a member that never took
+/// its turn leaves the keys with the one before it. Each distinct operator with a handover endpoint,
+/// never the member.
 /// Error cases:
 /// - the schedule cannot be read
 pub(crate) async fn sources(
@@ -158,11 +159,14 @@ pub(crate) async fn sources(
     let mut earlier = false;
     for _ in 0..=SOURCE_LOOKBACK {
         let Some(this) = drawn.take() else { break };
-        let holder = match earlier {
-            true => vault.handover_source_at(at, this.candidate).await.context("reading the registry")?,
-            false => None,
+        let (holder, superseded) = match earlier {
+            true => (
+                vault.handover_source_at(at, this.candidate).await.context("reading the registry")?,
+                vault.superseded_members(at, this.turn).await.context("reading the operator schedule")?,
+            ),
+            false => (None, Vec::new()),
         };
-        for source in holder.iter().chain(this.source.as_ref()) {
+        for source in holder.iter().chain(&superseded).chain(this.source.as_ref()) {
             if source.candidate != turn.candidate
                 && !source.handover_endpoint.is_empty()
                 && sources.iter().all(|listed| listed.candidate != source.candidate)

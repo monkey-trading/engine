@@ -372,6 +372,10 @@ impl CheckpointChain for CheckpointRpc {
         self.read_handover_source(at, candidate).await
     }
 
+    async fn superseded_members(&self, at: &Observation, turn: u64) -> anyhow::Result<Vec<HandoverSource>> {
+        self.read_superseded_members(at, turn).await
+    }
+
     fn reads_release_fold(&self) -> bool {
         true
     }
