@@ -9,12 +9,14 @@
 //! - ETH-USD served from a source ten minutes behind, as Coinbase served a product on
 //!   16 November 2026, for its subscription and the next two;
 //! - an outage of both venues;
-//! - an outage of trusted time.
+//! - an outage of trusted time;
+//! - with a second connection to each venue, each connection stalled and dropped in turn.
 //!
 //! While a market is unpriced the node alerts, and once its venues stream again every market is
 //! priced within `DEADLINE`, or after an outage of both venues or of trusted time within
-//! `timing.reconnect_max` more, the longest a feed waits between attempts. Run by scripts/dev-venue-load.sh, the only place the
-//! full-size books are served.
+//! `timing.reconnect_max` more, the longest a feed waits between attempts. With two connections to
+//! each venue, a fault on one at a time never unprices a market. Run by scripts/dev-venue-load.sh,
+//! the only place the full-size books are served.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -41,10 +43,10 @@ use crate::tee::EnclaveKey;
 use crate::test_support::{Alert, capture_alerts_and_resolutions, dev_config, scratch_dir, trusted_now};
 
 /// How soon every market is priced once its venues stream again.
-const DEADLINE: Duration = Duration::from_secs(10);
+pub(super) const DEADLINE: Duration = Duration::from_secs(10);
 
 /// How long a market may go unpriced before the monitor alerts, as the production template sets it.
-const NO_PRICE_AFTER: Duration = Duration::from_secs(5);
+pub(super) const NO_PRICE_AFTER: Duration = Duration::from_secs(5);
 
 /// The production template, whose `[feeds.venues]` timings the feeds run at.
 const TEMPLATE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/runbooks/production-node.toml");
@@ -52,18 +54,17 @@ const TEMPLATE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/runbooks/
 /// A source ten minutes behind Coinbase's own.
 const BEHIND: Duration = Duration::from_secs(600);
 
-const MARKETS: [MarketId; 2] = [1, 2];
+pub(super) const MARKETS: [MarketId; 2] = [1, 2];
 
-/// The feeds' timings in the production template.
-fn production_timing() -> Timing {
+/// The production template's `[feeds.venues]`: its feeds' timings and connections.
+pub(super) fn production_venues() -> VenuesSection {
     let template: toml::Value = toml::from_str(&std::fs::read_to_string(TEMPLATE).expect("the template")).unwrap();
-    let venues: VenuesSection = template["feeds"]["venues"].clone().try_into().expect("its [feeds.venues]");
-    Timing::for_venues(&venues)
+    template["feeds"]["venues"].clone().try_into().expect("its [feeds.venues]")
 }
 
 /// Whether `market` has a price, judged at the host clock or the engine's time, whichever is later,
 /// so a gap in what is sequenced shows as one.
-async fn priced(tx: &mpsc::Sender<Request>, market: MarketId) -> bool {
+pub(super) async fn priced(tx: &mpsc::Sender<Request>, market: MarketId) -> bool {
     query(tx, move |engine| {
         let state = &engine.markets()[&market];
         let held = state.quotes_for(None).expect("a spot market");
@@ -73,7 +74,7 @@ async fn priced(tx: &mpsc::Sender<Request>, market: MarketId) -> bool {
 }
 
 /// Waits for every one of `markets` to be priced, failing `phase` past `within`.
-async fn wait_priced(tx: &mpsc::Sender<Request>, markets: &[MarketId], within: Duration, phase: &str) {
+pub(super) async fn wait_priced(tx: &mpsc::Sender<Request>, markets: &[MarketId], within: Duration, phase: &str) {
     let start = Instant::now();
     loop {
         let mut all = true;
@@ -85,6 +86,17 @@ async fn wait_priced(tx: &mpsc::Sender<Request>, markets: &[MarketId], within: D
             return;
         }
         assert!(start.elapsed() < within, "{phase}: {markets:?} not priced within {within:?}");
+        sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Fails `phase` if any of `MARKETS` goes unpriced over the next `lasting`.
+async fn stay_priced(tx: &mpsc::Sender<Request>, lasting: Duration, phase: &str) {
+    let start = Instant::now();
+    while start.elapsed() < lasting {
+        for market in MARKETS {
+            assert!(priced(tx, market).await, "{phase}: market {market} unpriced after {:?}", start.elapsed());
+        }
         sleep(Duration::from_millis(100)).await;
     }
 }
@@ -139,7 +151,7 @@ async fn keep_time_now(tx: &mpsc::Sender<Request>) -> AbortHandle {
 #[ignore = "dev scenario, run by scripts/dev-venue-load.sh"]
 async fn dev_scenario_venue_load() {
     let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
-    let timing = production_timing();
+    let timing = Timing::for_venues(&production_venues());
     let dir = scratch_dir("venue-load");
     let (tx, _sequencer) = boot_with(&dir, &Arc::new(EnclaveKey::generate()), &dev_config().genesis, true);
     let mut time = keep_time(&tx);
@@ -221,5 +233,31 @@ async fn dev_scenario_venue_load() {
     time = keep_time_now(&tx).await;
     wait_priced(&tx, &MARKETS, timing.reconnect_max + DEADLINE, "time").await;
     expect(&mut resolved, "alert_resolved", "trusted_time_unavailable", None, DEADLINE, "time").await;
+
+    // A second connection to each venue, as production opens: a fault on one connection at a time
+    // leaves every market priced throughout, and the faulted one is current again within the
+    // deadline, before its sibling's fault. The first connections are faulted once more at the end,
+    // so the second ones' recovery from a drop counts too.
+    let (coinbase_second, kraken_second) =
+        (FaultyLink::start(&coinbase.url).await, FaultyLink::start(&kraken.url).await);
+    spawn_feed_into(tx.clone(), Venue::Coinbase, &coinbase_second.url, &[(1, BTC.id), (2, ETH.id)], timing);
+    spawn_feed_into(tx.clone(), Venue::Kraken, &kraken_second.url, &[(1, "BTC/USD"), (2, "ETH/USD")], timing);
+    sleep(DEADLINE).await;
+    drain(&mut alerts);
+    let links =
+        |fault| [(&coinbase_link, fault), (&kraken_link, fault), (&coinbase_second, fault), (&kraken_second, fault)];
+    let faults = links(stalled).into_iter().chain(links(down)).chain([(&coinbase_link, down), (&kraken_link, down)]);
+    for (at, (link, fault)) in faults.enumerate() {
+        let phase = format!("redundant {at}, {fault:?}");
+        link.set(fault);
+        stay_priced(&tx, NO_PRICE_AFTER, &phase).await;
+        link.set(Faults::default());
+        stay_priced(&tx, DEADLINE, &phase).await;
+    }
+    let raised = drain(&mut alerts);
+    for market in MARKETS {
+        assert_never_unpriced(&raised, market, "redundant");
+    }
+    println!("redundant: priced throughout");
     time.abort();
 }

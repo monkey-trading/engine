@@ -7,9 +7,21 @@
 # ETH-USD going quiet, ETH-USD served ten minutes behind as on 16 November 2026, an outage of both
 # venues, and an outage of trusted time. The node alerts while a market is unpriced, and every market
 # is priced again within 10 s of its venues streaming again, or within reconnect_max more after an
-# outage of both venues or of trusted time. Needs only Cargo: the venues are local stand-ins. About
-# five minutes.
+# outage of both venues or of trusted time. Then, with a second connection to each venue, each
+# connection is stalled and dropped in turn, and every market stays priced throughout. Needs only
+# Cargo: the venues are local stand-ins. About six minutes.
+#
+# With --soak [minutes] it runs the manual soak instead, before each release and never in CI: the
+# same markets from the live venues, over every connection the production template opens for them,
+# for 30 minutes unless given, dropping each connection alone in turn, then all of them, every two
+# minutes. Every market is priced within 10 s of each drop and never unpriced for longer between
+# them. Needs Cargo and the venues' public feeds.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
+test="feeds::tests::venue_load::dev_scenario_venue_load"
+if [[ "${1:-}" == "--soak" ]]; then
+  export SOAK_MINUTES="${2:-30}"
+  test="feeds::tests::venue_soak::soak_live_venues"
+fi
 CARGO_INCREMENTAL=0 cargo test --locked --manifest-path "$root/Cargo.toml" -p engine-node --lib \
-  feeds::tests::venue_load::dev_scenario_venue_load -- --ignored --exact --nocapture
+  "$test" -- --ignored --exact --nocapture

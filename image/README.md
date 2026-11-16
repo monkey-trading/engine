@@ -294,7 +294,9 @@ kernel only in an SEV-SNP launch (under plain QEMU it finds no bootable option),
    its browser verifier twice each and found the builds identical; its `image-first` artifact holds
    the image files and its `wasm-verifier-first` artifact the verifier package. Artifacts expire
    after 14 days; after that, run CI on the tag (`gh workflow run ci.yaml --ref v<version>`) and
-   take the files from that run.
+   take the files from that run. Before tagging, run `scripts/dev-venue-load.sh --soak` on that
+   commit: 30 minutes of the crypto feeds against the live venues with connections dropped, every
+   market priced again within 10 s of each drop.
 2. Rebuild the tag on a second machine with
    `scripts/build-image.sh --ref v<version> --no-cache <dir>` and check its `SHA256SUMS` matches
    the CI run's.

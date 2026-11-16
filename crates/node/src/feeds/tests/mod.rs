@@ -24,6 +24,7 @@ mod silent;
 mod toxicity;
 mod vendors;
 mod venue_load;
+mod venue_soak;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

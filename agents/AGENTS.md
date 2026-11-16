@@ -725,7 +725,10 @@ an index: load only the rule whose hint matches the current action.
   dev scenario (`feeds/tests/venue_load.rs`): Coinbase's full books and both venues' update rates at the production
   template's feed timings, through links that stall, drop, throttle and cut them, a quiet and a stale product, and
   outages of both venues and of trusted time, each market alerting while unpriced and priced again within 10 s of its
-  venues streaming, or `reconnect_max` more after a full outage; `dev-loss-trigger.sh`, the house loss
+  venues streaming, or `reconnect_max` more after a full outage, then a second connection to each venue with each
+  connection stalled and dropped in turn and every market priced throughout, and with `--soak` the manual soak before each release
+  (`feeds/tests/venue_soak.rs`): the template's crypto connections to the live venues for 30 minutes, each dropped in
+  turn and then all at once, every two minutes, each market priced within 10 s of each drop; `dev-loss-trigger.sh`, the house loss
   trigger's dev scenario from `V62` against the same stand-ins (`feeds/tests/loss_trigger.rs`, production's zero threshold
   and a 30 s cooldown): BTC at level 2 on the move that puts the house behind on the day, and back down after the cooldown
   once it is ahead, twice, then a replay and restart; `dev-cme-feeds.sh`, the CME Group feed dev scenario against
@@ -949,7 +952,9 @@ Run from the repo root:
   price BTC-USD under the dev genesis's 1 bp fixture floor; needs only Cargo, about four minutes)
 - Venue load dev scenario: `./scripts/dev-venue-load.sh` (loopback Coinbase and Kraken stand-ins at
   the venues' sizes and rates, faults injected one at a time, the deadlines asserted; needs only Cargo,
-  about five minutes; the only place the full-size Coinbase books are served)
+  about six minutes; the only place the full-size Coinbase books are served); before each release,
+  `./scripts/dev-venue-load.sh --soak [minutes]` runs the manual soak against the live venues (needs
+  Cargo and the venues' public feeds; 30 minutes unless given; never in CI)
 - House loss trigger dev scenario: `./scripts/dev-loss-trigger.sh` (the same stand-ins, under the dev
   genesis with production's zero threshold and a 30 s cooldown; needs only Cargo, about a minute and a half)
 - CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token
