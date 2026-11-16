@@ -795,10 +795,16 @@ an index: load only the rule whose hint matches the current action.
   under a head group that passes, and a merge group always runs the Rust and contracts jobs.
   Test-only modules (`tests`, `*_tests`, `scenario`, `*_scenario`, `*bench`, `test_support`) build
   into no binary, so they run the Rust jobs and only the scenarios whose engine-node lib tests reach
-  them; the rest of `crates/` and the workspace manifests run every scenario that runs the node (its
-  modules call into one another) and the image, but for the CT watcher, `engine exit-proof` and the
-  venue adapters, which run their own scenarios; contracts run the scenarios on Anvil; and a
-  scenario's scripts run it alone. `agents/` (but for the review-delta helper in
+  them. The node's other source is sorted into module families, each running the Rust jobs and the
+  scenarios that drive it directly: feeds; rotation and liveness (handovers, members, standbys, log
+  checks and heads, the seed relay, turns, votes and the custody mirrors of the registry, schedule
+  and staking); custody (deposits, checkpoints, withdrawals, payouts, the exit, screened access);
+  the API, TLS and limits; stats, history and metrics; alerts; snapshots; delivered secrets; the
+  verifier's CLI; the operator's client; and the CT watcher. The shared foundations, the engine,
+  engine-wire, the rest of the node (the sequencer, config, startup and recovery, the TEE, trusted
+  time, the log) and the workspace manifests, run every scenario and the image. A scenario that
+  reaches a family only through another is left to the full runs on `main` and nightly. Contracts
+  run the scenarios on Anvil, and a scenario's scripts run it alone. `agents/` (but for the review-delta helper in
   `agents/skills/agent-code-review/scripts/`), `research/` (but for the close-spread study's
   `fixtures/` and the benchmark-cap study's `fixtures/` and `results/refused.csv`, which `engine-core`
   tests read), the root `README.md`, `SECURITY.md`,
@@ -806,7 +812,8 @@ an index: load only the rule whose hint matches the current action.
   push to `main`, the nightly run, a manual run, a workflow change, a failed diff, or any path the
   list does not name runs every job, so whatever a PR or a group skipped runs once it lands. When a
   push to `main` or the nightly run fails, `main-failure-issue` opens a `bug` issue titled "CI
-  failing on main", or comments on the open one, naming the failed jobs and linking the run.
+  failing on main", or comments on the open one, naming the run, its commit and the failed jobs; a
+  job that fails there after its change's PR and merge group skipped it reads a path its area misses.
   Actions are pinned by commit SHA. `ci-passed` is the one CI check branch rules require: it passes
   only when every other job succeeded or was skipped because its area did not change, so each new
   job must be added to its `needs` and its area map, and every path it reads to `changes`. Each

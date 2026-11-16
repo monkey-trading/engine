@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks ci.yaml's `changes` classifier, run as the workflow runs it with `git diff` stubbed: the areas
-# each event and path sets, from test-only modules, scenario scripts, contracts and the node's leaves to
-# the workflow itself, a failed diff, and the events that run every job, and the range each event diffs.
+# each event and path sets, from test-only modules, scenario scripts, contracts, the node's module
+# families and the shared foundations to the workflow itself, a failed diff, and the events that run every job, and the range each event diffs.
 # Prints one line per case and exits 1 if any case fails. Needs yq.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,6 +22,7 @@ anvil="vault_deposits daily_rotation short_turns"
 prebuilt="metrics_alerts alert_outbox browser_origin dashboard_data proxy_protocol batch_orders ct_watch \
   snapshot_restart signed_api production_secrets log_heads"
 node="$prebuilt $anvil $feeds scenario_tests attestation_verifier acme engine_build"
+api="signed_api browser_origin proxy_protocol batch_orders dashboard_data acme scenario_tests engine_build"
 every="rust contracts image agent_scripts merge_approval ci_changes $node wasm_verifier"
 
 failed=0
@@ -47,11 +48,37 @@ case_ pull_request "" README.md agents/AGENTS.md research/launch-caps/run.py
 case_ pull_request "rust $feeds" crates/node/src/feeds/tests/toxicity.rs
 case_ pull_request "rust" crates/core/src/volume_tier/tests.rs crates/core/tests/toxicity.rs
 case_ pull_request "rust" crates/node/src/stats/tests/closeout_cost.rs crates/node/src/sequencer/resting_bench.rs
-case_ pull_request "rust $prebuilt $anvil $feeds scenario_tests attestation_verifier acme engine_build image wasm_verifier" \
-  crates/core/src/engine/mod.rs
-case_ pull_request "rust image ct_watch engine_build" crates/node/src/ct_watch/mod.rs
-case_ pull_request "rust image vault_deposits" crates/node/src/exit.rs
-case_ pull_request "rust image $feeds production_secrets engine_build" crates/node/src/feeds/coinbase.rs
+for foundation in crates/core/src/engine/mod.rs crates/wire/src/lib.rs crates/node/src/sequencer/pipeline.rs \
+  crates/node/src/config/mod.rs crates/node/src/node/mod.rs crates/node/src/tee/keys.rs \
+  crates/node/src/trusted_time/mod.rs crates/node/src/log/mod.rs crates/node/src/sequencer/quotes.rs Cargo.lock; do
+  case_ pull_request "rust image $node wasm_verifier" "$foundation"
+done
+case_ pull_request "rust ct_watch engine_build" crates/node/src/ct_watch/mod.rs
+for feed in crates/node/src/feeds/coinbase.rs crates/node/src/feeds/mod.rs crates/node/src/node/price_feeds.rs; do
+  case_ pull_request "rust $feeds scenario_tests metrics_alerts production_secrets engine_build" "$feed"
+done
+for rotation in crates/node/src/handover/tail.rs crates/node/src/node/member/turn.rs crates/node/src/seed_relay/mod.rs \
+  crates/node/src/sequencer/turns.rs crates/node/src/custody/registry.rs crates/node/src/api/operator.rs; do
+  case_ pull_request "rust $anvil log_heads scenario_tests engine_build" "$rotation"
+done
+for custody in crates/node/src/custody/quorum.rs crates/node/src/checkpoints/mod.rs crates/node/src/exit.rs \
+  crates/node/src/withdrawals.rs crates/node/src/sequencer/payouts.rs; do
+  case_ pull_request "rust vault_deposits scenario_tests production_secrets log_heads engine_build" "$custody"
+done
+case_ pull_request "rust vault_deposits $api" crates/node/src/access.rs crates/node/src/api/state.rs
+case_ pull_request "rust vault_deposits $api" crates/node/src/api/stream/quotes/mod.rs crates/node/src/limits/mod.rs
+case_ pull_request "rust $api" crates/node/src/api/account.rs crates/node/src/tls/mod.rs
+case_ pull_request "rust attestation_verifier $api" crates/node/src/api/attestation.rs
+case_ pull_request "rust snapshot_restart engine_build" crates/node/src/snapshot/mod.rs
+case_ pull_request "rust production_secrets engine_build" crates/node/src/secrets/mod.rs
+case_ pull_request "rust attestation_verifier wasm_verifier signed_api dashboard_data ct_watch engine_build" \
+  crates/node/src/verify/mod.rs
+case_ pull_request "rust image attestation_verifier wasm_verifier signed_api ct_watch engine_build" crates/verify/src/lib.rs
+case_ pull_request "rust dashboard_data metrics_alerts snapshot_restart engine_build" \
+  crates/node/src/stats/mod.rs crates/node/src/monitor/mod.rs
+case_ pull_request "rust metrics_alerts alert_outbox ct_watch production_secrets engine_build" crates/node/src/alerts/mod.rs
+case_ pull_request "rust scenario_tests dashboard_data production_secrets vault_deposits ct_watch engine_build" \
+  crates/node/src/admin/mod.rs
 case_ pull_request "rust $anvil $feeds scenario_tests attestation_verifier" crates/node/src/test_support/mod.rs
 case_ pull_request "rust $anvil" crates/node/src/custody/tests/election_scenario.rs crates/node/src/log_check/tests.rs
 case_ pull_request "rust scenario_tests" crates/node/src/api/access_tests/spreads.rs crates/core/tests/hot_path_benchmark.rs

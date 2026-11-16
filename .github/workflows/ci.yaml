@@ -87,6 +87,8 @@ jobs:
           feeds="toxicity loss_trigger rwa_feeds cme_feeds"
           # Every scenario that runs engine-node's lib tests, every one that runs the node, and every one.
           lib_tests="$anvil $feeds scenario_tests attestation_verifier"
+          # The scenarios that drive the API.
+          api="signed_api browser_origin proxy_protocol batch_orders dashboard_data acme scenario_tests"
           node="$prebuilt $lib_tests acme"
           scenarios="$node wasm_verifier"
           all="rust contracts image agent_scripts merge_approval ci_changes $scenarios"
@@ -151,17 +153,68 @@ jobs:
                   | crates/*/src/*/scenario/* | crates/*/src/*_scenario.rs | crates/*/src/*_scenario/* \
                   | crates/*/src/*bench.rs)
                   areas+=" rust" ;;
-                # The CT watcher runs as its own process, `engine ct-watch`.
-                crates/node/src/ct_watch/*) areas+=" rust image ct_watch" ;;
-                # `engine exit-proof`, which the exit and operator's share scenarios run.
-                crates/node/src/exit.rs) areas+=" rust image vault_deposits" ;;
-                # The venue adapters run only on a node priced from venues.
-                crates/node/src/feeds/bitstamp.rs | crates/node/src/feeds/coinbase.rs | crates/node/src/feeds/kraken/* \
-                  | crates/node/src/feeds/massive.rs | crates/node/src/feeds/massive/* \
-                  | crates/node/src/feeds/tradermade.rs | crates/node/src/feeds/cme/*)
-                  areas+=" rust image $feeds production_secrets" ;;
+                # The node's module families, each starting the scenarios that drive it directly. A
+                # scenario that only reaches a family through another is left to the full runs on
+                # `main` and nightly.
+                crates/node/src/ct_watch/*) areas+=" rust ct_watch" ;;
+                # Feeds: the venue adapters and the mock feed. The sequencer's quote bound stamps every
+                # command, so it stays with the sequencer.
+                crates/node/src/feeds/* | crates/node/src/node/price_feeds.rs)
+                  areas+=" rust $feeds scenario_tests metrics_alerts production_secrets" ;;
+                # Rotation and liveness: handovers, members, standbys, log checks and heads, the seed
+                # relay, turns and votes, and the custody mirrors of the registry, schedule and staking.
+                crates/node/src/handover/* | crates/node/src/liveness/* | crates/node/src/standby/* \
+                  | crates/node/src/standby_key/* | crates/node/src/log_check/* | crates/node/src/log_heads/* \
+                  | crates/node/src/seed_relay/* | crates/node/src/node/member* | crates/node/src/node/handover.rs \
+                  | crates/node/src/node/liveness* | crates/node/src/node/log_check.rs | crates/node/src/node/ready* \
+                  | crates/node/src/node/turn_keys* | crates/node/src/node/keys* | crates/node/src/node/registration.rs \
+                  | crates/node/src/sequencer/turns* | crates/node/src/sequencer/liveness* \
+                  | crates/node/src/sequencer/log_check* | crates/node/src/sequencer/governance* \
+                  | crates/node/src/sequencer/prefixes* | crates/node/src/sequencer/replay/live* \
+                  | crates/node/src/sequencer/checkpoints/handover* \
+                  | crates/node/src/custody/registry* | crates/node/src/custody/staking* \
+                  | crates/node/src/custody/evm/staking* | crates/node/src/custody/standby_keys* \
+                  | crates/node/src/custody/operators/* | crates/node/src/api/operator* | crates/node/src/api/standby* \
+                  | crates/node/src/api/archive.rs)
+                  areas+=" rust $anvil log_heads scenario_tests" ;;
+                # Custody: the vault's deposits, checkpoints, withdrawals and payouts, the exit, and
+                # screened access.
+                crates/node/src/custody/* | crates/node/src/checkpoints/* | crates/node/src/withdrawals.rs \
+                  | crates/node/src/sequencer/payout* | crates/node/src/exit.rs | crates/node/src/api/payouts.rs \
+                  | crates/node/src/api/reissue.rs | crates/node/src/api/withdrawal_queue.rs | crates/node/src/api/exit.rs)
+                  areas+=" rust vault_deposits scenario_tests production_secrets log_heads" ;;
+                crates/node/src/access* | crates/node/src/sequencer/access* | crates/node/src/api/access.rs \
+                  | crates/node/src/api/state*)
+                  areas+=" rust vault_deposits scenario_tests $api" ;;
+                # The API: its routes, stream, TLS and limits.
+                crates/node/src/api/stream/quotes/* | crates/node/src/api/admin.rs \
+                  | crates/node/src/api/distributions.rs | crates/node/src/limits/*)
+                  areas+=" rust $api vault_deposits" ;;
+                crates/node/src/api/attestation.rs) areas+=" rust $api attestation_verifier" ;;
+                crates/node/src/api/* | crates/node/src/tls/*) areas+=" rust $api" ;;
+                # Checkpoint caches.
+                crates/node/src/snapshot/* | crates/node/src/sequencer/snapshots* \
+                  | crates/node/src/sequencer/replay/snapshot*)
+                  areas+=" rust snapshot_restart" ;;
+                # Delivered secrets.
+                crates/node/src/secrets/* | crates/node/src/node/secrets*) areas+=" rust production_secrets" ;;
+                # The verifier's CLI, the collateral it relays and the CT watcher's checks.
+                crates/node/src/verify/*)
+                  areas+=" rust attestation_verifier wasm_verifier signed_api dashboard_data ct_watch" ;;
+                # Stats, history and metrics, and the node watching itself.
+                crates/node/src/stats/* | crates/node/src/history/* | crates/node/src/metrics/* \
+                  | crates/node/src/monitor/* | crates/node/src/node/marks.rs)
+                  areas+=" rust dashboard_data metrics_alerts snapshot_restart" ;;
+                # Alert routing.
+                crates/node/src/alerts/* | crates/node/src/throttle.rs | crates/node/src/episodes.rs)
+                  areas+=" rust metrics_alerts alert_outbox ct_watch production_secrets" ;;
+                # The operator's signing client and the benchmark publishers' worker and client.
+                crates/node/src/admin/* | crates/node/src/benchmarks/*)
+                  areas+=" rust scenario_tests dashboard_data production_secrets vault_deposits ct_watch" ;;
                 # The browser verifier's package.
                 crates/verify-wasm/*) areas+=" rust wasm_verifier" ;;
+                # Attestation verification, which the node's CLI and the CT watcher run.
+                crates/verify/*) areas+=" rust image attestation_verifier wasm_verifier ct_watch signed_api" ;;
                 # The scenarios' signed access source and request signer.
                 crates/node/examples/access_source.rs | crates/core/examples/sign_request.rs)
                   areas+=" rust vault_deposits dashboard_data proxy_protocol batch_orders production_secrets" ;;
@@ -173,8 +226,9 @@ jobs:
                 # The other integration tests, examples and reference logs run in the Rust jobs alone.
                 crates/core/tests/* | crates/node/tests/* | crates/core/examples/* | crates/node/examples/*)
                   areas+=" rust" ;;
-                # The rest of the crates and the workspace's build: the node's and the engine's modules
-                # call into one another, and the browser verifier checks the `engine` CLI's verdicts.
+                # The shared foundations: the engine, engine-wire, the rest of the node (the sequencer,
+                # config, startup and recovery, the TEE, trusted time and the log) and the workspace's
+                # build. Every scenario, the browser verifier's included, and the image.
                 crates/* | Cargo.toml | Cargo.lock) areas+=" rust image $scenarios" ;;
                 # The image embeds config/test-keys.toml and boots on config/dev.toml; the node compiles
                 # the keys in, and the scenarios run on dev.toml and anvil.toml.
@@ -1895,10 +1949,14 @@ jobs:
           failed=$(gh api --paginate "repos/$GH_REPO/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
             --jq '.jobs[] | select(.name != "ci-passed" and (.conclusion == "failure" or .conclusion == "cancelled"
               or .conclusion == "timed_out")) | "- `\(.name)` (\(.conclusion))"')
-          if [[ "$EVENT" == schedule ]]; then run="The nightly run"; else run="The push"; fi
-          body="$run of \`$SHA\` failed: $RUN_URL
+          if [[ "$EVENT" == schedule ]]; then run="nightly run"; else run="push"; fi
+          body="CI run [$RUN_ID, attempt $RUN_ATTEMPT]($RUN_URL), the $run of \`$SHA\` on main, failed.
 
-          ${failed:-No job failed; ci-passed refused a skipped one. See the run.}"
+          Failed jobs:
+          ${failed:-none; ci-passed refused a job that was skipped.}
+
+          A job that fails here after its change's pull request and merge group skipped it is reading a
+          path its area in \`changes\` does not list."
           number=$(gh issue list --state open --label bug --limit 500 --json number,title \
             --jq "map(select(.title == \"$title\"))[0].number // empty")
           if [[ -n "$number" ]]; then
