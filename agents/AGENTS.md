@@ -620,6 +620,7 @@ an index: load only the rule whose hint matches the current action.
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
+  `ci-changes-test.sh`, which runs `ci.yaml`'s `changes` classifier on a table of events and paths;
   `dev-vault-deposits.sh`, the vault deposit and RPC quorum dev scenarios on Anvil, with
   `dev-rpc-proxy.py` providing three local fault-injection endpoints and `dev-alert-audit.py`
   judging its node log's alerts (a provider Warning, or a missed Roughtime round's `trusted_time_no_sample`, that clears within a bounded window passes); `dev-metrics-alerts.sh`,
@@ -778,7 +779,7 @@ an index: load only the rule whose hint matches the current action.
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits and spreads), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
-  scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
+  scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
   package; `wasm-verifier-compare` fails if the builds differ), and the enclave image (`image`
@@ -787,8 +788,8 @@ an index: load only the rule whose hint matches the current action.
   nightly. A PR and a merge group build the package and the image once, and the image job also
   builds and boots the dev image; the second builds and the two compare jobs run on pushes to
   `main`, nightly, and on manual runs. The first job, `changes`, sorts the changed files from an
-  explicit path list into the Rust, contracts, image, agent-script, and merge-approval areas and
-  one area per scenario job, and each job runs only when its area changed. A PR's files are its diff
+  explicit path list into the Rust, contracts, image, agent-script, merge-approval and
+  classifier-test areas and one area per scenario job, and each job runs only when its area changed. A PR's files are its diff
   against its base; a merge group's are its diff against `main`, since the queue merges every entry
   under a head group that passes, and a merge group always runs the Rust and contracts jobs.
   Test-only modules (`tests`, `*_tests`, `scenario`, `*_scenario`, `*bench`, `test_support`) build
@@ -1148,6 +1149,7 @@ Run from the repo root:
   a scratch git repository; needs only `git`, `sed`, and `diff`)
 - Merge approval gate tests: `scripts/check-merge-approved-test.sh` (stubs the GitHub API; needs
   only `jq`)
+- CI area tests: `scripts/ci-changes-test.sh` (stubs `git diff`; needs only `yq`)
 
 ## Repo facts
 
