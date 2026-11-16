@@ -109,7 +109,8 @@ checklist, no restatement of the diff.
 which CI sets, and `merge-approved`, the owner's go-ahead. A PR enters the queue only when both pass
 on its head. The queue then builds a merge group, the PR's squashed changes on top of `main` and of
 the PRs queued ahead of it, and merges it only when both pass on the group's commit too: CI runs
-every job there, and the `merge-approved` job of
+the Rust and contracts checks there and every job its changes against `main` affect, and the
+`merge-approved` job of
 [merge-approval.yaml](../../../.github/workflows/merge-approval.yaml) passes only if the latest
 `merge-approved` status on the head of every PR in the group is `success` from the owner's account.
 

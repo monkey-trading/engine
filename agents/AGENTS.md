@@ -776,46 +776,52 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the spreads scenario (its own job, compiling the node's tests), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits and spreads), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
   package; `wasm-verifier-compare` fails if the builds differ), and the enclave image (`image`
   checks its download retries, builds it twice, and boots it under QEMU, `image-compare` fails if
-  the builds differ), on every push to `main`, every PR, and every merge group of the merge queue.
-  A PR builds the package and the image once, and its image job also builds and boots the dev
-  image; the second builds and the two compare jobs run in merge groups, pushes and manual runs.
-  On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
-  image, agent-script, and merge-approval areas from an explicit path list, and each job runs only
-  when its area changed: `agents/` (but for the review-delta helper in
+  the builds differ), on every push to `main`, every PR, every merge group of the merge queue, and
+  nightly. A PR and a merge group build the package and the image once, and the image job also
+  builds and boots the dev image; the second builds and the two compare jobs run on pushes to
+  `main`, nightly, and on manual runs. The first job, `changes`, sorts the changed files from an
+  explicit path list into the Rust, contracts, image, agent-script, and merge-approval areas and
+  one area per scenario job, and each job runs only when its area changed. A PR's files are its diff
+  against its base; a merge group's are its diff against `main`, since the queue merges every entry
+  under a head group that passes, and a merge group always runs the Rust and contracts jobs.
+  Test-only modules (`tests`, `*_tests`, `scenario`, `*_scenario`, `*bench`, `test_support`) build
+  into no binary, so they run the Rust jobs and only the scenarios whose engine-node lib tests reach
+  them; the rest of `crates/` and the workspace manifests run every scenario that runs the node (its
+  modules call into one another) and the image, but for the CT watcher, `engine exit-proof` and the
+  venue adapters, which run their own scenarios; contracts run the scenarios on Anvil; and a
+  scenario's scripts run it alone. `agents/` (but for the review-delta helper in
   `agents/skills/agent-code-review/scripts/`), `research/` (but for the close-spread study's
   `fixtures/` and the benchmark-cap study's `fixtures/` and `results/refused.csv`, which `engine-core`
   tests read), the root `README.md`, `SECURITY.md`,
   `AGENTS.md`, and `CLAUDE.md`, and the `README.md` of `image/` and of each crate change none. A
-  push to `main`, a merge group, a manual run, a workflow change, a failed diff, or any path the
-  list does not name runs every job. A push to `main` whose commit passed a merge group (the queue
-  lands the commit its group tested, which `changes` looks up) runs no area: only the jobs that save
-  a Rust cache run, `test` compiling without running its tests, so the caches every other run
-  restores stay fresh without repeating the group's checks; any other push runs every job.
+  push to `main`, the nightly run, a manual run, a workflow change, a failed diff, or any path the
+  list does not name runs every job, so whatever a PR or a group skipped runs once it lands. When a
+  push to `main` or the nightly run fails, `main-failure-issue` opens a `bug` issue titled "CI
+  failing on main", or comments on the open one, naming the failed jobs and linking the run.
   Actions are pinned by commit SHA. `ci-passed` is the one CI check branch rules require: it passes
   only when every other job succeeded or was skipped because its area did not change, so each new
   job must be added to its `needs` and its area map, and every path it reads to `changes`. Each
-  job but `changes` and `ci-passed` has a `cancel-<job>` companion that runs only on a pull
+  job but `changes`, `ci-passed` and `main-failure-issue` has a `cancel-<job>` companion that runs only on a pull
   request or a merge group, and only if that job fails; it cancels the run with its own
   `actions: write` token (the only jobs that hold it; they run no repository code), so the first
   failed job stops the rest and `ci-passed` fails on the cancelled jobs, and the merge queue drops a
   failed group's PR without waiting for the slowest job; a new job gets a companion. The image and
   browser-verifier matrices' `fail-fast` is likewise on only for a pull request or a merge group,
-  so a push to `main` and a manual run cancel nothing: every job runs to the end.
+  so a push to `main`, the nightly run and a manual run cancel nothing: every job runs to the end.
   `cancel-in-progress` is on for a pull request and a merge group: a group's ref names its PR and
   base commit, so a new run cancels only the stale run of a group the queue rebuilt on the same
   base. A fork PR's read-only token cannot cancel, so the companion warns and the run continues as
   before, and a job that times out is cancelled rather than failed, so the run continues too.
   `gh run rerun --failed` re-runs the failed, cancelled, and unstarted jobs with `ci-passed`, so a
-  re-run after a flake repeats everything the first failure cut short. The test job also runs the
-  corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits and volume benefits dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
-  their own job, `test-production`, which compiles a different feature set.
+  re-run after a flake repeats everything the first failure cut short. The node's production-build
+  tests run in their own job, `test-production`, which compiles a different feature set.
   `merge-approval.yaml` runs only on merge groups: its `merge-approved` job, the merge-group side of
   the required `merge-approved` check, runs `scripts/check-merge-approved.sh`, which follows the
   queue's entries from the group's head down to `main` and passes only if the latest

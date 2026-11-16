@@ -5,10 +5,14 @@ on:
     branches: [main]
   pull_request:
   merge_group:
+  # Every job, nightly, on main.
+  schedule:
+    - cron: "17 2 * * *"
   workflow_dispatch:
 
 # A merge group's ref names its pull request and base commit, so a group shares it only with the
-# stale run of a group the queue rebuilt on the same base, which the new run cancels.
+# stale run of a group the queue rebuilt on the same base, which the new run cancels. A push to main
+# and the nightly run share main's group and cancel nothing that has started.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
@@ -21,24 +25,47 @@ permissions:
   contents: read
 
 jobs:
-  # Sorts a PR's changed files into areas; every other job runs only when its area is true. A push,
-  # a merge group, a manual run, a failed diff, a workflow change, and any path not listed set every
+  # Sorts the changed files into areas; every other job runs only when its area is true. A pull
+  # request's files are its diff against its base. A merge group's are its diff against `main`: the
+  # queue merges every entry under a head group that passes, so the head's run covers each entry
+  # ahead of it; a merge group also always runs the Rust and contracts checks. A push to `main`, the
+  # nightly run, a manual run, a failed diff, a workflow change, and any path not listed set every
   # area true, so only the listed paths can skip a job. Each path lists the area of every job that
-  # reads it.
+  # reads it. Each scenario job has its own area, named after it.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
-      actions: read
     outputs:
-      cache: ${{ steps.classify.outputs.cache }}
       rust: ${{ steps.classify.outputs.rust }}
       contracts: ${{ steps.classify.outputs.contracts }}
-      scenarios: ${{ steps.classify.outputs.scenarios }}
       image: ${{ steps.classify.outputs.image }}
       agent_scripts: ${{ steps.classify.outputs.agent_scripts }}
       merge_approval: ${{ steps.classify.outputs.merge_approval }}
+      engine_build: ${{ steps.classify.outputs.engine_build }}
+      vault_deposits: ${{ steps.classify.outputs.vault_deposits }}
+      daily_rotation: ${{ steps.classify.outputs.daily_rotation }}
+      short_turns: ${{ steps.classify.outputs.short_turns }}
+      metrics_alerts: ${{ steps.classify.outputs.metrics_alerts }}
+      alert_outbox: ${{ steps.classify.outputs.alert_outbox }}
+      browser_origin: ${{ steps.classify.outputs.browser_origin }}
+      dashboard_data: ${{ steps.classify.outputs.dashboard_data }}
+      proxy_protocol: ${{ steps.classify.outputs.proxy_protocol }}
+      batch_orders: ${{ steps.classify.outputs.batch_orders }}
+      ct_watch: ${{ steps.classify.outputs.ct_watch }}
+      snapshot_restart: ${{ steps.classify.outputs.snapshot_restart }}
+      signed_api: ${{ steps.classify.outputs.signed_api }}
+      production_secrets: ${{ steps.classify.outputs.production_secrets }}
+      log_heads: ${{ steps.classify.outputs.log_heads }}
+      scenario_tests: ${{ steps.classify.outputs.scenario_tests }}
+      rwa_feeds: ${{ steps.classify.outputs.rwa_feeds }}
+      toxicity: ${{ steps.classify.outputs.toxicity }}
+      loss_trigger: ${{ steps.classify.outputs.loss_trigger }}
+      cme_feeds: ${{ steps.classify.outputs.cme_feeds }}
+      attestation_verifier: ${{ steps.classify.outputs.attestation_verifier }}
+      acme: ${{ steps.classify.outputs.acme }}
+      wasm_verifier: ${{ steps.classify.outputs.wasm_verifier }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,26 +78,28 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
           SHA: ${{ github.sha }}
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
         run: |
-          all="rust contracts scenarios image agent_scripts merge_approval"
+          # The scenario jobs that run the node from `engine-build`'s artifact, those on Anvil that run
+          # engine-node's lib tests, and those against loopback venues.
+          prebuilt="metrics_alerts alert_outbox browser_origin dashboard_data proxy_protocol batch_orders ct_watch snapshot_restart signed_api production_secrets log_heads"
+          anvil="vault_deposits daily_rotation short_turns"
+          feeds="toxicity loss_trigger rwa_feeds cme_feeds"
+          # Every scenario that runs engine-node's lib tests, every one that runs the node, and every one.
+          lib_tests="$anvil $feeds scenario_tests attestation_verifier"
+          node="$prebuilt $lib_tests acme"
+          scenarios="$node wasm_verifier"
+          all="rust contracts image agent_scripts merge_approval $scenarios"
           areas=$all
-          cache=false
-          # The queue lands the commit its merge group tested, so a push to main whose commit passed a
-          # group has already run every check on it. That push then only refreshes the caches: it runs
-          # the jobs that save one, compiling without the tests, and no area. A commit with no passed
-          # group, or an API error, runs every job.
-          if [[ "$EVENT" == push ]]; then
-            tested=$(gh api "repos/$GH_REPO/actions/workflows/ci.yaml/runs?head_sha=$SHA&event=merge_group&status=success&per_page=1" \
-              --jq .total_count) || tested=0
-            if [[ "$tested" =~ ^[1-9][0-9]*$ ]]; then areas=; cache=true; fi
-          fi
-          echo "cache=$cache" | tee -a "$GITHUB_OUTPUT"
+          case "$EVENT" in
+            pull_request) range="$BASE...$HEAD" ;;
+            merge_group) range="origin/main...$SHA" ;;
+            *) range= ;;
+          esac
           # --no-renames lists both sides of a move.
-          if [[ "$EVENT" == pull_request ]] && files=$(git diff --name-only --no-renames "$BASE...$HEAD"); then
+          if [[ -n "$range" ]] && files=$(git diff --name-only --no-renames "$range"); then
             echo "$files"
             areas=
+            if [[ "$EVENT" == merge_group ]]; then areas="rust contracts"; fi
             while IFS= read -r file; do
               case "$file" in
                 # The review-delta helper and its test.
@@ -85,30 +114,126 @@ jobs:
                 agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
                   | crates/core/README.md | crates/node/README.md | crates/verify/README.md \
                   | crates/verify-wasm/README.md | crates/wire/README.md | scripts/seed-relay-fixtures.sh) ;;
-                # The contracts' emission and exit tests read the engine's proof vectors.
-                crates/core/tests/fixtures/emissions.json | crates/core/tests/fixtures/exit.json)
-                  areas+=" rust scenarios image contracts" ;;
-                # The image embeds config/test-keys.toml and boots on config/dev.toml.
-                crates/* | Cargo.toml | Cargo.lock | config/dev.toml | config/test-keys.toml)
-                  areas+=" rust scenarios image" ;;
-                # Read by the node's tests, which the checkpoint scenario also compiles.
-                config/anvil.toml | config/benchmark-publishers.toml | config/production-genesis.toml | ops/*)
-                  areas+=" rust scenarios" ;;
-                rustfmt.toml | deny.toml | config/ct-watch.toml | scripts/check-file-loc.sh \
-                  | scripts/check-reference-logs.sh)
+                # The contracts' tests read the engine's proof vectors and the withdrawal vector, which
+                # the node's tests also read.
+                crates/core/tests/fixtures/emissions.json | crates/core/tests/fixtures/exit.json \
+                  | contracts/test/fixtures/withdrawal.json)
+                  areas+=" rust contracts" ;;
+                # Test-only modules (`tests`, `*_tests`, `scenario`, `*_scenario`, `*bench`, `test_support`)
+                # compile under `cfg(test)` alone, into no binary a scenario or the image runs. A scenario
+                # that runs engine-node's lib tests takes each test module its tests reach.
+                crates/node/src/test_support/* | crates/node/src/test_tracing.rs | crates/node/tests/common/* \
+                  | crates/node/src/trusted_time/tests/*)
+                  areas+=" rust $lib_tests" ;;
+                crates/node/src/feeds/tests/*) areas+=" rust $feeds" ;;
+                crates/node/src/verify/tests/* | crates/node/src/api/tests.rs | crates/node/src/api/tests/* \
+                  | crates/node/src/log/authenticated_tests*)
+                  areas+=" rust attestation_verifier" ;;
+                crates/node/src/api/access_tests* | crates/node/src/api/benchmark_tests* \
+                  | crates/node/src/sequencer/wait_bench.rs)
+                  areas+=" rust scenario_tests" ;;
+                crates/node/src/api/admin_tests* | crates/node/src/sequencer/fixture_tests.rs)
+                  areas+=" rust scenario_tests vault_deposits attestation_verifier" ;;
+                crates/node/src/checkpoints/scenario* | crates/node/src/checkpoints/tests*)
+                  areas+=" rust scenario_tests $anvil" ;;
+                crates/node/src/custody/tests/* | crates/node/src/seed_relay/tests/* | crates/node/src/node/tests* \
+                  | crates/node/src/node/member/turn/tests/* | crates/node/src/secrets/tests* \
+                  | crates/node/src/log_check/tests* | crates/node/src/sequencer/withdrawal_scenario/* \
+                  | crates/node/src/checkpoints/*_scenario* | crates/node/src/checkpoints/accounting/tests* \
+                  | crates/node/src/sequencer/checkpoints/accounting_tests* \
+                  | crates/node/src/sequencer/replay/accounting_tests*)
+                  areas+=" rust $anvil" ;;
+                crates/*/src/tests.rs | crates/*/src/tests/* | crates/*/src/*/tests.rs | crates/*/src/*/tests/* \
+                  | crates/*/src/*_tests.rs | crates/*/src/*_tests/* | crates/*/src/*/scenario.rs \
+                  | crates/*/src/*/scenario/* | crates/*/src/*_scenario.rs | crates/*/src/*_scenario/* \
+                  | crates/*/src/*bench.rs)
                   areas+=" rust" ;;
-                # The deposit and checkpoint scenarios deploy the vault.
-                contracts/*) areas+=" contracts scenarios" ;;
-                # The test job runs the corporate-action, operator bounds, parameter notice,
-                # holding-time fee, volume tier, weekend margin, earned leverage, tier limits and
-                # volume benefits scenarios, and the spreads job its node test.
+                # The CT watcher runs as its own process, `engine ct-watch`.
+                crates/node/src/ct_watch/*) areas+=" rust image ct_watch" ;;
+                # `engine exit-proof`, which the exit and operator's share scenarios run.
+                crates/node/src/exit.rs) areas+=" rust image vault_deposits" ;;
+                # The venue adapters run only on a node priced from venues.
+                crates/node/src/feeds/bitstamp.rs | crates/node/src/feeds/coinbase.rs | crates/node/src/feeds/kraken/* \
+                  | crates/node/src/feeds/massive.rs | crates/node/src/feeds/massive/* \
+                  | crates/node/src/feeds/tradermade.rs | crates/node/src/feeds/cme/*)
+                  areas+=" rust image $feeds production_secrets" ;;
+                # The browser verifier's package.
+                crates/verify-wasm/*) areas+=" rust wasm_verifier" ;;
+                # The scenarios' signed access source and request signer.
+                crates/node/examples/access_source.rs | crates/core/examples/sign_request.rs)
+                  areas+=" rust vault_deposits dashboard_data proxy_protocol batch_orders production_secrets" ;;
+                # The latency budget's engine-core benchmark, and the harness it shares.
+                crates/core/tests/hot_path_benchmark* | crates/core/tests/common/*) areas+=" rust scenario_tests" ;;
+                crates/core/tests/short_turns.rs) areas+=" rust short_turns" ;;
+                # The replay fixture the checkpoint scenario's accounting test reaches.
+                crates/node/tests/fixtures/*) areas+=" rust vault_deposits" ;;
+                # The other integration tests, examples and reference logs run in the Rust jobs alone.
+                crates/core/tests/* | crates/node/tests/* | crates/core/examples/* | crates/node/examples/*)
+                  areas+=" rust" ;;
+                # The rest of the crates and the workspace's build: the node's and the engine's modules
+                # call into one another, and the browser verifier checks the `engine` CLI's verdicts.
+                crates/* | Cargo.toml | Cargo.lock) areas+=" rust image $scenarios" ;;
+                # The image embeds config/test-keys.toml and boots on config/dev.toml; the node compiles
+                # the keys in, and the scenarios run on dev.toml and anvil.toml.
+                config/dev.toml | config/test-keys.toml) areas+=" rust image $node" ;;
+                config/anvil.toml) areas+=" rust $lib_tests acme production_secrets log_heads" ;;
+                # Read by the node's tests.
+                config/benchmark-publishers.toml | config/production-genesis.toml | config/ct-watch.toml)
+                  areas+=" rust" ;;
+                # The launch values scenario deploys from it; the node's tests read the rest of ops/.
+                ops/runbooks/production-deployment.toml) areas+=" rust vault_deposits" ;;
+                ops/*) areas+=" rust" ;;
+                rustfmt.toml | deny.toml | scripts/check-file-loc.sh | scripts/check-reference-logs.sh) areas+=" rust" ;;
+                # The scenarios on Anvil deploy the contracts and their mocks; the contracts' own tests
+                # stay with the contracts job.
+                contracts/test/mocks/*) areas+=" contracts $anvil production_secrets log_heads" ;;
+                contracts/test/* | contracts/README.md) areas+=" contracts" ;;
+                contracts/*) areas+=" contracts $anvil production_secrets log_heads" ;;
+                # Each scenario's scripts, and the helpers they run.
+                scripts/dev-vault-deposits.sh | scripts/dev-checkpoints.sh | scripts/dev-monkey-emissions.sh \
+                  | scripts/dev-monkey-staking.sh | scripts/dev-launch-values.sh | scripts/dev-operator-election.sh \
+                  | scripts/dev-staking-reads.sh | scripts/dev-seed-relay.sh | scripts/dev-operator-share.sh \
+                  | scripts/dev-standby-operator.sh | scripts/dev-operator-handover.sh \
+                  | scripts/dev-deposit-finality.sh | scripts/dev-withdrawals.sh | scripts/dev-key-lifecycle.sh \
+                  | scripts/dev-exit.sh | scripts/dev-access-enforcement.sh | scripts/dev-access-cases.sh \
+                  | scripts/dev-quotes.sh | scripts/dev-quotes-cases.sh | scripts/dev-quotes-client.py)
+                  areas+=" vault_deposits" ;;
+                scripts/dev-daily-rotation.sh | scripts/dev-parameter-votes.sh | scripts/dev-liveness.sh \
+                  | scripts/dev-operator-faults.sh)
+                  areas+=" daily_rotation" ;;
+                scripts/dev-short-turns.sh) areas+=" short_turns" ;;
+                scripts/dev-rpc-proxy.py) areas+=" $anvil production_secrets log_heads" ;;
+                scripts/dev-alert-audit.py) areas+=" vault_deposits log_heads" ;;
+                scripts/dev-access-fixture.sh)
+                  areas+=" vault_deposits dashboard_data proxy_protocol batch_orders production_secrets" ;;
+                scripts/dev-metrics-alerts.sh) areas+=" metrics_alerts" ;;
+                scripts/dev-alert-outbox.sh) areas+=" alert_outbox" ;;
+                scripts/dev-browser-origin.sh) areas+=" browser_origin" ;;
+                scripts/dev-dashboard-data.sh) areas+=" dashboard_data" ;;
+                scripts/dev-proxy-protocol.sh) areas+=" proxy_protocol" ;;
+                scripts/dev-batch-orders.sh) areas+=" batch_orders" ;;
+                scripts/dev-ct-watch.sh | scripts/dev-ct-log.py) areas+=" ct_watch" ;;
+                scripts/dev-snapshot-restart.sh) areas+=" snapshot_restart" ;;
+                scripts/dev-signed-api.sh) areas+=" signed_api" ;;
+                scripts/dev-production-secrets.sh) areas+=" production_secrets" ;;
+                scripts/dev-log-heads.sh) areas+=" log_heads" ;;
+                scripts/dev-acme.sh) areas+=" acme" ;;
                 scripts/dev-corporate-actions.sh | scripts/dev-operator-bounds.sh | scripts/dev-params-notice.sh \
                   | scripts/dev-holding-fee.sh | scripts/dev-volume-tiers.sh | scripts/dev-weekend-margin.sh \
-                  | scripts/dev-earned-leverage.sh | scripts/dev-tier-limits.sh | scripts/dev-volume-benefits.sh | scripts/dev-spreads.sh) areas+=" rust" ;;
-                # The browser verifier's jobs build its package and run its scenario.
-                scripts/dev-* | scripts/build-wasm-verifier.sh) areas+=" scenarios" ;;
+                  | scripts/dev-earned-leverage.sh | scripts/dev-tier-limits.sh | scripts/dev-volume-benefits.sh \
+                  | scripts/dev-spreads.sh)
+                  areas+=" scenario_tests" ;;
+                scripts/dev-toxicity.sh) areas+=" toxicity" ;;
+                scripts/dev-loss-trigger.sh) areas+=" loss_trigger" ;;
+                scripts/dev-rwa-feeds.sh) areas+=" rwa_feeds" ;;
+                scripts/dev-cme-feeds.sh) areas+=" cme_feeds" ;;
+                scripts/dev-attestation-verifier.sh) areas+=" attestation_verifier" ;;
+                scripts/dev-wasm-verifier.sh | scripts/dev-wasm-verifier.mjs | scripts/build-wasm-verifier.sh)
+                  areas+=" wasm_verifier" ;;
+                # A scenario file not listed above.
+                scripts/dev-*) areas+=" $scenarios" ;;
                 # The ACME scenario downloads its test CA under image/retry.
-                image/retry) areas+=" image scenarios" ;;
+                image/retry) areas+=" image acme" ;;
                 image/* | scripts/build-image.sh | scripts/check-image.sh | scripts/check-image-retry.sh)
                   areas+=" image" ;;
                 *) areas=$all ;;
@@ -119,6 +244,12 @@ jobs:
             [[ " $areas " == *" $area "* ]] && value=true || value=false
             echo "$area=$value" | tee -a "$GITHUB_OUTPUT"
           done
+          # Builds the node once for the scenarios that only run it.
+          engine_build=false
+          for area in $prebuilt; do
+            if [[ " $areas " == *" $area "* ]]; then engine_build=true; fi
+          done
+          echo "engine_build=$engine_build" | tee -a "$GITHUB_OUTPUT"
 
   fmt:
     needs: changes
@@ -149,7 +280,7 @@ jobs:
 
   clippy:
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cache == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -168,7 +299,7 @@ jobs:
 
   test:
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cache == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
@@ -181,44 +312,12 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
       - name: Test
-        run: cargo test --workspace --locked ${{ needs.changes.outputs.cache == 'true' && '--no-run' || '' }}
-      - name: Run the signed corporate-action dev scenario
-        if: needs.changes.outputs.cache != 'true'
-        run: ./scripts/dev-corporate-actions.sh
-      - name: Run the operator bounds dev scenario
-        run: ./scripts/dev-operator-bounds.sh
-      - name: Run the parameter notice dev scenario
-        if: needs.changes.outputs.cache != 'true'
-        run: ./scripts/dev-params-notice.sh
-      - name: Run the holding-time fee dev scenario
-        if: needs.changes.outputs.cache != 'true'
-        run: ./scripts/dev-holding-fee.sh
-      - name: Run the volume tier dev scenario
-        if: needs.changes.outputs.cache != 'true'
-        run: ./scripts/dev-volume-tiers.sh
-      - name: Run the weekend margin dev scenario
-        if: needs.changes.outputs.cache != 'true'
-        run: ./scripts/dev-weekend-margin.sh
-      - name: Run the earned leverage dev scenario
-        if: needs.changes.outputs.cache != 'true'
-        run: ./scripts/dev-earned-leverage.sh
-      - name: Run the tier limits dev scenario
-        if: needs.changes.outputs.cache != 'true'
-        run: ./scripts/dev-tier-limits.sh
-      - name: Run the volume benefits dev scenario
-        if: needs.changes.outputs.cache != 'true'
-        run: ./scripts/dev-volume-benefits.sh
-      - name: Check sequencer command latency at 100k accounts
-        if: needs.changes.outputs.cache != 'true'
-        run: cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture --test-threads=1
-      - name: Check the wait from a price entering the sequencer's channel to its stamp at 100k accounts
-        if: needs.changes.outputs.cache != 'true'
-        run: cargo test -p engine-node --lib --locked sequencer::wait_bench::price_wait_budget -- --ignored --nocapture
+        run: cargo test --workspace --locked
 
   # The production feature set compiles apart from `test`'s, so it has its own job and cache.
   test-production:
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cache == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -231,14 +330,14 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
       - name: Test the node's production build
-        run: cargo test -p engine-node --features production --locked --lib production_build ${{ needs.changes.outputs.cache == 'true' && '--no-run' || '' }}
+        run: cargo test -p engine-node --features production --locked --lib production_build
 
   # The reference sessions' example tests assert each session's end state without writing a
   # fixture; `cargo test --workspace` builds the examples but never runs these, so they need
   # their own run.
   reference-examples:
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cache == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -260,7 +359,7 @@ jobs:
   reference-logs:
     name: reference-logs (ubuntu-24.04-arm)
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cache == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
@@ -338,7 +437,7 @@ jobs:
 
   dev-vault-deposits:
     needs: changes
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.vault_deposits == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -398,7 +497,7 @@ jobs:
 
   dev-daily-rotation:
     needs: changes
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.daily_rotation == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -432,7 +531,7 @@ jobs:
   # real nodes.
   dev-short-turns:
     needs: changes
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.short_turns == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -474,11 +573,10 @@ jobs:
         run: ./scripts/dev-short-turns.sh
 
   # Builds the node and the scenario tools once, for the scenarios that only run them. Each of those
-  # used to compile the same binary, about seven minutes apiece. A push to main that only refreshes
-  # caches (see `changes`) runs this job alone of them, since it saves the cache these builds use.
+  # used to compile the same binary, about seven minutes apiece. It runs when any of them does.
   engine-build:
     needs: changes
-    if: needs.changes.outputs.scenarios == 'true' || needs.changes.outputs.cache == 'true'
+    if: needs.changes.outputs.engine_build == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -509,7 +607,7 @@ jobs:
 
   dev-metrics-alerts:
     needs: [changes, engine-build]
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.metrics_alerts == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -530,7 +628,7 @@ jobs:
 
   dev-alert-outbox:
     needs: [changes, engine-build]
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.alert_outbox == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -551,7 +649,7 @@ jobs:
 
   dev-browser-origin:
     needs: [changes, engine-build]
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.browser_origin == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -572,7 +670,7 @@ jobs:
 
   dev-dashboard-data:
     needs: [changes, engine-build]
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.dashboard_data == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -593,7 +691,7 @@ jobs:
 
   dev-proxy-protocol:
     needs: [changes, engine-build]
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.proxy_protocol == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -612,10 +710,12 @@ jobs:
           ENGINE_PREBUILT: "1"
         run: ./scripts/dev-proxy-protocol.sh
 
-  # The V52 spreads dev scenario: a node test on deterministic time, so it compiles the node's tests.
-  dev-spreads:
+  # The dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs,
+  # here by name under engine-node's own features, and the latency budgets at 100k accounts. They share
+  # one build of the node's tests; each scenario takes a second or two.
+  dev-scenario-tests:
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cache == 'true'
+    if: needs.changes.outputs.scenario_tests == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -625,18 +725,37 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: engine-lib
+          save-if: false
           cache-on-failure: true
-      - name: Build the node's tests
-        if: needs.changes.outputs.cache == 'true'
-        run: cargo test -p engine-node --lib --locked --no-run
+      - name: Run the signed corporate-action dev scenario
+        run: ./scripts/dev-corporate-actions.sh
+      - name: Run the operator bounds dev scenario
+        run: ./scripts/dev-operator-bounds.sh
+      - name: Run the parameter notice dev scenario
+        run: ./scripts/dev-params-notice.sh
+      - name: Run the holding-time fee dev scenario
+        run: ./scripts/dev-holding-fee.sh
+      - name: Run the volume tier dev scenario
+        run: ./scripts/dev-volume-tiers.sh
+      - name: Run the weekend margin dev scenario
+        run: ./scripts/dev-weekend-margin.sh
+      - name: Run the earned leverage dev scenario
+        run: ./scripts/dev-earned-leverage.sh
+      - name: Run the tier limits dev scenario
+        run: ./scripts/dev-tier-limits.sh
+      - name: Run the volume benefits dev scenario
+        run: ./scripts/dev-volume-benefits.sh
       - name: Run the spreads dev scenario
-        if: needs.changes.outputs.cache != 'true'
         run: ./scripts/dev-spreads.sh
+      - name: Check the wait from a price entering the sequencer's channel to its stamp at 100k accounts
+        run: cargo test -p engine-node --lib --locked sequencer::wait_bench::price_wait_budget -- --ignored --nocapture
+      - name: Check sequencer command latency at 100k accounts
+        run: cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture --test-threads=1
 
   dev-batch-orders:
     needs: [changes, engine-build]
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.batch_orders == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -657,7 +776,7 @@ jobs:
 
   dev-ct-watch:
     needs: [changes, engine-build]
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.ct_watch == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -678,7 +797,7 @@ jobs:
 
   dev-snapshot-restart:
     needs: [changes, engine-build]
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.snapshot_restart == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -699,7 +818,7 @@ jobs:
 
   dev-rwa-feeds:
     needs: changes
-    if: needs.changes.outputs.scenarios == 'true' || needs.changes.outputs.cache == 'true'
+    if: needs.changes.outputs.rwa_feeds == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -717,7 +836,7 @@ jobs:
 
   dev-toxicity:
     needs: changes
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.toxicity == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -735,7 +854,7 @@ jobs:
 
   dev-loss-trigger:
     needs: changes
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.loss_trigger == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -753,7 +872,7 @@ jobs:
 
   dev-cme-feeds:
     needs: changes
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.cme_feeds == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -771,7 +890,7 @@ jobs:
 
   dev-attestation-verifier:
     needs: changes
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.attestation_verifier == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -789,7 +908,7 @@ jobs:
 
   dev-signed-api:
     needs: [changes, engine-build]
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.signed_api == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -810,7 +929,7 @@ jobs:
 
   dev-production-secrets:
     needs: [changes, engine-build]
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.production_secrets == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -838,7 +957,7 @@ jobs:
 
   dev-log-heads:
     needs: [changes, engine-build]
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.log_heads == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -866,7 +985,7 @@ jobs:
 
   dev-acme:
     needs: changes
-    if: needs.changes.outputs.scenarios == 'true' || needs.changes.outputs.cache == 'true'
+    if: needs.changes.outputs.acme == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -884,15 +1003,17 @@ jobs:
   # Builds the browser verifier's package twice on separate runners with no shared cache and the
   # pinned toolchain, the second from another checkout path, with a space in it, so the build's path
   # remapping is covered; the first run also checks that package against the CLI on every fixture and vector.
-  # `wasm-verifier-compare` fails if the two builds differ by a single byte.
+  # `wasm-verifier-compare` fails if the two builds differ by a single byte. A pull request and a merge
+  # group build it once; the second build and the comparison run on a push to main, nightly, and on a
+  # manual run.
   wasm-verifier:
     name: wasm-verifier (${{ matrix.run }})
     needs: changes
-    if: needs.changes.outputs.scenarios == 'true'
+    if: needs.changes.outputs.wasm_verifier == 'true'
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
       matrix:
-        run: ${{ fromJSON(github.event_name == 'pull_request' && '["first"]' || '["first","second"]') }}
+        run: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '["first"]' || '["first","second"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
@@ -924,7 +1045,7 @@ jobs:
 
   wasm-verifier-compare:
     needs: [changes, wasm-verifier]
-    if: needs.changes.outputs.scenarios == 'true' && github.event_name != 'pull_request'
+    if: needs.changes.outputs.wasm_verifier == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -941,7 +1062,8 @@ jobs:
   # Builds the enclave image twice on separate runners with no shared cache, then boots it under
   # QEMU: the production image must refuse mock providers, and the dev image must attest its config
   # hash. `image-compare` fails if the two builds differ by a single byte. The first run also checks
-  # the build's download retries.
+  # the build's download retries. A pull request and a merge group build it once, with the dev image;
+  # the second build and the comparison run on a push to main, nightly, and on a manual run.
   image:
     name: image (${{ matrix.run }})
     needs: changes
@@ -949,7 +1071,7 @@ jobs:
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
       matrix:
-        run: ${{ fromJSON(github.event_name == 'pull_request' && '["first"]' || '["first","second"]') }}
+        run: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '["first"]' || '["first","second"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -974,15 +1096,15 @@ jobs:
       - name: Boot the image and check it refuses mock providers
         run: ./scripts/check-image.sh out/image
       - name: Build the dev image
-        if: matrix.run == 'second' || github.event_name == 'pull_request'
+        if: matrix.run == 'second' || github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: ./scripts/build-image.sh --variant dev out/image-dev
       - name: Boot the dev image and check its attestation
-        if: matrix.run == 'second' || github.event_name == 'pull_request'
+        if: matrix.run == 'second' || github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: ./scripts/check-image.sh out/image-dev
 
   image-compare:
     needs: [changes, image]
-    if: needs.changes.outputs.image == 'true' && github.event_name != 'pull_request'
+    if: needs.changes.outputs.image == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -1024,9 +1146,9 @@ jobs:
   # merge group, and only when that job itself fails (`failure()` alone is also true for a failed
   # ancestor such as `changes`). It cancels the run, so the first failed job stops the rest from
   # spending runner minutes; `ci-passed` still runs and fails on the cancelled jobs, so the merge
-  # queue drops a failed group's pull request without waiting for the slowest job. A push to `main`
-  # and a manual run skip the companions and the image matrix's `fail-fast`: every job runs to the
-  # end, so caches are saved whole and every failure shows. The companions run no repository code,
+  # queue drops a failed group's pull request without waiting for the slowest job. A push to `main`,
+  # the nightly run and a manual run skip the companions and the image matrix's `fail-fast`: every job
+  # runs to the end, so caches are saved whole and every failure shows. The companions run no repository code,
   # so `actions: write` is held by them alone. They are not in `ci-passed`'s `needs`. `changes` has
   # none, so its failure leaves the other jobs to skip as before. A job that times out is
   # cancelled, not failed, so its companion skips and the run continues. A new job gets a
@@ -1371,9 +1493,9 @@ jobs:
           gh run cancel ${{ github.run_id }} \
             || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
 
-  cancel-dev-spreads:
-    needs: dev-spreads
-    if: failure() && needs.dev-spreads.result == 'failure'
+  cancel-dev-scenario-tests:
+    needs: dev-scenario-tests
+    if: failure() && needs.dev-scenario-tests.result == 'failure'
       && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -1682,7 +1804,7 @@ jobs:
   # `changes` set its area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-daily-rotation, dev-short-turns, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-spreads, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-cme-feeds, dev-toxicity, dev-loss-trigger, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
+    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-daily-rotation, dev-short-turns, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-scenario-tests, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-cme-feeds, dev-toxicity, dev-loss-trigger, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1696,16 +1818,58 @@ jobs:
             .changes.outputs as $run
             | {fmt: "rust", "file-loc": "rust", clippy: "rust", test: "rust", "test-production": "rust", "reference-examples": "rust",
                "reference-logs": "rust", "reference-logs-frozen": "rust", "cargo-deny": "rust", contracts: "contracts",
-               "dev-vault-deposits": "scenarios", "dev-daily-rotation": "scenarios", "dev-short-turns": "scenarios", "engine-build": "scenarios",
-               "dev-metrics-alerts": "scenarios",
-               "dev-alert-outbox": "scenarios", "dev-ct-watch": "scenarios", "dev-browser-origin": "scenarios", "dev-dashboard-data": "scenarios", "dev-proxy-protocol": "scenarios", "dev-spreads": "rust", "dev-batch-orders": "scenarios",
-               "dev-snapshot-restart": "scenarios",
-               "dev-rwa-feeds": "scenarios", "dev-toxicity": "scenarios", "dev-loss-trigger": "scenarios", "dev-cme-feeds": "scenarios", "dev-attestation-verifier": "scenarios",
-               "dev-signed-api": "scenarios",
-               "dev-production-secrets": "scenarios", "dev-log-heads": "scenarios", "dev-acme": "scenarios",
-               "wasm-verifier": "scenarios", "wasm-verifier-compare": "scenarios", image: "image",
+               "dev-vault-deposits": "vault_deposits", "dev-daily-rotation": "daily_rotation", "dev-short-turns": "short_turns",
+               "engine-build": "engine_build", "dev-metrics-alerts": "metrics_alerts", "dev-alert-outbox": "alert_outbox",
+               "dev-ct-watch": "ct_watch", "dev-browser-origin": "browser_origin", "dev-dashboard-data": "dashboard_data",
+               "dev-proxy-protocol": "proxy_protocol", "dev-scenario-tests": "scenario_tests", "dev-batch-orders": "batch_orders",
+               "dev-snapshot-restart": "snapshot_restart", "dev-rwa-feeds": "rwa_feeds", "dev-toxicity": "toxicity",
+               "dev-loss-trigger": "loss_trigger", "dev-cme-feeds": "cme_feeds", "dev-attestation-verifier": "attestation_verifier",
+               "dev-signed-api": "signed_api", "dev-production-secrets": "production_secrets", "dev-log-heads": "log_heads",
+               "dev-acme": "acme", "wasm-verifier": "wasm_verifier", "wasm-verifier-compare": "wasm_verifier", image: "image",
                "image-compare": "image", "review-delta": "agent_scripts", "merge-approval": "merge_approval"} as $area
             | ["wasm-verifier-compare", "image-compare"] as $compare
             | all(to_entries[]; .value.result == "success"
                 or .value.result == "skipped" and $run[$area[.key] // ""] == "false"
-                or .value.result == "skipped" and $ENV.EVENT == "pull_request" and ([.key] | inside($compare)))'
+                or .value.result == "skipped" and ($ENV.EVENT == "pull_request" or $ENV.EVENT == "merge_group")
+                  and ([.key] | inside($compare)))'
+
+  # A push to `main` or the nightly run that fails opens an issue labelled `bug`, or comments on the
+  # open one, naming the failed jobs and linking the run. It runs no repository code, so it alone
+  # holds `issues: write`; it runs on no pull request or merge group, so it has no companion.
+  main-failure-issue:
+    needs: ci-passed
+    if: >-
+      ${{ !cancelled() && needs.ci-passed.result == 'failure'
+      && (github.event_name == 'push' || github.event_name == 'schedule') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Open or update the issue for main's failing CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          title="CI failing on main"
+          # shellcheck disable=SC2016 # jq's string interpolation, not the shell's.
+          failed=$(gh api --paginate "repos/$GH_REPO/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name != "ci-passed" and (.conclusion == "failure" or .conclusion == "cancelled"
+              or .conclusion == "timed_out")) | "- `\(.name)` (\(.conclusion))"')
+          if [[ "$EVENT" == schedule ]]; then run="The nightly run"; else run="The push"; fi
+          body="$run of \`$SHA\` failed: $RUN_URL
+
+          ${failed:-No job failed; ci-passed refused a skipped one. See the run.}"
+          number=$(gh issue list --state open --label bug --limit 500 --json number,title \
+            --jq "map(select(.title == \"$title\"))[0].number // empty")
+          if [[ -n "$number" ]]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --label bug --body "$body"
+          fi
