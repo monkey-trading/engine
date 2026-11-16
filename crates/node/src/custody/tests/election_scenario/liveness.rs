@@ -231,7 +231,8 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
         .map(|(index, url)| toml::from_str(&format!("name = 'operator-{index}'\nrpc_url = '{url}'")).unwrap())
         .collect();
     let time = (samples.subscribe(), clock.clone() as Arc<dyn Clock>);
-    let rig = Rig::start(&operator_cfg, &signing, (domain, keys), trusted(), time, &log, &members, operator).await;
+    let rig =
+        Rig::start(Arc::new(operator_cfg), &signing, (domain, keys), trusted(), time, &log, &members, operator).await;
     let callers: Vec<JoinHandle<anyhow::Result<()>>> = members
         .iter()
         .enumerate()

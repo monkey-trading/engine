@@ -116,13 +116,7 @@ async fn run() -> anyhow::Result<()> {
     }
     let drawn = draw_for(&chain, (schedule, receiver), turn, seats[0].candidate).await?;
     chain.mine_at(now_s()).await;
-    let miner = chain.provider.clone();
-    let mining = tokio::spawn(async move {
-        loop {
-            let _ = miner.request::<_, String>("evm_mine", ()).await;
-            sleep(Duration::from_secs(1)).await;
-        }
-    });
+    let mut mining = mine(&chain);
     let sealer = MockSealer { launch_digest: DIGEST_A };
     KeyStore::create(
         &seats[0].dir.join("keys"),
@@ -186,7 +180,6 @@ async fn run() -> anyhow::Result<()> {
 
     // A dies. The callers witness its missed slots and promote the next member.
     let last_head = chain.view(log_heads, headsCall { epoch: latched_seq.signerEpoch }).await;
-    let checkpoint_before = chain.view(vault, latestSeqCall {}).await;
     seats[0].kill().await?;
     let killed = Instant::now();
     let epoch = until("a promotion", window + Duration::from_secs(120), &mut seats[1..], async || {
@@ -195,6 +188,14 @@ async fn run() -> anyhow::Result<()> {
     })
     .await?;
     let promoted_at = Instant::now();
+    // Finality is held behind the promotion: no block comes until the checks below have run, so the
+    // vault's finalized view still names A's key, and the chain moves only by what a node sends.
+    mining.abort();
+    ensure!(
+        chain.view_at(vault, signerEpochCall {}, "finalized").await < epoch,
+        "the promotion is already final: finality could not be held behind it"
+    );
+    let held = chain.view(vault, latestSeqCall {}).await;
     let signer = AccountId(chain.view(vault, checkpointSignerCall {}).await.into());
     let p = seats.iter().position(|seat| seat.standby == signer).context("the vault names no member's standby key")?;
     println!(
@@ -231,13 +232,22 @@ async fn run() -> anyhow::Result<()> {
     );
     ensure!(since_head <= window + START_BUDGET, "the first fill came {since_head:?} after A's last head");
 
-    // Its first checkpoint lands once the promotion is final, signed by its standby key.
+    // While finality is held it posts no checkpoint, though it trades and its relayer is funded.
+    sleep(Duration::from_secs(20)).await;
+    seats[p].check()?;
+    ensure!(chain.view(vault, latestSeqCall {}).await == held, "a checkpoint landed before the promotion was final");
+    ensure!(chain.view(vault, checkpointSignerCall {}).await == Address::from(signer.0));
+    println!("PASS: {} posted no checkpoint while its promotion was not final", seats[p].name);
+
+    // Finality released, its first checkpoint extends the one the promotion fixed (the vault accepts a
+    // checkpoint only over its latest), signed by its standby key.
+    mining = mine(&chain);
     until("the promoted member's first checkpoint", Duration::from_secs(120), &mut seats, async || {
         let seq = chain.view(vault, latestSeqCall {}).await;
-        (seq > checkpoint_before).then_some(seq)
+        (seq > held).then_some(seq)
     })
     .await?;
-    println!("PASS: {}'s first checkpoint landed once the promotion was final", seats[p].name);
+    println!("PASS: {}'s first checkpoint landed once the promotion was final, over the one it fixed", seats[p].name);
 
     // The promotion consumed its standby key: it vouches for the replacement with the signer key it
     // now holds, which a set of no other member needs, before asking another member.
@@ -283,6 +293,17 @@ async fn run() -> anyhow::Result<()> {
     ensure!(replayed.checkpoint_signers == signers, "the replay names {:?}", replayed.checkpoint_signers);
     println!("PASS: {}'s log replays across the change of signer, each checkpoint by an attested key", seats[p].name);
     Ok(())
+}
+
+/// A block a second on the chain, until the task is aborted.
+fn mine(chain: &Chain) -> tokio::task::JoinHandle<()> {
+    let miner = chain.provider.clone();
+    tokio::spawn(async move {
+        loop {
+            let _ = miner.request::<_, String>("evm_mine", ()).await;
+            sleep(Duration::from_secs(1)).await;
+        }
+    })
 }
 
 /// True time on this host, in whole seconds: the chain follows it once the turns are drawn.

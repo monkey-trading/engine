@@ -209,7 +209,8 @@ async fn entries_from_the_first_take_onto_an_empty_copy_only() {
     let mut follower =
         Follower::open(&dir, SEGMENT_COMMANDS, DOMAIN, signer(), [signer()].into(), None, |_| {}).unwrap();
     assert!(follower.take_entries(None, &whole).unwrap() > 0);
-    let refused = follower.take_entries(None, &whole).expect_err("a copy that holds commands takes no start of the log");
+    let refused =
+        follower.take_entries(None, &whole).expect_err("a copy that holds commands takes no start of the log");
     assert!(format!("{refused:#}").contains("start the log"), "{refused:#}");
     drop(follower);
     assert_eq!(log_entries(&dir), log_entries(&operator), "the empty copy took the whole log");
