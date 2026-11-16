@@ -200,7 +200,6 @@ async fn a_followers_link_serves_the_entries_it_took_from_its_log() {
 async fn entries_from_the_first_take_onto_an_empty_copy_only() {
     let operator = scratch_dir("replica-first-operator");
     crate::standby::tests::ticks(&operator, 5).await;
-    let all = lines_after(&operator, 0);
     let mut whole = Vec::new();
     for entry in log_entries(&operator) {
         whole.extend(serde_json::to_vec(&entry).unwrap());
@@ -210,7 +209,8 @@ async fn entries_from_the_first_take_onto_an_empty_copy_only() {
     let mut follower =
         Follower::open(&dir, SEGMENT_COMMANDS, DOMAIN, signer(), [signer()].into(), None, |_| {}).unwrap();
     assert!(follower.take_entries(None, &whole).unwrap() > 0);
-    assert!(follower.take_entries(None, &all).is_err(), "a copy that holds commands takes no start of the log");
+    let refused = follower.take_entries(None, &whole).expect_err("a copy that holds commands takes no start of the log");
+    assert!(format!("{refused:#}").contains("start the log"), "{refused:#}");
     drop(follower);
     assert_eq!(log_entries(&dir), log_entries(&operator), "the empty copy took the whole log");
 }
