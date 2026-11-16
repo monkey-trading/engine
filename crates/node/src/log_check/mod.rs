@@ -91,12 +91,10 @@ impl Sequencers {
     }
 }
 
-/// The schedule's assignments a start read before it connected, for its own check: those a promotion or
-/// a skip made, in the turns from `from` on, other than the one that made the start. A check whose range
-/// begins in an earlier turn cannot tell, and counts for nothing (`own_check_read`).
+/// The schedule's assignments a start read before it connected, for its own check, over the turns near
+/// its own and other than the one that made the start (`own_check_read`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Reassigned {
-    pub from: u64,
     pub assigned: Vec<Assigned>,
 }
 
@@ -114,11 +112,13 @@ pub(crate) fn own_check_read(
     let checked = own_check(previous, takings, head, (release, candidates));
     let Some(read) = read.filter(|_| checked != previous) else { return checked };
     let sequenced = takings.sequenced(previous.map(|previous| previous.seq), head.seq);
-    let unread = |sequencers: &Sequencers| {
-        sequencers.in_office.0 < read.from || !sequencers.reassigned(&read.assigned).is_disjoint(candidates)
-    };
+    // A reassignment in a turn that began after the range's last command sequenced none of it, and one
+    // in a turn before the read began is final and mirrored, so the log's records name it.
+    let began = takings.began_by(head.seq);
+    let assigned: Vec<Assigned> =
+        read.assigned.iter().filter(|at| began.is_none_or(|began| at.turn <= began)).copied().collect();
     match sequenced {
-        Some(sequencers) if !unread(&sequencers) => checked,
+        Some(sequencers) if sequencers.reassigned(&assigned).is_disjoint(candidates) => checked,
         _ => previous,
     }
 }

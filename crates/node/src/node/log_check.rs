@@ -22,8 +22,8 @@ use crate::tee::keys::Head;
 use crate::tee::sealing::KeyStore;
 use crate::trusted_time::TrustedClock;
 
-/// How many turns before a start's own the schedule's reassignments are read, which the range its own
-/// check attributes begins within: a range that begins earlier counts for nothing.
+/// How many turns before a start's own the schedule's reassignments are read: an earlier reassignment is
+/// final and mirrored, so the log's records name it.
 const REASSIGNED_TURNS: u64 = 8;
 
 /// The schedule's reassignments for `turn`'s start, read at the latest block before the start connects:
@@ -42,7 +42,56 @@ pub(crate) async fn read_reassigned(
     if let Some((turn, position, _)) = promoted {
         assigned.retain(|at| (at.turn, at.position) != (turn, position));
     }
-    Ok(Reassigned { from, assigned })
+    Ok(Reassigned { assigned })
+}
+
+/// `after_start` for `log`, with the schedule's reassignments its start read (`start_reads`).
+/// Error cases:
+/// - see `start_reads` and `after_start`
+pub(crate) async fn start(
+    cfg: &NodeConfig,
+    store: Option<&KeyStore>,
+    log: &ReplayedLog,
+    (promoted, started): (Option<u64>, Option<&Reassigned>),
+) -> anyhow::Result<()> {
+    let read = start_reads(cfg, store, log, started).await?;
+    after_start(store, cfg.operator()?.address, log, promoted, read.as_ref())
+}
+
+/// The reassignments `log`'s start counts its own check against: those its member's start read before it
+/// connected (`ready`), and for a start that read none, as a whole-log take or a restart, those of the
+/// turns before the one in effect, read now while a rotation's turn is in effect and sealed keys take
+/// part. The start reads the chain anyway; a failed read fails it.
+/// Error cases:
+/// - the vault cannot be built, or the schedule cannot be read
+pub(crate) async fn start_reads(
+    cfg: &NodeConfig,
+    store: Option<&KeyStore>,
+    log: &ReplayedLog,
+    ready: Option<&Reassigned>,
+) -> anyhow::Result<Option<Reassigned>> {
+    match (ready, store) {
+        (Some(read), _) => Ok(Some(read.clone())),
+        (None, Some(_)) => match crate::handover::vault_reader(cfg)? {
+            Some(vault) => read_unreadied(&vault, log).await,
+            None => Ok(None),
+        },
+        (None, None) => Ok(None),
+    }
+}
+
+/// The reassignments of the turns before the one `log` has in effect, while the gate applies.
+/// Error cases:
+/// - the schedule cannot be read
+pub(crate) async fn read_unreadied(
+    vault: &impl CheckpointChain,
+    log: &ReplayedLog,
+) -> anyhow::Result<Option<Reassigned>> {
+    let engine = &log.replayed.engine;
+    match engine.daily_turns().in_effect.filter(|_| applies(engine)) {
+        Some(turn) => read_reassigned(vault, turn.turn, None).await.map(Some),
+        None => Ok(None),
+    }
 }
 
 /// The checks a start records: after a handover, the handed-over checkpoint (`after_handover`); for a
@@ -196,7 +245,7 @@ mod tests {
     async fn a_start_reads_the_reassignments_of_the_turns_its_check_may_span() {
         let schedule = Schedule(Default::default());
         let handover = read_reassigned(&schedule, 20, None).await.unwrap();
-        assert_eq!((handover.from, handover.assigned.len()), (12, 3));
+        assert_eq!(handover.assigned.len(), 3);
         assert_eq!(schedule.0.lock().unwrap().clone(), Some(12..20));
         let promoted = read_reassigned(&schedule, 7, Some((7, 2, 8))).await.unwrap();
         assert_eq!(schedule.0.lock().unwrap().clone(), Some(0..9));

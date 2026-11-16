@@ -68,7 +68,6 @@ fn a_promoted_start_whose_member_the_schedule_promoted_in_the_range_seals_no_che
         };
         let promoted_to = if own { other().candidate } else { AccountId([0x99; 20]) };
         let read = crate::log_check::Reassigned {
-            from: 0,
             assigned: vec![assigned(in_office.1, 0, false), assigned(promoted_to, 1, true)],
         };
         promoted_reading(&log, other().admin_key, fixed, name, Some(&read))
@@ -91,6 +90,45 @@ fn the_live_sequencer_and_a_replay_note_the_turn_that_had_begun_by_each_command(
     assert_eq!(node.seq.log_check.takings.began_by(last), Some(own + 1), "the live sequencer");
     assert_eq!(recovered(&node).replayed.takings.began_by(last), Some(own + 1), "a replay");
     assert_eq!(recovered(&node).replayed.takings.began_by(last - 1), Some(own), "the command before the boundary");
+}
+
+/// A start that read no schedule before it connected, as a whole-log take or a restart, reads the
+/// reassignments of the turns before the one in effect while the gate applies, so its own check sees a
+/// promotion the log has yet to mirror, and reads nothing once rotation is off.
+#[tokio::test]
+async fn a_start_with_no_earlier_read_reads_the_schedule_while_the_gate_applies() {
+    struct Schedule(std::sync::Mutex<Vec<std::ops::Range<u64>>>);
+    impl crate::checkpoints::CheckpointChain for Schedule {
+        async fn state(&self, _view: crate::checkpoints::View) -> anyhow::Result<crate::checkpoints::VaultState> {
+            anyhow::bail!("no vault state")
+        }
+
+        async fn post(&self, _checkpoint: &Checkpoint) -> anyhow::Result<()> {
+            anyhow::bail!("posts nothing")
+        }
+
+        async fn reassignments(
+            &self,
+            turns: std::ops::Range<u64>,
+        ) -> anyhow::Result<Vec<crate::checkpoints::Assigned>> {
+            self.0.lock().unwrap().push(turns);
+            Ok(Vec::new())
+        }
+    }
+    let mut node = Node::start("log-check-start-reads", &[other()]);
+    node.approve(1);
+    node.take_turn();
+    node.seq.flush().unwrap();
+    let schedule = Schedule(Default::default());
+    let read = crate::node::log_check::read_unreadied(&schedule, &recovered(&node)).await.unwrap();
+    assert!(read.is_some(), "the gate applies");
+    assert_eq!(schedule.0.lock().unwrap().iter().map(|turns| turns.end).collect::<Vec<_>>(), [node.turn]);
+    let off =
+        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
+    node.seq.sequence(off).unwrap().expect("admitted");
+    node.seq.flush().unwrap();
+    assert_eq!(crate::node::log_check::read_unreadied(&schedule, &recovered(&node)).await.unwrap(), None);
+    assert_eq!(schedule.0.lock().unwrap().len(), 1, "read with rotation off");
 }
 
 /// A promotion can fix a checkpoint the vault accepted whose entry no member received: the promoted

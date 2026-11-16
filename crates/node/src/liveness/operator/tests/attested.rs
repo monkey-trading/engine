@@ -77,12 +77,51 @@ async fn a_failed_recheck_keeps_the_verified_attested_key_until_a_check_refutes_
     rig.task.abort();
 }
 
-/// A failed re-check warns once, until one passes again.
-#[test]
-fn a_failed_recheck_warns_once_per_episode() {
-    let (kept, member) = (super::super::attested::Kept::default(), AccountId([MEMBER; 20]));
-    assert!(kept.first_failure(member) && !kept.first_failure(member), "the second failure warned again");
-    assert!(kept.first_failure(AccountId([0x22; 20])), "another member's episode");
+/// A failed re-check warns once per episode: not again while it keeps failing, and again once a re-check
+/// has passed in between.
+#[tokio::test(start_paused = true)]
+async fn a_failed_recheck_warns_once_per_episode() {
+    let (_guard, mut warned) = crate::test_support::capture_field("member");
+    let (rig, _) = attested_keyed("attested-warned", AccountId([MEMBER; 20]), |_, _| {}, |_| {}, 14).await;
+    let saved = rig.members.2.lock().unwrap().clone();
+    let warnings = |warned: &mut tokio::sync::mpsc::UnboundedReceiver<crate::test_support::Alert>| {
+        std::iter::from_fn(|| warned.try_recv().ok()).filter(|event| event["level"] == "WARN").count()
+    };
+    assert_eq!(warnings(&mut warned), 0);
+    for (restored, expected) in [(false, 1), (false, 0), (true, 0), (false, 1)] {
+        *rig.members.2.lock().unwrap() = if restored { saved.clone() } else { Default::default() };
+        tokio::time::sleep(MEMBERS_EVERY).await;
+        settle().await;
+        assert_eq!(warnings(&mut warned), expected, "restored {restored}");
+    }
+    rig.task.abort();
+}
+
+/// A kept key that its candidate's registered release no longer stands for, or that lost its approval,
+/// is dropped by a failed re-check, as one the schedule took is, and a re-check that itself finds the
+/// release moved drops it too.
+#[tokio::test(start_paused = true)]
+async fn a_failed_recheck_drops_a_kept_key_whose_release_moved_or_lost_approval() {
+    type Change = fn(&mut ChainState);
+    let cases: [(&str, Change); 2] = [
+        ("another release", |chain| chain.release = B256::repeat_byte(0x99)),
+        ("an unapproved release", |chain| chain.approved = false),
+    ];
+    for (case, change) in cases {
+        for served in [false, true] {
+            let (rig, _) = attested_keyed("attested-moved", AccountId([MEMBER; 20]), |_, _| {}, |_| {}, 14).await;
+            if !served {
+                rig.members.2.lock().unwrap().clear();
+            }
+            rig.chain.set(change);
+            tokio::time::sleep(MEMBERS_EVERY).await;
+            settle().await;
+            rig.answer(Some(14));
+            settle().await;
+            assert_eq!(rig.gate.confirmed(), 10, "{case} (served {served}): a refuted key counted");
+            rig.task.abort();
+        }
+    }
 }
 
 // ── Helpers ──

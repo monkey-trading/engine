@@ -126,11 +126,11 @@ async fn a_resumed_promotion_names_the_drawn_turn_it_is_carried_into() {
     chain.register(CANDIDATE, release().id(), true);
     chain.promote(CANDIDATE, key);
     let record = Record::new(CANDIDATE, key, PROMOTION, 121);
-    assert_eq!(record.carried(&chain, &DOMAIN).await, PROMOTION.turn, "its own turn while it is the latest");
+    assert_eq!(record.carried(&chain, &DOMAIN).await.unwrap(), PROMOTION.turn, "its own turn while it is the latest");
     chain.draw_next(CANDIDATE, PROMOTION.generation);
-    assert_eq!(record.carried(&chain, &DOMAIN).await, PROMOTION.turn + 1, "the drawn turn it is carried into");
+    assert_eq!(record.carried(&chain, &DOMAIN).await.unwrap(), PROMOTION.turn + 1, "the drawn turn it is carried into");
     chain.draw_next(AccountId([0x77; 20]), PROMOTION.generation);
-    assert_eq!(record.carried(&chain, &DOMAIN).await, PROMOTION.turn, "another member's turn carries nothing");
+    assert_eq!(record.carried(&chain, &DOMAIN).await.unwrap(), PROMOTION.turn, "another member's turn carries nothing");
 }
 
 /// The promotion's watch: a latest block recording the promotion stands until a final one does, a

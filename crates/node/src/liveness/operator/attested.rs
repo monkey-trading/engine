@@ -17,6 +17,19 @@ use crate::liveness::operator::{Operator, STATUS_TIMEOUT};
 use crate::standby_key::chain::{AgreedBlock, StandbyChain, StandbyDomain, vouch_view_at};
 use crate::standby_key::vouch::admit;
 
+/// A check that found the member's registered release is not the one its quote proves, or not approved:
+/// the candidate's key no longer stands, so a kept one does not either.
+#[derive(Debug)]
+struct Refuted(String);
+
+impl std::fmt::Display for Refuted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Refuted {}
+
 /// The attested keys this enclave verified, by candidate, with the release each quote proved, and the
 /// candidates whose latest re-check failed: a failed re-check keeps the key until a check refutes it.
 #[derive(Default)]
@@ -67,7 +80,10 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                             None => {
                                 debug!(member = %member.candidate, "no attested standby key to take statuses on: {e:#}")
                             }
-                            Some((key, release)) if !self.refuted(block, domain, &member, (key, release)).await => {
+                            Some((key, release))
+                                if e.downcast_ref::<Refuted>().is_none()
+                                    && !self.refuted(block, domain, &member, (key, release)).await =>
+                            {
                                 if self.kept.first_failure(member.candidate) {
                                     warn!(member = %member.candidate, %key, "re-checking the member's attested standby key failed, so the key stays until a check refutes it: {e:#}");
                                 }
@@ -126,11 +142,13 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         ensure!(request.candidate == member.candidate, "the attestation is candidate {}'s", request.candidate);
         let release = admit(&request, domain, (*provider, platform), at / 1000)?;
         let view = vouch_view_at(block, domain, member.candidate, None).await?;
-        ensure!(
-            view.release.is_some_and(|registered| registered.0 == release.id()) && view.approved,
-            "the quote proves release 0x{}, not the candidate's registered, approved one",
-            hex::encode(release.id())
-        );
+        if !(view.release.is_some_and(|registered| registered.0 == release.id()) && view.approved) {
+            let proves = hex::encode(release.id());
+            return Err(Refuted(format!(
+                "the quote proves release 0x{proves}, not the candidate's registered, approved one"
+            ))
+            .into());
+        }
         let holder = standby_holder(block, domain.schedule, request.key).await?;
         ensure!(holder.is_none(), "the schedule has taken standby key {}", request.key);
         Ok((request.key, B256::from(release.id())))

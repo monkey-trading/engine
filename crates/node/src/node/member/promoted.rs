@@ -166,7 +166,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let read: BoxFuture<'_, anyhow::Result<(Standing, u64)>> = Box::pin(async {
             let domain = StandbyDomain::read(&chain, self.cfg.custody.chain_id, vault).await?;
             let standing = record.standing_at_start(&chain, &domain, B256::from(self.release.id()), &sealing.dir);
-            Ok((standing.await?, record.carried(&chain, &domain).await))
+            Ok((standing.await?, record.carried(&chain, &domain).await?))
         });
         let (standing, carried) = read.await?;
         let promotion = Promotion { carried, ..record.promotion() };

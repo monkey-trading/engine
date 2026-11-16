@@ -160,14 +160,22 @@ fn the_nodes_own_check_counts_for_nothing_when_the_schedule_promoted_its_member_
     recorded.command(10, &[Event::TurnTaken { turn: 2, candidate: candidate(A), release: A }]);
     let at = |position, release, reassigned| Assigned { turn: 2, position, candidate: candidate(release), reassigned };
     let own = |read: &Reassigned| own_check_read(Some(head(20)), &recorded, head(34), (B2, &member(B)), Some(read));
-    let read = Reassigned { from: 0, assigned: vec![at(0, A, false), at(1, B, true)] };
+    let read = Reassigned { assigned: vec![at(0, A, false), at(1, B, true)] };
     assert_eq!(own(&read), Some(head(20)), "B's member checked its own work");
     // Without a record of the promotion, the log's records alone count it.
     assert_eq!(own_check_read(Some(head(20)), &recorded, head(34), (B2, &member(B)), None), Some(head(34)));
     // Another member's promotion, or a draw of this one, says nothing of it.
-    assert_eq!(own(&Reassigned { from: 0, assigned: vec![at(0, B, false), at(1, C, true)] }), Some(head(34)));
-    // A read that begins after the in-office turn cannot tell.
-    assert_eq!(own(&Reassigned { from: 3, assigned: vec![] }), Some(head(20)));
+    assert_eq!(own(&Reassigned { assigned: vec![at(0, B, false), at(1, C, true)] }), Some(head(34)));
+    // A reassignment in a turn that began after the range's last command sequenced none of it.
+    let begin = |turn: u64| engine_core::turns::boundary(turn).unwrap();
+    recorded.stamped(10, begin(2) + 1);
+    recorded.stamped(34, begin(3) - 1);
+    let later = Reassigned { assigned: vec![at(0, A, false), Assigned { turn: 3, ..at(1, B, true) }] };
+    let own = |read: &Reassigned| own_check_read(Some(head(20)), &recorded, head(34), (B2, &member(B)), Some(read));
+    assert_eq!(own(&later), Some(head(34)), "a turn that began after the range named its member");
+    recorded.stamped(40, begin(3) + 1);
+    let own = |read: &Reassigned| own_check_read(Some(head(20)), &recorded, head(40), (B2, &member(B)), Some(read));
+    assert_eq!(own(&later), Some(head(20)), "a turn that had begun by the range's end did not");
 }
 
 /// A member the schedule promoted or skipped to after the in-office holder's assignment may have
