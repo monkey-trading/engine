@@ -106,9 +106,15 @@ pub struct LogWriter {
     /// `pending_seals`, they keep a direct flush or a checkpoint capture from treating the
     /// manifest as settled before the old segment's completion is out.
     pub(super) taken_seals: u64,
+    /// A listing failed and the manifest could not be cut back to its durable length, so the
+    /// listing may be on disk: nothing more is appended to the segment it lists.
+    pub(super) listing_unsettled: bool,
     /// File syncs since the writer opened, for sync-budget assertions in tests.
     #[cfg(test)]
     pub(super) syncs: usize,
+    /// Makes the next listing's manifest sync fail, after the line is written.
+    #[cfg(test)]
+    pub(super) fail_manifest_sync: bool,
 }
 
 /// What the manifest needs to know about a segment, kept up to date as it is written.
@@ -333,8 +339,11 @@ impl SegmentedLog {
             seals_deferred: false,
             pending_seals: Vec::new(),
             taken_seals: 0,
+            listing_unsettled: false,
             #[cfg(test)]
             syncs: 0,
+            #[cfg(test)]
+            fail_manifest_sync: false,
         })
     }
 }

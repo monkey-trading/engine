@@ -217,8 +217,21 @@ impl LogWriter {
         self.dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))?;
         ensure!(self.manifest_file.metadata()?.len() == self.manifest_len, "manifest length changed before listing");
         let line = listing_line(listed)?;
-        self.manifest_file.write_all(&line).context("writing manifest")?;
-        self.manifest_file.sync_all().context("syncing manifest")?;
+        let written = self.manifest_file.write_all(&line).context("writing manifest").and_then(|()| {
+            #[cfg(test)]
+            ensure!(!self.fail_manifest_sync, "injected manifest sync failure");
+            self.manifest_file.sync_all().context("syncing manifest")
+        });
+        if let Err(e) = written {
+            // The line may already be durable: cut the manifest back to its last durable length so
+            // the segment can go on growing, or, if that fails too, close it to appends.
+            let restored = self.manifest_file.set_len(self.manifest_len).and_then(|()| self.manifest_file.sync_all());
+            if let Err(r) = restored {
+                self.listing_unsettled = true;
+                return Err(e.context(format!("restoring the manifest after the failed listing: {r}")));
+            }
+            return Err(e);
+        }
         self.manifest_len = self.manifest_len.checked_add(line.len() as u64).context("manifest length overflow")?;
         Ok(())
     }

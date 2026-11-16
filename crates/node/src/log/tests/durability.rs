@@ -309,3 +309,23 @@ fn a_flush_while_a_seal_pends_publishes_no_active_prefix() {
     writer.finish_sync(&job);
     assert_eq!(view.borrow().active.as_ref().unwrap().info.first_seq, 2);
 }
+
+#[test]
+fn a_seal_whose_manifest_sync_fails_leaves_a_log_that_opens_after_more_appends() {
+    // The listing line reaches the manifest and its sync fails: the segment stays open, so the
+    // entries sequencing goes on to append (a final checkpoint) must not meet a listing of the
+    // shorter segment. Without the manifest's cut back, the reopened log refuses the segment.
+    let dir = scratch_dir("seal-sync-fails");
+    let mut writer =
+        SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(10, watch::channel(Manifest::default()).0).unwrap();
+    writer.append(&cmd(0)).unwrap();
+    writer.fail_manifest_sync = true;
+    let err = writer.seal_open_segment().unwrap_err();
+    assert!(format!("{err:#}").contains("injected manifest sync failure"), "{err:#}");
+    writer.fail_manifest_sync = false;
+    writer.append(&cmd(1)).unwrap();
+    writer.flush().unwrap();
+    drop(writer);
+    assert_eq!(log_entries(&dir), [cmd(0), cmd(1)]);
+    SegmentedLog::open(&dir, |_| Ok(())).expect("the log opens");
+}
