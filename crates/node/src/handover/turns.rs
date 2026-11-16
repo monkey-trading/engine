@@ -160,10 +160,10 @@ pub(crate) async fn sources(
     for _ in 0..=SOURCE_LOOKBACK {
         let Some(this) = drawn.take() else { break };
         let (holder, superseded) = match earlier {
-            true => (
-                vault.handover_source_at(at, this.candidate).await.context("reading the registry")?,
-                vault.superseded_members(at, this.turn).await.context("reading the operator schedule")?,
-            ),
+            true => futures_util::try_join!(
+                async { vault.handover_source_at(at, this.candidate).await.context("reading the registry") },
+                async { vault.superseded_members(at, this.turn).await.context("reading the operator schedule") },
+            )?,
             false => (None, Vec::new()),
         };
         for source in holder.iter().chain(&superseded).chain(this.source.as_ref()) {

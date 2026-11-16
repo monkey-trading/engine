@@ -126,8 +126,9 @@ or it may hold the keys the turn in effect's member takes: as a member of the tu
 (only that turn's last member once a head latched it or a promotion named it), and, while no member
 of a turn took the keys, of the turns before it, up to seven turns back; or as the source of the
 earliest turn so reached, when it is the first turn, the first after an installation, or seven turns
-back. A holder is free from the boundary of the turn after the one whose member took its keys. Otherwise `cast send $REGISTRY 'deregister()'`
-removes it and frees the bond one cooldown later. A candidate
+back. A holder is free from the boundary of the turn after the one whose member took its keys,
+except as the source of the turn seven turns back, which stays for that day. Otherwise
+`cast send $REGISTRY 'deregister()'` removes it and frees the bond one cooldown later. A candidate
 changes its release without leaving, as in section 5, steps 2 and 3: an election names the release
 the candidacy holds when the epoch closes.
 

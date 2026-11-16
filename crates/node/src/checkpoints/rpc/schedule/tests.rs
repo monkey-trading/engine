@@ -1,4 +1,6 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use alloy::primitives::B256;
 use axum::extract::State;
@@ -17,8 +19,13 @@ const REGISTRY: Address = Address::repeat_byte(0x22);
 const SCHEDULE: Address = Address::repeat_byte(0x33);
 const PINNED: B256 = B256::repeat_byte(0x44);
 
-/// The registry and schedule the vault and registry name.
-type Named = Arc<Mutex<(Address, Address)>>;
+/// The chain a stand-in node answers for: the registry and schedule the vault and registry name, and
+/// the most `assignmentOf` reads it has had in flight at once.
+struct Chain {
+    named: Mutex<(Address, Address)>,
+    in_flight: AtomicUsize,
+    most: AtomicUsize,
+}
 
 /// The members of a turn's assignments before its latest, read at the pinned finalized block: turn 8 was
 /// drawn for A at position 0, skipped past an unassigned position to B at 2, then to C at 3, its latest,
@@ -27,10 +34,44 @@ type Named = Arc<Mutex<(Address, Address)>>;
 /// one pinned to no block, is refused.
 #[tokio::test]
 async fn the_members_a_turns_latest_assignment_superseded_are_read_in_the_order_made() {
-    let named: Named = Arc::new(Mutex::new((REGISTRY, SCHEDULE)));
+    let (rpc, chain, server) = serve().await;
+    let finalized = observation(View::Finalized, Some(PINNED));
+    let members = rpc.superseded_members(&finalized, 8).await.unwrap();
+    assert_eq!(members, [registered(0xa1), registered(0xb1)]);
+    assert_eq!(rpc.superseded_members(&finalized, 7).await.unwrap(), []);
+    *chain.named.lock().unwrap() = (REGISTRY, Address::ZERO);
+    assert_eq!(rpc.superseded_members(&finalized, 8).await.unwrap(), [], "a registry with no schedule");
+    *chain.named.lock().unwrap() = (Address::ZERO, SCHEDULE);
+    assert_eq!(rpc.superseded_members(&finalized, 8).await.unwrap(), [], "a vault with no registry");
+    *chain.named.lock().unwrap() = (REGISTRY, SCHEDULE);
+    assert!(rpc.superseded_members(&observation(View::Latest, Some(PINNED)), 8).await.is_err());
+    assert!(rpc.superseded_members(&observation(View::Finalized, None), 8).await.is_err());
+    server.abort();
+}
+
+/// A skip to a late position leaves a long assignment history: its positions are read several at a
+/// time, each answer here taking a while, and the members still come in the order made.
+#[tokio::test]
+async fn a_late_skips_assignment_history_is_read_several_positions_at_a_time() {
+    let (rpc, chain, server) = serve().await;
+    let members = rpc.superseded_members(&observation(View::Finalized, Some(PINNED)), 9).await.unwrap();
+    assert_eq!(members, [registered(0x91), registered(0x92)]);
+    assert!(chain.most.load(Ordering::SeqCst) > 1, "the assignments were read one at a time");
+    server.abort();
+}
+
+// ── Helpers ──
+
+/// A stand-in node answering for `Chain`, and a reader of the vault on it.
+async fn serve() -> (CheckpointRpc, Arc<Chain>, tokio::task::JoinHandle<()>) {
+    let chain = Arc::new(Chain {
+        named: Mutex::new((REGISTRY, SCHEDULE)),
+        in_flight: AtomicUsize::new(0),
+        most: AtomicUsize::new(0),
+    });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let app = Router::new().route("/", post(answer)).with_state(named.clone());
+    let app = Router::new().route("/", post(answer)).with_state(chain.clone());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let cfg: CheckpointSection = toml::from_str(&format!(
         "rpc_url='http://{address}'\nrelayer='0x{}'\nretry_interval='1ms'\nrpc_timeout='2s'",
@@ -39,25 +80,13 @@ async fn the_members_a_turns_latest_assignment_superseded_are_read_in_the_order_
     .unwrap();
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(VAULT.0.0) };
     let rpc = CheckpointRpc::read_only(&cfg, domain, Address::ZERO, FinalityTag::Finalized, 0).unwrap();
-    let finalized = observation(View::Finalized, Some(PINNED));
-    let members = rpc.superseded_members(&finalized, 8).await.unwrap();
-    assert_eq!(members, [registered(0xa1), registered(0xb1)]);
-    assert_eq!(rpc.superseded_members(&finalized, 7).await.unwrap(), []);
-    *named.lock().unwrap() = (REGISTRY, Address::ZERO);
-    assert_eq!(rpc.superseded_members(&finalized, 8).await.unwrap(), [], "a registry with no schedule");
-    *named.lock().unwrap() = (Address::ZERO, SCHEDULE);
-    assert_eq!(rpc.superseded_members(&finalized, 8).await.unwrap(), [], "a vault with no registry");
-    *named.lock().unwrap() = (REGISTRY, SCHEDULE);
-    assert!(rpc.superseded_members(&observation(View::Latest, Some(PINNED)), 8).await.is_err());
-    assert!(rpc.superseded_members(&observation(View::Finalized, None), 8).await.is_err());
-    server.abort();
+    (rpc, chain, server)
 }
 
-// ── Helpers ──
-
-/// Answers the vault's, registry's and schedule's reads at the pinned block, panicking on any other.
-async fn answer(State(named): State<Named>, Json(request): Json<Value>) -> Json<Value> {
-    let (registry, schedule) = *named.lock().unwrap();
+/// Answers the vault's, registry's and schedule's reads at the pinned block, panicking on any other;
+/// each `assignmentOf` answer of turn 9 takes 50 ms.
+async fn answer(State(chain): State<Arc<Chain>>, Json(request): Json<Value>) -> Json<Value> {
+    let (registry, schedule) = *chain.named.lock().unwrap();
     let call = &request["params"][0];
     let input = hex::decode(&call["input"].as_str().or(call["data"].as_str()).unwrap()[2..]).unwrap();
     let to: Address = call["to"].as_str().unwrap().parse().unwrap();
@@ -81,17 +110,27 @@ async fn answer(State(named): State<Named>, Json(request): Json<Value>) -> Json<
             turnOfCall::abi_encode_returns(&match turnOfCall::abi_decode(&input).unwrap().turn {
                 7 => turn(0xe1, 2, DRAWN),
                 8 => turn(0xc1, 3, 1),
+                9 => turn(0x93, 9, 1),
                 other => panic!("turn {other} read"),
             })
         }
         (SCHEDULE, assignmentOfCall::SELECTOR) => {
             let asked = assignmentOfCall::abi_decode(&input).unwrap();
+            if asked.turn == 9 {
+                let now = chain.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                chain.most.fetch_max(now, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                chain.in_flight.fetch_sub(1, Ordering::SeqCst);
+            }
             let made = match (asked.turn, asked.position) {
                 (8, 0) => assigned(0xa1, DRAWN),
                 (8, 1) => assigned(0, DRAWN),
                 (8, 2) => assigned(0xb1, 1),
-                (8, 3) => panic!("the latest assignment was read"),
+                (8, 3) | (9, 9) => panic!("the latest assignment was read"),
                 (7, _) => panic!("a turn its draw alone holds was read further"),
+                (9, 0) => assigned(0x91, DRAWN),
+                (9, 6) => assigned(0x92, 1),
+                (9, _) => assigned(0, DRAWN),
                 other => panic!("assignment {other:?} read"),
             };
             assignmentOfCall::abi_encode_returns(&assignmentOfReturn { _0: made, _1: Vec::new() })

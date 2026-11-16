@@ -462,6 +462,38 @@ contract SkipScheduleTest is SkipTest {
         registry.deregister();
     }
 
+    /// Alice draws the first turn and takes no keys, and bob's turn after it is drawn while she is named,
+    /// so she is its source; no member takes a turn from bob's on, and none of them is hers. She stays
+    /// while the walk stops at bob's turn, seven turns back, and may leave once it stops short of it.
+    function test_TheSourceSevenTurnsBackStaysUntilTheWalkStopsShortOfIt() public {
+        address[] memory members = new address[](4);
+        uint256[] memory stakes = new uint256[](4);
+        (members[0], members[1], members[2], members[3]) = (alice, bob, carol, dave);
+        (stakes[0], stakes[1], stakes[2], stakes[3]) = (40_000e18, 30_000e18, 20_000e18, 10_000e18);
+        setId = _rotate(members, stakes);
+        uint64 first = _nextTurn() + 1;
+        _relayPicking(first, setId, alice);
+        _relayPicking(first + 1, setId, bob);
+        address[3] memory others = [bob, carol, dave];
+        for (uint64 next = first + 2; next <= first + 9; ++next) {
+            _relayPicking(next, setId, others[next % 3]);
+        }
+        _draw(first);
+        vm.warp(schedule.boundary(first));
+        for (uint64 next = first + 1; next <= first + 8; ++next) {
+            _draw(next);
+        }
+        assertEq(schedule.sourceOf(first + 1), alice);
+        vm.warp(schedule.boundary(first + 8));
+        assertTrue(registry.holdsTurn(alice), "the source of the turn seven turns back");
+        _draw(first + 9);
+        vm.warp(schedule.boundary(first + 9));
+        assertFalse(registry.holdsTurn(alice));
+        vm.prank(alice);
+        registry.deregister();
+        assertEq(registry.candidateOf(alice).adminKey, address(0));
+    }
+
     function test_TheTimelockSetsTheTakeWindowWithinItsBoundsWhileNoTurnNamesTheOperator() public {
         (uint16 slots, uint16 minimum, uint16 maximum) = schedule.takeWindow();
         assertEq(slots, TAKE);
