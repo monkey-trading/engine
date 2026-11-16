@@ -196,13 +196,15 @@ async fn the_registry_operator_is_read_at_the_pinned_finalized_block_only_while_
 
 /// The schedule's reassignments over a range of turns, read at the latest block: a turn its draw alone
 /// holds is read no further; one a promotion or a skip followed gives each of its assignments, the
-/// draw's marked as none, and skips the positions it never assigned. A registry with no schedule gives
-/// none, and a vault with no registry cannot answer.
+/// draw's, its first, marked as none, and skips the positions it never assigned. Each assignment's
+/// revision history is longer than the stand-in answers `assignmentOf` for, as an RPC's limits refuse a
+/// member's repeated release moves, and the assignments read are the same. A registry with no schedule
+/// gives none, and a vault with no registry cannot answer.
 #[tokio::test]
 async fn reassignments_name_each_assignment_of_the_turns_a_promotion_or_skip_followed() {
     use crate::checkpoints::Assigned;
     use crate::checkpoints::rpc::schedule::{TurnReturn, scheduleCall, turnOfCall};
-    use crate::standby_key::chain::{AssignmentReturn, assignmentOfCall, assignmentOfReturn};
+    use crate::standby_key::chain::{RevisionReturn, assignmentOfCall, revisionOfCall, revisionOfReturn};
     const VAULT: Address = Address::repeat_byte(0x11);
     const REGISTRY: Address = Address::repeat_byte(0x22);
     const SCHEDULE: Address = Address::repeat_byte(0x33);
@@ -225,18 +227,9 @@ async fn reassignments_name_each_assignment_of_the_turns_a_promotion_or_skip_fol
             seed: B256::ZERO,
             source: Address::ZERO,
         };
-        let assigned = |candidate, reason| AssignmentReturn {
+        let assigned = |candidate| revisionOfReturn {
             candidate,
-            adminKey: candidate,
-            setId: 1,
-            reason,
-            standbyKey: Address::ZERO,
-            signerEpoch: 0,
-            headSeq: 0,
-            headLink: B256::ZERO,
-            checkpointSeq: 0,
-            checkpointRoot: B256::ZERO,
-            at: 0,
+            revision: RevisionReturn { release: B256::repeat_byte(1), generation: 7 },
         };
         let result = match (to, <[u8; 4]>::try_from(&input[..4]).unwrap()) {
             (VAULT, registryCall::SELECTOR) => registryCall::abi_encode_returns(&registry),
@@ -249,17 +242,22 @@ async fn reassignments_name_each_assignment_of_the_turns_a_promotion_or_skip_fol
                     other => panic!("turn {other} read"),
                 })
             }
-            (SCHEDULE, assignmentOfCall::SELECTOR) => {
-                let asked = assignmentOfCall::abi_decode(&input).unwrap();
+            (SCHEDULE, revisionOfCall::SELECTOR) => {
+                let asked = revisionOfCall::abi_decode(&input).unwrap();
+                assert_eq!(asked.index, U256::ZERO, "a revision past the first was read");
                 let at = match (asked.turn, asked.position) {
-                    (8, 1) => assigned(Address::repeat_byte(0xa1), 0),
-                    (8, 3) => assigned(Address::repeat_byte(0xb1), 2),
-                    (9, 0) => assigned(Address::repeat_byte(0xc1), 0),
-                    (9, 2) => assigned(Address::repeat_byte(0xd1), 1),
+                    (8, 1) => assigned(Address::repeat_byte(0xa1)),
+                    (8, 3) => assigned(Address::repeat_byte(0xb1)),
+                    (9, 0) => assigned(Address::repeat_byte(0xc1)),
+                    (9, 2) => assigned(Address::repeat_byte(0xd1)),
                     (7, _) => panic!("a turn its draw alone holds was read further"),
-                    _ => assigned(Address::ZERO, 0),
+                    _ => assigned(Address::ZERO),
                 };
-                assignmentOfCall::abi_encode_returns(&assignmentOfReturn { _0: at, _1: Vec::new() })
+                revisionOfCall::abi_encode_returns(&at)
+            }
+            (SCHEDULE, assignmentOfCall::SELECTOR) => {
+                let error = json!({"code": -32000, "message": "response size exceeded"});
+                return Json(json!({"jsonrpc":"2.0","id":request["id"],"error":error}));
             }
             other => panic!("unexpected read {other:?}"),
         };

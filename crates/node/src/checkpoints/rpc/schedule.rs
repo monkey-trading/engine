@@ -2,7 +2,7 @@
 //! `contracts/src/OperatorSchedule.sol` declares it.
 
 use alloy::eips::BlockId;
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 use anyhow::{Context, ensure};
@@ -11,7 +11,7 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 
 use crate::checkpoints::rpc::{candidateOfCall, registryCall};
 use crate::checkpoints::{Assigned, CheckpointRpc, HandoverSource, Observation, ScheduledTurn, View};
-use crate::standby_key::chain::assignmentOfCall;
+use crate::standby_key::chain::revisionOfCall;
 
 /// The reason a turn's draw records, as `OperatorSchedule.DRAWN` declares it.
 const DRAWN: u8 = 0;
@@ -145,8 +145,9 @@ impl CheckpointRpc {
     }
 
     /// See `CheckpointChain::reassignments`: a read of each turn's latest assignment, and, of a turn
-    /// whose latest is not its draw, of each assignment up to it, over the turns since the last verified
-    /// head's, which each check that counts moves on.
+    /// whose latest is not its draw, of each assignment's member up to it (`member_at`), over the turns
+    /// since the last verified head's, which each check that counts moves on. A turn's draw is its first
+    /// assignment, and each later one a promotion's or a skip's, at a later position (`OperatorSchedule._next`).
     /// Error cases:
     /// - the vault follows no registry, or a call or its decoding fails
     pub(super) async fn read_reassignments(&self, turns: std::ops::Range<u64>) -> anyhow::Result<Vec<Assigned>> {
@@ -166,11 +167,11 @@ impl CheckpointRpc {
             if latest.reason == DRAWN {
                 continue;
             }
+            let mut first = true;
             for position in 0..=latest.position {
-                let raw = self.call(schedule, assignmentOfCall { turn, position }.abi_encode(), block).await?;
-                let at = assignmentOfCall::abi_decode_returns(&raw).context("decoding the schedule's assignment")?._0;
-                if !at.candidate.is_zero() {
-                    let (candidate, reassigned) = (AccountId(at.candidate.0.0), at.reason != DRAWN);
+                let member = self.member_at(schedule, (turn, position), block).await?;
+                if !member.is_zero() {
+                    let (candidate, reassigned) = (AccountId(member.0.0), !std::mem::replace(&mut first, false));
                     assigned.push(Assigned { turn, position, candidate, reassigned });
                 }
             }
@@ -197,9 +198,9 @@ impl CheckpointRpc {
         self.handover_source_of(registry, Address::from(candidate.0), block).await.map(Some)
     }
 
-    /// See `CheckpointChain::superseded_members`: the schedule's `assignmentOf` at each position below
-    /// the turn's latest, read only when its latest is not the draw, so at most the draw's positions
-    /// and the set's size, `ASSIGNMENT_READS` at a time.
+    /// See `CheckpointChain::superseded_members`: the member of the schedule's assignment at each position
+    /// below the turn's latest (`member_at`), read only when its latest is not the draw, so at most the
+    /// draw's positions and the set's size, `ASSIGNMENT_READS` at a time.
     /// Error cases:
     /// - the observation is not finalized and pinned, or a call or its decoding fails
     pub(super) async fn read_superseded_members(
@@ -225,11 +226,7 @@ impl CheckpointRpc {
         if latest.reason == DRAWN {
             return Ok(Vec::new());
         }
-        let assignment_at = |position| async move {
-            let raw = self.call(schedule, assignmentOfCall { turn, position }.abi_encode(), block).await?;
-            let made = assignmentOfCall::abi_decode_returns(&raw).context("decoding the schedule's assignment")?;
-            anyhow::Ok(made._0.candidate)
-        };
+        let assignment_at = |position| self.member_at(schedule, (turn, position), block);
         let made: Vec<Address> =
             stream::iter(0..latest.position).map(assignment_at).buffered(ASSIGNMENT_READS).try_collect().await?;
         stream::iter(made.into_iter().filter(|candidate| !candidate.is_zero()))
@@ -237,6 +234,21 @@ impl CheckpointRpc {
             .buffered(ASSIGNMENT_READS)
             .try_collect()
             .await
+    }
+
+    /// The member of `turn`'s assignment at `position` at `block`, the zero address for none: the
+    /// schedule's `revisionOf`, whose cost does not grow with the assignment's revisions, which its
+    /// member's release moves append to.
+    /// Error cases:
+    /// - the call or its decoding fails
+    async fn member_at(
+        &self,
+        schedule: Address,
+        (turn, position): (u64, u16),
+        block: BlockId,
+    ) -> anyhow::Result<Address> {
+        let raw = self.call(schedule, revisionOfCall { turn, position, index: U256::ZERO }.abi_encode(), block).await?;
+        Ok(revisionOfCall::abi_decode_returns(&raw).context("decoding the schedule's assignment")?.candidate)
     }
 
     /// `candidate`'s registration at `block`.

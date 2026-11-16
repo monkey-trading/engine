@@ -77,6 +77,8 @@ sol! {
         external
         view
         returns (AssignmentReturn memory, RevisionReturn[] memory);
+    function revisionOf(uint64 turn, uint16 position, uint256 index)
+        external view returns (address candidate, RevisionReturn memory revision);
 }
 
 /// The chain, pinned at the latest block a strict majority of the custody providers agrees on.
