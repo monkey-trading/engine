@@ -115,7 +115,7 @@ async fn a_lagging_tip_is_refused_before_the_stop_and_the_predecessor_sequences_
     let early = scratch_dir("tail-lagged-early");
     let node = TestSequencer::start(&operator, 1024);
     ticks(&node, 6).await;
-    copy_files(&operator, &early);
+    crate::test_support::copy_dir(&operator, &early);
     // Past what a restarted sequencer retains, so the copy's tip is older than the log retains.
     ticks(&node, crate::sequencer::prefixes::RETAINED_PREFIXES + 64).await;
     node.stop().await;
@@ -245,7 +245,7 @@ impl Tailed {
         let early = scratch_dir(&format!("{name}-early"));
         let node = TestSequencer::start(&operator, 1024);
         ticks(&node, before).await;
-        copy_files(&operator, &early);
+        crate::test_support::copy_dir(&operator, &early);
         ticks(&node, after).await;
         Self::over(name, operator, node, &early).await
     }
@@ -255,7 +255,7 @@ impl Tailed {
     async fn over(name: &str, operator: PathBuf, node: TestSequencer, copy: &Path) -> Self {
         let exchange = Exchange::start_with(name, Some(node.tx.clone()), Some(operator.clone())).await;
         exchange.make_upgrade_current();
-        copy_files(copy, &exchange.successor_log);
+        crate::test_support::copy_dir(copy, &exchange.successor_log);
         let follower = Follower::open(
             &exchange.successor_log,
             SEGMENT_COMMANDS,
@@ -375,16 +375,6 @@ fn signer() -> AccountId {
 async fn ticks(node: &TestSequencer, count: usize) {
     for _ in 0..count {
         node.submit(Command::Tick).await;
-    }
-}
-
-/// Copies the log files in `from` into `to`, as a follower's copy of them.
-fn copy_files(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for file in std::fs::read_dir(from).unwrap().map(Result::unwrap) {
-        if file.file_type().unwrap().is_file() {
-            std::fs::copy(file.path(), to.join(file.file_name())).unwrap();
-        }
     }
 }
 

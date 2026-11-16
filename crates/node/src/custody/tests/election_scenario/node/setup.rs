@@ -74,6 +74,14 @@ pub(super) fn governance(chain: &Chain) -> Option<engine_core::governance::Gover
     })
 }
 
+/// The fault proof contract the chain runs and its penalty, when it has one.
+pub(super) fn fault_proof(chain: &Chain) -> Option<engine_core::operator_faults::FaultProofConfig> {
+    chain.fault_proof.map(|(contract, penalty)| engine_core::operator_faults::FaultProofConfig {
+        contract: AccountId(contract.into()),
+        penalty,
+    })
+}
+
 /// EVM custody over the chain's proxies, crediting at the latest block and releasing at the chain's
 /// release tag, with the staking contract, the registry, and any schedule mirrored.
 pub(crate) fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody: CustodySection) -> CustodySection {
@@ -97,7 +105,7 @@ pub(crate) fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody:
     evm.cursor_path = dir.join("custody.json");
     evm.staking = Some(
         toml::from_str(&format!(
-            "contract = '{:#x}'\ncursor_path = '{}'\n[registry]\ncontract = '{:#x}'{}{}{}",
+            "contract = '{:#x}'\ncursor_path = '{}'\n[registry]\ncontract = '{:#x}'{}{}{}{}",
             chain.staking,
             dir.join("staking.json").display(),
             chain.registry,
@@ -106,6 +114,13 @@ pub(crate) fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody:
             chain
                 .vote
                 .map(|(vote, ttl)| format!("\n[registry.vote]\ncontract = '{vote:#x}'\nrestriction_ttl = '{ttl}ms'"))
+                .unwrap_or_default(),
+            chain
+                .fault_proof
+                .map(|(contract, penalty)| format!(
+                    "\n[registry.fault_proof]\ncontract = '{contract:#x}'\npenalty = {{ initial_bps = {}, decay = '{}ms' }}",
+                    penalty.initial_bps, penalty.decay_ms
+                ))
                 .unwrap_or_default()
         ))
         .unwrap(),

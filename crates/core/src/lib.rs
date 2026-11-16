@@ -112,6 +112,7 @@ mod markouts;
 mod marks;
 pub mod merkle;
 pub mod operator_bounds;
+pub mod operator_faults;
 pub mod params;
 pub mod price;
 pub mod protocol;

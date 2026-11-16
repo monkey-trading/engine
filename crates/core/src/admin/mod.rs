@@ -84,6 +84,7 @@ impl Engine {
     ///   removes a stress level a restriction holds a floor at (see `Engine::check_restricted_levels`)
     /// - from `V60`, `UpsertMarket` with a weekend margin `Engine::check_weekend_listing` refuses; and
     ///   changing a listed market's weekend margin without a notice or a vote (`Engine::check_listing_change`)
+    /// - from `V70`, `SetFaultProof` with any error case of `Engine::set_fault_proof`
     ///
     /// A `voted` command is a passed vote's, whose seven days' notice replaces the parameter, markup
     /// and ceiling notices. From `V56` new parameters and listings set the baseline, and the values in
@@ -413,6 +414,7 @@ impl Engine {
                 self.adopt_close_spread_ceiling(*market, *max_close_spread_bps, *effective_at, listing.as_ref(), voted)?
             }
             AdminCommand::SetGovernance(config) => self.set_governance(config)?,
+            AdminCommand::SetFaultProof(config) => self.set_fault_proof(config)?,
         }
         Ok(())
     }

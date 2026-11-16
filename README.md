@@ -191,6 +191,11 @@ restriction that reduces risk (a higher margin or close-out level, a stress floo
 or reduce-only), which lapses after a recorded lifetime unless another vote renews it. The operator of
 the day keeps benchmark rates, its own bounded stress floor, reduce-only and corporate actions.
 
+From protocol V70, a member whose enclave signs two histories during its turn can be proven at fault
+on chain: anyone submits two of its signed log heads that name different histories at one seq, and
+the engine then cuts the member's share of the operator's earnings by a haircut that starts at the
+recorded penalty and falls linearly back to nothing, the withheld part going to stakers.
+
 The reasoning behind each of these choices is recorded in the decision issues
 [#1](https://github.com/0xjevons/monkeytrading/issues/1) to
 [#16](https://github.com/0xjevons/monkeytrading/issues/16).

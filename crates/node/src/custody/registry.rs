@@ -1,7 +1,8 @@
 //! The operator registry's mirrorable events, as `contracts/src/OperatorRegistry.sol` declares
-//! them, its schedule's, as `contracts/src/OperatorSchedule.sol` does, and the vote contract's, as
-//! `contracts/src/ParameterVote.sol` does, decoded for the staking mirror, which reads them in the
-//! same proven blocks as the staking contract's.
+//! them, its schedule's, as `contracts/src/OperatorSchedule.sol` does, the vote contract's, as
+//! `contracts/src/ParameterVote.sol` does, and the fault proof contract's, as
+//! `contracts/src/FaultProof.sol` does, decoded for the staking mirror, which reads them in the same
+//! proven blocks as the staking contract's.
 
 use alloy::primitives::{B256, keccak256};
 use alloy::rpc::types::Log;
@@ -47,9 +48,11 @@ sol! {
         bytes32 commandHash,
         bytes command
     );
+    event FaultProven(address indexed member, uint64 indexed turn, uint16 position, uint64 signerEpoch, uint64 seq);
     function schedule() external view returns (address);
     function rotationState() external view returns (bool enabled, bytes32 release, uint64 generation, uint64 until);
     function turnsRunUntil() external view returns (uint64);
+    function vault() external view returns (address);
 }
 
 /// The topics of the registry events the engine mirrors.
@@ -233,6 +236,44 @@ pub(super) fn decode_last_drawn_turn(
     }
     let since = until.checked_sub(86_400).and_then(millis);
     since.map(Some).with_context(|| format!("the last drawn turn's end {until} is out of range"))
+}
+
+/// The topics of the fault proof contract's events the engine mirrors.
+pub(super) const FAULT_SIGNATURES: [B256; 1] = [FaultProven::SIGNATURE_HASH];
+
+/// The engine's view of a fault proof log: a proven fault and the member it names.
+/// Error cases:
+/// - the log is not `FaultProven`, or does not decode
+pub(super) fn decode_fault(log: &Log) -> anyhow::Result<StakingEventKind> {
+    match log.topic0() {
+        Some(&FaultProven::SIGNATURE_HASH) => {
+            let event = FaultProven::decode_log(&log.inner).context("decoding FaultProven")?.data;
+            Ok(StakingEventKind::FaultProven {
+                member: AccountId(event.member.0.0),
+                turn: event.turn,
+                position: event.position,
+                signer_epoch: event.signerEpoch,
+                seq: event.seq,
+            })
+        }
+        other => bail!("unexpected fault proof event {other:?}"),
+    }
+}
+
+/// The vault a fault proof contract's `vault()` return data names, which must be the configured one;
+/// `None` for empty data, where the contract has no code yet.
+/// Error cases:
+/// - non-empty data that does not decode as an address
+pub(super) fn decode_fault_vault(out: &alloy::primitives::Bytes) -> anyhow::Result<Option<alloy::primitives::Address>> {
+    if out.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(vaultCall::abi_decode_returns(out).context("decoding the fault proof contract's vault")?))
+}
+
+/// The call that reads a fault proof contract's vault.
+pub(super) fn fault_vault_call() -> alloy::primitives::Bytes {
+    vaultCall {}.abi_encode().into()
 }
 
 /// `seconds` as milliseconds, if they fit `i64`.

@@ -7,11 +7,18 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
+use axum::Router;
+use axum::extract::State;
+use axum::http::header::CONTENT_TYPE;
+use axum::response::IntoResponse;
+use axum::routing::get;
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
 use tracing::info;
 
-use super::{Metrics, router};
+use super::Metrics;
+
+pub(super) const CONTENT_TYPE_OPENMETRICS: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
 /// The metrics listener on `listen`.
 /// Error cases:
@@ -37,4 +44,14 @@ pub(crate) async fn alongside<T>(
         outcome = run => outcome,
         Some(stopped) = serving.join_next() => Err(anyhow!("the metrics server stopped: {stopped:?}")),
     }
+}
+
+/// `GET /metrics`, for the operator listener.
+pub fn router(metrics: Arc<Metrics>) -> Router {
+    Router::new().route("/metrics", get(scrape)).with_state(metrics)
+}
+
+/// Serves the current metrics.
+async fn scrape(State(metrics): State<Arc<Metrics>>) -> impl IntoResponse {
+    ([(CONTENT_TYPE, CONTENT_TYPE_OPENMETRICS)], metrics.encode())
 }

@@ -104,11 +104,13 @@ impl Sequencer {
     }
 
     /// Records the config's client auth and operator and activates the latest protocol version,
-    /// whichever the log lacks, and from `V56` the config's vote contract, then checkpoints. While
-    /// votes govern at the stamp, activation and the access policy wait for a passed vote instead (see
-    /// `sequence_queued`). All run at the log's next seq, so earlier commands keep the rules they ran
-    /// under, once trusted time admits a stamp (see `sequence_required`).
-    /// `recover` has already refused a log that records another client auth, operator or vote contract.
+    /// whichever the log lacks, from `V56` the config's vote contract, and the config's fault proof
+    /// contract, recorded once `V70` is in force, then checkpoints. While votes govern at the stamp,
+    /// activation and the access policy wait for a passed vote instead (see `sequence_queued`). All run
+    /// at the log's next seq, so earlier commands keep the rules they ran under, once trusted time admits
+    /// a stamp (see `sequence_required`).
+    /// `recover` has already refused a log that records another client auth, operator, vote contract or
+    /// fault proof contract.
     /// Error cases:
     /// - the engine rejects any of them
     /// - the log cannot be written
@@ -159,11 +161,19 @@ impl Sequencer {
         if let (Some(config), None) = (self.governance, self.engine.governance().config) {
             cmds.push(Command::Admin(AdminCommand::SetGovernance(config)));
         }
+        // So is the fault proof contract, which waits at the stamp for `V70` (see `sequence_queued`).
+        cmds.extend(self.fault_proof_record());
         if cmds.is_empty() {
             return Ok(());
         }
         info!(version = ?ProtocolVersion::LATEST, seq = self.next_seq, "activating protocol");
         self.sequence_required("protocol activation", cmds)
+    }
+
+    /// `SetFaultProof` with the config's fault proof contract and penalty, while the log records none.
+    pub(super) fn fault_proof_record(&self) -> Option<Command> {
+        let config = self.fault_proof.filter(|_| self.engine.operator_faults().config.is_none())?;
+        Some(Command::Admin(AdminCommand::SetFaultProof(config)))
     }
 
     /// As `activate_protocol`, activating `version` instead of the latest, for tests of earlier rules.
@@ -284,6 +294,13 @@ impl Sequencer {
                     info!(seq = self.next_seq, ?cmd, "votes govern, so this waits for a passed vote");
                     continue;
                 }
+                // The fault proof contract is recorded under `V70`, which a passed vote may activate
+                // later (see `apply_due_changes`).
+                let fault_proof = matches!(&cmd, Command::Admin(AdminCommand::SetFaultProof(_)));
+                if fault_proof && self.engine.protocol_version() < ProtocolVersion::V70 {
+                    info!(seq = self.next_seq, "the fault proof contract waits for V70");
+                    continue;
+                }
                 let Some(events) = self.stamp(ts, cmd.clone())? else {
                     // Frozen or fenced mid-request: this command and the rest wait, like stamps the
                     // clock refuses, for the fence to open or a restart.
@@ -302,6 +319,23 @@ impl Sequencer {
         }
         Ok(())
     }
+}
+
+/// Refuses a log that records another vote contract or fault proof contract than `cfg` names, before
+/// anything is written under it.
+/// Error cases:
+/// - the log records a vote contract or a fault proof contract and penalty other than the config's
+pub(super) fn refuse_other_contracts(
+    engine: &Engine,
+    cfg: &crate::sequencer::SequencerConfig<'_>,
+) -> anyhow::Result<()> {
+    if let Some(recorded) = engine.governance().config.filter(|recorded| cfg.governance != Some(*recorded)) {
+        bail!("the log records vote contract {recorded:?}, but the config names {:?}", cfg.governance);
+    }
+    if let Some(recorded) = engine.operator_faults().config.filter(|recorded| cfg.fault_proof != Some(*recorded)) {
+        bail!("the log records fault proof contract {recorded:?}, but the config names {:?}", cfg.fault_proof);
+    }
+    Ok(())
 }
 
 /// The commands that record `client_auth` and `operator` and activate the latest protocol version,

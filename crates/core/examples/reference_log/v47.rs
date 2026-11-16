@@ -18,7 +18,7 @@ const SECOND_STAKER: AccountId = AccountId([0x47; 20]);
 /// The candidate this part elects under the admin key already in effect.
 const NEXT_CANDIDATE: AccountId = AccountId([0x48; 20]);
 /// The seed of the account key whose losses put the house above the floor.
-const LOSER_SEED: u8 = 0x4e;
+pub(crate) const LOSER_SEED: u8 = 0x4e;
 const HOUR_MS: Millis = 60 * 60 * 1000;
 
 /// The trader loses on a round trip, so the house earns above the floor, then a tick at the end of

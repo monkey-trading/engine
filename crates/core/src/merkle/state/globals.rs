@@ -17,6 +17,7 @@ use crate::governance::Governance;
 use crate::house_loss::HouseLoss;
 use crate::merkle::state::is_zero;
 use crate::operator_bounds::OperatorBounds;
+use crate::operator_faults::OperatorFaults;
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
 use crate::staking::Staking;
@@ -75,6 +76,9 @@ pub(super) struct Globals<'a> {
     pending_ceiling: &'a Option<PendingCeiling>,
     #[serde(skip_serializing_if = "HouseLoss::is_default")]
     house_loss: &'a HouseLoss,
+    /// From `V70`; omitted until the fault proof contract is recorded, so earlier roots stand.
+    #[serde(skip_serializing_if = "OperatorFaults::is_default")]
+    operator_faults: &'a OperatorFaults,
 }
 
 impl Engine {
@@ -125,6 +129,7 @@ impl Engine {
             operator_election,
             daily_turns,
             governance,
+            operator_faults,
             close_spread_ceilings,
             pending_ceiling,
             session_keys: _,
@@ -169,6 +174,7 @@ impl Engine {
             close_spread_ceilings,
             pending_ceiling,
             house_loss,
+            operator_faults,
         }
     }
 }

@@ -77,7 +77,7 @@ an index: load only the rule whose hint matches the current action.
   and no office past the first turn's application for the account in it before turns run), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
-  anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
+  anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), from `V70` cut by a proven fault's haircut, which starts at the recorded penalty and falls linearly to nothing, the withheld part going to stakers (`operator_faults.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks). It does no IO and uses no clocks,
@@ -197,7 +197,10 @@ an index: load only the rule whose hint matches the current action.
   decoded as the admin command their bytes are the canonical JSON of, once it is read to name the
   schedule, with `ApplyProposal` sequenced for a passed change once its seven days have run,
   `sequencer/governance.rs`, from V65 each staking frontier carrying the turn the registry's `rotationState()`
-  names the operator by, from V67 else the schedule's last drawn turn when it has yet to start, and a start refused on a log recording another vote contract), the
+  names the operator by, from V67 else the schedule's last drawn turn when it has yet to start, and a start refused on a log recording another vote contract; from V70
+  the fault proof contract's proven faults, once it is read to name the vault, with the contract and
+  penalty the config names recorded once `V70` is in force, at a start or after a passed activation,
+  and a start refused on a log recording others), the
   standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
   segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up,
   taking only entries whose command seals continue the copy and raising `operator_log_rollback`, with
@@ -408,6 +411,11 @@ an index: load only the rule whose hint matches the current action.
   (`skip`, `skipDueAt`), and promotes past an incumbent that still beats once no assignment of a turn of
   two or more members is latched within `heartbeatMisses + 1`; `LogHeads.headRelease(epoch)` names the
   release of the epoch's newest head.
+  `src/FaultProof.sol` (from #597) takes two `engine.log-head.v2` heads of one signer epoch, turn,
+  position and release that name different links at one seq, checks both against that epoch's signer
+  (`signerAtEpoch`) and the assignment's revision each names (`OperatorSchedule.revisionOf`, one read
+  per head), and emits `FaultProven` naming the member once per assignment, so a promotion's new
+  epoch pairs with nothing before it.
   `src/SeedSchedule.sol` fixes each daily operator turn's seed epoch
   (the beacon epoch holding the time two days before its draw deadline, which is a day before its 22:30 UTC boundary);
   `src/SeedRelay.sol` on Ethereum proves that epoch's RANDAO mix from an EIP-4788 beacon block root, its
@@ -452,6 +460,8 @@ an index: load only the rule whose hint matches the current action.
   `benchmark-publishers.toml` supplies the optional benchmark section with official publisher endpoints;
   a separate `engine admin ... sync-benchmarks --watch` worker signs daily snapshots and releases
   synchronization before startup catch-up and after trusted-time halts spanning unpaid rollovers.
+  The optional `[custody.evm.staking.registry.fault_proof]` names the FaultProof contract and the
+  penalty (`initial_bps`, `decay`) the node records once `V70` is in force; it needs the schedule.
   The optional `[log_heads]` (#541) names the LogHeads contract, a dedicated funded relayer distinct
   from the checkpoint relayer, and the posting interval (an hour by default); it requires
   `[checkpoints]`, and with it the node refuses to start on a log the posted head does not hold;
@@ -653,6 +663,10 @@ an index: load only the rule whose hint matches the current action.
   start budget (printed), its first checkpoint once the promotion is final, its replacement standby key
   vouched for by its own signer key, A's authorization reissued and paid once, and its log replayed
   across the change of signer;
+  `dev-operator-faults.sh`, the operator faults scenario on Anvil, from `V70`: B's enclave, restarted
+  by its host from an older copy of its log during B's turn, signs heads of two histories at one seq,
+  anyone proves them to `FaultProof`, the next closes cut B's share by the decaying haircut, a later turn
+  is paid whole, and a pair across a promotion's signer change proves nothing;
   `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
   contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
   relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped
@@ -737,7 +751,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking, launch values, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation and parameter votes dev scenarios (`dev-daily-rotation`), the enclave key
+  deposit finality scenarios, the MONKEY staking, launch values, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation, parameter votes and operator faults dev scenarios (`dev-daily-rotation`), the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
@@ -997,6 +1011,9 @@ Run from the repo root:
   candidate's unclaimed leaf registering and paying through the exit from the stopped node's log; then,
   on a fresh Anvil, a second election taking effect halfway through an epoch, whose close credits the
   outgoing and incoming candidates about half the share each, both in their histories and both claimed)
+- Operator faults dev scenario: `./scripts/dev-operator-faults.sh` (the same requirements; a rolled-back
+  member's two signed heads proven on the real `FaultProof`, mirrored into the real sequencer, the
+  haircut's cut at each close and its restoration, and a pair across a promotion refused)
 - Daily rotation dev scenario: `./scripts/dev-daily-rotation.sh` (the same requirements; the
   operator-share harness's in-process nodes on a test clock, against a custody Anvil finalising two
   blocks behind its head and the seed relay fixture's stand-in Ethereum; three members following the

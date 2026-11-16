@@ -83,10 +83,7 @@ async fn the_tail_is_the_entries_after_the_tips_command() {
 async fn a_copy_that_followed_while_the_predecessor_stopped_takes_only_the_rest_of_the_tail() {
     let (full, copy) = (scratch_dir("tail-past-copy-full"), scratch_dir("tail-past-copy-copy"));
     ticks(&full, 4).await;
-    std::fs::create_dir_all(&copy).unwrap();
-    for file in std::fs::read_dir(&full).unwrap().map(Result::unwrap) {
-        std::fs::copy(file.path(), copy.join(file.file_name())).unwrap();
-    }
+    crate::test_support::copy_dir(&full, &copy);
     ticks(&full, 4).await;
     let signer = AccountId(crate::tee::EnclaveKey::test_key().address());
     let domain = CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };

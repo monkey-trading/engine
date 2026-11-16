@@ -37,6 +37,7 @@ impl AdminCommand {
             | AdminCommand::SetToxicityNotional(_)
             | AdminCommand::SetCloseSpreadCeilings { .. }
             | AdminCommand::SetGovernance(_)
+            | AdminCommand::SetFaultProof(_)
             | AdminCommand::ActivateCustodyFinality { .. }
             | AdminCommand::ActivateProtocol { .. } => false,
         }

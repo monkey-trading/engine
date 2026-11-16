@@ -217,6 +217,7 @@ pub fn every_event() -> Vec<Event> {
         },
         Event::DistributionAllocated { account, epoch: 3, amount: engine_core::UsdcUnits(4_000) },
         Event::OperatorShareAllocated { account, epoch: 3, amount: engine_core::UsdcUnits(1_000) },
+        Event::OperatorShareWithheld { account, epoch: 3, amount: engine_core::UsdcUnits(500) },
         Event::DistributionEpochClosed {
             epoch: 3,
             nav: amount,
@@ -247,6 +248,20 @@ pub fn every_event() -> Vec<Event> {
             reason: "no notice".into(),
         },
         Event::TurnTaken { turn: 20_754, candidate: account, release: engine_core::eip712::B256::repeat_byte(1) },
+        Event::OperatorFaultProven {
+            member: account,
+            turn: 20_754,
+            position: 0,
+            signer_epoch: 1,
+            seq: 42,
+            decays_until: 1_793_864_000_000,
+        },
+        Event::OperatorFaultRefused {
+            member: account,
+            turn: 20_754,
+            position: 0,
+            reason: "fault proofs need protocol V70".into(),
+        },
         Event::TurnTakenRejected { reason: "turn 20754 is not the turn in effect".into() },
         Event::ProposalScheduled { proposal: 1, applies_at: 1_793_604_800_000 },
         Event::RestrictionApplied { proposal: 2, expires_at: 1_793_086_400_000 },
@@ -305,6 +320,9 @@ pub fn every_event() -> Vec<Event> {
             | Event::StakingRejected { .. }
             | Event::DistributionAllocated { .. }
             | Event::OperatorShareAllocated { .. }
+            | Event::OperatorShareWithheld { .. }
+            | Event::OperatorFaultProven { .. }
+            | Event::OperatorFaultRefused { .. }
             | Event::DistributionEpochClosed { .. }
             | Event::DistributionEpochsSkipped { .. }
             | Event::RotationSwitched { .. }

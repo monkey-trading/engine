@@ -621,6 +621,18 @@ contract OperatorSchedule is SeedSchedule {
         return (assignments[turn][position], revisions[turn][position]);
     }
 
+    /// @notice Turn `turn`'s assignment at `position`: its member, and its revision at `index`, zeros past
+    /// the last, at a cost that does not grow with the revisions.
+    function revisionOf(uint64 turn, uint16 position, uint256 index)
+        external
+        view
+        returns (address candidate, Revision memory revision)
+    {
+        Revision[] storage list = revisions[turn][position];
+        if (index < list.length) revision = list[index];
+        candidate = assignments[turn][position].candidate;
+    }
+
     /// @notice The member position `position` of `turn`'s draw from set `setId` picks with `seed`.
     /// Below `MAX_DRAW_POSITIONS`, the first whose cumulative weight exceeds
     /// `keccak256(abi.encode(seed, turn, position))` modulo the set's total weight; from it on, the

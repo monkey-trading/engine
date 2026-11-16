@@ -109,6 +109,10 @@ pub struct RegistryCustodySection {
     /// mirrored, and while rotation is on nothing changes the governed parameters.
     #[serde(default)]
     pub vote: Option<VoteCustodySection>,
+    /// The `FaultProof` contract over the vault, whose proven faults the watcher mirrors from `V70`, and
+    /// the penalty the node records with it. Absent, no fault is mirrored.
+    #[serde(default)]
+    pub fault_proof: Option<FaultProofCustodySection>,
 }
 
 /// The vote contract the watcher mirrors, which the node records in the log once `V56` applies.
@@ -149,6 +153,54 @@ impl VoteCustodySection {
     }
 }
 
+/// The fault proof contract the watcher mirrors, which the node records in the log once `V70` applies.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultProofCustodySection {
+    /// The `FaultProof` contract, whose `vault()` is `custody.vault`; the watcher refuses another.
+    pub contract: Address,
+    /// The haircut a proven fault puts on its member's operator share: protocol, recorded once.
+    pub penalty: PenaltySection,
+}
+
+/// A proven fault's haircut.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PenaltySection {
+    /// The haircut when the fault is mirrored, in bps of the member's share: 1 to 10,000.
+    pub initial_bps: i64,
+    /// How long it takes to fall linearly to nothing: whole milliseconds, at most ten years.
+    #[serde(with = "humantime_serde")]
+    pub decay: Duration,
+}
+
+impl FaultProofCustodySection {
+    /// What the node records in the log once `V70` applies, checked as the engine checks it, since a
+    /// value it refused would stop the node at the record.
+    /// Error cases:
+    /// - the zero address
+    /// - a haircut outside 1 to 10,000 bps, or a decay of zero, past ten years, or not whole milliseconds
+    pub fn config(&self) -> anyhow::Result<engine_core::operator_faults::FaultProofConfig> {
+        use engine_core::operator_faults::{FaultProofConfig, MAX_DECAY_MS, Penalty};
+        if self.contract.is_zero() {
+            bail!("custody.evm.staking.registry.fault_proof.contract must be a nonzero address");
+        }
+        let decay_ms = i64::try_from(self.penalty.decay.as_millis()).unwrap_or(i64::MAX);
+        if Duration::from_millis(decay_ms.unsigned_abs()) != self.penalty.decay
+            || !(1..=MAX_DECAY_MS).contains(&decay_ms)
+        {
+            bail!(
+                "custody.evm.staking.registry.fault_proof.penalty.decay must be whole milliseconds from 1ms to 3650 days"
+            );
+        }
+        if !(1..=10_000).contains(&self.penalty.initial_bps) {
+            bail!("custody.evm.staking.registry.fault_proof.penalty.initial_bps must be from 1 to 10000");
+        }
+        let penalty = Penalty { initial_bps: self.penalty.initial_bps, decay_ms };
+        Ok(FaultProofConfig { contract: engine_core::types::AccountId(self.contract.0.0), penalty })
+    }
+}
+
 /// Independently operated RPC service; its name identifies alerts without exposing credentials.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -158,6 +210,26 @@ pub struct RpcProviderSection {
 }
 
 impl NodeConfig {
+    /// The vote contract and restriction lifetime `[custody.evm.staking.registry.vote]` names, which the
+    /// node records once `V56` applies; `None` without the section.
+    /// Error cases:
+    /// - as `VoteCustodySection::governance`
+    pub fn governance(&self) -> anyhow::Result<Option<engine_core::governance::GovernanceConfig>> {
+        let staking = self.custody.evm.as_ref().and_then(|evm| evm.staking.as_ref());
+        staking.and_then(|staking| staking.registry.vote.as_ref()).map(VoteCustodySection::governance).transpose()
+    }
+
+    /// The fault proof contract and penalty `[custody.evm.staking.registry.fault_proof]` names, which
+    /// the node records once `V70` is in force; `None` without the section.
+    /// Error cases:
+    /// - as `FaultProofCustodySection::config`
+    pub fn fault_proof(&self) -> anyhow::Result<Option<engine_core::operator_faults::FaultProofConfig>> {
+        let evm = self.custody.evm.as_ref();
+        let section =
+            evm.and_then(|evm| evm.staking.as_ref()).and_then(|staking| staking.registry.fault_proof.as_ref());
+        section.map(FaultProofCustodySection::config).transpose()
+    }
+
     /// Checks the custody section against its provider, and that genesis credits house capital
     /// only under mock custody.
     /// Error cases:
@@ -169,6 +241,8 @@ impl NodeConfig {
     /// - `custody.evm.staking.registry.schedule` is any of those, or the lens
     /// - `custody.evm.staking.registry.vote` without a schedule, its contract any of those or the
     ///   schedule, or a restriction lifetime of zero, past seven days, or not whole milliseconds
+    /// - `custody.evm.staking.registry.fault_proof` without a schedule, its contract any of those, the
+    ///   vote contract or the log heads, or a contract or penalty `FaultProofCustodySection::config` refuses
     /// - `genesis.house_capital` is not zero with EVM custody
     pub(super) fn validate_custody(&self) -> anyhow::Result<()> {
         let evm = match (self.custody.provider, &self.custody.evm) {
@@ -230,6 +304,27 @@ impl NodeConfig {
                     );
                 }
                 vote.ttl_ms()?;
+            }
+            if let Some(fault_proof) = &staking.registry.fault_proof {
+                let schedule =
+                    staking.registry.schedule.context("custody.evm.staking.registry.fault_proof needs a schedule")?;
+                // `LogHeads` answers `vault()` too, so the watcher's binding read alone would pass for it.
+                let others = [
+                    Some(evm.usdc),
+                    Some(vault),
+                    Some(staking.contract),
+                    Some(staking.registry.contract),
+                    Some(schedule),
+                    staking.registry.lens,
+                    staking.registry.vote.as_ref().map(|vote| vote.contract),
+                    self.log_heads.as_ref().map(|heads| heads.contract),
+                ];
+                if others.contains(&Some(fault_proof.contract)) {
+                    bail!(
+                        "custody.evm.staking.registry.fault_proof.contract must be the fault proof contract, not the token, vault, staking contract, registry, schedule, lens, vote contract, or log heads"
+                    );
+                }
+                fault_proof.config()?;
             }
         }
         if self.genesis.house_capital != Fixed::ZERO {

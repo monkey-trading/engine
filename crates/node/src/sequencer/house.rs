@@ -15,6 +15,7 @@ use engine_core::governance::Governance;
 use engine_core::house_loss::HouseLossReading;
 use engine_core::listing_bounds::ListingNotice;
 use engine_core::operator_bounds::ParamsNotice;
+use engine_core::operator_faults::OperatorFaults;
 use engine_core::params::ProtocolParams;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::toxicity::{SCORE_RULES, ScoreRules};
@@ -85,6 +86,10 @@ pub struct HouseState {
     /// starts, and the stress level the loss sets in every market.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub house_loss: Option<HouseLossReading>,
+    /// From `V70`, the recorded fault proof contract and penalty, and when each penalised member's
+    /// haircut started decaying.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operator_faults: Option<OperatorFaults>,
     pub checkpoint: Option<StreamMsg>,
 }
 
@@ -132,6 +137,7 @@ impl Latest {
         let (seq, pending_ceiling, checkpoint) =
             (engine.last_seq(), engine.pending_ceiling().cloned(), self.checkpoint.clone());
         let house_loss = engine.house_loss();
+        let operator_faults = Some(engine.operator_faults()).filter(|faults| !faults.is_default()).cloned();
         let state = HouseState {
             seq,
             params,
@@ -141,6 +147,7 @@ impl Latest {
             governance,
             pending_ceiling,
             house_loss,
+            operator_faults,
             checkpoint,
         };
         Some((std::mem::take(&mut self.waiting), state))

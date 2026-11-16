@@ -2,7 +2,7 @@
 
 use anyhow::anyhow;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::custody::credit::query;
 use crate::custody::evm::{BlockRef, DepositWatcher, VaultReader};
@@ -162,12 +162,48 @@ impl<V: VaultReader> DepositWatcher<V> {
                 Some(_) => self.vote = Some((vote, true)),
             }
         }
+        // The fault proof contract must check proofs against this vault's signer history.
+        if let Some((fault_proof, false)) = self.fault_proof {
+            let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
+            let out = self
+                .vault
+                .contract_call(BlockRef { number: to, hash }, fault_proof, crate::custody::registry::fault_vault_call())
+                .await
+                .map_err(PollError::rpc)?;
+            match crate::custody::registry::decode_fault_vault(&out).map_err(PollError::rpc)? {
+                // Once the log records the address, for good, an address with no code mirrors no fault,
+                // so it pages until the contract is deployed there; a window before the record, as in a
+                // catch-up over blocks before the deployment, is no fault of the address.
+                None => {
+                    if query(tx, |engine| engine.operator_faults().config.is_some()).await.map_err(PollError::Fatal)? {
+                        warn!(
+                            alert = "fault_proof_undeployed",
+                            contract = %fault_proof,
+                            "the recorded fault proof contract has no code at block {to}"
+                        );
+                    } else {
+                        info!(to, "the fault proof contract is not deployed at this window's end");
+                    }
+                }
+                Some(recorded) if recorded != self.cursor.vault => {
+                    return Err(PollError::inconsistent(anyhow!(
+                        "the fault proof contract {fault_proof} records vault {recorded}, not the configured {}",
+                        self.cursor.vault
+                    )));
+                }
+                Some(_) => {
+                    info!(alert_resolved = "fault_proof_undeployed", contract = %fault_proof, "fault proof contract bound");
+                    self.fault_proof = Some((fault_proof, true));
+                }
+            }
+        }
         let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");
         let bound = self.registry.is_some_and(|(_, bound)| bound);
         let schedule_bound = self.schedule.is_none_or(|(_, bound)| bound);
         let vote_bound = self.vote.is_none_or(|(_, bound)| bound);
         // The registry's own state says which drawn turn, of the schedule it names, names the operator.
         let turns = self.registry.and_then(|(registry, bound)| bound.then_some(registry));
+        let fault_bound = self.fault_proof.is_none_or(|(_, bound)| bound);
         let window = from..=to;
         staking::mirror(
             &self.vault,
@@ -177,7 +213,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             &mut self.staking_range,
             window,
             &hashes,
-            (bound, schedule_bound, vote_bound),
+            (bound, schedule_bound, vote_bound, fault_bound),
             turns,
         )
         .await

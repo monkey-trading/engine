@@ -285,6 +285,13 @@ pub enum Event {
         epoch: u64,
         amount: UsdcUnits,
     },
+    /// From `V70`, what a proven fault's haircut withheld from `account`'s part of the operator's share
+    /// of a closed epoch: `amount` USDC base units that went to stakers instead.
+    OperatorShareWithheld {
+        account: AccountId,
+        epoch: u64,
+        amount: UsdcUnits,
+    },
     /// From `V25`, a closed distribution epoch: the NAV and floor it measured, the excess above the
     /// floor in whole USDC base units, and what was allocated of it: to stakers, and from `V47` to
     /// the operator. House cash fell by the allocated total; the dust is the house's.
@@ -356,6 +363,25 @@ pub enum Event {
         cause: TurnReason,
         candidate: AccountId,
         admin_key: AccountId,
+        reason: String,
+    },
+    /// From `V70`, a fault the fault proof contract proved, mirrored: `member`'s enclave signed two heads
+    /// of turn `turn`'s assignment at `position` under `signer_epoch` that disagree at `seq`. Its
+    /// haircut restarts at the penalty and reaches nothing at `decays_until`.
+    OperatorFaultProven {
+        member: AccountId,
+        turn: u64,
+        position: u16,
+        signer_epoch: u64,
+        seq: u64,
+        decays_until: Millis,
+    },
+    /// A fault the fault proof contract proved, credited but refused before `V70` is in force or the
+    /// contract is recorded: it changes nothing else.
+    OperatorFaultRefused {
+        member: AccountId,
+        turn: u64,
+        position: u16,
         reason: String,
     },
     /// From `V51`, the turn's member started sequencing it, in an enclave running `release`.

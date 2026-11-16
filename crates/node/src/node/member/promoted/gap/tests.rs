@@ -9,7 +9,7 @@ use engine_core::types::AccountId;
 use super::*;
 use crate::log::{CheckpointDomain, LogEntry};
 use crate::tee::EnclaveKey;
-use crate::test_support::{SEGMENT_COMMANDS, TestSequencer, log_entries, scratch_dir};
+use crate::test_support::{SEGMENT_COMMANDS, TestSequencer, copy_dir, log_entries, scratch_dir};
 
 /// The deployment the test sequencer seals and signs for.
 const DOMAIN: CheckpointDomain = CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };
@@ -172,18 +172,4 @@ fn with_offsets(dir: &std::path::Path) -> Vec<(Offset, LogEntry)> {
 fn open(dir: &std::path::Path) -> Follower {
     let signer = AccountId(EnclaveKey::test_key().address());
     Follower::open(dir, SEGMENT_COMMANDS, DOMAIN, signer, [signer].into(), None, |_| {}).unwrap()
-}
-
-/// Copies the log directory `from` into `to`.
-fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).unwrap();
-        }
-    }
 }

@@ -79,3 +79,56 @@ fn a_staking_section_names_its_operator_registry_as_a_contract_of_its_own() {
         assert!(err.contains("custody.evm.staking.registry.contract must be the operator registry"), "{err}");
     }
 }
+
+#[test]
+fn a_fault_proof_section_needs_a_schedule_a_contract_of_its_own_and_a_bounded_penalty() {
+    let text = std::fs::read_to_string(Path::new("../../config/anvil.toml")).unwrap();
+    let (staking, registry, schedule) = (
+        "0x00000000000000000000000000000000000000a5",
+        "0x00000000000000000000000000000000000000a6",
+        "0x00000000000000000000000000000000000000a7",
+    );
+    let section = |schedule: &str, contract: &str, initial_bps: i64, decay: &str| {
+        format!(
+            "{text}\n[custody.evm.staking]\ncontract = '{staking}'\ncursor_path = 'staking.json'\n[custody.evm.staking.registry]\ncontract = '{registry}'\n{schedule}\n[custody.evm.staking.registry.fault_proof]\ncontract = '{contract}'\npenalty = {{ initial_bps = {initial_bps}, decay = '{decay}' }}\n"
+        )
+    };
+    let named = format!("schedule = '{schedule}'");
+    let fault_proof = "0x00000000000000000000000000000000000000a8";
+    let cfg: NodeConfig = toml::from_str(&section(&named, fault_proof, 10_000, "730d")).unwrap();
+    cfg.validate_custody().unwrap();
+    let recorded = cfg.custody.evm.as_ref().unwrap().staking.as_ref().unwrap().registry.fault_proof.as_ref().unwrap();
+    let config = recorded.config().unwrap();
+    assert_eq!((config.penalty.initial_bps, config.penalty.decay_ms), (10_000, 730 * 86_400_000));
+
+    let refused = |text: String, expected: &str| {
+        let cfg: NodeConfig = toml::from_str(&text).unwrap();
+        let err = cfg.validate_custody().unwrap_err().to_string();
+        assert!(err.contains(expected), "{err}");
+    };
+    refused(section("", fault_proof, 10_000, "730d"), "fault_proof needs a schedule");
+    for other in [staking, registry, schedule, cfg.custody.vault.as_str()] {
+        refused(section(&named, other, 10_000, "730d"), "fault_proof.contract must be the fault proof contract");
+    }
+    refused(
+        section(&named, "0x0000000000000000000000000000000000000000", 10_000, "730d"),
+        "fault_proof.contract must be a nonzero address",
+    );
+    // `LogHeads` answers `vault()` as the fault proof contract does, so its address is refused here.
+    let heads = "0x00000000000000000000000000000000000000a9";
+    let with_heads = format!(
+        "{}\n[log_heads]\ncontract = '{heads}'\nrelayer = '0x00000000000000000000000000000000000000aa'\n",
+        section(&named, heads, 10_000, "730d")
+    );
+    let with_checkpoints = with_heads.replace(
+        "[log_heads]",
+        "[checkpoints]\nrpc_url = 'http://127.0.0.1:8547'\nrelayer = '0x00000000000000000000000000000000000000ab'\nretry_interval = '1s'\nrpc_timeout = '5s'\n\n[log_heads]",
+    );
+    refused(with_checkpoints, "fault_proof.contract must be the fault proof contract");
+    for initial_bps in [0, 10_001] {
+        refused(section(&named, fault_proof, initial_bps, "730d"), "penalty.initial_bps must be from 1 to 10000");
+    }
+    for decay in ["0s", "3651d", "1500us"] {
+        refused(section(&named, fault_proof, 10_000, decay), "penalty.decay must be whole milliseconds");
+    }
+}
