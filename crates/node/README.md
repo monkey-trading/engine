@@ -1471,6 +1471,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   paused time, held quotes against the engine's rule, kept books for unsubscribed symbols, the
   freshness rule, and backoff
 - `src/feeds/coinbase.rs`, `src/feeds/bitstamp.rs` — venue adapters
+- `src/feeds/coinbase_exchange.rs` — Coinbase Exchange's public `level2_batch` feed, Coinbase's books
+  from a second host, quoted as the same `coinbase` source
 - `src/feeds/massive.rs`, `src/feeds/tradermade.rs` — the Massive and TraderMade adapters: login,
   subscription, and quotes; Massive's tests are in `src/feeds/massive/tests.rs`
 - `src/feeds/cme/mod.rs` — the CME Group adapter: its login status, the top-of-book subscription of
@@ -1496,6 +1498,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/tests/fake.rs` — the loopback venues, the feed harness with an engine that applies
   what the feed sequences, and the wait for the next alert
 - `src/feeds/tests/delay.rs` — a connection's pings against a venue that answers them or does not
+- `src/feeds/tests/redundant.rs` — BTC-USD priced throughout while one of Coinbase's two connections
+  serves a stale replay, stalls, or drops
 - `src/feeds/tests/redate.rs` — a quiet book re-dated by a venue's answers: its stamps and the
   delay bound each carries, a delayed answer, the 5 s limit, a venue that stops answering, a later book replacing it, refused messages,
   a changed book dropped while the stream is behind, and emptied books; and, through the real

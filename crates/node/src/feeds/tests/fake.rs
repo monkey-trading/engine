@@ -290,6 +290,14 @@ pub fn bitstamp_book(symbol: &str, bid: &str, ask: &str, ts: Millis) -> String {
     )
 }
 
+/// A Coinbase Exchange `level2_batch` snapshot of `product`'s book with one level a side.
+pub fn coinbase_exchange_book(product: &str, bid: &str, ask: &str, ts: Millis) -> String {
+    let at = rfc3339(ts);
+    format!(
+        r#"{{"type":"snapshot","product_id":"{product}","bids":[["{bid}","1.25"]],"asks":[["{ask}","1.25"]],"time":"{at}"}}"#
+    )
+}
+
 /// A Coinbase `level2` message setting one bid and one offer level. `snapshot` replaces the
 /// product's book; otherwise the levels are updates to it.
 pub fn coinbase_levels(sequence: u64, snapshot: bool, product: &str, bid: &str, ask: &str, ts: Millis) -> String {

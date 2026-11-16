@@ -361,7 +361,7 @@ async fn assert_first_silent(alerts: &mut mpsc::UnboundedReceiver<Alert>, symbol
 async fn start_venue(node: &Node, venue: Venue, serve: fn(TcpListener) -> JoinHandle<()>) -> JoinHandle<()> {
     let symbols: [(MarketId, &str); 2] = match venue {
         Venue::Bitstamp => [(1, "btcusd"), (2, "ethusd")],
-        Venue::Coinbase => [(1, "BTC-USD"), (2, "ETH-USD")],
+        Venue::Coinbase | Venue::CoinbaseExchange => [(1, "BTC-USD"), (2, "ETH-USD")],
         Venue::Kraken => [(1, "BTC/USD"), (2, "ETH/USD")],
         Venue::Cme | Venue::Massive | Venue::Tradermade => {
             unreachable!("only the crypto venues price BTC and ETH")

@@ -154,6 +154,33 @@ fn a_production_build_refuses_a_genesis_market_its_venues_cannot_price() {
     assert!(err.contains("market 1 (BTC-USD) has no venue of 2"), "{err}");
 }
 
+// Runs in the production lane too, which filters on `production_build`.
+#[test]
+fn a_production_build_counts_two_feeds_of_one_venue_as_one_source() {
+    let mut cfg = with_vendors();
+    cfg.feeds.provider = FeedProvider::Venues;
+    cfg.genesis.markets.retain(|market| market.id == 1);
+    let venues = cfg.feeds.venues.as_mut().unwrap();
+    let coinbase = venues.connections.iter().find(|conn| conn.venue == Venue::Coinbase).unwrap().clone();
+    let exchange = VenueConnection {
+        venue: Venue::CoinbaseExchange,
+        url: "wss://ws-feed.exchange.coinbase.com".into(),
+        ..coinbase
+    };
+    venues.connections.retain(|conn| conn.venue != Venue::Kraken);
+    venues.connections.push(exchange);
+    // The same instrument from Coinbase's two hosts is a redundant source, not a misconfiguration.
+    venues.validate().unwrap();
+    let err = cfg.refuse_unmet_min_sources(true).unwrap_err().to_string();
+    assert!(err.contains("market 1 (BTC-USD) has 1 (coinbase) of 2"), "{err}");
+
+    // The Exchange feed is on Exchange's host, not Advanced Trade's.
+    let venues = cfg.feeds.venues.as_mut().unwrap();
+    venues.connections.last_mut().unwrap().url = "wss://advanced-trade-ws.coinbase.com".into();
+    let err = venues.validate().unwrap_err().to_string();
+    assert!(err.contains("coinbase url must be on exchange.coinbase.com"), "{err}");
+}
+
 #[test]
 fn a_quote_spacing_that_outlasts_the_venue_timeout_is_refused() {
     let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();

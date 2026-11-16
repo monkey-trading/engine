@@ -318,8 +318,9 @@ an index: load only the rule whose hint matches the current action.
   Withdrawal authorizations carry EIP-712 data and an approval inclusion proof; custody's used nonce
   determines payment, and unpaid approvals are reissued on signer rotation or on their account's
   signed request, never on a schedule. It also has price feeds: live crypto
-  venue WebSockets and RWA market-data vendors (`feeds/`, one adapter per venue: Massive and
-  TraderMade over WebSocket, with API keys from the delivered secrets the config names, or in a
+  venue WebSockets and RWA market-data vendors (`feeds/`, one adapter per venue, Coinbase read on
+  Advanced Trade and, as the same source, Exchange's `level2_batch` (`feeds/coinbase_exchange.rs`),
+  so either keeps its leg: Massive and TraderMade over WebSocket, with API keys from the delivered secrets the config names, or in a
   development build environment variables, and CME Group's WebSocket API for its exchanges'
   futures (`feeds/cme/`), whose handshake carries an OAuth bearer token the node fetches with a
   delivered client ID and secret (`feeds/venue/auth.rs`), each connection replaced before its token
