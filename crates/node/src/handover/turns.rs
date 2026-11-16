@@ -143,10 +143,11 @@ pub(crate) async fn names(
 /// The operators a member of `turn` may take the keys from, in the order it tries them: the turn's
 /// source, the operator the registry named when the turn was drawn, then, for each earlier drawn turn
 /// up to `SOURCE_LOOKBACK` turns back, the member of its latest assignment, which a promotion may have
-/// moved after this turn was drawn (#595), the members of its earlier assignments, since a member that
-/// took the keys before a skip passed it keeps them, and its source, since a member that never took
-/// its turn leaves the keys with the one before it. Each distinct operator with a handover endpoint,
-/// never the member.
+/// moved after this turn was drawn (#595), and its source, since a member that never took its turn
+/// leaves the keys with the one before it; then, after all of them, the members of those turns'
+/// earlier assignments, turn by turn, since a member that took the keys before a skip passed it keeps
+/// them, though a member a skip passed is most often one that is down. Each distinct operator with a
+/// handover endpoint, never the member.
 /// Error cases:
 /// - the schedule cannot be read
 pub(crate) async fn sources(
@@ -154,7 +155,7 @@ pub(crate) async fn sources(
     at: &Observation,
     turn: &ScheduledTurn,
 ) -> anyhow::Result<Vec<HandoverSource>> {
-    let mut sources: Vec<HandoverSource> = Vec::new();
+    let (mut walked, mut passed) = (Vec::new(), Vec::new());
     let mut drawn = Some(turn.clone());
     let mut earlier = false;
     for _ in 0..=SOURCE_LOOKBACK {
@@ -166,16 +167,19 @@ pub(crate) async fn sources(
             )?,
             false => (None, Vec::new()),
         };
-        for source in holder.iter().chain(&superseded).chain(this.source.as_ref()) {
-            if source.candidate != turn.candidate
-                && !source.handover_endpoint.is_empty()
-                && sources.iter().all(|listed| listed.candidate != source.candidate)
-            {
-                sources.push(source.clone());
-            }
-        }
+        walked.extend(holder.into_iter().chain(this.source.clone()));
+        passed.extend(superseded);
         earlier = true;
         drawn = vault.scheduled_turn(at, this.boundary - 1).await.context("reading the operator schedule")?;
+    }
+    let mut sources: Vec<HandoverSource> = Vec::new();
+    for source in walked.into_iter().chain(passed) {
+        if source.candidate != turn.candidate
+            && !source.handover_endpoint.is_empty()
+            && sources.iter().all(|listed| listed.candidate != source.candidate)
+        {
+            sources.push(source);
+        }
     }
     Ok(sources)
 }

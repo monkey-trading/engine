@@ -107,20 +107,25 @@ async fn the_look_back_ends_a_week_before_the_turn() {
 }
 
 #[tokio::test]
-async fn a_member_asks_each_member_an_earlier_turn_skipped_past() {
+async fn a_member_asks_each_member_an_earlier_turn_skipped_past_after_the_walk() {
     // Turn 20_751 is drawn for D while A holds 20_750, so A is its source. In 20_750 a skip names B, who
-    // takes the keys from A, and a skip past B names C, who never takes them: B holds them.
-    let (a, b, c, d, e) =
-        (operator(0xa, "a:1"), operator(0xb, "b:1"), operator(0xc, "c:1"), operator(0xd, "d:1"), operator(0xe, "e:1"));
+    // takes the keys from A, and a skip past B names C, who never takes them: B holds them. 20_750 was
+    // drawn while F held 20_749, whose source is G.
+    let (a, b, c, d) = (operator(0xa, "a:1"), operator(0xb, "b:1"), operator(0xc, "c:1"), operator(0xd, "d:1"));
+    let (f, g) = (operator(0xf, "f:1"), operator(0x9, "g:1"));
     let schedule = Schedule {
-        turns: vec![drawn(20_750, 0xc, Some(e.clone())), drawn(20_751, 0xd, Some(a.clone()))],
-        registered: vec![a.clone(), b.clone(), c.clone(), d, e.clone()],
+        turns: vec![
+            drawn(20_749, 0xf, Some(g.clone())),
+            drawn(20_750, 0xc, Some(f.clone())),
+            drawn(20_751, 0xd, Some(a.clone())),
+        ],
+        registered: vec![a.clone(), b.clone(), c.clone(), d, f.clone(), g.clone()],
         superseded: BTreeMap::from([(20_750, vec![a.clone(), b.clone()])]),
     };
     let at = schedule.observe(View::Finalized, &[]).await.unwrap();
     let turn = schedule.turns.last().unwrap().clone();
     let found = sources(&schedule, &at, &turn).await.unwrap();
-    // A, the source; C, 20_750's latest member; B, whom the skip to C passed (A again is listed already);
-    // then E, 20_750's source.
-    assert_eq!(found, [a, c, b, e]);
+    // A, the source; C, 20_750's latest member, and F, its source; G, 20_749's source (F again is
+    // listed already); then B, whom the skip to C passed (A again is listed already).
+    assert_eq!(found, [a, c, f, g, b]);
 }

@@ -50,7 +50,8 @@ async fn the_members_a_turns_latest_assignment_superseded_are_read_in_the_order_
 }
 
 /// A skip to a late position leaves a long assignment history: its positions are read several at a
-/// time, each answer here taking a while, and the members still come in the order made.
+/// time, and the members still come in the order made, though here the earlier positions, and the
+/// earlier member's registration, take longer to answer.
 #[tokio::test]
 async fn a_late_skips_assignment_history_is_read_several_positions_at_a_time() {
     let (rpc, chain, server) = serve().await;
@@ -84,7 +85,8 @@ async fn serve() -> (CheckpointRpc, Arc<Chain>, tokio::task::JoinHandle<()>) {
 }
 
 /// Answers the vault's, registry's and schedule's reads at the pinned block, panicking on any other;
-/// each `assignmentOf` answer of turn 9 takes 50 ms.
+/// an `assignmentOf` answer of turn 9 takes 10 ms for each position below 10, and member 0x91's
+/// registration 60 ms.
 async fn answer(State(chain): State<Arc<Chain>>, Json(request): Json<Value>) -> Json<Value> {
     let (registry, schedule) = *chain.named.lock().unwrap();
     let call = &request["params"][0];
@@ -96,6 +98,9 @@ async fn answer(State(chain): State<Arc<Chain>>, Json(request): Json<Value>) -> 
         (REGISTRY, scheduleCall::SELECTOR) => scheduleCall::abi_encode_returns(&schedule),
         (REGISTRY, candidateOfCall::SELECTOR) => {
             let byte = candidateOfCall::abi_decode(&input).unwrap().candidate.0[0];
+            if byte == 0x91 {
+                tokio::time::sleep(Duration::from_millis(60)).await;
+            }
             candidateOfCall::abi_encode_returns(&CandidateReturn {
                 adminKey: Address::repeat_byte(byte + 1),
                 enclave: Address::ZERO,
@@ -119,7 +124,7 @@ async fn answer(State(chain): State<Arc<Chain>>, Json(request): Json<Value>) -> 
             if asked.turn == 9 {
                 let now = chain.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
                 chain.most.fetch_max(now, Ordering::SeqCst);
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                tokio::time::sleep(Duration::from_millis(10 * u64::from(10 - asked.position))).await;
                 chain.in_flight.fetch_sub(1, Ordering::SeqCst);
             }
             let made = match (asked.turn, asked.position) {

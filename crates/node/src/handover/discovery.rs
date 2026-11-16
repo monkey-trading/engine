@@ -122,12 +122,12 @@ pub(crate) async fn members(
         StandbyDomain::at_if_scheduled(block, chain_id, vault).await?.context("the registry names no schedule")?;
     let (set, turn, current) = (assigned.set, assigned.binding.turn, assigned.binding.position);
     let listed = call(block, "discovery_set", domain.schedule, setOfCall { setId: set }).await?;
-    let assigned = |position| async move {
+    let assignment_at = |position| async move {
         let made = call(block, "discovery_assignment", domain.schedule, assignmentOfCall { turn, position }).await?;
         anyhow::Ok((made._0.candidate, position))
     };
     let made: Vec<(Address, u16)> =
-        stream::iter(0..=current).map(assigned).buffered(MEMBER_READS).try_collect().await?;
+        stream::iter(0..=current).map(assignment_at).buffered(MEMBER_READS).try_collect().await?;
     let mut positions = std::collections::BTreeMap::new();
     for (candidate, position) in made.into_iter().filter(|(candidate, _)| !candidate.is_zero()) {
         positions.entry(candidate).or_insert(position);

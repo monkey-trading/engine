@@ -225,13 +225,13 @@ impl CheckpointRpc {
         if latest.reason == DRAWN {
             return Ok(Vec::new());
         }
-        let assigned = |position| async move {
+        let assignment_at = |position| async move {
             let raw = self.call(schedule, assignmentOfCall { turn, position }.abi_encode(), block).await?;
             let made = assignmentOfCall::abi_decode_returns(&raw).context("decoding the schedule's assignment")?;
             anyhow::Ok(made._0.candidate)
         };
         let made: Vec<Address> =
-            stream::iter(0..latest.position).map(assigned).buffered(ASSIGNMENT_READS).try_collect().await?;
+            stream::iter(0..latest.position).map(assignment_at).buffered(ASSIGNMENT_READS).try_collect().await?;
         stream::iter(made.into_iter().filter(|candidate| !candidate.is_zero()))
             .map(|candidate| self.handover_source_of(registry, candidate, block))
             .buffered(ASSIGNMENT_READS)

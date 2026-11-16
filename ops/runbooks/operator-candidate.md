@@ -127,7 +127,8 @@ or it may hold the keys the turn in effect's member takes: as a member of the tu
 of a turn took the keys, of the turns before it, up to seven turns back; or as the source of the
 earliest turn so reached, when it is the first turn, the first after an installation, or seven turns
 back. A holder is free from the boundary of the turn after the one whose member took its keys,
-except as the source of the turn seven turns back, which stays for that day. Otherwise
+except as the source of the turn seven turns back, which stays until a later turn starts or an
+installation ends the turns. Otherwise
 `cast send $REGISTRY 'deregister()'` removes it and frees the bond one cooldown later. A candidate
 changes its release without leaving, as in section 5, steps 2 and 3: an election names the release
 the candidacy holds when the epoch closes.
@@ -345,8 +346,8 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
   a trusted time sample, reads the turn from the finalised schedule, connects to the incumbent's
   handover endpoint, and takes the keys and the log's tail; neither side waits for chain finality
   after the boundary. When the turn before never changed hands, because its member never took it, the node
-  tries each earlier turn's source in turn, a week back at most, and the operator still holding the
-  keys hands them over. That includes an incumbent that stopped for an earlier member whose transfer
+  tries each earlier turn's latest member and source in turn, a week back at most, then the members
+  those turns' skips passed, and the operator still holding the keys hands them over. That includes an incumbent that stopped for an earlier member whose transfer
   never confirmed (`handover_unconfirmed`): it admits you when the set your turn was drawn from names
   your candidate and key with seven days' notice by your boundary, from V53 counted from the first of
   the unbroken run of sets that named them. Failing that, start it
