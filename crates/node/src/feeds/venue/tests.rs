@@ -222,6 +222,30 @@ async fn a_recovery_gives_every_symbol_a_full_silence_window() {
     assert_eq!((alert["alert"].as_str(), alert["symbol"].as_str()), ("venue_symbol_silent", "ETH/USD"));
 }
 
+/// After a resubscription a stale symbol is judged on what the new subscription sends: its snapshot,
+/// read late, sets off no attempt, and reads still too old to count across the grace do.
+#[tokio::test(start_paused = true)]
+async fn a_resubscribed_stale_symbol_is_judged_on_what_the_new_subscription_sends() {
+    let (_guard, _alerts) = capture_alerts();
+    let mut feed = kraken_feed(&[(1, "BTC/USD"), (2, "ETH/USD")], Duration::from_secs(10));
+    let read = |feed: &mut VenueFeed, age_ms: Millis| feed.note_age("ETH/USD", now_ms() - age_ms, now_ms());
+    read(&mut feed, 600_000);
+    tokio::time::advance(STALE_GRACE).await;
+    read(&mut feed, 600_000);
+    assert_eq!(feed.check_silent(), ["ETH/USD"]);
+
+    // The new snapshot reads 2 s late, a second on; the backoff has long run.
+    tokio::time::advance(Duration::from_secs(1)).await;
+    read(&mut feed, 2_000);
+    tokio::time::advance(STALE_GRACE / 2).await;
+    assert!(feed.check_silent().is_empty());
+    // What follows it stays ten minutes old: once that spans the grace from the snapshot, ETH again.
+    read(&mut feed, 600_000);
+    tokio::time::advance(STALE_GRACE / 2).await;
+    read(&mut feed, 600_000);
+    assert_eq!(feed.check_silent(), ["ETH/USD"]);
+}
+
 #[test]
 fn backoff_doubles_up_to_its_cap() {
     let max = Duration::from_secs(30);
