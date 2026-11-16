@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
 
 use alloy::primitives::B256;
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, anyhow, bail, ensure};
 use engine_core::types::AccountId;
 use futures_util::future::join_all;
 use tracing::{debug, warn};
@@ -14,30 +14,37 @@ use tracing::{debug, warn};
 use crate::liveness::chain::{Member, standby_holder};
 use crate::liveness::link::{Asking, Reply, Request, describe};
 use crate::liveness::operator::{Operator, STATUS_TIMEOUT};
-use crate::standby_key::chain::{AgreedBlock, StandbyChain, StandbyDomain, registration_at};
+use crate::standby_key::chain::{AgreedBlock, StandbyChain, StandbyDomain, registered_release, release_approved};
 use crate::standby_key::vouch::admit;
 
-/// A check that read the candidate's registered release, which is not the one its quote proves, or not
-/// approved: what it read says whether a kept key's release still stands.
+/// What a failed check read of the candidate's registration before it failed: its registered release,
+/// and whether the timelock approved that release once that was read. Every failure after the
+/// registration read carries it, so a kept key whose release it shows moved is refuted whatever read
+/// fails after it.
 #[derive(Debug)]
-struct Refuted {
+struct Registration {
     registered: Option<B256>,
-    approved: bool,
-    quote: String,
+    approved: Option<bool>,
 }
 
-impl std::fmt::Display for Refuted {
+impl std::fmt::Display for Registration {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "the quote proves release 0x{}, not the candidate's registered, approved one", self.quote)
+        match self.registered {
+            Some(release) => write!(f, "the candidate's registered release is {release}")?,
+            None => write!(f, "the candidate is not registered")?,
+        }
+        match self.approved {
+            Some(true) => write!(f, ", approved"),
+            Some(false) => write!(f, ", not approved"),
+            None => Ok(()),
+        }
     }
 }
 
-impl std::error::Error for Refuted {}
-
-impl Refuted {
+impl Registration {
     /// Whether what the check read refutes a kept key that proved `release`.
     fn moved(&self, release: B256) -> bool {
-        self.registered != Some(release) || !self.approved
+        self.registered != Some(release) || self.approved == Some(false)
     }
 }
 
@@ -92,7 +99,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                                 debug!(member = %member.candidate, "no attested standby key to take statuses on: {e:#}")
                             }
                             Some((key, release))
-                                if !e.downcast_ref::<Refuted>().is_some_and(|r| r.moved(release))
+                                if !e.downcast_ref::<Registration>().is_some_and(|r| r.moved(release))
                                     && !self.refuted(block, domain, &member, (key, release)).await =>
                             {
                                 if self.kept.first_failure(member.candidate) {
@@ -117,8 +124,9 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
     }
 
     /// Whether `block` refutes the attested `key` of `member`, which proved `release`: the schedule has
-    /// taken it, or its candidate's registered release is another, or no longer approved. A read that
-    /// fails refutes nothing.
+    /// taken it, or its candidate's registered release is another, or no longer approved. The registered
+    /// release is compared before the approval is read, so one that moved refutes the key whatever read
+    /// fails after it; a read that fails refutes nothing.
     async fn refuted(
         &self,
         block: &impl AgreedBlock,
@@ -126,15 +134,19 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         member: &Member,
         (key, release): (AccountId, B256),
     ) -> bool {
-        let registration = registration_at(block, domain, member.candidate).await;
-        let moved = registration.is_ok_and(|(registered, approved)| registered != Some(release) || !approved);
+        let moved = match registered_release(block, domain, member.candidate).await {
+            Ok(registered) if registered != Some(release) => true,
+            Ok(_) => release_approved(block, domain, member.candidate, release).await.is_ok_and(|approved| !approved),
+            Err(_) => false,
+        };
         moved || standby_holder(block, domain.schedule, key).await.is_ok_and(|holder| holder.is_some())
     }
 
     /// The standby key `member`'s link attests, once its `engine.standby.v1` quote verifies at trusted
     /// time as a vouch's does (`vouch::admit`), names the member, and proves the release its candidacy
     /// registered, approved for it; and the schedule never took the key, so a key a promotion consumed
-    /// or a release move voided never counts again.
+    /// or a release move voided never counts again. Every failure after the registered release is read
+    /// carries what the check read of the registration (`Registration`).
     /// Error cases:
     /// - this enclave has no sealed platform or trusted time sample to verify against
     /// - the member does not answer within `STATUS_TIMEOUT`, answers no attestation, or a check fails
@@ -151,13 +163,20 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         let reply = asked.await.map_err(|_| anyhow::anyhow!("no answer within {STATUS_TIMEOUT:?}"))??;
         let Reply::Attestation { request } = reply else { bail!("no attestation: {}", describe(&reply)) };
         ensure!(request.candidate == member.candidate, "the attestation is candidate {}'s", request.candidate);
-        let release = admit(&request, domain, (*provider, platform), at / 1000)?;
-        let (registered, approved) = registration_at(block, domain, member.candidate).await?;
-        if !(registered.is_some_and(|registered| registered.0 == release.id()) && approved) {
-            return Err(Refuted { registered, approved, quote: hex::encode(release.id()) }.into());
+        let quoted = B256::from(admit(&request, domain, (*provider, platform), at / 1000)?.id());
+        let registered = registered_release(block, domain, member.candidate).await?;
+        let read = |approved| Registration { registered, approved };
+        if registered != Some(quoted) {
+            return Err(anyhow!("the quote proves release {quoted}, not the registered one").context(read(None)));
         }
-        let holder = standby_holder(block, domain.schedule, request.key).await?;
-        ensure!(holder.is_none(), "the schedule has taken standby key {}", request.key);
-        Ok((request.key, B256::from(release.id())))
+        let approved = release_approved(block, domain, member.candidate, quoted).await.context(read(None))?;
+        if !approved {
+            return Err(anyhow!("the quote's release {quoted} is not approved").context(read(Some(false))));
+        }
+        let holder = standby_holder(block, domain.schedule, request.key).await.context(read(Some(true)))?;
+        if holder.is_some() {
+            return Err(anyhow!("the schedule has taken standby key {}", request.key).context(read(Some(true))));
+        }
+        Ok((request.key, quoted))
     }
 }

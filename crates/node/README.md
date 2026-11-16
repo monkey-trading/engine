@@ -254,8 +254,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   release apart from the turn's keys; the seal opens only while the schedule lists the key as
   promotable, or as the signer of a promotion still its turn's latest assignment until its reseal as
   the turn's keys is durable, and a start seals a new one in any other state
-- `src/standby_key/chain.rs` — the vault, registry and schedule reads the standby key's rules make, at
-  the latest block the custody quorum agrees on: the key's state and what a vouch depends on
+- `src/standby_key/chain/mod.rs` — the vault, registry and schedule reads the standby key's rules make,
+  at the latest block the custody quorum agrees on: the key's state and what a vouch depends on;
+  `src/standby_key/chain/registration.rs` reads a candidate's registered release and, apart, its
+  approval
 - `src/standby_key/vouch.rs` — the standby key's attestation report data, the vouch request and
   reply, the client's request, the vouching enclave's handler (one-hour expiry bound), and the
   registration a vouch gives

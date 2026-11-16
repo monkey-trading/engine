@@ -124,6 +124,75 @@ async fn a_failed_recheck_drops_a_kept_key_whose_release_moved_or_lost_approval(
     }
 }
 
+/// A re-check that reads the kept key's registered release as moved refutes the key whatever read fails
+/// after that: the approval's read, the schedule's read of the key, or, once the attestation's own check
+/// read the move, the re-check's read of the registration, for a key the attestation names again or a
+/// new key for the new release. A failed read with no move read refutes nothing, and the key stays.
+#[tokio::test(start_paused = true)]
+async fn a_release_read_as_moved_refutes_a_kept_key_whatever_read_fails_after_it() {
+    let member = AccountId([MEMBER; 20]);
+    let moved_release = crate::tee::sealing::Release { launch_digest: [0x11; 48], config_sha256: [0xc2; 32] };
+    let moved = B256::from(moved_release.id());
+    type Failing = &'static [(&'static str, usize)];
+    let approval: Failing = &[("standby_release_approved", 0)];
+    let holder: Failing = &[("liveness_standby_holder", 0)];
+    // (case, attestation served: none, the kept key's, or a new key's for the moved release, failing calls)
+    let cases: [(&str, Option<bool>, Failing); 6] = [
+        ("the approval read fails", None, approval),
+        ("the schedule's read of the key fails", None, holder),
+        ("the approval read fails after the kept key's attestation", Some(false), approval),
+        ("the re-check's release read fails after the kept key's", Some(false), &[("standby_candidate", 1)]),
+        (
+            "the approval read and the re-check's release read fail after a new key's",
+            Some(true),
+            &[("standby_release_approved", 0), ("standby_candidate", 1)],
+        ),
+        (
+            "the key read and the re-check's reads fail after a new key's",
+            Some(true),
+            &[("liveness_standby_holder", 0), ("standby_candidate", 1)],
+        ),
+    ];
+    let mut counted = Vec::new();
+    for (case, served, failing) in cases {
+        let (rig, _) = attested_keyed("attested-moved-failing", member, |_, _| {}, |_| {}, 14).await;
+        match served {
+            None => rig.members.2.lock().unwrap().clear(),
+            Some(false) => {}
+            Some(true) => {
+                let dir = scratch_dir("attested-new-key");
+                let keys = StandbyKeys::sealed_for_test(&dir, moved_release.launch_digest, moved_release.config_sha256);
+                let attestation = request(&QUOTING, &MockAttestor, &keys, &DOMAIN.standby, member, TRUE_MS).await;
+                rig.members.2.lock().unwrap().insert("member:1".into(), attestation.unwrap());
+            }
+        }
+        rig.chain.set(|chain| {
+            chain.release = moved;
+            chain.failing = failing.to_vec();
+        });
+        tokio::time::sleep(MEMBERS_EVERY).await;
+        settle().await;
+        rig.answer(Some(14));
+        settle().await;
+        if rig.gate.confirmed() != 10 {
+            counted.push(case);
+        }
+        rig.task.abort();
+    }
+    assert_eq!(counted, Vec::<&str>::new(), "a key whose release moved counted");
+    for failing in [approval, holder] {
+        let (rig, _) = attested_keyed("attested-unmoved-failing", member, |_, _| {}, |_| {}, 14).await;
+        rig.members.2.lock().unwrap().clear();
+        rig.chain.set(|chain| chain.failing = failing.to_vec());
+        tokio::time::sleep(MEMBERS_EVERY).await;
+        settle().await;
+        rig.answer(Some(12));
+        settle().await;
+        assert_eq!(rig.gate.confirmed(), 12, "{failing:?}: a failed read refuted a key whose release stands");
+        rig.task.abort();
+    }
+}
+
 // ── Helpers ──
 
 /// A rule whose other member, once its promotable key is gone, signs its statuses with a new standby
