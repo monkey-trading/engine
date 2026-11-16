@@ -216,6 +216,34 @@ async fn a_crash_before_the_reseal_reopens_the_key_and_the_reseal_makes_it_the_t
     assert_resealed_once(&dir, key);
 }
 
+/// The schedule carries a promotion into its member's next drawn turn (`_carryNext`): past the boundary
+/// the key is still the vault's signer in the promotion's generation, so a crash before the reseal
+/// reopens it as the promotion's rather than seal a new key over the only copy. A drawn turn in another
+/// generation, or drawn for another member, leaves it no authority.
+#[tokio::test]
+async fn a_crash_before_the_reseal_reopens_the_key_past_the_boundary_into_its_members_drawn_turn() {
+    let dir = scratch_dir("standby-carried");
+    let chain = FakeChain::new();
+    let key = fresh_in(&dir).await.address();
+    chain.promote(CANDIDATE, key);
+    chain.draw_next(CANDIDATE, PROMOTION.generation);
+    let keys = promoted(start(&dir, &chain).await.unwrap());
+    keys.reseal(PROMOTION.generation).unwrap();
+    assert_resealed_once(&dir, key);
+    for (case, drawn, generation) in [
+        ("a fresh generation", CANDIDATE, PROMOTION.generation + 1),
+        ("another member", AccountId([0x77; 20]), PROMOTION.generation),
+    ] {
+        let dir = scratch_dir("standby-not-carried");
+        let chain = FakeChain::new();
+        let key = fresh_in(&dir).await.address();
+        chain.promote(CANDIDATE, key);
+        chain.draw_next(drawn, generation);
+        let (keys, generated) = standby(start(&dir, &chain).await.unwrap());
+        assert!(generated && keys.address() != key, "{case}: the key opened past the boundary");
+    }
+}
+
 #[tokio::test]
 async fn a_crash_during_the_reseal_leaves_a_partial_file_the_reseal_replaces() {
     let dir = scratch_dir("standby-crash-during");

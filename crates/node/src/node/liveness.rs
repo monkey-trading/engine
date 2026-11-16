@@ -138,7 +138,8 @@ pub(super) fn start(
         tasks.spawn(async move { ("standby renewal", renewal.run(trusted).await) });
     }
     let floor = started.promoted.map_or(0, |promotion| promotion.block);
-    spawn(cfg, wiring, (key, floor), released, sequencer, trusted, tasks)?;
+    let platform = started.store.map(|store| (cfg.tee.provider, store.platform()));
+    spawn(cfg, wiring, (key, floor, platform), released, sequencer, trusted, tasks)?;
     Ok(Serving { shared: Some(shared), vouching })
 }
 
@@ -188,14 +189,14 @@ pub(super) async fn watch_release(
     super::keys::watch_release(vault, store, every, trusted, assignments).await
 }
 
-/// Spawns the operator's rule for the enclave at `key`, reading the sequencer's `released` heads, and
-/// no block below `floor`, the one a promoted start read its promotion at.
+/// Spawns the operator's rule for the enclave at `key` on `platform`, reading the sequencer's `released`
+/// heads, and no block below `floor`, the one a promoted start read its promotion at.
 /// Error cases:
 /// - the custody quorum cannot be built
 fn spawn(
     cfg: &NodeConfig,
     wiring: Wiring,
-    (key, floor): (AccountId, u64),
+    (key, floor, platform): (AccountId, u64, Option<(crate::config::TeeProvider, crate::tee::sealing::Platform)>),
     released: watch::Receiver<Released>,
     sequencer: &mpsc::Sender<Request>,
     trusted: TrustedClock,
@@ -223,6 +224,7 @@ fn spawn(
             vault_signer: wiring.vault_signer,
             poll: crate::liveness::operator::POLL,
             floor,
+            platform,
         };
         ("liveness", operator.run().await)
     });

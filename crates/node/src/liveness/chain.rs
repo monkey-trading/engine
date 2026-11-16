@@ -124,7 +124,8 @@ pub(crate) struct Member {
     pub candidate: AccountId,
     /// Its registered handover endpoint, `host:port`, empty when it registered none.
     pub endpoint: String,
-    /// Its promotable standby key, `None` while it has none.
+    /// Its promotable standby key, `None` while it has none; the operator's rule gives a member with
+    /// none the key its link attests, once it verifies the attestation (`operator::attested`).
     pub standby: Option<AccountId>,
     /// The admin key its candidacy registered: the node that runs for it.
     pub admin_key: AccountId,

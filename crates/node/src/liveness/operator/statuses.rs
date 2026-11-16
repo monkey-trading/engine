@@ -118,8 +118,9 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         Ok(holder)
     }
 
-    /// `member`'s status for `request`, once it recovers to the member's promotable standby key over
-    /// `nonce` and names `epoch`; `None`, logged, otherwise.
+    /// `member`'s status for `request`, once it recovers to the member's standby key over `nonce`, its
+    /// promotable one or, lacking that, the one it attests (`attested`), and names `epoch`; `None`,
+    /// logged, otherwise.
     fn status(
         &self,
         member: Member,
@@ -130,7 +131,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         let deployment = (self.chain_id, self.vault);
         Box::pin(async move {
             let answered = async {
-                let key = member.standby.ok_or_else(|| anyhow::anyhow!("no promotable standby key"))?;
+                let key = member.standby.ok_or_else(|| anyhow::anyhow!("no promotable or attested standby key"))?;
                 anyhow::ensure!(!member.endpoint.is_empty(), "no registered handover endpoint");
                 let reply = tokio::time::timeout(STATUS_TIMEOUT, self.asking.ask(&member.endpoint, &request))
                     .await

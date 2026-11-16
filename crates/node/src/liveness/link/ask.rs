@@ -65,5 +65,6 @@ pub(crate) fn describe(reply: &Reply) -> String {
         Reply::Status { .. } => "a status".into(),
         Reply::Entries { entries } => format!("{} entries", entries.len()),
         Reply::Vouch { .. } => "a vouch".into(),
+        Reply::Attestation { .. } => "an attestation".into(),
     }
 }

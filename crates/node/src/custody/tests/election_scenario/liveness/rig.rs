@@ -127,6 +127,7 @@ impl Rig {
             vault_signer: watch::channel(None).0,
             poll: crate::liveness::operator::POLL,
             floor: 0,
+            platform: None,
         };
         tasks.push(tokio::spawn(async move {
             let _sequencer = sequencer;

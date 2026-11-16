@@ -32,6 +32,7 @@ struct Drive {
     gate: Gate,
     signed: watch::Receiver<Option<SignedHead>>,
     clock: Arc<TestClock>,
+    trusted: TrustedClock,
     tip: watch::Sender<Head>,
     task: JoinHandle<anyhow::Result<()>>,
 }
@@ -206,6 +207,44 @@ async fn a_tip_from_another_set_signs_no_head() {
     tokio::time::sleep(Duration::from_secs(30)).await;
     assert_eq!(chain.posts_v2().last().map(|(_, head)| head.confirmer), Some(Address::ZERO), "set 2's tip");
     drive.stop().await;
+}
+
+/// A confirmation, or a one-member set's exemption, lets a head be signed only until the boundary from
+/// which another set may apply, as it lets checkpoints pass: with the rule's read and the poster's own
+/// turn read both pinned before that boundary, no head goes out past it until a fresh read renews it.
+#[tokio::test(start_paused = true)]
+async fn past_the_boundary_another_set_may_apply_from_no_head_is_signed_until_a_read_renews_it() {
+    let confirmed = |seq| {
+        let (released, confirmer) = (Released { head: at(seq), stamp: stamp(seq) }, Address::repeat_byte(0xc1));
+        Signing::Confirmed(Signable { released, confirmer, scope: Some((1, 1)) })
+    };
+    let exempt = |_| Signing::Tip(Some((1, 1)));
+    let cases: [(&str, &dyn Fn(u64) -> Signing); 2] = [("a confirmation", &confirmed), ("an exempt tip", &exempt)];
+    for (case, signing) in cases {
+        let chain = FakeChain::new(None);
+        chain.name_turn(turn(GENERATION));
+        let drive = spawn(chain.clone(), Some((RELEASE, GENERATION)));
+        // The rule's last read, a minute before the boundary, holds until it.
+        let boundary = u64::try_from(TRUE_MS).unwrap() + 60_000;
+        drive.gate.deadline(Some(u64::MAX - 1), &drive.trusted);
+        drive.gate.holds_until(boundary);
+        drive.release(5);
+        drive.signing.send_replace(signing(5));
+        drive.clock.advance(Duration::from_secs(1));
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        assert_eq!(chain.posts_v2().len(), 1, "{case}: before the boundary");
+        // Past it by trusted time's upper bound, with no read since: nothing, at a newer seq included.
+        drive.clock.advance(Duration::from_secs(60));
+        drive.release(6);
+        drive.signing.send_replace(signing(6));
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert_eq!(chain.posts_v2().len(), 1, "{case}: a head past the boundary");
+        // A read at or past the boundary that names the same set renews it until the next one.
+        drive.gate.holds_until(boundary + 86_400_000);
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        assert_eq!(chain.posts_v2().last().map(|(_, head)| head.head), Some(at(6)), "{case}: once renewed");
+        drive.stop().await;
+    }
 }
 
 /// A node whose start check has not passed stays stopped, heads included: with a member's
@@ -395,14 +434,14 @@ fn spawn_retrying(chain: FakeChain, keys: Option<HeldKeys>, retry: Duration) -> 
         freeze: crate::log_heads::FreezeLatch::default(),
         confirmed: None,
         anchored: None,
-        trusted: Some(trusted),
+        trusted: Some(trusted.clone()),
         prefix_ring: Default::default(),
         stall_intervals: 2,
         heartbeat: Some(heartbeat),
     };
     let (sequencer, _from_poster) = tokio::sync::mpsc::channel(8);
     let task = tokio::spawn(poster.run(rx, sequencer));
-    Drive { released, signing, hold, gate, signed, clock, tip, task }
+    Drive { released, signing, hold, gate, signed, clock, trusted, tip, task }
 }
 
 /// Turn 20,400 at position 2 in `generation`, on a 60 s interval, read at block 100.

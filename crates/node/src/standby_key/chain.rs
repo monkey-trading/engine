@@ -52,6 +52,7 @@ sol! {
         address source;
     }
     function turnAt(uint64 timestamp) external view returns (uint64 turn, TurnReturn memory);
+    function turnOf(uint64 turn) external view returns (TurnReturn memory);
     struct AssignmentReturn {
         address candidate;
         address adminKey;
@@ -132,8 +133,9 @@ pub(crate) enum StandbyState {
     Promotable,
     /// The schedule has never taken it: a registration written or sent for it may still land.
     Unregistered,
-    /// It is the vault's signer by a promotion that is still its turn's latest assignment, under the
-    /// signer epoch the promotion started and the generation it reserved.
+    /// It is the vault's signer by a promotion that is still its turn's latest assignment, or carried
+    /// into the same member's next drawn turn, under the signer epoch the promotion started and the
+    /// generation it reserved.
     Promoted(Promotion),
     /// None of these: voided, replaced, or installed by a promotion its turn has moved past.
     Unusable(&'static str),
@@ -220,9 +222,11 @@ impl StandbyDomain {
 }
 
 /// What `key` is for `candidate` at the latest agreed block (see `StandbyState`). A promotion counts
-/// while the turn in effect at the block's time names it as its latest assignment, that assignment
-/// installed `key`, the vault still names `key` as its signer in the epoch the promotion started, and
-/// the turn still holds the generation it reserved.
+/// while the turn in effect at the block's time names it as its latest assignment, or, as the schedule
+/// carries a promotion into its member's next drawn turn (`_carryNext`), names that member drawn in the
+/// promotion's generation with the promotion as the latest assignment of the turn before; that
+/// assignment installed `key`, the vault still names `key` as its signer in the epoch the promotion
+/// started, and the turn in effect still holds the generation the promotion reserved.
 /// Error cases:
 /// - a read fails, or the schedule records a promotion with no generation
 pub(crate) async fn standby_state(
@@ -241,17 +245,24 @@ pub(crate) async fn standby_state(
     }
     let found = call(&block, "standby_turn", domain.schedule, turnAtCall { timestamp: block.time() }).await?;
     let (turn, named) = (found.turn, found._1);
-    if turn == 0 || named.reason != PROMOTED || named.candidate != candidate {
+    if turn == 0 || named.candidate != candidate {
         return Ok(StandbyState::Unusable("no promotion of the candidate is its turn's latest assignment"));
     }
-    let Some(promotion) = promotion_of(&block, domain, AccountId(key.0.0), turn, named.position).await? else {
-        return Ok(StandbyState::Unusable("the turn's latest promotion installed another key"));
+    let (turn, position) = match named.reason {
+        PROMOTED => (turn, named.position),
+        _ => {
+            let prior = call(&block, "standby_prior_turn", domain.schedule, turnOfCall { turn: named.prior }).await?;
+            (named.prior, prior.position)
+        }
+    };
+    let Some(promotion) = promotion_of(&block, domain, AccountId(key.0.0), turn, position).await? else {
+        return Ok(StandbyState::Unusable("no promotion in the turn in effect, or carried into it, installed the key"));
     };
     if !in_effect(&block, domain, AccountId(key.0.0), &promotion).await? {
         return Ok(StandbyState::Unusable("the vault no longer names the key in the epoch the promotion started"));
     }
     if named.generation != promotion.generation {
-        return Ok(StandbyState::Unusable("the member's release has moved since the promotion"));
+        return Ok(StandbyState::Unusable("the turn in effect holds another generation than the promotion's"));
     }
     Ok(StandbyState::Promoted(promotion))
 }
@@ -393,24 +404,35 @@ pub(crate) async fn vouch_view(
     candidate: AccountId,
     own: Option<AccountId>,
 ) -> anyhow::Result<VouchView> {
-    let block = chain.latest().await?;
+    vouch_view_at(&chain.latest().await?, domain, candidate, own).await
+}
+
+/// `vouch_view`, at `block`.
+/// Error cases:
+/// - a read fails
+pub(crate) async fn vouch_view_at(
+    block: &impl AgreedBlock,
+    domain: &StandbyDomain,
+    candidate: AccountId,
+    own: Option<AccountId>,
+) -> anyhow::Result<VouchView> {
     let candidate = Address::from(candidate.0);
-    let registered = call(&block, "standby_candidate", domain.registry, candidateOfCall { candidate }).await?;
+    let registered = call(block, "standby_candidate", domain.registry, candidateOfCall { candidate }).await?;
     let release = (!registered.adminKey.is_zero()).then_some(registered.release);
     let approved = match release {
         Some(release) => {
             let approval = keccak256((candidate, release).abi_encode());
-            call(&block, "standby_release_approved", domain.registry, releaseApprovedCall { approval }).await?
+            call(block, "standby_release_approved", domain.registry, releaseApprovedCall { approval }).await?
         }
         None => false,
     };
-    let signer = call(&block, "standby_signer", domain.vault, checkpointSignerCall {}).await?;
+    let signer = call(block, "standby_signer", domain.vault, checkpointSignerCall {}).await?;
     let own_promotable = match own {
         Some(own) => {
             let own = Address::from(own.0);
-            let holder = call(&block, "standby_holder", domain.schedule, standbyHolderCall { key: own }).await?;
+            let holder = call(block, "standby_holder", domain.schedule, standbyHolderCall { key: own }).await?;
             !holder.is_zero()
-                && call(&block, "standby_promotable", domain.schedule, promotableCall { candidate: holder }).await?
+                && call(block, "standby_promotable", domain.schedule, promotableCall { candidate: holder }).await?
                     == own
         }
         None => false,

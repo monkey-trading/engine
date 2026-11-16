@@ -73,10 +73,11 @@ impl Sequencers {
     }
 }
 
-/// A `TurnTaken` the engine accepted: the candidate whose turn it took, and the release it took it
-/// under.
+/// A `TurnTaken` the engine accepted: the turn, the candidate whose turn it took, and the release it
+/// took it under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Taking {
+    turn: u64,
     candidate: AccountId,
     release: B256,
 }
@@ -161,33 +162,36 @@ pub(crate) fn applies(engine: &Engine) -> bool {
 }
 
 /// The log's `TurnTaken` commands: the candidate and release each names, by the seq it was sequenced
-/// at, from the first command the replay that collected them applied; and the candidate of each
-/// promotion (#595) or skip (#596) the log mirrored, accepted or refused, by the seq of the mirror.
+/// at, from the first command the replay that collected them applied; and the turn and candidate of
+/// each promotion (#595) or skip (#596) the log mirrored, accepted or refused, by the seq of the mirror.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Takings {
     by_seq: BTreeMap<u64, Taking>,
     /// A promoted or skipped-to member sequences from its promotion or its take, before the finalised
-    /// mirror of it and its own `TurnTaken`, which a failure before then never logs.
-    promoted: BTreeMap<u64, BTreeSet<AccountId>>,
+    /// mirror of it and its own `TurnTaken`, which a failure before then never logs: each one's turn and
+    /// candidate.
+    promoted: BTreeMap<u64, BTreeSet<(u64, AccountId)>>,
     /// The first command seen: zero for a replay from genesis, past a snapshot's base for one from it.
     from: Option<u64>,
 }
 
 impl Takings {
     /// Notes the command at `seq` with the `events` it gave: a `TurnTaken` the engine accepted
-    /// records its candidate and release, and a promotion's assignment, accepted or refused, its
-    /// candidate.
+    /// records its turn, candidate and release, and a promotion's or a skip's assignment, accepted or
+    /// refused, its turn and candidate.
     pub(crate) fn command(&mut self, seq: u64, events: &[Event]) {
         self.from.get_or_insert(seq);
         for event in events {
-            if let Event::TurnAssigned { reason: TurnReason::Promotion | TurnReason::Skip, candidate, .. }
-            | Event::TurnRefused { cause: TurnReason::Promotion | TurnReason::Skip, candidate, .. } = event
+            if let Event::TurnAssigned { turn, reason: TurnReason::Promotion | TurnReason::Skip, candidate, .. }
+            | Event::TurnRefused { turn, cause: TurnReason::Promotion | TurnReason::Skip, candidate, .. } = event
             {
-                self.promoted.entry(seq).or_default().insert(*candidate);
+                self.promoted.entry(seq).or_default().insert((*turn, *candidate));
             }
         }
         let taken = events.iter().find_map(|event| match event {
-            Event::TurnTaken { candidate, release, .. } => Some(Taking { candidate: *candidate, release: *release }),
+            Event::TurnTaken { turn, candidate, release } => {
+                Some(Taking { turn: *turn, candidate: *candidate, release: *release })
+            }
             _ => None,
         });
         if let Some(taking) = taken {
@@ -209,14 +213,15 @@ impl Takings {
 
     /// Who sequenced the commands after `after`, the last verified head, through `through`, as
     /// `TurnTaken` records them: the latest one at or before the first of them, whose member sequenced
-    /// on from there, and each one after it; with the candidate of each promotion mirrored after that
-    /// latest one through `through`, whose member's commands may precede its mirror and its own
-    /// `TurnTaken`, if it ever logged one. With no verified head, as before the first check or once
-    /// a host kept the sealed one from a start, the range is the holding of the latest `TurnTaken` at
-    /// or before `through`: from genesis it would name every member that ever took a turn, and no
-    /// check could count again. `None` when no `TurnTaken` these records hold names who sequenced the
-    /// first of them: the operator before the log's first `TurnTaken`, which no record names, or the
-    /// holder before a snapshot's base.
+    /// on from there, and each one after it; with the candidate of each promotion or skip mirrored after
+    /// that latest one, at any seq, in its turn or a later one: the member's commands may precede its
+    /// mirror, which finality can hold past `through`, and its own `TurnTaken`, if it ever logged one,
+    /// while one in an earlier turn ended before that `TurnTaken`. With no verified head, as before the
+    /// first check or once a host kept the sealed one from a start, the range is the holding of the
+    /// latest `TurnTaken` at or before `through`: from genesis it would name every member that ever
+    /// took a turn, and no check could count again. `None` when no `TurnTaken` these records hold names
+    /// who sequenced the first of them: the operator before the log's first `TurnTaken`, which no record
+    /// names, or the holder before a snapshot's base.
     pub(crate) fn sequenced(&self, after: Option<u64>, through: u64) -> Option<Sequencers> {
         let first = match after {
             Some(after) => after.saturating_add(1),
@@ -233,9 +238,10 @@ impl Takings {
             sequencers.releases.insert(taking.release);
             sequencers
         });
-        let after_in_office = (std::ops::Bound::Excluded(since), std::ops::Bound::Included(through));
-        let promoted = self.promoted.range(after_in_office).flat_map(|(_, candidates)| candidates);
-        sequencers.candidates.extend(promoted);
+        let after_in_office = (std::ops::Bound::Excluded(since), std::ops::Bound::Unbounded);
+        let promoted = self.promoted.range(after_in_office).flat_map(|(_, promoted)| promoted);
+        let from_in_office = promoted.filter(|(turn, _)| *turn >= in_office.turn).map(|(_, candidate)| *candidate);
+        sequencers.candidates.extend(from_in_office);
         Some(sequencers)
     }
 

@@ -4,7 +4,8 @@
 //! a standby key the schedule lists as promotable, verifies that quote as a handover's predecessor
 //! verifies a successor's, checks the candidate's registration through the custody quorum, and signs
 //! the schedule's `vouchDigest` (`answer`), which the candidate registers with the key
-//! (`StandbyRegistration`). The member-to-member transport carries both messages.
+//! (`StandbyRegistration`). The member-to-member transport carries both messages. Until the key is
+//! registered, the operator's enclave checks the same quote (`admit`) to take the member's statuses.
 
 use std::time::Duration;
 
@@ -193,16 +194,7 @@ pub(crate) async fn answer<C: StandbyChain>(
         MAX_VOUCH_LIFETIME.as_secs()
     );
     let domain = &voucher.domain;
-    let release = Release { launch_digest: request.launch_digest.0, config_sha256: request.config_sha256.0 };
-    let tls = request.tls_public_key_sha256.0;
-    let bound = report_data(domain, request.candidate, request.key, &tls, &release, request.nonce, request.expiry);
-    let peer = evidence::verify(voucher.provider, &request.evidence, &bound, Some(latest / 1000), None)?;
-    ensure!(
-        peer.launch_digest == release.launch_digest,
-        "the quote proves measurement 0x{}, not the request's",
-        hex::encode(peer.launch_digest)
-    );
-    no_weaker(&voucher.platform, &peer)?;
+    let release = admit(request, domain, (voucher.provider, &voucher.platform), latest / 1000)?;
     let own = voucher.standby.map(StandbyKeys::address);
     let view = vouch_view(voucher.chain, domain, request.candidate, own).await?;
     let registered = view.release.with_context(|| format!("candidate {} is not registered", request.candidate))?;
@@ -224,6 +216,30 @@ pub(crate) async fn answer<C: StandbyChain>(
     };
     info!(candidate = %request.candidate, key = %request.key, voucher = %reply.voucher, "vouched for a standby key");
     Ok(reply)
+}
+
+/// The release `request`'s quote proves, once the quote binds the request's report data in `domain` at
+/// `at_secs` (Unix seconds), proves the request's measurement, and runs under a policy and TCB no
+/// weaker than `platform`'s, as a handover's predecessor checks a successor's.
+/// Error cases:
+/// - the quote does not verify, proves another measurement, or runs under a weaker policy or TCB
+pub(crate) fn admit(
+    request: &VouchRequest,
+    domain: &StandbyDomain,
+    (provider, platform): (TeeProvider, &Platform),
+    at_secs: i64,
+) -> anyhow::Result<Release> {
+    let release = Release { launch_digest: request.launch_digest.0, config_sha256: request.config_sha256.0 };
+    let tls = request.tls_public_key_sha256.0;
+    let bound = report_data(domain, request.candidate, request.key, &tls, &release, request.nonce, request.expiry);
+    let peer = evidence::verify(provider, &request.evidence, &bound, Some(at_secs), None)?;
+    ensure!(
+        peer.launch_digest == release.launch_digest,
+        "the quote proves measurement 0x{}, not the request's",
+        hex::encode(peer.launch_digest)
+    );
+    no_weaker(platform, &peer)?;
+    Ok(release)
 }
 
 /// The report data a standby key's quote binds: the purpose, the deployment, the candidate, the key,

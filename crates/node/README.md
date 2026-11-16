@@ -272,18 +272,23 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   confirmation the poster signs at, and the lag stop; `src/liveness/operator/fencing.rs` the fence tick;
   `src/liveness/operator/statuses.rs` how it asks the members and matches their statuses to its log;
   `src/liveness/operator/assess.rs` how members' statuses weigh against the log;
+  `src/liveness/operator/read.rs` its read of the chain and the set's members at one block;
+  `src/liveness/operator/attested.rs` the key a member with no promotable standby key confirms with,
+  once this enclave verifies its attestation;
   `src/liveness/operator/limits.rs` its pure limits (an exempt read's hold, the lag, refused rules);
   `src/liveness/operator/stamps.rs` the released heads' stamps, sampled as the sequencer releases them;
   `src/liveness/operator/tests.rs` drives it against fake members, chain and sequencer, with
   `tests/assess.rs`, `tests/members.rs` (every member but this node's own is asked),
+  `tests/attested.rs` (a member's attested standby key, and the attestations that count for nothing),
   `tests/exemptions.rs` (reads under which no promotion can pass, and how long each holds),
   `tests/copies.rs` (a reopened predecessor beside its successor) and
   `tests/rounds.rs` (the vault's signer before any exemption, a retired signer, confirmations per set,
   rounds while reads fail, a full set read within an interval, a former holder's tail, a promoted
   operator's blocked reads, the incumbent beside an orphaned holder)
-- `src/liveness/link.rs` — the member link: statuses, entries and vouches a member answers on its
-  handover endpoint while it follows, and the operator's log checks (`log_check::answer`) on the same
-  endpoint; `src/liveness/link/ask.rs` how a node asks and checks a status;
+- `src/liveness/link.rs` — the member link: statuses, entries, vouches and its standby key's
+  attestation a member answers on its handover endpoint while it follows, and the operator's log checks
+  (`log_check::answer`) on the same endpoint; `src/liveness/link/ask.rs` how a node asks and checks a
+  status; `src/liveness/link/attested.rs` the attestation the copy keeps to answer with;
   `src/liveness/link/state.rs` the copy's state, and which key a head that differs from it is evidence
   against;
   `src/liveness/link/slots.rs` its places, per peer address (IPv6 by /64), with the oldest connection

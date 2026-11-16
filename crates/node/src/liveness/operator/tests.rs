@@ -35,15 +35,24 @@ const OWN: AccountId = AccountId([0x0e; 20]);
 /// A member as a test sets it: its candidate, its standby key, and its status, if durable.
 type Answering = (AccountId, Arc<EnclaveKey>, Option<Status>);
 
-/// Members that answer their status as a test sets it, by endpoint.
+/// Members that answer their status as a test sets it, by endpoint, after the delay a test sets, and
+/// their standby key's attestation.
 #[derive(Clone, Default)]
-struct Members(Arc<Mutex<BTreeMap<String, Answering>>>, Arc<Mutex<BTreeMap<String, Duration>>>);
+struct Members(
+    Arc<Mutex<BTreeMap<String, Answering>>>,
+    Arc<Mutex<BTreeMap<String, Duration>>>,
+    Arc<Mutex<BTreeMap<String, crate::standby_key::vouch::VouchRequest>>>,
+);
 
 impl Asking for Members {
     async fn ask(&self, endpoint: &str, request: &Request) -> anyhow::Result<Reply> {
         let delay = self.1.lock().unwrap().get(endpoint).copied();
         if let Some(delay) = delay {
             tokio::time::sleep(delay).await;
+        }
+        if let Request::Attestation = request {
+            let attested = self.2.lock().unwrap().get(endpoint).cloned().context("no attestation")?;
+            return Ok(Reply::Attestation { request: Box::new(attested) });
         }
         let (member, key, status) = self.0.lock().unwrap().get(endpoint).cloned().context("unreachable")?;
         let Request::Status { epoch, nonce } = request else { anyhow::bail!("only statuses") };
@@ -380,6 +389,8 @@ impl Rig {
             }
         });
         let gate = Gate::closed();
+        let mock = crate::tee::sealing::MockSealer { launch_digest: [0x11; 48] };
+        let platform = Some((crate::config::TeeProvider::Mock, crate::tee::sealing::Sealer::platform(&mock).unwrap()));
         let operator = Operator {
             chain: chain.clone(),
             asking: members.clone(),
@@ -397,6 +408,7 @@ impl Rig {
             vault_signer: watch::channel(None).0,
             poll: TEST_POLL,
             floor,
+            platform,
         };
         let task = tokio::spawn(async move {
             let _sequencer = sequencer;
@@ -439,6 +451,7 @@ fn seconds(ms: Millis) -> u64 {
 }
 
 mod assess;
+mod attested;
 mod copies;
 mod exemptions;
 mod members;

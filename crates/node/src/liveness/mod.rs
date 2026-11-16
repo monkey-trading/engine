@@ -80,8 +80,8 @@ struct GateState {
     /// The trusted clock the deadline is read against, which the operator's rule sets once.
     clock: std::sync::OnceLock<crate::trusted_time::TrustedClock>,
     /// The time in milliseconds from which another set than the last read's may apply, past which no
-    /// checkpoint passes on that read's confirmation or exemption until a fresh read renews it;
-    /// `u64::MAX` with none.
+    /// checkpoint passes and no head is signed on that read's confirmation or exemption until a fresh
+    /// read renews it; `u64::MAX` with none.
     holds_until: AtomicU64,
 }
 
@@ -208,15 +208,21 @@ impl Gate {
     /// read: a checkpoint is signed at no later seq. Either stands only until another set may apply
     /// (`holds_until`), and none past it until a fresh read renews it.
     pub(crate) fn confirmed(&self) -> u64 {
-        let until = self.0.holds_until.load(Ordering::SeqCst);
-        match until != u64::MAX && self.reached(until) {
-            true => 0,
-            false => self.0.confirmed.load(Ordering::SeqCst),
+        match self.holds() {
+            true => self.0.confirmed.load(Ordering::SeqCst),
+            false => 0,
         }
     }
 
+    /// Whether the last read's confirmations, or its exemption, still stand: trusted time's upper bound
+    /// has not reached the boundary from which another set may apply (`holds_until`).
+    pub(crate) fn holds(&self) -> bool {
+        let until = self.0.holds_until.load(Ordering::SeqCst);
+        until == u64::MAX || !self.reached(until)
+    }
+
     /// Records `until_ms`, from which another set than the read's may apply: the confirmations taken
-    /// under that read let checkpoints pass only until then.
+    /// under that read let checkpoints pass, and heads be signed, only until then.
     pub(crate) fn holds_until(&self, until_ms: u64) {
         self.0.holds_until.store(until_ms, Ordering::SeqCst);
     }
