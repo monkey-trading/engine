@@ -109,7 +109,8 @@ pub(crate) struct StatusView {
 
 impl Status {
     /// A status that reads the poster's rollback latch, if the node runs one.
-    pub(crate) fn watching(rollback: Option<crate::log_heads::FreezeLatch>, metrics: &crate::metrics::Metrics) -> Self {
+    pub(crate) fn watching(poster: Option<&crate::log_heads::Publisher>, metrics: &crate::metrics::Metrics) -> Self {
+        let rollback = poster.map(|poster| poster.freeze.clone());
         Self { rollback, log_sync_held: Some(metrics.log_sync_held.clone()), ..Self::default() }
     }
 

@@ -255,8 +255,7 @@ async fn serve_node(
     seq_cfg.history_sealing = history.sealing();
     seq_cfg.log_heads = log_heads_setup.as_ref().map(|setup| setup.publisher());
     let published = crate::handover::Published::new(stream_tx.subscribe(), log.last_seq(), log.last_checkpoint());
-    let status =
-        crate::status::Status::watching(seq_cfg.log_heads.as_ref().map(|poster| poster.freeze.clone()), &metrics);
+    let status = crate::status::Status::watching(seq_cfg.log_heads.as_ref(), &metrics);
     let mut seq = Sequencer::recover_from(log, seq_cfg, key.clone(), stream_tx.clone(), withdrawals_tx)
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // Before activation and genesis sequence, so the record sees every command the log will hold.
