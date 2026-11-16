@@ -390,12 +390,13 @@ async fn enclave_head(
     let turn = heads.turn().await.unwrap().expect("a turn names the operator");
     let bound = Assignment::held(&turn, Some(keys));
     let inputs = Inputs {
-        signing: Signing::Tip,
+        signing: Signing::Tip(Some((epoch, turn.set))),
         tip: released,
         hold: Hold::Live,
         parent,
         reached: Some(reached),
         last_signed: 0,
+        epoch,
     };
     let head = next(&turn, bound, Some(keys), inputs).expect("a head to sign");
     let signature = key.sign_digest(head.digest(31337, vault, epoch)).parse().unwrap();

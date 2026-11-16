@@ -4,17 +4,12 @@
 //! that encoding also takes, so such a write can wait for a scrape to finish encoding that metric.
 //! Labels name markets, venues, and reasons, never accounts.
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 mod listener;
+pub use listener::router;
 pub(crate) use listener::{alongside, bind};
 
-use axum::Router;
-use axum::extract::State;
-use axum::http::header::CONTENT_TYPE;
-use axum::response::IntoResponse;
-use axum::routing::get;
 use engine_core::Fixed;
 use engine_core::deposits::DepositReject;
 use engine_core::event::{Event, Reject};
@@ -26,8 +21,6 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::metrics::histogram::{Histogram, exponential_buckets};
 use prometheus_client::registry::Registry;
-
-const CONTENT_TYPE_OPENMETRICS: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 /// Every `kind` a typed rejection reason can have; see `reject_kind`.
 const REJECT_KINDS: [&str; 35] = [
     "access",
@@ -409,16 +402,6 @@ impl Metrics {
         encode(&mut text, &self.registry).expect("metrics encode into a String");
         text
     }
-}
-
-/// `GET /metrics`, for the operator listener.
-pub fn router(metrics: Arc<Metrics>) -> Router {
-    Router::new().route("/metrics", get(scrape)).with_state(metrics)
-}
-
-/// Serves the current metrics.
-async fn scrape(State(metrics): State<Arc<Metrics>>) -> impl IntoResponse {
-    ([(CONTENT_TYPE, CONTENT_TYPE_OPENMETRICS)], metrics.encode())
 }
 
 /// A custody receipt rejection reason as the public log names it.

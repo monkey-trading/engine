@@ -1,6 +1,7 @@
 use super::*;
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use engine_core::Engine;
 use engine_core::command::{AdminCommand, Command, Sequenced};
@@ -13,6 +14,7 @@ use engine_core::types::{AccountId, Millis, Side};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+use super::listener::CONTENT_TYPE_OPENMETRICS;
 use crate::NodeConfig;
 use crate::sequencer::genesis_commands;
 use crate::test_support::every_event;
