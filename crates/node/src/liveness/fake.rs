@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::sol_types::SolCall;
-use anyhow::bail;
+use anyhow::{bail, ensure};
 use engine_core::types::AccountId;
 
 use crate::liveness::chain::{
@@ -70,6 +70,8 @@ pub(crate) struct ChainState {
     pub holders: Vec<(Address, Address)>,
     /// Whether the timelock approved every candidate's registered release (`release`).
     pub approved: bool,
+    /// The calls that fail, by operation, each after answering the given number more times.
+    pub failing: Vec<(&'static str, usize)>,
 }
 
 /// A chain whose latest block's answers a test sets.
@@ -108,6 +110,7 @@ impl Default for ChainState {
             latency: std::time::Duration::ZERO,
             holders: Vec::new(),
             approved: true,
+            failing: Vec::new(),
         }
     }
 }
@@ -154,12 +157,17 @@ impl AgreedBlock for FakeBlock<'_> {
         B256::from(U256::from(self.number()))
     }
 
-    async fn call(&self, _operation: &'static str, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
+    async fn call(&self, operation: &'static str, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
         let latency = self.0.0.lock().unwrap().latency;
         if !latency.is_zero() {
             tokio::time::sleep(latency).await;
         }
-        answer(&self.0.0.lock().unwrap(), to, &data).map(Bytes::from)
+        let mut chain = self.0.0.lock().unwrap();
+        if let Some((_, answers)) = chain.failing.iter_mut().find(|(failing, _)| *failing == operation) {
+            ensure!(*answers > 0, "{operation} failed");
+            *answers -= 1;
+        }
+        answer(&chain, to, &data).map(Bytes::from)
     }
 }
 

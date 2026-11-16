@@ -6,13 +6,16 @@
 
 use std::future::Future;
 
-use alloy::primitives::{Address, B256, Bytes, keccak256};
+use alloy::primitives::{Address, B256, Bytes};
 use alloy::sol;
-use alloy::sol_types::{SolCall, SolValue};
+use alloy::sol_types::SolCall;
 use anyhow::{Context, ensure};
 use engine_core::types::AccountId;
 
 use crate::liveness::chain::rotationStateCall;
+
+mod registration;
+pub(crate) use registration::{registered_release, registration_at, release_approved};
 
 /// The reason a promotion's assignment records, as `OperatorSchedule.PROMOTED` declares it.
 const PROMOTED: u8 = 2;
@@ -424,26 +427,6 @@ pub(crate) async fn vouch_view(
     own: Option<AccountId>,
 ) -> anyhow::Result<VouchView> {
     vouch_view_at(&chain.latest().await?, domain, candidate, own).await
-}
-
-/// `candidate`'s registered release at `block` (`None` while unregistered), and whether the timelock
-/// approved it for the candidate. Error cases: a read fails.
-pub(crate) async fn registration_at(
-    block: &impl AgreedBlock,
-    domain: &StandbyDomain,
-    candidate: AccountId,
-) -> anyhow::Result<(Option<B256>, bool)> {
-    let candidate = Address::from(candidate.0);
-    let registered = call(block, "standby_candidate", domain.registry, candidateOfCall { candidate }).await?;
-    let release = (!registered.adminKey.is_zero()).then_some(registered.release);
-    let approved = match release {
-        Some(release) => {
-            let approval = keccak256((candidate, release).abi_encode());
-            call(block, "standby_release_approved", domain.registry, releaseApprovedCall { approval }).await?
-        }
-        None => false,
-    };
-    Ok((release, approved))
 }
 
 /// The turn in effect at the latest agreed block when the schedule names `candidate` for it in
