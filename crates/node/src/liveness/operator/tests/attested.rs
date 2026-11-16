@@ -62,8 +62,9 @@ async fn a_failed_recheck_keeps_the_verified_attested_key_until_a_check_refutes_
     assert_eq!(rig.gate.confirmed(), 10, "the attested key's status confirmed nothing");
     // The member's attestation fails to answer at the next members read, as its status still does.
     rig.members.2.lock().unwrap().clear();
-    rig.answer(Some(12));
     tokio::time::sleep(MEMBERS_EVERY).await;
+    settle().await;
+    rig.answer(Some(12));
     settle().await;
     assert_eq!(rig.gate.confirmed(), 12, "one failed re-check dropped the key");
     // The schedule takes the key: the next failed re-check is refuted by it, and the status counts for nothing.
