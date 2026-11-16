@@ -40,6 +40,7 @@ async fn a_copy_lacking_either_prefix_the_promotion_fixed_names_what_it_lacks() 
         checkpoint_root: checkpoint.root.parse().unwrap(),
         at: 0,
         block: 0,
+        carried: 20_400,
     };
     assert_eq!(missing(replica, &promotion), None, "both prefixes held");
     let ahead = Promotion { head_seq: last + 3, ..promotion };
@@ -204,4 +205,5 @@ const PROMOTION: Promotion = Promotion {
     checkpoint_root: B256::repeat_byte(0x7e),
     at: 0,
     block: 0,
+    carried: 20_400,
 };

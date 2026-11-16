@@ -76,6 +76,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         operator: Option<&Followed>,
     ) -> anyhow::Result<(Taken, Ready)> {
         let (sources, mut prepared) = self.prepare_take(turn).await?;
+        // The reassignments the start's own log check counts, read with the rest: none after the confirmation.
+        let reassigned = crate::node::log_check::read_reassigned(&self.vault, turn.turn, None).await?;
         let read = Ready::read(
             self.cfg,
             &self.start,
@@ -85,7 +87,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             (turn, prepared.generation),
             self.time.sample(),
         );
-        let ready = read.await?;
+        let mut ready = read.await?;
+        ready.reassigned = Some(reassigned);
         prepared.posted = ready.heads.and_then(|heads| heads.newest).map(|(_, head)| head);
         // The reads took time: one short stint catches the copy up to the incumbent, so the tail
         // stays short. A replica that refuses an entry must be rebuilt; any other failure leaves the

@@ -45,6 +45,7 @@ async fn a_promoted_member_keeps_its_copy_and_extends_the_vaults_latest_under_it
         checkpoint_root: anchor.root.parse().unwrap(),
         at: 0,
         block: 0,
+        carried: 20_400,
     };
     let sealer = MockSealer { launch_digest: DIGEST };
     let sealing = cfg.tee.sealing.as_ref().unwrap();
@@ -60,6 +61,7 @@ async fn a_promoted_member_keeps_its_copy_and_extends_the_vaults_latest_under_it
         sample: sample_around(&crate::clock::SystemClock),
         certificates: None,
         promoted: Some(promotion),
+        reassigned: None,
     };
     let moved = Moved { after: last, entries: 0, bytes: 0 };
     let start = Start { replica: Replica { follower, stats, history, marks: Default::default() }, store, ready, moved };
@@ -148,6 +150,7 @@ async fn a_promoted_start_checks_its_staking_config_against_the_contract() {
         checkpoint_root: Default::default(),
         at: 0,
         block: 0,
+        carried: 1,
     };
     let sample = std::future::ready(Err(anyhow::anyhow!("the start sampled time after its staking check failed")));
     let start = crate::node::KeyStart::default();

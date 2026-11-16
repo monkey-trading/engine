@@ -128,6 +128,7 @@ impl Rig {
             poll: crate::liveness::operator::POLL,
             floor: 0,
             platform: None,
+            kept: Default::default(),
         };
         tasks.push(tokio::spawn(async move {
             let _sequencer = sequencer;

@@ -225,6 +225,7 @@ const PROMOTION: Promotion = Promotion {
     checkpoint_root: B256::repeat_byte(0x7e),
     at: 0,
     block: 0,
+    carried: 9,
 };
 
 // ── Helpers ──

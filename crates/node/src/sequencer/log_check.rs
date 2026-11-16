@@ -85,6 +85,11 @@ impl LogCheck {
         self.retarget();
     }
 
+    /// Notes that the command at `seq`, which `command` notes the events of next, was stamped `ts`.
+    pub(super) fn stamped(&mut self, seq: u64, ts: engine_core::types::Millis) {
+        self.takings.stamped(seq, ts);
+    }
+
     /// Notes the command at `seq` with the `events` it gave (see `Takings::command` and `retarget`).
     pub(super) fn command(&mut self, seq: u64, events: &[Event]) {
         self.takings.command(seq, events);

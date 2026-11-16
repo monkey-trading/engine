@@ -119,6 +119,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         // Before the start's reads open the member's certificate store, a restart's included.
         let tls_key_sha256 = Sha256::digest(store.keys().tls_key()?.subject_public_key_info()).into();
         crate::node::member::standby::certificate::promoted(self.cfg, &self.start, &tls_key_sha256);
+        let held = (promotion.turn, promotion.position, promotion.carried);
+        let reassigned = crate::node::log_check::read_reassigned(&self.vault, promotion.turn, Some(held)).await?;
         let read = Ready::read_promoted(
             self.cfg,
             &self.start,
@@ -129,7 +131,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             promotion,
             self.time.sample(),
         );
-        let ready = read.await?;
+        let mut ready = read.await?;
+        ready.reassigned = Some(reassigned);
         info!(turn = promotion.turn, position = promotion.position, %signer, after = tip,
             "promoted: starting from the copy under the standby key");
         let moved = Moved { after: before, entries: tip.saturating_sub(before), bytes: 0 };

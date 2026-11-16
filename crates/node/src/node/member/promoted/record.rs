@@ -84,6 +84,7 @@ impl Record {
             checkpoint_root,
             at,
             block,
+            carried: _,
         } = promotion;
         Self {
             candidate,
@@ -117,6 +118,7 @@ impl Record {
             checkpoint_root: self.checkpoint_root,
             at: self.at,
             block: self.block,
+            carried: self.turn,
         }
     }
 

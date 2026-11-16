@@ -411,6 +411,7 @@ impl Rig {
             poll: TEST_POLL,
             floor,
             platform,
+            kept: Default::default(),
         };
         let task = tokio::spawn(async move {
             let _sequencer = sequencer;

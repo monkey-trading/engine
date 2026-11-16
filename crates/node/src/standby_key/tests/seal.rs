@@ -251,6 +251,24 @@ async fn a_crash_before_the_reseal_reopens_the_key_past_the_boundaries_into_its_
     }
 }
 
+/// The promotion a restart finds names the turn in effect it is carried into, which the start publishes
+/// the generation of (`Promotion::generations`): the promotion's own turn, or the member's drawn turn.
+#[tokio::test]
+async fn a_promotion_found_past_the_boundary_names_the_drawn_turn_it_is_carried_into() {
+    let key = AccountId([0x5b; 20]);
+    let chain = FakeChain::new();
+    chain.promote(CANDIDATE, key);
+    let chain: &FakeChain = &chain;
+    let state = || async { crate::standby_key::chain::standby_state(chain, &DOMAIN, CANDIDATE, key).await.unwrap() };
+    let StandbyState::Promoted(own) = state().await else { panic!("the promotion's own turn") };
+    assert_eq!((own.turn, own.carried), (PROMOTION.turn, PROMOTION.turn));
+    chain.draw_next(CANDIDATE, PROMOTION.generation);
+    let StandbyState::Promoted(carried) = state().await else { panic!("the carried turn") };
+    assert!(carried.same(&own), "a later read of the same promotion differs");
+    assert_eq!((carried.turn, carried.carried), (PROMOTION.turn, PROMOTION.turn + 1));
+    assert_eq!(carried.generations(), [(PROMOTION.turn, 7), (PROMOTION.turn + 1, 7)].into());
+}
+
 /// A promotion continued through more drawn turns than the walk follows is not proven unusable: the
 /// start fails and the seal stays, while one at the limit still opens.
 #[tokio::test]

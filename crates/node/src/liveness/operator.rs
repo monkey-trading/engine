@@ -146,6 +146,8 @@ pub(crate) struct Operator<C, A> {
     /// This enclave's attestation provider and sealed platform, which a member's standby key's
     /// attestation is checked against; `None` without sealed keys, when only promotable keys count.
     pub platform: Option<(TeeProvider, Platform)>,
+    /// The attested keys it verified, which a failed re-check keeps (`attested`).
+    pub kept: attested::Kept,
 }
 
 impl<C: StandbyChain, A: Asking> Operator<C, A> {

@@ -174,7 +174,8 @@ async fn serve_node(
     let Recovered { mut log, history: history_plan, pending: log_heads_pending, anchor, stats } =
         recovery::recover(cfg, &key, checkpoint_setup.as_ref(), &marks, replica, &metrics).await?;
     let promoted = ready.as_ref().and_then(|ready| ready.promoted);
-    log_check::after_start(store.as_deref(), cfg.operator()?.address, &log, promoted.map(|p| p.checkpoint_seq))
+    let read = ready.as_ref().and_then(|ready| ready.reassigned.as_ref());
+    log_check::after_start(store.as_deref(), cfg.operator()?.address, &log, promoted.map(|p| p.checkpoint_seq), read)
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // Refuses a log the on-chain posted head does not hold (Critical `log_rollback` names the range).
     let mut log_heads_setup = crate::log_heads::setup::startup(log_heads_pending, &log)?;

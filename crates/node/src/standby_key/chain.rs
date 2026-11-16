@@ -163,14 +163,23 @@ pub(crate) struct Promotion {
     pub at: u64,
     /// The number of the agreed block it was read at: no block below it says anything of it.
     pub block: u64,
+    /// The turn in effect the promotion's generation is carried into at that block: `turn`, or the same
+    /// member's drawn turn that continues it (`_carryNext`), which a start publishes the generation of.
+    pub carried: u64,
 }
 
 impl Promotion {
+    /// The generation the promotion reserved, by the turn it is the schedule's for and the turn in effect
+    /// it is carried into, which a start publishes, so its first command in either is its `TurnTaken`.
+    pub(crate) fn generations(&self) -> std::collections::BTreeMap<u64, u64> {
+        [(self.turn, self.generation), (self.carried, self.generation)].into()
+    }
+
     /// Whether `other` is this promotion: the same assignment, signer epoch, generation and
-    /// commitments. The block time and the block read are no part of it: a reorg that includes the
-    /// same promotion again at a later block fixes the same history.
+    /// commitments. The block time, the block read and the turn carried into are no part of it: a reorg
+    /// that includes the same promotion again at a later block fixes the same history.
     pub(crate) fn same(&self, other: &Promotion) -> bool {
-        Self { at: 0, block: 0, ..*self } == Self { at: 0, block: 0, ..*other }
+        Self { at: 0, block: 0, carried: 0, ..*self } == Self { at: 0, block: 0, carried: 0, ..*other }
     }
 }
 
@@ -271,7 +280,7 @@ pub(crate) async fn standby_state(
     if named.generation != promotion.generation {
         return Ok(StandbyState::Unusable("the turn in effect holds another generation than the promotion's"));
     }
-    Ok(StandbyState::Promoted(promotion))
+    Ok(StandbyState::Promoted(Promotion { carried: found.turn, ..promotion }))
 }
 
 /// The promotion the schedule records for assignment `(turn, position)` at `block`, if one installed
@@ -303,6 +312,7 @@ pub(crate) async fn promotion_of(
         checkpoint_root: assignment.checkpointRoot,
         at: assignment.at,
         block: block.number(),
+        carried: turn,
     }))
 }
 

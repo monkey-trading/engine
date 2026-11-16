@@ -131,6 +131,7 @@ async fn run_member(
         sample: sample_around(&crate::clock::SystemClock),
         certificates: None,
         promoted: None,
+        reassigned: None,
     };
     let moved = Moved { after: last, entries: 0, bytes: 0 };
     let marks = Default::default();

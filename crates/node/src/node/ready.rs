@@ -55,6 +55,9 @@ pub(crate) struct Ready {
     /// The promotion that made this member the operator, for a promoted start (#595): its
     /// checkpoints wait for the promotion's finality, and its reorg stops it.
     pub promoted: Option<crate::standby_key::chain::Promotion>,
+    /// The schedule's reassignments the start's own log check reads (`log_check::read_reassigned`), set
+    /// by the member's start, before it connects.
+    pub reassigned: Option<crate::log_check::Reassigned>,
 }
 
 /// A member's start: its replica, the keys its tail handover sealed, what it read before
@@ -135,6 +138,7 @@ impl Ready {
             sample,
             certificates,
             promoted: None,
+            reassigned: None,
         })
     }
 
@@ -203,7 +207,8 @@ impl Ready {
             None => None,
         };
         let heads = crate::log_heads::setup::read_heads(cfg, signer).await?;
-        let generations = BTreeMap::from([(promotion.turn, promotion.generation)]);
+        // The turn in effect the generation is carried into too, so the first command there is its `TurnTaken`.
+        let generations = promotion.generations();
         let sample = sample.await.context("taking the trusted time sample the start stamps under")?;
         Ok(Self {
             setup,
@@ -215,6 +220,7 @@ impl Ready {
             sample,
             certificates,
             promoted: Some(promotion),
+            reassigned: None,
         })
     }
 }

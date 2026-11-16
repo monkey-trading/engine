@@ -54,6 +54,28 @@ async fn an_attestation_the_member_cannot_stand_on_confirms_nothing() {
     rig.task.abort();
 }
 
+/// A member whose attested key an earlier read verified keeps it through a re-check that fails once, its
+/// statuses still counting, until a check refutes the key: the schedule has taken it.
+#[tokio::test(start_paused = true)]
+async fn a_failed_recheck_keeps_the_verified_attested_key_until_a_check_refutes_it() {
+    let (rig, key) = attested_keyed("attested-kept", AccountId([MEMBER; 20]), |_, _| {}, |_| {}, 14).await;
+    assert_eq!(rig.gate.confirmed(), 10, "the attested key's status confirmed nothing");
+    // The member's attestation fails to answer at the next members read, as its status still does.
+    rig.members.2.lock().unwrap().clear();
+    rig.answer(Some(12));
+    tokio::time::sleep(MEMBERS_EVERY).await;
+    settle().await;
+    assert_eq!(rig.gate.confirmed(), 12, "one failed re-check dropped the key");
+    // The schedule takes the key: the next failed re-check is refuted by it, and the status counts for nothing.
+    rig.chain.set(|chain| chain.holders.push((key, Address::repeat_byte(MEMBER))));
+    tokio::time::sleep(MEMBERS_EVERY).await;
+    settle().await;
+    rig.answer(Some(14));
+    settle().await;
+    assert_eq!(rig.gate.confirmed(), 12, "a refuted key still confirmed");
+    rig.task.abort();
+}
+
 // ── Helpers ──
 
 /// A rule whose other member, once its promotable key is gone, signs its statuses with a new standby
@@ -70,7 +92,18 @@ async fn attested_as(
     change: impl FnOnce(&mut ChainState, Address),
     tamper: impl FnOnce(&mut VouchRequest),
 ) -> Rig {
-    let rig = Rig::spawn(10);
+    attested_keyed(name, attesting, change, tamper, 10).await.0
+}
+
+/// `attested_as` over a log whose tip is `tip`, with the standby key the member attests too.
+async fn attested_keyed(
+    name: &str,
+    attesting: AccountId,
+    change: impl FnOnce(&mut ChainState, Address),
+    tamper: impl FnOnce(&mut VouchRequest),
+    tip: u64,
+) -> (Rig, Address) {
+    let rig = Rig::spawn(tip);
     let keys = StandbyKeys::for_test(&scratch_dir(name));
     let mut attestation = request(&QUOTING, &MockAttestor, &keys, &DOMAIN.standby, attesting, TRUE_MS).await.unwrap();
     tamper(&mut attestation);
@@ -87,5 +120,5 @@ async fn attested_as(
     // The members the first read listed are read again once they are a minute old.
     tokio::time::sleep(MEMBERS_EVERY).await;
     settle().await;
-    rig
+    (rig, key)
 }

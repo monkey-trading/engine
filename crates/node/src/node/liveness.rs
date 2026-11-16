@@ -225,6 +225,7 @@ fn spawn(
             poll: crate::liveness::operator::POLL,
             floor,
             platform,
+            kept: Default::default(),
         };
         ("liveness", operator.run().await)
     });

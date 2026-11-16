@@ -403,6 +403,7 @@ impl Sequencer {
         let reinstated = reinstated_receipt(&sequenced.cmd, &events);
         self.access_alerts.note(&self.engine, &sequenced.cmd, &events);
         self.report_marks(&sequenced, &events);
+        self.log_check.stamped(sequenced.seq, sequenced.ts);
         self.log_check.command(sequenced.seq, &events);
         self.next_seq += 1;
         self.last_ts = ts;
