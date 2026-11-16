@@ -360,11 +360,8 @@ impl CheckpointChain for CheckpointRpc {
         self.read_turn_order(at, turn).await
     }
 
-    async fn reassigned(
-        &self,
-        turns: std::ops::Range<u64>,
-    ) -> anyhow::Result<std::collections::BTreeSet<engine_core::types::AccountId>> {
-        self.read_reassigned(turns).await
+    async fn reassignments(&self, turns: std::ops::Range<u64>) -> anyhow::Result<Vec<crate::checkpoints::Assigned>> {
+        self.read_reassignments(turns).await
     }
 
     async fn handover_source_at(

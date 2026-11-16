@@ -251,6 +251,26 @@ async fn a_crash_before_the_reseal_reopens_the_key_past_the_boundaries_into_its_
     }
 }
 
+/// A promotion continued through more drawn turns than the walk follows is not proven unusable: the
+/// start fails and the seal stays, while one at the limit still opens.
+#[tokio::test]
+async fn a_promotion_carried_past_the_walks_limit_keeps_the_seal() {
+    for (draws, opens) in [(64, true), (65, false)] {
+        let dir = scratch_dir("standby-carried-far");
+        let chain = FakeChain::new();
+        let key = fresh_in(&dir).await.address();
+        chain.promote(CANDIDATE, key);
+        (0..draws).for_each(|_| chain.draw_next(CANDIDATE, PROMOTION.generation));
+        match start(&dir, &chain).await {
+            Ok(opened) => assert!(opens && promoted(opened).address() == key, "{draws} draws opened the key"),
+            Err(e) => assert!(!opens && format!("{e:#}").contains("drawn turns back"), "{draws} draws: {e:#}"),
+        }
+        let sealed = ReleaseFile::new(&dir, STANDBY, sealer(), CONFIG).unwrap().read().unwrap().expect("the seal");
+        let sealed: KeySet = serde_json::from_slice(&sealed).unwrap();
+        assert_eq!(AccountId(sealed.enclave_key().unwrap().address()), key, "{draws} draws replaced the seal");
+    }
+}
+
 #[tokio::test]
 async fn a_crash_during_the_reseal_leaves_a_partial_file_the_reseal_replaces() {
     let dir = scratch_dir("standby-crash-during");

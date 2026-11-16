@@ -50,7 +50,7 @@ fn a_held_turn_in_a_two_member_set_signs_only_what_a_members_check_verified() {
     let head = due.head;
     assert!(head.seq >= taken_seq, "the check's checkpoint {} precedes the TurnTaken at {taken_seq}", head.seq);
     let releases = BTreeSet::from([node.release]);
-    let excluded = Sequencers { candidates: BTreeSet::from([CANDIDATE]), releases, turns_from: turn };
+    let excluded = Sequencers { candidates: BTreeSet::from([CANDIDATE]), releases, in_office: (turn, CANDIDATE) };
     assert_eq!((due.turn, due.excluded.clone()), (turn, excluded));
     assert_eq!(head, node.checkpoint_head(head.seq));
 

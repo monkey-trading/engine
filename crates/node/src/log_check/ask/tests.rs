@@ -12,7 +12,7 @@ use std::sync::Arc;
 use engine_core::Fixed;
 use engine_core::types::AccountId;
 
-use crate::checkpoints::{LifecycleEvidence, Observation, VaultState};
+use crate::checkpoints::{Assigned, LifecycleEvidence, Observation, VaultState};
 use crate::log::Checkpoint;
 use crate::log_check::answer::{Answering, Checked, CheckedHeads};
 use crate::log_check::{Sequencers, VerifiedHead};
@@ -75,7 +75,7 @@ fn the_node_asks_neither_itself_nor_a_member_or_release_in_the_range_nor_a_membe
     let excluded = Sequencers {
         candidates: BTreeSet::from([AccountId([0xf; 20])]),
         releases: BTreeSet::from([release_of(0xe)]),
-        turns_from: TURN - 1,
+        in_office: (TURN - 1, AccountId([0xf; 20])),
     };
     let due = due(AccountId([0xa; 20]), excluded);
     let asked: Vec<_> = qualifying(&order, &due).map(|member| member.candidate).collect();
@@ -195,9 +195,11 @@ impl CheckpointChain for Order {
         Ok(self.order.clone())
     }
 
-    async fn reassigned(&self, turns: std::ops::Range<u64>) -> anyhow::Result<BTreeSet<AccountId>> {
-        assert_eq!(turns, TURN - 1..TURN + 1, "the range's first turn through the turn due");
-        Ok(self.reassigned.clone())
+    async fn reassignments(&self, turns: std::ops::Range<u64>) -> anyhow::Result<Vec<Assigned>> {
+        assert_eq!(turns, TURN - 1..TURN + 1, "the in-office turn through the turn due");
+        let reassigned =
+            |candidate: &AccountId| Assigned { turn: TURN, position: 1, candidate: *candidate, reassigned: true };
+        Ok(self.reassigned.iter().map(reassigned).collect())
     }
 }
 
@@ -328,7 +330,7 @@ fn sequencers(bytes: &[u8]) -> Sequencers {
     Sequencers {
         candidates: bytes.iter().map(|byte| AccountId([*byte; 20])).collect(),
         releases: bytes.iter().map(|byte| release_of(*byte)).collect(),
-        turns_from: TURN - 1,
+        in_office: (TURN - 1, AccountId([bytes[0]; 20])),
     }
 }
 

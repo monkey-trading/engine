@@ -115,6 +115,34 @@ fn a_promotion_mirrored_past_the_range_names_its_member_from_the_turn_in_office_
     assert_eq!(own_check(Some(head(20)), &late, head(34), (E, &member(E))), Some(head(34)), "E sequenced none");
 }
 
+/// A member the schedule promoted or skipped to after the in-office holder's assignment may have
+/// sequenced part of the range before the log mirrored it, in the holder's turn or a later one; one
+/// reassigned earlier in the holder's turn ended before the holder's `TurnTaken`, and a draw is no
+/// reassignment. With no assignment of the holder's in its turn, each of that turn's counts.
+#[test]
+fn reassignments_after_the_in_office_assignment_name_their_members() {
+    let at =
+        |turn, position, release, reassigned| Assigned { turn, position, candidate: candidate(release), reassigned };
+    // Turn 2's draw named A; B was promoted at position 1, C at 3, whose `TurnTaken` is in office, and D
+    // at 4. Turn 3's draw named E, and A was skipped to at 2.
+    let assigned = [
+        at(2, 0, A, false),
+        at(2, 1, B, true),
+        at(2, 3, C, true),
+        at(2, 4, D, true),
+        at(3, 0, E, false),
+        at(3, 2, A, true),
+    ];
+    let in_office = |release| Sequencers {
+        candidates: BTreeSet::new(),
+        releases: BTreeSet::new(),
+        in_office: (2, candidate(release)),
+    };
+    let names = |releases: &[B256]| releases.iter().map(|release| candidate(*release)).collect::<BTreeSet<_>>();
+    assert_eq!(in_office(C).reassigned(&assigned), names(&[D, A]), "after C's assignment, and in turn 3");
+    assert_eq!(in_office(E).reassigned(&assigned), names(&[B, C, D, A]), "E holds no assignment of turn 2");
+}
+
 #[test]
 fn records_that_start_past_a_range_attribute_none_of_it() {
     // A replay from a snapshot sees the commands from its base on, so it cannot say who sequenced
@@ -283,12 +311,13 @@ fn member(release: B256) -> BTreeSet<AccountId> {
     BTreeSet::from([candidate(release)])
 }
 
-/// Who sequenced a range in which each of `releases` took a turn by its member, from turn 1 on.
+/// Who sequenced a range in which each of `releases` took turn 1 by its member, the first in office at
+/// its start.
 fn sequencers(releases: &[B256]) -> Sequencers {
     Sequencers {
         candidates: releases.iter().map(|release| candidate(*release)).collect(),
         releases: releases.iter().copied().collect(),
-        turns_from: 1,
+        in_office: (1, candidate(releases[0])),
     }
 }
 

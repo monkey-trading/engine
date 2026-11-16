@@ -30,6 +30,7 @@ use engine_core::types::{AccountId, Millis};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+use crate::checkpoints::Assigned;
 use crate::handover::Evidence;
 use crate::log::CheckpointDomain;
 
@@ -60,20 +61,33 @@ pub(crate) struct Due {
 /// The candidates that sequenced a range of the log, by the turns they took, and the releases they
 /// took them under. A check counts only from a member in neither: a candidate's other release, as
 /// after an upgrade, is the same member.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Sequencers {
     pub candidates: BTreeSet<AccountId>,
     pub releases: BTreeSet<B256>,
-    /// The turn the `TurnTaken` in office at the range's start took: a member the schedule promoted or
-    /// skipped to in this turn or a later one may have sequenced part of the range before the log
-    /// mirrored it, so a check counts from none of them (`CheckpointChain::reassigned`).
-    pub turns_from: u64,
+    /// The turn and candidate of the `TurnTaken` in office at the range's start: a member the schedule
+    /// promoted or skipped to after that assignment may have sequenced part of the range before the log
+    /// mirrored it, so a check counts from none of them (`reassigned`).
+    pub in_office: (u64, AccountId),
 }
 
 impl Sequencers {
     /// Whether `candidate`, or `release`, sequenced part of the range.
     pub(crate) fn include(&self, candidate: AccountId, release: B256) -> bool {
         self.candidates.contains(&candidate) || self.releases.contains(&release)
+    }
+
+    /// The members of `assigned`, the schedule's assignments of the in-office turn and the turns after
+    /// it, that a promotion or a skip made after the in-office holder's assignment: in a later turn, or
+    /// in the in-office turn at a later position, since a turn's positions only advance. With no
+    /// assignment of the holder's in its turn, every reassignment of that turn counts.
+    pub(crate) fn reassigned(&self, assigned: &[Assigned]) -> BTreeSet<AccountId> {
+        let (turn, holder) = self.in_office;
+        let since =
+            assigned.iter().find(|held| (held.turn, held.candidate) == (turn, holder)).map(|held| held.position);
+        let after =
+            |at: &&Assigned| at.turn > turn || (at.turn == turn && since.is_none_or(|since| at.position > since));
+        assigned.iter().filter(|at| at.reassigned).filter(after).map(|at| at.candidate).collect()
     }
 }
 
@@ -237,7 +251,12 @@ impl Takings {
             return None;
         }
         let takings = std::iter::once(in_office).chain(self.by_seq.range(first..=through).map(|(_, taking)| *taking));
-        let mut sequencers = takings.fold(Sequencers::default(), |mut sequencers, taking| {
+        let empty = Sequencers {
+            candidates: BTreeSet::new(),
+            releases: BTreeSet::new(),
+            in_office: (in_office.turn, in_office.candidate),
+        };
+        let mut sequencers = takings.fold(empty, |mut sequencers, taking| {
             sequencers.candidates.insert(taking.candidate);
             sequencers.releases.insert(taking.release);
             sequencers
@@ -246,7 +265,6 @@ impl Takings {
         let promoted = self.promoted.range(after_in_office).flat_map(|(_, promoted)| promoted);
         let from_in_office = promoted.filter(|(turn, _)| *turn >= in_office.turn).map(|(_, candidate)| *candidate);
         sequencers.candidates.extend(from_in_office);
-        sequencers.turns_from = in_office.turn;
         Some(sequencers)
     }
 

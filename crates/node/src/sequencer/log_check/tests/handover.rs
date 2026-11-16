@@ -14,17 +14,14 @@ fn a_start_after_a_handover_seals_its_check_only_while_the_gate_applies() {
     let mut node = Node::start("log-check-after-handover", &[other()]);
     node.approve(1);
     node.take_turn();
-    // A member the schedule promoted or skipped to in a turn of the range, not yet mirrored, is no check.
-    let carried = node.store.keys().log_check;
-    assert_eq!(handed_over(&mut node, "held", true), carried, "a member promoted in a turn of the range checked it");
     // Another member takes the keys and the log at the last checkpoint: its replay is the check.
-    let handed = handed_over(&mut node, "gated", false);
+    let handed = handed_over(&mut node, "gated");
     assert_eq!(handed.map(|head| head.seq), Some(node.last_checkpoint().seq));
     // With rotation off, the same start seals none.
     let off =
         Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
     node.seq.sequence(off).unwrap().expect("admitted");
-    assert_eq!(handed_over(&mut node, "ungated", false), None, "keys handed over with rotation off carry a head");
+    assert_eq!(handed_over(&mut node, "ungated"), None, "keys handed over with rotation off carry a head");
 }
 
 #[test]
@@ -36,20 +33,16 @@ fn a_promoted_start_seals_its_check_only_when_another_member_sequenced_the_range
     node.seq.flush().unwrap();
     let fixed = node.last_checkpoint().seq;
     // The other member, promoted over this node's turn, replayed its log through the fixed checkpoint.
-    let other_member = promoted(&node, other().admin_key, fixed, ("other", false));
+    let other_member = promoted(&node, other().admin_key, fixed, "other");
     assert_eq!(other_member, Some(node.checkpoint_head(fixed)), "the promoted member's replay is the check");
-    // The same member, had the schedule promoted it in a turn of the range, not yet mirrored.
-    let held = promoted(&node, other().admin_key, fixed, ("held", true));
-    assert_eq!(held, None, "a member promoted in a turn of the range checked it");
     // This node's own member, promoted under another release, sequenced the range: its replay is none.
-    let own = promoted(&node, node.member, fixed, ("own", false));
-    assert_eq!(own, None, "the member that sequenced it checked itself");
+    assert_eq!(promoted(&node, node.member, fixed, "own"), None, "the member that sequenced it checked itself");
     // With rotation off, the gate does not apply, and the start seals none.
     let off =
         Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
     node.seq.sequence(off).unwrap().expect("admitted");
     node.seq.flush().unwrap();
-    assert_eq!(promoted(&node, other().admin_key, fixed, ("ungated", false)), None, "sealed with the gate off");
+    assert_eq!(promoted(&node, other().admin_key, fixed, "ungated"), None, "sealed with the gate off");
 }
 
 /// A promotion can fix a checkpoint the vault accepted whose entry no member received: the promoted
@@ -79,7 +72,7 @@ fn a_promoted_start_checks_through_a_fixed_checkpoint_whose_entry_its_log_lacks(
     let sealer = MockSealer { launch_digest: [0x48; 48] };
     let dir = scratch_dir("log-check-promoted-unheld-keys");
     let store = Arc::new(KeyStore::create(&dir, &sealer, CONFIG, 9, KeySet::generate().unwrap()).unwrap());
-    crate::node::log_check::after_promotion(Some(&store), other().admin_key, &log, fixed.seq, false).unwrap();
+    crate::node::log_check::after_promotion(Some(&store), other().admin_key, &log, fixed.seq).unwrap();
     let head = node.checkpoint_head(fixed.seq);
     assert_eq!(store.keys().log_check, Some(head), "the promotion's check verified the log through it");
     let setup = LogCheckSetup { store, due: tokio::sync::watch::channel(None).0 };
@@ -90,22 +83,21 @@ fn a_promoted_start_checks_through_a_fixed_checkpoint_whose_entry_its_log_lacks(
 // ── Helpers ──
 
 /// The verified head the other member's promoted start under `operator` seals over `node`'s log once a
-/// promotion fixed its checkpoint at `checkpoint_seq`, the schedule having promoted it in a turn of the
-/// range if `held`.
-fn promoted(node: &Node, operator: AccountId, checkpoint_seq: u64, (name, held): (&str, bool)) -> Option<VerifiedHead> {
+/// promotion fixed its checkpoint at `checkpoint_seq`.
+fn promoted(node: &Node, operator: AccountId, checkpoint_seq: u64, name: &str) -> Option<VerifiedHead> {
     let sealer = MockSealer { launch_digest: [0x47; 48] };
     let dir = scratch_dir(&format!("log-check-promoted-{name}"));
     let store = KeyStore::create(&dir, &sealer, CONFIG, 9, KeySet::generate().unwrap()).unwrap();
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) };
     let signer = AccountId(EnclaveKey::test_key().address());
     let log = Sequencer::read_log_with_trust(&node.dir, Some(domain), Some(signer), |_| {}).unwrap();
-    crate::node::log_check::after_promotion(Some(&store), operator, &log, checkpoint_seq, held).unwrap();
+    crate::node::log_check::after_promotion(Some(&store), operator, &log, checkpoint_seq).unwrap();
     store.keys().log_check
 }
 
 /// The verified head the other member's start seals once it takes `node`'s keys and its log ending at
-/// a checkpoint written now, the schedule having promoted it in a turn of the range if `held`.
-fn handed_over(node: &mut Node, name: &str, held: bool) -> Option<VerifiedHead> {
+/// a checkpoint written now.
+fn handed_over(node: &mut Node, name: &str) -> Option<VerifiedHead> {
     node.seq.checkpoint().unwrap();
     node.seq.flush().unwrap();
     let last = node.last_checkpoint();
@@ -117,6 +109,6 @@ fn handed_over(node: &mut Node, name: &str, held: bool) -> Option<VerifiedHead> 
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) };
     let signer = AccountId(EnclaveKey::test_key().address());
     let log = Sequencer::read_log_with_trust(&node.dir, Some(domain), Some(signer), |_| {}).unwrap();
-    crate::node::log_check::after_handover(Some(&successor), other().admin_key, &log, held).unwrap();
+    crate::node::log_check::after_handover(Some(&successor), other().admin_key, &log).unwrap();
     successor.keys().log_check
 }

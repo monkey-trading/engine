@@ -19,7 +19,7 @@ const PROMOTED: u8 = 2;
 /// How many signer epochs past finality a rebuilt copy reads keys for at most.
 const UNFINAL_EPOCHS: u64 = 64;
 /// How many turns drawn for a promoted member in the promotion's generation, one a day, are followed
-/// back to the promotion at most: a key whose reseal a crash left undone longer reads as unusable.
+/// back to the promotion at most: past them the read fails, and the seal stays as it is.
 const CARRIED_TURNS: usize = 64;
 
 sol! {
@@ -233,6 +233,7 @@ impl StandbyDomain {
 /// generation the promotion reserved.
 /// Error cases:
 /// - a read fails, or the schedule records a promotion with no generation
+/// - the turn in effect continues a promotion more than `CARRIED_TURNS` drawn turns back
 pub(crate) async fn standby_state(
     chain: &impl StandbyChain,
     domain: &StandbyDomain,
@@ -252,16 +253,14 @@ pub(crate) async fn standby_state(
     if turn == 0 || named.candidate != candidate {
         return Ok(StandbyState::Unusable("no promotion of the candidate is its turn's latest assignment"));
     }
-    let (mut turn, mut latest) = (turn, named.clone());
-    for _ in 0..CARRIED_TURNS {
-        if latest.reason == PROMOTED || latest.prior == 0 {
-            break;
-        }
+    let (mut turn, mut latest, mut steps) = (turn, named.clone(), 0);
+    while latest.reason != PROMOTED && latest.prior != 0 {
         let prior = call(&block, "standby_prior_turn", domain.schedule, turnOfCall { turn: latest.prior }).await?;
         if prior.candidate != candidate || prior.generation != named.generation {
             break;
         }
-        (turn, latest) = (latest.prior, prior);
+        ensure!(steps < CARRIED_TURNS, "turn {turn} continues a promotion more than {CARRIED_TURNS} drawn turns back");
+        (turn, latest, steps) = (latest.prior, prior, steps + 1);
     }
     let Some(promotion) = promotion_of(&block, domain, AccountId(key.0.0), turn, latest.position).await? else {
         return Ok(StandbyState::Unusable("no promotion in the turn in effect, or carried into it, installed the key"));

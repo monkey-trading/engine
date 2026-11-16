@@ -5,7 +5,7 @@ use super::*;
 use crate::config::TeeProvider;
 use crate::handover::evidence::Quoting;
 use crate::standby_key::StandbyKeys;
-use crate::standby_key::vouch::request;
+use crate::standby_key::vouch::{VouchRequest, request};
 use crate::tee::MockAttestor;
 use crate::test_support::scratch_dir;
 
@@ -27,8 +27,8 @@ async fn a_member_with_no_promotable_key_confirms_on_the_key_its_link_attests() 
 }
 
 /// An attestation counts for nothing when it names another candidate, proves a release the member's
-/// candidacy does not name or the timelock has not approved, or is of a key the schedule took, as a
-/// key a promotion consumed is.
+/// candidacy does not name or the timelock has not approved, is of a key the schedule took, as a key a
+/// promotion consumed is, or carries a quote over other report data than its own.
 #[tokio::test(start_paused = true)]
 async fn an_attestation_the_member_cannot_stand_on_confirms_nothing() {
     let member = AccountId([MEMBER; 20]);
@@ -47,6 +47,11 @@ async fn an_attestation_the_member_cannot_stand_on_confirms_nothing() {
         assert!(!rig.gate.sequences(), "{case}: the start check passed on it");
         rig.task.abort();
     }
+    // A forged attestation: eligible in every other way, its quote binds another nonce than it states.
+    let rig = attested_as("attested-forged", member, |_, _| {}, |request| request.nonce += 1).await;
+    assert_eq!(rig.gate.confirmed(), 0, "a forged quote confirmed the log");
+    assert!(!rig.gate.sequences(), "the start check passed on a forged quote");
+    rig.task.abort();
 }
 
 // ── Helpers ──
@@ -55,9 +60,20 @@ async fn an_attestation_the_member_cannot_stand_on_confirms_nothing() {
 /// key whose attestation, quoted for `attesting`, its link serves, on a chain `change` sets given that
 /// key; the rule has read the members afresh and run a few rounds.
 async fn attested(name: &str, attesting: AccountId, change: impl FnOnce(&mut ChainState, Address)) -> Rig {
+    attested_as(name, attesting, change, |_| {}).await
+}
+
+/// `attested`, with the attestation as `tamper` leaves it after the quote.
+async fn attested_as(
+    name: &str,
+    attesting: AccountId,
+    change: impl FnOnce(&mut ChainState, Address),
+    tamper: impl FnOnce(&mut VouchRequest),
+) -> Rig {
     let rig = Rig::spawn(10);
     let keys = StandbyKeys::for_test(&scratch_dir(name));
-    let attestation = request(&QUOTING, &MockAttestor, &keys, &DOMAIN.standby, attesting, TRUE_MS).await.unwrap();
+    let mut attestation = request(&QUOTING, &MockAttestor, &keys, &DOMAIN.standby, attesting, TRUE_MS).await.unwrap();
+    tamper(&mut attestation);
     let key = Address::from(keys.address().0);
     rig.chain.set(|chain| {
         chain.members[1].2 = Address::ZERO;

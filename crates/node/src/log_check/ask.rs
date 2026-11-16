@@ -140,9 +140,10 @@ impl<C: CheckpointChain> Asker<C> {
             Statement { signer_epoch, boundary, turn: due.turn, position: due.position, set: due.set, head: due.head };
         let order = self.vault.turn_order(&at, due.turn).await.context("reading the turn's order")?;
         let mut failures = Vec::new();
-        // A member the schedule promoted or skipped to in a turn the range spans may have sequenced part
-        // of it before the log mirrored the assignment: it is not asked.
-        let reassigned = self.vault.reassigned(due.excluded.turns_from..due.turn.saturating_add(1)).await?;
+        // A member the schedule promoted or skipped to after the in-office assignment may have sequenced
+        // part of the range before the log mirrored it: it is not asked.
+        let since = due.excluded.in_office.0;
+        let reassigned = due.excluded.reassigned(&self.vault.reassignments(since..due.turn.saturating_add(1)).await?);
         for member in qualifying(&order, due) {
             if reassigned.contains(&member.candidate) {
                 failures.push(format!("{}: promoted or skipped to in a turn the range spans", member.candidate));

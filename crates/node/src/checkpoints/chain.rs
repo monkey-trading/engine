@@ -32,6 +32,16 @@ pub(crate) struct HandoverSource {
     pub handover_endpoint: String,
 }
 
+/// One of a turn's assignments, as the schedule records it: the turn, its position in the turn's order,
+/// the member it names, and whether a promotion or a skip made it rather than the draw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Assigned {
+    pub turn: u64,
+    pub position: u16,
+    pub candidate: AccountId,
+    pub reassigned: bool,
+}
+
 /// The daily turn a schedule the vault's registry names had drawn as in effect at a time, as a
 /// finalized block reads it: the member, the release its candidacy holds at that block, the generation
 /// the schedule fixed for the turn, and the member the turn takes over from, whose handover endpoint
@@ -285,13 +295,12 @@ pub(crate) trait CheckpointChain: Send + Sync {
         anyhow::bail!("this checkpoint chain reads no schedule")
     }
 
-    /// The candidates the schedule the vault's registry names promoted, or skipped to, in any of
-    /// `turns`, at the latest block: such a member sequences before the log mirrors its assignment,
-    /// which finality holds back, so a check of a range counts from none of them. A turn's drawn member
-    /// is not one: it sequenced only once its `TurnTaken` is in the log. A registry with no schedule
-    /// reassigned none.
+    /// Every assignment of each of `turns` in which a promotion or a skip followed the draw, the draw's
+    /// included, in the schedule the vault's registry names, at the latest block: a promoted or
+    /// skipped-to member sequences before the log mirrors its assignment, which finality holds back.
+    /// A turn its draw alone holds gives none, and a registry with no schedule none.
     /// Error cases: the chain cannot be read; a chain with no registry cannot answer
-    async fn reassigned(&self, turns: std::ops::Range<u64>) -> anyhow::Result<std::collections::BTreeSet<AccountId>> {
+    async fn reassignments(&self, turns: std::ops::Range<u64>) -> anyhow::Result<Vec<Assigned>> {
         let _ = turns;
         anyhow::bail!("this checkpoint chain reads no schedule")
     }
