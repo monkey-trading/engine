@@ -57,8 +57,8 @@ pub(crate) fn session(h: &mut Harness) {
         reason: TurnReason::Draw,
         candidate: member,
         admin_key,
-        block: 69_000_000,
-        chain_ref: "0xturn:69:0".into(),
+        block: 70_000_000,
+        chain_ref: "0xturn:70:0".into(),
     };
     let events = h.cmd(Command::AssignTurn(drawn));
     assert!(matches!(events.last(), Some(Event::TurnAssigned { .. })), "{events:?}");
@@ -74,8 +74,8 @@ pub(crate) fn session(h: &mut Harness) {
         position: 0,
         signer_epoch: 1,
         seq: h.log.len() as u64 - 2,
-        block: 69_000_010,
-        chain_ref: "0xfault:69:0".into(),
+        block: 70_000_010,
+        chain_ref: "0xfault:70:0".into(),
     };
     let events = h.cmd(Command::ProveFault(fault.clone()));
     assert!(matches!(events.last(), Some(Event::OperatorFaultProven { member: m, .. }) if *m == member), "{events:?}");
@@ -88,7 +88,7 @@ pub(crate) fn session(h: &mut Harness) {
         account: None,
         payer: Some(payer.account),
         amount: f("2000000"),
-        chain_ref: "0xhouse:69".into(),
+        chain_ref: "0xhouse:70".into(),
     };
     let screened = evidence(h, eip712::deposit_screening_hash(&house), None, Some(payer.account));
     let events = h.cmd(Command::AccessDeposit { deposit: house, evidence: screened });

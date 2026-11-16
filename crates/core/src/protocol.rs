@@ -462,7 +462,7 @@ pub enum ProtocolVersion {
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V69;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V70;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {
