@@ -249,7 +249,7 @@ an index: load only the rule whose hint matches the current action.
   score's constants), the pending parameter and listing notices, from V56 the recorded vote contract with the
   passed changes waiting and the restrictions in force, from `V62` the house's loss over the trailing day, and the
   latest checkpoint (`api/house_state.rs`,
-  `sequencer/house.rs`), the account read (`api/account.rs`) with the toxicity score, tier and add-on from `V54` and the
+  `sequencer/house.rs`), the market read's `pricing` (`api/pricing.rs`: fresh sources against `min_sources` and each source's state, from the quotes the engine holds at its last stamp) and the signed `/v1/status` read, also the signed stream's `status` frames, of what holds the sequencer (one relaxed store per change), trusted time, each venue connection's symbols (published by the connection's task, `feeds/status.rs`) and the open markets with no price (`api/operating.rs`, `status.rs`), the account read (`api/account.rs`) with the toxicity score, tier and add-on from `V54` and the
   volume tier, counted and pending volume, each tier's progress and each market's best-price bound from `V59`, the
   initial and maintenance requirements, withdrawable cash and each market's maximum leverage (`margin_standing`), the
   signed quote ladder's steps at the account's own band bounds, checkpoint posting

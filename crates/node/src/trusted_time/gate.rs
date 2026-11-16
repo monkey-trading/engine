@@ -210,7 +210,40 @@ impl TimeGate {
     }
 }
 
+/// Whether trusted time bounds the host clock, as the API sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum TimeState {
+    /// No sample has come yet: a start waiting for its first.
+    Starting,
+    /// The latest sample is within the grace and the host clock within the drift bound.
+    Sampled { last_sample_ms: Millis },
+    /// Stamps are refused: no sample within the grace, or the host clock beyond the drift bound.
+    Held { cause: HeldCause, last_sample_ms: Millis },
+}
+
+/// Why trusted time holds sequencing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeldCause {
+    NoSample,
+    Drift,
+}
+
 impl TrustedClock {
+    /// What trusted time shows now, and true time at the latest sample.
+    pub fn state(&self) -> TimeState {
+        let Some(sample) = *self.samples.borrow() else { return TimeState::Starting };
+        let (host_ms, now) = (self.clock.now_ms(), self.clock.instant());
+        // The sample's own lower bound on true time, so it moves only when a new sample arrives.
+        let last_sample_ms = sample.earliest_ms;
+        match check_sample(&sample, self.max_drift_ms, host_ms, host_ms, now) {
+            None => TimeState::Sampled { last_sample_ms },
+            Some(Refusal::Drift { .. }) => TimeState::Held { cause: HeldCause::Drift, last_sample_ms },
+            Some(Refusal::NoSample { .. }) => TimeState::Held { cause: HeldCause::NoSample, last_sample_ms },
+        }
+    }
+
     /// Reads `clock` against the latest sample `samples` holds, within `max_drift`.
     pub fn new(clock: Arc<dyn Clock>, samples: watch::Receiver<Option<Sample>>, max_drift: Duration) -> Self {
         Self { clock, samples, max_drift_ms: floor_millis(max_drift) }

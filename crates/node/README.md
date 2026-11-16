@@ -639,8 +639,12 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/account.rs` — `GET /v1/accounts/{address}`: an account's balance, equity, margin, initial
   and maintenance requirements, withdrawable cash, each market's maximum leverage, positions, orders,
   toxicity, close-outs, close fees, from `V59` its volume tier and from `V60` its weekend margins
-- `src/api/reads.rs` — `GET /v1/markets`: every market with its live state and from `V60` its weekend
-  margin window
+- `src/api/reads.rs` — `GET /v1/markets`: every market with its live state, how it is priced
+  (`pricing.rs`), and from `V60` its weekend margin window
+- `src/api/operating.rs` — `GET /v1/status`: the server's operating state (`src/status.rs`: what holds
+  the sequencer, trusted time, each venue connection's symbols, the open markets with no price);
+  `src/api/stream/status.rs` carries it as `status` frames; `src/feeds/status.rs` and
+  `src/feeds/venue/status.rs` are what each connection's task publishes
 - `src/api/state.rs` — request authentication, nonce checks, the session-key admission a
   registered key's request falls back to, and durable sequencer round trips
 - `src/api/actions.rs` — signed client actions, session-key registration and revocation, and
@@ -2061,7 +2065,7 @@ approval limited to finalised headroom, approval after finality, and one reorg d
 The EVM HTTP withdrawal route remains disabled until #23; this scenario proves approval eligibility
 at the sequencer/core boundary and does not perform a physical payout or HTTP cash-out.
 
-Endpoints: `GET /v1/health`, `GET /v1/attestation`, `GET /v1/attestation/collateral`,
+Endpoints: `GET /v1/health`, `GET /v1/status`, `GET /v1/attestation`, `GET /v1/attestation/collateral`,
 `GET /v1/markets`, `GET /v1/markets/{id}/marks`, `GET /v1/house`, `GET /v1/house/state`, `GET /v1/house/positions`,
 `GET /v1/monkey`, `GET /v1/monkey/activity`, `GET /v1/monkey/distributions`, `GET /v1/stats/series`, `GET /v1/operator`, `GET /v1/operators`,
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
@@ -2565,6 +2569,81 @@ also holds accounts never credited, the operator and an account's payout reissue
 `GET /v1/markets` gives each market's `weekend_margin_bps` (left out when none) and, for a market
 with one, `weekend_margin`: `{"weekend_margin_bps", "from", "close", "reopen"}` for its next or
 current weekend gap, or nothing while no gap starts within 366 days or before V60 activates.
+
+Each market of `GET /v1/markets` also carries `pricing`, read from the quotes the engine holds at its
+last stamp (`as_of_ms`), so it matches the price rule and adds nothing to the sequencer's path:
+
+```json
+{
+  "priced": false,
+  "unpriced": "too_few_sources",
+  "as_of_ms": 1792504804100,
+  "fresh_sources": 1, "min_sources": 2, "max_age_ms": 1000, "max_divergence_bps": 25,
+  "sources": [
+    { "source": "coinbase", "state": "counts", "last_quote_ms": 1792504804100, "age_ms": 0 },
+    { "source": "kraken", "state": "delayed", "last_quote_ms": 1792504800100, "age_ms": 4000 }
+  ]
+}
+```
+
+`priced` is whether the market has an index. `unpriced`, present only while it has none, is
+`too_few_sources` (`fresh_sources` is below `min_sources`), `diverging` (the fresh sources are further
+apart than `max_divergence_bps`; `divergence_bps` is their spread) or `out_of_range` (a futures market's
+roll-adjusted index). `divergence_bps` is present once there are `min_sources` fresh sources. Each
+source's `state` is one of `counts` (fresh and inside the index), `diverging` (an extreme of diverging
+sources), `stale` (its newest quote is older than `max_age_ms`), or, naming why a source is not
+counting, what its connection reports: `silent` (up, but no fresh quote for this market for the silence
+timeout), `delayed` (its stream runs past the delay bound, so its quotes do not count), `down`,
+`off` (withheld for want of a delivered secret), `not_expected` (the market takes no quotes from it
+now; for a futures market the symbol of its front contract decides, so its idle contracts say nothing),
+and `never_quoted` (expected, and the engine holds no quote from it). `last_quote_ms` and
+`age_ms` (the age at `as_of_ms`) are `null` for a source that has not quoted. A closed market holds no quotes, so it reads `too_few_sources` with no fresh source: read its `open` first.
+A client reads the
+reason for an unpriced market here, and the venue to name from the `sources` whose state is not
+`counts`.
+
+`GET /v1/status` answers the server's operating state, signed like every other read; a
+`signed=1&status=1&challenge=` stream connection also gets the same body, with `"type":"status"`, as a
+signed frame at the start and each time it changes, checked every `api.quote_interval`:
+
+```json
+{
+  "as_of_ms": 1792504804200,
+  "takes_orders": false,
+  "holds": [{ "cause": "trusted_time", "since_ms": 1792504801000 }],
+  "trusted_time": { "state": "held", "cause": "no_sample", "last_sample_ms": 1792504740000 },
+  "venues": [
+    { "venue": "coinbase", "state": "silent", "symbols": [{ "symbol": "BTC-USD", "market": 1, "state": "silent" }] }
+  ],
+  "unpriced_markets": [
+    { "market": 1, "symbol": "BTC-USD", "reason": "too_few_sources", "fresh_sources": 1, "min_sources": 2 }
+  ]
+}
+```
+
+`takes_orders` is false while any of `holds` stands; each names a `cause` and the node time it began
+(`since_ms`): `trusted_time` (no sample within the grace, or the host clock beyond the drift bound),
+`log_sync_held` (a batch's sync is held past 5 s) or `log_rollback` (frozen until restart). `since_ms` is when a
+status read first saw the hold. Waiting for the benchmark publisher snapshot is not reported: it raises the
+`benchmark_sync_pending` alert instead. A fenced liveness
+rule is not a hold: it stops signing, so it shows as an unsigned answer (below).
+Markets in reduce-only, closed or unpriced refuse orders of their own and are not holds: see
+`reduce_only` and `pricing` of `GET /v1/markets`. `trusted_time.state` is `starting` (before the first
+sample), `sampled`, or `held` with a `cause` of `no_sample` or `drift`; `last_sample_ms` is when the
+latest sample was taken. Each venue's `state`, and each of its symbols' (`market` is the market it
+quotes), is `not_expected`, `quoting`, `silent`, `delayed`, `down` or `off`, in that order, and a venue shows the worst
+of its symbols: one that quotes anything is `quoting` however many contracts of it are idle. `unpriced_markets` lists the markets open for trading that have no price, with the
+`reason` and the source counts of their `pricing`. The sequencer does nothing for any of it: the holds are read from what the node already keeps (trusted
+time's sample, the log-sync gauge, the poster's rollback latch), each connection's task publishes its
+symbols once a check interval, and every `status=1` connection shares one read of the API's copy of the
+engine an interval.
+
+While trusted time does not bound the host clock (`held` or `starting`), the node signs no answer: a
+`/v1/status` read goes out with no `X-Engine-Signature`, and a signed stream closes. A client takes an
+unsigned `/v1/status` or a closed signed stream as that state, and reads the unsigned body, the same view,
+for the cause. A signed answer's `trusted_time` is therefore `sampled`, except while the host clock is
+within the bound and only a stamp is not. `last_sample_ms` is true time at the latest sample, so it changes
+only when a sample arrives.
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns
 `{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the

@@ -255,6 +255,8 @@ async fn serve_node(
     seq_cfg.history_sealing = history.sealing();
     seq_cfg.log_heads = log_heads_setup.as_ref().map(|setup| setup.publisher());
     let published = crate::handover::Published::new(stream_tx.subscribe(), log.last_seq(), log.last_checkpoint());
+    let status =
+        crate::status::Status::watching(seq_cfg.log_heads.as_ref().map(|poster| poster.freeze.clone()), &metrics);
     let mut seq = Sequencer::recover_from(log, seq_cfg, key.clone(), stream_tx.clone(), withdrawals_tx)
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // Before activation and genesis sequence, so the record sees every command the log will hold.
@@ -378,7 +380,7 @@ async fn serve_node(
     let operator_hostname = ticker::start_operator_hostname(cfg, &mut tasks, trusted())?;
     // The monitor exports quote times only for the sources this config still feeds.
     let sources = feeds::configured_sources(&cfg.feeds);
-    price_feeds::spawn(&mut tasks, cfg.feeds.clone(), delivered, &tx)?;
+    price_feeds::spawn(&mut tasks, cfg.feeds.clone(), delivered, &tx, &status.feeds)?;
 
     let sealed = certificates.map(|certificates| Sealed { store: store.clone(), certificates, trusted: trusted() });
     let trusted_clock = trusted();
@@ -438,6 +440,7 @@ async fn serve_node(
         stats,
         emission_budget,
         staking_terms,
+        status,
         collateral: served,
         listing: Default::default(),
         operators: ticker::start_operators(&cfg.custody, &cfg.api, &mut tasks)?,

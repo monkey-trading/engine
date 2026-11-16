@@ -1,9 +1,7 @@
 //! V19 API tests for signed client requests: signatures, nonces, expiries, and the account trust path.
 
 use super::*;
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
@@ -411,6 +409,7 @@ impl Node {
             stats: crate::test_support::stats(),
             emission_budget: None,
             staking_terms: None,
+            status: Default::default(),
             collateral: None,
             listing: Default::default(),
             operators: None,

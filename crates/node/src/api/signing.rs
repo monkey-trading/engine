@@ -103,6 +103,11 @@ impl Signing {
         self.vault_signer.as_ref().and_then(|signer| *signer.borrow())
     }
 
+    /// What trusted time shows now.
+    pub(crate) fn time_state(&self) -> crate::trusted_time::TimeState {
+        self.time.state()
+    }
+
     /// The time to sign an answer with now, or `None` while trusted time does not bound the host
     /// clock, or the liveness rule's fence stops the enclave, when nothing may be signed.
     pub(crate) fn time_ms(&self) -> Option<u64> {

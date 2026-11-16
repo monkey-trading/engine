@@ -28,7 +28,9 @@ pub(crate) mod reissue;
 mod signing;
 mod standby;
 pub(crate) use signing::Signing;
+mod operating;
 mod payouts;
+pub(crate) mod pricing;
 mod reads;
 use reads::markets;
 mod state;
@@ -159,6 +161,8 @@ pub struct ApiState {
     pub staking_terms: Option<crate::custody::StakingTerms>,
     /// The enclave key and deployment the API signs answers for.
     pub(crate) signing: Arc<Signing>,
+    /// What the sequencer and the price feeds publish about their own operation.
+    pub(crate) status: crate::status::Status,
 }
 
 #[derive(Serialize)]
@@ -264,6 +268,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/attestation", get(attestation::attestation))
         .route("/v1/attestation/collateral", get(attestation::attestation_collateral))
         .route("/v1/markets", get(markets))
+        .route("/v1/status", get(operating::status))
         .route("/v1/markets/{id}/marks", get(marks::marks))
         .route("/v1/benchmarks", get(benchmarks))
         .route("/v1/benchmarks/schedule", get(benchmark_schedule::schedule))
@@ -406,6 +411,8 @@ mod closeout_tests;
 mod marks_tests;
 #[cfg(test)]
 mod origin_tests;
+#[cfg(test)]
+mod pricing_tests;
 #[cfg(test)]
 mod proof_tests;
 #[cfg(test)]

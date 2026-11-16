@@ -34,7 +34,9 @@ use tokio::time::{Instant as TokioInstant, MissedTickBehavior, interval, timeout
 use tracing::{debug, info, warn};
 
 mod gate;
-pub use crate::trusted_time::gate::{NO_SAMPLE_GRACE, TimeGate, TrustedClock};
+#[cfg(test)]
+pub use crate::trusted_time::gate::HeldCause;
+pub use crate::trusted_time::gate::{NO_SAMPLE_GRACE, TimeGate, TimeState, TrustedClock};
 
 use crate::clock::Clock;
 use crate::config::{RoughtimeServer, TimeSection};

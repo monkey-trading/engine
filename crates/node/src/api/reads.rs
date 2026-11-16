@@ -8,6 +8,7 @@ use engine_core::market::MarketSpec;
 use engine_core::weekend::WeekendWindow;
 use serde::Serialize;
 
+use crate::api::pricing::{Pricing, pricing};
 use crate::api::{ApiResult, ApiState};
 
 #[derive(Serialize)]
@@ -26,14 +27,17 @@ pub(super) struct MarketView {
     /// `close`, until the reopen. Absent before `V60` activates.
     #[serde(skip_serializing_if = "Option::is_none")]
     weekend_margin: Option<WeekendWindow>,
+    /// How the market is priced at the engine's last stamp: why it has no price, if it has none.
+    pricing: Pricing,
 }
 
 /// Every market with its live state.
 /// Error cases:
 /// - the sequencer has stopped
 pub(super) async fn markets(State(s): State<ApiState>) -> ApiResult<Vec<MarketView>> {
+    let venues = s.status.feeds.venues();
     let views = s
-        .read(|e| {
+        .read(move |e| {
             e.markets()
                 .values()
                 .map(|m| MarketView {
@@ -44,6 +48,7 @@ pub(super) async fn markets(State(s): State<ApiState>) -> ApiResult<Vec<MarketVi
                     fx_mark: m.fx_mark,
                     stress_level: m.stress.level,
                     weekend_margin: m.weekend_window(),
+                    pricing: pricing(m, e.now(), &venues),
                 })
                 .collect()
         })

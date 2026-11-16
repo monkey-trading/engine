@@ -360,6 +360,7 @@ impl Node {
             stats,
             emission_budget: None,
             staking_terms: None,
+            status: Default::default(),
             payouts_enabled: post_checkpoints,
             collateral: None,
             listing: Default::default(),
