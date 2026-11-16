@@ -4,6 +4,7 @@ pragma solidity 0.8.36;
 import {console} from "forge-std/Test.sol";
 
 import {LogHeads} from "../src/LogHeads.sol";
+import {OperatorRegistry} from "../src/OperatorRegistry.sol";
 import {OperatorSchedule} from "../src/OperatorSchedule.sol";
 import {LivenessTest} from "./helpers/LivenessTest.sol";
 
@@ -314,6 +315,84 @@ contract SkipScheduleTest is SkipTest {
         (, OperatorSchedule.Revision[] memory revisions) = schedule.assignmentOf(turn + 1, next.position);
         assertEq(revisions[revisions.length - 1].generation, skipped);
         assertEq(revisions[revisions.length - 1].release, registry.candidateOf(bob).release);
+    }
+
+    /// Carol's turn is drawn while alice is named, so alice is its source; the skip then names bob, who
+    /// takes the keys carol takes at her boundary.
+    function test_ASkippedToHolderCannotLeaveBeforeTheNextTurnsMemberTakesTheKeys() public {
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (alice, bob);
+        _startTurn(order, carol);
+        _draw(turn + 1);
+        assertEq(schedule.turnOf(turn + 1).candidate, carol);
+        _marked(TAKE);
+        schedule.skip();
+        assertEq(schedule.turnOf(turn).candidate, bob);
+        // Bob's first head latches the skip's assignment.
+        vm.warp(block.timestamp + 20);
+        _beat();
+        (, uint64 epoch, address latched,,) = logHeads.latches(turn, 1);
+        assertEq(epoch, 1);
+        assertEq(latched, bob);
+        vm.warp(schedule.boundary(turn + 1));
+        assertEq(schedule.sourceOf(turn + 1), alice, "the draw's source stays");
+        assertTrue(registry.holdsTurn(bob), "bob holds the keys carol takes");
+        vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
+        vm.prank(bob);
+        registry.deregister();
+    }
+
+    /// Dave's turn is drawn while alice is named; the skip names bob, who takes the keys but posts no
+    /// head before a skip past him to carol, who never takes them, so at dave's boundary bob holds them.
+    function test_ASupersededHolderCannotLeaveBeforeTheNextTurnsMemberTakesTheKeys() public {
+        address[] memory order = new address[](3);
+        (order[0], order[1], order[2]) = (alice, bob, carol);
+        _startTurn(order, dave);
+        _draw(turn + 1);
+        _marked(TAKE);
+        schedule.skip();
+        _marked(TAKE);
+        schedule.skip();
+        assertEq(schedule.turnOf(turn).candidate, carol);
+        vm.warp(schedule.boundary(turn + 1));
+        assertTrue(registry.holdsTurn(bob), "bob holds the keys dave takes");
+        vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
+        vm.prank(bob);
+        registry.deregister();
+    }
+
+    /// Alice holds the keys at the end of her turn; bob's turn after it is drawn while bob is named, and
+    /// dave's while bob is; neither bob nor carol, skipped to, takes them, so at dave's boundary alice,
+    /// the source of the turn before it, still holds them.
+    function test_TheSourceOfAnUntakenSkippedTurnCannotLeave() public {
+        address[] memory members = new address[](4);
+        uint256[] memory stakes = new uint256[](4);
+        (members[0], members[1], members[2], members[3]) = (alice, bob, carol, dave);
+        (stakes[0], stakes[1], stakes[2], stakes[3]) = (40_000e18, 30_000e18, 20_000e18, 10_000e18);
+        setId = _rotate(members, stakes);
+        uint64 first = _nextTurn() + 1;
+        address[] memory one = new address[](1);
+        one[0] = alice;
+        _relayOrder(first, one);
+        turn = first + 1;
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (bob, carol);
+        seed = _relayOrder(turn, order);
+        _relayPicking(turn + 1, setId, dave);
+        _draw(first);
+        vm.warp(schedule.boundary(first));
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        _draw(turn + 1);
+        assertEq(schedule.sourceOf(turn + 1), bob);
+        _marked(TAKE);
+        schedule.skip();
+        assertEq(schedule.turnOf(turn).candidate, carol);
+        vm.warp(schedule.boundary(turn + 1));
+        assertTrue(registry.holdsTurn(alice), "no member of bob's turn took alice's keys");
+        vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
+        vm.prank(alice);
+        registry.deregister();
     }
 
     function test_TheTimelockSetsTheTakeWindowWithinItsBoundsWhileNoTurnNamesTheOperator() public {

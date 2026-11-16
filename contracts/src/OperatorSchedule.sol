@@ -714,13 +714,6 @@ contract OperatorSchedule is SeedSchedule {
         return last == 0 ? 0 : boundary(last) + 1 days;
     }
 
-    /// @notice Whether `candidate` has held any assignment of the turn in effect or of the last drawn
-    /// turn, or is the turn in effect's source, which hands its member the keys.
-    function holdsTurn(address candidate) external view returns (bool) {
-        (uint64 inEffect, Turn memory current) = turnAt(uint64(block.timestamp));
-        return heldTurn[inEffect][candidate] || heldTurn[lastDrawnTurn][candidate] || candidate == current.source;
-    }
-
     /// @notice The operator the registry named when `turn` was drawn, which hands its member the keys;
     /// zero when it was not drawn.
     function sourceOf(uint64 turn) external view returns (address) {
