@@ -1045,11 +1045,12 @@ Run from the repo root:
   dependencies; about thirty minutes of wall time; CI runs it in the `dev-daily-rotation` job)
 - Short turns, development builds only: `cargo test -p engine-core --features short-turns --test
   short_turns`, and the node's turn timings with `cargo test -p engine-node --features short-turns --lib
-  -- seed_relay::schedule liveness::chain::tests custody::tests::staking the_handover_grace_windows`;
-  a short-turns build fails the other reference-log and turn tests, which hold day-long turns. Its dev
-  scenario: `./scripts/dev-short-turns.sh` (Anvil, Forge and installed Soldeer dependencies; about
-  twenty minutes of wall time; CI runs it in the `dev-short-turns` job with the feature build's clippy
-  and tests, and a check that a production build refuses the feature)
+  -- seed_relay::schedule liveness::chain::tests custody::tests::staking the_handover_grace_windows
+  a_turn_has_begun_from_its_boundary`; a short-turns build fails the other reference-log and turn
+  tests, which hold day-long turns. Its dev scenario: `./scripts/dev-short-turns.sh` (Anvil, Forge and
+  installed Soldeer dependencies; about twenty minutes of wall time; CI runs it in the
+  `dev-short-turns` job with the feature build's clippy and tests, and a check that a production build
+  refuses the feature)
 - Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens
   read through the custody quorum into `/v1/operators`, the closed epochs in `/v1/monkey/distributions`
   across a delegation and a restart, and each saved answer verified with `engine verify-response`)

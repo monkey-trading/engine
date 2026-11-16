@@ -338,7 +338,7 @@ impl Takings {
 /// The latest turn that had begun by `ts`, `None` before the first one's boundary.
 fn turn_begun_by(ts: Millis) -> Option<u64> {
     let turn =
-        u64::try_from(ts.checked_sub(engine_core::turns::BOUNDARY_OFFSET_MS)?.div_euclid(engine_core::turns::DAY_MS))
+        u64::try_from(ts.checked_sub(engine_core::turns::BOUNDARY_OFFSET_MS)?.div_euclid(engine_core::turns::TURN_MS))
             .ok()?;
     engine_core::turns::boundary(turn).filter(|boundary| *boundary <= ts).map(|_| turn)
 }

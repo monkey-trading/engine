@@ -3413,7 +3413,7 @@ cargo test -p engine-node --features production --lib production_build
 # A short-turns development build (five-minute operator turns, which a production build refuses to
 # compile): the node's turn timings, and the scenario on real nodes, two boundaries handing the keys
 # over by themselves and a promotion past the killed incumbent (about twenty minutes)
-cargo test -p engine-node --features short-turns --lib -- seed_relay::schedule liveness::chain::tests custody::tests::staking the_handover_grace_windows
+cargo test -p engine-node --features short-turns --lib -- seed_relay::schedule liveness::chain::tests custody::tests::staking the_handover_grace_windows a_turn_has_begun_from_its_boundary
 ./scripts/dev-short-turns.sh
 
 # Dev scenario: the Pebble ACME test CA certifies a dev node's attested key over TLS-ALPN-01 and the
