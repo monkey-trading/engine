@@ -23,6 +23,8 @@ use crate::sequencer::{Sequencer, SequencerConfig};
 use crate::tee::EnclaveKey;
 use crate::test_support::{dev_config, empty_custody_frontier, sample_around, scratch_dir, sequencer_config};
 
+mod tail;
+
 pub(super) const ACCOUNTS: u32 = 100_000;
 
 /// A gated sequencer holding `ACCOUNTS` funded accounts, its checkpoints final.
@@ -316,7 +318,9 @@ impl Clock for StampClock {
 /// the stall; a per-price slowdown moves the median on every batch. A scheduler hiccup on a loaded
 /// runner lifts wall-clock waits without any work behind them (a stall of the runner's CPU covers a
 /// tenth of a batch in 120 ms), so the median must hold on every batch while the p90 must hold on at
-/// least one of five windows; every batch is reported in full.
+/// least one of five windows; every batch is reported in full. A slow runner lifts the p99 alone (30 us
+/// to 250 us on unchanged code), so each batch's p99 is held to a multiple of the p99 of a probe thread
+/// woken beside every price (`tail`), and three of the five batches must hold it.
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn price_wait_budget() {
@@ -358,6 +362,13 @@ fn price_wait_budget() {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         runtime.block_on(seq.run(rx)).unwrap();
     });
+    // A thread woken beside every price, with no engine code behind it: its wake-up tail is the
+    // runner's own, which the batch's p99 is held against.
+    let (probe_tx, probe_rx) = std::sync::mpsc::channel::<Instant>();
+    let probe = std::thread::spawn(move || {
+        let woken: Vec<u128> = probe_rx.iter().map(|sent| sent.elapsed().as_micros()).collect();
+        woken
+    });
     let id = account(9);
     let load = {
         let tx = tx.clone();
@@ -381,6 +392,7 @@ fn price_wait_budget() {
         for cmd in prices.clone() {
             std::thread::sleep(std::time::Duration::from_millis(2));
             sent.push(Instant::now());
+            probe_tx.send(sent[sent.len() - 1]).unwrap();
             tx.blocking_send(crate::sequencer::Request::Submit { cmd, reply: None }).unwrap();
             // Evidence that the last checkpoint is final lets the next one sign.
             if (sent.len() as u64).is_multiple_of(EVERY) {
@@ -397,12 +409,15 @@ fn price_wait_budget() {
     }
     load.join().unwrap();
     drop(tx);
+    drop(probe_tx);
+    let probed = probe.join().unwrap();
     // The runner's exit drains every submitted command, so each batch's prices are all stamped.
     runner.join().unwrap();
     let all_stamps = clock.stamps.lock().unwrap();
-    let stats: Vec<(u128, u128)> = batches
+    let stats: Vec<(u128, u128, u128, u128)> = batches
         .iter()
-        .map(|(before, sent)| {
+        .enumerate()
+        .map(|(batch, (before, sent))| {
             let stamps = &all_stamps[*before..];
             assert!(stamps.len() >= PRICES, "every price was stamped");
             // Each price takes the first stamp at or after its send; a stamp another request took
@@ -420,12 +435,22 @@ fn price_wait_budget() {
                 })
                 .collect();
             report("price_channel_to_stamp_under_reads_and_checkpoints", waits.clone());
+            let mut probes = probed[batch * PRICES..(batch + 1) * PRICES].to_vec();
+            report("probe_wake_beside_the_prices", probes.clone());
             waits.sort_unstable();
-            (waits[waits.len() / 2], waits[waits.len() * 9 / 10])
+            probes.sort_unstable();
+            let (n, m) = (waits.len(), probes.len());
+            (waits[n / 2], waits[n * 9 / 10], waits[n * 99 / 100], probes[m * 99 / 100])
         })
         .collect();
-    let medians: Vec<u128> = stats.iter().map(|(median, _)| *median).collect();
-    let p90s: Vec<u128> = stats.iter().map(|(_, p90)| *p90).collect();
+    let medians: Vec<u128> = stats.iter().map(|(median, ..)| *median).collect();
+    let p90s: Vec<u128> = stats.iter().map(|(_, p90, ..)| *p90).collect();
     assert!(medians.iter().all(|median| *median <= MEDIAN_US), "a batch's median exceeded {MEDIAN_US}us: {medians:?}");
     assert!(p90s.iter().any(|p90| *p90 <= P90_US), "every batch's p90 exceeded {P90_US}us: {p90s:?}");
+    let tails: Vec<(u128, u128)> = stats.iter().map(|(_, _, p99, probe)| (*p99, *probe)).collect();
+    assert!(
+        tail::tail_holds(&tails),
+        "fewer than {} batches held their p99 (p99, probe p99): {tails:?}",
+        tail::TAIL_BATCHES
+    );
 }
