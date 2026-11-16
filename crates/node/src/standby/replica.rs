@@ -209,7 +209,8 @@ impl Follower {
     /// final checkpoint waits for a member to confirm its seq can take this member's confirmation.
     /// Returns `work`'s output, and why the following stopped early: the replica refused an entry
     /// (`ReplicaRefused`, after which the follower must be opened again), or the operator's log no
-    /// longer extends the copy.
+    /// longer extends the copy; or, when no stint reached the operator, the last failure, the
+    /// connecting that `work`'s end cut short included.
     pub(crate) async fn follow_during<T>(
         &mut self,
         cfg: &NodeConfig,
@@ -226,10 +227,15 @@ impl Follower {
         };
         let following = async {
             let started = tokio::time::Instant::now();
+            // The last failure, kept while no stint has reached the operator.
+            let (mut reached, mut failure) = (false, None);
             loop {
                 let left = budget.saturating_sub(started.elapsed());
                 if *until.borrow() || left.is_zero() {
-                    return Ok(());
+                    return match failure.filter(|_| !reached) {
+                        Some(e) => Err(e),
+                        None => Ok(()),
+                    };
                 }
                 self.copied.admit(followed.enclave);
                 self.replica.admit(followed.enclave);
@@ -248,8 +254,11 @@ impl Follower {
                     Err(e) if e.downcast_ref::<ReplicaRefused>().is_some() || rollback_of(&e).is_some() => {
                         return Err(e);
                     }
-                    Err(e) => tracing::debug!("following while waiting failed, following again: {e:#}"),
-                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::debug!("following while waiting failed, following again: {e:#}");
+                        failure = Some(e);
+                    }
+                    Ok(_) => reached = true,
                 }
                 // A stream the operator ends at once must not make this a spin.
                 let mut paused = until.clone();

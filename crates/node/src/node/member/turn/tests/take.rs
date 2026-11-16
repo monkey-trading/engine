@@ -197,6 +197,16 @@ fn only_a_refused_entry_or_a_part_changed_copy_rebuilds_the_replica() {
 /// says, whose task and request count come back too. Rotation is off, so the start's reads need no
 /// chain and the take reaches the predecessor.
 async fn in_own_turn(name: &str, script: Vec<Answer>) -> (Fixture, Operator, JoinHandle<()>, Arc<AtomicUsize>) {
+    in_own_turn_at(name, script, None).await
+}
+
+/// `in_own_turn`, with the incumbent's API at `api_hostname` when given, though the stand-in operator
+/// still runs.
+async fn in_own_turn_at(
+    name: &str,
+    script: Vec<Answer>,
+    api_hostname: Option<String>,
+) -> (Fixture, Operator, JoinHandle<()>, Arc<AtomicUsize>) {
     let mut fixture = Fixture::start(name, true).await;
     fixture.cfg.operator.rotation_enabled = false;
     let operator = fixture.operator(true).await;
@@ -204,7 +214,7 @@ async fn in_own_turn(name: &str, script: Vec<Answer>) -> (Fixture, Operator, Joi
     fixture.registry.source(HandoverSource {
         candidate: AccountId([0x0b; 20]),
         release: [0x0b; 32],
-        api_hostname: operator.host.clone(),
+        api_hostname: api_hostname.unwrap_or_else(|| operator.host.clone()),
         handover_endpoint: listener.local_addr().unwrap().to_string(),
     });
     fixture.registry.draw(fixture.release().id());
@@ -250,3 +260,42 @@ fn assert_left_to_the_start(dir: &std::path::Path) {
 }
 
 mod skip;
+
+/// An incumbent that accepts the stream's connection and never completes its handshake holds neither
+/// catch-up before the take, the copy's opened at the turn nor the take's own, past its budget: the
+/// predecessor is asked well within `FETCH_TIMEOUT`, and the catch-up that never reached the incumbent
+/// says so at warn level.
+#[tokio::test]
+async fn an_incumbent_that_stalls_its_handshake_holds_the_catch_ups_to_their_budgets() {
+    let (_guard, mut logged) = crate::test_support::capture_field("message");
+    let stalled = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let host = stalled.local_addr().unwrap().to_string();
+    let holding = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = stalled.accept().await {
+            held.push(stream);
+        }
+    });
+    let lagged = Answer::Missed(TailMiss::Lagged);
+    let (fixture, _operator, served, asked) =
+        in_own_turn_at("member-stalled-incumbent", vec![lagged; TAIL_ATTEMPTS], Some(host)).await;
+    let mut member = fixture.member();
+    let started = std::time::Instant::now();
+    let drive = async {
+        while asked.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        started.elapsed()
+    };
+    let turn = tokio::select! {
+        waited = drive => Ok(waited),
+        turn = member.until_turn() => Err(turn),
+    };
+    served.abort();
+    holding.abort();
+    let waited = turn.unwrap_or_else(|_| panic!("the member left its turn before asking the predecessor"));
+    assert!(waited < crate::standby::FETCH_TIMEOUT / 3, "the predecessor was asked after {waited:?}");
+    let warned = std::iter::from_fn(|| logged.try_recv().ok())
+        .any(|event| event["level"] == "WARN" && event["message"].contains("connected"));
+    assert!(warned, "a catch-up that never reached the incumbent did not warn");
+}

@@ -31,8 +31,8 @@ async fn a_stint_its_until_ends_while_connecting_returns_at_once() {
         ended.send_replace(true);
     };
     let (stinted, ()) = tokio::join!(tokio::time::timeout(Duration::from_secs(10), stint), end);
-    let appended = stinted.expect("the stint waited past its end for the handshake").unwrap();
-    assert_eq!(appended, None, "the stint appended entries");
+    let failed = stinted.expect("the stint waited past its end for the handshake").unwrap_err();
+    assert!(format!("{failed:#}").contains("before the stream"), "the stint failed as {failed:#}");
     assert!(started.elapsed() < Duration::from_secs(5), "the stint ended at {:?}", started.elapsed());
     holding.abort();
 }

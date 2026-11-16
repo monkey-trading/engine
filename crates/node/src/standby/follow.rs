@@ -69,7 +69,7 @@ pub(super) async fn follow(
 
 /// One follow stint, as `follow`, that also ends once `until`, if any, turns true or closes.
 /// Error cases:
-/// - as `follow`
+/// - as `follow`, and `until` ended while it still connected
 pub(super) async fn follow_until(
     writer: &mut LogWriter,
     copied: &mut Chain,
@@ -94,7 +94,7 @@ pub(super) async fn follow_until(
     let connected = match until.clone() {
         Some(mut until) => tokio::select! {
             connected = connect => connected,
-            _ = until.wait_for(|ended| *ended) => return Ok(None),
+            _ = until.wait_for(|ended| *ended) => anyhow::bail!("following ended before the stream at {url} connected"),
         },
         None => connect.await,
     };
