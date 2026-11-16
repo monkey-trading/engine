@@ -131,6 +131,11 @@ async fn a_resumed_promotion_names_the_drawn_turn_it_is_carried_into() {
     assert_eq!(record.carried(&chain, &DOMAIN).await.unwrap(), PROMOTION.turn + 1, "the drawn turn it is carried into");
     chain.draw_next(AccountId([0x77; 20]), PROMOTION.generation);
     assert_eq!(record.carried(&chain, &DOMAIN).await.unwrap(), PROMOTION.turn, "another member's turn carries nothing");
+    // A promotion carried through more drawn turns than a start's walk follows still resumes.
+    let chain = FakeChain::new();
+    chain.promote(CANDIDATE, key);
+    (0..70).for_each(|_| chain.draw_next(CANDIDATE, PROMOTION.generation));
+    assert_eq!(record.carried(&chain, &DOMAIN).await.unwrap(), PROMOTION.turn + 70);
 }
 
 /// The promotion's watch: a latest block recording the promotion stands until a final one does, a

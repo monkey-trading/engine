@@ -9,7 +9,7 @@ use engine_core::types::AccountId;
 use serde::{Deserialize, Serialize};
 
 use crate::standby_key::chain::{
-    AgreedBlock, Promotion, StandbyChain, StandbyDomain, StandbyState, in_effect, names_release, promotion_of,
+    AgreedBlock, Promotion, StandbyChain, StandbyDomain, in_effect, names_release, promotion_of,
 };
 
 /// The record a promoted member keeps of its promotion, beside its keys.
@@ -123,15 +123,11 @@ impl Record {
     }
 
     /// The turn in effect at `chain`'s latest agreed block that this promotion's generation is carried
-    /// into, as a start reads it (`standby_state`): the promotion's own turn when the chain says no more.
+    /// into (`carried_turn`): its own turn when the schedule names another member or generation there.
     /// Error cases:
     /// - a read fails
     pub(crate) async fn carried(&self, chain: &impl StandbyChain, domain: &StandbyDomain) -> anyhow::Result<u64> {
-        let state = crate::standby_key::chain::standby_state(chain, domain, self.candidate, self.key).await?;
-        Ok(match state {
-            StandbyState::Promoted(found) if found.same(&self.promotion()) => found.carried,
-            _ => self.turn,
-        })
+        crate::standby_key::chain::carried_turn(chain, domain, (self.candidate, self.generation, self.turn)).await
     }
 
     /// The record in `dir`, if one is there.

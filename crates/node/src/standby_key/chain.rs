@@ -424,15 +424,15 @@ pub(crate) async fn vouch_view(
     vouch_view_at(&chain.latest().await?, domain, candidate, own).await
 }
 
-/// `vouch_view`, at `block`.
+/// `candidate`'s registered release at `block`, `None` while it is not registered, and whether the timelock
+/// approved it for the candidate.
 /// Error cases:
 /// - a read fails
-pub(crate) async fn vouch_view_at(
+pub(crate) async fn registration_at(
     block: &impl AgreedBlock,
     domain: &StandbyDomain,
     candidate: AccountId,
-    own: Option<AccountId>,
-) -> anyhow::Result<VouchView> {
+) -> anyhow::Result<(Option<B256>, bool)> {
     let candidate = Address::from(candidate.0);
     let registered = call(block, "standby_candidate", domain.registry, candidateOfCall { candidate }).await?;
     let release = (!registered.adminKey.is_zero()).then_some(registered.release);
@@ -443,6 +443,36 @@ pub(crate) async fn vouch_view_at(
         }
         None => false,
     };
+    Ok((release, approved))
+}
+
+/// The turn in effect at the latest agreed block when the schedule names `candidate` for it in
+/// `generation`, which a promotion of `turn` in that generation is carried into; `turn` otherwise.
+/// Error cases:
+/// - a read fails
+pub(crate) async fn carried_turn(
+    chain: &impl StandbyChain,
+    domain: &StandbyDomain,
+    (candidate, generation, turn): (AccountId, u64, u64),
+) -> anyhow::Result<u64> {
+    let block = chain.latest().await?;
+    let found = call(&block, "standby_turn", domain.schedule, turnAtCall { timestamp: block.time() }).await?;
+    let named = found._1;
+    let carried = found.turn != 0 && named.candidate == Address::from(candidate.0) && named.generation == generation;
+    Ok(if carried { found.turn } else { turn })
+}
+
+/// `vouch_view`, at `block`.
+/// Error cases:
+/// - a read fails
+pub(crate) async fn vouch_view_at(
+    block: &impl AgreedBlock,
+    domain: &StandbyDomain,
+    candidate: AccountId,
+    own: Option<AccountId>,
+) -> anyhow::Result<VouchView> {
+    let (release, approved) = registration_at(block, domain, candidate).await?;
+    let candidate = Address::from(candidate.0);
     let signer = call(block, "standby_signer", domain.vault, checkpointSignerCall {}).await?;
     let own_promotable = match own {
         Some(own) => {

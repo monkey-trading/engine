@@ -120,14 +120,17 @@ async fn a_start_with_no_earlier_read_reads_the_schedule_while_the_gate_applies(
     node.take_turn();
     node.seq.flush().unwrap();
     let schedule = Schedule(Default::default());
-    let read = crate::node::log_check::read_unreadied(&schedule, &recovered(&node)).await.unwrap();
+    let read = crate::node::log_check::read_unreadied(&schedule, &recovered(&node), &Default::default()).await.unwrap();
     assert!(read.is_some(), "the gate applies");
-    assert_eq!(schedule.0.lock().unwrap().iter().map(|turns| turns.end).collect::<Vec<_>>(), [node.turn]);
+    assert_eq!(schedule.0.lock().unwrap().iter().map(|turns| turns.end).collect::<Vec<_>>(), [node.turn + 1]);
     let off =
         Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
     node.seq.sequence(off).unwrap().expect("admitted");
     node.seq.flush().unwrap();
-    assert_eq!(crate::node::log_check::read_unreadied(&schedule, &recovered(&node)).await.unwrap(), None);
+    assert_eq!(
+        crate::node::log_check::read_unreadied(&schedule, &recovered(&node), &Default::default()).await.unwrap(),
+        None
+    );
     assert_eq!(schedule.0.lock().unwrap().len(), 1, "read with rotation off");
 }
 

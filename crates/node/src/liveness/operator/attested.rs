@@ -14,21 +14,32 @@ use tracing::{debug, warn};
 use crate::liveness::chain::{Member, standby_holder};
 use crate::liveness::link::{Asking, Reply, Request, describe};
 use crate::liveness::operator::{Operator, STATUS_TIMEOUT};
-use crate::standby_key::chain::{AgreedBlock, StandbyChain, StandbyDomain, vouch_view_at};
+use crate::standby_key::chain::{AgreedBlock, StandbyChain, StandbyDomain, registration_at};
 use crate::standby_key::vouch::admit;
 
-/// A check that found the member's registered release is not the one its quote proves, or not approved:
-/// the candidate's key no longer stands, so a kept one does not either.
+/// A check that read the candidate's registered release, which is not the one its quote proves, or not
+/// approved: what it read says whether a kept key's release still stands.
 #[derive(Debug)]
-struct Refuted(String);
+struct Refuted {
+    registered: Option<B256>,
+    approved: bool,
+    quote: String,
+}
 
 impl std::fmt::Display for Refuted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        write!(f, "the quote proves release 0x{}, not the candidate's registered, approved one", self.quote)
     }
 }
 
 impl std::error::Error for Refuted {}
+
+impl Refuted {
+    /// Whether what the check read refutes a kept key that proved `release`.
+    fn moved(&self, release: B256) -> bool {
+        self.registered != Some(release) || !self.approved
+    }
+}
 
 /// The attested keys this enclave verified, by candidate, with the release each quote proved, and the
 /// candidates whose latest re-check failed: a failed re-check keeps the key until a check refutes it.
@@ -81,7 +92,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                                 debug!(member = %member.candidate, "no attested standby key to take statuses on: {e:#}")
                             }
                             Some((key, release))
-                                if e.downcast_ref::<Refuted>().is_none()
+                                if !e.downcast_ref::<Refuted>().is_some_and(|r| r.moved(release))
                                     && !self.refuted(block, domain, &member, (key, release)).await =>
                             {
                                 if self.kept.first_failure(member.candidate) {
@@ -115,8 +126,8 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         member: &Member,
         (key, release): (AccountId, B256),
     ) -> bool {
-        let view = vouch_view_at(block, domain, member.candidate, None).await;
-        let moved = view.is_ok_and(|view| view.release != Some(release) || !view.approved);
+        let registration = registration_at(block, domain, member.candidate).await;
+        let moved = registration.is_ok_and(|(registered, approved)| registered != Some(release) || !approved);
         moved || standby_holder(block, domain.schedule, key).await.is_ok_and(|holder| holder.is_some())
     }
 
@@ -141,13 +152,9 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         let Reply::Attestation { request } = reply else { bail!("no attestation: {}", describe(&reply)) };
         ensure!(request.candidate == member.candidate, "the attestation is candidate {}'s", request.candidate);
         let release = admit(&request, domain, (*provider, platform), at / 1000)?;
-        let view = vouch_view_at(block, domain, member.candidate, None).await?;
-        if !(view.release.is_some_and(|registered| registered.0 == release.id()) && view.approved) {
-            let proves = hex::encode(release.id());
-            return Err(Refuted(format!(
-                "the quote proves release 0x{proves}, not the candidate's registered, approved one"
-            ))
-            .into());
+        let (registered, approved) = registration_at(block, domain, member.candidate).await?;
+        if !(registered.is_some_and(|registered| registered.0 == release.id()) && approved) {
+            return Err(Refuted { registered, approved, quote: hex::encode(release.id()) }.into());
         }
         let holder = standby_holder(block, domain.schedule, request.key).await?;
         ensure!(holder.is_none(), "the schedule has taken standby key {}", request.key);

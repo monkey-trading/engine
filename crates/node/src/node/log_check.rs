@@ -1,6 +1,7 @@
 //! A node's part in the boundary's log check (`log_check`): the check its first start after a
 //! handover records, the sequencer's setup, and the asking of a node that takes turns.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -26,21 +27,29 @@ use crate::trusted_time::TrustedClock;
 /// final and mirrored, so the log's records name it.
 const REASSIGNED_TURNS: u64 = 8;
 
-/// The schedule's reassignments for `turn`'s start, read at the latest block before the start connects:
-/// of the turns before it, for a member's handover (`through` `None`), or through the turn its promotion
-/// carried into, leaving out its own assignment `(turn, position)`.
+/// The schedule's reassignments for the start of `turn`, read at the latest block before the start
+/// connects, of the turns near it: through `turn` for a member's handover, leaving out the assignment that
+/// gave the turn to one of `own`, its member, the latest of the turn; through the turn its promotion
+/// carried into for a promoted start, leaving out its own assignment `(turn, position)`.
 /// Error cases:
 /// - the schedule cannot be read
 pub(crate) async fn read_reassigned(
     vault: &impl CheckpointChain,
     turn: u64,
-    promoted: Option<(u64, u16, u64)>,
+    promoted: Option<(u16, u64)>,
+    own: &BTreeSet<AccountId>,
 ) -> anyhow::Result<Reassigned> {
     let from = turn.saturating_sub(REASSIGNED_TURNS);
-    let through = promoted.map_or(turn, |(_, _, carried)| carried.saturating_add(1));
+    let through = promoted.map_or(turn, |(_, carried)| carried).saturating_add(1);
     let mut assigned = vault.reassignments(from..through).await.context("reading the schedule's reassignments")?;
-    if let Some((turn, position, _)) = promoted {
-        assigned.retain(|at| (at.turn, at.position) != (turn, position));
+    match promoted {
+        Some((position, _)) => assigned.retain(|at| (at.turn, at.position) != (turn, position)),
+        None => {
+            let latest = assigned.iter().filter(|at| at.turn == turn).max_by_key(|at| at.position).copied();
+            if let Some(latest) = latest.filter(|latest| own.contains(&latest.candidate)) {
+                assigned.retain(|at| (at.turn, at.position) != (latest.turn, latest.position));
+            }
+        }
     }
     Ok(Reassigned { assigned })
 }
@@ -60,7 +69,7 @@ pub(crate) async fn start(
 
 /// The reassignments `log`'s start counts its own check against: those its member's start read before it
 /// connected (`ready`), and for a start that read none, as a whole-log take or a restart, those of the
-/// turns before the one in effect, read now while a rotation's turn is in effect and sealed keys take
+/// turns through the one in effect, read now while a rotation's turn is in effect and sealed keys take
 /// part. The start reads the chain anyway; a failed read fails it.
 /// Error cases:
 /// - the vault cannot be built, or the schedule cannot be read
@@ -73,23 +82,26 @@ pub(crate) async fn start_reads(
     match (ready, store) {
         (Some(read), _) => Ok(Some(read.clone())),
         (None, Some(_)) => match crate::handover::vault_reader(cfg)? {
-            Some(vault) => read_unreadied(&vault, log).await,
+            Some(vault) => {
+                read_unreadied(&vault, log, &own_candidates(&log.replayed.engine, cfg.operator()?.address)).await
+            }
             None => Ok(None),
         },
         (None, None) => Ok(None),
     }
 }
 
-/// The reassignments of the turns before the one `log` has in effect, while the gate applies.
+/// The reassignments of the turns through the one `log` has in effect, while the gate applies.
 /// Error cases:
 /// - the schedule cannot be read
 pub(crate) async fn read_unreadied(
     vault: &impl CheckpointChain,
     log: &ReplayedLog,
+    own: &BTreeSet<AccountId>,
 ) -> anyhow::Result<Option<Reassigned>> {
     let engine = &log.replayed.engine;
     match engine.daily_turns().in_effect.filter(|_| applies(engine)) {
-        Some(turn) => read_reassigned(vault, turn.turn, None).await.map(Some),
+        Some(turn) => read_reassigned(vault, turn.turn, None, own).await.map(Some),
         None => Ok(None),
     }
 }
@@ -240,15 +252,22 @@ mod tests {
         }
     }
 
-    /// A handover start reads the turns before its own, and a promoted start those through the turn it
+    /// A handover start reads the turns through its own, and a promoted start those through the turn it
     /// carries into, leaving out its own promotion; a schedule that cannot be read fails the read.
     #[tokio::test]
     async fn a_start_reads_the_reassignments_of_the_turns_its_check_may_span() {
         let schedule = Schedule(Default::default());
-        let handover = read_reassigned(&schedule, 20, None).await.unwrap();
+        let handover = read_reassigned(&schedule, 20, None, &BTreeSet::new()).await.unwrap();
         assert_eq!(handover.assigned.len(), 3);
-        assert_eq!(schedule.0.lock().unwrap().clone(), Some(12..20));
-        let promoted = read_reassigned(&schedule, 7, Some((7, 2, 8))).await.unwrap();
+        assert_eq!(schedule.0.lock().unwrap().clone(), Some(12..21), "through the turn taken");
+        let own = BTreeSet::from([AccountId([9; 20])]);
+        let taken = read_reassigned(&schedule, 7, None, &own).await.unwrap();
+        assert_eq!(
+            taken.assigned.iter().map(|at| at.position).collect::<Vec<_>>(),
+            [0, 1],
+            "the assignment that gave it"
+        );
+        let promoted = read_reassigned(&schedule, 7, Some((2, 8)), &BTreeSet::new()).await.unwrap();
         assert_eq!(schedule.0.lock().unwrap().clone(), Some(0..9));
         assert_eq!(promoted.assigned.iter().map(|at| at.position).collect::<Vec<_>>(), [0, 1], "its own promotion");
         struct Unread;
@@ -261,6 +280,6 @@ mod tests {
                 anyhow::bail!("unread")
             }
         }
-        assert!(read_reassigned(&Unread, 20, None).await.is_err(), "a failed read dropped the check");
+        assert!(read_reassigned(&Unread, 20, None, &BTreeSet::new()).await.is_err(), "a failed read dropped the check");
     }
 }
