@@ -321,6 +321,7 @@ async fn a_long_gap_leaves_the_promotions_fixed_head_in_the_replica() {
     let log = with_offsets(&full);
     let promotion = Promotion {
         turn: 1,
+        carried: 1,
         position: 0,
         signer_epoch: 2,
         generation: 1,
