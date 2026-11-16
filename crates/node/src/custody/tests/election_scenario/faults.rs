@@ -171,7 +171,7 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
     let copy = node.dir.with_extension("copy");
     let first = node.dir.with_extension("first");
     let second = node.dir.with_extension("second");
-    let mut node = node.restart_with(&chain, |dir| copy_dir(dir, &copy)).await;
+    let mut node = node.restart_with(&chain, |dir| crate::test_support::copy_dir(dir, &copy)).await;
     tick(&mut node, 3, 1_000).await;
     let mut node = node
         .restart_with(&chain, |dir| {
@@ -180,7 +180,7 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
         })
         .await;
     tick(&mut node, 5, 700).await;
-    let mut node = node.restart_with(&chain, |dir| copy_dir(dir, &second)).await;
+    let mut node = node.restart_with(&chain, |dir| crate::test_support::copy_dir(dir, &second)).await;
     let (history_a, history_b) =
         (crate::sequencer::replay_path(&first).unwrap(), crate::sequencer::replay_path(&second).unwrap());
     let seq = history_a.engine.last_seq().min(history_b.engine.last_seq()).expect("both logs hold commands");
@@ -339,20 +339,6 @@ fn head_at(dir: &Path, replayed: &crate::sequencer::Replayed, seq: u64) -> (B256
         })
         .expect("the log holds the seq");
     (link, u64::try_from(stamp).unwrap())
-}
-
-/// Copies the directory `from` to `to`, recursively.
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).unwrap();
-        }
-    }
 }
 
 /// The custody quorum's reads of the turn naming the operator, as the log-head poster makes them.

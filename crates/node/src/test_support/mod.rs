@@ -2,11 +2,13 @@
 //! history index following it, and a log layer that hands every alert to the test.
 
 mod alerts;
+mod copy;
 mod events;
 mod readers;
 mod scratch;
 mod staking_rpc;
 pub use alerts::{capture_alerts, capture_alerts_and_resolutions};
+pub use copy::copy_dir;
 pub use events::every_event;
 pub use readers::{marks_reader, stats};
 pub use scratch::{keep_scratch, scratch_dir, scratch_path};
