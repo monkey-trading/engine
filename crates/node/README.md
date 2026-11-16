@@ -1415,8 +1415,17 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   quote when its mid moves or the engine's quote needs refreshing, reconnect, and hold back
   quotes the engine would refuse
 - `src/feeds/venue/adapter.rs` — a venue's protocol on one connection, whichever adapter speaks it
-- `src/feeds/venue/alerts.rs` — the venue task's alerts: outages, silent symbols, a clock ahead of
-  the host's, and refused messages
+- `src/feeds/venue/alerts.rs` — the venue task's alerts: outages, silent and stale symbols, a clock
+  ahead of the host's, and refused messages
+- `src/feeds/venue/stale.rs` — a symbol's run of books read already too old to count, which raises
+  `venue_stale` once its reads span 2 s (or `feeds.venues.timeout` if shorter), is timed afresh
+  after each resubscription, and ends at a book young enough
+- `src/feeds/venue/resubscribe.rs` — resubscribing silent and stale symbols, again each time one
+  shows it since the last attempt, with backoff: alone on the connection where the venue takes that
+  (Coinbase), replacing the connection only for a symbol still stale after its own alone attempt
+- `src/feeds/venue/silence_tests.rs` — silent and stale symbols on paused time: a stale run's alert
+  and resolution, a market's tighter age limit, when a resubscription is due, and the info log of an
+  outage's failed reconnects
 - `src/feeds/venue/emit.rs` — sequencing the newest quote per symbol as book updates arrive, as soon
   as it is read, within a per-symbol budget (one per `feeds.venues.min_quote_spacing` after a
   burst, past which updates coalesce to the newest), holding a repeat of the sequenced mid until
@@ -1476,6 +1485,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   of the host clock is not held for it
 - `src/feeds/tests/quiet.rs` — a venue repeating its top of book: a repeated mid is sequenced only
   to refresh the engine's quote, a moved mid or a new connection's first quote goes at once
+- `src/feeds/tests/coinbase_support.rs` — a loopback Coinbase `level2` endpoint at the venue's
+  load: whole-book snapshots (a tenth of Coinbase's depth by default, its full depth on request),
+  25 updates a second a product, pings answered in stream order,
+  subscriptions served from a source a set time behind or put behind while they stream, and halted
+  products
+- `src/feeds/tests/silent.rs` — silent and stale symbols resubscribed until they quote: a stale
+  product alone while the other quotes on, a later episode alone too, one still stale alone then on
+  a new connection, a halted product alone each time, and a Kraken symbol on each new connection
 - `src/feeds/tests/fake.rs` — the loopback venues, the feed harness with an engine that applies
   what the feed sequences, and the wait for the next alert
 - `src/feeds/tests/delay.rs` — a connection's pings against a venue that answers them or does not

@@ -29,7 +29,10 @@ BTC-USD and ETH-USD are priced from Coinbase and Kraken only, with `min_sources 
 close-outs until it is back. This halts those markets. A book that stands is kept quoting by the
 connection's pings for about five seconds past its last change, and for about a second once the
 venue stops answering them, so a symbol whose book shows no change for more than about six seconds
-halts its own market.
+halts its own market. A venue can also stream one product minutes behind while the others on the same
+connection are current, as Coinbase did on 16 November 2026: `venue_stale` names the product and the
+age of its quotes, and the node resubscribes the product alone, then on a new connection if it stays
+stale, repeating with backoff until it is current.
 
 **Why it is the case to watch.** At the owner's decided terms (1% margin, 100x, up to $1M, close-out
 at 50% of margin) a full 100x position closes out about 0.5% from its entry and loses more than its
@@ -119,7 +122,8 @@ shows only a market that never priced. Match the alerts to the cause:
 | Alert | Level | Meaning | Do |
 | --- | --- | --- | --- |
 | `venue_feed_down` | Warning | A connection to a venue or vendor is down; the node reconnects with backoff (`reconnect_min` to `reconnect_max`). For CME it is also a reconnect with no bearer token to connect with. Fields: `venue`, `feed`. | Check the vendor's status and the account (plan, key, entitlement, connection limit); for CME, see [CME Group's feed](#cme-groups-feed). Nothing to do on the node. |
-| `venue_symbol_silent` | Warning | A symbol has had no fresh quote for `feeds.venues.timeout` while its market is open. The connection is replaced. | Check the symbol is still the vendor's (a ticker or contract change); a wrong symbol is a config fix. |
+| `venue_symbol_silent` | Warning | A symbol has had no fresh quote for `feeds.venues.timeout` while its market is open. It is resubscribed, and again each `feeds.venues.timeout` it stays silent, with backoff from `reconnect_min` to `reconnect_max`, until it quotes: on Coinbase alone on its connection each time, so the other symbols quote on; on other venues by replacing the connection, which costs its other symbols a reconnect each time. | Check the symbol is still the vendor's (a ticker or contract change); a wrong symbol is a config fix. |
+| `venue_stale` | Warning | A venue has kept sending a symbol's books, for 2 s (or `feeds.venues.timeout` if shorter), already older than its quotes count for: it is streaming that symbol from behind. The age is in the message. The symbol is resubscribed at once, on Coinbase alone on its connection first and then on a new connection, and again after each 2 s more of such books, with backoff from `reconnect_min` to `reconnect_max`; the alert resolves at the next book young enough to count. | Check the venue's status page. Nothing to do on the node while the other source quotes; the market has no price until this one is current. |
 | `venue_token_failed` | Warning | CME's token endpoint failed or refused a bearer token request. While the connection's token has life left, the feed still prices. It resolves at the next request the endpoint grants. Fields: `venue`, `feed`. | See [CME Group's feed](#cme-groups-feed). |
 | `venue_message_refused` | Warning | The node refused a vendor message (malformed, unknown), or CME refused a login or subscription. At most one a minute, with a count. A venue that holds no credential has the message excerpted; one that does (CME, Massive, TraderMade) has it named by its length and a SHA-256 prefix, since it could echo a credential. | Read the reason and the excerpt, or tell messages apart by their hashes. A vendor format change needs a node release; for CME's refusals, see [CME Group's feed](#cme-groups-feed). |
 | `venue_clock_ahead` | Warning | A venue's timestamps are well ahead of the host clock. | Check `clock_drift` and the host clock; quotes ahead of sequenced time are rejected (`prices_rejected`, reason `quote_ahead`). |

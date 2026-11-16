@@ -1,5 +1,5 @@
-//! A venue task's alerts: outages, silent symbols, a clock ahead of the host's, and refused
-//! messages, each raised once per episode and resolved when it ends. Every alert names its
+//! A venue task's alerts: outages, silent and stale symbols, a clock ahead of the host's, and
+//! refused messages, each raised once per episode and resolved when it ends. Every alert names its
 //! connection (`feed`, the endpoint URL), so the connections of one venue keep their own episodes.
 
 use std::time::Duration;
@@ -12,6 +12,8 @@ use tracing::{debug, info, warn};
 use crate::clock::now_ms;
 use crate::feeds::venue::VenueFeed;
 use crate::feeds::venue::auth::redact;
+use crate::feeds::venue::stale::STALE_GRACE;
+use crate::throttle::Throttle;
 
 /// How much of a refused message its log line keeps.
 const EXCERPT_CHARS: usize = 200;
@@ -35,37 +37,72 @@ impl VenueFeed {
         }
     }
 
-    /// Alerts once for each symbol that has gone `timing.timeout` without a fresh quote sequenced,
-    /// across reconnects: one the venue accepted but never publishes, or whose quotes arrive stale
-    /// or too far ahead of the host clock, or reach the engine late. An outage already alerted
-    /// stands for every symbol. A symbol held back from the engine, or with its market closed, is not
-    /// silent, and its count starts again from now.
-    /// Returns whether a symbol went silent on this check, so the connection is replaced once to
-    /// subscribe it afresh; a symbol already silent does not trigger another.
-    pub(super) fn check_silent(&mut self) -> bool {
-        if self.down {
-            return false;
-        }
+    /// Alerts once for each symbol whose books keep arriving already too old to count when the venue
+    /// sent them, across the shorter of `STALE_GRACE` and `timing.timeout` (see `stale`), and once
+    /// for each that has gone
+    /// `timing.timeout` without a fresh quote sequenced, across reconnects: one the venue accepted
+    /// but never publishes, or whose quotes arrive stale or too far ahead of the host clock, or
+    /// reach the engine late. An outage already alerted stands for every symbol's silence. A symbol
+    /// held back from the engine, or with its market closed, is neither stale nor silent, and its
+    /// count starts again from now.
+    /// Returns the symbols to resubscribe now (see `resubscribe`): every one silent or alerted
+    /// stale, once one has newly gone silent, stayed silent for `timing.timeout` since the last
+    /// attempt or connection, or read stale across the grace since then, and the backoff allows;
+    /// none during an outage, whose no-fresh-quote count replaces the connection.
+    pub(super) fn check_quoting(&mut self) -> Vec<String> {
         let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
         let now = Instant::now();
         let now_ms = now_ms();
-        let mut newly_silent = false;
+        let grace = STALE_GRACE.min(self.timing.timeout);
+        let since = self.resubscription.since();
+        let mut needed = Vec::new();
+        let mut shown = false;
         for (symbol, instrument) in &self.instruments {
             let market = instrument.market;
             if self.is_held(symbol) || self.closed(market, now_ms) {
                 self.last_quote.insert(symbol.clone(), now);
+                if self.stale.end(symbol) {
+                    info!(
+                        alert_resolved = "venue_stale",
+                        venue, feed, symbol, market, "venue symbol no longer expected to quote"
+                    );
+                }
+                continue;
+            }
+            if let Some(age_ms) = self.stale.newly_stale(symbol, grace) {
+                // The age changes while the venue stays behind, so it is in the message, not the key.
+                let age = Duration::from_millis(u64::try_from(age_ms).unwrap_or(u64::MAX));
+                warn!(
+                    alert = "venue_stale",
+                    venue, feed, symbol, market, "venue quotes {age:?} old when sent: too old to count"
+                );
+            }
+            if self.down {
                 continue;
             }
             let quiet = self.last_quote.get(symbol).is_some_and(|at| now.duration_since(*at) >= self.timing.timeout);
-            if quiet && self.silent.insert(symbol.clone()) {
+            let newly_silent = quiet && self.silent.insert(symbol.clone());
+            if newly_silent {
                 warn!(
                     alert = "venue_symbol_silent",
                     venue, feed, symbol, market, "no fresh quote for {:?}", self.timing.timeout
                 );
-                newly_silent = true;
+            }
+            let (silent, stale) = (self.silent.contains(symbol), self.stale.alerted(symbol));
+            if silent || stale {
+                needed.push(symbol.clone());
+                // Silent across a whole window of its own count, and since the last attempt or connection.
+                let silent_again =
+                    silent && quiet && since.is_none_or(|since| now.duration_since(since) >= self.timing.timeout);
+                shown |= newly_silent || silent_again || (stale && self.stale.spans(symbol, grace));
             }
         }
-        newly_silent
+        if !self.resubscription.due(&needed, shown, now, &self.timing) {
+            return Vec::new();
+        }
+        // What the resubscription brings is judged afresh.
+        self.stale.restart();
+        needed
     }
 
     /// Alerts, at most once per `REALERT_AFTER`, that a quote for `market` is dated `lead_ms` ahead
@@ -111,7 +148,8 @@ impl VenueFeed {
     }
 
     /// Logs a lost connection. A connection that sequenced fresh quotes is a routine drop; one that
-    /// sequenced none starts an outage, alerted once until a fresh quote ends it.
+    /// sequenced none starts an outage, alerted once until a fresh quote ends it, and each failed
+    /// attempt after says why at most once per `REALERT_AFTER`, with a count of those between.
     pub(super) fn dropped(&mut self, error: &anyhow::Error, retry_in: Duration) {
         let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
         let error = self.redact(&format!("{error:#}"));
@@ -119,7 +157,15 @@ impl VenueFeed {
             info!(venue, feed, ?retry_in, "venue feed dropped: {error}");
         } else if !self.down {
             self.down = true;
+            self.retries = Throttle::default();
             warn!(alert = "venue_feed_down", venue, feed, "venue feed down, retrying in {retry_in:?}: {error}");
+        } else if let Some(suppressed) = self.retries.ready(Instant::now()) {
+            info!(
+                venue,
+                feed,
+                ?retry_in,
+                "venue still down ({suppressed} more failed attempts since the last): {error}"
+            );
         } else {
             debug!(venue, feed, ?retry_in, "venue still down: {error}");
         }

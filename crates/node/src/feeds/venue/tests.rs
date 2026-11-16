@@ -190,10 +190,10 @@ async fn a_recovery_gives_every_symbol_a_full_silence_window() {
     feed.delivered("BTC/USD");
     tokio::time::advance(window - Duration::from_millis(1)).await;
     feed.delivered("BTC/USD");
-    assert!(!feed.check_silent());
+    assert!(feed.check_quoting().is_empty());
     assert!(alerts.try_recv().is_err());
     tokio::time::advance(Duration::from_millis(1)).await;
-    assert!(feed.check_silent());
+    assert_eq!(feed.check_quoting(), ["ETH/USD"]);
     let alert = next_alert(&mut alerts).await;
     assert_eq!((alert["alert"].as_str(), alert["symbol"].as_str()), ("venue_symbol_silent", "ETH/USD"));
 }
@@ -230,7 +230,7 @@ async fn venue_alerts_keep_one_key_per_subject_and_resolve_under_it() {
     feed.dropped(&anyhow::anyhow!("refused"), Duration::from_secs(1));
     feed.delivered("BTC/USD");
     tokio::time::advance(window).await;
-    assert!(feed.check_silent());
+    assert!(!feed.check_quoting().is_empty());
     feed.delivered("ETH/USD");
     feed.clock_ahead(1, 60_000);
     feed.refuse("unparseable", "{");
@@ -293,7 +293,7 @@ async fn an_unnamed_contract_alerts_and_a_held_symbol_is_not_silent() {
     feed.confirmed(Confirmation { unnamed: vec!["ETH/USD".into()], ..Confirmation::default() });
     assert!(feed.is_held("ETH/USD"));
     tokio::time::advance(window).await;
-    assert!(feed.check_silent());
+    assert!(!feed.check_quoting().is_empty());
     feed.confirmed(Confirmation { idle: vec!["BTC/USD".into()], ..Confirmation::default() });
     assert!(feed.is_held("BTC/USD") && !feed.is_held("ETH/USD"));
 
@@ -376,7 +376,7 @@ fn a_cme_read_waits_at_least_two_heartbeat_intervals_and_any_other_the_timeout()
 // ── Helpers ──
 
 /// A Kraken feed for `symbols` that is never run, for calling its alert paths directly.
-fn kraken_feed(symbols: &[(MarketId, &str)], timeout: Duration) -> VenueFeed {
+pub(super) fn kraken_feed(symbols: &[(MarketId, &str)], timeout: Duration) -> VenueFeed {
     feed_at(Venue::Kraken, "wss://ws.kraken.com/v2", symbols, timeout)
 }
 

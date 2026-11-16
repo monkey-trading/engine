@@ -645,7 +645,17 @@ meanwhile only while its sources' spread, in whole basis points of their median,
 index at most about 13 bps from the venue still quoting (half their 25 bps, plus the rounding to
 whole basis points), and past that the market has no price. This rests on those venues writing a
 pong behind what they sent before reading its ping, as they were measured to; Massive's,
-TraderMade's and CME Group's connections, which were not measured, re-date nothing. A
+TraderMade's and CME Group's connections, which were not measured, re-date nothing. The ping bound
+holds against the host, which cannot make a pong overtake what the venue sent before it, but not
+against a venue lagging upstream of its own send queue. On 16 November 2026 Coinbase answered pings
+at once while it served one product's book, snapshot and updates, from a source 5 to 18 minutes
+behind its own, and kept the connection's other product current. Prices stayed safe because each
+quote carries the venue's own time: the engine counted none older than `max_age_ms`, and re-dating
+moves a book's stamp on only by the time since it was read, so the market lost that venue rather
+than taking its old price. Books arriving already older than they count for when the venue sent them
+(their age less the time since the connection's newest answered ping went out), across 2 s, raise
+`venue_stale` and resubscribe the product, alone on its connection where the venue takes that and on
+a new connection if it stays stale, again after each 2 s more of such books, with backoff. A
 production market needs two sources fresh, so a delay past the bound on either leaves it without a
 price. Every part of this rests on the monotonic clock's rate, as do
 the Roughtime round trips that place trusted time and with them `time.max_drift`. The enclave image
