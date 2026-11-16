@@ -90,7 +90,7 @@ impl NodeConfig {
                 venues_quoting(connections, market).into_iter().filter(move |(_, by)| by.len() < needed).map(
                     move |(contract, by)| {
                         let contract = contract.map(|c| format!(" contract {c}")).unwrap_or_default();
-                        let names: Vec<&str> = by.iter().map(|venue| venue.name()).collect();
+                        let names: Vec<&str> = by.iter().copied().collect();
                         let has = if by.is_empty() {
                             "no venue".into()
                         } else {

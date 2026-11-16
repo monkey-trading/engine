@@ -287,7 +287,8 @@ impl VenueFeed {
 }
 
 /// Whether `venue`'s connections re-date quiet books: those measured to write a pong behind what
-/// they sent before reading its ping. Massive's and TraderMade's are not measured.
+/// they sent before reading its ping. Massive's, TraderMade's and Coinbase Exchange's are not
+/// measured.
 pub(super) fn redates(venue: Venue) -> bool {
     matches!(venue, Venue::Bitstamp | Venue::Coinbase | Venue::Kraken)
 }

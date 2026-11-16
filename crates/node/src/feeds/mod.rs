@@ -15,6 +15,7 @@ mod bitstamp;
 mod cme;
 pub(crate) use cme::check_symbol as check_cme_symbol;
 mod coinbase;
+mod coinbase_exchange;
 mod kraken;
 mod massive;
 mod tradermade;

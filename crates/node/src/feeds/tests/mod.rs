@@ -14,6 +14,7 @@ mod loss_trigger;
 mod mock;
 mod quiet;
 mod redate;
+mod redundant;
 mod rwa;
 pub(super) mod rwa_support;
 mod scenario;
@@ -26,19 +27,22 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use engine_core::price::{PriceError, compute_index};
 use engine_core::types::MarketId;
 use futures_util::SinkExt;
+use tokio::sync::oneshot;
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::clock::now_ms;
 use crate::config::Venue;
 use crate::feeds::tests::fake::{
-    WAIT, accept, bitstamp_book, coinbase_levels, fast, kraken_book, listen, next_alert, next_prices, quote, send,
-    spawn_feed, stream,
+    WAIT, accept, bitstamp_book, coinbase_exchange_book, coinbase_levels, fake_sequencer, fast, kraken_book, listen,
+    next_alert, next_prices, quote, send, spawn_feed, spawn_feed_into, stream,
 };
 use crate::feeds::venue::{Book, Instrument, Timing, to_quote};
 use crate::feeds::{bitstamp, kraken};
+use crate::sequencer::{Query, Request};
 use crate::test_support::{Alert, capture_alerts};
 
 const MARKETS: [(MarketId, &str); 2] = [(1, "BTC/USD"), (2, "ETH/USD")];
@@ -58,6 +62,36 @@ async fn quotes_are_sequenced_per_market_with_the_venue_timestamp() {
     let mut sequenced = BTreeMap::from([next_prices(&mut rx).await, next_prices(&mut rx).await]);
     assert_eq!(sequenced.remove(&1), Some(vec![quote(Venue::Kraken, "81251", 1_000)]));
     assert_eq!(sequenced.remove(&2), Some(vec![quote(Venue::Kraken, "2377.05", 2_000)]));
+}
+
+/// Coinbase read on its two hosts is one source: the engine holds the later-stamped of their
+/// quotes, and with no other venue a market needing two sources has no price.
+#[tokio::test]
+async fn two_feeds_of_one_venue_count_as_one_source() {
+    let (tx, mut rx) = fake_sequencer();
+    let ((advanced, advanced_url), (exchange, exchange_url)) = (listen().await, listen().await);
+    let _advanced = spawn_feed_into(tx.clone(), Venue::Coinbase, &advanced_url, &[(1, "BTC-USD")], fast(WAIT));
+    let _exchange = spawn_feed_into(tx.clone(), Venue::CoinbaseExchange, &exchange_url, &[(1, "BTC-USD")], fast(WAIT));
+    let ((mut advanced, _), (mut exchange, _)) = (accept(&advanced).await, accept(&exchange).await);
+
+    let ts = now_ms();
+    send(&mut advanced, &[coinbase_levels(1, true, "BTC-USD", "100", "101", ts - 50)]).await;
+    assert_eq!(next_prices(&mut rx).await, (1, vec![quote(Venue::Coinbase, "100.5", ts - 50)]));
+    send(&mut exchange, &[coinbase_exchange_book("BTC-USD", "100.2", "101.2", ts)]).await;
+    assert_eq!(next_prices(&mut rx).await, (1, vec![quote(Venue::Coinbase, "100.7", ts)]));
+
+    let (reply, answer) = oneshot::channel();
+    let query: Query = Box::new(move |engine| {
+        let state = &engine.markets()[&1];
+        let held = state.quotes_for(None).expect("BTC-USD takes quotes").clone();
+        let index = compute_index(&held, &state.spec.price_rules, engine.now());
+        let _ = reply.send((held, index));
+    });
+    tx.send(Request::Query(query)).await.expect("the fake sequencer");
+    let (held, index) = timeout(WAIT, answer).await.expect("an answer in time").expect("answered");
+    assert_eq!(held.keys().collect::<Vec<_>>(), ["coinbase"]);
+    assert_eq!(held["coinbase"].mid, "100.7".parse().unwrap());
+    assert_eq!(index.map(|index| index.sources), Err(PriceError::Stale { fresh: 1, needed: 2 }));
 }
 
 #[tokio::test]

@@ -28,7 +28,8 @@ pub enum FeedProvider {
 }
 
 /// A venue or market-data vendor whose live feed the node reads. Its name is the quote source in
-/// the log.
+/// the log: two feeds of one venue share it, and the engine holds the later-stamped of their quotes
+/// as that one source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Venue {
@@ -36,6 +37,9 @@ pub enum Venue {
     /// CME Group's real-time WebSocket API: its own exchanges' futures.
     Cme,
     Coinbase,
+    /// Coinbase Exchange's public `level2_batch` feed: Coinbase's books from another host than
+    /// Advanced Trade's, quoted as the same source, `coinbase`.
+    CoinbaseExchange,
     Kraken,
     /// Massive (formerly Polygon.io): FX, futures, and US stock quotes.
     Massive,
@@ -178,7 +182,7 @@ impl Venue {
         match self {
             Venue::Bitstamp => "bitstamp",
             Venue::Cme => "cme",
-            Venue::Coinbase => "coinbase",
+            Venue::Coinbase | Venue::CoinbaseExchange => "coinbase",
             Venue::Kraken => "kraken",
             Venue::Massive => "massive",
             Venue::Tradermade => "tradermade",
@@ -191,6 +195,7 @@ impl Venue {
             Venue::Bitstamp => "bitstamp.net",
             Venue::Cme => "cmegroup.com",
             Venue::Coinbase => "coinbase.com",
+            Venue::CoinbaseExchange => "exchange.coinbase.com",
             Venue::Kraken => "kraken.com",
             Venue::Massive => "massive.com",
             Venue::Tradermade => "tradermade.com",
@@ -250,9 +255,11 @@ impl VenueConnection {
 }
 
 impl VenuesSection {
-    /// Checks the values that would otherwise fail silently: a venue quoting one instrument under
-    /// one source name twice, a symbol that could mean two instruments, a feed missing its
-    /// credentials, or one the host could forge.
+    /// Checks the values that would otherwise fail silently: a venue's connections quoting one
+    /// instrument twice, a symbol that could mean two instruments, a feed missing its credentials,
+    /// or one the host could forge. Two venues of one source name, as Coinbase's Advanced Trade and
+    /// Exchange feeds are, may quote the same instrument: the engine holds the later-stamped of
+    /// their quotes as that one source.
     /// Error cases:
     /// - `timeout`, `reconnect_min`, `stale_after`, or `ping_interval` is zero, `reconnect_min`
     ///   exceeds `reconnect_max`, or `ping_interval` is not under `max_delay`
@@ -337,14 +344,15 @@ impl VenueConnection {
     }
 }
 
-/// Each instrument `market`'s listing names, with the venues among `connections` that quote it:
+/// Each instrument `market`'s listing names, with the sources among `connections` that quote it, by
+/// name, so two feeds of one venue count once:
 /// every one of its contracts, rolled off or not, for a market priced from futures, and the market
 /// itself (`None`) for one that is not. An instrument no venue quotes maps to none, and a symbol for
 /// an instrument the listing does not name can never price the market, so it counts for none.
 pub(super) fn venues_quoting<'a>(
     connections: &[VenueConnection],
     market: &'a MarketSpec,
-) -> BTreeMap<Option<&'a str>, BTreeSet<Venue>> {
+) -> BTreeMap<Option<&'a str>, BTreeSet<&'static str>> {
     let instruments: Vec<Option<&str>> = match market.contracts.as_slice() {
         [] => vec![None],
         contracts => contracts.iter().map(|listed| Some(listed.contract.as_str())).collect(),
@@ -355,7 +363,7 @@ pub(super) fn venues_quoting<'a>(
             let quotes = |conn: &&VenueConnection| {
                 conn.symbols.iter().any(|s| s.market == market.id && s.contract.as_deref() == instrument)
             };
-            (instrument, connections.iter().filter(quotes).map(|conn| conn.venue).collect())
+            (instrument, connections.iter().filter(quotes).map(|conn| conn.venue.name()).collect())
         })
         .collect()
 }

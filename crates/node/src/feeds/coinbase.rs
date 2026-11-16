@@ -32,7 +32,7 @@ pub(super) struct Books {
 
 /// One product's price levels with a non-zero quantity.
 #[derive(Default)]
-struct Depth {
+pub(super) struct Depth {
     bids: BTreeSet<Fixed>,
     offers: BTreeSet<Fixed>,
 }
@@ -104,8 +104,7 @@ impl Books {
 
     /// The best bid and offer kept for `product`, while its book has both sides.
     pub(super) fn top(&self, product: &str) -> Option<(Fixed, Fixed)> {
-        let depth = self.depths.get(product)?;
-        depth.bids.last().zip(depth.offers.first()).map(|(bid, ask)| (*bid, *ask))
+        self.depths.get(product)?.top()
     }
 
     /// Applies `level2` events and returns the top of each changed product's book, stamped with
@@ -145,22 +144,12 @@ impl Books {
         };
         let mut ts: Option<Millis> = None;
         for update in updates {
-            let levels = match update.side {
-                "bid" => &mut depth.bids,
-                "offer" => &mut depth.offers,
+            let bid = match update.side {
+                "bid" => true,
+                "offer" => false,
                 other => return Err(format!("unknown side {other}")),
             };
-            if !update.price_level.is_valid_input() {
-                return Err(format!("{product_id} price level {} out of range", update.price_level));
-            }
-            if update.new_quantity.is_negative() {
-                return Err(format!("{product_id} negative quantity {}", update.new_quantity));
-            }
-            if update.new_quantity.is_zero() {
-                levels.remove(&update.price_level);
-            } else if levels.insert(update.price_level) && levels.len() > MAX_LEVELS {
-                return Err(format!("{product_id} {} side past {MAX_LEVELS} levels", update.side));
-            }
+            depth.set(&product_id, bid, update.price_level, update.new_quantity)?;
             let event_time = DateTime::parse_from_rfc3339(update.event_time)
                 .map_err(|e| format!("bad event_time {}: {e}", update.event_time))?
                 .timestamp_millis();
@@ -169,6 +158,33 @@ impl Books {
         }
         let ts = ts.ok_or_else(|| format!("{product_id} event without updates"))?;
         Ok(self.top(&product_id).map(|(bid, ask)| Book { symbol: product_id, bid, ask, ts }))
+    }
+}
+
+impl Depth {
+    /// Sets one side's level at `price` to `quantity` (`bid`, or the offers), removing it at zero.
+    /// Error cases:
+    /// - `price` is outside the valid input range, or `quantity` is negative
+    /// - the side would hold more than `MAX_LEVELS` levels
+    pub(super) fn set(&mut self, product: &str, bid: bool, price: Fixed, quantity: Fixed) -> Result<(), String> {
+        let (levels, side) = if bid { (&mut self.bids, "bid") } else { (&mut self.offers, "offer") };
+        if !price.is_valid_input() {
+            return Err(format!("{product} price level {price} out of range"));
+        }
+        if quantity.is_negative() {
+            return Err(format!("{product} negative quantity {quantity}"));
+        }
+        if quantity.is_zero() {
+            levels.remove(&price);
+        } else if levels.insert(price) && levels.len() > MAX_LEVELS {
+            return Err(format!("{product} {side} side past {MAX_LEVELS} levels"));
+        }
+        Ok(())
+    }
+
+    /// The best bid and offer, while both sides have a level.
+    pub(super) fn top(&self) -> Option<(Fixed, Fixed)> {
+        self.bids.last().zip(self.offers.first()).map(|(bid, ask)| (*bid, *ask))
     }
 }
 

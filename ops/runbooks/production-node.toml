@@ -228,6 +228,8 @@ ping_interval = "500ms"
 max_delay = "2s"
 
 # Crypto: Coinbase and Kraken, public feeds with no key. Each market needs both (min_sources = 2).
+# Coinbase is read on two hosts, Advanced Trade and Exchange, quoted as the one source `coinbase`:
+# the engine holds the later-stamped of the two, so either keeps Coinbase's leg while the other fails.
 [[feeds.venues.connections]]
 venue = "coinbase"
 url = "wss://advanced-trade-ws.coinbase.com"
@@ -408,6 +410,12 @@ venue = "massive"
 url = "wss://socket.massive.com/stocks"
 api_key_secret = "massive_api_key"
 symbols = [{ market = 40, symbol = "AAPL" }] # OWNER: add markets 41 to 59, and a second TLS source for each
+
+# Coinbase's second host for the crypto markets above, quoted as the same source, `coinbase`.
+[[feeds.venues.connections]]
+venue = "coinbase_exchange"
+url = "wss://ws-feed.exchange.coinbase.com"
+symbols = [{ market = 1, symbol = "BTC-USD" }, { market = 2, symbol = "ETH-USD" }, { market = 3, symbol = "SOL-USD" }]
 
 # Trusted time: a strict majority of these independent servers must agree. The attestation binds
 # this file, so a verifier checks the keys against a published copy.
