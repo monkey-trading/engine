@@ -1,5 +1,5 @@
-//! The gap fetch's bound: every member is asked at once each round, a silent one costs one ask's wait
-//! per round, and the fetch stops at its deadline.
+//! The gap fetch's bound: every member is asked at once each round, a silent one costs the round no more
+//! than one ask's wait and none while another gives, and the fetch stops at its deadline.
 
 use std::collections::BTreeMap;
 
@@ -67,11 +67,12 @@ async fn the_gap_fetch_asks_every_member_at_once_and_stops_at_its_deadline() {
     let (taken, refused) = from_members(&asking, &members, &mut follower, started + BUDGET).await;
     assert!(taken > 0 && refused.is_none());
     assert_eq!(follower.replica().last_seq(), open(&full).replica().last_seq(), "the copy took the whole gap");
-    // Two rounds, the second finding nothing more: each waits one ask's time for the silent members.
+    // Two rounds: the first is taken from the giving member at once, the second finds nothing more and
+    // waits one ask's time for the silent members, not one each.
     let elapsed = started.elapsed();
     assert!(
-        elapsed >= ASK * 2 && elapsed < ASK * 3,
-        "silent members cost one wait per round, not one each: {elapsed:?}"
+        elapsed >= ASK && elapsed < ASK * 2,
+        "silent members cost one wait, only once nothing is given: {elapsed:?}"
     );
     // With every member silent, the fetch ends at its deadline.
     let silent = Members(BTreeMap::from([("silent:1".into(), None)]));
@@ -183,34 +184,61 @@ async fn a_member_gives_an_empty_copy_and_a_trailing_one_the_gap_from_its_log() 
     }
 }
 
-/// The archive's lines for a segment: all of them for an empty copy, and for one holding commands through
-/// `tip` the entries at its seq and later, but not the command at `tip` or any before it.
+/// The archive's lines for a segment: all of them for an empty copy, and for one holding entries through
+/// `after` only those past it, in order.
 #[tokio::test]
-async fn an_archived_segment_gives_an_empty_copy_every_line_and_a_trailing_one_those_past_its_tip() {
-    let dir = scratch_dir("gap-past-tip");
+async fn an_archived_segment_gives_an_empty_copy_every_line_and_a_trailing_one_those_past_its_last_entry() {
+    let dir = scratch_dir("gap-past");
     ticks(&dir, 6).await;
-    let entries = log_entries(&dir);
-    let bytes: Vec<u8> = entries.iter().flat_map(|e| [serde_json::to_vec(e).unwrap(), vec![b'\n']].concat()).collect();
+    let entries = with_offsets(&dir);
+    let bytes: Vec<u8> =
+        entries.iter().flat_map(|(_, e)| [serde_json::to_vec(e).unwrap(), vec![b'\n']].concat()).collect();
     let mut all = Vec::new();
-    past_tip(&bytes, 0, None, &mut all).unwrap();
+    past(&bytes, 0, None, &mut all).unwrap();
     assert_eq!(all, bytes, "an empty copy takes the whole segment");
-    let mut after = Vec::new();
-    past_tip(&bytes, 0, Some(2), &mut after).unwrap();
-    let mut seq = 0;
-    let expected: Vec<LogEntry> = entries
-        .iter()
-        .filter(|entry| {
-            if let LogEntry::Command(command) = entry {
-                seq = command.sequenced.seq;
-            }
-            if matches!(entry, LogEntry::Command(_)) { seq > 2 } else { seq >= 2 }
-        })
-        .cloned()
-        .collect();
+    let after =
+        entries.iter().find(|(_, e)| !matches!(e, LogEntry::Command(_))).map(|(at, _)| *at).expect("a checkpoint");
+    let mut rest = Vec::new();
+    past(&bytes, 0, Some(after), &mut rest).unwrap();
     let taken: Vec<LogEntry> =
-        after.split(|b| *b == b'\n').filter(|l| !l.is_empty()).map(|l| serde_json::from_slice(l).unwrap()).collect();
-    assert_eq!(taken, expected, "a trailing copy takes the entries past its tip's command, in order");
+        rest.split(|b| *b == b'\n').filter(|l| !l.is_empty()).map(|l| serde_json::from_slice(l).unwrap()).collect();
+    let expected: Vec<LogEntry> = entries.iter().filter(|(at, _)| *at > after).map(|(_, e)| e.clone()).collect();
+    assert_eq!(taken, expected, "a trailing copy takes the entries past its last one, in order");
     assert!(!taken.is_empty() && taken.len() < entries.len());
+}
+
+/// The archive's completed segments are taken one after another onto an empty copy and onto a trailing
+/// one, though each ends with a checkpoint after its last command: the next segment's first command follows
+/// the copy's last entry.
+#[tokio::test]
+async fn the_archives_segments_are_taken_in_turn_onto_an_empty_copy_and_a_trailing_one() {
+    let (full, trailing, empty) =
+        (scratch_dir("gap-seg-full"), scratch_dir("gap-seg-trail"), scratch_dir("gap-seg-empty"));
+    ticks(&full, 4).await;
+    copy_dir(&full, &trailing);
+    ticks(&full, 12).await;
+    let mut files: Vec<(u64, Vec<u8>)> = std::fs::read_dir(&full)
+        .unwrap()
+        .filter_map(|file| {
+            let file = file.unwrap();
+            let first = crate::log::segment_seq(&file.file_name().to_string_lossy())?;
+            Some((first, std::fs::read(file.path()).unwrap()))
+        })
+        .collect();
+    files.sort();
+    assert!(files.len() > 2, "the log spans several segments");
+    let segments: Vec<(u64, u64)> = files
+        .iter()
+        .enumerate()
+        .map(|(i, (first, _))| (*first, files.get(i + 1).map_or(u64::MAX, |(next, _)| next - 1)))
+        .collect();
+    for (name, dir) in [("trailing", &trailing), ("empty", &empty)] {
+        let mut follower = open(dir);
+        let taken = take_segments(&mut follower, &segments, async |index| Ok(files[index].1.clone())).await.unwrap();
+        assert!(taken > 0, "{name}");
+        drop(follower);
+        assert_eq!(log_entries(dir), log_entries(&full), "{name}: the copy took every segment");
+    }
 }
 
 /// A gap of many pages is taken through every one: the fetch goes on while a round extends the copy, not
@@ -266,4 +294,39 @@ fn with_offsets(dir: &std::path::Path) -> Vec<(Offset, LogEntry)> {
 fn open(dir: &std::path::Path) -> Follower {
     let signer = AccountId(EnclaveKey::test_key().address());
     Follower::open(dir, SEGMENT_COMMANDS, DOMAIN, signer, [signer].into(), None, |_| {}).unwrap()
+}
+
+/// A silent member does not hold up a page another gives: a gap of many pages from one member that answers
+/// at once is taken whole, in less than one ask's wait, though a silent member is asked every round.
+#[tokio::test]
+async fn a_silent_member_does_not_delay_the_pages_another_gives() {
+    let (full, empty) = (scratch_dir("gap-silent-full"), scratch_dir("gap-silent-empty"));
+    ticks(&full, 40).await;
+    let entries = with_offsets(&full);
+    let mut follower = open(&empty);
+    let member = |byte: u8, endpoint: &str| SetMember {
+        candidate: AccountId([byte; 20]),
+        endpoint: endpoint.into(),
+        standby: None,
+        admin_key: AccountId([byte; 20]),
+        held: false,
+    };
+    let members = [member(1, "silent:1"), member(2, "paging:1")];
+    struct Mixed(Vec<(Offset, LogEntry)>);
+    impl Asking for Mixed {
+        async fn ask(&self, endpoint: &str, request: &Request) -> anyhow::Result<Reply> {
+            if endpoint.starts_with("silent") {
+                return std::future::pending().await;
+            }
+            Paging(self.0.clone()).ask(endpoint, request).await
+        }
+    }
+    tokio::time::pause();
+    let started = Instant::now();
+    let deadline = started + BUDGET;
+    let (taken, refused) = from_members(&Mixed(entries.clone()), &members, &mut follower, deadline).await;
+    assert!(refused.is_none());
+    assert_eq!(taken as usize, entries.len(), "every page was taken");
+    // One wait, in the last round, which finds nothing more.
+    assert!(started.elapsed() < ASK * 2, "{:?}", started.elapsed());
 }

@@ -282,6 +282,42 @@ async fn an_empty_copy_admits_the_recorded_signers_for_the_first_entries() {
     assert!(recorded.take_entries(None, &whole).unwrap() > 0);
 }
 
+/// A copy opened again between two pages of a log sealed by a key the vault recorded, before any checkpoint
+/// of the copy names that key, takes the second page: the recorded signers are admitted again.
+#[tokio::test]
+async fn a_reopened_copy_takes_the_next_page_sealed_by_a_recorded_signer() {
+    let operator = scratch_dir("replica-reopen-operator");
+    crate::standby::tests::ticks(&operator, 6).await;
+    let log: Vec<(Offset, LogEntry)> = {
+        let mut previous = None;
+        log_entries(&operator)
+            .into_iter()
+            .map(|entry| {
+                let offset = offset_of(previous, &entry).unwrap();
+                previous = Some(offset);
+                (offset, entry)
+            })
+            .collect()
+    };
+    let lines = |entries: &[(Offset, LogEntry)]| {
+        entries.iter().flat_map(|(_, e)| [serde_json::to_vec(e).unwrap(), vec![b'\n']].concat()).collect::<Vec<u8>>()
+    };
+    // The first page ends at a command, before the first checkpoint.
+    let split = log.iter().position(|(offset, e)| offset.seq == 2 && matches!(e, LogEntry::Command(_))).unwrap() + 1;
+    assert!(log[..split].iter().all(|(_, e)| !matches!(e, LogEntry::Checkpoint(_))), "no checkpoint names the key yet");
+    let dir = scratch_dir("replica-reopen-copy");
+    let followed = AccountId([0x77; 20]);
+    let open = || Follower::open(&dir, SEGMENT_COMMANDS, DOMAIN, followed, [followed, signer()].into(), None, |_| {});
+    let mut first = open().unwrap();
+    assert!(first.take_entries(None, &lines(&log[..split])).unwrap() > 0);
+    drop(first);
+    let mut reopened = open().unwrap();
+    let head = reopened.head();
+    assert!(reopened.take_entries(head, &lines(&log[split..])).unwrap() > 0);
+    drop(reopened);
+    assert_eq!(log_entries(&dir), log_entries(&operator));
+}
+
 // ── Helpers ──
 
 /// The test sequencer's enclave, which seals and signs its log.

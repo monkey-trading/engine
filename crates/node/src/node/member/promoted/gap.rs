@@ -10,7 +10,8 @@ use std::time::Duration;
 use alloy::primitives::Address;
 use anyhow::Context;
 use engine_core::types::AccountId;
-use futures_util::future::join_all;
+use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 use tokio::time::Instant;
 use tracing::{info, warn};
 
@@ -49,7 +50,7 @@ impl std::error::Error for TailRefused {}
 /// Fetches what the members of `promotion`'s turn's set hold past the copy, the member whose enclave
 /// confirmed the outgoing epoch's head first, as the operator's stream named it; then, while the copy
 /// still lacks a prefix the promotion fixed, what the outgoing `operator`'s archive holds, and what the
-/// members hold past that, the recent entries they keep going on from its completed segments; before
+/// members hold past that, what their copies hold going on from its completed segments; before
 /// `deadline`, asking no source in `refused`. Returns the first source whose entries the copy refused,
 /// after which the follower must be opened again.
 pub(super) async fn fetch(
@@ -88,7 +89,7 @@ pub(super) async fn fetch(
         match tokio::time::timeout_at(deadline, archive(follower, operator)).await {
             Ok(Ok(taken)) => {
                 info!(taken, "took the gap from the outgoing operator's archive");
-                // The archive serves completed segments: the members' recent entries go on from there.
+                // The archive serves completed segments: what the members hold goes on from there.
                 if taken > 0 && missing(follower.replica(), promotion).is_some() {
                     let (taken, refusal) = from_members(&Tcp, &members, follower, deadline).await;
                     info!(taken, "asked the turn's members again past the archive");
@@ -109,7 +110,7 @@ pub(super) async fn fetch(
 }
 
 /// Takes what `members` hold past the copy: each round asks every member at once, each within `ASK`
-/// and all before `deadline`, and takes the first answer, in `members`' order, that extends the copy;
+/// and all before `deadline`, and takes the first answer that extends the copy;
 /// rounds go on while one does. Returns how many entries the copy took, and the member whose entries
 /// the copy refused, if one did: the fetch stops there, since the follower must be opened again.
 pub(super) async fn from_members(
@@ -126,11 +127,19 @@ pub(super) async fn from_members(
         let after = follower.head();
         let request = Request::Entries { after };
         let by = deadline.min(Instant::now() + ASK);
-        let answers =
-            join_all(members.iter().map(|member| tokio::time::timeout_at(by, asking.ask(&member.endpoint, &request))))
-                .await;
+        // Every member is asked at once and the first answer that extends the copy is taken, so a silent
+        // member costs a round no more than it takes the others to answer; one that answers nothing
+        // useful costs the round `ASK`.
+        let request = &request;
+        let mut answers: FuturesUnordered<_> =
+            members
+                .iter()
+                .map(|member| async move {
+                    (member, tokio::time::timeout_at(by, asking.ask(&member.endpoint, request)).await)
+                })
+                .collect();
         let mut progressed = false;
-        for (member, answer) in members.iter().zip(answers) {
+        while let Some((member, answer)) = answers.next().await {
             let entries = match answer {
                 Ok(Ok(Reply::Entries { entries })) if !entries.is_empty() => entries,
                 Ok(Ok(other)) => {
@@ -178,9 +187,9 @@ pub(super) async fn from_members(
     }
 }
 
-/// Takes what `operator`'s archive and its mirrors hold past the copy's tip, or all of it for an empty
-/// copy: every entry of the completed segments after the command at the tip, a segment at a time through
-/// the copy's seal chain as a handover's tail.
+/// Takes what `operator`'s archive and its mirrors hold past the copy, or all of it for an empty copy:
+/// every entry of the completed segments past its last entry, a segment at a time through the copy's seal
+/// chain as a handover's tail.
 /// Returns how many entries the copy took.
 /// Error cases:
 /// - the archive cannot be read, a segment differs from its listing or does not parse, or its entries
@@ -189,22 +198,44 @@ async fn archive(follower: &mut Follower, operator: &crate::standby::Followed) -
     use crate::standby::archive::{archive_client, check_listing, fetch_archive_bytes, fetch_manifest};
     let (archive, origins) = (archive_client(operator.danger_accept_invalid_certs)?, operator.origins());
     let listings = fetch_manifest(&archive, &origins).await?;
+    let segments: Vec<(u64, u64)> = listings.iter().map(|listed| (listed.first_seq, listed.last_seq)).collect();
+    take_segments(follower, &segments, async |index| {
+        let listed = &listings[index];
+        let bytes = fetch_archive_bytes(&archive, &origins, &listed.file, Some(listed)).await?;
+        check_listing(listed, &bytes)?;
+        Ok(bytes)
+    })
+    .await
+}
+
+/// Takes the completed `segments` (first and last seq) past the copy's head, in order, one at a time, `bytes`
+/// giving the file of the one at an index: memory holds one, and what is taken stays taken if a later one
+/// fails. Returns how many entries the copy took.
+/// Error cases:
+/// - a segment cannot be read or does not parse, its entries do not extend the copy (`TailRefused`), or
+///   none was taken
+async fn take_segments(
+    follower: &mut Follower,
+    segments: &[(u64, u64)],
+    mut bytes: impl AsyncFnMut(usize) -> anyhow::Result<Vec<u8>>,
+) -> anyhow::Result<u64> {
     let mut taken = 0;
-    // One segment at a time: memory holds one, and what is taken stays taken if a later one fails.
-    for listed in &listings {
+    for (index, (first_seq, last_seq)) in segments.iter().enumerate() {
         let tip = follower.replica().last_seq();
-        if tip.is_some_and(|tip| listed.last_seq < tip) {
+        if tip.is_some_and(|tip| last_seq < &tip) {
             continue;
         }
+        // From the copy's last entry, which may be one past its tip's command: a segment that ended at a
+        // checkpoint is followed by the next one's first command, with nothing to repeat.
+        let after = follower.head();
         let step = async {
-            let bytes = fetch_archive_bytes(&archive, &origins, &listed.file, Some(listed)).await?;
-            check_listing(listed, &bytes)?;
+            let bytes = bytes(index).await?;
             let mut lines = Vec::new();
-            past_tip(&bytes, listed.first_seq, tip, &mut lines)?;
+            past(&bytes, *first_seq, after, &mut lines)?;
             if lines.is_empty() {
                 return anyhow::Ok(0);
             }
-            follower.take_entries(tip.map(Offset::start_of), &lines).map_err(|e| e.context(TailRefused))
+            follower.take_entries(after, &lines).map_err(|e| e.context(TailRefused))
         };
         match step.await {
             Ok(count) => taken += count,
@@ -219,23 +250,20 @@ async fn archive(follower: &mut Follower, operator: &crate::standby::Followed) -
     Ok(taken)
 }
 
-/// Appends to `lines` the JSON lines of the segment `bytes`, which starts at `first_seq`, that follow the
-/// command at `tip`: its later commands, and the entries at its seq or later; every line for an empty
-/// copy, whose `tip` is `None`.
+/// Appends to `lines` the JSON lines of the segment `bytes`, which starts at `first_seq`, that lie past
+/// `after`, the copy's last entry; every line for an empty copy, whose `after` is `None`.
 /// Error cases:
 /// - a line is not a log entry
-fn past_tip(bytes: &[u8], first_seq: u64, tip: Option<u64>, lines: &mut Vec<u8>) -> anyhow::Result<()> {
-    let mut seq = first_seq.saturating_sub(1);
-    for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+fn past(bytes: &[u8], first_seq: u64, after: Option<Offset>, lines: &mut Vec<u8>) -> anyhow::Result<()> {
+    let mut at = Offset::start_of(first_seq);
+    for (n, line) in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).enumerate() {
         let entry: crate::log::LogEntry = serde_json::from_slice(line).context("an archived entry")?;
-        if let crate::log::LogEntry::Command(command) = &entry {
-            seq = command.sequenced.seq;
-        }
-        let after_tip = match entry {
-            crate::log::LogEntry::Command(_) => tip.is_none_or(|tip| seq > tip),
-            _ => tip.is_none_or(|tip| seq >= tip),
+        at = match &entry {
+            crate::log::LogEntry::Command(command) => Offset::start_of(command.sequenced.seq),
+            _ if n > 0 => at.next(),
+            _ => anyhow::bail!("an archived segment starts with a message that is not a command"),
         };
-        if after_tip {
+        if after.is_none_or(|after| at > after) {
             lines.extend_from_slice(line);
             lines.push(b'\n');
         }

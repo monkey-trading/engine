@@ -21,6 +21,7 @@ use crate::config::NodeConfig;
 use crate::history::marks::fold::MarkFold;
 use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, LogWriter, Manifest, Offset, offset_of};
 use crate::log_check::answer::CheckedHeads;
+use crate::log_heads::Head;
 use crate::sequencer::ReplayedLog;
 use crate::sequencer::replay::LiveReplay;
 use crate::stats::Stats;
@@ -302,14 +303,13 @@ impl Follower {
                 ensure!(self.replica.last_seq() == Some(after.seq), "the tail follows {after}, not the copy's tip");
                 self.copied.begin_after(after);
             }
-            None => {
-                ensure!(self.replica.last_seq().is_none(), "the entries start the log, but the copy holds some");
-                // The log's first commands may be sealed by a key an earlier signer change replaced.
-                self.signers.iter().for_each(|signer| self.copied.admit(*signer));
-            }
+            None => ensure!(self.replica.last_seq().is_none(), "the entries start the log, but the copy holds some"),
         }
+        // A page may be sealed by a key an earlier signer change replaced, before the checkpoint that names
+        // it: a copy opened again between pages has lost that admission.
+        self.signers.iter().for_each(|signer| self.copied.admit(*signer));
         let mut previous = after;
-        let mut taken = 0;
+        let (mut taken, mut last) = (0, None);
         for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
             let entry: LogEntry = serde_json::from_slice(line).context("a tail line is not a log entry")?;
             let offset = offset_of(previous, &entry)?;
@@ -318,7 +318,20 @@ impl Follower {
                 self.replica.apply(&entry).map_err(|e| e.context(ReplicaRefused))?;
                 self.writer.append(&entry).context("appending a tail entry to the copy")?;
                 match &self.link {
-                    Some(link) => link.appended(offset, &entry),
+                    Some(link) => {
+                        link.appended(offset, &entry);
+                        if let LogEntry::Command(command) = &entry {
+                            link.linked(
+                                command.sequenced.seq,
+                                self.replica.head_link(),
+                                command.seal.as_ref().map(|seal| seal.signer),
+                            );
+                            last = Some((
+                                Head { seq: command.sequenced.seq, link: self.replica.head_link() },
+                                command.seal.as_ref().map(|seal| seal.signer),
+                            ));
+                        }
+                    }
                     None => self.forget_opened(),
                 }
                 self.copied.extend(offset, entry, link);
@@ -326,6 +339,9 @@ impl Follower {
             }
         }
         self.writer.sync().context("syncing the copy")?;
+        if let (Some(link), Some((head, sealer))) = (&self.link, last) {
+            link.durable(head, sealer);
+        }
         Ok(taken)
     }
 
