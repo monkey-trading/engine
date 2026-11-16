@@ -206,6 +206,19 @@ async fn run() -> anyhow::Result<()> {
     .await
     .context("waiting for a promotion")??;
     let promoted_at = Instant::now();
+    // The block the promotion landed in, and finality's room: a block is final once two follow it.
+    let head = block_number(&chain).await;
+    let mut promotion_block = head;
+    while promotion_block > 0
+        && chain.view_at(vault, signerEpochCall {}, &format!("{:#x}", promotion_block - 1)).await >= epoch
+    {
+        promotion_block -= 1;
+    }
+    ensure!(
+        head <= promotion_block + 1,
+        "{} blocks followed the promotion: finality could not be held",
+        head - promotion_block
+    );
     ensure!(
         chain.view_at(vault, signerEpochCall {}, "finalized").await < epoch,
         "the promotion is already final: finality could not be held behind it"
@@ -260,7 +273,9 @@ async fn run() -> anyhow::Result<()> {
     };
     ensure!(!sent_by_relayer().await, "the promoted member sent a checkpoint before its promotion was final");
     chain.rpc("evm_setAutomine", json!([true])).await;
-    chain.rpc("evm_mine", json!([])).await;
+    if head == promotion_block {
+        chain.rpc("evm_mine", json!([])).await;
+    }
     sleep(Duration::from_secs(8)).await;
     seats[p].check()?;
     ensure!(
@@ -325,6 +340,12 @@ async fn run() -> anyhow::Result<()> {
     ensure!(replayed.checkpoint_signers == signers, "the replay names {:?}", replayed.checkpoint_signers);
     println!("PASS: {}'s log replays across the change of signer, each checkpoint by an attested key", seats[p].name);
     Ok(())
+}
+
+/// The chain's latest block number.
+async fn block_number(chain: &Chain) -> u64 {
+    let number = chain.rpc_result("eth_blockNumber", json!([])).await;
+    u64::from_str_radix(number.as_str().unwrap_or("0x0").trim_start_matches("0x"), 16).unwrap_or(0)
 }
 
 /// A block a second on the chain, until the task is aborted.
