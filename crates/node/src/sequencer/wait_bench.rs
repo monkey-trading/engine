@@ -352,10 +352,15 @@ fn price_wait_budget() {
     rig.seq.trust(sample_around(clock.as_ref())).unwrap();
     // A disk that takes `SYNC_STALL` more than it should on every sync: a price that waits for one
     // shows it.
+    let syncs: Arc<std::sync::Mutex<Vec<(Instant, Instant)>>> = Arc::default();
+    let timed = syncs.clone();
     rig.seq
-        .pipeline_with_syncs(|job| {
+        .pipeline_with_syncs(move |job| {
             std::thread::sleep(SYNC_STALL);
-            job.sync()
+            let began = Instant::now();
+            let synced = job.sync();
+            timed.lock().unwrap().push((began, Instant::now()));
+            synced
         })
         .unwrap();
     let mut seq = rig.seq;
@@ -450,6 +455,25 @@ fn price_wait_budget() {
                 })
                 .collect();
             report("price_channel_to_stamp_under_reads_and_checkpoints", waits.clone());
+            let syncs = syncs.lock().unwrap();
+            let (first, last) = (sent[0], sent[sent.len() - 1]);
+            let took = |(began, end): &(Instant, Instant)| end.duration_since(*began).as_micros();
+            let in_batch: Vec<u128> = syncs.iter().filter(|(b, _)| *b >= first && *b <= last).map(took).collect();
+            if !in_batch.is_empty() {
+                report("log_sync_in_the_batch", in_batch);
+            }
+            let (worst, wait) = waits.iter().enumerate().max_by_key(|(_, wait)| **wait).map(|(i, w)| (i, *w)).unwrap();
+            let stamped = sent[worst] + std::time::Duration::from_micros(wait as u64);
+            let over: Vec<u128> = syncs.iter().filter(|(b, e)| *b < stamped && *e > sent[worst]).map(took).collect();
+            let ended =
+                syncs.iter().filter(|(_, e)| *e <= stamped).map(|(_, e)| stamped.duration_since(*e).as_micros());
+            println!(
+                "WAIT worst_price batch={batch} wait_us={wait} overlapping_syncs={} longest_overlapping_sync_us={} \
+                 stamp_after_last_sync_end_us={}",
+                over.len(),
+                over.iter().max().unwrap_or(&0),
+                ended.min().unwrap_or(u128::MAX)
+            );
             let mut probes = probed[batch * PRICES..(batch + 1) * PRICES].to_vec();
             report("probe_wake_beside_the_prices", probes.clone());
             waits.sort_unstable();
