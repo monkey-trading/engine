@@ -19,7 +19,8 @@ pub struct Mix {
     /// The share of accounts resting orders, each at its tier's limit.
     pub resting: u64,
     /// The share of an account's resting orders inside its markets' first spread band, where a
-    /// price could reach them; the rest rest at half the mark.
+    /// price could reach them; the rest rest away from the price, buys at half the mark and sells at
+    /// twice it.
     pub in_band: u64,
     /// Session keys each account holds.
     pub session_keys: usize,

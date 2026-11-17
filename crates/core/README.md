@@ -1505,25 +1505,30 @@ on a book shaped like launch's (#905, `tests/common/launch_book/`): 100k account
 protocol version on the 34 markets of `config/production-genesis.toml`, dealt out by
 `Mix::proposal`, the one place to change its shares. Half the accounts hold one market, 30% two to
 four, 15% five to twelve and 5% all 34, each market's holders in proportion to the cap study's market
-mix; 70%, 20%, 8% and 2% sit at tiers 0 to 3, each of the tiers above 0 with a full 30-day volume
-book; a fifth of the accounts rest orders up to their tier's limit, half inside the first spread band
-of a market and half at half the mark; every account has a toxicity score and two session keys. The
-accounts it signs for are made by signed commands, and the rest are written into the engine's
-encoding around them, from those accounts' entries. In-band orders buy where a market's id is odd
-and sell where it is even, so the close-out case's fall in ETH-USD reaches none.
+mix (`research/cap-calibration/data/derived/market_mix.csv`); 70%, 20%, 8% and 2% sit at tiers 0 to 3,
+each of the tiers above 0 with a full 30-day volume book; a fifth of the accounts rest orders up to
+their tier's limit, half inside the first spread band of a market and half away from the price (buys
+at half the mark, sells at twice it); every account has a toxicity score, two session keys, the
+request nonces and the credited reference they leave, and positions of $5,000 in each market it holds.
+The accounts a case signs for (230 of the 100k) are made by signed commands, and the rest are written
+into the engine's encoding around them, from those accounts' entries. In-band orders buy where a
+market's id is odd and sell where it is even, so the close-out case's fall in ETH-USD reaches none;
+no timed case reaches an in-band order, since a price that does is a mass fill, which `tests/launch_book.rs`
+checks happens and the mass-event benchmarks measure.
 
-Run `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1`.
-Each case prints p50, p99 and p999 in microseconds as `LAUNCH <case>`; a case of fewer than a thousand
-samples reports its largest as p999. The cases:
+Run `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1 launch_book_latency`
+(`LAUNCH_BOOK_ACCOUNTS` runs a smaller book). Each case prints p50, p99 and p999 in microseconds as
+`LAUNCH <case>`; a case of fewer than a thousand samples reports its largest as p999. The cases:
 
 | Case | Budget |
 | --- | ---: |
 | A price in BTC-USD, in EUR-USD inside its session, and in US 500 priced from futures: p99, cost per holder, and prices a second the market could take | p99 250 ms |
-| One price in every market in turn: the round, and the rounds a second the thread could take | none |
+| One price in every market in turn: the round, the rounds a second the thread could take, and each market's slowest price | 250 ms each |
 | A signed order that opens a position, and one that adds to an account holding all 34 markets | p99 2 ms |
 | A price of ETH-USD that closes out an account holding all 34 markets (30 accounts, one to a step) | 500 ms |
-| The daily rollover with financing on 440k positions (4 rollovers, ending before the weekend's gap) | 500 ms |
-| The state root over 1k, 10k and all changed accounts, the first root of the book, and an account proof of an account holding all 34 markets | 500 ms over 100k changed |
+| The daily rollover with financing on every position (4 rollovers, ending before the weekend's gap) | 500 ms |
+| The state root after the last rollover, which hashes each account it changed and no other leaf | bar 500 ms, guard 3 s |
+| The state root after 1k, 10k and all other accounts are credited (each adds a reference leaf to its account's), the first root of the book, and an account proof of an account holding all 34 markets | none |
 | The snapshot encoding in time and bytes, and its recovery: decoding, `restore_indexes` and the first command | none |
 
 `launch_book_price_attribution` prices BTC-USD and EUR-USD on the book with its resting orders, or its

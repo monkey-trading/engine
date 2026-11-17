@@ -117,6 +117,8 @@ jobs:
                 research/close-spread-calibration/fixtures/* | research/benchmark-cap/fixtures/* \
                   | research/benchmark-cap/results/refused.csv)
                   areas+=" rust" ;;
+                # The cap study's market mix deals out the launch book's holdings.
+                research/cap-calibration/data/derived/market_mix.csv) areas+=" rust scenario_tests" ;;
                 # Read by no build, test, scenario, or image.
                 agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
                   | crates/core/README.md | crates/node/README.md | crates/verify/README.md \
@@ -137,7 +139,8 @@ jobs:
                   | crates/node/src/log/authenticated_tests*)
                   areas+=" rust attestation_verifier" ;;
                 crates/node/src/api/access_tests* | crates/node/src/api/benchmark_tests* \
-                  | crates/node/src/sequencer/wait_bench.rs)
+                  | crates/node/src/sequencer/wait_bench.rs | crates/node/src/stats/bench.rs \
+                  | crates/node/src/stats/launch_bench.rs)
                   areas+=" rust scenario_tests" ;;
                 crates/node/src/api/admin_tests* | crates/node/src/sequencer/fixture_tests.rs)
                   areas+=" rust scenario_tests vault_deposits attestation_verifier" ;;
@@ -206,7 +209,7 @@ jobs:
                 # Stats, history and metrics, and the node watching itself.
                 crates/node/src/stats/* | crates/node/src/history/* | crates/node/src/metrics/* \
                   | crates/node/src/monitor/* | crates/node/src/node/marks.rs)
-                  areas+=" rust dashboard_data metrics_alerts snapshot_restart" ;;
+                  areas+=" rust scenario_tests dashboard_data metrics_alerts snapshot_restart" ;;
                 # Alert routing.
                 crates/node/src/alerts/* | crates/node/src/throttle.rs | crates/node/src/episodes.rs)
                   areas+=" rust metrics_alerts alert_outbox ct_watch production_secrets" ;;
@@ -238,9 +241,9 @@ jobs:
                 # the keys in, and the scenarios run on dev.toml and anvil.toml.
                 config/dev.toml | config/test-keys.toml) areas+=" rust image $node" ;;
                 config/anvil.toml) areas+=" rust $lib_tests acme production_secrets log_heads" ;;
-                # Read by the node's tests.
-                config/benchmark-publishers.toml | config/production-genesis.toml | config/ct-watch.toml)
-                  areas+=" rust" ;;
+                # Read by the node's tests; the launch book's benchmarks build on the production genesis.
+                config/production-genesis.toml) areas+=" rust scenario_tests" ;;
+                config/benchmark-publishers.toml | config/ct-watch.toml) areas+=" rust" ;;
                 # The launch values scenario deploys from it; the node's tests read the rest of ops/.
                 ops/runbooks/production-deployment.toml) areas+=" rust vault_deposits" ;;
                 ops/*) areas+=" rust" ;;
@@ -816,7 +819,7 @@ jobs:
       - name: Check sequencer command latency at 100k accounts
         run: cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture --test-threads=1
       - name: Check sequencer command latency on a launch-scale book at 100k accounts
-        run: cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1
+        run: cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1 launch_book_latency
       - name: Check the stats record's cost on a launch-scale book at 100k accounts
         run: cargo test -p engine-node --lib --locked stats::launch_bench -- --ignored --nocapture --test-threads=1
 

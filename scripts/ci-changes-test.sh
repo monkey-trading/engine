@@ -74,14 +74,17 @@ case_ pull_request "rust production_secrets engine_build" crates/node/src/secret
 case_ pull_request "rust attestation_verifier wasm_verifier signed_api dashboard_data ct_watch engine_build" \
   crates/node/src/verify/mod.rs
 case_ pull_request "rust image attestation_verifier wasm_verifier signed_api ct_watch engine_build" crates/verify/src/lib.rs
-case_ pull_request "rust dashboard_data metrics_alerts snapshot_restart engine_build" \
+case_ pull_request "rust scenario_tests dashboard_data metrics_alerts snapshot_restart engine_build" \
   crates/node/src/stats/mod.rs crates/node/src/monitor/mod.rs
 case_ pull_request "rust metrics_alerts alert_outbox ct_watch production_secrets engine_build" crates/node/src/alerts/mod.rs
 case_ pull_request "rust scenario_tests dashboard_data production_secrets vault_deposits ct_watch engine_build" \
   crates/node/src/admin/mod.rs
 case_ pull_request "rust $anvil $feeds scenario_tests attestation_verifier" crates/node/src/test_support/mod.rs
 case_ pull_request "rust $anvil" crates/node/src/custody/tests/election_scenario.rs crates/node/src/log_check/tests.rs
-case_ pull_request "rust scenario_tests" crates/node/src/api/access_tests/spreads.rs crates/core/tests/hot_path_benchmark.rs
+case_ pull_request "rust scenario_tests" crates/node/src/api/access_tests/spreads.rs crates/core/tests/hot_path_benchmark.rs \
+  crates/core/tests/launch_book_benchmark.rs crates/core/tests/launch_book_benchmark/cases.rs \
+  crates/node/src/stats/launch_bench.rs config/production-genesis.toml \
+  research/cap-calibration/data/derived/market_mix.csv
 case_ pull_request "rust attestation_verifier" crates/node/src/verify/tests/mod.rs
 case_ pull_request "rust short_turns" crates/core/tests/short_turns.rs
 case_ pull_request "rust wasm_verifier" crates/verify-wasm/src/lib.rs

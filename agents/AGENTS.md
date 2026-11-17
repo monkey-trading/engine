@@ -526,7 +526,7 @@ an index: load only the rule whose hint matches the current action.
   settings), and `retry`, which repeats each download after a failure. Its `README.md` covers the
   build, what the guest exposes, the guest's clock, the attestation layout, booting on a host, and
   the release steps.
-- **research/** — studies that set protocol parameters from data, outside the build and CI except the close-spread study's `fixtures/` and the benchmark-cap study's `fixtures/` and `results/refused.csv`.
+- **research/** — studies that set protocol parameters from data, outside the build and CI except the close-spread study's `fixtures/`, the benchmark-cap study's `fixtures/` and `results/refused.csv`, and the cap study's `data/derived/market_mix.csv`, which the launch book reads.
   `cap-calibration/` calibrates the house exposure-cap floors by Monte Carlo (#111): scripts that
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
   `data/derived/`), the Python model behind `run.py`, its tests, and `results/`. Its `README.md`
@@ -824,8 +824,8 @@ an index: load only the rule whose hint matches the current action.
   reaches a family only through another is left to the full runs on `main` and nightly. Contracts
   run the scenarios on Anvil, and a scenario's scripts run it alone. `agents/` (but for the review-delta helper in
   `agents/skills/agent-code-review/scripts/`), `research/` (but for the close-spread study's
-  `fixtures/` and the benchmark-cap study's `fixtures/` and `results/refused.csv`, which `engine-core`
-  tests read), the root `README.md`, `SECURITY.md`,
+  `fixtures/`, the benchmark-cap study's `fixtures/` and `results/refused.csv`, and the cap study's
+  `data/derived/market_mix.csv`, which `engine-core` tests read), the root `README.md`, `SECURITY.md`,
   `AGENTS.md`, and `CLAUDE.md`, and the `README.md` of `image/` and of each crate change none. A
   push to `main`, the nightly run, a manual run, a workflow change, a failed diff, or any path the
   list does not name runs every job, so whatever a PR or a group skipped runs once it lands. When a

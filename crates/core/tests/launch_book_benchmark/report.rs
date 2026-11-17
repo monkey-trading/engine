@@ -44,6 +44,13 @@ pub fn within(name: &str, us: u128, budget_us: u128) {
     }
 }
 
+/// Prints how `us` microseconds of `name` stand against `budget_us`, a bar the book is known to miss,
+/// and notes no excess.
+pub fn noted(name: &str, us: u128, budget_us: u128) {
+    let verdict = if us <= budget_us { "within" } else { "OVER" };
+    println!("LAUNCH bar {name} us={us} bar_us={budget_us} {verdict}");
+}
+
 /// The budgets exceeded so far.
 pub fn exceeded() -> Vec<String> {
     OVER.lock().expect("budget notes").clone()

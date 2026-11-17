@@ -18,6 +18,10 @@ use crate::common::{CHAIN_ID, Harness, VAULT, operator};
 
 const PRODUCTION_GENESIS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/production-genesis.toml");
 
+/// Mon 16 Nov 2026, 15:00 UTC: the US shares, CME's futures, Cboe FX and Osaka's night session all
+/// trade, and four daily rollovers (22:00 UTC) fall before the weekend's gap.
+pub const BOOK_TIME: Millis = 1_794_841_200_000;
+
 /// The `[genesis]` section of a node config, as far as the engine reads it.
 #[derive(Deserialize)]
 struct File {
@@ -32,19 +36,10 @@ struct Genesis {
     close_spread_ceilings: Vec<CloseSpreadCeiling>,
 }
 
-/// The production genesis's markets, in listing order.
-pub fn production_markets() -> Vec<MarketSpec> {
-    load().genesis.markets
-}
-
 fn load() -> File {
     let text = std::fs::read_to_string(PRODUCTION_GENESIS).expect("config/production-genesis.toml");
     toml::from_str(&text).expect("the production genesis parses as the engine's types")
 }
-
-/// Mon 16 Nov 2026, 15:00 UTC: the US shares, CME's futures, Cboe FX and Osaka's night session all
-/// trade, and four daily rollovers (22:00 UTC) fall before the weekend's gap.
-pub const BOOK_TIME: Millis = 1_794_841_200_000;
 
 /// An engine at `ProtocolVersion::LATEST` with the production genesis sequenced as the node does:
 /// signed requests and the harness operator recorded, then the version activated, then the genesis's
