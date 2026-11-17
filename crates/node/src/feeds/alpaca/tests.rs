@@ -99,6 +99,29 @@ fn a_refused_subscription_and_other_errors_leave_the_connection_up() {
 }
 
 #[test]
+fn a_json_escape_in_any_field_alpaca_writes_leaves_the_message_readable() {
+    // An escape in a control message's type, status, or text it is not read for.
+    let escaped_error = r#"[{"T":"\u0065rror","code":409,"msg":"plan A \u0026 B"}]"#;
+    let expected = Err(Refusal::Connection("error 409: insufficient subscription".into()));
+    assert_eq!(session().read(escaped_error), expected);
+    let escaped_status = AUTHENTICATED.replace("authenticated", r"auth\u0065nticated");
+    assert!(matches!(session().read(&escaped_status), Ok(Frame::Reply(_))), "{escaped_status}");
+    let escaped_symbols = SUBSCRIBED.replace(r#""AAPL","MSFT""#, r#""\u0041APL","MSFT""#);
+    assert_eq!(session().read(&escaped_symbols), Ok(Frame::Subscribed));
+    // And in a quote's type, symbol, time, or a field it does not read.
+    let book =
+        || Book { symbol: "AAPL".into(), bid: "87.66".parse().unwrap(), ask: "87.68".parse().unwrap(), ts: QUOTE_TS };
+    for escaped in [
+        QUOTE.replace(r#""T":"q""#, r#""T":"\u0071""#),
+        QUOTE.replace(r#""S":"AAPL""#, r#""S":"A\u0041PL""#),
+        QUOTE.replace("15:51:45", r"15\u003a51:45"),
+        QUOTE.replace(r#""c":["R"]"#, r#""c":["\"R\""]"#),
+    ] {
+        assert_eq!(session().read(&format!("[{escaped}]")), Ok(Frame::Books(vec![book()])), "{escaped}");
+    }
+}
+
+#[test]
 fn malformed_messages_and_quotes_are_refused() {
     let quote = |edit: &dyn Fn(&str) -> String| format!("[{}]", edit(QUOTE));
     let cases = [

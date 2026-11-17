@@ -1614,9 +1614,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   to the owner's #436 decision and the contracts' constructor rules, and the deploy runbook's
   `init-emissions` and `init-staking` commands to the file
 - `tests/production_node_template.rs` — loads `ops/runbooks/production-node.toml` assembled with the
-  benchmark publishers and the production genesis, checks it holds what a production build requires
-  but for the markets short of `min_sources` TLS venues, which it names, and that every placeholder
-  carries a marker
+  benchmark publishers and the production genesis, checks it holds what a production build requires,
+  `min_sources` TLS venues for every launch market included, that the share markets are quoted by
+  Massive and Alpaca and fall short without Alpaca, and that every placeholder carries a marker
 - `tests/production_genesis/` — loads `config/production-genesis.toml` as a dev node's genesis,
   checks the launch values and quote currencies, and steps it through weeks with holidays and early
   closes (`main.rs`); checks each market reaches every divergence stress level with screened house

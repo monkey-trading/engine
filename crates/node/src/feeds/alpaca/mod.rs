@@ -13,6 +13,7 @@
 //! of what Alpaca sent, only a value from a list Alpaca documents (a message type, an error code with
 //! its meaning) and numbers, and a symbol only once it is one the connection subscribed to.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use chrono::DateTime;
@@ -54,21 +55,23 @@ pub(super) struct Session {
     symbols: BTreeSet<String>,
 }
 
-/// One message of an array: a control message or a quote, by `T`.
+/// One message of an array: a control message or a quote, by `T`. Its strings are borrowed from the
+/// message where they can be and owned where a JSON escape has to be decoded, so an escape in any
+/// of them leaves the message readable.
 #[derive(Deserialize)]
 struct Message<'a> {
-    #[serde(rename = "T")]
-    kind: &'a str,
+    #[serde(borrow, rename = "T")]
+    kind: Cow<'a, str>,
     /// A `success` message's status.
     #[serde(borrow)]
-    msg: Option<&'a str>,
+    msg: Option<Cow<'a, str>>,
     /// An `error` message's code.
     code: Option<i64>,
     /// The symbols a `subscription` message confirms quotes for.
     quotes: Option<Vec<String>>,
     /// A quote's symbol.
     #[serde(borrow, rename = "S")]
-    symbol: Option<&'a str>,
+    symbol: Option<Cow<'a, str>>,
     /// A quote's bid and ask, and their sizes.
     #[serde(borrow)]
     bp: Option<&'a RawValue>,
@@ -80,7 +83,7 @@ struct Message<'a> {
     size_ask: Option<&'a RawValue>,
     /// A quote's time, RFC 3339 to the nanosecond.
     #[serde(borrow)]
-    t: Option<&'a str>,
+    t: Option<Cow<'a, str>>,
 }
 
 impl Session {
@@ -118,7 +121,7 @@ impl Session {
             ))
         })?;
         if let [message] = messages.as_slice()
-            && CONTROL_TYPES.contains(&message.kind)
+            && CONTROL_TYPES.contains(&message.kind.as_ref())
         {
             return self.control(message);
         }
@@ -128,7 +131,7 @@ impl Session {
 
     /// Reads a control message sent alone in its array.
     fn control(&self, message: &Message) -> Result<Frame, Refusal> {
-        match (message.kind, message.msg) {
+        match (message.kind.as_ref(), message.msg.as_deref()) {
             ("success", Some("connected")) => Ok(Frame::Control),
             ("success", Some("authenticated")) => Ok(Frame::Reply(vec![self.subscription()])),
             ("success", _) => Err(Refusal::Message("a success message of an undocumented status".into())),
@@ -158,13 +161,14 @@ impl Session {
     ///   `side`)
     fn quote(&self, message: &Message) -> Result<Option<Book>, String> {
         if message.kind != "q" {
-            return Err(unexpected(message.kind));
+            return Err(unexpected(&message.kind));
         }
         let symbol = message
             .symbol
+            .as_deref()
             .and_then(|symbol| self.symbols.get(symbol))
             .ok_or("a quote for a symbol the connection did not subscribe to")?;
-        let time = message.t.ok_or_else(|| format!("{symbol} quote without a time"))?;
+        let time = message.t.as_deref().ok_or_else(|| format!("{symbol} quote without a time"))?;
         let ts = DateTime::parse_from_rfc3339(time)
             .map_err(|_| format!("{symbol} quote time is not RFC 3339"))?
             .timestamp_millis();

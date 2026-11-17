@@ -341,7 +341,9 @@ fn a_redated_quote_dated_ahead_of_a_stepped_back_host_clock_is_refused_and_its_b
 #[test]
 fn only_venues_measured_to_answer_pings_in_order_redate() {
     let measured = [Venue::Bitstamp, Venue::Coinbase, Venue::Kraken];
-    let others = [Venue::Cme, Venue::Massive, Venue::Tradermade];
+    // Every other venue: Alpaca's, CME's, Coinbase Exchange's, Massive's and TraderMade's pongs are
+    // not measured (#543).
+    let others = [Venue::Alpaca, Venue::Cme, Venue::CoinbaseExchange, Venue::Massive, Venue::Tradermade];
     measured.into_iter().for_each(|venue| assert!(redates(venue), "{venue:?}"));
     others.into_iter().for_each(|venue| assert!(!redates(venue), "{venue:?}"));
 }
