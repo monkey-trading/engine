@@ -6,6 +6,7 @@ mod cancel;
 mod declarations;
 mod earned_leverage;
 mod holding_fee;
+mod portfolio_margin;
 mod pre_deposit;
 mod pre_deposit_budgets;
 mod reissue;
@@ -335,6 +336,7 @@ impl Node {
             stats: crate::test_support::stats(),
             emission_budget: None,
             staking_terms: None,
+            portfolio_margin: None,
             status: Default::default(),
             collateral: None,
             listing: Default::default(),

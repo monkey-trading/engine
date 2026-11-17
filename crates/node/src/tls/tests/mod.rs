@@ -356,6 +356,7 @@ impl TestNode {
             stats: crate::test_support::stats(),
             emission_budget: None,
             staking_terms: None,
+            portfolio_margin: None,
             status: Default::default(),
             collateral: None,
             listing: Default::default(),
@@ -464,8 +465,7 @@ async fn http(conn: &mut ClientTls<TcpStream>, method: &str, path: &str, body: &
     (status, body)
 }
 
-/// Sends one request on `conn`, asking the server to close it after, and returns the status and
-/// the whole response.
+/// Sends one request on `conn`, asking the server to close it after, and returns the status and the whole response.
 async fn http_head(conn: &mut ClientTls<TcpStream>, method: &str, path: &str, body: &str) -> (u16, String) {
     let request = format!(
         "{method} {path} HTTP/1.1\r\nhost: engine\r\nconnection: close\r\ncontent-type: application/json\r\n\

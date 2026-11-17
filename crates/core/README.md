@@ -285,6 +285,18 @@ this crate and reproduce the signed state roots exactly.
   move only after a seven-day notice, within ±50% of launch, and a floor is fixed at listing.
   Activation drops queued markouts and clears the `V11` scores, so every account starts neutral,
   and gives a market listed with no floor its asset class's
+- Portfolio margin as a read (`src/portfolio/`), which no state, root or event depends on: within
+  each offset group, the loading-weighted exposure on the smaller side, long or short, matches as much
+  on the larger, pro rata across its positions. Matched exposure takes the group's credit, its share
+  of the bands less each matched part's own move and the cost of closing it at its close-spread
+  ceiling over the close-out level, at most `1 - φ` of that share and never below zero, worked exactly
+  in wide integers and rounded down once. The requirement is the per-position requirement less every
+  credit, so exposure that offsets nothing, a lone position included, keeps its bands exactly. At
+  initial bands it takes the tier floor and the weekend margins band by band, so a lone position meets
+  its tier exactly while matched exposure is credited at every tier; over a group's weekend gap and
+  the two hours before it, its weekend residuals, and no credit on the matched part of a market with
+  no weekend rate; and no credit for a group with a held member that cannot trade. The node serves it
+  on the account read under the grid its config names
 
 ## Repository Structure
 
@@ -443,6 +455,22 @@ this crate and reproduce the signed state roots exactly.
   that does nothing until activation starts it, holding a gap it is in or that starts within the
   lead with no close-out, through a relisting and to a gap within the lead after it, with
   `tests/weekend_margin.rs` on the shared harness in `tests/common/weekend.rs`
+- `src/portfolio/mod.rs` — portfolio margin's grid: offset groups with their floor shares, their
+  members' loadings and residual shocks with their weekend values; the grid's structure check and its
+  check against the listings; unit tests, the exact net's and the credit's among them, in
+  `src/portfolio/tests.rs`
+- `src/portfolio/exposure.rs` — a group's loading-weighted exposure by side, the matched exposure, its
+  worst loss and its credit, exact in wide integers, with the range argument
+- `src/portfolio/requirement.rs` — an account's portfolio requirement at marks, at the market's
+  bands and at initial bands, and the account read's standing
+- `tests/portfolio_margin.rs` — a hedged book's credit and each group's part, a net short, an exact
+  hedge, a book that offsets nothing, the credit at tier 0's floor, the weekend shocks, no weekend
+  credit for markets with no weekend rate, a member that cannot trade, a grid that does not fit the
+  listings, a lone position at its per-position requirement in every market at every size and tier,
+  and the requirement between the floor shares and the per-position requirement over random books and
+  grids
+- `tests/portfolio_margin_benchmark.rs` — the portfolio requirement's cost over 100k holders of
+  BTC-USD against the per-position requirement's (ignored; "Portfolio requirement cost" below)
 - `tests/params_notice.rs` — the V49 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
@@ -1497,6 +1525,16 @@ price at 100,000 or 100,001 passes and BTC's 1bp first band keeps out of reach. 
 51,335 us p50 / p99 under `V73`, which prices every one of those limits, and 0 / 2 us under `V74`, which
 visits none. The budget is the resting case's 200 us p99.
 
+Portfolio requirement cost (`tests/portfolio_margin_benchmark.rs`, ignored; run it with
+`cargo test -p engine-core --test portfolio_margin_benchmark --locked -- --ignored --nocapture --test-threads=1`),
+measured on 17 November 2026 on the machine above with other workspace builds running (load average
+about 26, so the absolute figures run high): each of 100,000 accounts holds $100k of BTC-USD long and
+$100k of ETH-USD short, loading 1.25, in one offset group and $20k of AAPL in none. A pass over every
+holder took 13,929 / 15,899 us p50 / max of 30 passes for `Engine::equity_and_margin`, 139 ns a holder,
+and 63,064 / 68,601 us for `Engine::portfolio_margin`, 630 ns a holder: about 4.5 times the per-position
+requirement, which also sums equity. The figures do not separate the group's exact credit, worked in
+512-bit integers, from the rest of the pass. Nothing on the sequencer reads it yet.
+
 ### The launch book
 
 The cases above price one market of a book in which nearly every account holds one position. Launch's
@@ -1537,4 +1575,3 @@ Run `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignore
 `launch_book_price_attribution` prices BTC-USD and EUR-USD on the book with its resting orders, or its
 extra markets, taken away. `engine-node`'s `stats::launch_bench` runs the stats scans and the worker's
 copy on the same book. `tests/launch_book.rs` holds the builder to its mix.
-

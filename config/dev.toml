@@ -253,6 +253,24 @@ episode_quiet = "15m"
 # [alerts.critical]
 # url_env = "ENGINE_ALERTS_CRITICAL_URL"
 
+# Portfolio margin as a read on the account: the offset groups whose positions
+# offset each other. These are TEST FIXTURES, not calibrated values: #914
+# calibrates production's. BTC-USD and ETH-USD move with a common factor,
+# ETH-USD 1.25 times as far as BTC-USD, each also 0.2% on its own. Exposure the
+# group matches gets credit: its share of the bands less that 0.2% and the cost
+# of closing it at its 30bp ceiling at the 50% close-out level, at most half
+# that share. Exposure that offsets nothing keeps its bands. Nothing the engine
+# decides reads the grid.
+[portfolio_margin]
+
+[[portfolio_margin.groups]]
+name = "crypto"
+floor_share_bps = 5000
+members = [
+  { market = 1, loading = "1", residual_shock_bps = 20, weekend_residual_shock_bps = 20 },
+  { market = 2, loading = "1.25", residual_shock_bps = 20, weekend_residual_shock_bps = 20 },
+]
+
 [genesis]
 # Mock custody only. With EVM custody, house capital enters through vault deposits to the house.
 house_capital = "10000000"

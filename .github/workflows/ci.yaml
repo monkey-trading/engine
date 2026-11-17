@@ -285,7 +285,7 @@ jobs:
                 scripts/dev-corporate-actions.sh | scripts/dev-operator-bounds.sh | scripts/dev-params-notice.sh \
                   | scripts/dev-holding-fee.sh | scripts/dev-volume-tiers.sh | scripts/dev-weekend-margin.sh \
                   | scripts/dev-earned-leverage.sh | scripts/dev-tier-limits.sh | scripts/dev-volume-benefits.sh \
-                  | scripts/dev-spreads.sh)
+                  | scripts/dev-spreads.sh | scripts/dev-portfolio-margin.sh)
                   areas+=" scenario_tests" ;;
                 scripts/dev-toxicity.sh) areas+=" toxicity" ;;
                 scripts/dev-venue-load.sh) areas+=" venue_load" ;;
@@ -812,6 +812,8 @@ jobs:
         run: ./scripts/dev-tier-limits.sh
       - name: Run the volume benefits dev scenario
         run: ./scripts/dev-volume-benefits.sh
+      - name: Run the portfolio margin dev scenario
+        run: ./scripts/dev-portfolio-margin.sh
       - name: Run the spreads dev scenario
         run: ./scripts/dev-spreads.sh
       - name: Check the wait from a price entering the sequencer's channel to its stamp at 100k accounts

@@ -646,7 +646,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/mod.rs` — REST routes, read handlers and the request span
 - `src/api/account.rs` — `GET /v1/accounts/{address}`: an account's balance, equity, margin, initial
   and maintenance requirements, withdrawable cash, each market's maximum leverage, positions, orders,
-  toxicity, close-outs, close fees, from `V59` its volume tier and from `V60` its weekend margins
+  toxicity, close-outs, close fees, from `V59` its volume tier, from `V60` its weekend margins, and
+  under `[portfolio_margin]` its portfolio requirement
 - `src/api/reads.rs` — `GET /v1/markets`: every market with its live state, how it is priced
   (`pricing.rs`), and from `V60` its weekend margin window
 - `src/api/operating.rs` — `GET /v1/status`: the server's operating state (`src/status.rs`: what holds
@@ -692,6 +693,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   refused the 26th naming tier 0, its next requests refused with 429 naming tier 0's rate, a wallet at
   tier 2 resting 30 orders under its own rate, the tier falling thirty days on with the 30 orders
   left resting and a new one refused at 25, the account read, replay and a restart
+- `src/api/access_tests/portfolio_margin.rs` — the portfolio margin dev scenario under the dev config's
+  BTC-USD and ETH-USD group: a pair's portfolio requirement below its bands and at least the floor
+  share of them, BTC alone at its bands, both after a 2% move in BTC, the pair's BTC leg alone after
+  its ETH leg closes, each read verified as `engine verify-response` verifies it
 - `src/api/access_tests/earned_leverage.rs` — the `V64` dev scenario: a fresh wallet's BTC short
   refused at 25x by tier 0's margin floor and opened at 19.8x, 50x at tier 1 and 100x at tier 2, the
   tier falling thirty days on with the short open, a withdrawal stopped at the initial requirement, the
@@ -1074,6 +1079,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/telemetry.rs` — the metrics listener and alert webhook config, and the redacting
   `WebhookUrl`
 - `src/config/tests.rs` — config loading and validation tests
+- `src/config/tests/portfolio.rs` — the `[portfolio_margin]` section: the dev fixture group loads, and an
+  unknown key at each level, a malformed grid or one that does not fit the genesis listings fails the boot
 - `src/config/api_tests.rs` — the `[api]` heartbeat, quote and stats scan intervals' defaults and minimums, and the fresh-account budgets' check
 - `src/config/mock_key_tests.rs` — published mock-only signer opt-in and hardware refusal regressions
 - `src/config/custody_tests.rs` — independent provider configuration checks
@@ -2606,6 +2613,28 @@ from the account and its session keys, beyond which a request gets 429 with `Ret
 naming the `tier` and its `requests_per_second`. From `V68`, `volume` also gives the tier's
 `fee_discount_bps`, `financing_discount_bps` and `emissions_boost_bps`. A tier naming no rate leaves `api.per_account`, which
 also holds accounts never credited, the operator and an account's payout reissue requests.
+With a `[portfolio_margin]` section the read adds `portfolio_margin`, the account's requirement if
+margin were set by the risk of its whole book; nothing the engine decides reads it. In each offset
+group, a position's loading-weighted exposure is its loading β times its signed USD notional. The
+exposure on the group's smaller side, long or short, offsets as much on its larger side: the matched
+exposure is the group's gross loading-weighted exposure less the magnitude of its net, the smaller
+side whole and that share of each position on the larger side. Exposure that offsets nothing keeps its
+bands. Matched exposure gets the group's credit: its share of the bands less its worst loss over the
+grid (each matched part's own move, ρ, the group's factor cancelling on it) and the cost of closing it
+at its close-spread ceilings over the close-out level, at most `1 - φ` of that share, φ the group's
+`floor_share_bps`, and never below zero, worked exactly and rounded down once.
+`{"margin", "initial_margin", "maintenance_margin", "groups"}`: `margin` less every group's credit, at
+the markets' own bands; the same at the bands `initial_margin` takes, the tier's margin floor
+included, with each group's weekend residual shocks from two hours before its members' weekend gap
+until they reopen, when the matched part of a market with no weekend rate keeps its bands, and no
+credit for a group with a held member that cannot trade; the first at the close-out level; and by group name, for each group the account holds a
+member of, `{"members", "net_notional", "matched_notional", "worst_loss", "binding_direction",
+"offset"}`: the members held, the loading-weighted net and matched exposure, the matched exposure's
+worst loss, `down`, `up` or `either` for which way the factor's move hurts the exposure left
+unmatched, and the credit, so `margin` less the offsets is `portfolio_margin.margin`. A lone position
+keeps its per-position requirement exactly. A grid that no longer fits the listings (a group's listed
+members in two asset classes, on two schedules, or quoted outside USD) gives none, with Warning
+`portfolio_grid_mismatch` until a read it fits.
 `GET /v1/markets` gives each market's `weekend_margin_bps` (left out when none) and, for a market
 with one, `weekend_margin`: `{"weekend_margin_bps", "from", "close", "reopen"}` for its next or
 current weekend gap, or nothing while no gap starts within 366 days or before V60 activates.

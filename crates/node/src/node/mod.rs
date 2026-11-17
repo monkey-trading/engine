@@ -400,9 +400,8 @@ async fn serve_node(
         backfills.clone(),
         Some(history.resume_at()),
     );
-    // History runs outside `tasks`: on shutdown it outlives the sequencer, so it can take the final
-    // checkpoint's capture, and stops at the end of the stream. Its own set still aborts it if this
-    // function returns early.
+    // History runs outside `tasks`: on shutdown it outlives the sequencer, so it can take the final checkpoint's
+    // capture, and stops at the end of the stream. Its own set still aborts it if this function returns early.
     let history_stopper = history.stopper();
     let mut history_task = JoinSet::new();
     history_task.spawn(history.run(history_feed));
@@ -437,6 +436,7 @@ async fn serve_node(
         stats,
         emission_budget,
         staking_terms,
+        portfolio_margin: crate::api::account::PortfolioMargin::configured(cfg),
         status,
         collateral: served,
         listing: Default::default(),
