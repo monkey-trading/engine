@@ -206,7 +206,7 @@ async fn contracts_the_market_does_not_take_are_held_back_without_an_alert() {
     let learned = wait_for(WAIT, || Some(quoted_june("kraken")?.max(quoted_june("bitstamp")?))).await;
     wait_for(WAIT, || (commands(&applied).len() >= learned + RUN).then_some(())).await;
     // December is held back from here, so a window past its last quote shows whether it counts as silent.
-    tokio::time::sleep(QUOTING + TIMEOUT).await;
+    tokio::time::sleep(QUOTING * 3 / 2).await;
     let after = commands(&applied);
     assert!(!contracts(&after[learned..]).contains(&"ESZ6".into()), "December quoted after both feeds learned");
     assert!(events_of(&applied).iter().all(|e| !matches!(e, Event::PricesRejected { .. })));
