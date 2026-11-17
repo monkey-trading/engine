@@ -497,6 +497,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/checkpoint_tests/handover_stop.rs` — a handover's stop is the gate's call: refused
   with its causes while it would withhold the final checkpoint, and only an admitted stop ends the
   sequencer's loop
+- `src/sequencer/checkpoint_tests/reorg.rs` — no checkpoint is signed from a receipt reversal until
+  the next finalised custody frontier, whether the reorganisation moves a credited deposit or
+  orphans two, and across a restart
 - `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures,
   and logs whose genesis an older protocol applied but no current config can give
 - `src/sequencer/recovery.rs` — pure recovery validation and exact authenticated checkpoint-tail restoration
@@ -1430,7 +1433,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/confirmed/frozen.rs` — a pending receipt under frozen finality: each window read
   once across quota failures, lost replies, reorg and restart
 - `src/custody/tests/confirmed/reinclusion.rs` — reincluded deposits move in one step and keep a
-  solvent position open; an orphan with no replacement waits for the eligible head
+  solvent position open; an orphan with no replacement waits for the eligible head; the finalised
+  frontier follows every transition of a reorganisation
 - `src/custody/tests/confirmed/episodes.rs` — a reversal alert resolves only when its receipt is reinstated
 - `src/custody/tests/legacy.rs` — legacy tag upgrades, principal eligibility and signature finality proofs
 - `src/custody/tests/legacy/cache.rs` — bounded consumed header retention and unchanged approval/refusal outcomes
@@ -2074,7 +2078,11 @@ reaches the eligible head, holding the finalised frontier below it, and then deb
 exactly once. A transaction canonical again with other economics is no replacement, so its orphan is
 debited at once. After a debit, the existing balance-change close-out closes executable positions;
 stale positions wait for a valid price. Once flat, a negative account balance is written off against
-house cash through `BadDebt`. A negative house NAV does not halt trading. Accounting-mismatch withdrawal
+house cash through `BadDebt`. The adapter sequences a reorganisation's transitions one receipt at a
+time, so from any receipt reversal until the next finalised frontier applies, which it logs only once
+no orphan of its scan is left, the node signs no checkpoint (`checkpoint_withheld`, cause
+`custody_prefix`), across a restart too: a root between two transitions could name, as a gap the
+vault's exit refunds, the id a credited deposit moved to, or an id past the vault's own deposits. A negative house NAV does not halt trading. Accounting-mismatch withdrawal
 gating belongs to #24, and public liquidity FIFO to #49. Exact receipts and conditional transition
 revisions prevent old deliveries from repeating effects across restarts.
 

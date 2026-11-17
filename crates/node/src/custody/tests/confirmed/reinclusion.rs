@@ -114,6 +114,47 @@ async fn an_orphan_without_a_replacement_reverses_once_the_scan_reaches_the_head
     assert_eq!(transitions(&dir, |update| matches!(update, DepositUpdate::Replace { .. })), 0);
 }
 
+#[tokio::test]
+async fn the_finalised_frontier_follows_every_transition_of_a_reorganisation() {
+    // The deposit at id 0 is orphaned and the one credited at id 1 is reincluded at id 0, both above
+    // the block finality reaches, where the engine would take a frontier between the transitions:
+    // only the watcher's order keeps the signing hold (`Accounting::reorganising`) over both.
+    let dir = scratch("confirmed-reinclusion-frontier");
+    let node = Node::start_confirmed(&dir);
+    let chains = chains(5, None);
+    let (orphan, moved) = (confirmed_deposit(0, 3, 40), confirmed_deposit(1, 4, 100));
+    add(&chains, &orphan);
+    add(&chains, &moved);
+    let mut scan = watcher(&chains, &dir, 10, None);
+    catch_up(&mut scan, &node.tx).await;
+    let reincluded = VaultDeposit { id: 0, block: 5, block_hash: fork_hash(5), ..moved.clone() };
+    for chain in &chains {
+        chain.remove(&orphan);
+        chain.remove(&moved);
+        chain.add(reincluded.clone());
+        fork(chain, 3, 5);
+    }
+    set_release(&chains, Some(2));
+    catch_up(&mut scan, &node.tx).await;
+    assert_eq!(node.read(|e| e.custody_checkpoint().map(|c| (c.block, c.deposit_count))).await, Some((2, 0)));
+    node.stop().await;
+    let order: Vec<_> = crate::test_support::log_entries(&dir.join("log"))
+        .into_iter()
+        .filter_map(|entry| match entry {
+            crate::log::LogEntry::Command(command) => match command.sequenced.cmd {
+                Command::CustodyDeposit(update) => {
+                    matches!(*update, DepositUpdate::Reverse { .. } | DepositUpdate::Replace { .. })
+                        .then_some("transition")
+                }
+                Command::CustodyFinalised(_) => Some("frontier"),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["transition", "transition", "frontier"]);
+}
+
 // ── Helpers ──
 
 /// Prices market 1 from two fresh sources at `mid`.

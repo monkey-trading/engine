@@ -22,6 +22,13 @@ pub(crate) struct Accounting {
     #[serde(default)]
     pub(super) pending: Fixed,
     unpaid: Fixed,
+    /// A receipt was reversed and no finalised custody frontier has applied since. The custody
+    /// adapter sequences a reorganisation's transitions one receipt at a time and logs a frontier
+    /// only once none is left, so until then the exit terms can name gaps the vault would refund
+    /// twice or refuse. Serialized only when set, which a gated node's snapshots, taken at the
+    /// checkpoints it signs, never are.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) reorganising: bool,
 }
 
 impl Accounting {
@@ -106,6 +113,7 @@ impl Accounting {
                         .context("checkpoint distribution overflow")?;
                 }
                 Event::CustodyDepositChanged { receipt, status, principal_delta, uncredited } => {
+                    self.reorganising |= *status == DepositStatus::Reversed;
                     self.receipt_changed(command, receipt, status, *principal_delta, *uncredited)?;
                 }
                 _ => {}
@@ -113,6 +121,11 @@ impl Accounting {
             if evm_disposition(command, event) {
                 self.deposits = self.deposits.checked_add(1).context("checkpoint deposit count overflow")?;
             }
+        }
+        if matches!(command, Command::CustodyFinalised(_))
+            && !events.iter().any(|event| matches!(event, Event::AdminRejected { .. }))
+        {
+            self.reorganising = false;
         }
         Ok(self)
     }

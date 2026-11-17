@@ -412,10 +412,75 @@ contract ExitTestCases is ExitTest {
         _refuseMalformedGaps(gaps);
     }
 
-    function testAProvenTermsWithAGapAtOrPastTheCursorIsRefused() public {
+    function testAGapAtTheCursorIsRefundedAndReservedOnceThroughTheCursorRule() public {
+        for (uint256 i; i < 3; ++i) {
+            _deposit(funder, alice, 100e6);
+        }
+        uint256 past = _deposit(funder, bob, 50e6);
         uint64[] memory gaps = new uint64[](1);
-        gaps[0] = 3;
-        _refuseMalformedGaps(gaps);
+        gaps[0] = uint64(past);
+        ExitVerifier.ExitTerms memory terms = _addTerms(3, 0, 0, 0, 0, 300e6 * UNIT, gaps);
+        ExitVerifier.AccountState memory a = _addAccount(alice, 300e6 * UNIT);
+        _post();
+        _startExit(terms);
+        assertFalse(vault.exitRefundableGap(past), "the cursor rule refunds it, not the gap");
+        assertEq(vault.exitRefundReserve(), 50e6, "reserved once");
+        vault.refundDeposit(past);
+        assertEq(usdc.balanceOf(funder), 50e6);
+        (ExitVerifier.PositionState[] memory positions, ExitVerifier.MarketState[] memory markets) = _none();
+        vault.registerExit(alice, _withAccountProof(alice, a), positions, markets);
+        vm.warp(block.timestamp + WINDOW);
+        assertEq(vault.claimExit(alice), 300e6);
+        assertEq(usdc.balanceOf(address(vault)), 0);
+    }
+
+    function testTheExitStartsAgainstARootWhoseGapIsPastTheVaultsDepositCount() public {
+        // A reorganisation orphaned the engine's credits at ids 6 and 7, and the vault kept six
+        // deposits. The root was taken between the two reversals: cursor 8, the gap 6, and id 7's
+        // receipt still live. The cursor clamps to the vault's six, past which nothing is refunded.
+        for (uint256 i; i < 6; ++i) {
+            _deposit(funder, alice, 100e6);
+        }
+        uint64[] memory gaps = new uint64[](1);
+        gaps[0] = 6;
+        ExitVerifier.ExitTerms memory terms = _addTerms(8, 6, 0, 0, 0, 100e6 * UNIT, gaps);
+        _addAccount(alice, 600e6 * UNIT);
+        _post();
+        _startExit(terms);
+        assertGt(vault.exitStartedAt(), 0, "the exit started");
+        assertEq(vault.exitDepositCursor(), 6);
+        assertFalse(vault.exitRefundableGap(6));
+        assertEq(vault.exitRefundReserve(), 0, "no deposit from the clamped cursor on, and none named");
+    }
+
+    function testAGapBelowAClampedCursorIsRefundedWhileOnePastItIsSkipped() public {
+        // The root names gaps 5 and 7 below its cursor 9, with live receipts at 6 and 8 (the
+        // house's); the vault holds ids 0 to 6, bob's deposit at 5 among them.
+        for (uint256 i; i < 5; ++i) {
+            _deposit(funder, alice, 100e6);
+        }
+        uint256 gap = _deposit(bob, bob, 40e6);
+        uint256 held = _deposit(funder, alice, 100e6);
+        uint64[] memory gaps = new uint64[](2);
+        (gaps[0], gaps[1]) = (uint64(gap), 7);
+        ExitVerifier.ExitTerms memory terms = _addTerms(9, 5, 0, 0, 0, 200e6 * UNIT, gaps);
+        ExitVerifier.AccountState memory a = _addAccount(alice, 600e6 * UNIT);
+        _post();
+        _startExit(terms);
+        assertEq(vault.exitDepositCursor(), 7);
+        assertTrue(vault.exitRefundableGap(gap) && !vault.exitRefundableGap(7));
+        assertEq(vault.exitRefundReserve(), 40e6, "the gap below the cursor, at the vault's own amount");
+        vm.expectRevert(abi.encodeWithSelector(Vault.NotRefundable.selector, held));
+        vault.refundDeposit(held);
+        vm.expectRevert(abi.encodeWithSelector(Vault.NotRefundable.selector, 7));
+        vault.refundDeposit(7);
+        vault.refundDeposit(gap);
+        assertEq(usdc.balanceOf(bob), 40e6);
+        (ExitVerifier.PositionState[] memory positions, ExitVerifier.MarketState[] memory markets) = _none();
+        vault.registerExit(alice, _withAccountProof(alice, a), positions, markets);
+        vm.warp(block.timestamp + WINDOW);
+        assertEq(vault.claimExit(alice), 600e6);
+        assertEq(usdc.balanceOf(address(vault)), 0);
     }
 
     function testUnheldPrincipalPastTheNamedGapsStaysInTheVault() public {

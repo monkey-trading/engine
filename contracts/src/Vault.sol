@@ -932,20 +932,20 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         if (checkpointsStale()) revert CheckpointsStale();
     }
 
-    /// @dev Marks each id in `gaps` below `cursor` as refundable by the exit. The list is the lowest
-    /// `MAX_EXIT_GAPS` ids, strictly increasing, as the engine commits it; their principal is
-    /// already reserved in `terms.unheld`.
     /// @dev Marks each id in `gaps` below `cursor` as refundable by the exit and returns their
     /// canonical payer-funded principal, as the vault's own records hold it: the terms' `unheld`
     /// covers only the unnamed gaps, whose principal only the engine has seen. The list is the
-    /// lowest `MAX_EXIT_GAPS` ids, strictly increasing, as the engine commits it.
+    /// lowest `MAX_EXIT_GAPS` ids, strictly increasing, as the engine commits it. An id at or past
+    /// `cursor` is skipped: the cursor rule already refunds and reserves every deposit from it on,
+    /// and past the vault's deposit count, where the cursor clamps, there is no deposit to refund.
     function _markRefundableGaps(uint64 cursor, uint64[] calldata gaps) private returns (uint256 refundable) {
         if (gaps.length > MAX_EXIT_GAPS) revert InvalidExitProof();
         uint64 previous;
         for (uint256 i; i < gaps.length; ++i) {
             uint64 id = gaps[i];
-            if (id >= cursor || (i > 0 && id <= previous)) revert InvalidExitProof();
+            if (i > 0 && id <= previous) revert InvalidExitProof();
             previous = id;
+            if (id >= cursor) continue;
             exitRefundableGap[id] = true;
             refundable += refundableThrough[id] - (id == 0 ? 0 : refundableThrough[id - 1]);
         }
