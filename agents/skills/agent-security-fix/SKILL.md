@@ -24,6 +24,9 @@ progress, so the system is contained first and the fix ships as a release.
 
 ### Recording a finding
 
+- Reports arrive through GitHub's private vulnerability reporting, the primary channel, or the email
+  address in [SECURITY.md](../../../SECURITY.md#reporting-a-vulnerability). The coordinator reads
+  them; no PGP key is published.
 - A finding becomes an advisory only after it has been reproduced independently, outside the
   session that found it.
 - Each finding is one draft repository security advisory:
@@ -107,67 +110,88 @@ Only the coordinator session lands a fix.
 
 ## After launch
 
-The engine holds live funds, so a finding is a live exposure until the fixed release is the
-vault's current release. The coordinator proposes each step; the owner decides and acts.
+The engine holds live funds, so a finding is a live exposure until its fix is live. The
+coordinator proposes each step; the owner decides and acts.
 
 1. **Triage first.** Follow [SECURITY.md](../../../SECURITY.md#what-happens-next) for the
    response times: acknowledge a private report, tell the reporter whether it reproduces, how
    severe it is and what is planned, and keep the reporter informed until it is resolved. Grade
    severity with the severity guide. Record the finding as above once it reproduces
    independently.
-2. **Contain before fixing, for a live Critical or High.** The coordinator proposes the steps; the
-   owner decides and acts. Take the least drastic step that stops the harm, from
-   [incident-response](../../../ops/runbooks/incident-response.md#the-ladder-of-containment):
-   - make the affected markets reduce-only ([reduce-only](../../../ops/runbooks/reduce-only.md));
-   - the guardian's `pauseWithdrawals()`, up to seven days, which the guardian cannot extend;
-   - the timelock's `setPauses` to pause deposits, or withdrawals, until it lifts them;
-   - the stress floor, which lapses after 72 hours unless set again;
-   - while votes govern, a fast-path restriction by vote of the rotation set
-     ([operator-candidate](../../../ops/runbooks/operator-candidate.md));
-   - as a last resort, stopping the node, which starts the vault's exit deadlines
-     ([restart-and-recovery](../../../ops/runbooks/restart-and-recovery.md)).
+2. **Contain by severity, before fixing.** The coordinator proposes; the owner acts.
+   - **Critical:** the guardian's `pauseWithdrawals()` and every affected market reduce-only, at
+     once.
+   - **High:** the affected markets reduce-only. Add the withdrawal pause only if funds can leave
+     through the flaw.
+   - **Medium and Low:** no containment. The fix goes at the normal pace.
 
-   Containment must hold for the whole window until the fixed release is live, so plan each
-   lever's expiry and renewal against the schedule in step 4 and put each renewal in the
-   coordinator's notes.
+   The levers and their runbooks are in
+   [incident-response](../../../ops/runbooks/incident-response.md#the-ladder-of-containment):
+   [reduce-only](../../../ops/runbooks/reduce-only.md), the guardian's pause (seven days, which the
+   guardian cannot extend, so the coordinator notes its expiry), the timelock's `setPauses` for
+   deposits or withdrawals, and the stress floor (which lapses after 72 hours). While votes
+   govern, a fast-path restriction by vote of the rotation set
+   ([operator-candidate](../../../ops/runbooks/operator-candidate.md)) is one more. The permanent
+   exit ([restart-and-recovery](../../../ops/runbooks/restart-and-recovery.md)) is the fallback
+   when the vault itself cannot be made safe.
+
+   Containment holds for the whole window until the fix is live, including the timelock's delay.
+   It is lifted when the fixed release is the vault's current release, or when a contract
+   migration is complete.
 3. **Fix privately,** as in [Building the fix](#building-the-fix): the advisory's fork, the CI
    mirror for the green run, and the same review level.
-4. **Ship an engine or node fix as a release,** in this order:
-   1. Merge the fix to `main` through the advisory's merge, as in [Landing a fix](#landing-a-fix).
-      It is public from then on.
-   2. Rebuild the reproducible image from the fix commit and write the release manifest, as in
+4. **Ship an engine or node fix as a release,** in this order. The fix's source stays private until
+   the fixed release activates.
+   1. Verify the fix in the advisory's private fork and on the CI mirror, as in
+      [Landing a fix](#landing-a-fix), but do not merge it.
+   2. Build the reproducible image from the fix commit and write the release manifest, as in
       [deploy-and-rollback](../../../ops/runbooks/deploy-and-rollback.md) section 1 and
-      [image/README.md](../../../image/README.md#release). The release's measurement must
-      reproduce from public source, so a verifier can check its attestation.
-   3. The timelock approves the release with `setCurrentRelease`, and the node upgrades by
-      handover ([deploy-and-rollback](../../../ops/runbooks/deploy-and-rollback.md) section 3).
-
-   The fix is merged and public no later than the moment the release goes to the timelock, and
-   the timelock's delay is the public window: containment holds through it.
+      [image/README.md](../../../image/README.md#release).
+   3. The owner proposes the release to the timelock (`setCurrentRelease`). At the proposal, the
+      owner adds each rotation-set member's maintainer as a collaborator on the draft advisory.
+      That gives them its private fork to build the image and verify the release's measurement
+      themselves, under embargo until activation.
+   4. Containment holds through the timelock's delay. The release activates and the node upgrades
+      by handover ([deploy-and-rollback](../../../ops/runbooks/deploy-and-rollback.md) section 3).
+   5. The advisory's merge puts the fix on `main` at activation. That moment, not the timelock
+      proposal, is when the source becomes public, so anyone can then reproduce the release's
+      measurement from public source and verify its attestation.
 5. **A contract finding has no hot fix.** The deployed contracts cannot be patched in place.
-   Contain as in step 2, then the owner decides a migration or redeployment plan, through the
-   timelock where it applies. Never describe a contract fix as a patch to the live contract.
-6. **Disclose once the fixed release is the vault's current release and the deployment is done.**
-   - Publish the advisory, as [SECURITY.md](../../../SECURITY.md#coordinated-disclosure) says, and
-     credit the reporter by name unless they would rather not be.
-   - Request a CVE for a Critical or High finding, on the owner's confirmation.
-   - The owner directs the announcement to users through the project's public channels.
-   - Bug bounty payouts follow the programme #72 sets, and the owner decides each one.
-7. **Afterwards,** do the [post-incident steps](../../../ops/runbooks/incident-response.md#after-the-incident),
+   1. Pause what the finding reaches, through the guardian or the timelock.
+   2. Deploy a fixed contract through the timelock.
+   3. Move clients over by withdrawals and re-deposits, with the old contract kept withdraw-only.
+
+   If the vault itself cannot be made safe, the permanent exit is the fallback. Never describe a
+   contract fix as a patch to the live contract.
+6. **Tell users when containment affects them.** Announce it at once, in neutral wording such as
+   "security maintenance", on the project's announcement channel and in the console. Give full
+   details at publication.
+7. **Disclose** every advisory, of any severity, once the release containing its fix is the vault's
+   current release, as [SECURITY.md](../../../SECURITY.md#coordinated-disclosure) says.
+   - Request a CVE for Critical and High findings.
+   - Credit the reporter if they wish.
+   - Bounty payouts follow the scale #72 publishes. #72 is a launch blocker.
+8. **Deadline.** If a fix cannot meet `SECURITY.md`'s deadline, agree one extension with the
+   reporter in writing, of at most 30 days, and keep containment in place. Publish when the fix is
+   live or at the extended deadline, whichever comes first.
+9. **Afterwards,** do the [post-incident steps](../../../ops/runbooks/incident-response.md#after-the-incident),
    then re-run the relevant audit area on the fixed release. Delete the mirror's branch, the
    worktree and the `private-xxxx` remote.
 
-## Owner decisions
+## Decisions (owner, 2026-11-17)
 
-The repository's records do not settle these. Do not choose them; ask.
+These settle what the repository's records left open. Each also stands in the step it governs.
 
-- Which containment steps to take for a given finding, and when to lift each.
-- Whether a Critical or High finding's fix may wait for the timelock's delay with containment in
-  place, or needs a different route.
-- The migration or redeployment plan for a contract finding.
-- Whether to request a CVE, finding by finding.
-- The announcement's channels and wording.
-- Each bug bounty payout, and its amount.
-- The reporter's contact path before a PGP key is published in `SECURITY.md`, and who writes to
-  the reporter.
-- The advisory's fix date when the 90-day limit in `SECURITY.md` cannot be met.
+- **Containment** follows the finding's severity, and is lifted when the fixed release is current
+  or a contract migration is complete (After launch, step 2).
+- **Engine and node fixes** stay private until the fixed release activates, with containment
+  through the timelock's delay and each rotation-set member's maintainer added to the draft
+  advisory at the proposal (step 4).
+- **Contract findings** are paused, redeployed through the timelock and migrated by withdrawals
+  and re-deposits, with the permanent exit as the fallback (step 5).
+- **Users** are told at once, in neutral wording, when containment affects them (step 6).
+- **Disclosure** covers every advisory once its fix's release is current; a CVE is requested for
+  Critical and High; the bounty follows #72's scale (step 7).
+- **Reporting** goes through GitHub's private vulnerability reporting or the email in
+  `SECURITY.md`, with no PGP key.
+- **Deadline:** one written extension of at most 30 days, with containment kept (step 8).
