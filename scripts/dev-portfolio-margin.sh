@@ -3,8 +3,9 @@
 # BTC-USD and ETH-USD, through the signed order routes and the account read on deterministic time,
 # with isolated temporary state: account A opens $1M long BTC-USD and $1M short ETH-USD, account B
 # $1M long BTC-USD alone, and each read is verified as `engine verify-response` verifies it. A's
-# portfolio requirement is below its per-position requirement and at least the floor share of it,
-# naming the group and its binding direction; B's equals its per-position requirement; after BTC-USD
+# matched exposure takes the group's credit, leaving its portfolio requirement below its per-position
+# requirement and above the group's floor share of it, naming the group and its binding direction;
+# B's matches nothing and equals its per-position requirement; after BTC-USD
 # moves 2% both reads follow the new marks; and once A closes its ETH-USD leg its portfolio
 # requirement equals its per-position requirement.
 set -euo pipefail

@@ -4,6 +4,8 @@
 //! margin each position needs, and under a `[portfolio_margin]` grid its portfolio requirement.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -13,9 +15,10 @@ use engine_core::types::{AccountId, MarketId, OrderId};
 use engine_core::{Engine, Fixed};
 use serde::Serialize;
 use tracing::field::display;
-use tracing::{Span, warn};
+use tracing::{Span, info, warn};
 
 use crate::api::{ApiError, ApiResult, ApiState};
+use crate::config::NodeConfig;
 
 #[derive(Serialize)]
 pub(crate) struct AccountView {
@@ -56,11 +59,49 @@ pub(crate) struct AccountView {
     portfolio_refusal: Option<String>,
 }
 
+/// The grid `[portfolio_margin]` names, and whether the account read may have left Warning
+/// `portfolio_grid_mismatch` open: so from the start, as an episode a run before left open is kept.
+pub(crate) struct PortfolioMargin {
+    grid: PortfolioGrid,
+    misfit: AtomicBool,
+}
+
+impl PortfolioMargin {
+    /// The read of `grid`, whose first fitting read ends any episode left open.
+    pub(crate) fn new(grid: PortfolioGrid) -> Self {
+        Self { grid, misfit: AtomicBool::new(true) }
+    }
+
+    /// The read of the grid `cfg` names, if it names one.
+    pub(crate) fn configured(cfg: &NodeConfig) -> Option<Arc<Self>> {
+        cfg.portfolio_margin.clone().map(|grid| Arc::new(Self::new(grid)))
+    }
+
+    /// Raises Warning `portfolio_grid_mismatch` for a read the grid did not fit, `refusal` saying why,
+    /// keyed by its name alone, and ends it at the first read after that the grid fits.
+    pub(crate) fn report(&self, refusal: Option<&str>) {
+        match refusal {
+            Some(reason) => {
+                self.misfit.store(true, Ordering::Relaxed);
+                warn!(
+                    alert = "portfolio_grid_mismatch",
+                    "the portfolio margin grid does not fit the listings, so the account read gives no portfolio \
+                     requirement: {reason}"
+                );
+            }
+            None if self.misfit.swap(false, Ordering::Relaxed) => {
+                info!(alert_resolved = "portfolio_grid_mismatch", "the portfolio margin grid fits the listings");
+            }
+            None => {}
+        }
+    }
+}
+
 /// One account's balance, equity, margin, initial and maintenance requirements, withdrawable cash,
 /// maximum leverage in each market, positions, orders, each position's close-out and close fee, its
 /// volume tier, the weekend margin each position needs, and its portfolio requirement under the
 /// configured grid. A grid that does not fit the listings gives none and raises Warning
-/// `portfolio_grid_mismatch`.
+/// `portfolio_grid_mismatch` until a read it fits.
 /// Error cases:
 /// - the address is malformed
 /// - the account has never been credited
@@ -68,14 +109,12 @@ pub(crate) struct AccountView {
 pub(super) async fn account(State(s): State<ApiState>, Path(address): Path<String>) -> ApiResult<AccountView> {
     let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     Span::current().record("id", display(id));
-    let grid = s.portfolio_margin.clone();
-    let view = s.read(move |e| account_view(e, id, grid.as_deref())).await?.ok_or(ApiError::NotFound)?;
-    if let Some(reason) = &view.portfolio_refusal {
-        warn!(
-            alert = "portfolio_grid_mismatch",
-            %reason,
-            "the portfolio margin grid does not fit the listings, so the account read gives no portfolio requirement"
-        );
+    let portfolio = s.portfolio_margin.clone();
+    let read = portfolio.clone();
+    let view = s.read(move |e| account_view(e, id, read.as_deref().map(|portfolio| &portfolio.grid))).await?;
+    let view = view.ok_or(ApiError::NotFound)?;
+    if let Some(portfolio) = &portfolio {
+        portfolio.report(view.portfolio_refusal.as_deref());
     }
     Ok(Json(view))
 }

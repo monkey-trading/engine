@@ -2,18 +2,25 @@
 //! engine decides reads.
 //!
 //! The markets of an offset group share an asset class, one schedule and USD as quote currency, so
-//! each member's profit and loss is linear in its own price. Each moves with the group's factor by
-//! its loading β and by a residual of its own. With N each position's signed USD notional, the worst
-//! loss of a group's positions over the grid of the factor moving ±F and each residual moving ±ρ is
-//! `L = F × |Σ β N| + Σ ρ |N|`. The model is `M = Σ L + the bands of every position in no group +
-//! the cost of closing every position at its close-spread ceiling, over the close-out level`, and the
-//! portfolio requirement is `R = min(PP, max(φ × PP, M))`, PP the per-position requirement and φ the
-//! floor share: never above per-position margin, never below its share of it, and PP itself while no
-//! group offsets anything. At initial bands, PP charges each band at least the account's tier floor
-//! and, over a market's weekend window, its weekend margin; a group takes its weekend shocks while a
-//! listed member's weekend margin applies, and counts at its members' bands while a member the
-//! account holds cannot trade; and R is at least the tier floor on the sum of notionals.
+//! each member's profit and loss is linear in its own price, and each moves with the group's factor by
+//! its loading β. A position's loading-weighted exposure is `β × qty × price`. In each group, the
+//! exposure on its smaller side, long or short, offsets as much on its larger side: the matched
+//! exposure is the group's gross loading-weighted exposure less the magnitude of its net, the smaller
+//! side whole and that share of each position on the larger side. Its net is zero, so the factor's
+//! move cancels on it and its worst loss over the grid is each member's own move of ±ρ.
+//!
+//! Exposure that offsets nothing keeps its per-position requirement, bands included, so a lone
+//! position's requirement is its per-position one exactly. Matched exposure gets the grid's credit:
+//! its share of the bands less its worst loss and the cost of closing it at its close-spread ceilings
+//! over the close-out level, at most `1 - φ` of that share, φ the group's floor share, and never
+//! below zero. The portfolio requirement is the per-position requirement less every group's credit,
+//! so it is never above per-position margin. At initial bands each band charges at least the
+//! account's tier floor and, over its market's weekend window, its weekend margin; a group takes its
+//! weekend shocks from two hours before its members' shared schedule starts a weekend gap until they
+//! reopen, and no credit while a member the account holds cannot trade; and the requirement is at
+//! least the tier floor on the sum of notionals.
 
+mod exposure;
 mod requirement;
 pub use requirement::{FactorMove, GroupStanding, PortfolioStanding};
 
@@ -25,18 +32,16 @@ use crate::Fixed;
 use crate::market::MarketSpec;
 use crate::types::MarketId;
 
-/// The most a shock or the floor share may be: 100%.
+/// The most a shock or a floor share may be: 100%.
 const MAX_BPS: i64 = 10_000;
 /// The largest loading of either sign: a member moving ten times as far as its group's factor. It
-/// bounds the net's range (`requirement::loading_weighted_net`).
+/// bounds the exposures' range (`exposure`).
 pub const MAX_LOADING: Fixed = Fixed::from_int(10);
 
-/// The offset groups and the floor share an account's portfolio requirement is computed under.
+/// The offset groups an account's portfolio requirement is computed under.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PortfolioGrid {
-    /// φ: the least share of the per-position requirement the portfolio requirement is, in bps.
-    pub floor_share_bps: i64,
     pub groups: Vec<OffsetGroup>,
 }
 
@@ -46,10 +51,8 @@ pub struct PortfolioGrid {
 pub struct OffsetGroup {
     /// The name the account read keys the group by.
     pub name: String,
-    /// F: the factor's move either way, in bps of the group's loading-weighted net notional.
-    pub factor_shock_bps: i64,
-    /// F over the group's weekend window, for the initial requirement; at least `factor_shock_bps`.
-    pub weekend_factor_shock_bps: i64,
+    /// φ: the least share of its matched exposure's per-position requirement the group keeps, in bps.
+    pub floor_share_bps: i64,
     pub members: Vec<GroupMember>,
 }
 
@@ -69,16 +72,12 @@ pub struct GroupMember {
 impl PortfolioGrid {
     /// Checks the grid's structure.
     /// Error cases:
-    /// - a floor share outside 1..=10000 bps
     /// - a group with an empty name, a name another group has, or fewer than two members
+    /// - a floor share outside 1..=10000 bps
     /// - a market in more than one group, or twice in one
-    /// - a factor shock outside 1..=10000 bps, or a residual shock outside 0..=10000 bps
-    /// - a weekend shock below its normal shock or above 10000 bps
+    /// - a residual shock outside 0..=10000 bps, or a weekend one below it or above 10000 bps
     /// - a loading of zero, or of a magnitude above `MAX_LOADING`
     pub fn validate(&self) -> Result<(), String> {
-        if !(1..=MAX_BPS).contains(&self.floor_share_bps) {
-            return Err("floor_share_bps must be in 1..=10000".into());
-        }
         let (mut names, mut markets) = (BTreeSet::new(), BTreeSet::new());
         for group in &self.groups {
             let name = &group.name;
@@ -88,19 +87,26 @@ impl PortfolioGrid {
             if group.members.len() < 2 {
                 return Err(format!("group {name} needs at least two members"));
             }
-            check_shocks(name, "factor", group.factor_shock_bps, group.weekend_factor_shock_bps, 1)?;
+            if !(1..=MAX_BPS).contains(&group.floor_share_bps) {
+                return Err(format!("group {name}: floor_share_bps must be in 1..=10000"));
+            }
             for member in &group.members {
-                if !markets.insert(member.market) {
-                    return Err(format!("market {} is in more than one place in the grid", member.market));
+                let market = member.market;
+                if !markets.insert(market) {
+                    return Err(format!("market {market} is in more than one place in the grid"));
                 }
                 if member.loading.is_zero() || member.loading.abs() > MAX_LOADING {
                     return Err(format!(
-                        "group {name}: market {}'s loading must be non-zero and at most 10 either way",
-                        member.market
+                        "group {name}: market {market}'s loading must be non-zero and at most 10 either way"
                     ));
                 }
                 let (normal, weekend) = (member.residual_shock_bps, member.weekend_residual_shock_bps);
-                check_shocks(name, &format!("market {}'s residual", member.market), normal, weekend, 0)?;
+                if !(0..=MAX_BPS).contains(&normal) || !(normal..=MAX_BPS).contains(&weekend) {
+                    return Err(format!(
+                        "group {name}: market {market}'s residual shock must be in 0..=10000 bps, and its \
+                         weekend shock from it to 10000"
+                    ));
+                }
             }
         }
         Ok(())
@@ -129,24 +135,6 @@ impl PortfolioGrid {
         }
         Ok(())
     }
-
-    /// The group `market` is a member of, if any.
-    fn group_of(&self, market: MarketId) -> Option<&OffsetGroup> {
-        self.groups.iter().find(|group| group.members.iter().any(|member| member.market == market))
-    }
-}
-
-/// Checks a normal shock and its weekend value, `what` naming them.
-/// Error cases:
-/// - the normal shock outside `least..=10000` bps
-/// - the weekend shock below the normal one or above 10000 bps
-fn check_shocks(group: &str, what: &str, normal: i64, weekend: i64, least: i64) -> Result<(), String> {
-    if !(least..=MAX_BPS).contains(&normal) || !(normal..=MAX_BPS).contains(&weekend) {
-        return Err(format!(
-            "group {group}: the {what} shock must be in {least}..=10000 bps, and its weekend shock from it to 10000"
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

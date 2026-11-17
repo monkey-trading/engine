@@ -285,15 +285,17 @@ this crate and reproduce the signed state roots exactly.
   move only after a seven-day notice, within ±50% of launch, and a floor is fixed at listing.
   Activation drops queued markouts and clears the `V11` scores, so every account starts neutral,
   and gives a market listed with no floor its asset class's
-- Portfolio margin as a read (`src/portfolio/`), which no state, root or event depends on: an
-  account's requirement under a grid of offset groups, each group's worst loss over its factor and
-  residual shocks, plus the bands of every position in no group and the cost of closing every
-  position at its close-spread ceiling over the close-out level, held between the floor share of the
-  per-position requirement and that requirement. At initial bands it takes the tier floor and the
-  weekend margins band by band, a group's weekend shocks over its window, no offset for a group
-  with a member the account holds that cannot trade, and at least the tier floor on gross notional.
-  Each group's loading-weighted net is summed exactly from quantity, price and loading, and only its
-  magnitude rounds. The node serves it on the account read under the grid its config names
+- Portfolio margin as a read (`src/portfolio/`), which no state, root or event depends on: within
+  each offset group, the loading-weighted exposure on the smaller side, long or short, matches as much
+  on the larger, pro rata across its positions. Matched exposure takes the group's credit, its share
+  of the bands less each matched part's own move and the cost of closing it at its close-spread
+  ceiling over the close-out level, at most `1 - φ` of that share and never below zero, worked exactly
+  in wide integers and rounded down once. The requirement is the per-position requirement less every
+  credit, so exposure that offsets nothing, a lone position included, keeps its bands exactly. At
+  initial bands it takes the tier floor and the weekend margins band by band, a group's weekend
+  residuals over its members' weekend gap, no credit for a group with a held member that cannot
+  trade, and at least the tier floor on gross notional. The node serves it on the account read under
+  the grid its config names
 
 ## Repository Structure
 
@@ -452,16 +454,19 @@ this crate and reproduce the signed state roots exactly.
   that does nothing until activation starts it, holding a gap it is in or that starts within the
   lead with no close-out, through a relisting and to a gap within the lead after it, with
   `tests/weekend_margin.rs` on the shared harness in `tests/common/weekend.rs`
-- `src/portfolio/mod.rs` — portfolio margin's grid: offset groups, their members' loadings and
-  shocks with their weekend values, and the floor share; the grid's structure check and its check
-  against the listings; unit tests, the exact net's among them, in `src/portfolio/tests.rs`
+- `src/portfolio/mod.rs` — portfolio margin's grid: offset groups with their floor shares, their
+  members' loadings and residual shocks with their weekend values; the grid's structure check and its
+  check against the listings; unit tests, the exact net's and the credit's among them, in
+  `src/portfolio/tests.rs`
+- `src/portfolio/exposure.rs` — a group's loading-weighted exposure by side, the matched exposure, its
+  worst loss and its credit, exact in wide integers, with the range argument
 - `src/portfolio/requirement.rs` — an account's portfolio requirement at marks, at the market's
-  bands and at initial bands, each group's exact loading-weighted net, and the account read's
-  standing
-- `tests/portfolio_margin.rs` — a hedged book's requirement and each group's part, a net short, a
-  book that offsets nothing, the tier floor on gross notional, the weekend shocks, a member that
-  cannot trade, a grid that does not fit the listings, and the requirement between its floor share
-  and the per-position requirement over random books and grids
+  bands and at initial bands, and the account read's standing
+- `tests/portfolio_margin.rs` — a hedged book's credit and each group's part, a net short, an exact
+  hedge, a book that offsets nothing, the tier floor on gross notional, the weekend shocks, a member
+  that cannot trade, a grid that does not fit the listings, a lone position at its per-position
+  requirement in every market at every size, and the requirement between the floor shares and the
+  per-position requirement over random books and grids
 - `tests/portfolio_margin_benchmark.rs` — the portfolio requirement's cost over 100k holders of
   BTC-USD against the per-position requirement's (ignored; "Portfolio requirement cost" below)
 - `tests/params_notice.rs` — the V49 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay
@@ -1521,11 +1526,12 @@ visits none. The budget is the resting case's 200 us p99.
 Portfolio requirement cost (`tests/portfolio_margin_benchmark.rs`, ignored; run it with
 `cargo test -p engine-core --test portfolio_margin_benchmark --locked -- --ignored --nocapture --test-threads=1`),
 measured on 17 November 2026 on the machine above with other workspace builds running (load average
-about 7.5): each of 100,000 accounts holds $100k of BTC-USD long and $100k of ETH-USD short in one
-offset group and $20k of AAPL in none. A pass over every holder took 10,428 / 13,051 us p50 / max of 30
-passes for `Engine::equity_and_margin`, 104 ns a holder, and 20,673 / 22,845 us for
-`Engine::portfolio_margin`, 206 ns a holder: about twice the per-position requirement, which also
-sums equity. Nothing on the sequencer reads it yet.
+about 26, so the absolute figures run high): each of 100,000 accounts holds $100k of BTC-USD long and
+$100k of ETH-USD short, loading 1.25, in one offset group and $20k of AAPL in none. A pass over every
+holder took 13,929 / 15,899 us p50 / max of 30 passes for `Engine::equity_and_margin`, 139 ns a holder,
+and 63,064 / 68,601 us for `Engine::portfolio_margin`, 630 ns a holder: about 4.5 times the per-position
+requirement, which also sums equity. The figures do not separate the group's exact credit, worked in
+512-bit integers, from the rest of the pass. Nothing on the sequencer reads it yet.
 
 ### The launch book
 

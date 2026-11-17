@@ -1,36 +1,33 @@
 //! An account's portfolio requirement at marks now, at the market's bands and at initial bands, and
 //! the account read's standing. Each position's notional and band charge are the ones the
-//! per-position requirement takes (`Engine::equity_and_margin`), so with no group the requirement is
-//! that one exactly.
+//! per-position requirement takes (`Engine::equity_and_margin`), so a book no group credits keeps that
+//! requirement exactly.
 
 use std::collections::BTreeMap;
 
-use alloy_primitives::U256;
+use alloy_primitives::U512;
 use serde::Serialize;
 
 use crate::Fixed;
 use crate::account::{Account, Position};
 use crate::engine::{Engine, MarketState};
 use crate::fixed::Rounding;
-use crate::portfolio::{OffsetGroup, PortfolioGrid};
+use crate::portfolio::exposure::{BPS, Exposure, Leg, ceil_div, narrow, wide};
+use crate::portfolio::{GroupMember, OffsetGroup, PortfolioGrid};
 use crate::types::{AccountId, MarketId};
-
-/// The raw value of a product of three `Fixed` values is at `Fixed`'s scale cubed: this over it
-/// brings it to `Fixed`'s.
-const SCALE_SQUARED: u64 = 1_000_000_000_000_000_000;
-const BPS: u64 = 10_000;
+use crate::weekend::WEEKEND_LEAD_MS;
 
 /// An account's portfolio requirement under a grid at marks now, as the account read gives it, with
 /// the groups behind it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PortfolioStanding {
-    /// R at the market's bands, with each group's normal shocks: the portfolio counterpart of the
-    /// per-position requirement.
+    /// The per-position requirement at the market's bands less each group's credit, with each
+    /// member's normal shocks.
     pub margin: Fixed,
-    /// R at initial bands: each band charged at least the account's tier floor and, over its market's
-    /// weekend window, its weekend margin; each group's weekend shocks over its window, and its
-    /// members' bands while one the account holds cannot trade; and at least the tier floor on the sum
-    /// of the account's notionals.
+    /// The same at initial bands: each band charged at least the account's tier floor and, over its
+    /// market's weekend window, its weekend margin; each group's weekend shocks from two hours before
+    /// its members' weekend gap until they reopen, and no credit while a member the account holds
+    /// cannot trade; and at least the tier floor on the sum of the account's notionals.
     pub initial_margin: Fixed,
     /// The close-out level's share of `margin`.
     pub maintenance_margin: Fixed,
@@ -43,18 +40,22 @@ pub struct PortfolioStanding {
 pub struct GroupStanding {
     /// The group's markets the account holds, in the grid's order.
     pub members: Vec<MarketId>,
-    /// Σ β N over them, its magnitude rounded up.
+    /// Σ β N over them, N each position's signed USD notional; its magnitude rounded up.
     pub net_notional: Fixed,
-    /// L: the worst loss over the grid, `F × |Σ β N| + Σ ρ |N|`.
+    /// The matched exposure: the gross loading-weighted exposure less the net's magnitude, twice the
+    /// smaller side's; rounded down.
+    pub matched_notional: Fixed,
+    /// The matched exposure's worst loss over the grid, each matched part's own move ±ρ, the factor's
+    /// cancelling on it; rounded up.
     pub worst_loss: Fixed,
-    /// Which way the factor's move gives the worst loss.
+    /// Which way the factor's move hurts the exposure left unmatched.
     pub binding_direction: FactorMove,
-    /// What the group takes off the per-position requirement: its members' bands less its worst loss
-    /// and the cost of closing its members; negative where they come to more than the bands.
+    /// What the group takes off the per-position requirement: its matched exposure's share of the
+    /// bands less its worst loss and the cost of closing it, at most `1 - φ` of that share.
     pub offset: Fixed,
 }
 
-/// Which way an offset group's factor moves in its worst loss.
+/// Which way an offset group's factor moves against its unmatched exposure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactorMove {
@@ -62,71 +63,26 @@ pub enum FactorMove {
     Down,
     /// A net short: the factor rising.
     Up,
-    /// No net: either way, the residuals alone.
+    /// No net: every exposure matched.
     Either,
 }
 
-/// The bands, shocks and rules a requirement takes.
+/// The bands and shocks a requirement takes.
 #[derive(Clone, Copy)]
 enum Bands {
-    /// The market's bands, and each group's normal shocks.
+    /// The market's bands, and each member's normal shocks.
     Market,
     /// Each band at least `floor_bps`, the account's tier floor, and over its market's weekend window
-    /// its weekend margin; each group's weekend shocks over its window, and its members' bands while
-    /// one the account holds cannot trade.
+    /// its weekend margin; each member's weekend shocks over its group's weekend gap and the lead
+    /// before it, and no credit while a member the account holds cannot trade.
     Initial { floor_bps: i64 },
 }
 
-/// One offset group's terms for an account. Wide amounts are at `Fixed`'s scale.
-#[derive(Default)]
-struct GroupTerms {
-    /// Σ β N.
-    net: Net,
-    /// L: the worst loss over the grid.
-    loss: U256,
-    /// The band charges of the group's positions.
-    bands: Fixed,
-    /// The cost of closing the group's positions at their ceilings, over the close-out level.
-    closing: U256,
-    /// Whether the account holds a member that cannot trade now; set at initial bands only.
-    shut: bool,
-}
-
-/// Σ β × qty × price over a group's positions, exact: each term is formed whole, positives and
-/// negatives summed apart, and only the result's magnitude rounds. Each term is at most
-/// |qty × price| × |β| at `Fixed`'s scale cubed, where `Engine::notional_at_mark` has already formed
-/// |qty × price| as a `Fixed` (halting outside its range, as every margin read does), so it is below
-/// 2^127 × 10^9 < 2^157; |β| is at most `MAX_LOADING`, 10^10 < 2^34 raw; and a group holds at most
-/// one member per market id, 2^32. Each sum stays below 2^223, inside `U256`.
-#[derive(Default)]
-pub(super) struct Net {
-    long: U256,
-    short: U256,
-}
-
-impl Net {
-    /// Adds `loading` × `qty` × `price`.
-    pub(super) fn add(&mut self, qty: Fixed, price: Fixed, loading: Fixed) {
-        let magnitude = [qty, price, loading]
-            .iter()
-            .fold(U256::from(1), |product, factor| product.saturating_mul(U256::from(factor.raw().unsigned_abs())));
-        let negative = qty.is_negative() ^ price.is_negative() ^ loading.is_negative();
-        let side = if negative { &mut self.short } else { &mut self.long };
-        *side = side.saturating_add(magnitude);
-    }
-
-    /// Whether the net is below zero, and its magnitude at `Fixed`'s scale, rounded up.
-    pub(super) fn rounded(&self) -> (bool, U256) {
-        let short = self.short > self.long;
-        let magnitude = if short { self.short - self.long } else { self.long - self.short };
-        (short, ceil_div(magnitude, U256::from(SCALE_SQUARED)))
-    }
-}
-
 impl Engine {
-    /// `acct`'s portfolio requirement under `grid` at the market's bands, at marks now: R with each
-    /// group's normal shocks, never above the per-position requirement `Engine::equity_and_margin`
-    /// gives. `grid` is one `PortfolioGrid::validate` and `PortfolioGrid::check_listings` passed.
+    /// `acct`'s portfolio requirement under `grid` at the market's bands, at marks now: the
+    /// per-position requirement `Engine::equity_and_margin` gives, less each group's credit at each
+    /// member's normal shocks. `grid` is one `PortfolioGrid::validate` and
+    /// `PortfolioGrid::check_listings` passed.
     pub fn portfolio_margin(&self, acct: &Account, grid: &PortfolioGrid) -> Fixed {
         self.portfolio_requirement(acct, grid, Bands::Market)
     }
@@ -161,82 +117,116 @@ impl Engine {
         Ok(Some(PortfolioStanding { margin, initial_margin, maintenance_margin, groups }))
     }
 
-    /// `acct`'s portfolio requirement under `grid` at `bands`: `min(PP, max(φ × PP, M))`, and at initial
-    /// bands at least the tier floor on the sum of its notionals.
+    /// `acct`'s portfolio requirement under `grid` at `bands`: the per-position requirement less each
+    /// group's credit, and at initial bands at least the tier floor on the sum of its notionals.
     fn portfolio_requirement(&self, acct: &Account, grid: &PortfolioGrid, bands: Bands) -> Fixed {
-        let (mut per_position, mut model, mut gross) = (Fixed::ZERO, U256::ZERO, U256::ZERO);
+        let (mut per_position, mut gross) = (Fixed::ZERO, U512::ZERO);
         for (id, pos) in &acct.positions {
             let Some(market) = self.markets.get(id) else { continue };
             let (_, notional) = self.notional_at_mark(market, pos);
-            let charge = self.band_charge(market, notional, bands);
-            per_position += charge;
-            gross = gross.saturating_add(wide(notional));
-            if grid.group_of(*id).is_none() {
-                model = model.saturating_add(wide(charge)).saturating_add(self.closing_cost(*id, notional));
-            }
+            per_position += self.band_charge(market, notional, bands);
+            gross += wide(notional);
         }
-        for group in &grid.groups {
-            let terms = self.group_terms(acct, group, bands);
-            let risk = if terms.shut { wide(terms.bands) } else { terms.loss };
-            model = model.saturating_add(risk).saturating_add(terms.closing);
-        }
-        let floor = per_position.mul_bps_rounded(grid.floor_share_bps, Rounding::Up);
-        // A model past the per-position requirement may be past `Fixed`'s range; one below it is not.
-        let requirement = if model >= wide(per_position) { per_position } else { narrow(model).max(floor) };
+        let credit: Fixed = grid
+            .groups
+            .iter()
+            .filter_map(|group| self.group_exposure(acct, group, bands).map(|exposure| (group, exposure)))
+            .map(|(group, exposure)| exposure.credit(group.floor_share_bps, self.charge_scale()))
+            .sum();
+        // Each credit is at most its group's share of the bands, so this is at least zero.
+        let requirement = per_position - credit;
         match bands {
             Bands::Market => requirement,
             // Every band charges at least the floor, so this stays at or below the per-position
             // requirement.
             Bands::Initial { floor_bps } => {
-                let tier_floor = ceil_div(gross.saturating_mul(U256::from(floor_bps.unsigned_abs())), U256::from(BPS));
-                requirement.max(narrow(tier_floor))
+                let floor = ceil_div(gross * U512::from(floor_bps.unsigned_abs()), U512::from(BPS));
+                requirement.max(narrow(floor))
             }
         }
     }
 
-    /// The terms of `group` in `acct`'s requirement at `bands`.
-    fn group_terms(&self, acct: &Account, group: &OffsetGroup, bands: Bands) -> GroupTerms {
+    /// `group`'s loading-weighted exposure in `acct` at `bands`, or `None` when the account holds none
+    /// of its members, or at initial bands while one it holds cannot trade.
+    fn group_exposure(&self, acct: &Account, group: &OffsetGroup, bands: Bands) -> Option<Exposure> {
+        if !group.members.iter().any(|member| self.holds(acct, member.market)) {
+            return None;
+        }
         let initial = matches!(bands, Bands::Initial { .. });
-        let listed = |id: MarketId| self.markets.get(&id);
-        let weekend = initial
-            && group
-                .members
-                .iter()
-                .filter_map(|member| listed(member.market))
-                .any(|m| m.weekend_margin_applies(self.now));
-        let mut terms = GroupTerms::default();
-        let mut residual = U256::ZERO;
+        let weekend = initial && self.group_weekend(group);
+        let mut exposure = Exposure::default();
         for member in &group.members {
-            let (Some(market), Some(pos)) = (listed(member.market), acct.positions.get(&member.market)) else {
+            let (Some(market), Some(pos)) = (self.markets.get(&member.market), acct.positions.get(&member.market))
+            else {
                 continue;
             };
+            if initial && !pos.qty.is_zero() && self.tradeable_index(member.market).is_none() {
+                return None;
+            }
             let (price, notional) = self.notional_at_mark(market, pos);
-            terms.bands += self.band_charge(market, notional, bands);
-            terms.closing = terms.closing.saturating_add(self.closing_cost(member.market, notional));
             let rho = if weekend { member.weekend_residual_shock_bps } else { member.residual_shock_bps };
-            residual = residual.saturating_add(wide(notional.mul_bps_rounded(rho, Rounding::Up)));
-            terms.net.add(pos.qty, price, member.loading);
-            terms.shut |= initial && !pos.qty.is_zero() && self.tradeable_index(member.market).is_none();
+            exposure.add(Leg {
+                qty: pos.qty,
+                price,
+                loading: member.loading,
+                bands: self.band_charge(market, notional, bands),
+                charge: self.charge(member, notional, rho),
+                residual: wide(notional) * U512::from(rho.unsigned_abs()),
+            });
         }
-        let factor = if weekend { group.weekend_factor_shock_bps } else { group.factor_shock_bps };
-        let (_, net) = terms.net.rounded();
-        let factor_loss = ceil_div(net.saturating_mul(U256::from(factor.unsigned_abs())), U256::from(BPS));
-        terms.loss = factor_loss.saturating_add(residual);
-        terms
+        Some(exposure)
+    }
+
+    /// `notional`'s grid charge in `member`'s market at a residual shock of `rho` bps: its own move,
+    /// `rho / 10^4`, and the cost of closing it at its close-spread ceiling over the close-out level,
+    /// `ceiling / level`, both over the common denominator `charge_scale`, so no division rounds it.
+    /// A market with no ceiling, or a log before its parameters, adds no closing cost.
+    fn charge(&self, member: &GroupMember, notional: Fixed, rho: i64) -> U512 {
+        let ceiling = self.params.as_ref().and_then(|_| self.close_spread_ceiling(member.market)).unwrap_or(0);
+        let per_unit = U512::from(rho.unsigned_abs()) * U512::from(self.closeout_level())
+            + U512::from(ceiling.unsigned_abs()) * U512::from(BPS);
+        wide(notional) * per_unit
+    }
+
+    /// The scale every grid charge is at over `Fixed`'s: `10^4 × the close-out level` in bps.
+    fn charge_scale(&self) -> U512 {
+        U512::from(BPS) * U512::from(self.closeout_level())
+    }
+
+    /// The close-out level in bps, or all of it before parameters are set, when no close costs anything.
+    fn closeout_level(&self) -> u64 {
+        self.params.as_ref().map_or(BPS, |params| params.closeout_level_bps.unsigned_abs())
+    }
+
+    /// Whether `group`'s weekend shocks apply now: from `WEEKEND_LEAD_MS` before a weekend gap of its
+    /// members' shared schedule starts until they reopen, whatever their weekend margins. A gap lasts at
+    /// least `WEEKEND_GAP_MS`, far past the lead, so one that starts within the lead is under way at its
+    /// end.
+    fn group_weekend(&self, group: &OffsetGroup) -> bool {
+        let Some(market) = group.members.iter().find_map(|member| self.markets.get(&member.market)) else {
+            return false;
+        };
+        let lead_end = self.now.saturating_add(WEEKEND_LEAD_MS);
+        [self.now, lead_end].into_iter().any(|at| market.spec.schedule.weekend_gap_at(at).is_some())
     }
 
     /// `group`'s standing in `acct`'s requirement at the market's bands, `members` the ones it holds.
     fn group_standing(&self, acct: &Account, group: &OffsetGroup, members: Vec<MarketId>) -> GroupStanding {
-        let terms = self.group_terms(acct, group, Bands::Market);
-        let (short, net) = terms.net.rounded();
+        let exposure = self.group_exposure(acct, group, Bands::Market).unwrap_or_default();
+        let (short, net) = exposure.net();
         let binding_direction = match (net.is_zero(), short) {
             (true, _) => FactorMove::Either,
             (false, true) => FactorMove::Up,
             (false, false) => FactorMove::Down,
         };
-        let net_notional = if short { -narrow(net) } else { narrow(net) };
-        let offset = terms.bands - narrow(terms.loss.saturating_add(terms.closing));
-        GroupStanding { members, net_notional, worst_loss: narrow(terms.loss), binding_direction, offset }
+        GroupStanding {
+            members,
+            net_notional: if short { -narrow(net) } else { narrow(net) },
+            matched_notional: narrow(exposure.matched()),
+            worst_loss: narrow(exposure.worst_loss()),
+            binding_direction,
+            offset: exposure.credit(group.floor_share_bps, self.charge_scale()),
+        }
     }
 
     /// Whether `acct` holds a position in `market`, a listed one.
@@ -263,30 +253,4 @@ impl Engine {
         };
         market.spec.floored_margin_for(notional, floor_bps, self.charge_rounding())
     }
-
-    /// What closing `notional` in `market` at its close-spread ceiling costs, over the close-out level,
-    /// rounded up; nothing for a market with no ceiling, or before parameters are set.
-    fn closing_cost(&self, market: MarketId, notional: Fixed) -> U256 {
-        let (Some(ceiling), Some(params)) = (self.close_spread_ceiling(market), &self.params) else {
-            return U256::ZERO;
-        };
-        let cost = wide(notional).saturating_mul(U256::from(ceiling.unsigned_abs()));
-        ceil_div(cost, U256::from(params.closeout_level_bps.unsigned_abs()))
-    }
-}
-
-/// A non-negative `Fixed` as a wide amount at its scale.
-fn wide(amount: Fixed) -> U256 {
-    U256::from(amount.raw().unsigned_abs())
-}
-
-/// A wide amount as a `Fixed`, at most the largest one: a figure past it reads as it.
-fn narrow(amount: U256) -> Fixed {
-    Fixed::from_raw(i128::try_from(amount).unwrap_or(i128::MAX))
-}
-
-/// `numerator / denominator`, rounded up. Panics on a zero denominator, which callers rule out.
-fn ceil_div(numerator: U256, denominator: U256) -> U256 {
-    let (quotient, remainder) = numerator.div_rem(denominator);
-    if remainder.is_zero() { quotient } else { quotient + U256::from(1) }
 }

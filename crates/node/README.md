@@ -2612,20 +2612,27 @@ naming the `tier` and its `requests_per_second`. From `V68`, `volume` also gives
 `fee_discount_bps`, `financing_discount_bps` and `emissions_boost_bps`. A tier naming no rate leaves `api.per_account`, which
 also holds accounts never credited, the operator and an account's payout reissue requests.
 With a `[portfolio_margin]` section the read adds `portfolio_margin`, the account's requirement if
-margin were set by the risk of its whole book; nothing the engine decides reads it.
-`{"margin", "initial_margin", "maintenance_margin", "groups"}`: the portfolio requirement R =
-min(PP, max(φ × PP, M)) at the markets' own bands, PP being `margin` and φ the grid's
-`floor_share_bps`, with M each offset group's worst loss over its factor and residual shocks, the bands
-of every position in no group, and the cost of closing every position at its close-spread ceiling over
-the close-out level; R at initial bands, at the tier floor and weekend margins `initial_margin` takes,
-with each group's weekend shocks over its window, no offset for a group with a held member that cannot
-trade, and at least the tier floor on the sum of the account's notionals; R at the close-out level; and
-by group name, for each group the account holds a member of, `{"members", "net_notional",
-"worst_loss", "binding_direction", "offset"}`: the members held, the loading-weighted net notional,
-the worst loss, `down`, `up` or `either` for which way the group's factor moves in it, and the group's
-bands less its worst loss and the cost of closing its positions. A grid that no longer fits the
-listings (a group's listed members in two asset classes, on two schedules, or quoted outside USD)
-gives none, with Warning `portfolio_grid_mismatch`.
+margin were set by the risk of its whole book; nothing the engine decides reads it. In each offset
+group, a position's loading-weighted exposure is its loading β times its signed USD notional. The
+exposure on the group's smaller side, long or short, offsets as much on its larger side: the matched
+exposure is the group's gross loading-weighted exposure less the magnitude of its net, the smaller
+side whole and that share of each position on the larger side. Exposure that offsets nothing keeps its
+bands. Matched exposure gets the group's credit: its share of the bands less its worst loss over the
+grid (each matched part's own move, ρ, the group's factor cancelling on it) and the cost of closing it
+at its close-spread ceilings over the close-out level, at most `1 - φ` of that share, φ the group's
+`floor_share_bps`, and never below zero, worked exactly and rounded down once.
+`{"margin", "initial_margin", "maintenance_margin", "groups"}`: `margin` less every group's credit, at
+the markets' own bands; the same at the bands `initial_margin` takes, with each group's weekend
+residual shocks from two hours before its members' weekend gap until they reopen, no credit for a
+group with a held member that cannot trade, and at least the tier floor on the sum of the account's
+notionals; the first at the close-out level; and by group name, for each group the account holds a
+member of, `{"members", "net_notional", "matched_notional", "worst_loss", "binding_direction",
+"offset"}`: the members held, the loading-weighted net and matched exposure, the matched exposure's
+worst loss, `down`, `up` or `either` for which way the factor's move hurts the exposure left
+unmatched, and the credit, so `margin` less the offsets is `portfolio_margin.margin`. A lone position
+keeps its per-position requirement exactly. A grid that no longer fits the listings (a group's listed
+members in two asset classes, on two schedules, or quoted outside USD) gives none, with Warning
+`portfolio_grid_mismatch` until a read it fits.
 `GET /v1/markets` gives each market's `weekend_margin_bps` (left out when none) and, for a market
 with one, `weekend_margin`: `{"weekend_margin_bps", "from", "close", "reopen"}` for its next or
 current weekend gap, or nothing while no gap starts within 366 days or before V60 activates.

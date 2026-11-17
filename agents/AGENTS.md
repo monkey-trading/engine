@@ -11,11 +11,11 @@ an index: load only the rule whose hint matches the current action.
 
 - **crates/core/** — `engine-core`: the protocol state machine. Covers pricing against the index,
   size and stress spreads, margin and close-out, portfolio margin as a read nothing decides on
-  (`portfolio/`: an account's requirement under a grid of offset groups, each group's worst loss over its
-  factor and residual shocks from a net summed exactly, the bands of the positions in no group and the cost
-  of closing every position, held between the floor share of per-position margin and that margin, at the
-  market's bands and at initial bands, `tests/portfolio_margin.rs`, its cost at 100k holders in
-  `tests/portfolio_margin_benchmark.rs`), the profit fee (from `V55` falling with holding time
+  (`portfolio/`: per-position margin less each offset group's credit on its matched exposure, the
+  loading-weighted exposure of its smaller side and as much of its larger, pro rata: the matched bands less
+  their residual shocks and closing cost, at most `1 - φ` of them, exact in wide integers and rounded down
+  once, so exposure that offsets nothing keeps its bands, at the market's bands and at initial bands,
+  `tests/portfolio_margin.rs`, its cost at 100k holders in `tests/portfolio_margin_benchmark.rs`), the profit fee (from `V55` falling with holding time
   along a hold curve from each position's open time, `holding_fee/`, with the open time's own leaf in
   `merkle/open_time.rs`, the base, from launch to +50%, and the curve, at or above launch at every hold,
   moved only after notice, and from `V57` an add's averaged age clamped at the launch curve's last hold
@@ -474,8 +474,8 @@ an index: load only the rule whose hint matches the current action.
   `custody.vault` under `eip712`, and `operator.public_key`, with the same chain id and vault, are
   recorded in the log when it first activates the protocol versions that need them, so changing
   either needs a fresh log.
-  The optional `[portfolio_margin]` names the offset groups and floor share the account read computes the
-  portfolio requirement under, checked at load against the genesis listings; `dev.toml` carries a labelled
+  The optional `[portfolio_margin]` names the offset groups, each with its floor share, that the account read
+  computes the portfolio requirement under, checked at load against the genesis listings; `dev.toml` carries a labelled
   BTC-USD/ETH-USD fixture group, and production leaves it out until #914's values are confirmed.
   The optional `[custody.evm.staking.registry.vote]` names the `ParameterVote` contract over the schedule
   and its `restriction_ttl` (at most seven days), which the node records in the log once V56 applies; a
@@ -645,7 +645,7 @@ an index: load only the rule whose hint matches the current action.
   lower, one closed after 2 minutes at the curve's rate for both, and a loss in one MONKEY period weighed 1.25 times
   for the tier 2 wallet, restart and replay;
   `dev-portfolio-margin.sh`, portfolio margin as a read on a dev node under `dev.toml`'s fixture group: a $1M BTC
-  long and $1M ETH short whose portfolio requirement is below its bands and at least the floor share of them, a
+  long and $1M ETH short taking its matched exposure's credit, above the group's floor share of its bands, a
   BTC long alone at its bands, both after a 2% move in BTC and after the pair's ETH leg closes, each account
   read verified as `engine verify-response` verifies it;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;

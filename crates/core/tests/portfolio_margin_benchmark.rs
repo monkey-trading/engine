@@ -28,7 +28,7 @@ fn portfolio_requirement_over_100k_holders() {
     let accounts: Vec<&Account> = engine.accounts().values().collect();
     assert_eq!(accounts.len(), HOLDERS);
     let one = accounts[0];
-    // The group offsets something, so the timed passes run the whole model, not an early cap.
+    // The group credits its matched exposure, so the timed passes run the whole credit, not an early return.
     assert!(engine.portfolio_margin(one, &grid) < engine.equity_and_margin(one, None).1);
     let pass = |requirement: &dyn Fn(&Account) -> Fixed| {
         let began = Instant::now();
@@ -87,11 +87,10 @@ fn grid() -> PortfolioGrid {
     };
     let crypto = OffsetGroup {
         name: "crypto".into(),
-        factor_shock_bps: 420,
-        weekend_factor_shock_bps: 420,
-        members: vec![member(BTC, "1"), member(ETH, "1.05")],
+        floor_share_bps: 5_000,
+        members: vec![member(BTC, "1"), member(ETH, "1.25")],
     };
-    let grid = PortfolioGrid { floor_share_bps: 5_000, groups: vec![crypto] };
+    let grid = PortfolioGrid { groups: vec![crypto] };
     assert_eq!(grid.validate(), Ok(()));
     grid
 }

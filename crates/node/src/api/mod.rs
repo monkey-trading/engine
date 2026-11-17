@@ -164,7 +164,7 @@ pub struct ApiState {
     /// What the sequencer and the price feeds publish about their own operation.
     pub(crate) status: crate::status::Status,
     /// The grid `[portfolio_margin]` names, which the account read computes portfolio margin under.
-    pub(crate) portfolio_margin: Option<Arc<engine_core::portfolio::PortfolioGrid>>,
+    pub(crate) portfolio_margin: Option<Arc<crate::api::account::PortfolioMargin>>,
 }
 
 #[derive(Serialize)]

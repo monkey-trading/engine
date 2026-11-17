@@ -1,8 +1,14 @@
-use alloy_primitives::U256;
+use alloy_primitives::U512;
 use serde_json::{Value, json};
 
-use super::requirement::Net;
+use super::exposure::{Exposure, Leg};
 use super::*;
+
+/// The dev fixture's grid charge on each dollar of notional, over `CHARGE_SCALE`: a 20bp residual at a
+/// 50% close-out level, 20 × 5000, and a 30bp ceiling, 30 × 10^4, so 0.2% plus 0.6%.
+const PER_UNIT: u64 = 20 * 5_000 + 30 * 10_000;
+/// 10^4 × a close-out level of 5000 bps.
+const CHARGE_SCALE: u64 = 10_000 * 5_000;
 
 #[test]
 fn a_well_formed_grid_passes() {
@@ -11,17 +17,14 @@ fn a_well_formed_grid_passes() {
 
 #[test]
 fn the_grid_refuses_each_malformed_part() {
-    let cases: [(&str, Break); 14] = [
-        ("floor_share_bps", |g| g.floor_share_bps = 0),
-        ("floor_share_bps", |g| g.floor_share_bps = 10_001),
+    let cases: [(&str, Break); 11] = [
+        ("floor_share_bps", |g| g.groups[0].floor_share_bps = 0),
+        ("floor_share_bps", |g| g.groups[1].floor_share_bps = 10_001),
         ("non-empty and distinct", |g| g.groups[0].name.clear()),
         ("non-empty and distinct", |g| g.groups[1].name = "crypto".into()),
         ("at least two members", |g| g.groups[0].members.truncate(1)),
         ("more than one place", |g| g.groups[1].members[0].market = 1),
         ("more than one place", |g| g.groups[0].members[1].market = 1),
-        ("factor shock", |g| g.groups[0].factor_shock_bps = 0),
-        ("factor shock", |g| g.groups[0].weekend_factor_shock_bps = 419),
-        ("factor shock", |g| (g.groups[0].factor_shock_bps, g.groups[0].weekend_factor_shock_bps) = (10_000, 10_001)),
         ("residual shock", |g| g.groups[0].members[0].residual_shock_bps = -1),
         ("residual shock", |g| g.groups[0].members[0].weekend_residual_shock_bps = 19),
         ("loading", |g| g.groups[0].members[0].loading = Fixed::ZERO),
@@ -33,13 +36,17 @@ fn the_grid_refuses_each_malformed_part() {
         let refused = broken.validate().expect_err(expected);
         assert!(refused.contains(expected), "{expected}: {refused}");
     }
-    // The bounds themselves pass: a zero residual, loadings of ten either way, and full shocks.
+    // The bounds themselves pass: a zero residual, loadings of ten either way, full shocks and shares.
     let mut edge = grid();
     edge.groups[0].members[0] =
         GroupMember { loading: MAX_LOADING, residual_shock_bps: 0, ..edge.groups[0].members[0] };
-    edge.groups[0].members[1].loading = -MAX_LOADING;
-    (edge.groups[1].factor_shock_bps, edge.groups[1].weekend_factor_shock_bps, edge.floor_share_bps) =
-        (10_000, 10_000, 10_000);
+    edge.groups[0].members[1] = GroupMember {
+        loading: -MAX_LOADING,
+        residual_shock_bps: 10_000,
+        weekend_residual_shock_bps: 10_000,
+        ..edge.groups[0].members[1]
+    };
+    (edge.groups[0].floor_share_bps, edge.groups[1].floor_share_bps) = (1, 10_000);
     assert_eq!(edge.validate(), Ok(()));
 }
 
@@ -97,9 +104,9 @@ fn positions_past_the_input_bound_net_exactly_where_i128_would_overflow() {
     let terms = [("5000000000", "1000000000", "10"), ("-5000000000", "1000000000", "9.999999999")];
     assert_eq!(net(&terms), Fixed::from_int(5_000_000_000));
     // A notional at the top of `Fixed`'s range, ten times loaded, nets past it exactly.
-    let mut wide = Net::default();
-    wide.add("100000000000000000000".parse().unwrap(), Fixed::from_int(1_000_000_000), MAX_LOADING);
-    assert_eq!(wide.rounded(), (false, U256::from(10u64).pow(U256::from(39))));
+    let mut wide = Exposure::default();
+    wide.add(leg("100000000000000000000", "1000000000", "10", "0", 0));
+    assert_eq!(wide.net(), (false, U512::from(10u64).pow(U512::from(39))));
 }
 
 #[test]
@@ -109,14 +116,55 @@ fn the_net_matches_an_exact_reference_over_many_terms() {
     let terms: Vec<(i128, i128, i128)> = (1..40)
         .map(|i| ((-1i128).pow(i) * (7_919 * i as i128), 104_729 + i as i128, 15_485_863 * (i as i128 % 3 - 1)))
         .collect();
-    let mut accumulated = Net::default();
+    let mut accumulated = Exposure::default();
     for (qty, price, loading) in &terms {
-        accumulated.add(Fixed::from_raw(*qty), Fixed::from_raw(*price), Fixed::from_raw(*loading));
+        let leg = Leg {
+            qty: Fixed::from_raw(*qty),
+            price: Fixed::from_raw(*price),
+            loading: Fixed::from_raw(*loading),
+            bands: Fixed::ZERO,
+            charge: U512::ZERO,
+            residual: U512::ZERO,
+        };
+        accumulated.add(leg);
     }
     let exact: i128 = terms.iter().map(|(qty, price, loading)| qty * price * loading).sum();
     let scale = 1_000_000_000_000_000_000i128;
     let magnitude = (exact.abs() + scale - 1) / scale;
-    assert_eq!(accumulated.rounded(), (exact < 0, U256::from(magnitude as u128)));
+    assert_eq!(accumulated.net(), (exact < 0, U512::from(magnitude as u128)));
+}
+
+#[test]
+fn exposure_on_one_side_gets_no_credit() {
+    // A lone leg, two legs on one side through loadings of opposite signs, and an empty book.
+    let lone = exposure([leg("10", "100000", "1", "10000", PER_UNIT)]);
+    let one_side =
+        exposure([leg("10", "100000", "1", "10000", PER_UNIT), leg("-250", "4000", "-1", "10000", PER_UNIT)]);
+    for book in [lone, one_side, Exposure::default()] {
+        assert_eq!(
+            (book.credit(5_000, U512::from(CHARGE_SCALE)), book.matched(), book.worst_loss()),
+            (Fixed::ZERO, U512::ZERO, U512::ZERO)
+        );
+    }
+}
+
+#[test]
+fn the_credit_is_the_matched_parts_bands_less_its_charge_rounded_down_once() {
+    // $1M of BTC long against $1M of ETH short loading 1.05: BTC is matched whole and ETH in the ratio
+    // 1/1.05. The matched bands are 10,000 + 10,000/1.05 and the grid charge 0.8% of the matched
+    // notional, so the credit is 2,000 + 2,000/1.05 = 3,904.7619047619..., rounded down once. Rounding
+    // the ratio first, to 0.952380952, would give 3,904.761904.
+    let book = exposure([leg("10", "100000", "1", "10000", PER_UNIT), leg("-250", "4000", "1.05", "10000", PER_UNIT)]);
+    let scale = U512::from(CHARGE_SCALE);
+    assert_eq!(book.credit(5_000, scale), "3904.761904761".parse().unwrap());
+    // A 90% floor share keeps a tenth of the matched bands, 1,952.38095238..., rounded down.
+    assert_eq!(book.credit(9_000, scale), "1952.380952380".parse().unwrap());
+    // The worst loss is the matched part's 0.2%, rounded up, and twice the smaller side is matched.
+    assert_eq!(book.worst_loss(), U512::from(3_904_761_904_762u64));
+    assert_eq!(book.matched(), U512::from(2_000_000_000_000_000u64));
+    // A grid charge at or above the matched bands credits nothing.
+    let costly = exposure([leg("10", "100000", "1", "10000", 2_000_000), leg("-250", "4000", "1", "10000", 2_000_000)]);
+    assert_eq!(costly.credit(1, scale), Fixed::ZERO);
 }
 
 // ── Helpers ──
@@ -132,14 +180,8 @@ fn grid() -> PortfolioGrid {
         residual_shock_bps: residual,
         weekend_residual_shock_bps: residual,
     };
-    let group = |name: &str, members| OffsetGroup {
-        name: name.into(),
-        factor_shock_bps: 420,
-        weekend_factor_shock_bps: 420,
-        members,
-    };
+    let group = |name: &str, members| OffsetGroup { name: name.into(), floor_share_bps: 5_000, members };
     PortfolioGrid {
-        floor_share_bps: 5_000,
         groups: vec![
             group("crypto", vec![member(1, "1", 20), member(2, "1.05", 20)]),
             group("metals", vec![member(30, "1", 50), member(31, "-0.8", 80)]),
@@ -162,13 +204,32 @@ fn spec(id: MarketId, class: &str, schedule: Value, currency: Option<Value>) -> 
     serde_json::from_value(spec).unwrap()
 }
 
+/// A leg of `qty` at `price` with `loading`, `bands` of per-position requirement, a grid charge of
+/// `per_unit` on each dollar of notional over `CHARGE_SCALE`, and a 20bp residual.
+fn leg(qty: &str, price: &str, loading: &str, bands: &str, per_unit: u64) -> Leg {
+    let (qty, price): (Fixed, Fixed) = (qty.parse().unwrap(), price.parse().unwrap());
+    let notional = U512::from(qty.abs().mul(price).raw().unsigned_abs());
+    Leg {
+        qty,
+        price,
+        loading: loading.parse().unwrap(),
+        bands: bands.parse().unwrap(),
+        charge: notional * U512::from(per_unit),
+        residual: notional * U512::from(20u64),
+    }
+}
+
+/// The exposure of `legs`.
+fn exposure(legs: impl IntoIterator<Item = Leg>) -> Exposure {
+    let mut exposure = Exposure::default();
+    legs.into_iter().for_each(|leg| exposure.add(leg));
+    exposure
+}
+
 /// The signed net of `terms`, each (qty, price, loading), as the account read gives it.
 fn net(terms: &[(&str, &str, &str)]) -> Fixed {
-    let mut net = Net::default();
-    for (qty, price, loading) in terms {
-        net.add(qty.parse().unwrap(), price.parse().unwrap(), loading.parse().unwrap());
-    }
-    let (short, magnitude) = net.rounded();
+    let book = exposure(terms.iter().map(|(qty, price, loading)| leg(qty, price, loading, "0", 0)));
+    let (short, magnitude) = book.net();
     let magnitude = Fixed::from_raw(i128::try_from(magnitude).unwrap());
     if short { -magnitude } else { magnitude }
 }
