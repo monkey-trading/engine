@@ -8,7 +8,14 @@ quantile_bps = 9950
 horizon_ms = 60000
 floor_share_bps = 8000
 
-# crypto: dropped: at the proposal's floor share 0.9 its offsets save 10% of the per-position requirement, no more than 15%
+[[genesis.params.portfolio_margin.groups]]
+name = "crypto"
+factor_tenth_bps = 720
+members = [
+  { market = "BTC-USD", loading_milli = 690, residual_tenth_bps = 229 },
+  { market = "ETH-USD", loading_milli = 1060, residual_tenth_bps = 289 },
+  { market = "SOL-USD", loading_milli = 1250, residual_tenth_bps = 314 },
+]
 
 [[genesis.params.portfolio_margin.groups]]
 name = "fx"

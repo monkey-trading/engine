@@ -56,14 +56,18 @@ def books(ctx: Ctx, g: model.Group):
 
 def evaluate(ctx: Ctx, g: model.Group, phis=PHI_GRID) -> list[dict]:
     """One row per (book, tier, phi): the rule's and the bands' loss past balance on the same books and starts."""
-    rng = np.random.default_rng(SEED)
     rows = []
     windows = {}
     for members, size, hedge in books(ctx, g):
         key = tuple(members)
-        w = windows.setdefault(key, sim.Window(ctx.hr, members))
+        if key not in windows:
+            windows[key] = sim.Window(ctx.hr, members)
+        w = windows[key]
         starts = np.random.default_rng(SEED).choice(w.starts, ACCOUNTS)
-        n0 = np.tile(checks.pair_book(members, g.beta, members[0], members[1], size, hedge), (ACCOUNTS, 1))
+        # each book long and short, so a market's drift over the window favours neither side
+        starts = np.concatenate([starts, starts])
+        book = checks.pair_book(members, g.beta, members[0], members[1], size, hedge)
+        n0 = np.vstack([np.tile(book, (ACCOUNTS, 1)), np.tile(-book, (ACCOUNTS, 1))])
         for tier in TIERS_USED:
             floor = TIER_FLOORS[tier]
             r_b = sim.simulate(w, ctx.specs, model.Params([g], 1.0), "bands", members, n0, starts, floor, ctx.level)

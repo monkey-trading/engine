@@ -88,7 +88,6 @@ def simulate(w: Window, specs, params, rule: str, members: list[str], n0: np.nda
     return {
         "e0": e0, "gross": gross0, "closed_out": closed_out,
         "past_balance": np.maximum(-final, 0.0), "house": -(result - e0),
-        "hedge_eq": eq,
     }
 
 
@@ -151,6 +150,8 @@ def simulate_shut(w: Window, specs, params, rule: str, members: list[str], n0: n
                     cash[sel] += (n[sel, i] - n0[sel, i]) - model.spread_cost(specs[m], n[sel, i]) - FEE * np.maximum(leg, 0.0)
                     alive[sel, i] = 0
                     closed_out |= sel
+    if shut_hours >= WEEK:  # the shut leg's moves arrive when the week ends
+        cum[:, 1] += missed
     n = n0 * np.exp(cum)
     for i, m in enumerate(members):
         sel = alive[:, i] > 0

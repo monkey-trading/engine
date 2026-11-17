@@ -48,8 +48,6 @@ def alternatives(ctx: Ctx, params: model.Params) -> list[dict]:
         a, b = g.members[0], g.members[1]
         for size in test_sizes(ctx.specs[a])[:3]:
             n = checks.pair_book(g.members, g.beta, a, b, size, 1.0)
-            full = np.zeros(len(g.members))
-            full[g.members.index(a)], full[g.members.index(b)] = n[g.members.index(a)], n[g.members.index(b)]
             book = {m: np.array([v]) for m, v in zip(g.members, n)}
             pp = float(model.per_position(ctx.specs, book)[0])
             legs = [float(model.per_position(ctx.specs, {m: book[m]})[0]) for m in (a, b)]

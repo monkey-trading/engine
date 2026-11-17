@@ -1,4 +1,13 @@
 params,phi,group,market,tier,launch_max_leverage,max_leverage_bands,max_leverage_rule,rule_over_launch,max_ratio_to_own_bands,at_size_usd,rule_leverage_there,bands_leverage_there
+proposal,0.8,crypto,BTC-USD,0,100,20,20,0.2,1,10000,20,20
+proposal,0.8,crypto,BTC-USD,1,100,50,50,0.5,1.25,1.31295e+07,46.0395,36.8316
+proposal,0.8,crypto,BTC-USD,2,100,100,100,1,1.25,2.15426e+07,35.5662,28.453
+proposal,0.8,crypto,ETH-USD,0,100,20,20,0.2,1,10000,20,20
+proposal,0.8,crypto,ETH-USD,1,100,50,50,0.5,1.25,1.31295e+07,46.0395,36.8316
+proposal,0.8,crypto,ETH-USD,2,100,100,100,1,1.25,2.15426e+07,35.5662,28.453
+proposal,0.8,crypto,SOL-USD,0,10,10,12.5,1.25,1.25,56582.3,12.5,10
+proposal,0.8,crypto,SOL-USD,1,10,10,12.5,1.25,1.25,56582.3,12.5,10
+proposal,0.8,crypto,SOL-USD,2,10,10,12.5,1.25,1.25,56582.3,12.5,10
 proposal,0.8,fx,EUR-USD,0,200,20,20,0.1,1,10000,20,20
 proposal,0.8,fx,EUR-USD,1,200,50,50,0.25,1.25,5.79964e+07,48.6582,38.9266
 proposal,0.8,fx,EUR-USD,2,200,200,210.349,1.05175,1.25,1.02499e+07,165.323,132.258
