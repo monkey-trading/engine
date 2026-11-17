@@ -3,10 +3,10 @@ name: agent-security-fix
 description: >
   Use when fixing, landing or recording a confirmed security finding — anything a security audit
   or a private report found that must not be public before its fix lands. Covers recording a
-  finding as a draft repository security advisory, keeping every artefact private, and then, before
-  launch, building the fix in the advisory's temporary private fork and landing it through the
-  private CI mirror on the owner's merge; and, after launch, containing the live system first,
-  shipping the fix as a release the timelock approves, and disclosing once the release is live.
+  finding as a draft repository security advisory, keeping every artefact private until the fix is
+  merged, building the fix in the advisory's temporary private fork, and landing it through the
+  public merge queue: before launch, once the fix is ready; after launch, once its release is live,
+  with the system contained first and the release approved by the timelock, and disclosing after.
   Does not cover ordinary bug PRs (agent-create-pr) or reviewing a public PR.
 ---
 
@@ -15,10 +15,21 @@ description: >
 Fix and land a confirmed security finding without publishing it before its fix is live. The
 repository is public, so everything about an unpublished finding stays in the working record, the
 advisory and its private fork. Ordinary PRs go through [agent-create-pr](../agent-create-pr/SKILL.md);
-this skill replaces its branch, push, review-posting and merge steps for a finding, and keeps its
-local review and check rules. [Before launch](#before-launch) no funds are exposed and the fix
+this skill replaces its branch, push and review-posting steps for a finding, and keeps its
+local review, check and merge rules. [Before launch](#before-launch) no funds are exposed and the fix
 lands on `main` first. [After launch](#after-launch) live funds are exposed while the fix is in
-progress, so the system is contained first and the fix ships as a release.
+progress, so the system is contained first and the fix ships as a release, and lands on `main`
+once that release is live.
+
+## How a fix lands
+
+A fix lands through the public merge queue, with full CI and the owner's `merge-approved`, like any
+PR. It never lands through the advisory's "Merge pull request(s)" button, a ruleset bypass or
+`gh pr merge --admin`.
+
+Merging into a public repository is the disclosure: the diff, tests and commit message reveal the
+flaw. Concealment therefore comes only from when the fix is merged, not how. The advisory's private
+fork keeps the finding, the exploit tests, the review and the fix out of sight until that moment.
 
 ## Rules for both phases
 
@@ -38,7 +49,9 @@ progress, so the system is contained first and the fix ships as a release.
 
 ### Confidentiality
 
-- Never push a fix branch to `origin`.
+- Never push a fix branch to `origin`, and never open its public PR, before the moment the phase
+  below names: before launch, when the fix is ready to land; after launch, once the fixed release
+  is live.
 - Never open a public PR, issue or comment about an unpublished finding.
 - Keep every file, PR bodies included, in your own worktree under a unique name. Never use a shared
   scratch folder: a shared PR-body file once put a private fix's text into a public PR's edit
@@ -71,7 +84,8 @@ progress, so the system is contained first and the fix ships as a release.
   fix and passing after it.
 - Write one mutation per fix and revert it afterwards.
 - A temporary fork runs no CI. Run locally what CI would run for the touched areas, per
-  [git-workflow](../../rules/git-workflow.md#local-checks-before-push).
+  [git-workflow](../../rules/git-workflow.md#local-checks-before-push), and use the
+  [private CI mirror](#the-private-ci-mirror) for a full run.
 - Review as for any change, locally: a bug fix gets the single-agent check of
   [agent-code-review](../agent-code-review/SKILL.md#the-review-loop), and a PR that adds a protocol
   version gets the multi-agent loop. Reviewers read only the local diff, and nothing is posted.
@@ -83,27 +97,40 @@ progress, so the system is contained first and the fix ships as a release.
 
 ## Before launch
 
+### The private CI mirror
+
+`monkey-trading/engine-security` (remote `private-ci`) runs the repository's CI without publishing
+anything. Its `main` is upstream `main` plus one commit that drops the nightly schedule. Start a run
+with `gh workflow run ci.yaml -R monkey-trading/engine-security --ref <branch>`.
+
+The mirror runs on 2-core runners, while public CI runs on 4-core ones. In the mirror these timing
+checks are informational:
+
+- `price_wait_budget`;
+- the command-latency and launch-book budgets;
+- the stats cost.
+
+Every correctness job must be green there, and no correctness step may be skipped behind a failed
+timing step.
+
 ### Landing a fix
 
-Only the coordinator session lands a fix.
+Only the coordinator session lands a fix. When a fix is ready, the coordinator:
 
-1. Rebase the fix on current `main`, renumber its protocol version if needed, and squash it to one
-   commit.
-2. Push that exact commit to the advisory fork's PR branch and to the private CI mirror
-   `monkey-trading/engine-security` (remote `private-ci`). The mirror's `main` is upstream `main`
-   plus one commit that drops the nightly schedule.
-3. Run `gh workflow run ci.yaml -R monkey-trading/engine-security --ref <branch>`.
-4. When `ci-passed` is green on that exact head, report the 40-character head and the advisory
-   link to the owner.
-5. The owner presses "Merge pull request(s)" on the advisory. That merge skips branch rules,
-   required checks and the merge queue, so the mirror's green run is the check and the owner's
-   press is the approval. Never post `merge-approved` or queue a PR for a finding.
-6. Land a private protocol version only while no other version PR is queued.
-7. CI on `main` after the push is a backstop; read it and report a failure.
+1. rebases it on current `main`, renumbers its protocol version if needed, and squashes it to one
+   commit;
+2. optionally runs the private CI mirror on that commit;
+3. pushes that exact commit to a public branch and opens a normal PR;
+4. queues it through the merge queue with full CI and the owner's `merge-approved`, as
+   [agent-create-pr](../agent-create-pr/SKILL.md#merging) describes for any PR.
+
+Nothing is deployed before launch, so the public window between the push and the merge harms no
+one. Land a protocol version only while no other version PR is queued. The advisory stays in draft.
 
 ### After the merge
 
-- Delete the branch from the mirror, then remove the worktree and the `private-xxxx` remote.
+- Close the advisory fork's PR.
+- Delete the mirror's branch, then remove the worktree and the `private-xxxx` remote.
 - Keep the advisory in draft.
 - Publish every advisory together at launch, with the first release and the audit report.
   Publishing deletes each temporary fork. Request no CVEs for pre-launch code.
@@ -138,14 +165,15 @@ coordinator proposes each step; the owner decides and acts.
    Containment holds for the whole window until the fix is live, including the timelock's delay.
    It is lifted when the fixed release is the vault's current release, or when a contract
    migration is complete.
-3. **Fix privately,** as in [Building the fix](#building-the-fix): the advisory's fork, the CI
-   mirror for the green run, and the same review level.
+3. **Fix privately,** as in [Building the fix](#building-the-fix): the advisory's fork, the same
+   review level, and the [private CI mirror](#the-private-ci-mirror) as the pre-release CI, because
+   nothing may be public before activation.
 4. **Ship an engine or node fix as a release,** in this order. The fix's source stays private until
    the fixed release activates.
-   1. Verify the fix in the advisory's private fork and on the CI mirror, as in
-      [Landing a fix](#landing-a-fix), but do not merge it.
-   2. Build the reproducible image from the fix commit and write the release manifest, as in
-      [deploy-and-rollback](../../../ops/runbooks/deploy-and-rollback.md) section 1 and
+   1. Build and test the fix privately: the advisory's fork and the mirror, with every correctness
+      job green. Do not push it to `origin` or merge it.
+   2. Build the reproducible image from that exact private commit and write the release manifest, as
+      in [deploy-and-rollback](../../../ops/runbooks/deploy-and-rollback.md) section 1 and
       [image/README.md](../../../image/README.md#release).
    3. The owner proposes the release to the timelock (`setCurrentRelease`). At the proposal, the
       owner adds each rotation-set member's maintainer as a collaborator on the draft advisory.
@@ -153,9 +181,12 @@ coordinator proposes each step; the owner decides and acts.
       themselves, under embargo until activation.
    4. Containment holds through the timelock's delay. The release activates and the node upgrades
       by handover ([deploy-and-rollback](../../../ops/runbooks/deploy-and-rollback.md) section 3).
-   5. The advisory's merge puts the fix on `main` at activation. That moment, not the timelock
-      proposal, is when the source becomes public, so anyone can then reproduce the release's
-      measurement from public source and verify its attestation.
+   5. At activation, push the release's exact commit as a public tag, so anyone can reproduce the
+      release's measurement and verify its attestation. That moment, not the timelock proposal, is
+      when the source becomes public.
+   6. Merge the fix through the public merge queue, as in [How a fix lands](#how-a-fix-lands). The
+      release is live by then, so the fix's time in the queue exposes nothing.
+   7. Then publish the advisory, as step 7 says.
 5. **A contract finding has no hot fix.** The deployed contracts cannot be patched in place.
    1. Pause what the finding reaches, through the guardian or the timelock.
    2. Deploy a fixed contract through the timelock.
@@ -167,7 +198,7 @@ coordinator proposes each step; the owner decides and acts.
    "security maintenance", on the project's announcement channel and in the console. Give full
    details at publication.
 7. **Disclose** every advisory, of any severity, once the release containing its fix is the vault's
-   current release, as [SECURITY.md](../../../SECURITY.md#coordinated-disclosure) says.
+   current release and the fix has merged, as [SECURITY.md](../../../SECURITY.md#coordinated-disclosure) says.
    - Request a CVE for Critical and High findings.
    - Credit the reporter if they wish.
    - Bounty payouts follow the scale #72 publishes. #72 is a launch blocker.
@@ -175,8 +206,9 @@ coordinator proposes each step; the owner decides and acts.
    reporter in writing, of at most 30 days, and keep containment in place. Publish when the fix is
    live or at the extended deadline, whichever comes first.
 9. **Afterwards,** do the [post-incident steps](../../../ops/runbooks/incident-response.md#after-the-incident),
-   then re-run the relevant audit area on the fixed release. Delete the mirror's branch, the
-   worktree and the `private-xxxx` remote.
+   then re-run the relevant audit area on the fixed release. Close the fork's PR, delete the
+   mirror's branch, the worktree and the `private-xxxx` remote, and keep the advisory in draft
+   until it is published.
 
 ## Decisions (owner, 2026-11-17)
 
@@ -184,9 +216,13 @@ These settle what the repository's records left open. Each also stands in the st
 
 - **Containment** follows the finding's severity, and is lifted when the fixed release is current
   or a contract migration is complete (After launch, step 2).
+- **Landing** is through the public merge queue, never the advisory's merge button, a ruleset
+  bypass or `gh pr merge --admin`: the merge is the disclosure, so only its timing conceals
+  (How a fix lands).
 - **Engine and node fixes** stay private until the fixed release activates, with containment
   through the timelock's delay and each rotation-set member's maintainer added to the draft
-  advisory at the proposal (step 4).
+  advisory at the proposal; the release's commit is tagged publicly at activation and the fix then
+  merges through the queue (step 4).
 - **Contract findings** are paused, redeployed through the timelock and migrated by withdrawals
   and re-deposits, with the permanent exit as the fallback (step 5).
 - **Users** are told at once, in neutral wording, when containment affects them (step 6).
