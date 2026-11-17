@@ -107,31 +107,28 @@ impl Session {
     /// Reads one message array: the subscription to send once the login is accepted, its
     /// confirmation, or the books its quotes carry.
     /// Error cases:
-    /// - an array that does not parse, a `success` of an undocumented status, an error that leaves
+    /// - an array that does not parse, a lone message that does not, a `success` of an undocumented status, an error that leaves
     ///   the session up (a refused subscription among them) or of an undocumented code, or a
     ///   confirmation that leaves a symbol out (the connection carries on)
     /// - an error that ends the session (see `ERRORS`): the connection ends and retries
     ///
-    /// Within an array of quotes, a control message batched with others, a message of a type other
-    /// than a quote, or a quote that does not parse or check is refused alone, and the array's other
+    /// Within an array of quotes, a control message batched with others, a message that does not parse, a
+    /// message of a type other than a quote, or a quote that does not parse or check is refused alone, and the array's other
     /// books are read (`Frame::PartlyRefused`).
     pub(super) fn read(&mut self, text: &str) -> Result<Frame, Refusal> {
-        let messages: Vec<Message> = serde_json::from_str(text).map_err(|e| {
-            Refusal::Message(format!(
-                "unparseable message ({:?} at line {}, column {})",
-                e.classify(),
-                e.line(),
-                e.column()
-            ))
-        })?;
-        if let [message] = messages.as_slice()
-            && CONTROL_TYPES.contains(&message.kind.as_ref())
-        {
-            return self.control(message);
+        let elements: Vec<&RawValue> = serde_json::from_str(text).map_err(|e| Refusal::Message(unparseable(&e)))?;
+        // Each element is read on its own, so one that does not deserialize costs only itself.
+        let messages: Vec<Result<Message, String>> =
+            elements.iter().map(|raw| serde_json::from_str(raw.get()).map_err(|e| unparseable(&e))).collect();
+        if let [message] = messages.as_slice() {
+            let message = message.as_ref().map_err(|reason| Refusal::Message(reason.clone()))?;
+            if CONTROL_TYPES.contains(&message.kind.as_ref()) {
+                return self.control(message);
+            }
         }
         let (mut books, mut refused) = (Vec::new(), Vec::new());
         for message in &messages {
-            match self.quote(message) {
+            match message.as_ref().map_err(Clone::clone).and_then(|message| self.quote(message)) {
                 Ok(book) => books.extend(book),
                 Err(reason) => refused.push(reason),
             }
@@ -209,6 +206,12 @@ fn side(symbol: &str, side: &str, price: Option<&RawValue>, size: Option<&RawVal
     }
     check_size(symbol, side, size)?;
     Ok(Some(price))
+}
+
+/// Why a message or one element of an array does not deserialize: its error's class and position,
+/// never Alpaca's text.
+fn unparseable(e: &serde_json::Error) -> String {
+    format!("unparseable message ({:?} at line {}, column {})", e.classify(), e.line(), e.column())
 }
 
 /// The refusal an `error` with `code` gives: the connection ends for an error that ends the session,
