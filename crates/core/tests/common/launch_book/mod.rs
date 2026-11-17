@@ -10,6 +10,7 @@
 
 mod build;
 mod counts;
+mod encode;
 mod genesis;
 mod mix;
 

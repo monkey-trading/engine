@@ -4,11 +4,10 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use engine_core::access::AccessPolicy;
-use engine_core::account::{Account, Position, RestingOrder};
+use engine_core::account::{Position, RestingOrder};
 use engine_core::command::{AdminCommand, Command, OrderKind, Sequenced};
 use engine_core::emissions::{PeriodResult, TokenUnits};
 use engine_core::event::Event;
-use engine_core::fixed::Rounding;
 use engine_core::market::QuoteCurrency;
 use engine_core::types::{AccountId, MarketId, Side};
 use engine_core::volume_tier::{AccountVolume, DayVolume, MIN_HOLD_MS, WINDOW_DAYS, day_of};
@@ -17,8 +16,9 @@ use serde_json::json;
 
 use crate::common::close_spread::{attest, fund, rest, source_key, trade};
 use crate::common::launch_book::counts::{Counts, check, weak_cash};
+use crate::common::launch_book::encode::{entry, key_of};
 use crate::common::launch_book::genesis::{BOOK_TIME, price_market, production_harness_at, publish_benchmarks};
-use crate::common::launch_book::mix::{Mix, Rng, WeakKind, market_weights};
+use crate::common::launch_book::mix::{Mix, NEAR_LEVEL_DRAWS, Rng, WeakKind, market_weights, near_level_cash};
 use crate::common::session_keys::{HOUR_MS, register};
 use crate::common::{CHAIN_ID, Client, Harness, VAULT, f};
 
@@ -30,8 +30,6 @@ pub const MARK: i64 = 100;
 /// ETH-USD, where the book's in-band resting orders are sells, which a fall does not reach.
 pub const CLOSEOUT_MARKET: MarketId = 2;
 const CLOSEOUT_QTY: &str = "3000";
-/// The stream that draws which accounts are near their level, apart from each account's own.
-const NEAR_LEVEL_DRAWS: u64 = 0x6e65_6172_6c65_7665;
 
 /// How many of each named account a book makes. Each is a real client, signing its own commands.
 #[derive(Clone, Copy, Debug)]
@@ -104,19 +102,6 @@ impl Book {
     }
 }
 
-/// Cash leaving `account`, each position worth `position_usd` at the mark, at its close-out level
-/// after a 1% move against every position: the requirement at the level and 1% of the notional.
-fn near_level_cash(engine: &Engine, account: &Account, position_usd: i64) -> Fixed {
-    let notional = Fixed::from_int(position_usd);
-    let level_bps = engine.params().expect("params").closeout_level_bps;
-    let required: Fixed = account
-        .positions
-        .keys()
-        .map(|id| engine.markets()[id].spec.floored_margin_for(notional, 0, Rounding::Up))
-        .sum();
-    required.mul_bps_rounded(level_bps, Rounding::Up) + notional.mul_bps(100).mul_int(account.positions.len() as i64)
-}
-
 /// The price of `mark` plus `micro` millionths.
 fn price(mark: i64, micro: i64) -> Fixed {
     f(&format!("{}.{:06}", mark + micro.div_euclid(1_000_000), micro.rem_euclid(1_000_000)))
@@ -126,20 +111,6 @@ fn address(prefix: u8, index: u64) -> AccountId {
     let mut bytes = [prefix; 20];
     bytes[12..].copy_from_slice(&index.to_be_bytes());
     AccountId(bytes)
-}
-
-fn key_of(account: AccountId) -> String {
-    serde_json::to_string(&account).expect("an address encodes")
-}
-
-/// Appends `"key":value` to a JSON object under construction.
-fn entry(out: &mut String, key: &str, value: &str) {
-    if out.len() > 1 {
-        out.push(',');
-    }
-    out.push_str(key);
-    out.push(':');
-    out.push_str(value);
 }
 
 /// Builds the book.

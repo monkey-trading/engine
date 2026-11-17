@@ -1,10 +1,14 @@
 //! The launch book's account mix: the shares #905 proposes, in one place, so the owner's changes to
 //! them are edits to `Mix::proposal`, and the deterministic draws that deal them out.
 
-use engine_core::Fixed;
+use engine_core::account::Account;
+use engine_core::fixed::Rounding;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{MarketId, Millis};
+use engine_core::{Engine, Fixed};
 
+/// The stream that draws which accounts are near their level, apart from each account's own.
+pub const NEAR_LEVEL_DRAWS: u64 = 0x6e65_6172_6c65_7665;
 const MARKET_MIX: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../research/cap-calibration/data/derived/market_mix.csv");
 
@@ -174,4 +178,17 @@ pub fn market_weights(symbols: &[(MarketId, String)]) -> Vec<(MarketId, u64)> {
             (*id, ((share * 1e6).round() as u64).max(1))
         })
         .collect()
+}
+
+/// Cash leaving `account`, each position worth `position_usd` at the mark, at its close-out level
+/// after a 1% move against every position: the requirement at the level and 1% of the notional.
+pub fn near_level_cash(engine: &Engine, account: &Account, position_usd: i64) -> Fixed {
+    let notional = Fixed::from_int(position_usd);
+    let level_bps = engine.params().expect("params").closeout_level_bps;
+    let required: Fixed = account
+        .positions
+        .keys()
+        .map(|id| engine.markets()[id].spec.floored_margin_for(notional, 0, Rounding::Up))
+        .sum();
+    required.mul_bps_rounded(level_bps, Rounding::Up) + notional.mul_bps(100).mul_int(account.positions.len() as i64)
 }
