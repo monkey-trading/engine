@@ -325,7 +325,9 @@ an index: load only the rule whose hint matches the current action.
   development build environment variables, and CME Group's WebSocket API for its exchanges'
   futures (`feeds/cme/`), whose handshake carries an OAuth bearer token the node fetches with a
   delivered client ID and secret (`feeds/venue/auth.rs`), each connection replaced before its token
-  expires by one opened beside it on the next (`feeds/venue/replace.rs`); every
+  expires by one opened beside it on the next (`feeds/venue/replace.rs`), and, for the US shares
+  beside Massive, Alpaca's consolidated (SIP) stock feed (`feeds/alpaca/`), whose login message carries
+  a delivered key ID and secret key, each quote the national best bid and offer; every
   venue is reached over TLS that ends in the enclave, the only sources that may set a price;
   `feeds/venue/delay.rs`
   bounds how far behind a connection's stream can be from its pings on the monotonic clock, past
@@ -489,7 +491,8 @@ an index: load only the rule whose hint matches the current action.
   `ct-watch.toml` is the Certificate Transparency watcher's config, documenting what it needs: the
   domain, the node and its release manifest, the logs to follow, and alert routing.
   A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,
-  `api_key_secret`, a CME connection's `oauth.client_id_secret` and `oauth.client_secret_secret`, or
+  `api_key_secret`, a CME connection's `oauth.client_id_secret` and `oauth.client_secret_secret`, an
+  Alpaca connection's `key_pair.key_id_secret` and `key_pair.secret_key_secret`, or
   `url_secret`, with `[tee.sealing.secrets]` to receive them; a `production` build
   refuses `api_key_env` and `url_env`, but for `run --standby`, which no enclave runs.
   `test-keys.toml` lists the keys whose private keys the repo publishes for development (the dev
@@ -733,7 +736,8 @@ an index: load only the rule whose hint matches the current action.
   trigger's dev scenario from `V62` against the same stand-ins (`feeds/tests/loss_trigger.rs`, production's zero threshold
   and a 30 s cooldown): BTC at level 2 on the move that puts the house behind on the day, and back down after the cooldown
   once it is ahead, twice, then a replay and restart; `dev-cme-feeds.sh`, the CME Group feed dev scenario against
-  a local stand-in for CME's token endpoint and stream beside a local Massive; `dev-signed-api.sh`, the signed API answers scenario:
+  a local stand-in for CME's token endpoint and stream beside a local Massive; `dev-share-feeds.sh`, the US share
+  feeds' dev scenario against a local stand-in for Alpaca's consolidated feed beside a local Massive; `dev-signed-api.sh`, the signed API answers scenario:
   verified responses and stream frames, and refused tampering, replay and gaps; `dev-key-lifecycle.sh`,
   the enclave key lifecycle scenario on Anvil (keys only for the vault's current release,
   registration of new keys, a restart with a withdrawal outstanding, a refused start without the
@@ -791,7 +795,7 @@ an index: load only the rule whose hint matches the current action.
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits and spreads), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
-  score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
+  score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
@@ -964,6 +968,11 @@ Run from the repo root:
   connection opened beside the old one, a refused token raises `venue_token_failed` then
   `venue_feed_down` and leaves US 500 unpriced with no credential or token logged, and the log
   replays; no CME account or key)
+- US share feeds dev scenario: `./scripts/dev-share-feeds.sh` (loopback stand-ins for Alpaca's
+  consolidated feed and Massive's stocks feed, behind TLS, quote Apple while its market is closed; a
+  resting limit fills at the two sources' index only after the open, Alpaca stopping raises
+  `venue_feed_down`, and Apple is unpriced while either vendor stops, with no key ID or secret key
+  logged, and the log replays; no Alpaca account or key, about a minute)
 - Attestation verifier dev scenario: `./scripts/dev-attestation-verifier.sh` (a loopback
   key-distribution stand-in issues a test certificate chain; a test-signed SEV-SNP report verifies
   against a release manifest and names the release, while a mock quote, an unlisted configuration,

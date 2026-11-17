@@ -127,6 +127,6 @@ async fn accept_next(listener: &TcpListener) -> Option<(Conn, String)> {
 }
 
 /// A price as a JSON number, written exactly as its decimal text.
-fn number(price: Fixed) -> Value {
+pub fn number(price: Fixed) -> Value {
     serde_json::from_str(&price.to_string()).expect("a decimal is a JSON number")
 }

@@ -7,12 +7,13 @@ use engine_core::types::Millis;
 
 use crate::config::{ApiKey, Venue, VenueConnection};
 use crate::feeds::venue::validation::mid_of;
-use crate::feeds::venue::{Frame, Refusal};
-use crate::feeds::{bitstamp, cme, coinbase, coinbase_exchange, kraken, massive, tradermade};
+use crate::feeds::venue::{Credentials, Frame, Refusal};
+use crate::feeds::{alpaca, bitstamp, cme, coinbase, coinbase_exchange, kraken, massive, tradermade};
 
 /// A venue's protocol on one connection: its opening messages, and a reader that keeps any state
 /// the venue's messages build on, such as an order book or a login handshake.
 pub(super) enum Adapter {
+    Alpaca(alpaca::Session),
     Bitstamp,
     Cme(cme::Session),
     Coinbase(coinbase::Books),
@@ -23,11 +24,16 @@ pub(super) enum Adapter {
 }
 
 impl Adapter {
-    /// A fresh adapter for a new connection on `conn`, authenticating with `api_key` where the
-    /// venue needs one, and subscribed to `symbols`.
-    pub(super) fn new(conn: &VenueConnection, api_key: Option<&ApiKey>, symbols: &[&str]) -> Self {
-        let key = api_key.map(ApiKey::expose).unwrap_or_default();
+    /// A fresh adapter for a new connection on `conn`, logging in with the API key or key pair of
+    /// `credentials` where the venue's login message carries one, and subscribed to `symbols`.
+    pub(super) fn new(conn: &VenueConnection, credentials: &Credentials, symbols: &[&str]) -> Self {
+        let key = credentials.api_key().map(ApiKey::expose).unwrap_or_default();
         match conn.venue {
+            Venue::Alpaca => {
+                let (key_id, secret_key) =
+                    credentials.key_pair().map_or(("", ""), |(id, secret)| (id.expose(), secret.expose()));
+                Adapter::Alpaca(alpaca::Session::new(key_id, secret_key, symbols))
+            }
             Venue::Bitstamp => Adapter::Bitstamp,
             Venue::Cme => Adapter::Cme(cme::Session::new(symbols)),
             Venue::Coinbase => Adapter::Coinbase(coinbase::Books::new(symbols)),
@@ -42,6 +48,7 @@ impl Adapter {
     /// to them.
     pub(super) fn opening(&self, symbols: &[&str]) -> Vec<String> {
         match self {
+            Adapter::Alpaca(session) => session.opening(),
             Adapter::Bitstamp => bitstamp::subscriptions(symbols),
             // CME logs in on the handshake and answers with its login status, before the subscription.
             Adapter::Cme(_) => Vec::new(),
@@ -100,6 +107,7 @@ impl Adapter {
     /// - the message cannot be applied to the state kept for this connection
     pub(super) fn read(&mut self, text: &str, now: Millis) -> Result<Frame, Refusal> {
         match self {
+            Adapter::Alpaca(session) => session.read(text),
             Adapter::Bitstamp => bitstamp::parse(text).map_err(Refusal::Message),
             Adapter::Cme(session) => session.read(text),
             Adapter::Coinbase(books) => books.read(text, now),

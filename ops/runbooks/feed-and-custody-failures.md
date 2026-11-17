@@ -124,11 +124,11 @@ shows only a market that never priced. Match the alerts to the cause:
 
 | Alert | Level | Meaning | Do |
 | --- | --- | --- | --- |
-| `venue_feed_down` | Warning | A connection to a venue or vendor is down; the node reconnects with backoff (`reconnect_min` to `reconnect_max`). For CME it is also a reconnect with no bearer token to connect with. Fields: `venue`, `feed`. | Check the vendor's status and the account (plan, key, entitlement, connection limit); for CME, see [CME Group's feed](#cme-groups-feed). Nothing to do on the node. |
+| `venue_feed_down` | Warning | A connection to a venue or vendor is down; the node reconnects with backoff (`reconnect_min` to `reconnect_max`). For CME it is also a reconnect with no bearer token to connect with. Fields: `venue`, `feed`. | Check the vendor's status and the account (plan, key, entitlement, connection limit); for CME, see [CME Group's feed](#cme-groups-feed), and for Alpaca, [Alpaca's feed](#alpacas-feed). Nothing to do on the node. |
 | `venue_symbol_silent` | Warning | A symbol has had no fresh quote for `feeds.venues.timeout` while its market is open. It is resubscribed, and again each `feeds.venues.timeout` it stays silent, with backoff from `reconnect_min` to `reconnect_max`, until it quotes: on Coinbase alone on its connection each time, so the other symbols quote on; on other venues by replacing the connection, which costs its other symbols a reconnect each time. | Check the symbol is still the vendor's (a ticker or contract change); a wrong symbol is a config fix. |
 | `venue_stale` | Warning | A venue has kept sending a symbol's books, for 2 s (or `feeds.venues.timeout` if shorter), already older than its quotes count for: it is streaming that symbol from behind. The age is in the message. The symbol is resubscribed at once, on Coinbase alone on its connection first and then on a new connection, and again after each 2 s more of such books, with backoff from `reconnect_min` to `reconnect_max`; the alert resolves at the next book young enough to count. | Check the venue's status page. Nothing to do on the node while the other source quotes; the market has no price until this one is current. |
 | `venue_token_failed` | Warning | CME's token endpoint failed or refused a bearer token request. While the connection's token has life left, the feed still prices. It resolves at the next request the endpoint grants. Fields: `venue`, `feed`. | See [CME Group's feed](#cme-groups-feed). |
-| `venue_message_refused` | Warning | The node refused a vendor message (malformed, unknown), or CME refused a login or subscription. At most one a minute, with a count. A venue that holds no credential has the message excerpted; one that does (CME, Massive, TraderMade) has it named by its length and a SHA-256 prefix, since it could echo a credential. | Read the reason and the excerpt, or tell messages apart by their hashes. A vendor format change needs a node release; for CME's refusals, see [CME Group's feed](#cme-groups-feed). |
+| `venue_message_refused` | Warning | The node refused a vendor message (malformed, unknown), or CME or Alpaca refused a login or subscription. At most one a minute, with a count. A venue that holds no credential has the message excerpted; one that does (Alpaca, CME, Massive, TraderMade) has it named by its length and a SHA-256 prefix, since it could echo a credential. | Read the reason and the excerpt, or tell messages apart by their hashes. A vendor format change needs a node release; for CME's refusals, see [CME Group's feed](#cme-groups-feed), and for Alpaca's, [Alpaca's feed](#alpacas-feed). |
 | `venue_clock_ahead` | Warning | A venue's timestamps are well ahead of the host clock. | Check `clock_drift` and the host clock; quotes ahead of sequenced time are rejected (`prices_rejected`, reason `quote_ahead`). |
 | `venue_delayed` | Warning | A connection's pings show its stream may be further behind than `feeds.venues.max_delay`, so what it reads counts as no quote, and a market needing that venue has no price. It resolves when a frame next counts. Fields: `venue`, `feed`. | Check the network path to the venue, and the host's load. If the path is healthy, the host may be holding the stream back: read [incident-response.md](incident-response.md). |
 | `prices_rejected` | Warning | The engine refused a price update. The `reason` is one of `unknown_market`, `malformed_quote`, `quote_ahead`, `market_closed`, `contract_not_taken`, `other`. | `contract_not_taken` on a futures market means a quote for a contract the market is not on: see below. |
@@ -215,6 +215,35 @@ expires.
   node takes no price from it; take the time and the contract to CME. A future of a subscribed
   product whose `periodCode` is not `YYYYMM` is refused the same way, naming the product: CME's own
   message examples send none, so CME sent a shape its field table does not promise.
+
+### Alpaca's feed
+
+Markets 40 to 59, the US shares, price from Massive's stocks feed and from Alpaca's consolidated feed
+(`/v2/sip`, the quotes of every US exchange, on the Algo Trader Plus plan). An Alpaca connection
+logs in with the API key ID and secret key, the delivered secrets its `key_pair` names. Without both,
+the connection stays off under `secret_missing`, and the shares have Massive alone, which is no price
+at `min_sources = 2`. Alpaca's errors are named by code and Alpaca's meaning of it, such as
+`error 402: auth failed`; Alpaca's own text is not logged.
+
+- **A refused login.** `venue_message_refused` with `error 402: auth failed`, `error 404: auth
+  timeout` or `error 409: insufficient subscription`, then `venue_feed_down` as the node reconnects
+  with backoff. Check that the delivered values are the account's live keys and that its plan
+  includes the SIP feed (Algo Trader Plus); a plan without it is refused at login. New values are a
+  new delivery, which the node takes at its next restart ([key-recovery.md](key-recovery.md),
+  "Secrets").
+- **`error 406: connection limit exceeded`.** An Alpaca account streams on one connection at a time.
+  Another process holds one on the same keys: a second node or a test client given the production
+  keys, or the node's own earlier connection that Alpaca has not yet seen close, which a reconnect
+  outlasts. Find and stop the other user; never give the node's keys to anything else.
+- **A refused subscription.** `error 405: symbol limit exceeded`, `error 410: invalid subscribe action
+  for this feed`, or a confirmation that leaves symbols out ("the subscription confirms quotes for N of
+  20 symbols"): the connection stays up, and while the market is open each symbol it does not quote
+  raises `venue_symbol_silent` after `feeds.venues.timeout`, and the connection is replaced to
+  subscribe again. Check the plan and the symbols; a wrong symbol is a config fix, a new release.
+- **A refused quote.** A quote whose prices, sizes or time do not parse, or for a symbol the
+  connection did not subscribe to, is refused: `venue_message_refused` names the reason and, for a
+  configured symbol, the symbol. A side with a zero price and zero size quotes nothing, and that quote
+  gives no book, without an alert.
 
 ### Benchmark rates
 

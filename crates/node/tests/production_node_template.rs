@@ -1,6 +1,6 @@
 //! The production node template. Assembled as the deploy runbook says, with the benchmark
 //! publishers and the production genesis, it loads and validates as a node config, and it holds what
-//! a production build requires of one but for the share markets' second TLS source (#684). Every
+//! a production build requires of one, two TLS sources for every launch market included. Every
 //! placeholder carries a marker, so none is mistaken for a value.
 
 use std::fs;
@@ -36,8 +36,7 @@ fn the_template_with_the_production_genesis_loads_as_a_node_config() {
 #[test]
 fn the_template_holds_what_a_production_build_requires() {
     let cfg = assembled("production");
-    // The refusals of a production build, which `NodeConfig::load` applies only when built with it,
-    // but for the venues' coverage of each market's min_sources (below).
+    // The refusals of a production build, which `NodeConfig::load` applies only when built with it.
     assert_eq!(cfg.tee.provider, TeeProvider::ConfigfsTsm);
     assert_eq!(cfg.custody.provider, CustodyProvider::Evm);
     assert_eq!(cfg.feeds.provider, FeedProvider::Venues);
@@ -58,20 +57,42 @@ fn the_template_holds_what_a_production_build_requires() {
     assert!(sealing.secrets.is_some(), "[tee.sealing.secrets] takes the delivery");
     let text = template();
     assert!(!text.contains("api_key_env =") && !text.contains("url_env ="), "the environment is refused");
+    // Crypto from Coinbase and Kraken, FX from Massive and TraderMade, the CME Group exchanges' index
+    // and commodity futures, every contract, from Massive and CME, and the US shares from Massive and
+    // Alpaca meet min_sources 2.
+    cfg.refuse_unmet_min_sources(true).expect("every launch market has its min_sources over TLS");
 }
 
 #[test]
-fn a_production_build_refuses_the_template_until_its_shares_have_a_second_tls_source() {
-    let err = assembled("min-sources").refuse_unmet_min_sources(true).unwrap_err().to_string();
-    // Crypto from Coinbase and Kraken, FX from Massive and TraderMade, and the CME Group exchanges'
-    // index and commodity futures, every contract, from Massive and CME meet min_sources 2.
-    for met in [1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 25, 30, 31, 32] {
-        assert!(!err.contains(&format!("market {met} (")), "market {met}: {err}");
+fn the_share_markets_are_quoted_by_massive_and_alpacas_consolidated_feed() {
+    let mut cfg = assembled("shares");
+    let venues = cfg.feeds.venues.as_ref().expect("[feeds.venues]");
+    let alpaca = venues.connections.iter().find(|conn| conn.venue == Venue::Alpaca).expect("an Alpaca connection");
+    assert_eq!(alpaca.url, "wss://stream.data.alpaca.markets/v2/sip");
+    let pair = alpaca.key_pair.as_ref().expect("Alpaca's key pair");
+    assert_eq!(
+        (pair.key_id_secret.to_string(), pair.secret_key_secret.to_string()),
+        ("alpaca_key_id".into(), "alpaca_secret_key".into())
+    );
+    let stocks = venues.connections.iter().find(|conn| conn.url == "wss://socket.massive.com/stocks").expect("stocks");
+    // Each share market, by its genesis symbol, on both vendors' connections.
+    let shares: Vec<(u32, String)> =
+        cfg.genesis.markets.iter().filter(|m| (40..=59).contains(&m.id)).map(|m| (m.id, m.symbol.clone())).collect();
+    assert_eq!(shares.len(), 20);
+    for conn in [alpaca, stocks] {
+        let quoted: Vec<(u32, String)> = conn.symbols.iter().map(|s| (s.market, s.symbol.clone())).collect();
+        assert_eq!(quoted, shares, "{}", conn.url);
     }
-    // Apple has Massive alone, and every other share market no venue yet.
-    assert!(err.contains("market 40 (AAPL) has 1 (massive) of 2"), "{err}");
+
+    // Without Alpaca, every share market has Massive alone, short of min_sources 2.
+    cfg.feeds.venues.as_mut().unwrap().connections.retain(|conn| conn.venue != Venue::Alpaca);
+    let err = cfg.refuse_unmet_min_sources(true).unwrap_err().to_string();
     for short in 40..=59 {
         assert!(err.contains(&format!("market {short} (")), "market {short}: {err}");
+    }
+    assert!(err.contains("market 40 (AAPL) has 1 (massive) of 2"), "{err}");
+    for met in [1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 25, 30, 31, 32] {
+        assert!(!err.contains(&format!("market {met} (")), "market {met}: {err}");
     }
     // The Eurex and ICE markets are not in the launch genesis (#673).
     for deferred in [23, 24, 33] {

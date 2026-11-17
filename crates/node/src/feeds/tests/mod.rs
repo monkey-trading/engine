@@ -1,6 +1,7 @@
 //! Venue feed tasks against loopback venues: what they sequence, what they refuse, and how they
 //! reconnect.
 
+mod alpaca_support;
 mod cme;
 pub(super) mod cme_support;
 mod coinbase_support;
@@ -21,6 +22,7 @@ mod redundant;
 mod rwa;
 pub(super) mod rwa_support;
 mod scenario;
+mod shares;
 mod silent;
 mod toxicity;
 mod vendors;

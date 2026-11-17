@@ -376,6 +376,7 @@ fn feed_into(venue: Venue, symbols: &[(MarketId, &str)], tx: mpsc::Sender<crate:
         api_key_env: None,
         api_key_secret: None,
         oauth: None,
+        key_pair: None,
         symbols: symbols.collect(),
     };
     VenueFeed::new(conn, Credentials::Public, fast(WAIT), tls_config().expect("tls config"), tx)
@@ -391,6 +392,6 @@ fn bitstamp() -> (VenueFeed, Adapter) {
 fn bitstamp_on(market: MarketId) -> (VenueFeed, Adapter) {
     let mut feed = feed(Venue::Bitstamp, &[(market, "btcusd")]);
     feed.timing.max_delay = Duration::from_secs(2);
-    let adapter = Adapter::new(&feed.conn, None, &["btcusd"]);
+    let adapter = Adapter::new(&feed.conn, &Credentials::Public, &["btcusd"]);
     (feed, adapter)
 }

@@ -2,7 +2,8 @@
 //! published, so a credential reaches the node only in a delivered bundle (`crate::secrets`), and the
 //! config says which secret each field reads: `{name}` inside a URL's path or query for a provider's
 //! key, `api_key_secret` for a vendor's, `oauth.client_id_secret` and `oauth.client_secret_secret`
-//! for a vendor's OAuth login, and `url_secret` for an alert webhook's URL.
+//! for a vendor's OAuth login, `key_pair.key_id_secret` and `key_pair.secret_key_secret` for a
+//! vendor's key ID and secret key, and `url_secret` for an alert webhook's URL.
 //!
 //! A URL names only its key, never its origin. The custody quorum's providers credit deposits, so
 //! the host and scheme stay in the file the timelock approves (the release's config hash), and a
@@ -323,13 +324,7 @@ impl NodeConfig {
             url(&access.endpoint, "access.endpoint".to_owned())?;
         }
         for connection in self.feeds.venues.iter().flat_map(|venues| &venues.connections) {
-            let oauth = connection.oauth.iter().flat_map(|oauth| {
-                [
-                    ("oauth.client_id_secret", &oauth.client_id_secret),
-                    ("oauth.client_secret_secret", &oauth.client_secret_secret),
-                ]
-            });
-            for (key, name) in connection.api_key_secret.iter().map(|name| ("api_key_secret", name)).chain(oauth) {
+            for (key, name) in connection.secret_fields() {
                 let field = format!("feeds.venues.connections[{}].{key}", connection.url);
                 named.push(NamedSecret { name: name.clone(), field, usage: SecretUse::VendorKey });
             }

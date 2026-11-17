@@ -120,6 +120,7 @@ fn venue_feeds() -> FeedsSection {
                     api_key_env: None,
                     api_key_secret: None,
                     oauth: None,
+                    key_pair: None,
                     symbols: vec![
                         VenueSymbol { market: 1, symbol: "BTC-USD".to_owned(), contract: None },
                         VenueSymbol { market: 2, symbol: "ETH-USD".to_owned(), contract: None },
@@ -131,6 +132,7 @@ fn venue_feeds() -> FeedsSection {
                     api_key_env: None,
                     api_key_secret: None,
                     oauth: None,
+                    key_pair: None,
                     symbols: vec![VenueSymbol { market: 1, symbol: "BTC/USD".to_owned(), contract: None }],
                 },
             ],

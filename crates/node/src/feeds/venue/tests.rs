@@ -93,9 +93,10 @@ fn a_kept_book_for_a_symbol_not_subscribed_is_refused_before_it_is_kept() {
             api_key_env: None,
             api_key_secret: None,
             oauth: None,
+            key_pair: None,
             symbols: Vec::new(),
         };
-        let refused = Adapter::new(&conn, None, &symbols).read(&message, NOW);
+        let refused = Adapter::new(&conn, &Credentials::Public, &symbols).read(&message, NOW);
         assert!(
             matches!(&refused, Err(Refusal::Connection(reason)) if reason.contains("SOL") && reason.contains("not subscribed")),
             "{}: {refused:?}",
@@ -367,13 +368,14 @@ fn a_cme_read_waits_at_least_two_heartbeat_intervals_and_any_other_the_timeout()
         api_key_env: None,
         api_key_secret: None,
         oauth: None,
+        key_pair: None,
         symbols: Vec::new(),
     };
-    let cme = Adapter::new(&connection(Venue::Cme), None, &["ES:202612"]);
+    let cme = Adapter::new(&connection(Venue::Cme), &Credentials::Public, &["ES:202612"]);
     // CME's heartbeat comes every ten seconds, the template's timeout.
     assert_eq!(cme.read_timeout(Duration::from_secs(10)), Duration::from_secs(20));
     assert_eq!(cme.read_timeout(Duration::from_secs(30)), Duration::from_secs(30));
-    let kraken = Adapter::new(&connection(Venue::Kraken), None, &["BTC/USD"]);
+    let kraken = Adapter::new(&connection(Venue::Kraken), &Credentials::Public, &["BTC/USD"]);
     assert_eq!(kraken.read_timeout(Duration::from_secs(10)), Duration::from_secs(10));
 }
 
@@ -385,9 +387,12 @@ fn coinbase_on_either_host_resubscribes_one_product_alone_and_kraken_does_not() 
         api_key_env: None,
         api_key_secret: None,
         oauth: None,
+        key_pair: None,
         symbols: Vec::new(),
     };
-    let alone = |venue| Adapter::new(&connection(venue), None, &["BTC-USD", "ETH-USD"]).resubscription(&["ETH-USD"]);
+    let alone = |venue| {
+        Adapter::new(&connection(venue), &Credentials::Public, &["BTC-USD", "ETH-USD"]).resubscription(&["ETH-USD"])
+    };
     assert_eq!(alone(Venue::Coinbase), Some(crate::feeds::coinbase::resubscriptions(&["ETH-USD"])));
     assert_eq!(alone(Venue::CoinbaseExchange), Some(crate::feeds::coinbase_exchange::resubscriptions(&["ETH-USD"])));
     assert_eq!(alone(Venue::Kraken), None);
@@ -413,6 +418,7 @@ fn feed_at(venue: Venue, url: &str, symbols: &[(MarketId, &str)], timeout: Durat
         api_key_env: None,
         api_key_secret: None,
         oauth: None,
+        key_pair: None,
         symbols: symbols.collect(),
     };
     VenueFeed::new(conn, Credentials::Public, fast(timeout), tls_config().unwrap(), mpsc::channel(1).0)

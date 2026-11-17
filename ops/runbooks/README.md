@@ -54,8 +54,6 @@ runbook that depends on one says so where it does:
   the vendor accounts and the access source. The vault's and staking contract's launch values are
   decided: [production-deployment.toml](production-deployment.toml) holds them, and only the opening
   day waits on the owner.
-- **A production build refuses the template's feeds** until every futures and share market has
-  `min_sources` venues reached over TLS: #673 lists which markets fall short and the options.
 
 ## Keeping these in step
 

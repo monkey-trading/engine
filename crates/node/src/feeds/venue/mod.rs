@@ -279,7 +279,7 @@ impl VenueFeed {
         self.standing.connected(redates(self.conn.venue));
         self.ping(&mut link).await?;
         let symbols: Vec<&str> = self.instruments.keys().map(String::as_str).collect();
-        let mut adapter = Adapter::new(&self.conn, self.credentials.api_key(), &symbols);
+        let mut adapter = Adapter::new(&self.conn, &self.credentials, &symbols);
         let opening = adapter.opening(&symbols);
         timeout(self.timing.timeout, link.send_all(opening))
             .await
