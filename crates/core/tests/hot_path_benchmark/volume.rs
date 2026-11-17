@@ -47,7 +47,7 @@ fn earned_leverage_trigger_latency() {
 }
 
 /// A full-book client's 0.01 BTC fills, in turn opening and closing, at each of `versions`, printed
-/// as `name`; each version's p99 within `BATCH_BUDGET_US`.
+/// as `name`; each version's p99 against `BATCH_BUDGET_US` and its p50 held by `hold_fill`.
 fn fill_latency(name: &str, versions: [ProtocolVersion; 2]) {
     let mut p50s = Vec::new();
     for version in versions {
@@ -65,7 +65,7 @@ fn fill_latency(name: &str, versions: [ProtocolVersion; 2]) {
         times.sort_unstable();
         let (p50, p99) = (times[times.len() / 2 - 1], times[times.len() * 99 / 100 - 1]);
         println!("LATENCY {name}_fill_{version:?} accounts=100000 p50_us={p50} p99_us={p99}");
-        assert!(p99 <= BATCH_BUDGET_US, "a {version:?} fill's p99 {p99}us exceeds {BATCH_BUDGET_US}us");
+        hold_fill(&format!("{name}_fill_{version:?}"), p50, p99, p50s.last().copied());
         p50s.push(p50);
     }
     println!("LATENCY {name}_fill_added p50_us={}", p50s[1] as i128 - p50s[0] as i128);

@@ -1464,11 +1464,11 @@ command-processing regression guards, not an end-to-end service latency promise.
 | From `V74`, a limit per account that every price passes and the first band keeps out of reach, against `V73` | 100,000 | 200 us |
 | Daily rollover with financing on every position | 100,000 | 500 ms |
 | Finalising a MONKEY emission period in which every account lost (one sample) | 100,000 | 500 ms |
-| A signed empty cancel-all, the floor of a signed command (one sample per account) | 100,000 | 2 ms |
-| A signed cancel-all of 100 resting orders | 100,000 | 2 ms |
-| A signed close-all across the 37 launch markets | 100,000 | 2 ms |
-| From `V54`, a signed fill among scored accounts with 2,000 markouts within the horizon | 100,000 | 2 ms |
-| From `V62`, a price and a signed fill among accounts all holding BTC, with a day of loss slots, against `V61` | 100,000 | twice `V61`'s, plus 200 us |
+| A signed empty cancel-all, the floor of a signed command (one sample per account) | 100,000 | bar 2 ms, guard p50 2.5 ms |
+| A signed cancel-all of 100 resting orders | 100,000 | bar 2 ms, guard p50 2.5 ms |
+| A signed close-all across the 37 launch markets | 100,000 | bar 2 ms, guard p50 2.5 ms |
+| From `V54`, a signed fill among scored accounts with 2,000 markouts within the horizon | 100,000 | bar 2 ms, guard p50 2.5 ms and twice `V52`'s plus 200 us |
+| From `V62`, a price and a signed fill among accounts all holding BTC, with a day of loss slots, against `V61` | 100,000 | price p99 twice `V61`'s plus 200 us; fill bar 2 ms, guard p50 2.5 ms and twice `V61`'s plus 200 us |
 | First command after a year-long gap with quotes held across it, or at the last stamp the engine accepts (one sample each) | 1 | 5 ms |
 
 A concentrated price update still visits every holder, and a rollover still finances and checks
@@ -1507,6 +1507,14 @@ holding an hour of spread history, 1,045 / 1,095 us p50 / p99 against 1,565 / 1,
 markout, and the state root after it 50 ms against 47 ms; one price triggering 20,001 stops 227 ms
 against 236 ms, no more a fill. Budgets: a fill's p99 2 ms, scoring 50 ms, the root after it 100 ms,
 and the triggered fills twice `V52`'s plus 10 ms.
+
+A signed fill's 2 ms p99 is a bar the benchmarks print with its verdict (`LATENCY bar ... within` or
+`OVER`) and do not assert, since a slow CI runner misses it on unchanged code: the same fills measured p50 0.6
+to 0.7 ms and p99 0.7 to 1.1 ms on one class of runner on 17 November 2026, and p50 1.0 to 1.2 ms and p99 up
+to 1.9 ms on another, with stalls of 2 to 6.5 ms on busier runs. They assert instead the p50, which a
+regression of the fill path moves and a runner's scheduling stalls do not: at most 2.5 ms, twice the slowest
+p50 CI measured, and, for a later protocol version, at most twice the earlier version's from the same process
+plus 200 us (`V58`/`V59`, `V63`/`V64`, `V52`/`V54`, `V61`/`V62`), as the triggered fills are held.
 
 The house loss trigger's cost from `V62` (`house_loss_latency` in
 `tests/hot_path_benchmark/house_loss.rs`, against `V61` running the same commands), measured on 15

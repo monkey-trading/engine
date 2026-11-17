@@ -21,6 +21,7 @@ fn toxicity_fill_latency() {
     // later one price command samples every market's index and scores the markouts, and the state
     // root takes the scores, the markouts and every market's spread history.
     const QUEUED: usize = 2_000;
+    let mut earlier_p50 = None;
     for version in [ProtocolVersion::V52, ProtocolVersion::V54] {
         let (mut h, client, fillers) = scored_fixture(version, 100_000, None);
         let markouts: Vec<serde_json::Value> = fillers
@@ -56,7 +57,8 @@ fn toxicity_fill_latency() {
         times.sort_unstable();
         let (p50, p99) = (times[times.len() / 2 - 1], times[times.len() * 99 / 100 - 1]);
         println!("LATENCY toxicity_fill_{version:?} accounts=100000 queued={QUEUED} p50_us={p50} p99_us={p99}");
-        assert!(p99 <= BATCH_BUDGET_US, "a {version:?} fill's p99 {p99}us exceeds {BATCH_BUDGET_US}us");
+        hold_fill(&format!("toxicity_fill_{version:?}"), p50, p99, earlier_p50);
+        earlier_p50 = Some(p50);
         h.engine.state_root();
         h.advance(5_000);
         let began = Instant::now();
