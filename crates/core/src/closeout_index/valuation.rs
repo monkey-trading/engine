@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use crate::Fixed;
 use crate::account::{Account, Position};
-use crate::engine::Engine;
+use crate::engine::{Engine, MarketState};
 use crate::fixed::Rounding;
 use crate::market::{QuoteCurrency, Tier, floored_margin};
 use crate::protocol::ProtocolVersion;
@@ -44,6 +44,22 @@ impl Valuation {
         Valuation { price, fx: if currency.is_usd() { None } else { fx } }
     }
 
+    /// What the check values every position in `market` at, given the index a fill would take there
+    /// now and its FX index, `live`, while it can trade (`Engine::tradeable_index`): those, or else its
+    /// mark and FX mark.
+    pub(crate) fn at(market: &MarketState, live: Option<(Fixed, Option<Fixed>)>) -> Self {
+        let (price, fx) = match live {
+            Some((mid, fx)) => (Some(mid), fx),
+            None => (market.mark, market.fx_mark),
+        };
+        Valuation::of(market.spec.quote_currency, price, fx)
+    }
+
+    /// The price and FX index `pos` is valued at: its entry while the market has no price.
+    pub(crate) fn price_for(&self, pos: &Position) -> (Fixed, Option<Fixed>) {
+        (self.price.unwrap_or(pos.entry), self.fx)
+    }
+
     /// Whether one point values every position in a market quoted in `currency`: a price, and an FX
     /// index for a market quoted outside USD.
     pub(super) fn is_point(&self, currency: QuoteCurrency) -> bool {
@@ -54,13 +70,8 @@ impl Valuation {
 impl Engine {
     /// The valuation `next_closeout` gives every position in `market_id` now. The market is listed.
     pub(crate) fn closeout_valuation(&self, market_id: MarketId) -> Valuation {
-        let market = &self.markets[&market_id];
         let live = if self.protocol_version >= ProtocolVersion::V6 { self.tradeable_index(market_id) } else { None };
-        let (price, fx) = match live {
-            Some((mid, fx)) => (Some(mid), fx),
-            None => (market.mark, market.fx_mark),
-        };
-        Valuation::of(market.spec.quote_currency, price, fx)
+        Valuation::at(&self.markets[&market_id], live)
     }
 
     /// The valuation a weekend gap's close-out gives every position in `market_id`: its mark (or each
@@ -85,8 +96,8 @@ impl Engine {
             };
             let currency = market.spec.quote_currency;
             keyable &= valuation.is_point(currency);
-            let price = valuation.price.unwrap_or(pos.entry);
-            let summed = position_value(self.protocol_version, charge, currency, pos, price, valuation.fx)
+            let (price, fx) = valuation.price_for(pos);
+            let summed = position_value(self.protocol_version, charge, currency, pos, price, fx)
                 .and_then(|(pnl, held)| Some((pnl, held, margin_of(&market.spec.margin_tiers, held, 0, charge)?)))
                 .and_then(|(pnl, held, required)| {
                     Some((add(equity, pnl)?, add(margin, required)?, add(notional, held)?))

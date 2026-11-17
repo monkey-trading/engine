@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 
 use crate::Fixed;
 use crate::account::Position;
+use crate::closeout_index::Valuation;
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::execution::{Exec, PriceGuard};
@@ -117,8 +118,9 @@ impl Engine {
         };
         let (indexes, (equity, margin)) = if at_index {
             let indexes = tradeable();
+            // The close-out index values accounts by the same `Valuation`, so the two cannot drift.
             let valued = self.equity_and_margin_at(acct, |market_id, market, pos| {
-                indexes.get(&market_id).copied().unwrap_or((market.mark.unwrap_or(pos.entry), market.fx_mark))
+                Valuation::at(market, indexes.get(&market_id).copied()).price_for(pos)
             });
             (Some(indexes), valued)
         } else {

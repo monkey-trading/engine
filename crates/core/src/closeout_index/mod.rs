@@ -37,6 +37,7 @@ use crate::types::{AccountId, MarketId};
 
 #[cfg(feature = "closeout-oracle")]
 pub use oracle::{CloseoutCoverage, CloseoutOracle};
+pub(crate) use valuation::Valuation;
 
 /// Positions a command may key, across every refresh it runs, so the keying a mass event leaves is
 /// spread over the commands after it.
@@ -85,6 +86,8 @@ pub(crate) enum Noted {
     Relevel,
     Reband,
     Keyed,
+    /// Counted only under the oracle, which works it out.
+    #[cfg_attr(not(feature = "closeout-oracle"), allow(dead_code))]
     WeekendSkip,
     WeekendRevaluation,
     CarriedOver,
@@ -207,10 +210,8 @@ impl CloseoutIndex {
     /// order: every unkeyed holder, and every keyed one the key does not clear.
     fn weekend_candidates(&mut self, engine: &Engine, closing: &BTreeSet<MarketId>) -> Vec<AccountId> {
         let mut candidates = BTreeSet::new();
-        let mut keyed = 0;
         for keys in closing.iter().filter_map(|id| self.markets.get(id)) {
             candidates.extend(keys.unkeyed.iter().copied());
-            keyed += keys.keyed_count();
             match keys.rules.as_ref().is_some_and(|rules| rules.weekend_margin_bps > 0) {
                 true => candidates.extend(keys.weekend_weak.iter().copied()),
                 false => candidates.extend(keys.keyed()),
@@ -231,8 +232,11 @@ impl CloseoutIndex {
         if revalued {
             self.coverage.note(Noted::WeekendRevaluation);
         }
-        if keyed > candidates.len() {
-            self.coverage.note(Noted::WeekendSkip);
+        #[cfg(feature = "closeout-oracle")]
+        {
+            let keyed: BTreeSet<AccountId> =
+                closing.iter().filter_map(|id| self.markets.get(id)).flat_map(|keys| keys.keyed()).collect();
+            keyed.difference(&candidates).for_each(|_| self.coverage.note(Noted::WeekendSkip));
         }
         candidates.into_iter().collect()
     }

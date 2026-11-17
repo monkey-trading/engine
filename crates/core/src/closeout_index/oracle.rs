@@ -34,9 +34,12 @@ pub struct CloseoutCoverage {
     pub price_crossings: u64,
     pub fx_crossings: u64,
     pub headroom_moves: u64,
+    /// Keys moved to a new close-out level.
     pub relevels: u64,
+    /// Keys moved to a market's new bands, weekend margin or currency.
     pub rebands: u64,
     pub keys: u64,
+    /// Keyed holders a weekend gap's close-out did not value.
     pub weekend_skips: u64,
     /// Markets a weekend gap's close-out valued at marks other than the valuation their keys hold.
     pub weekend_revaluations: u64,

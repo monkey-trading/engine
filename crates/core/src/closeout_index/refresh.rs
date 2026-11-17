@@ -77,11 +77,11 @@ impl CloseoutIndex {
     /// Moves every key to `level_bps`, unkeying those left below zero, and marks every unkeyed account.
     fn relevel(&mut self, engine: &Engine, level_bps: i64, charge: Rounding, marked: &mut BTreeSet<AccountId>) {
         self.level_bps = level_bps;
-        self.coverage.note(Noted::Relevel);
         let mut broken = Vec::new();
         for (account, standing) in &mut self.accounts {
             match standing {
                 Standing::Keyed(key) => {
+                    self.coverage.note(Noted::Relevel);
                     if key.settle(level_bps, charge).is_none() {
                         broken.push(*account);
                     }
@@ -122,9 +122,9 @@ impl CloseoutIndex {
                 (Some(old), Some(new)) if old.quote_currency == new.quote_currency => Some((old.clone(), new.clone())),
                 _ => None,
             };
-            self.coverage.note(Noted::Reband);
             let level_bps = self.level_bps;
             for account in holders {
+                self.coverage.note(Noted::Reband);
                 let rebanded = bands.as_ref().and_then(|(old, new)| {
                     let Some(Standing::Keyed(key)) = self.accounts.get_mut(&account) else { return None };
                     key.reband(id, (old, new), level_bps, charge)

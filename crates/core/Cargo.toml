@@ -31,7 +31,7 @@ sha3.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-engine-core = { path = ".", features = ["closeout-oracle"] }
+engine-core = { workspace = true, features = ["closeout-oracle"] }
 alloy-dyn-abi.workspace = true
 anyhow.workspace = true
 hex.workspace = true

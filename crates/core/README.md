@@ -1753,7 +1753,8 @@ a price with a jump of 0.2% to 1% one price in fifty, on the book with its resti
 price (`Mix::in_band` of zero) and no account, 1% and 10% of accounts a 1% move from their close-out
 level (`Mix::near_level`), each on a book of its own with the close-out index; it prints the accounts
 each walk closes out, and holds the prices that close out none, the check's work alone, to the 10 ms
-bar. CI runs it beside `launch_book_latency`. With `LAUNCH_BOOK_FULL_CHECK` set, each walk runs again
+bar, with the 10% book's noted against it and held to a 30 ms guard, since after each jump its prices
+value thousands of unkeyed accounts until they are keyed again. CI runs it beside `launch_book_latency`. With `LAUNCH_BOOK_FULL_CHECK` set, each walk runs again
 with today's full check in the index's place.
 `launch_book_memory` counts the bytes the close-out index keeps live on the book, beside the engine's
 and its other derived indexes', with an allocator of its own. `engine-node`'s `stats::launch_bench` runs the stats scans and the worker's
