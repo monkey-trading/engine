@@ -244,6 +244,12 @@ at `min_sources = 2`. Alpaca's errors are named by code and Alpaca's meaning of 
   connection did not subscribe to, is refused alone, and the other quotes Alpaca sent in its message
   are read: `venue_message_refused` names the reason and, for a configured symbol, the symbol. A side
   with a zero price and zero size quotes nothing, and that quote gives no book, without an alert.
+- **A closure.** Alpaca documents no heartbeat, so what it sends overnight and at weekends is still
+  unmeasured (#543). Once its subscription is confirmed, a connection whose every market is closed
+  stays up with no read deadline, and pings still end a dead connection; at each open it has a whole
+  `feeds.venues.timeout` from the open, and one still silent then raises `venue_symbol_silent` and
+  is replaced with `venue_feed_down`. A login or subscription that stalls through a closure is
+  replaced as at any hour. Massive's stocks connection is kept the same way.
 
 ### Benchmark rates
 

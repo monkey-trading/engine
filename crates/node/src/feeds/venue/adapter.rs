@@ -81,6 +81,13 @@ impl Adapter {
         }
     }
 
+    /// Whether a connection that has its subscription may stay silent while no market it quotes is
+    /// open, as Alpaca's and Massive's do through an overnight or weekend closure with no heartbeat
+    /// documented. CME sends heartbeats, and every other venue quotes around the clock.
+    pub(super) fn may_go_quiet(&self) -> bool {
+        matches!(self, Adapter::Alpaca(_) | Adapter::Massive(_))
+    }
+
     /// Whether the adapter keeps state built from earlier messages, so a refused book means that
     /// state can no longer be trusted.
     pub(super) fn keeps_state(&self) -> bool {

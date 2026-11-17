@@ -19,7 +19,9 @@ use tokio::time::timeout;
 
 use crate::clock::now_ms;
 use crate::config::{Genesis, Venue, VenueConnection, VenueSymbol};
-use crate::feeds::tests::fake::{accept, bitstamp_book, fast, kraken_book, listen, next_alert, send, stream};
+use crate::feeds::tests::fake::{
+    accept, bitstamp_book, fast, kraken_book, listen, next_alert, next_text, send, stream,
+};
 use crate::feeds::tests::rwa_support::{around_the_clock, commands, events_of, listing, priced, wait_for};
 use crate::feeds::tests::scenario::Node;
 use crate::feeds::venue::{self, Credentials, Timing, tls_config};
@@ -242,6 +244,109 @@ async fn a_contract_the_listing_does_not_name_is_alerted_once_and_held_back() {
     tokio::time::sleep(TIMEOUT * 3).await;
     assert_no_feed_alert(&mut alerts);
     assert!(priced(&applied, US500).iter().all(|(_, contracts)| !contracts.contains(&Some("ESZ26".into()))));
+}
+
+/// What a venue that may go quiet sends to log in and confirm its subscription to `AAPL`.
+fn quiet_venue_script(venue: Venue) -> [&'static str; 2] {
+    match venue {
+        Venue::Alpaca => [r#"[{"T":"success","msg":"authenticated"}]"#, r#"[{"T":"subscription","quotes":["AAPL"]}]"#],
+        _ => [
+            r#"[{"ev":"status","status":"auth_success","message":"authenticated"}]"#,
+            r#"[{"ev":"status","status":"success","message":"subscribed to: Q.AAPL"}]"#,
+        ],
+    }
+}
+
+/// Logs a connection in and confirms its subscription as `venue` does, then reads on so pings are
+/// answered and the venue sends nothing more. Returns the task that reads.
+async fn subscribe_then_stay_quiet(listener: &tokio::net::TcpListener, venue: Venue) -> tokio::task::JoinHandle<()> {
+    let [authenticated, subscribed] = quiet_venue_script(venue);
+    let (mut ws, _login) = accept(listener).await;
+    send(&mut ws, &[authenticated.to_owned()]).await;
+    assert!(next_text(&mut ws).await.contains("subscribe"));
+    send(&mut ws, &[subscribed.to_owned()]).await;
+    tokio::spawn(async move { while ws.next().await.is_some() {} })
+}
+
+#[tokio::test]
+async fn an_alpaca_connection_that_sends_nothing_outlasts_a_closure_without_alerting() {
+    outlasts_a_closure(Venue::Alpaca).await;
+}
+
+#[tokio::test]
+async fn a_massive_connection_that_sends_nothing_outlasts_a_closure_without_alerting() {
+    outlasts_a_closure(Venue::Massive).await;
+}
+
+#[tokio::test]
+async fn a_quiet_alpaca_connection_has_a_whole_deadline_from_the_open_and_is_replaced_if_silent_after_it() {
+    deadline_runs_from_the_open(Venue::Alpaca).await;
+}
+
+#[tokio::test]
+async fn a_quiet_massive_connection_has_a_whole_deadline_from_the_open_and_is_replaced_if_silent_after_it() {
+    deadline_runs_from_the_open(Venue::Massive).await;
+}
+
+#[tokio::test]
+async fn a_stalled_alpaca_login_while_every_market_is_closed_alerts_and_reconnects() {
+    let (_guard, mut alerts) = capture_alerts();
+    let start = now_ms();
+    let closed = MarketSpec { schedule: around_the_clock(Some((start - 60_000, start + LATER_MS))), ..listing(AAPL) };
+    let node = Node::boot("stalled-alpaca", &genesis(vec![closed])).await;
+    let (listener, url) = listen().await;
+    start_feed_timed(&node, Venue::Alpaca, &[(AAPL, "AAPL", None)], &url, PINGING);
+
+    // The venue completes the handshake and answers nothing, not even the login: the subscription
+    // never confirmed, the read deadline still ends the connection.
+    let (mut ws, _login) = accept(&listener).await;
+    let _reading = tokio::spawn(async move { while ws.next().await.is_some() {} });
+    let alert = next_alert(&mut alerts).await;
+    assert_eq!((alert["alert"].as_str(), alert["venue"].as_str()), ("venue_feed_down", "alpaca"));
+    timeout(WAIT, accept(&listener)).await.expect("no retry in time");
+}
+
+/// A subscribed `venue` connection that sends nothing, its pings answered, stays over several read
+/// timeouts while Apple is closed throughout.
+async fn outlasts_a_closure(venue: Venue) {
+    let (_guard, mut alerts) = capture_alerts();
+    let start = now_ms();
+    let closed = MarketSpec { schedule: around_the_clock(Some((start - 60_000, start + LATER_MS))), ..listing(AAPL) };
+    let node = Node::boot(&format!("quiet-closure-{}", venue.name()), &genesis(vec![closed])).await;
+    let (listener, url) = listen().await;
+    start_feed_timed(&node, venue, &[(AAPL, "AAPL", None)], &format!("{url}/stocks"), PINGING);
+    let _reading = subscribe_then_stay_quiet(&listener, venue).await;
+    tokio::time::sleep(TIMEOUT * 4).await;
+    assert_no_feed_alert(&mut alerts);
+    assert!(timeout(Duration::from_millis(100), listener.accept()).await.is_err(), "reconnected");
+}
+
+/// A `venue` connection quiet through a closure and silent after Apple opens is replaced and
+/// alerted, but not before a whole read deadline has run from the open.
+async fn deadline_runs_from_the_open(venue: Venue) {
+    let (_guard, mut alerts) = capture_alerts();
+    let start = now_ms();
+    let closed = |until| MarketSpec { schedule: around_the_clock(Some((start - 60_000, until))), ..listing(AAPL) };
+    let node = Node::boot(&format!("quiet-open-{}", venue.name()), &genesis(vec![closed(start + LATER_MS)])).await;
+    let (listener, url) = listen().await;
+    start_feed_timed(&node, venue, &[(AAPL, "AAPL", None)], &format!("{url}/stocks"), PINGING);
+    let _reading = subscribe_then_stay_quiet(&listener, venue).await;
+    // Quiet past several deadlines with Apple closed, then Apple opens a moment from here.
+    tokio::time::sleep(TIMEOUT * 3).await;
+    let open_at = now_ms() + 300;
+    node.relist(closed(open_at)).await;
+
+    // The symbol may be alerted silent first; the connection is then replaced and alerted down.
+    let ended = loop {
+        let alert = next_alert(&mut alerts).await;
+        if alert["alert"].as_str() == "venue_feed_down" {
+            assert_eq!(alert["venue"].as_str(), venue.name());
+            break now_ms();
+        }
+    };
+    let deadline = i64::try_from(TIMEOUT.as_millis()).unwrap();
+    assert!(ended >= open_at + deadline * 9 / 10, "ended {}ms after the open", ended - open_at);
+    timeout(WAIT, accept(&listener)).await.expect("no retry in time");
 }
 
 // ── Helpers ──

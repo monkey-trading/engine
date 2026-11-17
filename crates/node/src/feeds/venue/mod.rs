@@ -32,6 +32,7 @@ use quotes::Pending;
 mod receive;
 mod replace;
 use replace::Replacing;
+mod quiet;
 mod resubscribe;
 use resubscribe::Resubscription;
 mod setup;
@@ -119,7 +120,8 @@ pub struct Timing {
     /// market's `max_age_ms` old, whichever is shorter.
     pub interval: Duration,
     /// The deadline for a read: the login, the subscription, and each message after, whatever its
-    /// market's hours, or longer for a venue with a slower heartbeat (see `Adapter::read_timeout`).
+    /// market's hours (but for a venue that may go quiet, once subscribed and while no market it
+    /// quotes is open, see `Adapter::may_go_quiet`), or longer for a venue with a slower heartbeat (see `Adapter::read_timeout`).
     pub timeout: Duration,
     pub reconnect_min: Duration,
     pub reconnect_max: Duration,
@@ -156,6 +158,9 @@ struct VenueFeed {
     /// Whether the current connection has sequenced a fresh quote: one the engine holds from this
     /// venue, which may be another connection's.
     quoted: bool,
+    /// Whether the current connection has its subscription, or has quoted, on a venue that may go
+    /// quiet through a closure (see `Adapter::may_go_quiet`).
+    subscribed: bool,
     /// Whether the current connection has sent a quote of its own to the sequencer.
     sent_own: bool,
     /// When each symbol last had a fresh quote sequenced, counted from the task's start, the
@@ -230,6 +235,7 @@ impl VenueFeed {
             tx,
             down: false,
             quoted: false,
+            subscribed: false,
             sent_own: false,
             last_quote,
             silent: BTreeSet::new(),
@@ -260,11 +266,14 @@ impl VenueFeed {
     /// holds from it is no older than `timing.stale_after` or the market's `max_age_ms` (see
     /// `confirm`). Every read has `timing.timeout` to produce a message, or longer for a venue
     /// whose heartbeat is slower (see `Adapter::read_timeout`), whether or not any market is open,
-    /// so a stalled login or a dead connection is replaced instead of hanging unseen through a
-    /// closure.
+    /// so a stalled login is replaced instead of hanging unseen through a closure. Alpaca and
+    /// Massive send nothing while their feeds are quiet, so once subscribed, a connection whose
+    /// markets are all closed has no deadline, and each time a market opens it has a whole one
+    /// from then; pings end a dead transport at any hour.
     /// Error cases:
     /// - connecting or sending the opening messages fails or takes longer than `timing.timeout`
-    /// - no message arrives within that read timeout, whatever its market's hours
+    /// - no message arrives within that read timeout, whatever its market's hours, unless the venue
+    ///   may go quiet and is subscribed while every market it quotes is closed
     /// - the connection sequences no fresh quote within `timing.timeout` while a market it quotes
     ///   is open, or the venue closes it or asks for a reconnect
     /// - a symbol goes silent or stale, or stays so past a resubscription of it alone, so the
@@ -290,6 +299,7 @@ impl VenueFeed {
             .context("subscribe")?;
         info!(venue = self.conn.venue.name(), feed = self.conn.url.as_str(), "venue connected");
         self.report.up = true;
+        self.subscribed = false;
         let mut waiting_since = Instant::now();
         self.connected_afresh();
         // The engine's quote from an earlier connection says nothing of what this one sequenced.
@@ -317,6 +327,8 @@ impl VenueFeed {
         // restart it past.
         let read_timeout = adapter.read_timeout(self.timing.timeout);
         let mut read_deadline = Instant::now() + read_timeout;
+        // Whether silence is allowed for now (see `quiet_allowed`), the deadline then a day out.
+        let mut quiet = false;
         let mut rollover = self.rollover();
         let mut replacing: Option<Replacing> = None;
         // The wait before trying again on a new token after a replacement fails.
@@ -326,13 +338,14 @@ impl VenueFeed {
                 message = timeout_at(read_deadline, link.stream.next()) => {
                     let message = message.context("read timed out")?.context("connection closed")?.context("read")?;
                     // A pong shows the connection is alive, not that the venue's protocol is moving.
-                    if !matches!(message, Incoming::Pong(_)) {
+                    if !matches!(message, Incoming::Pong(_)) && !quiet {
                         read_deadline = Instant::now() + read_timeout;
                     }
                     match message {
                         Incoming::Text(text) => {
                             self.receive(&mut adapter, &mut link, &text, &mut buffered).await?;
                             rearm(&mut emit_wake, self.emit(&mut buffered, &mut spent).await?);
+                            self.allow_quiet(&adapter, &mut quiet, &mut read_deadline, read_timeout);
                         }
                         Incoming::Binary => self.refuse("binary message", ""),
                         Incoming::Closed(reason) => bail!("closed by the venue: {reason}"),
@@ -397,6 +410,7 @@ impl VenueFeed {
                 }
                 _ = checks.tick() => {
                     self.publish_status();
+                    self.allow_quiet(&adapter, &mut quiet, &mut read_deadline, read_timeout);
                     let resubscribing = self.check_quoting();
                     if !resubscribing.is_empty() {
                         self.resubscribe(&adapter, &mut link, &resubscribing).await?;
