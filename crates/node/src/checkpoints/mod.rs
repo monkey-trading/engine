@@ -82,16 +82,18 @@ impl Work {
         }
     }
 
-    /// Whether signing now can produce work with a provable credited prefix.
+    /// Whether signing now can produce work with a provable credited prefix: never while a
+    /// reorganisation may be half applied (`Accounting::reorganising`).
     pub(crate) fn can_capture(accounting: Accounting, engine: &engine_core::Engine) -> bool {
-        !engine.deposit_finality_enabled()
-            || engine.custody_deposit_coverage().is_some()
-            || Self::empty_prefix(
-                accounting.deposits,
-                accounting.liabilities,
-                accounting.unpaid(),
-                engine.staking().map_or(UsdcUnits(0), |staking| staking.distributed),
-            )
+        !accounting.reorganising
+            && (!engine.deposit_finality_enabled()
+                || engine.custody_deposit_coverage().is_some()
+                || Self::empty_prefix(
+                    accounting.deposits,
+                    accounting.liabilities,
+                    accounting.unpaid(),
+                    engine.staking().map_or(UsdcUnits(0), |staking| staking.distributed),
+                ))
     }
 
     /// No allocated custody liability can depend on the identity of a receipt in an empty prefix.

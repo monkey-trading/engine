@@ -284,7 +284,7 @@ impl Sequencer {
                 warn!(
                     alert = "checkpoint_withheld",
                     cause = Withheld::CustodyPrefix.cause(),
-                    "no checkpoint signed at seq {seq}: custody prefix awaits canonical scan"
+                    "no checkpoint signed at seq {seq}: custody prefix awaits a canonical scan or a finalised frontier"
                 );
                 return Ok(());
             }

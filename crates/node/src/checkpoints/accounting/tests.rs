@@ -131,7 +131,14 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
     let max = Fixed::from_raw(i128::MAX);
     let cases = [
         (
-            Accounting { pending: Fixed::ZERO, held: Fixed::ZERO, liabilities: max, deposits: 2, unpaid: Fixed::ZERO },
+            Accounting {
+                pending: Fixed::ZERO,
+                held: Fixed::ZERO,
+                liabilities: max,
+                deposits: 2,
+                unpaid: Fixed::ZERO,
+                reorganising: false,
+            },
             deposit(1, "0xoverflow"),
             vec![Event::Deposited { account: TRADER, amount: Fixed::ONE }],
             "liabilities overflow",
@@ -143,13 +150,21 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
                 liabilities: Fixed::from_raw(i128::MIN),
                 deposits: 2,
                 unpaid: Fixed::ZERO,
+                reorganising: false,
             },
             capital(-1, "0xunderflow"),
             vec![Event::HouseCapitalMoved { amount: -Fixed::ONE, nav: Fixed::ONE }],
             "liabilities overflow",
         ),
         (
-            Accounting { pending: Fixed::ZERO, held: Fixed::ZERO, liabilities: Fixed::ONE, deposits: 2, unpaid: max },
+            Accounting {
+                pending: Fixed::ZERO,
+                held: Fixed::ZERO,
+                liabilities: Fixed::ONE,
+                deposits: 2,
+                unpaid: max,
+                reorganising: false,
+            },
             deposit(1, "0xatomic"),
             vec![
                 Event::Deposited { account: TRADER, amount: Fixed::ONE },
@@ -164,6 +179,7 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
                 liabilities: Fixed::ONE,
                 deposits: u64::MAX,
                 unpaid: Fixed::ZERO,
+                reorganising: false,
             },
             capital(0, "0xcount-overflow"),
             vec![Event::HouseCapitalMoved { amount: Fixed::ZERO, nav: Fixed::ONE }],

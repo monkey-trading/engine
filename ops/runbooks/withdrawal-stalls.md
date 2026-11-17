@@ -119,7 +119,7 @@ trading, when they differ.
 | `cause` | Meaning | Do |
 | --- | --- | --- |
 | `collateral` | No checkpoint signed at seq N: collateral is unvalidated or diverged. | The `collateral_mismatch` rows above. |
-| `custody_prefix` | The custody prefix awaits a canonical scan. | `collateral_pending_deposits`, above. |
+| `custody_prefix` | The custody prefix awaits a canonical scan, or a deposit was reversed and the next finalised custody frontier has not applied. | `collateral_pending_deposits`, above; after a `deposit_reversed`, it resolves at the next finalised frontier; if it does not, the `custody_deposits_stalled` and `custody_finality_stalled` rows above. |
 | `post_diverged` | A checkpoint is not posted while the reconciliation is diverged. | The `collateral_mismatch` rows above. |
 | `signer_retired` | The vault's signer is retired. | "The vault is paused or has no signer". |
 

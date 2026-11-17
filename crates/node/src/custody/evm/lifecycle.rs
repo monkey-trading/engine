@@ -176,7 +176,9 @@ impl<V: VaultReader> DepositWatcher<V> {
             sequence_update(tx, update).await?;
         }
         self.apply_confirmed_scan(tx).await?;
-        // An orphan still waiting for its replacement holds the finalised frontier below it.
+        // An orphan still waiting for its replacement holds the finalised frontier below it. The
+        // frontier ends the signing hold a reversal opens (`Accounting::reorganising`), so it follows
+        // every transition of the scan.
         if deferred {
             return Ok(self.behind(from, eligible));
         }
