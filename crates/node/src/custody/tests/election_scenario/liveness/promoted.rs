@@ -74,6 +74,16 @@ async fn dev_scenario_a_promoted_member_trades_within_its_start_budget() {
 /// Error cases:
 /// - any chain, node or client step, or a behavioural check, fails
 async fn run() -> anyhow::Result<()> {
+    // The turn in effect now, which A is drawn for, with a boundary too close waited out before the
+    // configs fix the genesis staking start a few minutes ahead: a start the wait left behind the
+    // nodes' first command is refused, and no node starts.
+    let now = now_s();
+    let mut turn = (now - BOUNDARY_OFFSET_SECS) / DAY_SECS;
+    if boundary(turn + 1) < now + BOUNDARY_GUARD_SECS {
+        println!("waiting out the boundary of turn {} first", turn + 1);
+        sleep(Duration::from_secs(boundary(turn + 1) + 30 - now)).await;
+        turn += 1;
+    }
     let signing = Arc::new(EnclaveKey::generate());
     let deployer = k256::ecdsa::SigningKey::from_slice(&[0x41; 32])?;
     // Each block final once two follow it, as the members' reads of the schedule and the vault wait for.
@@ -107,14 +117,7 @@ async fn run() -> anyhow::Result<()> {
     }
     adopt(&mut chain, &seats, schedule, &signing).await;
 
-    // The turn in effect now, drawn for A at its deadline; then the chain runs on true time.
-    let now = now_s();
-    let mut turn = (now - BOUNDARY_OFFSET_SECS) / DAY_SECS;
-    if boundary(turn + 1) < now + BOUNDARY_GUARD_SECS {
-        println!("waiting out the boundary of turn {} first", turn + 1);
-        sleep(Duration::from_secs(boundary(turn + 1) + 30 - now)).await;
-        turn += 1;
-    }
+    // The turn drawn for A at its deadline; then the chain runs on true time.
     let drawn = draw_for(&chain, (schedule, receiver), turn, seats[0].candidate).await?;
     chain.mine_at(now_s()).await;
     let mut mining = mine(&chain);

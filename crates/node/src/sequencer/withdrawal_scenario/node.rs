@@ -18,7 +18,14 @@ use crate::sequencer::withdrawal_scenario::{
 use crate::test_support::ANVIL_CONFIG;
 use crate::test_support::LOADED_WAIT;
 
-pub(crate) struct ChildProcess(Child);
+/// How many of its log's last lines a child's exit reports: a node logs why it stopped last.
+const EXIT_LOG_LINES: usize = 40;
+
+/// A child process and the log its output goes to.
+pub(crate) struct ChildProcess {
+    child: Child,
+    log: PathBuf,
+}
 
 pub(super) struct Node {
     child: Option<ChildProcess>,
@@ -53,29 +60,35 @@ impl ChildProcess {
             .kill_on_drop(true)
             .stdout(Stdio::from(output.try_clone()?))
             .stderr(Stdio::from(output));
-        Ok(Self(command.spawn()?))
+        Ok(Self { child: command.spawn()?, log: log.to_path_buf() })
     }
 
-    /// Refuses to proceed if a supervised child has already stopped.
+    /// Refuses to proceed if a supervised child has already stopped, with the end of its log.
     /// Error cases:
     /// - status polling fails or the child exited
     pub fn check(&mut self) -> anyhow::Result<()> {
-        ensure!(self.0.try_wait()?.is_none(), "scenario child exited; inspect its local log");
-        Ok(())
+        match self.child.try_wait()? {
+            None => Ok(()),
+            Some(status) => anyhow::bail!(
+                "scenario child exited ({status}); the end of its log {}:\n{}",
+                self.log.display(),
+                log_tail(&self.log)
+            ),
+        }
     }
 
     /// Waits for the child to exit on its own, and its status.
     /// Error cases:
     /// - it is still running after `within`, or waiting fails
     pub async fn exited(&mut self, within: Duration) -> anyhow::Result<std::process::ExitStatus> {
-        timeout(within, self.0.wait()).await.context("the child did not exit")?.map_err(Into::into)
+        timeout(within, self.child.wait()).await.context("the child did not exit")?.map_err(Into::into)
     }
 
     /// Sends actual SIGKILL and reaps the stopped child under a deadline.
     /// Error cases:
     /// - killing/reaping fails or exceeds ten seconds
     pub async fn kill(&mut self) -> anyhow::Result<()> {
-        timeout(LOADED_WAIT, self.0.kill()).await.context("SIGKILL deadline")??;
+        timeout(LOADED_WAIT, self.child.kill()).await.context("SIGKILL deadline")??;
         Ok(())
     }
 
@@ -83,11 +96,16 @@ impl ChildProcess {
     /// Error cases:
     /// - signaling, draining or the child's final result fails
     pub async fn stop(&mut self) -> anyhow::Result<()> {
-        let id = self.0.id().context("node child already reaped")?;
+        let id = self.child.id().context("node child already reaped")?;
         let signal = timeout(LOADED_WAIT, Command::new("kill").args(["-TERM", &id.to_string()]).status()).await??;
         ensure!(signal.success(), "could not signal local node");
-        let status = timeout(LOADED_WAIT, self.0.wait()).await.context("node drain deadline")??;
-        ensure!(status.success(), "node child did not drain successfully");
+        let status = timeout(LOADED_WAIT, self.child.wait()).await.context("node drain deadline")??;
+        ensure!(
+            status.success(),
+            "node child did not drain successfully ({status}); the end of its log {}:\n{}",
+            self.log.display(),
+            log_tail(&self.log)
+        );
         Ok(())
     }
 }
@@ -328,6 +346,18 @@ fn verdict_covers(metrics: &str, after: u64) -> bool {
         .is_some_and(|seq| seq >= after)
 }
 
+/// The last `EXIT_LOG_LINES` lines of the log at `path`, or why it cannot be read.
+fn log_tail(path: &Path) -> String {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let text = String::from_utf8_lossy(&bytes);
+            let lines: Vec<&str> = text.lines().collect();
+            lines[lines.len().saturating_sub(EXIT_LOG_LINES)..].join("\n")
+        }
+        Err(e) => format!("(the log cannot be read: {e})"),
+    }
+}
+
 /// Reserves an unused loopback TCP port for a subsequently spawned process.
 /// Error cases:
 /// - the operating system cannot allocate a loopback listener
@@ -411,7 +441,45 @@ pub(super) fn write_config(
 
 #[cfg(test)]
 mod tests {
-    use super::gate_admits;
+    use std::time::Duration;
+
+    use super::{ChildProcess, EXIT_LOG_LINES, gate_admits};
+
+    #[tokio::test]
+    async fn a_child_that_exits_reports_the_end_of_its_log() {
+        let dir = crate::test_support::scratch_dir("child-exit-log");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("child.log");
+        // Two lines more than the report holds, then the reason.
+        let script = format!("seq 0 {EXIT_LOG_LINES}; echo why it stopped; exit 3");
+        let mut child = ChildProcess::spawn("sh", &["-c", script.as_str()], &log, &[], None).unwrap();
+        child.exited(Duration::from_secs(10)).await.unwrap();
+        let error = format!("{:#}", child.check().unwrap_err());
+        assert!(error.contains("exit status: 3") && error.contains(&log.display().to_string()), "{error}");
+        let tail = error.split_once(":\n").expect("the log's end follows").1;
+        let expected: Vec<String> =
+            (2..=EXIT_LOG_LINES).map(|i| i.to_string()).chain(["why it stopped".into()]).collect();
+        assert_eq!(tail, expected.join("\n"));
+    }
+
+    #[tokio::test]
+    async fn a_child_whose_drain_fails_reports_the_end_of_its_log() {
+        let dir = crate::test_support::scratch_dir("child-drain-log");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("child.log");
+        let script = "trap 'echo the drain failed; exit 4' TERM; echo draining on TERM; while :; do sleep 0.05; done";
+        let mut child = ChildProcess::spawn("sh", &["-c", script], &log, &[], None).unwrap();
+        // The trap is set once the child has written its first line.
+        crate::test_support::wait_for("the child's trap", async {
+            while !std::fs::read_to_string(&log).unwrap_or_default().contains("draining on TERM") {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        let error = format!("{:#}", child.stop().await.unwrap_err());
+        assert!(error.contains("exit status: 4"), "{error}");
+        assert!(error.ends_with(":\ndraining on TERM\nthe drain failed"), "{error}");
+    }
 
     #[test]
     fn a_healthy_verdict_from_before_the_deposit_does_not_admit_withdrawals() {
