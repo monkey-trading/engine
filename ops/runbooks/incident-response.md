@@ -43,7 +43,8 @@ different receiver for the node going silent and for pages that cannot be delive
    - Is the public log or the vault inconsistent with what the node says? (`checkpoint_conflict`,
      `collateral_mismatch`, `log_tail_lost`, a failed replay.)
 4. **Call the owner** for anything in the second to fourth class, and for any step below marked as
-   changing the live system. Have the exact command ready.
+   changing the live system. Have the exact command ready, and the notice users will see
+   ("Tell users" below) if the step affects them.
 5. **Keep the evidence** (below) before you restart or change anything.
 
 ## The ladder of containment
@@ -55,11 +56,41 @@ system and needs the owner's approval for that action; the guardian steps need t
 | --- | --- | --- | --- |
 | Observe | Nothing changes. | n/a | The checks above. |
 | Reduce-only for a market or all | Refuses orders that grow a position. Closes still fill. | Yes, at once | [reduce-only.md](reduce-only.md) |
+| Status notice | Shows one short message on every console page. Nothing else changes. | Yes, at once | `$ENGINE admin … set-notice "<text>"`, `clear-notice` (owner's approval). See "Tell users" below. |
 | Raise the stress floor | Widens spreads. From `V46` at most level 1, and it lapses after 72 hours unless set again. | Yes | `$ENGINE admin … set-stress-floor <level> [--market <id>]` (owner's approval) |
 | Guardian: `pauseWithdrawals()` | No withdrawal or distribution claim pays for 7 days. Trading, checkpoints and deposits continue. | The timelock lifts it with `setPauses`; it also ends after 7 days | `cast send $VAULT 'pauseWithdrawals()' --rpc-url $RPC --account <guardian>` |
 | Timelock: `setPauses(depositsPaused, withdrawalsPaused)` | Pauses deposits and/or withdrawals until the timelock lifts it. | Yes, through the timelock | Pattern in reference.md; 3-day delay |
 | Guardian: `retireSigner()` | The vault accepts no checkpoint and no withdrawal signed in the current epoch, until the timelock installs a signer. | Only by a new signer through the timelock | [key-recovery.md](key-recovery.md), "New keys" |
 | Stop the node (VM off) | Everything stops: trading, checkpoints, the API. The vault's deadlines begin to run. | Restart | [restart-and-recovery.md](restart-and-recovery.md) |
+
+## Tell users
+
+When a step affects users, a withdrawal pause or markets made reduce-only, tell them at once, in
+neutral wording, on the announcement channel and in the console. Post the console's part as the
+operator's status notice:
+
+```sh
+# As reference.md's admin call: OPERATOR_KEY_FILE names the operator's key.
+$ENGINE admin --config $CONFIG --node $API --pin $PIN set-notice "Security maintenance: withdrawals are paused."
+curl -sf $API/v1/notice | jq .
+```
+
+- The text is 1 to 280 characters of plain text: no markup, link or line break, and no leading or
+  trailing space. The command refuses anything else before it signs. A new text replaces the
+  one in force.
+- It is a sequenced admin command (protocol `V78`), so every node serves it signed at `/v1/notice` and
+  on the signed stream (`notice=1`), a handover or restart carries it with the log, and the public log
+  shows who set it and when. It moves no value, so the operator in office may set it while votes govern.
+- State what users need and nothing about the cause: what is paused or restricted, and what is
+  unaffected. Say when the next update comes if you know it. Do not name an attacker, a suspected
+  cause or an amount.
+- Post it with the containment step, not after it, and replace it when the situation changes.
+- Remove it as soon as the step is lifted: `$ENGINE admin --config $CONFIG --node $API --pin $PIN clear-notice`
+  (a clear with no notice in force is refused, which is harmless). Check `/v1/notice` shows `"notice": null`.
+- It is a sequenced command, so it needs a node that is sequencing: while sequencing is frozen or halted
+  (`log_rollback`, a trusted-time halt, a held log sync) or the node is down, the command is refused or
+  cannot reach it, and the announcement channel is the only way to tell users.
+- Setting or clearing it changes the live system, so it needs the owner's approval like the steps above.
 
 A guardian step is **immediate** and the quickest lever on chain; the timelock's is 3 days. The
 guardian's pause cannot be extended by the guardian. Use it when funds are leaving wrongly or may be,

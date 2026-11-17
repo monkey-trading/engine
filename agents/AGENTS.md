@@ -87,6 +87,7 @@ an index: load only the rule whose hint matches the current action.
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), from `V70` cut by a proven fault's haircut, which starts at the recorded penalty and falls linearly to nothing, the withheld part going to stakers (`operator_faults.rs`), from `V75` a client's unfinalised deposit counted as its own cash, reserving only what its reversal would leave unpaid, and an epoch closed only once the mirror's finalised frontier has passed its end, within a day of it, `tests/staking/unfinalised_deposits.rs` and `tests/staking/mirror_frontier.rs`, cumulative distributions proven on chain; `Engine::distributable_excess` in `staking/excess.rs` reads what a close would distribute),
+  from `V78` the operator's status notice (`notice.rs`: one 1 to 280 character plain-text message, no markup or link, set and cleared by the operator's signed `SetNotice` and `ClearNotice` whether or not votes govern, held in state with the time it was set, `tests/notice.rs`),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks, and from `V77` `merkle/credits.rs`
@@ -265,7 +266,7 @@ an index: load only the rule whose hint matches the current action.
   score's constants), the pending parameter and listing notices, from V56 the recorded vote contract with the
   passed changes waiting and the restrictions in force, from `V62` the house's loss over the trailing day, and the
   latest checkpoint (`api/house_state.rs`,
-  `sequencer/house.rs`), the market read's `pricing` (`api/pricing.rs`: fresh sources against `min_sources` and each source's state, from the quotes the engine holds at its last stamp) and the signed `/v1/status` read, also the signed stream's `status` frames, of what holds the sequencer (one relaxed store per change), trusted time, each venue connection's symbols (published by the connection's task, `feeds/status.rs`) and the open markets with no price (`api/operating.rs`, `status.rs`), the account read (`api/account.rs`) with the toxicity score, tier and add-on from `V54` and the
+  `sequencer/house.rs`), the market read's `pricing` (`api/pricing.rs`: fresh sources against `min_sources` and each source's state, from the quotes the engine holds at its last stamp) and the signed `/v1/notice` read of the operator's status notice (from `V78`, read from the engine's state, `api/notice.rs`), also the signed stream's `notice` frames at its start and on each change (`notice=1`, `api/stream/notice.rs`), and the signed `/v1/status` read, also the signed stream's `status` frames, of what holds the sequencer (one relaxed store per change), trusted time, each venue connection's symbols (published by the connection's task, `feeds/status.rs`) and the open markets with no price (`api/operating.rs`, `status.rs`), the account read (`api/account.rs`) with the toxicity score, tier and add-on from `V54` and the
   volume tier, counted and pending volume, each tier's progress and each market's best-price bound from `V59`, the
   initial and maintenance requirements, withdrawable cash and each market's maximum leverage (`margin_standing`), and
   under `[portfolio_margin]` the portfolio requirement with each offset group's part (Warning `portfolio_grid_mismatch`
@@ -773,7 +774,7 @@ an index: load only the rule whose hint matches the current action.
   once it is ahead, twice, then a replay and restart; `dev-cme-feeds.sh`, the CME Group feed dev scenario against
   a local stand-in for CME's token endpoint and stream beside a local Massive; `dev-share-feeds.sh`, the US share
   feeds' dev scenario against a local stand-in for Alpaca's consolidated feed beside a local Massive; `dev-signed-api.sh`, the signed API answers scenario:
-  verified responses and stream frames, and refused tampering, replay and gaps; `dev-key-lifecycle.sh`,
+  verified responses and stream frames, and refused tampering, replay and gaps; `dev-status-notice.sh`, the status notice scenario: set, replaced and cleared through `engine admin`, each answer and stream frame verified, refused text, a restart that keeps it, and a log replay; `dev-key-lifecycle.sh`,
   the enclave key lifecycle scenario on Anvil (keys only for the vault's current release,
   registration of new keys, a restart with a withdrawal outstanding, a refused start without the
   sealed file, an edited config, an upgrade, the superseded release refused, and named again, a second
@@ -830,7 +831,7 @@ an index: load only the rule whose hint matches the current action.
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin and spreads), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
-  score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
+  score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
@@ -1041,6 +1042,10 @@ Run from the repo root:
   script; fails over 1.5 MB gzipped; see `crates/verify-wasm/README.md`)
 - Signed API answers dev scenario: `./scripts/dev-signed-api.sh` (needs `curl`, `jq`, and `python3`,
   which reads the WebSocket stream; a dev node on a quiet log with one-second heartbeats)
+- Status notice dev scenario: `./scripts/dev-status-notice.sh` (needs `curl`, `jq`, and `python3`; a dev node
+  on private temporary data: `engine admin set-notice` and `clear-notice`, the signed `/v1/notice` read and the
+  `notice=1` stream frames each verified with `engine verify-response` and `engine verify-frames`, refused
+  text, a restart that keeps the notice, and a replay)
 - Verify a signed response or stream connection: `cargo run -p engine-node -- verify-response
   --signer <attested address> --chain-id <id> --vault <address> --challenge <64 hex> --path <path>
   --headers <curl -D file> --body <file>`, or `verify-frames ... --frames <one frame a line>`; the

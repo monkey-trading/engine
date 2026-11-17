@@ -18,7 +18,7 @@ impl Node {
 
     /// `engine admin` with `rest` against this node at `url`, signing with the dev operator key at
     /// the node's time.
-    async fn admin_at(&self, url: &str, rest: &[&str]) -> anyhow::Result<AdminRequest> {
+    pub(super) async fn admin_at(&self, url: &str, rest: &[&str]) -> anyhow::Result<AdminRequest> {
         let key = KeyEnv { key_file: None, key: Some(HexKey(format!("0x{}", hex::encode(DEV_KEY)))) };
         let stamps = self.stamps.clone();
         admin::run_with_clock(self.args(url, rest), key, move || stamps.now_ms()).await

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use serde::Serialize;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::{Interval, MissedTickBehavior, interval};
 
 use crate::api::{ApiError, ApiState};
@@ -40,6 +40,8 @@ impl StatusFeed {
         let tx = state.tx.downgrade();
         let mut state = state.clone();
         state.tx = mpsc::channel(1).0;
+        // Nor the live log's sender, which would keep the stream from seeing the log's feed end.
+        state.stream = broadcast::channel(1).0;
         let mut ticks = interval(every);
         ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
         Self { state, tx, every, ticks, reading: None, sent: None }

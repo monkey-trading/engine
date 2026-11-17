@@ -33,9 +33,11 @@ use tracing::{Instrument, Span, error, info};
 use crate::api::{ApiError, ApiState};
 use crate::log::{LogReader, Manifest, Offset};
 use crate::sequencer::StreamMsg;
+mod notice;
 mod quotes;
 mod signed;
 mod status;
+use notice::NoticeFeed;
 use quotes::Quotes;
 use signed::Framing;
 use status::StatusFeed;
@@ -66,7 +68,14 @@ pub struct StreamParams {
     /// With `signed=1`, `1` also sends the server's operating state as a signed `status` frame at the
     /// start and on each change.
     status: Option<u8>,
+    /// With `signed=1`, `1` also sends the operator's status notice as a signed `notice` frame at the
+    /// start and on each change.
+    notice: Option<u8>,
 }
+
+/// What a signed connection subscribes to besides the log: its quotes with the inbox they read, its
+/// status frames and its notice frames.
+type Subscriptions = (Option<(Quotes, watch::Sender<String>)>, Option<StatusFeed>, Option<NoticeFeed>);
 
 /// One subscriber's messages, in offset order, each once.
 pub(crate) struct Feed {
@@ -158,7 +167,7 @@ impl Feed {
 /// - both `after` and `from` are given
 /// - `signed` is not `1`, it comes without a `challenge` or a `challenge` without it, or the
 ///   challenge is not 64 hex characters
-/// - `heads` is not `1`, or comes without `signed=1`
+/// - `heads`, `status` or `notice` is not `1`, or comes without `signed=1`
 /// - every subscriber place is taken
 pub async fn stream(
     State(s): State<ApiState>,
@@ -185,6 +194,13 @@ pub async fn stream(
         (Some(_), _) => return Err(ApiError::BadRequest("status must be 1".into())),
     };
     let status = status.then(|| StatusFeed::new(&s, s.limits.quote_interval));
+    let notice = match (params.notice, params.signed) {
+        (None, _) => false,
+        (Some(1), Some(1)) => true,
+        (Some(1), _) => return Err(ApiError::BadRequest("notice=1 needs signed=1".into())),
+        (Some(_), _) => return Err(ApiError::BadRequest("notice must be 1".into())),
+    };
+    let notice = notice.then(|| NoticeFeed::new(&s, s.limits.quote_interval));
     let signed = match (params.signed, params.challenge.as_deref()) {
         (None, None) => None,
         (Some(1), Some(challenge)) => {
@@ -220,7 +236,7 @@ pub async fn stream(
                 Some((framing, quotes, inbox)) => (Some(framing), Some((quotes, inbox))),
                 None => (None, None),
             };
-            forward(socket, feed, send_timeout, framing, (quotes, status)).await;
+            forward(socket, feed, send_timeout, framing, (quotes, status, notice)).await;
             drop(place);
         }
         .instrument(span)
@@ -236,7 +252,7 @@ async fn forward<S>(
     feed: Feed,
     send_timeout: Duration,
     framing: Option<Framing>,
-    (quotes, status): (Option<(Quotes, watch::Sender<String>)>, Option<StatusFeed>),
+    (quotes, status, notice): Subscriptions,
 ) where
     S: Sink<Message> + Stream<Item = Result<Message, Error>> + Unpin,
 {
@@ -247,7 +263,7 @@ async fn forward<S>(
             // Sends the close reply queued when the close was read.
             let _ = timeout(send_timeout, sink.close()).await;
         },
-        () = send_feed(&mut sink, feed, send_timeout, framing, (quotes, status)) => {}
+        () = send_feed(&mut sink, feed, send_timeout, framing, (quotes, status, notice)) => {}
     }
 }
 
@@ -279,7 +295,7 @@ async fn send_feed<S: Sink<Message> + Unpin>(
     mut feed: Feed,
     send_timeout: Duration,
     mut framing: Option<Framing>,
-    (mut quotes, mut status): (Option<Quotes>, Option<StatusFeed>),
+    (mut quotes, mut status, mut notice): (Option<Quotes>, Option<StatusFeed>, Option<NoticeFeed>),
 ) {
     loop {
         let next = feed.next();
@@ -300,6 +316,7 @@ async fn send_feed<S: Sink<Message> + Unpin>(
                 }
                 texts = next_quotes(&mut quotes) => texts,
                 texts = next_status(&mut status) => texts,
+                texts = next_notice(&mut notice) => texts,
             };
             // Quotes exist only on a signed connection.
             for text in texts {
@@ -373,6 +390,14 @@ async fn next_quotes(quotes: &mut Option<Quotes>) -> Vec<String> {
     }
 }
 
+/// The connection's next notice message; never, without `notice=1`.
+async fn next_notice(notice: &mut Option<NoticeFeed>) -> Vec<String> {
+    match notice {
+        Some(notice) => notice.next().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// The connection's next status message; never, without `status=1`.
 async fn next_status(status: &mut Option<StatusFeed>) -> Vec<String> {
     match status {
@@ -437,6 +462,8 @@ fn read_batch(
     Ok((Some(reader), batch))
 }
 
+#[cfg(test)]
+mod notice_tests;
 #[cfg(test)]
 mod status_tests;
 #[cfg(test)]

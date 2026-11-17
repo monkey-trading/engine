@@ -217,6 +217,10 @@ this crate and reproduce the signed state roots exactly.
   launch, in the units held at their capture, a split at most 20 to 1 either way, with seven days'
   notice and after every pending dividend's capture, at least two of the market's trading days ahead,
   and while votes govern only by a passed vote (`src/corporate/bounds.rs`)
+- From protocol `V78`, the operator's status notice (`src/notice.rs`): one message of 1 to 280 characters of
+  plain text, with no markup, link or control character, that the operator's signed `SetNotice` sets and
+  `ClearNotice` removes, whether or not votes govern, and that the state holds with the sequenced time it was
+  set, so every node serves the same notice and a replay rebuilds it
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -398,6 +402,7 @@ this crate and reproduce the signed state roots exactly.
   rollover kept, and each rollover's charge for the time since the last, from the activation the
   rollover before the one due
 - `src/operator_bounds/rotation.rs` — the V35 operator rotation: a signed `RotateOperator` and its seven-day notice
+- `src/notice.rs` — the V78 status notice: its text check (`check_notice_text`), the notice and the time it was set, and the commands that set and clear it
 - `src/operator_faults.rs` — the V70 fault proof contract, the penalty, each member's haircut and what it withholds from the time in office
 - `src/spread_tier.rs` — size spread bands: the `V52` unit in tenths of a bp beside the whole-bps
   encoding earlier listings keep, the class floors, and the band staircase; unit tests in
@@ -446,6 +451,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/tier_limits.rs` — a fresh wallet's 25 resting orders and the refusal naming its tier, each tier's
   limit, a falling tier's orders staying, a table naming no limit, the request rate and the account
   read, and activation over resting orders
+- `tests/notice.rs` — `V78`: the operator setting, replacing and clearing a notice, refused text, a notice before `V78`, another key's signature, and a replay's notice and root; `tests/parameter_votes/notice.rs` the same while votes govern
 - `tests/resting_reach.rs` — `V74`: each limit filling on the first price its fill price reaches, as
   under `V73`; a limit refused before its price is checked (reduce-only with its position gone, a
   reversal over the ceiling, new risk in a reduce-only market or below the minimum notional, a spread
@@ -739,7 +745,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V77` parts (`v15.rs` to `v77.rs`)
+  `V15` to `V77` parts (`v15.rs` to `v77.rs`), and its `V78` part (`v78.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1452,6 +1458,15 @@ The vault's exit takes an account's unfinalised principal out of its claim and a
 credit, each one its own deposit records match in payer, amount and beneficiary, and refunds the
 deposit at an id whose credited, pending or held receipt there they do not match. Its log is
 `v77.jsonl`, and its session is in `examples/reference_log/v77.rs`.
+
+Protocol V78 adds the operator's status notice: a short plain-text message the operator sets with the signed
+`SetNotice` and removes with `ClearNotice`, which every node serves to its clients. The engine holds it in
+state (`src/notice.rs`) with the sequenced time it was set, so every member of a rotation serves the same
+notice, a handover carries it with the log and a replay rebuilds it. The text is 1 to 280 characters, with no
+markup (`<`, `>`, `&`, `[`, `]`), link (`://`, `www.`, `mailto:`), control or invisible character (line and paragraph separators, zero-width and bidirectional marks) or
+leading or trailing space, and a refused one is an `AdminRejected` with its reason, as is a clear with none in
+force. It moves no value, so the operator in office sets it while rotation is on, and no vote carries it. A notice
+before V78 is refused. Its log is `v78.jsonl`, and its session is in `examples/reference_log/v78.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

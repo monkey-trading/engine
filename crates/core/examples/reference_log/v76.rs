@@ -146,7 +146,7 @@ fn session_closes(schedule: &Schedule, after: Millis, count: usize) -> (Millis, 
 }
 
 /// The seed of the key in office, among the session's.
-fn office_seed(h: &Harness) -> u8 {
+pub(crate) fn office_seed(h: &Harness) -> u8 {
     let office = h.engine.operator().expect("the operator is recorded").address;
     (1..=u8::MAX).find(|seed| Client::new(*seed).account == office).expect("a session key is in office")
 }

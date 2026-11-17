@@ -244,6 +244,12 @@ pub enum AdminAction {
         #[arg(long)]
         listing: Option<PathBuf>,
     },
+    /// Show `text` to every client as the operator's status notice (from V78), replacing the one in
+    /// force: 1 to 280 characters of plain text, with no markup, link or line break. The node serves
+    /// it signed at `/v1/notice` and on the signed stream, and it stays until `clear-notice`.
+    SetNotice { text: String },
+    /// Remove the status notice in force (from V78).
+    ClearNotice,
     /// Encrypt a secrets bundle to a node's attested one-time key, after checking its quote against
     /// the release manifest, sign it, and deliver it to `[tee.sealing.secrets]`'s listener. Secrets
     /// come from a file, never the command line.

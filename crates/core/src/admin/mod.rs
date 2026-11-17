@@ -88,6 +88,7 @@ impl Engine {
     /// - from `V76`, `SetParams` changing the rollover time or the corporate bounds outside their bounds
     ///   (`Engine::check_rollover_change`, `Engine::check_corporate_bounds_change`), and `UpsertMarket`
     ///   loosening a listed market's price rules without a notice or past its launch rules
+    /// - `SetNotice` and `ClearNotice` with any error case of `Engine::set_notice` and `Engine::clear_notice`
     ///
     /// A `voted` command is a passed vote's, whose seven days' notice replaces the parameter, markup
     /// and ceiling notices. From `V56` new parameters and listings set the baseline, and the values in
@@ -423,6 +424,8 @@ impl Engine {
             }
             AdminCommand::SetGovernance(config) => self.set_governance(config)?,
             AdminCommand::SetFaultProof(config) => self.set_fault_proof(config)?,
+            AdminCommand::SetNotice { text } => self.set_notice(text)?,
+            AdminCommand::ClearNotice => self.clear_notice()?,
         }
         Ok(())
     }

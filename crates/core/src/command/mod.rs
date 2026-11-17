@@ -347,6 +347,13 @@ pub enum AdminCommand {
     /// From `V70`, records the fault proof contract the node mirrors and the penalty a proven fault
     /// carries. The node alone sequences it, from its config; a log records it once.
     SetFaultProof(FaultProofConfig),
+    /// From `V78`, signed: shows `text` to clients as the operator's status notice, replacing the one in
+    /// force (`notice`).
+    SetNotice {
+        text: String,
+    },
+    /// From `V78`, signed: removes the notice in force.
+    ClearNotice,
 }
 
 /// An admin command with the operator's signature, nonce, and expiry, as `engine admin` signs and
