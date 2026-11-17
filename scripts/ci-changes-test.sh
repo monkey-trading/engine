@@ -81,10 +81,14 @@ case_ pull_request "rust scenario_tests dashboard_data production_secrets vault_
   crates/node/src/admin/mod.rs
 case_ pull_request "rust $anvil $feeds scenario_tests attestation_verifier" crates/node/src/test_support/mod.rs
 case_ pull_request "rust $anvil" crates/node/src/custody/tests/election_scenario.rs crates/node/src/log_check/tests.rs
-case_ pull_request "rust scenario_tests" crates/node/src/api/access_tests/spreads.rs crates/core/tests/hot_path_benchmark.rs \
-  crates/core/tests/launch_book_benchmark.rs crates/core/tests/launch_book_benchmark/cases.rs \
-  crates/node/src/stats/launch_bench.rs config/production-genesis.toml \
-  research/cap-calibration/data/derived/market_mix.csv
+case_ pull_request "rust scenario_tests" crates/node/src/api/access_tests/spreads.rs crates/core/tests/hot_path_benchmark.rs
+case_ pull_request "rust scenario_tests" crates/core/tests/launch_book_benchmark.rs
+case_ pull_request "rust scenario_tests" crates/core/tests/launch_book_benchmark/cases.rs
+case_ pull_request "rust scenario_tests" crates/node/src/stats/launch_bench.rs
+case_ pull_request "rust scenario_tests" crates/node/src/stats/bench.rs
+case_ pull_request "rust scenario_tests" config/production-genesis.toml
+case_ pull_request "rust scenario_tests" research/cap-calibration/data/derived/market_mix.csv
+case_ pull_request "rust" config/ct-watch.toml
 case_ pull_request "rust attestation_verifier" crates/node/src/verify/tests/mod.rs
 case_ pull_request "rust short_turns" crates/core/tests/short_turns.rs
 case_ pull_request "rust wasm_verifier" crates/verify-wasm/src/lib.rs

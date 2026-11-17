@@ -13,7 +13,7 @@ use engine_core::volume_tier::{AccountVolume, DayVolume, WINDOW_DAYS, day_of};
 use engine_core::{Engine, Fixed};
 use serde_json::json;
 
-use crate::common::close_spread::{attest, fund, rest, trade};
+use crate::common::close_spread::{attest, fund, rest, source_key, trade};
 use crate::common::launch_book::genesis::{BOOK_TIME, price_market, production_harness, publish_benchmarks};
 use crate::common::launch_book::mix::{Mix, Rng, market_weights};
 use crate::common::session_keys::{HOUR_MS, register};
@@ -129,10 +129,7 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
     assert!(mix.accounts >= named_total, "the named accounts are part of the book");
     let mut h = production_harness();
     publish_benchmarks(&mut h);
-    h.admin(AdminCommand::SetAccessPolicy(AccessPolicy {
-        source: crate::common::close_spread::source_key(),
-        max_age_ms: 10 * HOUR_MS,
-    }));
+    h.admin(AdminCommand::SetAccessPolicy(AccessPolicy { source: source_key(), max_age_ms: 10 * HOUR_MS }));
     let ids: Vec<MarketId> = h.engine.markets().keys().copied().collect();
     let mark = MARK.to_string();
     for id in &ids {
@@ -185,18 +182,18 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
                 (false, _) => units[id].to_string(),
             };
             let events = trade(&mut h, client, *id, Side::Buy, &size, &mark);
-            assert!(events.iter().any(|e| matches!(e, engine_core::event::Event::Fill(_))), "{id}: {events:?}");
+            assert!(events.iter().any(|e| matches!(e, Event::Fill(_))), "{id}: {events:?}");
         }
     }
     // The template account rests an order and holds two session keys, which the rest copy.
     let template = named.adders.first().expect("an adder is the template");
     let events = rest(&mut h, template, ids[0], Side::Buy, "1", OrderKind::Limit { price: f("50") });
-    assert!(events.iter().any(|e| matches!(e, engine_core::event::Event::OrderAccepted { .. })), "{events:?}");
+    assert!(events.iter().any(|e| matches!(e, Event::OrderAccepted { .. })), "{events:?}");
     for index in 0..mix.session_keys as u8 {
         let key = crate::common::session_keys::fresh_key(index);
         let cmd = register(&h, template, &key, BOOK_TIME + 285_000 + i64::from(index));
         let events = h.cmd(cmd);
-        assert!(matches!(events[..], [engine_core::event::Event::SessionKeyRegistered { .. }]), "{events:?}");
+        assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
     }
     // Two small moves a horizon apart, so every fill is scored, then the mark again once the opening
     // lots have matured.

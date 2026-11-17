@@ -1,5 +1,5 @@
 //! The launch book's account mix: the shares #905 proposes, in one place, so the owner's changes to
-//! them are edits to `Mix::PROPOSAL`, and the deterministic draws that deal them out.
+//! them are edits to `Mix::proposal`, and the deterministic draws that deal them out.
 
 use engine_core::types::MarketId;
 

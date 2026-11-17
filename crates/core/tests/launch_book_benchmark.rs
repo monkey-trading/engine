@@ -3,7 +3,8 @@
 //! a volume book, a toxicity score and session keys (`common::launch_book`, dealt out by
 //! `Mix::proposal`). Each case prints its p50, p99 and p999 in microseconds as `LAUNCH name ...`, and
 //! the case's cost per holder or per order where it scales. Run in a quiet CPU window:
-//! `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1`.
+//! `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1 launch_book_latency`;
+//! `launch_book_price_attribution` runs apart.
 
 #[path = "launch_book_benchmark/cases.rs"]
 mod cases;
@@ -22,9 +23,9 @@ const NAMED: NamedCounts = NamedCounts { adders: 100, openers: 100, closeouts: 3
 /// The budgets #904's launch bar sets, which #905's proposal asserts (microseconds).
 const PRICE_P99_US: u128 = 250_000;
 const SIGNED_P99_US: u128 = 2_000;
-/// The root over 100k changed accounts: the bar, which the book misses (CI measured 1.3 s on
-/// 17 November 2026, over account and reference leaves), and the guard CI holds it to until the owner
-/// accepts that or a change meets the bar.
+/// The root over 100k changed accounts: #904's bar, which the book misses (CI measured 0.8 s on
+/// 17 November 2026, over the accounts a rollover financed), and the guard CI holds it to until the
+/// owner accepts that figure or a change meets the bar.
 const ROOT: RootBudget = RootBudget { bar_us: 500_000, guard_us: 3_000_000 };
 /// No single command, rollover and close-out included, holds the thread over this.
 const SINGLE_COMMAND_US: u128 = 500_000;
@@ -37,9 +38,9 @@ fn launch_book_latency() {
     let mut book = build(&Mix::proposal(accounts), NAMED);
     cases::summary(&book, accounts, rss_before, rss_mib());
     cases::roots_and_proofs(&mut book, accounts);
-    cases::prices(&mut book, PRICE_P99_US);
+    cases::prices(&mut book, PRICE_P99_US, SINGLE_COMMAND_US);
     cases::price_rounds(&mut book, PRICE_P99_US);
-    cases::signed_orders(&mut book, SIGNED_P99_US);
+    cases::signed_orders(&mut book, SIGNED_P99_US, SINGLE_COMMAND_US);
     cases::close_outs(&mut book, SINGLE_COMMAND_US);
     cases::rollover(&mut book, SINGLE_COMMAND_US, ROOT);
     cases::encoding_and_recovery(&mut book);

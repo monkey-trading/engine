@@ -889,7 +889,8 @@ Run from the repo root:
 - Launch-book latency (#905: 100k accounts at the latest protocol on the 34 genesis markets, with positions, resting
   orders, volume books, scores and session keys, built by `crates/core/tests/common/launch_book/`; the proposal's
   shares are `Mix::proposal`): `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored
-  --nocapture --test-threads=1`, and its stats scans and worker copy:
+  --nocapture --test-threads=1 launch_book_latency` (`launch_book_price_attribution` runs apart, on books with
+  parts taken away), and its stats scans and worker copy:
   `cargo test -p engine-node --lib stats::launch_bench -- --ignored --nocapture --test-threads=1`; the builder's own
   test: `cargo test -p engine-core --test launch_book`
 - Property tests: `cargo test -p engine-core --test invariants`

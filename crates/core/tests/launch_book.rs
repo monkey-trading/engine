@@ -1,12 +1,16 @@
 //! The launch book's own properties (#905), on a small book: it is what `Mix` says, at the latest
-//! protocol on the production genesis's markets, and a price moving only the mark trades nothing. The benchmarks that use it are `launch_book_benchmark`.
+//! protocol on the production genesis's markets, and a price moving only the mark trades nothing. The
+//! benchmarks that use it are `launch_book_benchmark`.
 
 mod common;
 
 use common::f;
 use common::launch_book::{Mix, NamedCounts, build, price_command};
+use engine_core::account::Account;
+use engine_core::command::OrderKind;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
+use engine_core::types::Side;
 
 const ACCOUNTS: usize = 4_000;
 const NAMED: NamedCounts = NamedCounts { adders: 2, openers: 2, closeouts: 3 };
@@ -37,12 +41,17 @@ fn the_book_is_the_mix_on_the_production_genesis() {
     }
     let all = engine.accounts().values().filter(|a| a.positions.len() == 34).count();
     assert!(book.holders.values().all(|held| *held >= all), "{:?}", book.holders);
+    // Holders follow the cap study's market mix: BTC-USD, ETH-USD and SOL-USD lead it, and EUR-USD
+    // trails them by far.
+    let holders = |market| book.holders[&market];
+    assert!(holders(1) > holders(2) && holders(2) > holders(3), "{:?}", book.holders);
+    assert!(holders(3) > 2 * holders(10), "{:?}", book.holders);
     // Each account's orders are at its tier's limit, and a share of them inside the first band, which
     // the template's order away from the price at 50 does not shift.
     let (mut in_band, mut orders) = (0, 0);
     for (id, account) in engine.accounts() {
         for order in account.orders.values() {
-            let engine_core::command::OrderKind::Limit { price } = order.kind else { panic!("{order:?}") };
+            let OrderKind::Limit { price } = order.kind else { panic!("{order:?}") };
             in_band += usize::from((price - f("100")).abs() < f("1"));
             orders += 1;
         }
@@ -81,12 +90,12 @@ fn a_book_is_the_same_on_every_build() {
 #[test]
 fn the_in_band_orders_are_the_ones_a_price_reaches() {
     let in_band = |market, buy: bool, book: &common::launch_book::Book| {
-        let rests = |account: &engine_core::account::Account| {
+        let rests = |account: &Account| {
             account
                 .orders
                 .values()
-                .filter(|o| o.market == market && (o.side == engine_core::types::Side::Buy) == buy)
-                .filter(|o| matches!(o.kind, engine_core::command::OrderKind::Limit { price } if (price - f("100")).abs() < f("1")))
+                .filter(|o| o.market == market && (o.side == Side::Buy) == buy)
+                .filter(|o| matches!(o.kind, OrderKind::Limit { price } if (price - f("100")).abs() < f("1")))
                 .count()
         };
         book.h.engine.accounts().values().map(rests).sum::<usize>()

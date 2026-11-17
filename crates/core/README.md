@@ -1510,7 +1510,10 @@ each of the tiers above 0 with a full 30-day volume book; a fifth of the account
 their tier's limit, half inside the first spread band of a market and half away from the price (buys
 at half the mark, sells at twice it); every account has a toxicity score, two session keys, the
 request nonces and the credited reference they leave, and positions of $5,000 in each market it holds.
-The accounts a case signs for (230 of the 100k) are made by signed commands, and the rest are written
+Each is funded by a credited reference, as the mock custody does, not by a custody receipt: the book
+leaves out the receipt leaf and index entry of each account, about 4% of its state. Staking and emissions
+are initialised at `ops/runbooks/production-deployment.toml`'s values, whose time origin is ahead of
+the book's clock, so no epoch or period closes in a case. The accounts a case signs for (230 of the 100k) are made by signed commands, and the rest are written
 into the engine's encoding around them, from those accounts' entries. In-band orders buy where a
 market's id is odd and sell where it is even, so the close-out case's fall in ETH-USD reaches none;
 no timed case reaches an in-band order, since a price that does is a mass fill, which `tests/launch_book.rs`

@@ -26,6 +26,9 @@ fn launch_book_scans_and_copy() {
     let rss_book = rss_kib();
     let mut book = build(&Mix::proposal(accounts), NamedCounts { adders: 1, openers: 0, closeouts: 0 });
     let engine = &book.h.engine;
+    // Staking is initialised, as at launch, so a full scan walks every account's equity for the excess a
+    // close would distribute.
+    assert!(book.h.engine.distributable_excess().is_some(), "staking is initialised");
     let rss_built = rss_kib();
     println!(
         "STATS launch_book accounts={accounts} positions={} orders={} resident_mib={} resident_added_mib={}",

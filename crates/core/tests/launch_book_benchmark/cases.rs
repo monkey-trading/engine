@@ -96,7 +96,7 @@ pub fn roots_and_proofs(book: &mut Book, accounts: usize) {
 }
 
 /// A price in BTC-USD, in an FX market and in a futures-priced index market.
-pub fn prices(book: &mut Book, budget_p99_us: u128) {
+pub fn prices(book: &mut Book, budget_p99_us: u128, single_us: u128) {
     for (name, market) in [("price_btc_usd", BTC), ("price_fx_eur_usd", EURUSD), ("price_index_us500", US500)] {
         let mut times = Vec::with_capacity(PRICE_SAMPLES);
         for sample in 0..PRICE_SAMPLES {
@@ -108,7 +108,8 @@ pub fn prices(book: &mut Book, budget_p99_us: u128) {
             times.push(us);
         }
         let holders = book.holders.get(&market).copied().unwrap_or(0);
-        let (p50, p99, _) = report(name, &mut times, "");
+        let (p50, p99, max) = report(name, &mut times, "");
+        within(&format!("{name}_max"), max, single_us);
         println!(
             "LAUNCH {name}_rate holders={holders} us_per_holder={:.3} prices_per_second={:.1}",
             p50 as f64 / holders.max(1) as f64,
@@ -194,7 +195,7 @@ fn order(book: &Book, client: &Client, qty: &str) -> Command {
 
 /// A signed market order that opens a position, and one that adds to a position of an account that
 /// holds every market. The commands are signed first, so the timing is the engine's apply of each.
-pub fn signed_orders(book: &mut Book, budget_p99_us: u128) {
+pub fn signed_orders(book: &mut Book, budget_p99_us: u128, single_us: u128) {
     let qty = "50".to_string();
     for (name, accounts) in
         [("signed_open_btc", book.named.openers.len()), ("signed_add_all_34", book.named.adders.len())]
@@ -209,8 +210,9 @@ pub fn signed_orders(book: &mut Book, budget_p99_us: u128) {
             assert!(events.iter().any(|e| matches!(e, Event::Fill(_))), "{name}: {events:?}");
             times.push(us);
         }
-        let (_, p99, _) = report(name, &mut times, "");
+        let (_, p99, max) = report(name, &mut times, "");
         within(&format!("{name}_p99"), p99, budget_p99_us);
+        within(&format!("{name}_max"), max, single_us);
     }
 }
 
@@ -251,29 +253,49 @@ pub fn close_outs(book: &mut Book, budget_us: u128) {
 /// published first, and the state root after the last, which hashes every account it changed and
 /// nothing else. The weekend's gap follows the fourth rollover.
 pub fn rollover(book: &mut Book, budget_us: u128, root: RootBudget) {
+    const ROLLOVERS: usize = 4;
     let total = |book: &Book| -> engine_core::Fixed { book.h.engine.accounts().values().map(|a| a.balance).sum() };
     let positions: usize = book.h.engine.accounts().values().map(|a| a.positions.len()).sum();
-    let holders = book.h.engine.accounts().values().filter(|a| !a.positions.is_empty()).count();
     let mut times = Vec::new();
-    for _ in 0..4 {
+    let mut financed = (0, 0);
+    for rollover in 0..ROLLOVERS {
         let due = book.h.engine.next_rollover().expect("a rollover is due");
         book.h.advance_to(due - 1);
         let batch = benchmark_batch(&book.h);
         let events = book.operate(batch);
         assert!(events.contains(&Event::AdminApplied), "{events:?}");
+        if rollover == ROLLOVERS - 1 {
+            // The root timed below hashes what this rollover changed, not what the cases before it did.
+            book.h.engine.state_root();
+        }
         book.h.advance_to(due);
         let before = total(book);
         let (events, us) = timed(|| book.apply(Command::Tick));
         assert!(total(book) < before, "the rollover charges financing: {events:?}");
         times.push(us);
+        let charged: Vec<AccountId> = events
+            .iter()
+            .filter_map(|e| if let Event::Financing { account, .. } = e { Some(*account) } else { None })
+            .collect();
+        financed = (charged.len(), charged.iter().collect::<std::collections::BTreeSet<_>>().len());
     }
-    let extra = format!("positions={positions} us_per_position_p50={:.3}", times_p50(&times) as f64 / positions as f64);
-    let (_, p99, _) = report("rollover", &mut times, &extra);
-    within("rollover_max", p99, budget_us);
-    // The first root after the rollover hashes the leaf of each account that held a position, whose
-    // cash the rollover changed, and no other leaf.
+    // Every position pays or earns financing at the published rate, so no account is skipped.
+    assert!(financed.0 * 100 >= positions * 99, "{} of {positions} positions financed", financed.0);
+    let extra = format!(
+        "positions={positions} financed={} us_per_position_p50={:.3}",
+        financed.0,
+        times_p50(&times) as f64 / positions as f64
+    );
+    let (_, _, max) = report("rollover", &mut times, &extra);
+    within("rollover_max", max, budget_us);
+    // The root after the last rollover hashes the leaf of each account it financed, and no other
+    // account's.
     let (_, us) = timed(|| book.h.engine.state_root());
-    println!("LAUNCH root_after_rollover changed={holders} us={us} us_per_account={:.2}", us as f64 / holders as f64);
+    println!(
+        "LAUNCH root_after_rollover changed={} us={us} us_per_account={:.2}",
+        financed.1,
+        us as f64 / financed.1 as f64
+    );
     noted("root_after_rollover_bar", us, root.bar_us);
     within("root_after_rollover_guard", us, root.guard_us);
 }
