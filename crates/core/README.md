@@ -1567,7 +1567,7 @@ Run `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignore
 | One price in every market in turn: the round, the rounds a second the thread could take, and each market's slowest price | 250 ms each |
 | A signed order that opens a position, and one that adds to an account holding all 34 markets | p99 2 ms |
 | A price of ETH-USD that closes out an account holding all 34 markets (30 accounts, one to a step) | 500 ms |
-| The daily rollover with financing on every position (4 rollovers, ending before the weekend's gap): the slowest | bar 500 ms, guard 2 s |
+| The daily rollover with financing on every position (4 rollovers, ending before the weekend's gap, each with every open market quoted just before it): the slowest | bar 500 ms, guard 2 s |
 | The state root after the last rollover, which hashes each account it changed and no other leaf | bar 500 ms, guard 3 s |
 | The state root after 1k, 10k and all other accounts are credited (each adds a reference leaf to its account's), the first root of the book, and an account proof of an account holding all 34 markets | none |
 | The snapshot encoding in time and bytes, and its recovery: decoding, `restore_indexes` and the first command | none |

@@ -6,6 +6,7 @@ use engine_core::access::AccessDeposit;
 use engine_core::command::{Command, OrderKind, OrderRequest};
 use engine_core::eip712;
 use engine_core::event::Event;
+use engine_core::session::Schedule;
 use engine_core::types::{AccountId, MarketId, Side};
 
 use crate::common::close_spread::evidence;
@@ -264,6 +265,7 @@ pub fn rollover(book: &mut Book, bar: Bar, root: Bar) {
         let batch = benchmark_batch(&book.h);
         let events = book.operate(batch);
         assert!(events.contains(&Event::AdminApplied), "{events:?}");
+        reprice_open_markets(book, due);
         if rollover == ROLLOVERS - 1 {
             // The root timed below hashes what this rollover changed, not what the cases before it did.
             book.h.engine.state_root();
@@ -299,6 +301,29 @@ pub fn rollover(book: &mut Book, bar: Bar, root: Bar) {
     );
     noted("root_after_rollover_bar", us, root.bar_us);
     within("root_after_rollover_guard", us, root.guard_us);
+}
+
+/// Quotes every market at its own mark, so no price moves, one millisecond before `due` and outside the timed rollover, as a
+/// launch node's feeds keep the open markets priced; a market outside its session, or whose price
+/// rules keep a quote for less than a millisecond, takes no price from it. Asserts the always-open
+/// markets, which the rollover's close-out sweep reads, have an index when the rollover runs.
+fn reprice_open_markets(book: &mut Book, due: i64) {
+    let marks: Vec<(MarketId, String)> =
+        book.h.engine.markets().iter().filter_map(|(id, m)| m.mark.map(|mark| (*id, mark.to_string()))).collect();
+    for (id, mark) in marks {
+        let cmd = price_command(&book.h, id, &mark, book.h.ts);
+        let events = book.apply(cmd);
+        assert!(!is_trade(&events), "{id}: {events:?}");
+    }
+    let unpriced: Vec<MarketId> = book
+        .h
+        .engine
+        .markets()
+        .iter()
+        .filter(|(_, market)| matches!(market.spec.schedule, Schedule::AlwaysOpen) && market.index(due).is_err())
+        .map(|(id, _)| *id)
+        .collect();
+    assert!(unpriced.is_empty(), "always-open markets with no index at the rollover: {unpriced:?}");
 }
 
 /// The budgets of a case the book does not meet: #904's bar, which is only noted, and the guard CI
