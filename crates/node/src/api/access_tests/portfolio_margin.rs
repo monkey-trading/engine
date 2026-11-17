@@ -112,6 +112,18 @@ fn a_misfit_grid_warns_and_the_next_newer_read_it_fits_ends_the_warning() {
     assert_eq!(taken(&mut resolutions), 1);
 }
 
+#[test]
+fn a_node_started_without_a_grid_ends_an_episode_a_run_with_one_left_open() {
+    let (_guard, mut alerts, mut resolutions) = crate::test_support::capture_alerts_and_resolutions();
+    let mut cfg = dev_config();
+    assert!(PortfolioMargin::configured(&cfg).is_some());
+    assert!(std::iter::from_fn(|| resolutions.try_recv().ok()).next().is_none());
+    cfg.portfolio_margin = None;
+    assert!(PortfolioMargin::configured(&cfg).is_none());
+    assert_eq!(std::iter::from_fn(|| resolutions.try_recv().ok()).count(), 1);
+    assert!(alerts.try_recv().is_err());
+}
+
 /// Serves `node`'s API with `grid` as its `[portfolio_margin]`.
 fn serve_grid(node: &mut Node, grid: engine_core::portfolio::PortfolioGrid) {
     node.state.portfolio_margin = Some(Arc::new(PortfolioMargin::new(grid)));
