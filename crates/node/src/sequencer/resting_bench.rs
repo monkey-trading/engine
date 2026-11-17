@@ -1,10 +1,12 @@
 //! What resting orders add to a price at 100k accounts (#700). A price visits every resting order
-//! its mid has reached (`hot_indexes`, `triggered`), and a limit the spread keeps out of reach stays
-//! resting, so the same orders are visited, and priced, on every price. Each case loads that many
-//! such limits into market 1, tier 0's 25 an account, and times the price command's stamp, which
-//! every later price waits behind (`wait_bench::price_wait_budget` holds a batch's median wait to
-//! 1 ms). The last case is every account at tier 0's limit; a second test holds that many limits
-//! away from the price, which no price visits. Run in a quiet CPU window:
+//! its mid has reached (`hot_indexes`, `triggered`). Before `V74` a limit is reached at its price, and
+//! one the spread keeps out of reach fails on slippage and stays resting, so the same orders are
+//! visited, and priced, on every price; from `V74` a limit is reached only where its market's least
+//! fill rate lets it fill, so a price visits none of them. Each case loads that many such limits into
+//! market 1, tier 0's 25 an account, and times the price command's stamp, which every later price
+//! waits behind (`wait_bench::price_wait_budget` holds a batch's median wait to 1 ms). The last case
+//! is every account at tier 0's limit; a second test holds that many limits away from the price, which
+//! no price visits under any version. Run in a quiet CPU window:
 //! `cargo test -p engine-node --lib sequencer::resting_bench -- --ignored --nocapture --test-threads=1`.
 
 use engine_core::Fixed;
@@ -21,10 +23,10 @@ const MOST: usize = 250;
 /// Out-of-reach limits in market 1, per case.
 const LOADS: [u32; 6] = [0, 1_000, 10_000, 100_000, 1_000_000, PER_ACCOUNT * ACCOUNTS];
 
-/// A limit buy at 100,005: every price (`Rig::price`, 100,000 or 100,001) reaches it, and market 1's
+/// A limit buy at 100,005: every price (`Rig::price`, 100,000 or 100,001) passes it, and market 1's
 /// 2 bps first band (the development genesis's BTC-USD, #688) puts a fill at 100,020 or more, past
-/// the limit, so it stays resting.
-const OUT_OF_REACH: i64 = 100_005;
+/// the limit, so it stays resting. From `V74` it is reached only at a mid of about 99,985.
+pub(super) const OUT_OF_REACH: i64 = 100_005;
 /// A limit buy at 90,000, below every price, which no price reaches.
 const AWAY: i64 = 90_000;
 
@@ -50,7 +52,7 @@ fn rig(name: &str) -> Rig {
 }
 
 /// Places resting limits at `price` until `placed` reaches `load`, `PER_ACCOUNT` an account.
-fn place(rig: &mut Rig, placed: &mut u32, load: u32, price: i64) {
+pub(super) fn place(rig: &mut Rig, placed: &mut u32, load: u32, price: i64) {
     while *placed < load {
         let events = rig.seq.sequence(resting(*placed / PER_ACCOUNT, u64::from(*placed), price)).unwrap().unwrap();
         assert!(events.iter().any(|e| matches!(e, Event::OrderAccepted { .. })), "order {placed} rests: {events:?}");

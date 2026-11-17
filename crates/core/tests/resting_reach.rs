@@ -4,9 +4,12 @@
 //! price reaches; a limit refused before its price is checked is cancelled only once a price comes
 //! within its reach, and a stop still triggers at its price; the stress refresh a visit ran moves to
 //! the next fill, close-out or the command's end; and the keys follow bands raised above the ceiling
-//! and bands lowered again. `V73` keeps the earlier visits.
+//! and bands lowered again. `V73` keeps the earlier visits. No fill pays less than the rate the keys
+//! take (`resting_reach/least_rate.rs`).
 
 mod common;
+#[path = "resting_reach/least_rate.rs"]
+mod least_rate;
 
 use common::close_spread::{rest, rest_as, source_key, trade};
 use common::events::fills;
@@ -63,7 +66,7 @@ fn each_limit_fills_on_the_first_price_its_fill_price_reaches_as_before() {
 fn a_limit_refused_before_its_price_is_checked_is_cancelled_once_a_price_reaches_it() {
     // WIDE's 1bp first band keys a buy at 99990 at 99980.002 and a sell at 100010 at 100020.002:
     // 99988 and 100012 pass the price but not that key, 99975 and 100025 pass both.
-    let cases: [(&str, Side, fn(&mut Harness, &Client) -> OrderId); 5] = [
+    let cases: [(&str, Side, Place); 5] = [
         ("a reduce-only limit whose position has gone", Side::Sell, |h, a| {
             trade(h, a, WIDE, Side::Buy, "1", "100000");
             let id = resting(&rest_as(h, a, WIDE, Side::Sell, "1", limit("100010"), true));
@@ -186,14 +189,20 @@ fn the_keys_follow_a_ceiling_below_raised_bands_and_lowered_bands() {
     // 100035 as 10bp would key it, and fills at 99996, at the ceiling.
     let effective_at = h.ts + NOTICE_MS;
     let ceiling = 6;
-    let adoption = AdminCommand::AdoptCloseSpreadCeiling { market: TIGHT, max_close_spread_bps: ceiling, effective_at, listing: None };
+    let adoption = AdminCommand::AdoptCloseSpreadCeiling {
+        market: TIGHT,
+        max_close_spread_bps: ceiling,
+        effective_at,
+        listing: None,
+    };
     h.operator_admin(adoption);
     h.advance_to(effective_at);
     relist(&mut h, tenths(&[(None, 100)]));
     h.price(TIGHT, "99800");
     let first = resting(&rest(&mut h, &a, TIGHT, Side::Sell, "1", limit("99935")));
     assert!(fills(&h.price(TIGHT, "99990")).is_empty());
-    let filled: Vec<_> = fills(&h.price(TIGHT, "99996")).iter().map(|fill| (fill.order_id, fill.price, fill.spread_bps)).collect();
+    let filled: Vec<_> =
+        fills(&h.price(TIGHT, "99996")).iter().map(|fill| (fill.order_id, fill.price, fill.spread_bps)).collect();
     assert_eq!(filled, [(first, f("99936.0024"), ceiling)]);
     // A limit keyed at the ceiling is keyed again at 5bp once the bands are lowered back to it, so
     // 99996 reaches a sell at 99945 (99946.002), which the ceiling keys at 100005.
@@ -217,6 +226,9 @@ fn the_keys_follow_a_ceiling_below_raised_bands_and_lowered_bands() {
 
 // ── Helpers ──
 
+/// Rests a limit for a case, and returns its id.
+type Place = fn(&mut Harness, &Client) -> OrderId;
+
 /// A log that activates `version` before its genesis: the harness parameters in `V54`'s form with
 /// the launch volume tiers, BTC-USD at 1bp to $1m, 2bp to $5m and 5bp above and WIDE, each 24/7 at
 /// 10% margin with a 1bp markout floor, a 100% slippage bound and a 20bp ceiling, and the access policy.
@@ -238,7 +250,11 @@ fn tight() -> Harness {
 
 /// Client auth, the operator, `version`, `params`, a 4.3% SOFR, each of `markets` with its bands and
 /// ceiling, 100m of house capital, the ceilings and the access policy.
-fn listed(version: ProtocolVersion, params: ProtocolParams, markets: &[(MarketId, &str, Vec<SpreadTier>, i64)]) -> Harness {
+fn listed(
+    version: ProtocolVersion,
+    params: ProtocolParams,
+    markets: &[(MarketId, &str, Vec<SpreadTier>, i64)],
+) -> Harness {
     let mut h = Harness::empty();
     h.admin(AdminCommand::SetClientAuth(ClientAuth::Eip712 { chain_id: CHAIN_ID, vault: VAULT }));
     h.admin(AdminCommand::SetOperator(operator()));
@@ -252,7 +268,8 @@ fn listed(version: ProtocolVersion, params: ProtocolParams, markets: &[(MarketId
         h.admin(AdminCommand::UpsertMarket(spec));
     }
     h.cmd(Command::HouseCapital { amount: h.house_capital, chain_ref: "genesis".into() });
-    let ceilings = markets.iter().map(|(market, _, _, bps)| CloseSpreadCeiling { market: *market, max_close_spread_bps: *bps });
+    let ceilings =
+        markets.iter().map(|(market, _, _, bps)| CloseSpreadCeiling { market: *market, max_close_spread_bps: *bps });
     h.admin(AdminCommand::SetCloseSpreadCeilings { ceilings: ceilings.collect() });
     h.admin(AdminCommand::SetAccessPolicy(AccessPolicy { source: source_key(), max_age_ms: 1_000 }));
     h
@@ -285,7 +302,7 @@ fn resting(events: &[Event]) -> OrderId {
 
 /// Whether `events` cancel order `id` as unfillable.
 fn cancelled(events: &[Event], id: OrderId) -> bool {
-    events.iter().any(|e| {
-        matches!(e, Event::OrderCancelled { order_id, reason: CancelReason::Unfillable, .. } if *order_id == id)
-    })
+    events.iter().any(
+        |e| matches!(e, Event::OrderCancelled { order_id, reason: CancelReason::Unfillable, .. } if *order_id == id),
+    )
 }

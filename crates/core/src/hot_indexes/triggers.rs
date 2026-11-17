@@ -10,6 +10,8 @@ use crate::account::RestingOrder;
 use crate::command::OrderKind;
 use crate::engine::Engine;
 use crate::hot_indexes::HotIndexes;
+use crate::protocol::ProtocolVersion;
+use crate::spread_tier::SpreadTier;
 use crate::types::{AccountId, MarketId, OrderId, Side};
 
 /// Tenths of a bp in 100%.
@@ -17,8 +19,13 @@ const WHOLE_TENTH_BPS: i128 = 100_000;
 
 #[derive(Debug, Default)]
 pub(super) struct Triggers {
+    /// Orders a mid at or above their key reaches: sell limits and buy stops.
     below: BTreeMap<(Fixed, OrderId), AccountId>,
+    /// Orders a mid at or below their key reaches: buy limits and sell stops.
     above: BTreeMap<(Fixed, OrderId), AccountId>,
+    /// Each indexed order's key and whether it is in `below`, so removing an order reads the key it
+    /// was indexed at.
+    keys: BTreeMap<OrderId, (Fixed, bool)>,
     /// The least fill rate, in tenths of a bp, the limits are keyed at.
     rate: i64,
 }
@@ -53,9 +60,18 @@ impl HotIndexes {
         orders.for_each(|(account, order)| self.order(account, order, true));
     }
 
-    /// Adds or removes an order at its key: a sell limit and a buy stop trigger once the mid is at or
-    /// above it, a buy limit and a sell stop once it is at or below it.
+    /// Adds an order at its key, or removes it from the key it was added at: a sell limit and a buy
+    /// stop trigger once the mid is at or above the key, a buy limit and a sell stop once it is at or
+    /// below it.
     pub(super) fn order(&mut self, account: AccountId, order: &RestingOrder, insert: bool) {
+        if !insert {
+            let Some(book) = self.triggers.get_mut(&order.market) else { return };
+            if let Some((key, below)) = book.keys.remove(&order.order_id) {
+                let index = if below { &mut book.below } else { &mut book.above };
+                index.remove(&(key, order.order_id));
+            }
+            return;
+        }
         let book = self.triggers.entry(order.market).or_default();
         let (key, below) = match (order.kind, order.side) {
             (OrderKind::Limit { price }, side) => (reach(price, side, book.rate), side == Side::Sell),
@@ -63,11 +79,8 @@ impl HotIndexes {
             (OrderKind::Market { .. }, _) => return,
         };
         let index = if below { &mut book.below } else { &mut book.above };
-        if insert {
-            index.insert((key, order.order_id), account);
-        } else {
-            index.remove(&(key, order.order_id));
-        }
+        index.insert((key, order.order_id), account);
+        book.keys.insert(order.order_id, (key, below));
     }
 }
 
@@ -94,6 +107,19 @@ impl Engine {
             (*account, accounts[account].orders.get(order_id).expect("a resting book entry is its account's order"))
         });
         indexes.key_triggers(market, rate, orders);
+    }
+
+    /// The least share of the index mid any fill in `market` pays from `V74`, in tenths of a bp: the
+    /// lower of its least spread band and its close-spread ceiling. The stress and toxicity charges
+    /// are never negative, from `V52` every fill pays its bands at a size multiplier of at least 1x,
+    /// and only a pure close is clamped, to the ceiling (`Engine::bounded_close_charge`). Zero before
+    /// `V74`, which keys each limit at its price.
+    pub(super) fn least_fill_rate(&self, market: MarketId) -> i64 {
+        if self.protocol_version < ProtocolVersion::V74 {
+            return 0;
+        }
+        let least = self.markets[&market].spec.spread_tiers.iter().map(SpreadTier::tenth_bps).min().unwrap_or(0);
+        self.close_spread_ceiling(market).map_or(least, |bps| least.min(bps.saturating_mul(10)))
     }
 }
 
@@ -125,7 +151,7 @@ mod tests {
 
     #[test]
     fn a_limit_is_keyed_at_the_last_mid_a_fill_paying_the_rate_could_reach() {
-        for limit in (1..=3_000).chain([999_999_999_937, 100_000 * 1_000_000_000 + 7]) {
+        for limit in (1..=3_000).chain([999_999_999_937, 100_000 * 1_000_000_000 + 7, Fixed::MAX_INPUT.raw()]) {
             for rate in [0, 1, 7, 10, 99, 500, 1_234, 50_000, 99_999] {
                 let price = Fixed::from_raw(limit);
                 // A buy fills only where the mid plus the least spread is at or under the limit.
@@ -154,5 +180,33 @@ mod tests {
         let price = Fixed::from_int(100);
         assert_eq!(reach(price, Side::Sell, 100_000), reach(price, Side::Sell, 99_999));
         assert_eq!(reach(price, Side::Buy, 250_000), reach(price, Side::Buy, 99_999));
+    }
+
+    #[test]
+    fn an_order_leaves_from_the_key_it_was_indexed_at() {
+        let order = |order_id, side| RestingOrder {
+            order_id,
+            client_id: 0,
+            market: 1,
+            side,
+            qty: Fixed::from_int(1),
+            kind: OrderKind::Limit { price: Fixed::from_int(100) },
+            reduce_only: false,
+        };
+        let (buy, sell) = (order(1, Side::Buy), order(2, Side::Sell));
+        let mut indexes = HotIndexes::default();
+        indexes.key_triggers(1, 1_000, std::iter::empty());
+        indexes.order(AccountId([1; 20]), &buy, true);
+        indexes.order(AccountId([1; 20]), &sell, true);
+        // At 1% the buy is reached from 99.0099..., the sell from 101.0101...
+        assert_eq!(indexes.triggered(1, Fixed::from_int(99)), [(1, AccountId([1; 20]))]);
+        assert_eq!(indexes.triggered(1, Fixed::from_int(102)), [(2, AccountId([1; 20]))]);
+        assert!(indexes.triggered(1, Fixed::from_int(100)).is_empty());
+        // A rate moved in place does not move where an indexed order leaves from.
+        indexes.triggers.get_mut(&1).expect("keyed").rate = 0;
+        indexes.order(AccountId([1; 20]), &buy, false);
+        indexes.order(AccountId([1; 20]), &sell, false);
+        let book = &indexes.triggers[&1];
+        assert!(book.below.is_empty() && book.above.is_empty() && book.keys.is_empty());
     }
 }

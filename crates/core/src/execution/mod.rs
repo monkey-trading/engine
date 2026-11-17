@@ -22,7 +22,6 @@ use crate::event::{CancelReason, Event, Fill, Reject};
 use crate::fixed::Rounding;
 use crate::holding_fee;
 use crate::protocol::ProtocolVersion;
-use crate::spread_tier::SpreadTier;
 use crate::toxicity::FillMark;
 use crate::types::{AccountId, MarketId, OrderId, Side};
 use crate::volume_tier::AccountBands;
@@ -223,18 +222,6 @@ impl Engine {
         let id = self.next_order_id;
         self.next_order_id += 1;
         id
-    }
-
-    /// The least share of the index mid any fill in `market` pays from `V74`, in tenths of a bp: the
-    /// lower of its least spread band and its close-spread ceiling. Every spread part is at least zero,
-    /// from `V52` every fill pays its bands at a size multiplier of at least 1x, and only a pure close
-    /// clamps, to the ceiling (`price_at`). Zero before `V74`, which keys each limit at its price.
-    pub(crate) fn least_fill_rate(&self, market: MarketId) -> i64 {
-        if self.protocol_version < ProtocolVersion::V74 {
-            return 0;
-        }
-        let least = self.markets[&market].spec.spread_tiers.iter().map(SpreadTier::tenth_bps).min().unwrap_or(0);
-        self.close_spread_ceiling(market).map_or(least, |bps| least.min(bps.saturating_mul(10)))
     }
 
     /// The live mid resting orders in `market_id` trigger against, or `None` while the market is
