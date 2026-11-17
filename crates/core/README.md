@@ -1544,8 +1544,9 @@ protocol version on the 34 markets of `config/production-genesis.toml`, dealt ou
 `Mix::proposal`, the one place to change its shares. Half the accounts hold one market, 30% two to
 four, 15% five to twelve and 5% all 34, each market's holders in proportion to the cap study's market
 mix (`research/cap-calibration/data/derived/market_mix.csv`); 70%, 20%, 8% and 2% sit at tiers 0 to 3,
-each of the tiers above 0 with a full 30-day volume book; a fifth of the accounts rest orders up to
-their tier's limit, half inside the first spread band of a market and half away from the price (buys
+each of the tiers above 0 with a full 30-day volume book and tier 0 with the day its positions' opening
+notional counted on; a fifth of the accounts rest orders up to their tier's limit, half inside the
+first spread band of a market and half away from the price (buys
 at half the mark, sells at twice it); every account has a toxicity score, two session keys, the
 request nonces and the credited reference they leave, and positions of $5,000 in each market it holds.
 Each is funded by a credited reference, as the mock custody does, not by a custody receipt: the book
