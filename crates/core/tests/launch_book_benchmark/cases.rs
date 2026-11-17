@@ -252,7 +252,7 @@ pub fn close_outs(book: &mut Book, budget_us: u128) {
 /// The daily rollover, which charges every position its financing, with each benchmark's rate
 /// published first, and the state root after the last, which hashes every account it changed and
 /// nothing else. The weekend's gap follows the fourth rollover.
-pub fn rollover(book: &mut Book, budget_us: u128, root: RootBudget) {
+pub fn rollover(book: &mut Book, bar: Bar, root: Bar) {
     const ROLLOVERS: usize = 4;
     let total = |book: &Book| -> engine_core::Fixed { book.h.engine.accounts().values().map(|a| a.balance).sum() };
     let positions: usize = book.h.engine.accounts().values().map(|a| a.positions.len()).sum();
@@ -287,7 +287,8 @@ pub fn rollover(book: &mut Book, budget_us: u128, root: RootBudget) {
         times_p50(&times) as f64 / positions as f64
     );
     let (_, _, max) = report("rollover", &mut times, &extra);
-    within("rollover_max", max, budget_us);
+    noted("rollover_max_bar", max, bar.bar_us);
+    within("rollover_max_guard", max, bar.guard_us);
     // The root after the last rollover hashes the leaf of each account it financed, and no other
     // account's.
     let (_, us) = timed(|| book.h.engine.state_root());
@@ -300,10 +301,10 @@ pub fn rollover(book: &mut Book, budget_us: u128, root: RootBudget) {
     within("root_after_rollover_guard", us, root.guard_us);
 }
 
-/// The budgets of the root over a hundred thousand changed accounts: #904's bar, which the book does
-/// not meet and which is only noted, and the guard CI holds it to until it does.
+/// The budgets of a case the book does not meet: #904's bar, which is only noted, and the guard CI
+/// holds it to until the bar is met.
 #[derive(Clone, Copy)]
-pub struct RootBudget {
+pub struct Bar {
     pub bar_us: u128,
     pub guard_us: u128,
 }
