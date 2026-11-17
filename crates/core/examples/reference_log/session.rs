@@ -22,6 +22,7 @@ use crate::{stress, v10, v11, v12, v14, v15, v16, v17, v18, v19, v20, v21, v22, 
 use crate::{
     v29, v30, v31, v32, v33, v34, v35, v37, v38, v39, v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51, v52,
     v53, v54, v55, v56, v57, v58, v59, v60, v61, v62, v63, v64, v65, v66, v67, v68, v69, v70, v71, v72, v73, v74, v75,
+    v76,
 };
 
 /// The scripted session: client auth and activation, genesis, funding, prices,
@@ -45,8 +46,9 @@ use crate::{
 /// the timelock's installed operator, the house loss trigger, earned leverage, request and order limits, tier
 /// benefits, a rollover's tier in a catch-up, and a promotion finalised after its turn ended, including one
 /// of a refused draw and one whose set a lagging staking mirror kept, limits a price re-checks only
-/// once it could fill them, and closes that wait for the staking mirror and count a parked deposit as
-/// its client's, with the operator's key refused as a session key.
+/// once it could fill them, closes that wait for the staking mirror and count a parked deposit as its
+/// client's, with the operator's key refused as a session key, and voted changes to the rollover, price
+/// rules and corporate actions held to the operator's bounds.
 pub(crate) fn session() -> Vec<Sequenced> {
     let mut h = Harness::signed();
     let (a, b, c, d, t, e) = (h.signer(1), h.signer(2), h.signer(3), h.signer(4), h.signer(5), h.signer(6));
@@ -484,5 +486,6 @@ pub(crate) fn session() -> Vec<Sequenced> {
     v73::session(&mut h);
     v74::session(&mut h);
     v75::session(&mut h);
+    v76::session(&mut h);
     h.log
 }

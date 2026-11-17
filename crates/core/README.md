@@ -197,6 +197,15 @@ this crate and reproduce the signed state roots exactly.
   frontier has passed closes, while it ended less than a day before, and an older one is skipped
   (`src/staking.rs`); and a session key whose address is the operator key in effect signs nothing
   (`src/auth.rs`)
+- From protocol `V76`, the operator's bounds cover the rollover, price rules and corporate actions: the
+  rollover time moves only by a seven-day notice or a vote, from the rollover after the one due, and a
+  rollover charges a day's financing per day since the last (`src/operator_bounds/rollover.rs`); a
+  listed market's price rules loosen only by a seven-day listing notice or a vote, within its launch
+  rules (`src/listing_bounds.rs`); and a corporate action stays within the parameters' corporate
+  bounds, the dividends a market pays on short notice within seven days at most 10% of the mark at
+  launch, in the units held at their capture, a split at most 20 to 1 either way, with seven days'
+  notice and after every pending dividend's capture, at least two of the market's trading days ahead,
+  and while votes govern only by a passed vote (`src/corporate/bounds.rs`)
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -320,8 +329,9 @@ this crate and reproduce the signed state roots exactly.
   first reaches them, from `V74` a limit at the mid where its market's least fill rate first lets it fill,
   re-keyed when that rate moves, and each order's key kept for its removal
 - `src/marks.rs` — venue prices, and marking a market and the markets that convert at its index
-- `src/corporate/` — authenticated instruction types and scheduling (`mod.rs`), actual venue
-  boundary validation (`calendar.rs`), checked dividend cash transfers and recorded-FX
+- `src/corporate/` — authenticated instruction types and scheduling (`mod.rs`), the `V76` corporate
+  bounds (`bounds.rs`), actual venue boundary validation and the trading days before an action
+  (`calendar.rs`), checked dividend cash transfers and recorded-FX
   conversion (`cash.rs`), atomic split scaling with rounding and cash in lieu (`split.rs`), and
   chronological financing/action catch-up (`timeline.rs`)
 - `src/execution/` — order placement, triggers, pricing, and booking fills (`mod.rs`), the margin
@@ -366,7 +376,12 @@ this crate and reproduce the signed state roots exactly.
 - `src/admin/mod.rs` — operator commands and signed admin commands; `src/admin/quote_currency.rs`
   checks a listing's quote currency, and `src/admin/activation.rs` starts the rule sets an activation
   carries the log into that check their own version
-- `src/operator_bounds/mod.rs` — the V35 bounds: launch rates, rate notices and price-rule checks
+- `src/operator_bounds/mod.rs` — the V35 bounds: launch rates and rate notices
+- `src/operator_bounds/held.rs` — the checks on relisting a market that holds positions: price rules
+  that leave it priced (V35) and its benchmark (V46)
+- `src/operator_bounds/rollover.rs` — the V76 rollover bounds: the noticed rollover time, the due
+  rollover kept, and each rollover's charge for the time since the last, from the activation the
+  rollover before the one due
 - `src/operator_bounds/rotation.rs` — the V35 operator rotation: a signed `RotateOperator` and its seven-day notice
 - `src/operator_faults.rs` — the V70 fault proof contract, the penalty, each member's haircut and what it withholds from the time in office
 - `src/spread_tier.rs` — size spread bands: the `V52` unit in tenths of a bp beside the whole-bps
@@ -480,6 +495,17 @@ this crate and reproduce the signed state roots exactly.
 - `tests/params_notice.rs` — the V49 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
+- `tests/rollover_bounds.rs` — `V76`: a rollover moved every minute charging nothing more, a noticed move
+  that keeps the due rollover and the shorter day it then charges, the activation's first span over a
+  daylight saving day, and the rules before `V76`
+- `tests/price_rule_bounds.rs` — `V76`: loosened price rules refused without a notice, so a held-back
+  price fills nothing, tighter rules at once, noticed rules within launch's, the rules before `V76`,
+  and the activation's launch rules and corporate bounds
+- `tests/corporate_bounds.rs` — `V76`: a dividend above its cap refused on short notice and allowed
+  seven days ahead or by vote, short-notice dividends capped together within seven days and in the
+  units held at their capture, a split after pending dividends, trading days as distinct dates a day
+  apart whatever the calendar adds, the split ratio, the operator's action refused while votes govern,
+  the bounds' notice and launch limit, and the rules before `V76`
 - `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record; from `V47`, the candidate seated and the account the operator's share goes to; from `V48`, the timelock-only installation the failed-key fallback mirrors
 - `tests/operator_election.rs` — the V37 elections: refusals, the effective time and its seven-day floor, cancellation, and the refused signed rotation
 - `src/governance/mod.rs` — the V56 parameter votes: the recorded vote contract, when votes govern (from V65 only with a set with members in effect, a drawn turn from its boundary), passed proposals mirrored once, the normal changes waiting out their notice and `ApplyProposal`, the governed commands, and the canonical command bytes a proposal carries
@@ -494,6 +520,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/parameter_votes/volume_tiers.rs` — `V59` activated by a vote, a voted volume tier table held to its launch bounds without a notice, a voted relisting held at every tier, and from `V64` a voted table's margin floors held at or above launch, and from `V66` a voted table's limits held at or below launch
 - `tests/parameter_votes/weekend.rs` — `V60`: a voted weekend margin with no listing notice, held to its listing's range, the operator's weekend margin notice refused while rotation is on, the fast path refusing to move it, and a fast-path margin raise past it
 - `tests/parameter_votes/house_loss.rs` — `V62`: a voted change to the house loss threshold, refused above launch's or off its level, applied below it, with no notice
+- `tests/parameter_votes/operator_bounds.rs` — `V76`: a voted relisting loosening price rules back to launch's and refused past them, a voted rollover time that keeps the due rollover and charges the shorter day after it for its length, and voted corporate bounds needing no notice but refused past launch's
 - `src/turns.rs` — the V51 daily turns: the mirrored rotation sets and turn assignments, the turn key's handover at its boundary or mirror, the seven days' notice a set gives its keys, carried across sets from V53, `TurnTaken`, the turn's time in office, and the set in effect, which V65's votes need; with the `short-turns` feature, five-minute turns and one turn's notice
 - `src/turns/office.rs` — the turn in effect's member and the time its office ends, for the operator's share
 - `src/turns/length.rs` — a turn's length, boundary offset, draw lead and set notice: a day's, or with the `short-turns` feature five minutes'
@@ -551,7 +578,8 @@ this crate and reproduce the signed state roots exactly.
   key within its scope
 - `src/eip712.rs` — the EIP-712 domain, the request types clients and the operator sign, and signer
   recovery
-- `src/protocol.rs` — protocol versions, and how to add one
+- `src/protocol.rs` — how to add a protocol version
+- `src/protocol/versions.rs` — the protocol versions, in activation order
 - `src/protocol/support.rs` — `ProtocolVersion::LATEST`, and what a rule set supports: access
   screening, deposit finality, and `V2`
 - `src/merkle/mod.rs` — the state tree's layout and the sparse Merkle tree
@@ -696,7 +724,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V75` parts (`v15.rs` to `v75.rs`)
+  `V15` to `V76` parts (`v15.rs` to `v76.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1375,6 +1403,29 @@ Last, a request a session key signs is refused, spending no nonce, while the key
 operator key in effect, so a key an account registered before it became the operator's never trades on
 the admin sequence. Its log is `v75.jsonl`, and its session is in `examples/reference_log/v75.rs`.
 
+Protocol V76 bounds the operator's rollover, price rules and corporate actions. The rollover time
+(`ProtocolParams::rollover`) moves only as a parameter notice of at least seven days names it, or by a
+vote, and a new time keeps the rollover already due, applying from the one after it; a rollover charges
+a day's financing in proportion to the time since the last, rounded in the house's favour, so no
+schedule charges faster than a day's financing a day. The activation takes the rollover before the one
+due, by the time in force, as the last. A listed market's price rules loosen, by fewer
+sources, a longer freshness bound or a wider divergence bound, only as a listing notice of at least
+seven days names them, or by a vote, and never past the market's launch rules: those in force at the
+activation, or its first listing after it. Tighter rules apply at once. The parameters carry corporate
+bounds (`corporate::CorporateBounds`, launch's 10%, 20 and 2). A cash dividend scheduled less than seven
+days before its previous close, and not by a vote, is held, together with every other such dividend on
+its market ex within seven days of it, to `max_dividend_bps` of the market's mark when it is scheduled,
+in the units held at its capture, the mark scaled by each pending split that applies first. A split's
+ratio is at most `max_split_ratio` either way; a split needs scheduling at least seven days before its
+previous close, or a vote, since the venues' prices do not follow a split no issuer declared; and it may
+not apply before a pending dividend's previous close. Every action leaves at least `min_trading_days`
+trading days by its market's calendar: sessions closing after it is scheduled, its previous close the
+last, on as many distinct dates, with a day of time for each past the first, so sessions the operator
+adds to the calendar at once shorten nothing. The bounds move only by a notice or a vote, never looser
+than launch's. While votes govern, only a passed vote schedules a corporate action. Instructions pending
+at the activation keep the rules they were scheduled under. Its log is `v76.jsonl`, and its session is in
+`examples/reference_log/v76.rs`.
+
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
 is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
@@ -1421,7 +1472,7 @@ logs replay to. It ships as a new protocol version, and the committed logs of ea
 keep passing unchanged. `v1.jsonl` holds the original rules, and `v2.jsonl` adds two: a venue quote
 stamped more than `MAX_QUOTE_LEAD_MS` after the sequenced time is refused, and any quote replaces a
 stored one stamped after the sequenced time. Both predate activation, so every log starts under
-their combined rules, which `src/protocol.rs` names `V2`; `v1.jsonl` still replays because none of
+their combined rules, which `src/protocol/versions.rs` names `V2`; `v1.jsonl` still replays because none of
 its quotes is stamped ahead. `V3` adds signed client requests and activates at a recorded seq; its
 log is `v3.jsonl`. `V4` lets schedules carry dated closures and special sessions, and lets a zero
 house capital move record its reference; it activates the same way, and its log is `v4.jsonl`. `V5`

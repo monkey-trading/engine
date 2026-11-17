@@ -274,6 +274,7 @@ fn notice(market: MarketId, weekend_margin_bps: i64, effective_at: Millis) -> Ad
         margin_tiers: None,
         markup_bps: None,
         weekend_margin_bps: Some(weekend_margin_bps),
+        price_rules: None,
         effective_at,
     };
     AdminCommand::AnnounceListing { market, notice }

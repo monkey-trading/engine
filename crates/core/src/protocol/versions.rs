@@ -1,0 +1,481 @@
+//! The protocol versions, in activation order.
+
+use serde::{Deserialize, Serialize};
+
+/// A rule set, in activation order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProtocolVersion {
+    /// The rules every log starts under: the original rules (`v1.jsonl`), with venue quotes stamped
+    /// too far ahead of the sequenced time refused (`v2.jsonl`). Anyone may act for any account.
+    #[default]
+    V2,
+    /// Orders, cancels, and withdrawals are authorised as the log's `ClientAuth` records: by the
+    /// account's EIP-712 signature, next nonce, and expiry, or unsigned in dev logs.
+    V3,
+    /// Schedules may carry dated closures and special sessions, and a house capital move of zero
+    /// records its reference without moving cash.
+    V4,
+    /// Position accounting rounds in the house's favour: an averaged entry is the exact average of
+    /// the held entry and the fill price, rounded once, up for a long and down for a short; realised
+    /// and unrealised PnL round down; and the profit fee and a financing charge round up.
+    V5,
+    /// Each house exposure cap is the larger of its share of house NAV and its fixed dollar floor.
+    /// Close-outs are also checked after each rollover's financing and after a parameter or listing
+    /// change, close out only markets inside their trading session, and value a market that can
+    /// trade at the index they fill at.
+    V6,
+    /// A market may be quoted in EUR, GBP, or JPY, converted to USD at an FX market's index
+    /// (`MarketSpec::quote_currency`), and an FX pair's own listing is quoted in its second currency,
+    /// so a USD-JPY listing in USD is refused. Every other rule acts only through such a listing,
+    /// which earlier versions refuse, so USD markets run as before.
+    V7,
+    /// Admin commands arrive signed by the `Operator` the log records, with the operator's next
+    /// nonce and an expiry; once any deposit or house capital is credited, an unsigned operator
+    /// command is refused. One command makes every market reduce-only, and no parameters may let
+    /// stress and toxicity spreads price a closing trade at the price itself.
+    V8,
+    /// The state root is the root of the state tree (`merkle`), which each root updates where
+    /// commands changed it, and which proves an account's leaf against a posted root.
+    V9,
+    /// Spreads and margin round in the house's favour: every spread charge rounds up for the trader
+    /// paying it, from the size spread's notional and band charges to its share per unit, though a
+    /// sell's stops a unit short of the price, so rounding never makes a spread reach the price; and
+    /// every margin requirement rounds up, from the position's notional to the close-out level.
+    V10,
+    /// Toxicity scores carry nine decimals of a bp. A score is the notional-weighted average of its
+    /// account's markouts, from a neutral prior and over at most a memory of fill notional
+    /// (`ToxicityParams::notional`), and a markout is scored only at an index valid when it is
+    /// scored, within one horizon of falling due. Markouts queue in due order.
+    V11,
+    /// Each command first brings every market to its sequenced time, after storing a price
+    /// command's quotes: it refreshes every session, then processes each market whose index has
+    /// changed since it was last processed, and the priced one, as a price update does, before the
+    /// command or a rollover acts; a parameter or listing change does the same before its close-out
+    /// check. A venue quote stamped ahead of the sequenced time counts at once, as stamped at the
+    /// sequenced time.
+    V12,
+    /// Stress follows its inputs: an open, priced market's automatic level is re-evaluated before
+    /// every fill and after every command, the fast-move trigger measures moves over a trailing
+    /// window, and a divergence trigger is a share of each market's divergence bound. Activation
+    /// turns absolute divergence triggers into shares of the widest listed bound.
+    V13,
+    /// A market whose benchmark has no rate accrues no financing, and each rollover records the
+    /// benchmarks that have none; once any benchmark has a rate, no market is listed or moved onto
+    /// one that has none. An account rests at most `max_resting_orders` orders, which parameters
+    /// may set only from here, a resting order that may add risk meets its market's minimum notional
+    /// at its own price, and placing one checks only that order against the live price.
+    V14,
+    /// A resting order that can only reduce the account's existing position in its market — its
+    /// side opposing the position, its quantity at most the position's — need not meet the market's
+    /// minimum notional, exactly as a reduce-only order need not, so any position can be closed
+    /// with a plain order.
+    V15,
+    /// `SetParams` clamps every account's toxicity history to the memory in force, so a lowered
+    /// memory weighs the next markout against no more history than that. Before this, an account's
+    /// next markout after a lowered memory still weighs the history it had built under the old one;
+    /// that markout caps the history at the memory then in force.
+    V16,
+    /// Reopening a market keeps its trailing move window: prices observed within the window before
+    /// a halt still count after the reopening, so a move across a halt shorter than the window
+    /// raises fast-move stress as it would without the halt. Before `V17` an open cleared the
+    /// window.
+    V17,
+    /// Dated benchmark histories select each rollover's rate by its local date, including catch-up.
+    V18,
+    /// MONKEY emissions (`emissions`): once the operator's signed initialisation records a start and
+    /// a budget, every ten-minute period's budget is shared pro rata by its eligible realised losses
+    /// and finalised before the first command at or after its end, budgets halve every 26,280
+    /// periods, and each account's cumulative entitlement is a leaf of the state tree.
+    V19,
+    /// Sequencer-confirmed custody receipts are trading collateral; Ethereum finality releases
+    /// withdrawal principal, and canonical reversals remove the credited cash exactly once.
+    V20,
+    /// A quote is stored only if its market stays open from the quote's stamp to the sequenced time,
+    /// quotes held from before a closure are dropped at the first command after it, and activation
+    /// drops held quotes that could not count under these rules, so the first index after an open
+    /// comes from quotes stamped after it. A listing may name futures contracts in roll order: its
+    /// index is the front contract's median plus a roll adjustment; the next contract's quotes are
+    /// taken too, with the gap between the two medians recorded whenever both have an index, and
+    /// once the next contract's roll time has passed the market rolls at the first command where
+    /// it has an index and a gap is recorded, the adjustment taking the gap.
+    V21,
+    /// A withdrawal reserves whole USDC from trading cash in a public FIFO queue, and the queue
+    /// approves its head, partly when physical cash is short, as an immutable payout with its own
+    /// nonce. Activation sets payout capacity to the conserved cash less principal awaiting
+    /// finality, which joins it when its receipt finalises.
+    V22,
+    /// Pre-close corporate instructions capture entitlements and apply cash dividends and splits,
+    /// rounding each scaled price and quantity once, before ex-date opening execution, in
+    /// chronological order with financing. A failed split blocks its market and its financing.
+    V23,
+    /// Signed eligibility declarations and fail-closed API and custody access screening.
+    V24,
+    /// MONKEY staking and USDC distributions (`staking`): once the operator's initialisation
+    /// records a liquidity floor, an epoch length, and a start, each epoch the house NAV above the
+    /// floor is distributed to stakers pro-rata from the staked snapshot at the epoch's close,
+    /// paid in whole USDC base units that reduce house cash, with each account's cumulative
+    /// distribution a leaf of the state tree the vault pays a claim against. Stake and unstake
+    /// mirror the staking contract's finalised events, each credited once under its chain
+    /// reference.
+    V25,
+    /// Screen canonical replacement payers and retain terminal holds across receipt variants.
+    V26,
+    /// Staking mirror identities and completed finalized scan ranges are authenticated in the state root.
+    V27,
+    /// Reserve unresolved negative client cash before allocating staking distributions.
+    V28,
+    /// Exclude uncollectible marked client equity from distributable house NAV.
+    V29,
+    /// Compose reversible principal with marked liabilities before staking allocation.
+    V30,
+    /// Reserve staker distributions from unapproved physical withdrawal capacity.
+    V31,
+    /// An emission write-off that a period's realised losses cannot absorb, such as a reversal or
+    /// bad debt landing after the losses it unwinds, becomes a per-account emission debt that later
+    /// loss weight pays down before it earns again. Emission eligibility during corporate-action
+    /// catch-up is judged at the enclosing command's stamp, not the rewound boundary.
+    V32,
+    /// A relisting that raises a market's `max_age_ms` first drops the quotes already stale under the
+    /// old limit, so they cannot price again. A gap between two commands longer than the market's
+    /// `max_age_ms` checks the held quotes for a closure only within that window after the last command
+    /// and at its end, since after the window all of them are stale. A command stamped more than
+    /// [`crate::corporate::MAX_CATCH_UP_BOUNDARIES`] rollover or corporate boundaries past the engine's
+    /// last is deferred: it applies that many and nothing else, but for a benchmark batch's outcome.
+    V33,
+    /// A withdrawal request is at least 10 USDC, the vault's deposit floor, and the queue approves
+    /// less than that only as a request's final remainder.
+    V34,
+    /// The profit fee and the close-out level move only within ±50% of their launch values and only
+    /// from the time a signed notice, logged at least seven days before, names. A relisting whose
+    /// tighter price rules leave a market with open positions without a price is refused unless the
+    /// market is reduce-only. The operator key rotates only by a signed rotation that takes effect
+    /// seven days after it is logged.
+    V35,
+    /// The operator key follows the operator registry's election (`election`): the registry's
+    /// finalised events turning rotation on or off and electing a candidate mirror on the staking
+    /// mirror, each credited once under its chain reference, and an election naming another key
+    /// hands it over at the election's effective time, or seven days after it is logged when that
+    /// is later. While rotation is on, `RotateOperator` is refused.
+    V37,
+    /// The state root commits what the vault's exit against the last posted root needs: a queued
+    /// withdrawal's and a pending receipt's leaves are ABI-encoded so the vault can check them, and
+    /// one leaf holds the vault deposit cursor with the pending and held principal the exit
+    /// reserves. Activation rebuilds the tree under these encodings.
+    V38,
+    /// The exit terms name no unheld principal past the deposit cursor: with no live receipt above
+    /// the finalised frontier, a reversed deposit at vault deposit id 0 stays out of `unheld` — the
+    /// vault's cursor rule already refunds it by id, and reserving it as unheld too double-counted
+    /// it in the exit's refund reserve.
+    V39,
+    /// The total spread a close can pay is capped per market (`close_spread`): a ceiling registry
+    /// adopted at genesis — one entry per listed market, kept apart from `MarketSpec` — bounds
+    /// every close, and no operator command can raise a close's spread above its ceiling. A pure
+    /// close's charge clamps to the ceiling, floored to the exact bound; a reversal whose blended
+    /// spread would exceed the ceiling is refused while the pure close stays open, and a triggered
+    /// order refused that way fills its closing slice and cancels the rest. After genesis an entry
+    /// enters only by a signed adoption in effect seven days after it is logged, and can only be
+    /// lowered; a listing without an adopted ceiling, or one changing its instrument's identity,
+    /// is refused.
+    V40,
+    /// Session keys (`session_keys`): an account-signed registration authorises a browser-held key
+    /// to place and cancel orders until its expiry or an account-signed revocation. A registered,
+    /// unexpired key's request runs on the key's own nonce sequence under the same per-request
+    /// expiry cap; a revoked or expired key, a key signing a withdrawal, and any registration or
+    /// revocation before `V41` are refused with their own rejections.
+    V41,
+    /// An account's introduction of new session-key addresses is a budget that refills over
+    /// sequenced time instead of a lifetime count: a capacity of `MAX_SESSION_KEY_REGISTRATIONS`,
+    /// one address back per `SESSION_KEY_REFILL_MS`. Activation starts each account's budget at the
+    /// capacity less the addresses it introduced under `V41`, refilling from the activation time.
+    V42,
+    /// MONKEY emission weight (`emissions`) is an account's gross realised losses in each period:
+    /// every fill's loss magnitude counts, `max(-realised_pnl, 0)` (liquidations included, the
+    /// profit fee and financing excluded, cash-in-lieu split losses as before), and wins in the
+    /// period do not offset. Before `V43` weight is the net realised loss there. The `V32`
+    /// emission-debt mechanics carry over: a period's write-off absorbs its gross losses first,
+    /// the unabsorbed remainder becomes debt charged against earned weight, and surviving weight
+    /// pays debt down before it earns.
+    V43,
+    /// Batch orders (`batch`): one signed request cancels every resting order the account holds,
+    /// or closes the account's whole position in each named market, as one sequenced command. Each
+    /// close runs the single reduce-only market order's execution path in list order, so its
+    /// spreads, close-spread ceiling, fee, emissions weight, stress and house caps are that
+    /// order's; one that cannot fill is rejected and the others still run. Both forms take one
+    /// nonce, run under the `Trade` scope a session key signs within, and are refused before `V44`.
+    V44,
+    /// A close-all closes at most `Fixed::MAX_INPUT` units of a position per entry: the closing
+    /// order's quantity is the position capped at the external quantity bound, so a position
+    /// that fills accumulated past the bound still closes, the rest left in the fill's
+    /// `position` for the next request. Before `V45` such a close is refused whole as
+    /// `qty out of range`.
+    V45,
+    /// An elected operator's powers over rates and stress are bounded. A signed benchmark rate more
+    /// than 300 bps per day between their dates from a neighbouring applied rate is refused, and a
+    /// benchmark's first rate is bound only by the ±100% range. The operator's stress floor, in one
+    /// market or in all, is at most level 1 and lapses 72 hours of sequenced time after it is set;
+    /// a higher floor in force at activation drops to level 1, and each floor then in force starts
+    /// its 72 hours. The automatic triggers and `SetReduceOnly` do not change.
+    V46,
+    /// While rotation is on, a fifth of each epoch's distribution, rounded down, credits the
+    /// operator in effect when the close runs, in the cumulative distribution leaf of its candidate
+    /// address, and stakers share the rest pro rata; their rounding dust stays the house's. An
+    /// epoch that distributes nothing, or a close with rotation off, credits the operator nothing.
+    V47,
+    /// The timelock-only fallback for a failed operator whose key is gone (`election`): the
+    /// registry's `OperatorInstalled` event, mirrored while rotation is off, records an installed
+    /// handover whose key takes effect seven days after it is logged, replacing any pending
+    /// rotation; a signed `RotateOperator` is refused while one waits. The registry installs at
+    /// once on chain, behind the timelock's delay, so the mirror waits no finalised frontier. An
+    /// installed operator was seated by no election: the operator's share, once rotation is on
+    /// again, credits its key's address.
+    V48,
+    /// The stress parameters and a listed market's financing markup move only after a notice of at
+    /// least seven days, as the profit fee and close-out level do. `AnnounceParams` may name new
+    /// stress levels, move window and cooldown, which a `SetParams` applies from the notice's time
+    /// on, and `AnnounceMarkup` a market's new markup, which a relisting applies from its time on;
+    /// each applies once. A new listing needs no notice.
+    V49,
+    /// The operator's share is split by time in office (`staking::office`). While rotation is on,
+    /// each command credits the sequenced time since the last one to the account in office over it,
+    /// as `V47` names it, before its own handover. A close splits its fifth by the time the open epoch
+    /// counted, from the close before it, `V50`'s activation or staking's initialisation: each
+    /// account's part rounds down, and the time no one served with rotation off and the rounding go
+    /// to stakers. A handover in the close's own command leaves that epoch to the outgoing operator.
+    V50,
+    /// Daily operator turns (`turns`). The registry's rotation sets and turn assignments are mirrored
+    /// from finalised events, each credited once. A turn's admin key signs from its boundary, or from
+    /// its mirror when that is later, and only if a set mirrored at least seven days earlier names
+    /// it; otherwise the turn is refused and the key in effect stays. While turns run, the
+    /// operator's share counts time in office from the member's `TurnTaken` to the end of its turn,
+    /// and the time before a member takes its turn goes to stakers.
+    V51,
+    /// Every fill pays its market's size spread (`spread_tier`), in tenths of a bp: the slice that
+    /// closes the position pays through the same bands as the slice that grows it, over the notional
+    /// it closes, both at the stress level's multiplier, and a pure close's charge clamps to its
+    /// ceiling before the check that a spread stays under the price, so a pure close always prices.
+    /// No spread band is below its class's floor, a tenth of a bp on FX and index markets and 1bp on
+    /// every other, and no stress level's size multiplier is below 1x. A listed market's spread and
+    /// margin bands move only as a listing notice of at least seven days names them: at every
+    /// notional the spread rate stays from its launch rate to twice it, and the margin requirement at
+    /// or above launch's (`listing_bounds`). A close-spread ceiling is at least its market's launch
+    /// close charge, which counts the first band at the widest multiplier, and an adoption for a
+    /// market not yet listed binds the listing that market's first listing must be. Activation writes
+    /// every listed band in tenths, raises each to its floor and each multiplier to 1x, and takes the
+    /// result as the launch bands.
+    V52,
+    /// Daily turns keep a key's notice across sets, and count no office past the first turn's application.
+    /// A member's notice starts with the first of the unbroken run of mirrored sets, each the one
+    /// mirrored before the next, that named its candidate with its key: a set mirrored late that names
+    /// a member unchanged keeps its notice, and so does a set the engine no longer keeps. Before any
+    /// turn is in effect, the account in office holds it only until the first accepted turn applies,
+    /// so the first command past that boundary credits it nothing for the time since. The activation
+    /// carries the notice through the sets the log keeps then.
+    V53,
+    /// The toxicity score only worsens a price, and round trips cannot dilute it (`toxicity`). A
+    /// fill's markout is the index's move from the fill's index to the market's tradeable index 5 s
+    /// later, in units of the market's markout spread: the root mean square of its index's 5 s
+    /// changes over the trailing hour, never below the floor its listing names. The score is the
+    /// account's decayed weighted markout sum over the root of its decayed squared weights, with a
+    /// 7-day half-life and each weight capped at four times the account's decayed mean fill; from 20
+    /// decayed fills its tiers add spread. A fill matches the account's opposite fills within the
+    /// horizon newest-first, the quantity it closes against what they opened and the quantity it
+    /// opens against what they closed, and quantity matched at the same index scores nothing. Tier
+    /// thresholds and add-ons move only after a seven-day notice, within ±50% of
+    /// launch with an add-on of at least 1 bp, and a market's floor only at its listing. Activation
+    /// drops queued markouts, clears the `V11` scores and starts every account neutral, sets the
+    /// launch tiers where the parameters name none, and gives a market listed with no floor its
+    /// asset class's: 0.1 bp for FX, bonds and rates, 0.5 bp for indices, and 1 bp for the rest.
+    V54,
+    /// The profit fee falls with holding time (`holding_fee`): a realised gain pays the larger of
+    /// the base fee and the hold curve's fee at the hold of the slice it closes, the hold running
+    /// from the position's open time, which an add moves to the size-weighted average of now and
+    /// the open time raised to no earlier than now less the curve's last hold, and a flip restarts.
+    /// The base moves only from its launch value up to +50%, and the curve only to one at or above
+    /// its launch curve at every hold, reaching at most 30 minutes, each after a seven-day notice.
+    /// Before it a curve in the parameters charges nothing; activation raises a base cut below its
+    /// launch value back to it, gives parameters that name no curve the default one, and gives each
+    /// held position the open time `activation - the curve's last hold`.
+    V55,
+    /// Parameter changes by stake-weighted operator vote (`governance`). While rotation is on, the
+    /// governed parameters, listings, toxicity weighting, close-spread ceiling adoptions, the access
+    /// policy and protocol activation change only by a passed proposal, mirrored from finalised
+    /// events and credited once, and the operator's signed commands for them, and the node's unsigned
+    /// ones, are refused. A normal change applies no sooner than seven days after it is logged, under
+    /// every check its command meets but the notices the vote's own replaces. A fast-path proposal
+    /// applies at once as a restriction that only raises a margin or the close-out level, sets a
+    /// stress floor, lowers a house or market cap, or makes a market reduce-only: the values in force
+    /// are the stricter of the baseline and every restriction, which lapses after the recorded
+    /// lifetime unless renewed.
+    V56,
+    /// An add's averaged open time is clamped at the launch curve's last hold, 15 minutes at launch,
+    /// whatever curve is in force: the open time is raised to no earlier than now less that hold
+    /// before averaging, so a later curve that reaches further, noticed or voted, cannot widen the
+    /// age an add borrows. A log launched with no curve has no hold to pin and clamps at the curve in
+    /// force's, as before. Activation keeps every held position's open time.
+    V57,
+    /// The markout spread counts no change across a moment its market's index lapsed by quote expiry
+    /// alone: the sampler also checks the index at each moment one of the market's quotes aged out
+    /// since the previous command, which where three or more venues quote can end the index and bring
+    /// it back with no command between. A close-spread ceiling adoption for a market not yet listed
+    /// binds only a listing that names a markout floor. Activation gives each listing an adoption
+    /// bound, applied or pending, that names none its asset class's default floor, and carrying the
+    /// log across `V54` it is refused while such a listing's ceiling is below its launch close charge
+    /// under the parameters as it converts them.
+    V58,
+    /// Volume tiers (`volume_tier`): an account's tier is the highest whose threshold its counted volume
+    /// over the last 30 UTC days reaches, each day counting at most the threshold over the tier's day
+    /// divisor, and its first spread band in every market ends at its tier's share of the first bound,
+    /// at most the second, with no rate changed. Opening notional counts on the day it has been held
+    /// 60 s; a close takes the position's pending notional newest first, counting nothing for it, and
+    /// counts what it closes past it once the toxicity horizon has passed, unless a reopening at the
+    /// same index within it takes it back as a round trip; a close-out counts at once. The table moves
+    /// only after a seven-day notice or by a vote, keeping its launch tiers, thresholds and day
+    /// divisors at or above launch and shares at or below, with every market's spread at each tier from
+    /// that tier's launch spread to twice it. Activation, refused over a listing outside that bound, gives
+    /// parameters that name no table the launch table, starts every account at tier 0 with no counted
+    /// volume, and holds every position held then pending, counting nothing, for its first 60 s.
+    V59,
+    /// A market may carry a weekend margin (`weekend`): a rate each of its margin bands charges at
+    /// least over its weekend gap, any closure of at least 40 hours by its calendar. From two hours
+    /// before such a gap starts until the market reopens, the account's margin requirement counts each
+    /// position in the market at its weekend margin for a fill that adds risk in any market, which is
+    /// refused below it, and for a withdrawal. When the gap starts, each account holding the market
+    /// whose equity at its marks is below that requirement is closed out on the markets whose gaps
+    /// start then, largest loser first, at their marks, until it meets it; a relisting that puts the
+    /// market in a gap it has not closed out closes it out then. A listed market's weekend margin moves
+    /// only as a listing notice of at least seven days names it, or while rotation is on as a passed
+    /// vote does, to a rate from none to 10000 bps; a calendar change that is not a vote may not
+    /// narrow or remove a weekend gap within seven days, nor add or bring forward a held market's gap
+    /// within seven days. Before it a listing's weekend margin does nothing; activation starts each
+    /// listed market that names one, holding a gap it is in, or one starting within two hours, with
+    /// no close-out.
+    V60,
+    /// Volume tier fixes. An activation over parameters set before `V59` records `launch_volume_tiers` as
+    /// the launch table the table's bounds measure from, rather than the table those parameters name,
+    /// which it still takes up when no more generous, and checks every listing against it, and every
+    /// first listing an adoption binds (the pending one where it replaces an applied one). A close-spread ceiling adoption for a market not yet listed is held, when adopted, to the
+    /// volume tier bound its listing must meet when it applies. A closing lot joins the newest only
+    /// when its leg's matured and pending units cannot be told apart in the order the toxicity score
+    /// takes them: either leg empty, both only matured, or both only pending.
+    V61,
+    /// A stress trigger on the house's marked loss to its clients over the trailing day (`house_loss`):
+    /// the fall in house NAV, which counts clients' unrealised PnL at the marks, less the house capital
+    /// credited in net, so net of fees, spreads and financing, from activation and never below the loss
+    /// over the day, with a dividend paid ahead of its market's next mark counted without it. A stress
+    /// level's trigger may name a loss threshold, met when the loss is above it; every market's
+    /// automatic level then rises to that level, re-read before every fill and after every command, and
+    /// steps down after the cooldown once the loss is back at or below it. Each change of the level the
+    /// loss sets is an event. A change to the stress parameters, by notice or by vote, keeps each
+    /// launch threshold at its level or above, at most its launch value. Before it a threshold the
+    /// parameters name reads nothing; activation keeps it, gives level 2's trigger a threshold of zero
+    /// where the parameters have a level 2 and name none, and takes the thresholds in force as
+    /// launch's.
+    V62,
+    /// An activation that carries the log from before this version to it ends every market's open
+    /// markout-spread interval, since the activation command sampled under the earlier rules, which
+    /// before `V58` did not check the moments a market's quotes aged out (and `V58`'s own activation
+    /// sampled under the rules before it), so a lapse since the last grid point may be unseen and the
+    /// change across it would count.
+    V63,
+    /// Earned leverage (`volume_tier`): a volume tier may carry a margin floor, and an account's initial
+    /// requirement charges each margin band at the larger of its rate and its tier's floor, with the
+    /// weekend margins that apply now on top band by band. A fill that adds risk is refused below it,
+    /// and a withdrawal leaves it; close-outs, on a price move or at a weekend gap, read the market's
+    /// bands alone, so a falling tier closes nothing out. The table's floors move only with it, by a
+    /// seven-day notice or a vote, never below launch's and never rising with the tier. Activation gives
+    /// each tier of the table in force, and of its launch table, at least a floor by position: 500 bps
+    /// at tier 0, 200 at tier 1 and none above; before it a floor a table names charges nothing.
+    V64,
+    /// Votes govern only while a rotation set with members is in effect, as only its members can
+    /// propose, so until the first takes effect, and while an empty one is, the operator keeps its
+    /// bounded commands. A drawn turn names the operator from its boundary, not its mirror. Each
+    /// mirrored staking frontier carries the registry's turn state at that block, the boundary of the
+    /// turn naming the operator or none, which a turn the engine refused before `V65` gives no other
+    /// record of, and a passed proposal mirrored while a set is in effect and the engine sees no
+    /// rotation shows such a turn from then. Activation takes the earliest boundary of the accepted
+    /// turns held, and a log holding rotation sets counts rotation as on until the first frontier.
+    V65,
+    /// Request and order limits (`volume_tier`): a volume tier may carry a resting-order limit and a
+    /// request rate, each named for every tier or none. An account rests at most its tier's limit in
+    /// place of the parameters' cap, a new resting order past it refused with its own rejection while
+    /// orders already resting stay, and the node admits its signed requests at its tier's rate. The
+    /// limits move only with the table, by a seven-day notice or a vote, never above launch's and never
+    /// falling with the tier. Activation gives each tier of the table in force, and of its launch table,
+    /// that names none a limit by position: 25, 50, 100 and 250 orders, and 2, 5, 10 and 20 requests a
+    /// second; before it a table may name none.
+    V66,
+    /// A weekend close-out fills at its market's mark at the stress level the house's loss sets now if
+    /// that is higher than the market's own level, which it neither lowers nor changes, so a market
+    /// with no index to re-read its level from (`V62` leaves it at the level it last set) pays the
+    /// loss trigger's level too. Its spread still clamps to the market's close-spread ceiling. A mirrored
+    /// staking frontier may name a drawn turn that has not started, up to a day after the block's time,
+    /// where `V65` named only a turn begun by then.
+    V67,
+    /// Tier benefits (`volume_tier`): a volume tier may carry a fee discount, a financing discount and an
+    /// emissions boost. A realised gain pays the larger of its hold curve's fee and the base fee less its
+    /// tier's discount at the close, rounded up to the bp; each rollover charges a position the markup
+    /// less its account's tier's discount, a negative markup as listed; and an account's weight in an
+    /// emission period, after its emission debt, grows by its tier's boost at the period's close before
+    /// the budget is shared. The benefits move only with the table, by a seven-day notice or a vote, none
+    /// above launch's and none falling with the tier, so a higher tier never pays more fee than a lower
+    /// one. Activation gives each tier of the table in force, and of its launch table, its position's
+    /// benefits: fee and financing discounts of 0, 0, 10% and 20%, and boosts of 0, 10%, 25% and 50%;
+    /// before it a table may name none.
+    V68,
+    /// A rollover reads an account's tier from only the volume that had counted by its own time, however
+    /// many fills of the account a catch-up makes first, in this command or an earlier one it was deferred
+    /// from: a fill's book settlement moves every lot counted by the command's stamp into its day, and the
+    /// book now keeps each lot counted after the boundary the catch-up stands at (a lot's due time, day and
+    /// notional, a close-out's own count included) until the catch-up has passed its time, and the tier
+    /// read at an earlier boundary leaves them out. The volume leaf encodes them while any are kept.
+    V69,
+    /// A fault the fault proof contract proves, two signed log heads of one turn's assignment that
+    /// disagree at one seq, cuts its member's operator share by a haircut that starts at the recorded
+    /// penalty and falls linearly to nothing over its decay; the withheld part goes to stakers
+    /// (`operator_faults`).
+    V70,
+    /// A promotion the schedule finalised after its turn's nominal end applies when it is mirrored, as
+    /// long as no later turn is in effect, so the promoted member's key signs and its `TurnTaken` is
+    /// accepted, where an earlier version refused every assignment for a turn that had ended. A turn
+    /// applied after its end holds the office, for the operator's share, until a later turn applies.
+    V71,
+    /// The engine keeps the set of each turn whose assignment it refused, until a later turn is in
+    /// effect, so a promotion of that turn after its end is not refused for a set a later adoption
+    /// pruned.
+    V72,
+    /// The engine forgets a rotation set by the block time the staking mirror has completed, when that
+    /// is earlier than the sequenced time, and forgets none before the mirror records one, so a mirror
+    /// that lags the chain keeps a set until the draws from it are mirrored, where an earlier version
+    /// counted from the sequenced time alone.
+    V73,
+    /// A price re-checks only the resting limits it could fill. A limit is indexed at the index mid
+    /// where its market's least fill rate, the lower of its least spread band and its close-spread
+    /// ceiling, first lets it fill, since no fill pays less, and a market's limits are re-keyed once
+    /// that rate moves, by a relisting, a passed vote or a ceiling adoption. A stop keeps its trigger
+    /// at its price. A limit a price leaves out of that reach is not priced, where an earlier version
+    /// priced every limit past its price:
+    /// - the stress refresh that pricing runs first waits for the next fill, close-out or the
+    ///   command's end, so the stress level, and the prices of the fills that follow, can differ;
+    /// - a limit refused before its price is checked is cancelled as unfillable only once a price
+    ///   comes within its reach, or never: a reduce-only limit whose position has gone or turned, new
+    ///   risk in a market that is reduce-only (by its own flag, every market's, or a vote's
+    ///   restriction) or below its minimum notional, a spread at its size that reaches the price, and
+    ///   a reversal over the ceiling, whose closing slice fills first if it can;
+    /// - until then such a limit rests, and fills if a later change lets it, as a reduce-only limit
+    ///   does once its position reopens.
+    V74,
+    /// An epoch close counts a client's unfinalised deposit as the client's own cash, reserving for each
+    /// account only what its cash, and its marked equity, would fall below zero by were its deposits to
+    /// reverse. The latest epoch the staking mirror's finalised frontier has passed closes, while it
+    /// ended under a day before; an older one is skipped. A session key signs nothing while its address
+    /// is the operator key in effect, and spends no nonce.
+    V75,
+    /// Bounds on the rollover, price rules and corporate actions. The rollover time moves only by a
+    /// seven-day parameter notice or a vote, from the rollover after the one due, and a rollover charges
+    /// a day's financing per day since the last (`operator_bounds::rollover`). A listed market's
+    /// price rules loosen only by a seven-day listing notice or a vote, within its launch rules
+    /// (`listing_bounds`). A corporate action stays within `corporate::CorporateBounds` and, while votes
+    /// govern, needs a passed vote.
+    V76,
+}

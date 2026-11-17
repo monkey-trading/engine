@@ -190,6 +190,7 @@ fn a_pending_listing_notice_is_listed_in_the_market_reads_units_and_across_a_res
         margin_tiers: None,
         markup_bps: None,
         weekend_margin_bps: None,
+        price_rules: None,
         effective_at,
     };
     let events = operate(&mut seq, &clock, AdminCommand::AnnounceListing { market: 1, notice: notice.clone() });
@@ -223,6 +224,8 @@ fn a_pending_parameter_notice_and_the_profit_fee_curve_are_listed_and_kept_acros
         stress: None,
         profit_fee_curve: Some(raised),
         volume_tiers: None,
+        rollover: None,
+        corporate_bounds: None,
         effective_at: clock.now_ms() + NOTICE_MS + 60_000,
         score_tiers: None,
     };

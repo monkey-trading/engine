@@ -104,6 +104,8 @@ pub(crate) fn session(h: &mut Harness) {
         closeout_level_bps: None,
         stress: None,
         score_tiers: Some(raised),
+        rollover: None,
+        corporate_bounds: None,
         effective_at,
         profit_fee_curve: None,
         volume_tiers: None,

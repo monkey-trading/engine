@@ -118,8 +118,8 @@ pub enum AdminAction {
     /// `--effective-at`, at least seven days after the notice is logged, and the fee, the level and each
     /// tier's score and add-on must each stay within 50% of their launch values, from V55 with the fee
     /// at or above its launch value and the curve at or above its launch curve at every hold, and from
-    /// V59 with the volume tiers no more generous than at launch. It replaces a pending notice,
-    /// whatever that names.
+    /// V59 with the volume tiers no more generous than at launch, and from V76 with the corporate bounds
+    /// no looser than at launch. It replaces a pending notice, whatever that names.
     AnnounceParams {
         #[arg(long)]
         profit_fee_bps: Option<i64>,
@@ -138,6 +138,12 @@ pub enum AdminAction {
         /// A TOML parameters file whose volume tier table a later `set-params` applies.
         #[arg(long)]
         volume_tiers_from: Option<PathBuf>,
+        /// From V76, a TOML parameters file whose rollover time a later `set-params` applies.
+        #[arg(long)]
+        rollover_from: Option<PathBuf>,
+        /// From V76, a TOML parameters file whose corporate action bounds a later `set-params` applies.
+        #[arg(long)]
+        corporate_bounds_from: Option<PathBuf>,
         /// When the new values may apply from, in RFC 3339 (`2027-01-01T00:00:00Z`).
         #[arg(long)]
         effective_at: DateTime<Utc>,
@@ -154,11 +160,12 @@ pub enum AdminAction {
         effective_at: DateTime<Utc>,
     },
     /// Give notice of a listed market's new spread bands, margin bands and/or financing markup, in
-    /// bps a year (from V52), and/or weekend margin (from V60): an `upsert-market` carrying them
-    /// applies only from `--effective-at`, at least seven days after the notice is logged, with each
-    /// spread rate from its launch rate to twice it, the margin requirement at or above launch's, and
-    /// the weekend margin from 0, none, to 10000 bps, which each margin band charges at least over the
-    /// market's weekend gap. It replaces that market's pending notice.
+    /// bps a year (from V52), weekend margin (from V60) and/or price rules (from V76): an `upsert-market`
+    /// carrying them applies only from `--effective-at`, at least seven days after the notice is logged,
+    /// with each spread rate from its launch rate to twice it, the margin requirement at or above
+    /// launch's, the weekend margin from 0, none, to 10000 bps, which each margin band charges at least
+    /// over the market's weekend gap, and price rules no looser than launch's. Tighter price rules need
+    /// no notice. It replaces that market's pending notice.
     AnnounceListing {
         market: MarketId,
         /// A TOML market spec whose spread bands a later `upsert-market` applies, such as the file it
@@ -173,6 +180,9 @@ pub enum AdminAction {
         /// From V60, the market's new weekend margin rate, 0 for none.
         #[arg(long)]
         weekend_margin_bps: Option<i64>,
+        /// From V76, a TOML market spec whose price rules a later `upsert-market` applies.
+        #[arg(long)]
+        price_rules_from: Option<PathBuf>,
         /// When the new values may apply from, in RFC 3339 (`2027-01-01T00:00:00Z`).
         #[arg(long)]
         effective_at: DateTime<Utc>,

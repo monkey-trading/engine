@@ -44,6 +44,8 @@ fn stress_notice(params: &ProtocolParams, effective_at: Millis) -> AdminCommand 
         stress,
         profit_fee_curve: None,
         volume_tiers: None,
+        rollover: None,
+        corporate_bounds: None,
         effective_at,
         score_tiers: None,
     })
@@ -158,6 +160,8 @@ fn a_rate_and_stress_notice_is_spent_part_by_part_and_a_new_notice_replaces_it()
         stress,
         profit_fee_curve: None,
         volume_tiers: None,
+        rollover: None,
+        corporate_bounds: None,
         effective_at: due,
         score_tiers: None,
     };
@@ -176,6 +180,8 @@ fn a_rate_and_stress_notice_is_spent_part_by_part_and_a_new_notice_replaces_it()
         stress: None,
         profit_fee_curve: None,
         volume_tiers: None,
+        rollover: None,
+        corporate_bounds: None,
         effective_at,
         score_tiers: None,
     };

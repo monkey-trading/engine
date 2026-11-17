@@ -258,6 +258,15 @@ tz = "Europe/London"
 hour = 22
 minute = 0
 
+[genesis.params.corporate_bounds]
+# From protocol V76, the corporate action bounds: cash dividends scheduled with less than seven days'
+# notice totalling at most 10% of the share's mark within seven days, a split of at most 20 to 1 either
+# way, and at least two of the market's trading days before every ex-date. Later bounds never loosen
+# past these.
+max_dividend_bps = 1000
+max_split_ratio = 20
+min_trading_days = 2
+
 [genesis.params.toxicity]
 # From protocol V54 the score is how many standard errors an account's
 # decayed, size-capped markout edge sits above zero, each markout in units of

@@ -150,6 +150,8 @@ fn each_action_builds_its_admin_command() {
                 score_tiers: None,
                 profit_fee_curve: None,
                 volume_tiers: None,
+                rollover: None,
+                corporate_bounds: None,
                 effective_at: 1_798_761_600_000,
             }),
         ),
@@ -250,7 +252,7 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
     };
     assert_eq!(notice.profit_fee_curve, Some(dev_config().genesis.params.profit_fee_curve));
     assert_eq!(notice.stress, None);
-    // A volume tier notice takes the table of the file a later `set-params` carries.
+    // A volume tier notice, and from V76 a rollover and corporate bounds notice, take the file's.
     let AdminCommand::AnnounceParams(notice) =
         action(&["announce-params", "--volume-tiers-from", &params, "--effective-at", at]).command().unwrap()
     else {
@@ -258,6 +260,12 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
     };
     assert_eq!(notice.volume_tiers, Some(dev_config().genesis.params.volume_tiers));
     assert_eq!(notice.profit_fee_curve, None);
+    let (rollover, bounds) = ("--rollover-from", "--corporate-bounds-from");
+    let args = ["announce-params", rollover, &params, bounds, &params, "--effective-at", at];
+    let AdminCommand::AnnounceParams(notice) = action(&args).command().unwrap() else { panic!("a notice") };
+    let genesis = dev_config().genesis.params;
+    let named = (notice.rollover, notice.corporate_bounds, notice.volume_tiers);
+    assert_eq!(named, (Some(genesis.rollover), Some(genesis.corporate_bounds), None));
 
     let mut wide = dev_config().genesis.params;
     let top = wide.stress_levels.len() - 1;
@@ -290,6 +298,9 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
     };
     assert_eq!(notice.spread_tiers.as_ref(), Some(&spec.spread_tiers));
     assert_eq!((notice.margin_tiers, notice.markup_bps), (Some(spec.margin_tiers.clone()), None));
+    let args = ["announce-listing", "3", "--price-rules-from", &sol, "--effective-at", at];
+    let AdminCommand::AnnounceListing { notice, .. } = action(&args).command().unwrap() else { panic!("a notice") };
+    assert_eq!((notice.price_rules, notice.spread_tiers), (Some(spec.price_rules), None));
     let adopt = ["adopt-close-spread-ceiling", "-m", "3", "--max-close-spread-bps", "30", "--effective-at", at];
     let AdminCommand::AdoptCloseSpreadCeiling { listing, .. } =
         action(&[&adopt[..], &["--listing", &sol]].concat()).command().unwrap()

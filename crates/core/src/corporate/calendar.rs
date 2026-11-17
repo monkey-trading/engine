@@ -1,9 +1,17 @@
 //! Calendar validation uses the same schedule predicate as execution, including dated exceptions.
 
+use std::collections::BTreeSet;
+
 use chrono::{DateTime, Datelike, LocalResult, NaiveDateTime, Offset, TimeZone, Utc};
 
-use crate::session::Schedule;
+use crate::session::{Schedule, WEEKEND_SEARCH_MS};
 use crate::types::Millis;
+
+/// How far after scheduling the session closes before a corporate action are looked for: the year the
+/// weekend gap searches look ahead.
+const CLOSE_SEARCH_MS: Millis = WEEKEND_SEARCH_MS;
+/// A day of sequenced time, the least lead each trading day past the first adds.
+const DAY_MS: Millis = 24 * 60 * 60 * 1000;
 
 /// Checks an actual close and its immediately following venue opening.
 /// Error cases:
@@ -55,6 +63,32 @@ pub(super) fn validate_boundaries(schedule: &Schedule, close: Millis, open: Mill
         date = next;
     }
     Ok(())
+}
+
+/// Whether `schedule` has at least `count` trading days between `after` and `close`: sessions closing
+/// after `after` and at or before `close`, within `CLOSE_SEARCH_MS` of `after`, on at least `count`
+/// distinct local dates, with `close` at least a day after `after` for each trading day past the
+/// first. The dates keep closes within one day from counting twice, and the time keeps sessions the
+/// calendar adds at once from shortening the lead below a day each.
+pub(super) fn trading_days_at_least(schedule: &Schedule, after: Millis, close: Millis, count: u32) -> bool {
+    let Schedule::Weekly { tz, .. } = schedule else { return false };
+    if close - after < i64::from(count.saturating_sub(1)) * DAY_MS {
+        return false;
+    }
+    let limit = close.min(after.saturating_add(CLOSE_SEARCH_MS));
+    let mut dates = BTreeSet::new();
+    let mut at = after;
+    while dates.len() < count as usize {
+        let Some(change) = schedule.next_change(at, limit) else { return false };
+        // Open at `at`, the venue shuts at `change`: a session closes there, on the local date of its
+        // last open instant.
+        if schedule.is_open(at) {
+            let last = DateTime::<Utc>::from_timestamp_millis(change - 1).expect("a close within engine time");
+            dates.insert(last.with_timezone(tz).date_naive());
+        }
+        at = change;
+    }
+    true
 }
 
 /// Boundary occurrences and the offset change that can cross it backwards or skip over it.

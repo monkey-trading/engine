@@ -48,6 +48,8 @@ fn notice(fee: Option<i64>, level: Option<i64>, effective_at: Millis) -> AdminCo
         stress: None,
         profit_fee_curve: None,
         volume_tiers: None,
+        rollover: None,
+        corporate_bounds: None,
         effective_at,
         score_tiers: None,
     })

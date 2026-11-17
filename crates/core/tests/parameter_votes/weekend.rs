@@ -59,6 +59,7 @@ fn the_operators_weekend_notice_waits_for_rotation_to_end_and_the_fast_path_cann
         margin_tiers: None,
         markup_bps: None,
         weekend_margin_bps: Some(3_000),
+        price_rules: None,
         effective_at: h.ts + NOTICE_MS,
     };
     let announce = AdminCommand::AnnounceListing { market: AAPL, notice };

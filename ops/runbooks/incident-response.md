@@ -117,7 +117,9 @@ A market priced far from the venues, a page that the venues disagree, fills that
 - Make the market reduce-only. If the price itself is wrong and fills continue, raise the stress
   floor, and consider the guardian's pause. See [feed-and-custody-failures.md](feed-and-custody-failures.md).
 - Do not widen `max_divergence_bps` or change a market's price rules in the heat of an incident:
-  they are protocol parameters and a change is an owner decision with a notice period.
+  they are protocol parameters and a change is an owner decision with a notice period. From `V76` the
+  engine enforces it: looser price rules apply only seven days after a listing notice
+  (`announce-listing --price-rules-from`), or by a vote, and never past the market's launch rules.
 - From `V52` a market's spread and margin bands change only seven days after a listing notice
   (`announce-listing`), within its launch bands, so an incident widens spreads through the stress
   floor and stops new risk through reduce-only, never through a relisting. While votes govern

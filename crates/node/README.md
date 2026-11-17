@@ -2842,12 +2842,15 @@ above the launch curve at every hold, as the profit fee stays at or above its la
 launch tiers, no threshold or day divisor below launch and no share above it, from `V64` no margin
 floor below launch or above the tier before it, and from `V66` no `max_resting_orders` or
 `requests_per_second` unnamed, above launch or below the tier before it, and from `V68` no `fee_discount_bps`,
-`financing_discount_bps` or `emissions_boost_bps` above launch or below the tier before it; `announce-markup <market> <bps>
+`financing_discount_bps` or `emissions_boost_bps` above launch or below the tier before it, and from `V76` with
+`--rollover-from <params.toml>` the notice a rollover time change needs and with `--corporate-bounds-from
+<params.toml>` the notice for its `corporate_bounds`, none looser than launch's; `announce-markup <market> <bps>
 --effective-at <time>` gives the notice a listed market's markup change needs before an
 `upsert-market` carries it. From `V52`, `announce-listing <market>` with `--spreads-from` and
 `--margins-from` (TOML market specs whose bands it names) and `--markup-bps` gives the notice a listed
-market's spread band, margin band or markup change needs, and from `V60` with `--weekend-margin-bps`
-(0 for none) the notice its weekend margin change needs; `adopt-close-spread-ceiling --listing
+market's spread band, margin band or markup change needs, from `V60` with `--weekend-margin-bps`
+(0 for none) the notice its weekend margin change needs, and from `V76` with `--price-rules-from
+<spec.toml>` the notice price rules looser in any rule need, none looser than the market's launch rules; `adopt-close-spread-ceiling --listing
 <spec.toml>` names the listing an adoption for a market not yet listed binds. From `V37`, while the operator registry has rotation on, the engine refuses
 `rotate-operator`, and an election's key takes over the same way: from the election's effective
 time, or seven days after the election is logged when that is later, and once the staking mirror
@@ -2857,15 +2860,16 @@ has completed a finalised block stamped at or after the registry's effective tim
 "house_loss", "checkpoint"}` from memory, signed like the other reads, with no log scan, so a client learns the
 protocol parameters, the pending notices and the latest checkpoint without replaying the log.
 `params_notice` is the pending parameter notice (`null` while none waits): each of
-`profit_fee_bps`, `closeout_level_bps`, `stress`, from `V54` `score_tiers` and from `V55`
-`profit_fee_curve` it names, and `effective_at`. `listing_notices` maps each
-market with a pending notice to it (`spread_tiers` in tenths of a bp, `margin_tiers`, `markup_bps`,
-from `V60` `weekend_margin_bps`, each left out when not named, and `effective_at`); the bands in
+`profit_fee_bps`, `closeout_level_bps`, `stress`, from `V54` `score_tiers`, from `V55`
+`profit_fee_curve` and from `V76` `rollover` and `corporate_bounds` it names, and `effective_at`.
+`listing_notices` maps each market with a pending notice to it (`spread_tiers` in tenths of a bp,
+`margin_tiers`, `markup_bps`, from `V60` `weekend_margin_bps`, from `V76` `price_rules`, each left out
+when not named, and `effective_at`); the bands in
 force are `GET /v1/markets`'s. `seq` is the log head the read was taken at (`null` on an empty log).
 `params` is `null` until the first `SetParams` applies, then the parameters in force, as the
 `set_params` command encodes them (`profit_fee_bps`, `closeout_level_bps`, `house_total_cap_bps`,
-`house_total_cap_floor` left out when zero, `stress_levels`, from `V55` `profit_fee_curve`, and the
-rest), plus `seq`, the seq of the
+`house_total_cap_floor` left out when zero, `stress_levels`, from `V55` `profit_fee_curve`, from `V76`
+`corporate_bounds` left out at launch's, and the rest), plus `seq`, the seq of the
 `SetParams` that set them (`null` only when a snapshot written before it carried the seq restored the
 node and no `SetParams` has applied since; an activation that converts the parameters in place, as
 `V13`'s divergence shares, `V52`'s 1x multipliers, `V54`'s score tiers, `V55`'s default curve and
@@ -3391,6 +3395,14 @@ sessions and DST; `previous_close` must be the close immediately before `ex_open
 before that close. Submission at the close or later is rejected because the engine cannot infer
 historical holdings. A pending action locks its market's calendar, symbol, asset class and quote
 currency; margin and spread changes remain available.
+
+From V76 each instruction is held to the parameters' `corporate_bounds`: at least two of the market's
+trading days close after it is logged, on distinct dates and with a day of time for each past the
+first; dividends logged less than seven days before their previous close total at most 10% of the
+market's mark within seven days, in the shares held at their capture; and a split is at most 20 to 1
+either way, logged at least seven days before its previous close and after every pending dividend's
+capture. While votes govern, only a passed vote schedules one. `ops/runbooks/corporate-actions.md`
+gives the bounds and the refusals.
 
 For a dividend, `[adjustment]` contains `kind = "dividend"`, `gross_per_unit` in quote currency per
 share or index unit held at `previous_close` (so a dividend going ex after a split is entered per

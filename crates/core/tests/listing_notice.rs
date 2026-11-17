@@ -31,6 +31,7 @@ fn notice(spread: Option<Vec<SpreadTier>>, margin: Option<Vec<Tier>>, markup: Op
         margin_tiers: margin,
         markup_bps: markup,
         weekend_margin_bps: None,
+        price_rules: None,
         effective_at: at,
     }
 }
@@ -243,6 +244,8 @@ fn from_v52_no_stress_level_waives_the_size_spread() {
         stress,
         profit_fee_curve: None,
         volume_tiers: None,
+        rollover: None,
+        corporate_bounds: None,
         effective_at: at,
         score_tiers: None,
     };

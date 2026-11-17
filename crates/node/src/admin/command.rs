@@ -43,12 +43,16 @@ impl AdminAction {
                 score_tiers_from,
                 profit_fee_curve_from,
                 volume_tiers_from,
+                rollover_from,
+                corporate_bounds_from,
                 effective_at,
             } => {
                 let stress = stress_from.map(|file| read_params(&file).map(|params| StressSettings::of(&params)));
                 let tiers = score_tiers_from.map(|file| read_params(&file).map(|params| params.toxicity.score_tiers));
                 let curve = profit_fee_curve_from.map(|file| read_params(&file).map(|params| params.profit_fee_curve));
                 let volume_tiers = volume_tiers_from.map(|file| read_params(&file).map(|params| params.volume_tiers));
+                let rollover = rollover_from.map(|file| read_params(&file).map(|params| params.rollover));
+                let bounds = corporate_bounds_from.map(|file| read_params(&file).map(|params| params.corporate_bounds));
                 AdminCommand::AnnounceParams(ParamsNotice {
                     profit_fee_bps,
                     closeout_level_bps,
@@ -56,6 +60,8 @@ impl AdminAction {
                     score_tiers: tiers.transpose()?,
                     profit_fee_curve: curve.transpose()?,
                     volume_tiers: volume_tiers.transpose()?,
+                    rollover: rollover.transpose()?,
+                    corporate_bounds: bounds.transpose()?,
                     effective_at: effective_at.timestamp_millis(),
                 })
             }
@@ -68,6 +74,7 @@ impl AdminAction {
                 margins_from,
                 markup_bps,
                 weekend_margin_bps,
+                price_rules_from,
                 effective_at,
             } => {
                 let notice = ListingNotice {
@@ -79,6 +86,9 @@ impl AdminAction {
                         .transpose()?,
                     markup_bps,
                     weekend_margin_bps,
+                    price_rules: price_rules_from
+                        .map(|file| read_spec(&file).map(|spec| spec.price_rules))
+                        .transpose()?,
                     effective_at: effective_at.timestamp_millis(),
                 };
                 AdminCommand::AnnounceListing { market, notice }

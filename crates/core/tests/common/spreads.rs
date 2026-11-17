@@ -43,6 +43,7 @@ pub fn spread_notice(h: &Harness, market: MarketId, spread_tiers: Vec<SpreadTier
         margin_tiers: None,
         markup_bps: None,
         weekend_margin_bps: None,
+        price_rules: None,
         effective_at,
     };
     (AdminCommand::AnnounceListing { market, notice }, effective_at)

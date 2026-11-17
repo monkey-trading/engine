@@ -209,6 +209,19 @@ rested past a tier's limit, is in scope.
 From protocol V68 each tier's fee discount, financing discount and emissions boost stays at or below its launch
 value and never falls with the tier, so a notice or vote cannot make a higher tier pay more fee than a lower one or
 raise a benefit past launch's; a fee or financing charge below what the tier's launch discount allows is in scope.
+From protocol V76 the rollover time moves only after a seven-day notice, or while votes govern by a vote, a
+new time keeps the rollover already due, and a rollover charges a day's financing per day of
+sequenced time since the last; a listed market's price rules loosen only after a seven-day notice or by a
+vote, never past the market's launch rules, while tighter rules apply at once; and a corporate action stays
+within the parameters' corporate bounds, which move only after a seven-day notice or by a vote and never past
+launch's: at launch the cash dividends a market pays with less than seven days' notice total at most 10% of
+the share's mark within any seven days, in the units held at their capture, a split is at most 20 to 1 either
+way, needs seven days' notice and applies after every pending dividend's capture, and at least two of the
+market's trading days close after an action is scheduled, on as many distinct dates, the previous close at
+least a day after scheduling for each past the first. While votes govern only a vote schedules one; an
+instruction pending when V76 activates keeps the rules it was scheduled under. So financing charged faster
+than that, price rules loosened past those bounds, or a corporate action scheduled from V76 and applied
+outside them, is in scope.
 From protocol V60 a listed market's weekend margin changes only after a seven-day notice, or
 while rotation is on by a vote, the operator's calendar change does not shorten or remove a weekend
 closure starting within seven days, nor add or bring forward a held market's closure within seven
@@ -559,7 +572,9 @@ at most 30 minutes), V59's volume tier bounds (the launch tiers, no threshold or
 launch, no best-price share above it, and each tier's spread from its launch spread to twice it), V62's
 (each launch house loss threshold kept at its level or above, at most its launch value), V64's (each
 margin floor at or above launch's), V66's (each order limit and request rate named and at or below
-launch's), V68's (each fee discount, financing discount and emissions boost at or below launch's) and each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
+launch's), V68's (each fee discount, financing discount and emissions boost at or below launch's), V76's (loosened
+price rules within the launch rules, corporate bounds no looser than launch's, and a corporate action within the
+bounds but for a dividend's share of the mark) and each field's validation, with no other range yet (#549 may add some), so members holding two thirds of the weight
 can set the other parameters to any valid value after seven days' notice, and a normal change applies only over the
 parameters or market it passed on; a fast-path proposal applies at once but only as a restriction that
 moves fields toward lower risk and lapses at the recorded lifetime, at most seven days, and its margin

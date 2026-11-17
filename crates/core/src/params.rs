@@ -1,11 +1,12 @@
 //! Protocol-wide parameters. Changed only by sequenced admin commands, so every change is in the
 //! public log.
 
-use chrono::{DateTime, Duration, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::corporate::{CorporateBounds, is_launch};
 use crate::fixed::Rounding;
 use crate::holding_fee::{CurvePoint, validate_curve};
 use crate::market::MarketSpec;
@@ -78,6 +79,10 @@ pub struct ProtocolParams {
     /// Left out of the encoding while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub volume_tiers: Vec<VolumeTier>,
+    /// From `V76`, what a corporate action may be (`corporate::CorporateBounds`). Parameters that name
+    /// none take launch's, and before `V76` they name only those. Left out of the encoding at launch's.
+    #[serde(default, skip_serializing_if = "is_launch")]
+    pub corporate_bounds: CorporateBounds,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,7 +169,7 @@ pub struct ToxicityTier {
 }
 
 /// Daily financing rollover, e.g. 22:00 Europe/London.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rollover {
     pub tz: Tz,
@@ -190,6 +195,7 @@ impl ProtocolParams {
     /// - a resting-order cap outside 1..=1000
     /// - a profit fee curve that fails `holding_fee::validate_curve`
     /// - volume tiers that fail `volume_tier::validate_volume_tiers`
+    /// - corporate bounds that fail `CorporateBounds::validate`
     pub fn validate(&self) -> Result<(), String> {
         let rate = 0..=MAX_RATE_BPS;
         if !(0..MAX_RATE_BPS).contains(&self.profit_fee_bps) {
@@ -241,14 +247,13 @@ impl ProtocolParams {
             notional.validate()?;
         }
         validate_score_tiers(&tox.score_tiers)?;
-        if self.rollover.hour > 23 || self.rollover.minute > 59 {
-            return Err("invalid rollover time".into());
-        }
+        self.rollover.validate()?;
         if !(1..=MAX_RESTING_ORDERS).contains(&self.max_resting_orders) {
             return Err("max_resting_orders must be in 1..=1000".into());
         }
         validate_curve(&self.profit_fee_curve)?;
-        validate_volume_tiers(&self.volume_tiers)
+        validate_volume_tiers(&self.volume_tiers)?;
+        self.corporate_bounds.validate()
     }
 
     /// Checks a trade that only reduces a position can always fill: the widest stress spread plus
@@ -299,6 +304,7 @@ impl ProtocolParams {
     /// - from `V59`, no volume tiers
     /// - before `V66`, a volume tier naming a resting-order limit or a request rate
     /// - before `V68`, a volume tier naming a fee discount, a financing discount or an emissions boost
+    /// - before `V76`, corporate bounds other than launch's
     pub fn validate_for(&self, version: ProtocolVersion) -> Result<(), String> {
         self.validate()?;
         if version >= ProtocolVersion::V52
@@ -325,6 +331,9 @@ impl ProtocolParams {
         }
         if version < ProtocolVersion::V68 && names_benefits(&self.volume_tiers) {
             return Err(format!("a tier discount or boost needs protocol {:?}", ProtocolVersion::V68));
+        }
+        if version < ProtocolVersion::V76 && !is_launch(&self.corporate_bounds) {
+            return Err(format!("corporate bounds need protocol {:?}", ProtocolVersion::V76));
         }
         let mut triggers = self.stress_levels.iter().filter_map(|level| level.trigger.as_ref());
         if version >= ProtocolVersion::V13 {
@@ -405,26 +414,57 @@ impl NotionalWeighting {
 }
 
 impl Rollover {
+    /// Checks the time exists.
+    /// Error cases:
+    /// - an hour above 23 or a minute above 59
+    pub fn validate(&self) -> Result<(), String> {
+        if self.hour > 23 || self.minute > 59 {
+            return Err("invalid rollover time".into());
+        }
+        Ok(())
+    }
+
     /// The first rollover strictly after `ts`. In a DST gap, where the wall time does not exist,
     /// the rollover happens an hour later in wall-clock terms.
     pub fn next_after(&self, ts: Millis) -> Millis {
         // `Engine::apply` refuses stamps past `types::MAX_STAMP_MS`, so the calendar always has a
         // representable next day here, whatever the time zone or a DST gap does to the wall clock.
-        let local = DateTime::<Utc>::from_timestamp_millis(ts).expect("engine time in range").with_timezone(&self.tz);
-        let mut date = local.date_naive();
+        let mut date = self.local_date(ts);
         loop {
-            // `validate` rules out an hour or minute that does not exist.
-            let naive = date.and_hms_opt(self.hour, self.minute, 0).expect("validated time");
-            let at = self
-                .tz
-                .from_local_datetime(&naive)
-                .earliest()
-                .or_else(|| self.tz.from_local_datetime(&(naive + Duration::hours(1))).earliest());
-            if let Some(at) = at.map(|t| t.timestamp_millis()).filter(|t| *t > ts) {
+            if let Some(at) = self.on(date).filter(|at| *at > ts) {
                 return at;
             }
             date = date.succ_opt().expect("date in range");
         }
+    }
+
+    /// The last rollover strictly before `ts`, as `next_after` places each.
+    pub fn previous_before(&self, ts: Millis) -> Millis {
+        let mut date = self.local_date(ts);
+        loop {
+            if let Some(at) = self.on(date).filter(|at| *at < ts) {
+                return at;
+            }
+            // Engine stamps start in 1970, and the day before it is representable too.
+            date = date.pred_opt().expect("date in range");
+        }
+    }
+
+    /// The local calendar date at `ts`.
+    fn local_date(&self, ts: Millis) -> NaiveDate {
+        DateTime::<Utc>::from_timestamp_millis(ts).expect("engine time in range").with_timezone(&self.tz).date_naive()
+    }
+
+    /// The rollover on local `date`: its wall time there, or an hour later in a DST gap.
+    fn on(&self, date: NaiveDate) -> Option<Millis> {
+        // `validate` rules out an hour or minute that does not exist.
+        let naive = date.and_hms_opt(self.hour, self.minute, 0).expect("validated time");
+        let at = self
+            .tz
+            .from_local_datetime(&naive)
+            .earliest()
+            .or_else(|| self.tz.from_local_datetime(&(naive + Duration::hours(1))).earliest());
+        at.map(|t| t.timestamp_millis())
     }
 }
 

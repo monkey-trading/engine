@@ -31,6 +31,8 @@ fn notice(score_tiers: Vec<ScoreTier>, effective_at: i64) -> AdminCommand {
         closeout_level_bps: None,
         stress: None,
         score_tiers: Some(score_tiers),
+        rollover: None,
+        corporate_bounds: None,
         effective_at,
         profit_fee_curve: None,
         volume_tiers: None,

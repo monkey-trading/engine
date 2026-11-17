@@ -10,6 +10,11 @@
 //! or a market's first listing after it; with them is the market's launch close charge under the
 //! parameters in force then, below which no ceiling is adopted (see `close_spread`). A new listing
 //! needs no notice.
+//!
+//! From `V76` a notice may name a market's price rules, and price rules that loosen any of the rules in
+//! force, fewer sources, a longer freshness bound or a wider divergence bound, apply only as a notice
+//! or a vote names them, and never looser in any rule than the market's launch rules: those in force
+//! when `V76` activates, or its first listing after. Tighter price rules apply at once.
 
 use std::iter::once;
 
@@ -19,16 +24,16 @@ use serde::{Deserialize, Serialize};
 use crate::Fixed;
 use crate::close_spread::launch_close_charge_tenth_bps;
 use crate::engine::Engine;
-use crate::market::{MarketSpec, Tier, validate_tiers};
+use crate::market::{MarketSpec, PriceRules, Tier, validate_tiers};
 use crate::params::MAX_RATE_BPS;
 use crate::protocol::ProtocolVersion;
 use crate::spread_tier::{SpreadTier, check_spread_tiers, validate_spread_tiers};
 use crate::types::{MarketId, Millis};
 
 /// The operator's notice of one listed market's new listing values: from `V49` its financing markup,
-/// from `V52` its spread and margin bands, and from `V60` its weekend margin. A relisting may apply
-/// each named value from `effective_at` on, once. A notice naming only a markup encodes as `V49`'s
-/// did.
+/// from `V52` its spread and margin bands, from `V60` its weekend margin, and from `V76` its price
+/// rules. A relisting may apply each named value from `effective_at` on, once. A notice naming only a
+/// markup encodes as `V49`'s did.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListingNotice {
@@ -41,6 +46,9 @@ pub struct ListingNotice {
     /// From `V60`, a weekend margin rate, zero for none, left out of the encoding when none is named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weekend_margin_bps: Option<i64>,
+    /// From `V76`, price rules, left out of the encoding when none are named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_rules: Option<PriceRules>,
     /// The sequenced time the named values may apply from.
     pub effective_at: Millis,
 }
@@ -54,6 +62,10 @@ pub struct LaunchBands {
     pub margin_tiers: Vec<Tier>,
     /// The launch close charge, in tenths of a bp, under the parameters in force at launch.
     pub close_charge_tenth_bps: i64,
+    /// From `V76`, the launch price rules, past which no price rules loosen; left out of the encoding
+    /// while none are recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_rules: Option<PriceRules>,
 }
 
 /// What a listing changes that its market's notice names, so applying it spends those values, and
@@ -65,6 +77,7 @@ pub(crate) struct ListingChange {
     margin: bool,
     markup: bool,
     weekend: bool,
+    price_rules: bool,
 }
 
 impl ListingNotice {
@@ -75,6 +88,7 @@ impl ListingNotice {
             margin_tiers: None,
             markup_bps: Some(markup_bps),
             weekend_margin_bps: None,
+            price_rules: None,
             effective_at,
         }
     }
@@ -85,6 +99,7 @@ impl ListingNotice {
             && self.margin_tiers.is_none()
             && self.markup_bps.is_none()
             && self.weekend_margin_bps.is_none()
+            && self.price_rules.is_none()
     }
 }
 
@@ -110,10 +125,27 @@ impl Engine {
         }
     }
 
+    /// On an activation carrying `version` to `V76` or later from before it, takes each listed market's
+    /// price rules as its launch rules.
+    pub(crate) fn start_price_rule_bounds(&mut self, version: ProtocolVersion) {
+        if self.protocol_version >= ProtocolVersion::V76 || version < ProtocolVersion::V76 {
+            return;
+        }
+        for (id, market) in self.markets.iter() {
+            let launch = self
+                .operator_bounds
+                .launch_bands
+                .get_mut(id)
+                .expect("V52's activation records every market listed then, and each first listing after it");
+            launch.price_rules = Some(market.spec.price_rules);
+        }
+    }
+
     /// `spec` as its market's launch bands, with its launch close charge under the parameters in
-    /// force, none before parameters are set.
+    /// force, none before parameters are set, and from `V76` its price rules.
     fn launch_of(&self, spec: &MarketSpec) -> LaunchBands {
         LaunchBands {
+            price_rules: (self.protocol_version >= ProtocolVersion::V76).then_some(spec.price_rules),
             spread_tiers: spec.spread_tiers.clone(),
             margin_tiers: spec.margin_tiers.clone(),
             close_charge_tenth_bps: self
@@ -136,6 +168,8 @@ impl Engine {
     /// - a markup outside ±10000 bps a year
     /// - a weekend margin before `V60`, or one the listing, with any margin bands the notice names,
     ///   would fail `MarketSpec::validate` with
+    /// - price rules before `V76`, ones the listing would fail `MarketSpec::validate` with, or ones
+    ///   looser in any rule than the market's launch rules
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_listing(&mut self, market: MarketId, notice: &ListingNotice) -> Result<(), String> {
         if self.protocol_version < ProtocolVersion::V52 {
@@ -170,6 +204,13 @@ impl Engine {
             let margin_tiers = notice.margin_tiers.clone().unwrap_or_else(|| listed.spec.margin_tiers.clone());
             MarketSpec { weekend_margin_bps, margin_tiers, ..listed.spec.clone() }.validate()?;
         }
+        if let Some(price_rules) = notice.price_rules {
+            if self.protocol_version < ProtocolVersion::V76 {
+                return Err(format!("a price rule notice needs protocol {:?}", ProtocolVersion::V76));
+            }
+            MarketSpec { price_rules, ..listed.spec.clone() }.validate()?;
+            check_price_rules_within_launch(market, &price_rules, launch)?;
+        }
         self.check_notice_time("a listing notice", notice.effective_at)?;
         self.operator_bounds.markups.insert(market, notice.clone());
         Ok(())
@@ -177,20 +218,22 @@ impl Engine {
 
     /// Checks a listing's spread bands are written as the version in force lists them, and that a
     /// relisting changes a listed market's markup (from `V49`), its spread and margin bands (from
-    /// `V52`) and its weekend margin (from `V60`) only to the values its notice names, once that
-    /// notice's time has come. A `voted` relisting's notice is its vote's, and it is held to the
-    /// bounds a notice is: each changed band table within its market's launch bands, and a weekend
-    /// margin `MarketSpec::validate` admits. Changes are measured from the baseline
-    /// (`Engine::baseline_spec`). Returns what applying the listing spends.
+    /// `V52`), its weekend margin (from `V60`) and price rules that loosen any rule (from `V76`) only to
+    /// the values its notice names, once that notice's time has come. A `voted` relisting's notice is
+    /// its vote's, and it is held to the bounds a notice is: each changed band table within its market's
+    /// launch bands, a weekend margin `MarketSpec::validate` admits, and loosened price rules within the
+    /// launch rules. Changes are measured from the baseline (`Engine::baseline_spec`). Returns what
+    /// applying the listing spends.
     /// Error cases:
     /// - spread bands `check_spread_tiers` refuses
     /// - from `V59`, changed spread bands `Engine::check_tiered_listing` refuses, or a first listing's
     ///   bands `Engine::check_tiered_first_listing` refuses
-    /// - unless `voted`, a changed markup, spread band table, margin band table or weekend margin no
-    ///   notice names, or whose notice takes effect later than the sequenced time
+    /// - unless `voted`, a changed markup, spread band table, margin band table or weekend margin, or
+    ///   from `V76` price rules looser in any rule, no notice names, or whose notice takes effect later
+    ///   than the sequenced time
     /// - if `voted`, a changed spread band table whose rate at some notional is below the launch rate
-    ///   there or above twice it, or a changed margin band table whose requirement at some notional is
-    ///   below launch's
+    ///   there or above twice it, a changed margin band table whose requirement at some notional is
+    ///   below launch's, or from `V76` loosened price rules looser in any rule than the launch rules
     pub(crate) fn check_listing_change(&self, spec: &MarketSpec, voted: bool) -> Result<ListingChange, String> {
         check_spread_tiers(&spec.spread_tiers, spec.asset_class, self.protocol_version)?;
         let markup = self.check_markup_change(spec, voted)?;
@@ -232,6 +275,16 @@ impl Engine {
             self.check_noticed(spec.id, "weekend margin", named)?;
             change.weekend = true;
         }
+        let loosened = spec.price_rules.looser_than(&listed.price_rules);
+        if self.protocol_version >= ProtocolVersion::V76 && loosened {
+            if voted {
+                check_price_rules_within_launch(spec.id, &spec.price_rules, launch)?;
+            } else {
+                let named = notice.filter(|notice| notice.price_rules == Some(spec.price_rules));
+                self.check_noticed(spec.id, "price rule", named)?;
+                change.price_rules = true;
+            }
+        }
         Ok(change)
     }
 
@@ -257,6 +310,9 @@ impl Engine {
         if change.weekend {
             notice.weekend_margin_bps = None;
         }
+        if change.price_rules {
+            notice.price_rules = None;
+        }
         if notice.names_nothing() {
             self.operator_bounds.markups.remove(&spec.id);
         }
@@ -274,6 +330,24 @@ impl Engine {
             Some(_) => Ok(()),
         }
     }
+}
+
+/// Checks `price_rules` are no looser in any rule than `market`'s launch rules.
+/// Error cases:
+/// - fewer sources, a longer freshness bound or a wider divergence bound than the launch rules
+fn check_price_rules_within_launch(
+    market: MarketId,
+    price_rules: &PriceRules,
+    launch: &LaunchBands,
+) -> Result<(), String> {
+    // `V76`'s activation records every listed market's rules, and each first listing after it.
+    let launched = launch.price_rules.expect("launch price rules are recorded wherever V76 applies");
+    if price_rules.looser_than(&launched) {
+        return Err(format!(
+            "market {market}'s price rules {price_rules:?} are looser than its launch rules {launched:?}"
+        ));
+    }
+    Ok(())
 }
 
 /// The rate of the band that charges the notional just above `notional`. `tiers` is a validated
