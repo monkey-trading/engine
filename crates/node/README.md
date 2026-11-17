@@ -163,9 +163,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   a symbol's book since one read before its ping sequences that book's mid again, stamped no later
   than the venue's clock when the ping went out, for up to 5 s after the book was read
 - Live FX, index and commodity futures, and US share prices from market-data vendors: Massive
-  (FX, futures, and stocks feeds) and TraderMade over WebSocket with their API keys, and CME Group's
+  (FX, futures, and stocks feeds) and TraderMade over WebSocket with their API keys, CME Group's
   WebSocket API for its exchanges' futures, whose handshake carries an OAuth bearer token fetched
-  with a delivered client ID and secret and replaced before it expires; quotes for a
+  with a delivered client ID and secret and replaced before it expires, and Alpaca's consolidated
+  (SIP) stock feed, logged in with a delivered key ID and secret key; quotes for a
   futures contract carry its name, and a feed holds back quotes stamped or sent while their market
   is closed and quotes for a contract the market does not take
 - Alerts for refused venue messages (at most one a minute per venue, counting the rest, excerpted
@@ -431,9 +432,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/node/secrets.rs` — this start's delivered secrets: opening the sealed bundle, asking a
   predecessor, holding for what the node cannot run without, setting the rest into the config and
   the alert routes, `secret_missing`, and the listener handed back to a member's own operator key
-  once its run hands the keys over; `src/node/secrets/tests/` covers each, and
-  `src/node/secrets/tests/wiring.rs` drives `run_with_cpu` over a log that recorded a rotated
-  operator: the listener refuses the configured key and takes the recorded one
+  once its run hands the keys over; `src/node/secrets/tests/` covers each,
+  `src/node/secrets/tests/credentials.rs` what a connection authenticates with, its two secrets
+  only once both are delivered, and `src/node/secrets/tests/wiring.rs` drives `run_with_cpu` over a
+  log that recorded a rotated operator: the listener refuses the configured key and takes the
+  recorded one
 - `src/node/registration.rs` — serving only the attestation until the vault names the key
 - `src/node/shutdown.rs` — supervising the tasks until one stops, a signal arrives, or a handover
   stops sequencing, which commits only once the sequencer admits its final checkpoint; then ending
@@ -1468,10 +1471,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/venue/setup.rs` — the timing from the config, the TLS client config, and the
   reconnect loop every connection shares: at once after a connection that quoted drops, with
   backoff while attempts fail
-- `src/feeds/venue/auth.rs` — what a connection authenticates with: an API key, or an OAuth client
-  of the venue's token endpoint whose bearer token the handshake carries, refetched three quarters
-  of the way through its life, and the `venue_token_failed` alert; its tests, against the loopback
-  CME token endpoint, are in `src/feeds/venue/auth/tests.rs`
+- `src/feeds/venue/auth.rs` — what a connection authenticates with: an API key, a key ID and its
+  secret key, or an OAuth client of the venue's token endpoint whose bearer token the handshake
+  carries, refetched three quarters of the way through its life, and the `venue_token_failed` alert;
+  its tests, against the loopback CME token endpoint, are in `src/feeds/venue/auth/tests.rs`
 - `src/feeds/venue/replace.rs` — the connection that replaces one on a fresh token, opened beside it
   and switched to once it is subscribed, a ping sent then is answered, and a book it then sends is
   in hand (or a ping interval has passed), that ping answered within `feeds.venues.max_delay` or
@@ -1487,6 +1490,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   from a second host, quoted as the same `coinbase` source
 - `src/feeds/massive.rs`, `src/feeds/tradermade.rs` — the Massive and TraderMade adapters: login,
   subscription, and quotes; Massive's tests are in `src/feeds/massive/tests.rs`
+- `src/feeds/alpaca/mod.rs` — the Alpaca adapter: its login with the key ID and secret key, the quote
+  subscription and its confirmation, each quote restated whole and a side with no price and no size
+  quoting nothing, and errors named by their documented codes, those that end the session ending the
+  connection; its message-shape tests are in `src/feeds/alpaca/tests.rs`
 - `src/feeds/cme/mod.rs` — the CME Group adapter: its login status, the top-of-book subscription of
   each product whole, outrights only, each `TOB` restated whole, and the config check that a symbol
   names its contract by product code and period; its message-shape tests are in `src/feeds/cme/tests.rs`
@@ -1561,6 +1568,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   quotes, a slow or failed replacement, connections ended at their token's expiry, a quiet closure,
   a refused token alerted with no credential or token logged, and the dev scenario, which prices US
   500 from CME and Massive through the sequencer and replays the log
+- `src/feeds/tests/alpaca_support.rs` — a loopback Alpaca consolidated feed behind TLS: its welcome,
+  login, subscription confirmation and quotes, a refused login echoing what it was sent, and a stop
+- `src/feeds/tests/shares.rs` — the US shares' two sources against the loopback Alpaca and Massive: a
+  refused Alpaca login alerted with no key ID, secret key or Alpaca text logged, and the dev scenario,
+  which prices Apple from both across its open, unprices it when either stops, and replays the log
 - `src/feeds/tests/hours.rs` — quotes held back while a market is closed and for a contract the
   market does not take, without silence alerts
 - `src/feeds/tests/rwa_support.rs` — schedules open around the clock, signed relistings, a record
@@ -1602,9 +1614,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   to the owner's #436 decision and the contracts' constructor rules, and the deploy runbook's
   `init-emissions` and `init-staking` commands to the file
 - `tests/production_node_template.rs` — loads `ops/runbooks/production-node.toml` assembled with the
-  benchmark publishers and the production genesis, checks it holds what a production build requires
-  but for the markets short of `min_sources` TLS venues, which it names, and that every placeholder
-  carries a marker
+  benchmark publishers and the production genesis, checks it holds what a production build requires,
+  `min_sources` TLS venues for every launch market included, that the share markets are quoted by
+  Massive and Alpaca and fall short without Alpaca, and that every placeholder carries a marker
 - `tests/production_genesis/` — loads `config/production-genesis.toml` as a dev node's genesis,
   checks the launch values and quote currencies, and steps it through weeks with holidays and early
   closes (`main.rs`); checks each market reaches every divergence stress level with screened house
@@ -3452,6 +3464,19 @@ oauth = { token_url = "https://auth.cmegroup.com/as/token.oauth2", client_id_sec
 symbols = [{ market = 20, symbol = "ES:202612", contract = "ESZ6" }, { market = 20, symbol = "ES:202703", contract = "ESH7" }]
 ```
 
+An Alpaca connection logs in with a key ID and its secret key: its `key_pair` names the delivered
+secrets holding them, which no build reads from the environment. Its URL is Alpaca's consolidated
+feed, `/v2/sip`, the quotes of every US exchange; a single exchange's feed such as `/v2/iex` is
+refused:
+
+```toml
+[[feeds.venues.connections]]
+venue = "alpaca"
+url = "wss://stream.data.alpaca.markets/v2/sip"
+key_pair = { key_id_secret = "alpaca_key_id", secret_key_secret = "alpaca_secret_key" }
+symbols = [{ market = 40, symbol = "AAPL" }, { market = 41, symbol = "MSFT" }]
+```
+
 ### Dated benchmark worker
 
 Append `config/benchmark-publishers.toml` to a complete node config to enable publisher ingestion.
@@ -3590,6 +3615,9 @@ cargo test -p engine-node --features short-turns --lib -- seed_relay::schedule l
 # Dev scenario: a loopback CME token endpoint and stream behind TLS price US 500 beside a loopback
 # Massive across token rollovers; a refused token alerts and leaves it unpriced, and the log replays
 ./scripts/dev-cme-feeds.sh
+# Dev scenario: loopback Alpaca and Massive behind TLS price Apple from both across its open; it is
+# unpriced while either stops, no key ID or secret key is logged, and the log replays
+./scripts/dev-share-feeds.sh
 # Dev scenario: a signed dividend and four-for-one split through the TLS API, restart and replay
 ./scripts/dev-corporate-actions.sh
 # Dev scenario: the Certificate Transparency watcher against a mock node and a loopback stand-in

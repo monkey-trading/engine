@@ -290,21 +290,109 @@ fn a_production_build_reads_cme_credentials_only_as_delivered_secrets() {
     }
 }
 
+#[test]
+fn an_alpaca_connection_names_its_key_pair_secrets_and_reads_the_consolidated_feed() {
+    let cfg = with_alpaca();
+    cfg.validate().unwrap();
+    let named = cfg.named_secrets().unwrap();
+    let listed: Vec<(String, String)> =
+        named.iter().map(|field| (field.field.clone(), field.name.to_string())).collect();
+    let expected =
+        [("key_id_secret", "alpaca_key_id"), ("secret_key_secret", "alpaca_secret_key")].map(|(key, name)| {
+            (
+                format!("feeds.venues.connections[wss://stream.data.alpaca.markets/v2/sip].key_pair.{key}"),
+                name.to_owned(),
+            )
+        });
+    assert_eq!(listed, expected);
+    // Without its secrets the connection stays off; the node runs.
+    assert!(named.iter().all(|field| field.usage == crate::config::SecretUse::VendorKey));
+}
+
+#[test]
+fn alpaca_settings_that_would_fail_or_could_be_forged_are_refused() {
+    type Edit = fn(&mut Vec<VenueConnection>);
+    let cases: [(&str, Edit); 10] = [
+        ("alpaca key_pair must be set exactly for alpaca", |c| c[2].key_pair = None),
+        ("coinbase key_pair must be set exactly for alpaca", |c| c[0].key_pair = c[2].key_pair.clone()),
+        ("alpaca api_key_env must be set exactly for a vendor", |c| c[2].api_key_env = Some("ALPACA_KEY".into())),
+        ("alpaca api_key_env must be set exactly for a vendor", |c| {
+            c[2].api_key_secret = c[2].key_pair.as_ref().map(|pair| pair.key_id_secret.clone())
+        }),
+        // A single exchange's feed, a delayed one, an ATS's, and Alpaca's own overnight prices are
+        // not the consolidated quote.
+        ("alpaca url must be its consolidated /v2/sip feed", |c| {
+            c[2].url = "wss://stream.data.alpaca.markets/v2/iex".into()
+        }),
+        ("alpaca url must be its consolidated /v2/sip feed", |c| {
+            c[2].url = "wss://stream.data.alpaca.markets/v2/delayed_sip".into()
+        }),
+        ("alpaca url must be its consolidated /v2/sip feed", |c| {
+            c[2].url = "wss://stream.data.alpaca.markets/v1beta1/boats".into()
+        }),
+        ("alpaca url must be on alpaca.markets", |c| c[2].url = "wss://stream.data.example.com/v2/sip".into()),
+        ("alpaca url must be wss://", |c| c[2].url = "ws://stream.data.alpaca.markets/v2/sip".into()),
+        ("alpaca lists symbol AAPL twice", |c| {
+            let again = c[2].symbols[0].clone();
+            c[2].symbols.push(again)
+        }),
+    ];
+    for (expected, edit) in cases {
+        let mut cfg = with_alpaca();
+        edit(&mut cfg.feeds.venues.as_mut().unwrap().connections);
+        let err = format!("{:#}", cfg.validate().unwrap_err());
+        assert!(err.contains(expected), "expected {expected:?}, got {err}");
+    }
+}
+
+// Runs in the production lane too, which filters on `production_build`: no build reads Alpaca's
+// key ID or secret key from a value in the file or the environment, only from a delivered bundle.
+#[test]
+fn a_production_build_reads_alpaca_credentials_only_as_delivered_secrets() {
+    let cfg = with_alpaca();
+    cfg.refuse_environment_secrets_at_load(true).unwrap();
+    let base = "key_id_secret = 'a'\nsecret_key_secret = 'b'";
+    for (field, value) in [("key_id_env", "'ALPACA_KEY_ID'"), ("key_id", "'AK123'"), ("secret_key", "'secret'")] {
+        let err = toml::from_str::<KeyPairSection>(&format!("{base}\n{field} = {value}")).unwrap_err().to_string();
+        assert!(err.contains(&format!("unknown field `{field}`")), "{field}: {err}");
+    }
+}
+
 // ── Helpers ──
+
+/// The committed dev config taking delivered secrets, with an Alpaca connection after its crypto
+/// venues that quotes Apple and Microsoft.
+fn with_alpaca() -> NodeConfig {
+    with_connection(
+        r#"
+[[feeds.venues.connections]]
+venue = "alpaca"
+url = "wss://stream.data.alpaca.markets/v2/sip"
+key_pair = { key_id_secret = "alpaca_key_id", secret_key_secret = "alpaca_secret_key" }
+symbols = [{ market = 40, symbol = "AAPL" }, { market = 41, symbol = "MSFT" }]
+"#,
+    )
+}
 
 /// The committed dev config taking delivered secrets, with a CME connection after its crypto venues
 /// that quotes two of US 500's contracts.
 fn with_cme() -> NodeConfig {
-    let dev = std::fs::read_to_string(DEV).unwrap();
-    let (head, tail) = dev.split_once("\n[time]\n").expect("dev.toml has a [time] section");
-    let cme = r#"
+    with_connection(
+        r#"
 [[feeds.venues.connections]]
 venue = "cme"
 url = "wss://markets.api.cmegroup.com/marketdatastream/v1"
 oauth = { token_url = "https://auth.cmegroup.com/as/token.oauth2", client_id_secret = "cme_api_id", client_secret_secret = "cme_api_secret" }
 symbols = [{ market = 20, symbol = "ES:202612", contract = "ESZ6" }, { market = 20, symbol = "ES:202703", contract = "ESH7" }]
-"#;
-    let mut cfg: NodeConfig = toml::from_str(&format!("{head}\n{cme}\n[time]\n{tail}")).unwrap();
+"#,
+    )
+}
+
+/// The committed dev config taking delivered secrets, with `connection` after its crypto venues.
+fn with_connection(connection: &str) -> NodeConfig {
+    let dev = std::fs::read_to_string(DEV).unwrap();
+    let (head, tail) = dev.split_once("\n[time]\n").expect("dev.toml has a [time] section");
+    let mut cfg: NodeConfig = toml::from_str(&format!("{head}\n{connection}\n[time]\n{tail}")).unwrap();
     cfg.tee.use_published_mock_key = false;
     cfg.tee.sealing = Some(toml::from_str("dir = 'keys'\n[secrets]\nlisten = '127.0.0.1:9472'").unwrap());
     cfg

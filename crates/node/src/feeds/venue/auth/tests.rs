@@ -108,11 +108,17 @@ async fn debug_output_names_no_credential_or_token() {
     let client = stand_in.client(&tls, TIMEOUT);
     let token = client.fetch(TIMEOUT).await.unwrap();
     let basic = STANDARD.encode(format!("{CLIENT_ID}:{CLIENT_SECRET}"));
-    let shown =
-        format!("{:?} {token:?} {:?}", Credentials::OAuth(client.clone()), Credentials::ApiKey(key(CLIENT_SECRET)));
+    let pair = Credentials::KeyPair { key_id: key(CLIENT_ID), secret_key: key(CLIENT_SECRET) };
+    let shown = format!(
+        "{:?} {token:?} {:?} {pair:?}",
+        Credentials::OAuth(client.clone()),
+        Credentials::ApiKey(key(CLIENT_SECRET))
+    );
     for secret in [CLIENT_ID, CLIENT_SECRET, basic.as_str(), token.bearer().expose()] {
         assert!(!shown.contains(secret), "{shown}");
     }
+    // A key pair's feed redacts both its keys.
+    assert_eq!(pair.secrets(), [CLIENT_ID, CLIENT_SECRET]);
     assert!(shown.contains(&stand_in.token_url), "{shown}");
     // What a feed redacts: every credential, in the forms a request carries them.
     let credentials = Credentials::OAuth(client);
@@ -186,13 +192,16 @@ async fn a_refused_message_is_excerpted_only_from_a_venue_that_holds_no_credenti
     let client = OAuthClient::new(url, key(CLIENT_ID), key(CLIENT_SECRET), &tls.client, TIMEOUT).unwrap();
     let text = r#"{"header":{"messageType":"LOGINERR"},"payload":{"echo":"VENDOR-TEXT"}}"#;
     let hashed = format!("a {}-byte message, SHA-256 ", text.len());
-    for (credentials, excerpted) in [(Credentials::Public, true), (Credentials::OAuth(client), false)] {
+    let pair = Credentials::KeyPair { key_id: key(CLIENT_ID), secret_key: key(CLIENT_SECRET) };
+    let cases = [(Credentials::Public, true), (Credentials::OAuth(client), false), (pair, false)];
+    for (credentials, excerpted) in cases {
         let conn = VenueConnection {
             venue: Venue::Cme,
             url: "wss://markets.api.cmegroup.com/marketdatastream/v1".into(),
             api_key_env: None,
             api_key_secret: None,
             oauth: None,
+            key_pair: None,
             symbols: Vec::new(),
         };
         let mut feed = VenueFeed::new(conn, credentials, fast(TIMEOUT), tls.client.clone(), mpsc::channel(1).0);
@@ -263,6 +272,7 @@ async fn a_credential_or_token_echoed_back_never_reaches_an_alert() {
         api_key_env: None,
         api_key_secret: None,
         oauth: None,
+        key_pair: None,
         symbols: Vec::new(),
     };
     let timing = fast(TIMEOUT);
@@ -347,6 +357,7 @@ async fn an_escaped_credential_or_token_echoed_back_never_reaches_an_alert() {
         api_key_env: None,
         api_key_secret: None,
         oauth: None,
+        key_pair: None,
         symbols: Vec::new(),
     };
     let mut feed =

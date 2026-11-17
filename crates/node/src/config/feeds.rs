@@ -17,6 +17,8 @@ use crate::feeds::check_cme_symbol;
 
 /// Massive's real-time WebSocket endpoints, one per asset class, by path.
 const MASSIVE_PATHS: [&str; 3] = ["/forex", "/futures", "/stocks"];
+/// Alpaca's consolidated (SIP) stock feed: the quotes of every US exchange, not one venue's.
+const ALPACA_SIP_PATH: &str = "/v2/sip";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,6 +35,8 @@ pub enum FeedProvider {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Venue {
+    /// Alpaca's real-time stock data: US share quotes from its consolidated (SIP) feed.
+    Alpaca,
     Bitstamp,
     /// CME Group's real-time WebSocket API: its own exchanges' futures.
     Cme,
@@ -128,6 +132,9 @@ pub struct VenueConnection {
     /// The OAuth login whose bearer token the WebSocket handshake carries: required for CME and
     /// refused for every other venue.
     pub oauth: Option<OAuthSection>,
+    /// The API key ID and secret key the login message carries: required for Alpaca and refused for
+    /// every other venue.
+    pub key_pair: Option<KeyPairSection>,
     pub symbols: Vec<VenueSymbol>,
 }
 
@@ -145,6 +152,18 @@ pub struct OAuthSection {
     pub client_secret_secret: SecretName,
 }
 
+/// An API key ID and its secret key, each a delivered secret: a production build reads no
+/// credential from the environment, and until both are delivered the connection stays off, under
+/// `secret_missing`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeyPairSection {
+    /// The delivered secret holding the API key ID.
+    pub key_id_secret: SecretName,
+    /// The delivered secret holding the API secret key.
+    pub secret_key_secret: SecretName,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VenueSymbol {
@@ -156,8 +175,8 @@ pub struct VenueSymbol {
     pub contract: Option<String>,
 }
 
-/// A vendor credential: an API key, an OAuth client ID or secret, or a bearer token. `Debug` hides
-/// it; read it with `expose` where it is used.
+/// A vendor credential: an API key, a key ID or secret key, an OAuth client ID or secret, or a
+/// bearer token. `Debug` hides it; read it with `expose` where it is used.
 #[derive(Clone)]
 pub struct ApiKey(String);
 
@@ -182,6 +201,7 @@ impl Venue {
     /// The source name this venue's quotes carry.
     pub fn name(self) -> &'static str {
         match self {
+            Venue::Alpaca => "alpaca",
             Venue::Bitstamp => "bitstamp",
             Venue::Cme => "cme",
             Venue::Coinbase | Venue::CoinbaseExchange => "coinbase",
@@ -194,6 +214,7 @@ impl Venue {
     /// The domain this venue's endpoints are served under.
     fn domain(self) -> &'static str {
         match self {
+            Venue::Alpaca => "alpaca.markets",
             Venue::Bitstamp => "bitstamp.net",
             Venue::Cme => "cmegroup.com",
             Venue::Coinbase => "coinbase.com",
@@ -217,6 +238,11 @@ impl Venue {
     /// Whether the venue's WebSocket handshake needs an OAuth bearer token.
     fn needs_oauth(self) -> bool {
         self == Venue::Cme
+    }
+
+    /// Whether the venue's login message needs a key ID and its secret key.
+    fn needs_key_pair(self) -> bool {
+        self == Venue::Alpaca
     }
 }
 
@@ -246,6 +272,21 @@ impl ApiKey {
 }
 
 impl VenueConnection {
+    /// Every delivered secret the connection names, with the field that names it.
+    pub(crate) fn secret_fields(&self) -> impl Iterator<Item = (&'static str, &SecretName)> {
+        let api_key = self.api_key_secret.iter().map(|name| ("api_key_secret", name));
+        let oauth = self.oauth.iter().flat_map(|oauth| {
+            [
+                ("oauth.client_id_secret", &oauth.client_id_secret),
+                ("oauth.client_secret_secret", &oauth.client_secret_secret),
+            ]
+        });
+        let key_pair = self.key_pair.iter().flat_map(|pair| {
+            [("key_pair.key_id_secret", &pair.key_id_secret), ("key_pair.secret_key_secret", &pair.secret_key_secret)]
+        });
+        api_key.chain(oauth).chain(key_pair)
+    }
+
     /// The connection's API key, from the environment variable its config names, if any.
     /// Error cases:
     /// - the named variable is unset or empty
@@ -272,6 +313,8 @@ impl VenuesSection {
     /// - an API key missing for a vendor or given for a public venue
     /// - an OAuth login missing for CME or given for another venue, or its token URL not `https://`
     ///   on the venue's own domain
+    /// - a key pair missing for Alpaca or given for another venue, or an Alpaca URL other than its
+    ///   consolidated `/v2/sip` feed
     /// - a CME symbol that does not name, as `<product>:<YYYYMM>`, the contract it quotes
     /// - a symbol, or a market and contract, listed twice on one connection, or a URL listed twice
     ///   for one venue
@@ -291,6 +334,10 @@ impl VenuesSection {
         for conn in &self.connections {
             let name = conn.venue.name();
             ensure!(conn.oauth.is_some() == conn.venue.needs_oauth(), "{name} oauth must be set exactly for cme");
+            ensure!(
+                conn.key_pair.is_some() == conn.venue.needs_key_pair(),
+                "{name} key_pair must be set exactly for alpaca"
+            );
             conn.validate_endpoint()?;
             // A venue's alerts name the connection by its URL, so no two of its connections share one.
             ensure!(endpoints.insert((conn.venue, conn.url.as_str())), "{name} lists url {} twice", conn.url);
@@ -334,6 +381,9 @@ impl VenueConnection {
         ensure!(uri.host().is_some_and(|host| self.venue.serves(host)), "{name} url must be on {domain}");
         if self.venue == Venue::Massive {
             ensure!(MASSIVE_PATHS.contains(&uri.path()), "{name} url must be one of its {MASSIVE_PATHS:?} feeds");
+        }
+        if self.venue == Venue::Alpaca {
+            ensure!(uri.path() == ALPACA_SIP_PATH, "{name} url must be its consolidated {ALPACA_SIP_PATH} feed");
         }
         if let Some(oauth) = &self.oauth {
             let token: Uri = oauth.token_url.parse().with_context(|| format!("{name} oauth.token_url"))?;

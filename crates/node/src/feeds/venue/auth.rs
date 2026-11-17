@@ -1,5 +1,6 @@
 //! What a venue connection authenticates with: nothing for a public feed, a vendor's API key sent in
-//! its login message, or, for CME Group, an OAuth 2.0 bearer token its WebSocket handshake carries.
+//! its login message, for Alpaca a key ID and its secret key sent in its login message, or, for CME
+//! Group, an OAuth 2.0 bearer token its WebSocket handshake carries.
 //!
 //! A token comes from the client-credentials grant (RFC 6749, section 4.4): a `POST` of
 //! `grant_type=client_credentials` to the venue's token endpoint with the client ID and secret in
@@ -56,6 +57,8 @@ pub enum Credentials {
     Public,
     /// A vendor's API key, sent in its login message.
     ApiKey(ApiKey),
+    /// A vendor's API key ID and its secret key, both sent in its login message.
+    KeyPair { key_id: ApiKey, secret_key: ApiKey },
     /// A client of the venue's token endpoint, whose bearer token the WebSocket handshake carries.
     OAuth(OAuthClient),
 }
@@ -128,7 +131,15 @@ impl Credentials {
     pub(super) fn api_key(&self) -> Option<&ApiKey> {
         match self {
             Credentials::ApiKey(key) => Some(key),
-            Credentials::Public | Credentials::OAuth(_) => None,
+            Credentials::Public | Credentials::KeyPair { .. } | Credentials::OAuth(_) => None,
+        }
+    }
+
+    /// The key ID and secret key a vendor's login message carries, if any.
+    pub(super) fn key_pair(&self) -> Option<(&ApiKey, &ApiKey)> {
+        match self {
+            Credentials::KeyPair { key_id, secret_key } => Some((key_id, secret_key)),
+            Credentials::Public | Credentials::ApiKey(_) | Credentials::OAuth(_) => None,
         }
     }
 
@@ -137,6 +148,7 @@ impl Credentials {
         match self {
             Credentials::Public => Vec::new(),
             Credentials::ApiKey(key) => vec![key.expose()],
+            Credentials::KeyPair { key_id, secret_key } => vec![key_id.expose(), secret_key.expose()],
             Credentials::OAuth(client) => client.secrets().to_vec(),
         }
     }

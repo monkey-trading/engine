@@ -647,7 +647,7 @@ meanwhile only while its sources' spread, in whole basis points of their median,
 index at most about 13 bps from the venue still quoting (half their 25 bps, plus the rounding to
 whole basis points), and past that the market has no price. This rests on those venues writing a
 pong behind what they sent before reading its ping, as they were measured to; Massive's,
-TraderMade's and CME Group's connections, which were not measured, re-date nothing; nor does
+TraderMade's, CME Group's and Alpaca's connections, which were not measured, re-date nothing; nor does
 Coinbase Exchange's. Two connections of one venue, such as Coinbase's on Advanced Trade and on
 Exchange, or Kraken's two, carry one source name, and the engine holds one quote a source, the
 later-stamped, so a venue read twice still counts once, and either connection keeps its leg while

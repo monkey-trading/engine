@@ -17,7 +17,7 @@ printf '%s\n' "$FILES"
 EOF
 chmod +x "$tmp/bin/git"
 
-feeds="toxicity loss_trigger rwa_feeds cme_feeds venue_load"
+feeds="toxicity loss_trigger rwa_feeds cme_feeds share_feeds venue_load"
 anvil="vault_deposits daily_rotation short_turns"
 prebuilt="metrics_alerts alert_outbox browser_origin dashboard_data proxy_protocol batch_orders ct_watch \
   snapshot_restart signed_api production_secrets log_heads"
@@ -91,6 +91,7 @@ case_ pull_request "rust contracts" contracts/test/fixtures/withdrawal.json
 case_ pull_request "rust image $node" config/dev.toml
 case_ pull_request "toxicity" scripts/dev-toxicity.sh
 case_ pull_request "venue_load" scripts/dev-venue-load.sh
+case_ pull_request "share_feeds" scripts/dev-share-feeds.sh
 case_ pull_request "scenario_tests" scripts/dev-holding-fee.sh
 case_ pull_request "ct_watch contracts $anvil production_secrets log_heads engine_build" \
   scripts/dev-ct-log.py contracts/test/mocks/MockUSDC.sol

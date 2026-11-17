@@ -13,8 +13,8 @@ house, in turn, is issued to the people who trade with it.
 > their FIFO queue also run against Anvil, as do MONKEY emissions and claims; MONKEY's production
 > budget and start are still to be set. FX, index, commodity, and share prices from two market-data
 > vendors each run against local stand-ins for those vendors, as do the index and commodity futures'
-> second source, CME Group's own WebSocket API; live vendor feeds wait on credentials and
-> redistribution licences. MONKEY staking, USDC distribution claims and operator elections run against Anvil,
+> second source, CME Group's own WebSocket API, and the US shares' second source, Alpaca's
+> consolidated quote feed; live vendor feeds wait on credentials and redistribution licences. MONKEY staking, USDC distribution claims and operator elections run against Anvil,
 > the API's public certificate is issued and renewed against a local ACME test CA, and
 > the enclave's keys survive restarts and pass to the release governance names against Anvil, with a stand-in
 > for the hardware sealing; hardware attestation and sealing remain under construction.

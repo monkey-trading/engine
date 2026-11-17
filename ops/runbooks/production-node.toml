@@ -11,7 +11,8 @@
 # ops/runbooks/deploy-and-rollback.md has the procedure.
 #
 # Secrets never appear in this file, so it can be published whole. It names them: `{name}` in an RPC
-# provider's or the screening source's URL, `api_key_secret`, and `url_secret`. The operator delivers
+# provider's or the screening source's URL, `api_key_secret`, a CME connection's `oauth` and an Alpaca
+# connection's `key_pair` secrets, and `url_secret`. The operator delivers
 # their values into the attested enclave (key-recovery.md, "Secrets"); a production build refuses
 # `api_key_env` and `url_env`. A URL's origin stays here, so a delivered value never changes who answers.
 #
@@ -405,12 +406,63 @@ symbols = [
   { market = 32, symbol = "CL:202803", contract = "CLH8" },
 ]
 
-# US shares, shown for AAPL (market 40).
+# US shares: Massive's stocks feed and Alpaca's consolidated (SIP) feed, two vendors a market. Alpaca's
+# login message carries its API key ID and secret key, two delivered secrets; until both are delivered
+# the connection stays off under secret_missing, and the shares have Massive alone, which is no price.
+# An Alpaca account streams on one connection at a time, so no other node may use its keys.
 [[feeds.venues.connections]]
 venue = "massive"
 url = "wss://socket.massive.com/stocks"
 api_key_secret = "massive_api_key"
-symbols = [{ market = 40, symbol = "AAPL" }] # OWNER: add markets 41 to 59, and a second TLS source for each
+symbols = [
+  { market = 40, symbol = "AAPL" },
+  { market = 41, symbol = "MSFT" },
+  { market = 42, symbol = "NVDA" },
+  { market = 43, symbol = "AMZN" },
+  { market = 44, symbol = "GOOGL" },
+  { market = 45, symbol = "META" },
+  { market = 46, symbol = "TSLA" },
+  { market = 47, symbol = "AVGO" },
+  { market = 48, symbol = "BRK.B" },
+  { market = 49, symbol = "JPM" },
+  { market = 50, symbol = "V" },
+  { market = 51, symbol = "MA" },
+  { market = 52, symbol = "LLY" },
+  { market = 53, symbol = "JNJ" },
+  { market = 54, symbol = "XOM" },
+  { market = 55, symbol = "WMT" },
+  { market = 56, symbol = "COST" },
+  { market = 57, symbol = "NFLX" },
+  { market = 58, symbol = "AMD" },
+  { market = 59, symbol = "ORCL" },
+]
+
+[[feeds.venues.connections]]
+venue = "alpaca"
+url = "wss://stream.data.alpaca.markets/v2/sip"
+key_pair = { key_id_secret = "alpaca_key_id", secret_key_secret = "alpaca_secret_key" } # OWNER: the secret names; promote after #684's owner action
+symbols = [
+  { market = 40, symbol = "AAPL" },
+  { market = 41, symbol = "MSFT" },
+  { market = 42, symbol = "NVDA" },
+  { market = 43, symbol = "AMZN" },
+  { market = 44, symbol = "GOOGL" },
+  { market = 45, symbol = "META" },
+  { market = 46, symbol = "TSLA" },
+  { market = 47, symbol = "AVGO" },
+  { market = 48, symbol = "BRK.B" },
+  { market = 49, symbol = "JPM" },
+  { market = 50, symbol = "V" },
+  { market = 51, symbol = "MA" },
+  { market = 52, symbol = "LLY" },
+  { market = 53, symbol = "JNJ" },
+  { market = 54, symbol = "XOM" },
+  { market = 55, symbol = "WMT" },
+  { market = 56, symbol = "COST" },
+  { market = 57, symbol = "NFLX" },
+  { market = 58, symbol = "AMD" },
+  { market = 59, symbol = "ORCL" },
+]
 
 # Coinbase's second host for the crypto markets above, quoted as the same source, `coinbase`.
 [[feeds.venues.connections]]

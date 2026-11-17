@@ -28,7 +28,7 @@ use crate::feeds::venue::auth::Token;
 use crate::feeds::venue::delay::DelayProbe;
 use crate::feeds::venue::standing::redates;
 use crate::feeds::venue::transport::{self, Incoming, Link};
-use crate::feeds::venue::{Frame, Refusal, VenueFeed};
+use crate::feeds::venue::{Credentials, Frame, Refusal, VenueFeed};
 
 /// The connection being opened to replace the current one.
 pub(super) type Replacing = Pin<Box<dyn Future<Output = anyhow::Result<Replacement>> + Send>>;
@@ -59,7 +59,7 @@ impl VenueFeed {
                 let mut delay = DelayProbe::default();
                 link.ping(delay.sent(Instant::now(), now_ms())).await.context("ping")?;
                 let symbols: Vec<&str> = symbols.iter().map(String::as_str).collect();
-                let mut adapter = Adapter::new(&conn, None, &symbols);
+                let mut adapter = Adapter::new(&conn, &Credentials::Public, &symbols);
                 link.send_all(adapter.opening(&symbols)).await.context("subscribe")?;
                 let (mut subscribed, mut ready_from, mut book_until) = (false, None, None);
                 let (mut refused, mut books) = (Vec::new(), Vec::new());
@@ -94,6 +94,10 @@ impl VenueFeed {
                             Ok(Frame::Control) => {}
                             Err(Refusal::Message(reason)) => refused.push((reason, text)),
                             Ok(Frame::Subscribed) => subscribed = true,
+                            // Passed over like a refused message, its refusals logged at the switch.
+                            Ok(Frame::PartlyRefused { refused: reasons, .. }) => {
+                                refused.extend(reasons.into_iter().map(|reason| (reason, text.clone())));
+                            }
                             Ok(Frame::Books(read)) => {
                                 subscribed = true;
                                 if bounded && current(&delay) {

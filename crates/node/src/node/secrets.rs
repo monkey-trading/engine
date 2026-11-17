@@ -85,10 +85,9 @@ struct Moving<'a> {
 }
 
 impl Delivered {
-    /// Whether `connection` names a key or OAuth secret this start lacks, so it stays off.
+    /// Whether `connection` names a key, key pair or OAuth secret this start lacks, so it stays off.
     pub(crate) fn withholds(&self, connection: &VenueConnection) -> bool {
-        let oauth = connection.oauth.iter().flat_map(|oauth| [&oauth.client_id_secret, &oauth.client_secret_secret]);
-        connection.api_key_secret.iter().chain(oauth).any(|name| !self.values.contains_key(name))
+        connection.secret_fields().any(|(_, name)| !self.values.contains_key(name))
     }
 
     /// `connection`'s API key: the delivered one it names, or the variable it names.
@@ -102,10 +101,11 @@ impl Delivered {
     }
 
     /// What `connection` authenticates with: a client of its token endpoint, over TLS with `tls` and
-    /// bounded by `timeout`, with the delivered OAuth secrets it names, or its API key, or nothing.
+    /// bounded by `timeout`, with the delivered OAuth secrets it names, or the delivered key ID and
+    /// secret key it names, or its API key, or nothing.
     /// Error cases:
-    /// - a named OAuth secret is not delivered (see `withholds`), or the token endpoint's client
-    ///   cannot be built
+    /// - a named OAuth or key pair secret is not delivered (see `withholds`), or the token endpoint's
+    ///   client cannot be built
     /// - a named variable is unset or empty
     pub(crate) fn credentials(
         &self,
@@ -113,11 +113,15 @@ impl Delivered {
         tls: &ClientConfig,
         timeout: Duration,
     ) -> anyhow::Result<Credentials> {
-        let Some(oauth) = &connection.oauth else {
-            return Ok(self.api_key(connection)?.map_or(Credentials::Public, Credentials::ApiKey));
-        };
         let delivered = |name: &SecretName| {
             self.values.get(name).map(ApiKey::delivered).with_context(|| format!("secret {name} is not delivered"))
+        };
+        if let Some(pair) = &connection.key_pair {
+            let (key_id, secret_key) = (delivered(&pair.key_id_secret)?, delivered(&pair.secret_key_secret)?);
+            return Ok(Credentials::KeyPair { key_id, secret_key });
+        }
+        let Some(oauth) = &connection.oauth else {
+            return Ok(self.api_key(connection)?.map_or(Credentials::Public, Credentials::ApiKey));
         };
         let (id, secret) = (delivered(&oauth.client_id_secret)?, delivered(&oauth.client_secret_secret)?);
         Ok(Credentials::OAuth(OAuthClient::new(&oauth.token_url, id, secret, tls, timeout)?))

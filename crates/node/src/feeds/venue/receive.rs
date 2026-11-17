@@ -27,6 +27,10 @@ impl VenueFeed {
         let now = now_ms();
         let books = match adapter.read(text, now) {
             Ok(Frame::Books(books)) => books,
+            Ok(Frame::PartlyRefused { books, refused }) => {
+                refused.iter().for_each(|reason| self.refuse(reason, text));
+                books
+            }
             Ok(Frame::Control | Frame::Subscribed) => return Ok(()),
             Ok(Frame::Reply(messages)) => {
                 return timeout(self.timing.timeout, link.send_all(messages)).await.context("reply timed out")?;
