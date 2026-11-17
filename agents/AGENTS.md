@@ -589,6 +589,12 @@ an index: load only the rule whose hint matches the current action.
   tier-2 accounts, reconciled with #697's and `loss-rate-trigger/`'s) and across session gaps (FX,
   index and commodity markets, at each tier's leverage). Its `README.md` gives the method, results,
   proposals and how to re-run.
+  `portfolio-margin/` (#914, for #913) proposes portfolio margin's offset groups, loadings, factor and
+  residual shocks, weekend shocks, tail quantile and horizon and floor share: the cap study's hourly bars
+  and the rogue-operator grids read in place, the daily history from 2016 re-fetched (`data/derived/`), pairwise
+  co-movement, an account-level simulator valuing hedged books under per-position margin and the rule, coverage
+  under joint sampling, crisis days, lone-position leverage, outages of one member, and the proposal in genesis
+  format. Its `README.md` gives the method, results, limits and how to re-run.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
   `dev-operator-bounds.sh`, the operator's bounds on a dev node: benchmark rates inside and outside the
@@ -1169,6 +1175,10 @@ Run from the repo root:
   (`sweep` and `joint` at `--tier 0` and `--tier 3`, the joint also with `--flow target`, `propose`,
   `total`, `stress`, `sensitivity` and `income` per tier, `gaps`, `unprice`, then `report`; hours of
   compute, run under `nice`), and its tests with `python -I -m pytest tests`
+- Portfolio-margin research (#914), from a virtualenv outside the repo with
+  `research/portfolio-margin/requirements.txt`, in `research/portfolio-margin/`: `python -I run.py <stage>`
+  (`fetch` and `derive` for the daily history, then `all`, or `horizon`, `comove`, `groups`, `coverage`, `checks`,
+  `outage`, `proposal`, and `sensitivity`; minutes, run under `nice`), and its tests with `python -I -m pytest tests`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
   `python -I research/close-spread-calibration/run.py`, then
   `python -I research/close-spread-calibration/calibrate.py`, then

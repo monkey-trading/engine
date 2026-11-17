@@ -1,0 +1,14 @@
+{
+ "command": [
+  "all"
+ ],
+ "derived_sha256": {
+  "daily_logclose.csv": "749ba118e20e9cdf",
+  "daily_sources.csv": "c7853c7c9f8e4685"
+ },
+ "horizon_s": 60,
+ "level": 0.5,
+ "quantile": 0.995,
+ "seconds": 50,
+ "seed": 914
+}
