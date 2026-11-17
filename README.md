@@ -424,7 +424,7 @@ matters when the change touches the node or `image`. The code's conventions are 
 
 ## Security
 
-Please report vulnerabilities privately to william.jevons@proton.me rather than in a public issue.
+Please report vulnerabilities privately, through GitHub's private vulnerability reporting or to william.jevons@proton.me, rather than in a public issue.
 The [security policy](SECURITY.md) explains what a report should include, how quickly to expect a
 response, how disclosure is coordinated, and which components are in scope. A bug bounty will be
 announced before launch.

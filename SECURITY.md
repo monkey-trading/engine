@@ -8,10 +8,11 @@ explains how to reach us, what you can expect from us in return, and what it cov
 
 ## Reporting a vulnerability
 
-Email reports to william.jevons@proton.me. Please do not describe a vulnerability in a public
-issue, pull request, or discussion, even in outline. Mail sent from a Proton account is end-to-end
-encrypted; a PGP key for senders on other providers will be published in this file. Either way,
-please keep the details out of the subject line.
+Report through GitHub's private vulnerability reporting: open this repository's Security tab and
+choose "Report a vulnerability". The report stays visible only to us and to you. If you would rather
+not use GitHub, email william.jevons@proton.me instead. Please do not describe a vulnerability in
+a public issue, pull request, or discussion, even in outline, and keep the details out of an email's
+subject line. We publish no PGP key.
 
 A report is easiest to act on when it names the affected component and the commit of `main` you
 tested, says what an attacker can achieve and what access they need first, and shows how to
@@ -32,11 +33,12 @@ why.
 
 We ask that you keep the details of a vulnerability private until a fix has shipped, or until 90
 days after you reported it, whichever comes first. A fix has shipped when it is on `main` and, once
-the engine is live, running in production. If a fix needs longer, we will tell you why before the
-deadline and agree a new date with you. Once the fix has shipped, we publish an advisory in this
-repository that describes the vulnerability, its impact, and the fix, and credits you by name
-unless you would rather it did not. You are free to publish your own account from the day the fix
-ships. If we conclude that a report does not describe a vulnerability, you may disclose it once we
+the engine is live, running in production. If a fix cannot meet that deadline, we will tell you why
+before it and agree one extension with you in writing, of at most 30 days, and keep any containment
+we have put in place until the fix is live. We publish an advisory in this repository when the fix
+is live or at the extended deadline, whichever comes first. It describes the vulnerability, its
+impact, and the fix, and credits you by name unless you would rather it did not. You are free to
+publish your own account from the day the fix ships. If we conclude that a report does not describe a vulnerability, you may disclose it once we
 have told you so.
 
 ## Safe harbour
