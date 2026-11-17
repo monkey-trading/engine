@@ -1,15 +1,16 @@
 //! What every venue connection shares: its timing from the config, the TLS client config, and the
-//! backoff between attempts.
+//! reconnect loop with its backoff between attempts.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use rustls::crypto::ring;
 use rustls::{ClientConfig, RootCertStore};
+use tokio::time::{Instant, sleep};
 
 use crate::config::VenuesSection;
-use crate::feeds::venue::Timing;
+use crate::feeds::venue::{Timing, VenueFeed};
 
 impl Timing {
     /// The timing a venue section configures: `min_quote_spacing` is the per-symbol sequencing
@@ -27,6 +28,36 @@ impl Timing {
             stale_after: venues.stale_after,
             ping_interval: venues.ping_interval,
             max_delay: venues.max_delay,
+        }
+    }
+}
+
+impl VenueFeed {
+    /// Connects and relays until the connection fails, then retries: at once after a connection that
+    /// sequenced fresh quotes of its own, though never within `timing.reconnect_min` of its attempt,
+    /// else after a backoff that doubles while attempts sequence none (see `next_attempt`).
+    /// Error cases:
+    /// - the sequencer has gone away
+    pub(super) async fn run(mut self) -> anyhow::Result<()> {
+        let mut backoff = self.timing.reconnect_min;
+        self.publish_status();
+        loop {
+            (self.quoted, self.sent_own) = (false, false);
+            let attempted = Instant::now();
+            let Err(error) = self.relay().await;
+            self.report.up = false;
+            self.settle().await;
+            if self.tx.is_closed() {
+                // The supervisor logs what the task returns, so it is redacted as a log line is.
+                return Err(anyhow!(self.redact(&format!("{error:#}"))).context("sequencer gone"));
+            }
+            // Healthy only on its own quotes: the engine's fresh quote may be a sibling's.
+            let healthy = self.quoted && self.sent_own;
+            let (wait, next) = next_attempt(backoff, healthy, attempted.elapsed(), &self.timing);
+            self.dropped(&error, wait);
+            self.publish_status();
+            sleep(wait).await;
+            backoff = next;
         }
     }
 }
@@ -49,12 +80,18 @@ pub fn tls_config() -> anyhow::Result<Arc<ClientConfig>> {
     Ok(Arc::new(config))
 }
 
-/// The wait before the next connection attempt, and the backoff after that. A connection that
-/// sequenced a fresh quote retries after `reconnect_min`; otherwise the wait is `backoff`, and the
-/// next one doubles it up to `reconnect_max`.
-pub(super) fn next_attempt(backoff: Duration, quoted: bool, timing: &Timing) -> (Duration, Duration) {
-    let wait = if quoted { timing.reconnect_min } else { backoff };
-    (wait, next_backoff(wait, timing.reconnect_max))
+/// The wait before the next connection attempt, and the backoff after that, for a connection
+/// attempted `lived` ago. A `healthy` connection, one that sequenced fresh quotes of its own, ran
+/// until it dropped, so it reconnects as soon as `reconnect_min` has passed since it was attempted,
+/// at once after any but a brief one, and the backoff starts again at `reconnect_min`. One that
+/// sequenced none failed: it waits `backoff`, and the next failure doubles it up to
+/// `reconnect_max`. So the backoff applies from the second failure in a row, and attempts never
+/// start closer than `reconnect_min` apart, however a venue refuses or drops them.
+pub(super) fn next_attempt(backoff: Duration, healthy: bool, lived: Duration, timing: &Timing) -> (Duration, Duration) {
+    if healthy {
+        return (timing.reconnect_min.saturating_sub(lived), timing.reconnect_min);
+    }
+    (backoff, next_backoff(backoff, timing.reconnect_max))
 }
 
 /// The delay after `current`: double it, capped at `max`.

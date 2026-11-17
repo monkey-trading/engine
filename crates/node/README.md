@@ -151,7 +151,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   bound
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
 - Live crypto prices from Coinbase and Kraken over WebSocket: one supervised task per
-  venue connection, quotes stamped with the venue's own time, and reconnects with backoff
+  venue connection, quotes stamped with the venue's own time, and reconnects at once after a
+  connection that quoted drops, with backoff while attempts fail
 - Prices only from sources reached over TLS that ends in the enclave: every venue endpoint is
   `wss://` on the venue's own domain, so the host can delay a source's quotes but not alter them
 - A bound on a price's age under a hostile host, on the monotonic clock: every venue connection
@@ -1421,8 +1422,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the new share units, keeping a restart's pending splits and re-anchoring to a mark when the
   engine splits without the walk following
 - `src/feeds/venue/mod.rs` — the venue task: connect, subscribe, sequence each symbol's newest
-  quote when its mid moves or the engine's quote needs refreshing, reconnect, and hold back
-  quotes the engine would refuse
+  quote when its mid moves or the engine's quote needs refreshing, and hold back quotes the
+  engine would refuse
 - `src/feeds/venue/adapter.rs` — a venue's protocol on one connection, whichever adapter speaks it
 - `src/feeds/venue/alerts.rs` — the venue task's alerts: outages, silent and stale symbols, a clock
   ahead of the host's, and refused messages
@@ -1463,8 +1464,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the emit path arming its timer and clearing its memory, and the engine's index compared at every
   millisecond against an engine handed every update, under sequencer delays inside and past the
   refresh margin
-- `src/feeds/venue/setup.rs` — the timing from the config, the TLS client config and reconnect
-  backoff every connection shares
+- `src/feeds/venue/setup.rs` — the timing from the config, the TLS client config, and the
+  reconnect loop every connection shares: at once after a connection that quoted drops, with
+  backoff while attempts fail
 - `src/feeds/venue/auth.rs` — what a connection authenticates with: an API key, or an OAuth client
   of the venue's token endpoint whose bearer token the handshake carries, refetched three quarters
   of the way through its life, and the `venue_token_failed` alert; its tests, against the loopback
@@ -1523,6 +1525,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/tests/redundant.rs` — BTC-USD priced throughout while one of Coinbase's two
   connections, or one of Kraken's, serves a stale replay (for Coinbase also from the stand-in),
   stalls, or drops
+- `src/feeds/tests/reconnect.rs` — a connection that quoted reconnecting at once when it drops, and
+  a failure after that waiting `reconnect_min` before the next attempt
 - `src/feeds/tests/redate.rs` — a quiet book re-dated by a venue's answers: its stamps and the
   delay bound each carries, a delayed answer, the 5 s limit, a venue that stops answering, a later book replacing it, refused messages,
   a changed book dropped while the stream is behind, and emptied books; and, through the real
