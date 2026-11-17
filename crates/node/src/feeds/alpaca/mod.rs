@@ -4,7 +4,8 @@
 //! and once Alpaca answers `authenticated` it subscribes to the quotes of its symbols. Alpaca sends
 //! arrays of messages typed by `T`: a control message (`success`, `error`, `subscription`) alone in
 //! its array, and quotes (`q`) one or more to an array. A quote restates its symbol's best bid and
-//! ask whole, so the adapter keeps no state. Prices and sizes are JSON numbers, read from their
+//! ask whole, so the adapter keeps no state, and each is read on its own: one it refuses costs only
+//! itself, not the quotes batched with it. Prices and sizes are JSON numbers, read from their
 //! text, never through a float, and a book is stamped with the quote's RFC 3339 time `t`, to the
 //! millisecond. Alpaca does not document a one-sided quote, so a side whose price and size are both
 //! zero is read as quoting nothing, and that quote gives no book.
@@ -106,11 +107,14 @@ impl Session {
     /// Reads one message array: the subscription to send once the login is accepted, its
     /// confirmation, or the books its quotes carry.
     /// Error cases:
-    /// - an array that does not parse, a control message batched with others, a message of a type
-    ///   other than a quote, a `success` of an undocumented status, an error that leaves the session
-    ///   up (a refused subscription among them) or of an undocumented code, a confirmation that leaves
-    ///   a symbol out, or a quote that does not parse or check (the connection carries on)
+    /// - an array that does not parse, a `success` of an undocumented status, an error that leaves
+    ///   the session up (a refused subscription among them) or of an undocumented code, or a
+    ///   confirmation that leaves a symbol out (the connection carries on)
     /// - an error that ends the session (see `ERRORS`): the connection ends and retries
+    ///
+    /// Within an array of quotes, a control message batched with others, a message of a type other
+    /// than a quote, or a quote that does not parse or check is refused alone, and the array's other
+    /// books are read (`Frame::PartlyRefused`).
     pub(super) fn read(&mut self, text: &str) -> Result<Frame, Refusal> {
         let messages: Vec<Message> = serde_json::from_str(text).map_err(|e| {
             Refusal::Message(format!(
@@ -125,8 +129,17 @@ impl Session {
         {
             return self.control(message);
         }
-        let books: Result<Vec<Option<Book>>, String> = messages.iter().map(|message| self.quote(message)).collect();
-        books.map(|books| Frame::Books(books.into_iter().flatten().collect())).map_err(Refusal::Message)
+        let (mut books, mut refused) = (Vec::new(), Vec::new());
+        for message in &messages {
+            match self.quote(message) {
+                Ok(book) => books.extend(book),
+                Err(reason) => refused.push(reason),
+            }
+        }
+        if refused.is_empty() {
+            return Ok(Frame::Books(books));
+        }
+        Ok(Frame::PartlyRefused { books, refused })
     }
 
     /// Reads a control message sent alone in its array.

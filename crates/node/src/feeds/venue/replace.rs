@@ -94,6 +94,10 @@ impl VenueFeed {
                             Ok(Frame::Control) => {}
                             Err(Refusal::Message(reason)) => refused.push((reason, text)),
                             Ok(Frame::Subscribed) => subscribed = true,
+                            // Passed over like a refused message, its refusals logged at the switch.
+                            Ok(Frame::PartlyRefused { refused: reasons, .. }) => {
+                                refused.extend(reasons.into_iter().map(|reason| (reason, text.clone())));
+                            }
                             Ok(Frame::Books(read)) => {
                                 subscribed = true;
                                 if bounded && current(&delay) {

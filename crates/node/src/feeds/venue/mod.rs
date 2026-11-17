@@ -83,6 +83,9 @@ pub(super) enum Refusal {
 pub(super) enum Frame {
     /// The best bid and ask for one or more of the venue's symbols.
     Books(Vec<Book>),
+    /// The books of a message batching several items, some of which were refused, each by its
+    /// reason: the books are taken, and each refusal is logged as a refused message is.
+    PartlyRefused { books: Vec<Book>, refused: Vec<String> },
     /// An acknowledgement, heartbeat, or status message: nothing to price.
     Control,
     /// The venue's acceptance of the subscription: nothing to price either, but a replacement

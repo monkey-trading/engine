@@ -241,9 +241,9 @@ at `min_sources = 2`. Alpaca's errors are named by code and Alpaca's meaning of 
   raises `venue_symbol_silent` after `feeds.venues.timeout`, and the connection is replaced to
   subscribe again. Check the plan and the symbols; a wrong symbol is a config fix, a new release.
 - **A refused quote.** A quote whose prices, sizes or time do not parse, or for a symbol the
-  connection did not subscribe to, is refused: `venue_message_refused` names the reason and, for a
-  configured symbol, the symbol. A side with a zero price and zero size quotes nothing, and that quote
-  gives no book, without an alert.
+  connection did not subscribe to, is refused alone, and the other quotes Alpaca sent in its message
+  are read: `venue_message_refused` names the reason and, for a configured symbol, the symbol. A side
+  with a zero price and zero size quotes nothing, and that quote gives no book, without an alert.
 
 ### Benchmark rates
 

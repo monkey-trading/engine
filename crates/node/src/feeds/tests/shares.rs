@@ -1,6 +1,7 @@
 //! The US share markets' two TLS sources: loopback stand-ins for Massive's stocks feed and Alpaca's
 //! consolidated feed, each behind TLS a test CA certifies. A refused Alpaca login is alerted with no
-//! key ID, secret key or text Alpaca wrote in any log line or in what a stopped feed returns; and the
+//! key ID, secret key or text Alpaca wrote in any log line or in what a stopped feed returns; a
+//! refused quote is alerted while the quotes batched with it are sequenced; and the
 //! dev scenario, where Apple, closed while both vendors quote it, opens and fills at the index of the
 //! two sources, goes unpriced when either stops and prices again when it is back, and the log then
 //! replays.
@@ -23,14 +24,16 @@ use crate::clock::now_ms;
 use crate::config::{Genesis, Venue, VenueConnection, VenueSymbol};
 use crate::feeds::tests::alpaca_support::{AlpacaStandIn, KEY_ID, REFUSAL_TEXT, SECRET_KEY};
 use crate::feeds::tests::cme_support::key;
-use crate::feeds::tests::fake::{WAIT, fake_sequencer, fast, listen};
+use crate::feeds::tests::fake::{
+    WAIT, accept, fake_sequencer, fast, listen, next_alert, next_prices, next_text, rfc3339, send, spawn_feed,
+};
 use crate::feeds::tests::rwa_support::{Applied, TlsFront, around_the_clock, events_of, listing, priced, wait_for};
 use crate::feeds::tests::scenario::Node;
 use crate::feeds::tests::vendors::{KEY, Prices, serve_massive};
 use crate::feeds::venue::{self, Credentials, Timing};
 use crate::replay_path;
 use crate::sequencer::Request;
-use crate::test_support::dev_config;
+use crate::test_support::{capture_alerts, dev_config};
 use crate::trusted_time::tests::logs::Logs;
 
 const AAPL: MarketId = 40;
@@ -51,7 +54,7 @@ async fn a_refused_login_alerts_without_the_key_pair_or_alpacas_text_in_any_log_
     wait_for(WAIT, || (logs.warnings("venue_feed_down") > 0).then_some(())).await;
     assert!(logs.warnings("venue_message_refused") > 0);
     assert!(logs.count("error 402: auth failed") > 0, "the refusal names its code");
-    assert!(logs.count("-byte message, SHA-256 ") > 0, "the refused login was excerpted");
+    assert!(logs.count("-byte message, SHA-256 ") > 0, "the refused login was named by its length and hash");
 
     // With the sequencer gone, the attempt that finds it gone is what the task returns to its
     // supervisor: its login refused, or its first query unanswered, whichever comes first.
@@ -65,6 +68,29 @@ async fn a_refused_login_alerts_without_the_key_pair_or_alpacas_text_in_any_log_
     }
     assert_eq!(stand_in.logins(), 0);
     stand_in.abort();
+}
+
+#[tokio::test]
+async fn a_refused_quote_is_alerted_and_the_quotes_batched_with_it_are_sequenced() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (listener, url) = listen().await;
+    let (mut rx, _feed) = spawn_feed(Venue::Alpaca, &url, &[(1, "AAPL"), (2, "MSFT")], fast(WAIT));
+    let (mut ws, login) = accept(&listener).await;
+    assert!(login.contains(r#""action":"auth""#), "{login}");
+    send(&mut ws, &[r#"[{"T":"success","msg":"authenticated"}]"#.to_owned()]).await;
+    assert!(next_text(&mut ws).await.contains(r#""action":"subscribe""#));
+
+    // MSFT's bid is priced with no size, which is refused; AAPL's quote beside it is sequenced.
+    let at = rfc3339(now_ms());
+    let quote = |symbol: &str, bid_size: u32| {
+        format!(r#"{{"T":"q","S":"{symbol}","bp":230,"bs":{bid_size},"ap":230.02,"as":2,"t":"{at}"}}"#)
+    };
+    send(&mut ws, &[format!("[{},{}]", quote("MSFT", 0), quote("AAPL", 3))]).await;
+    let (market, quotes) = next_prices(&mut rx).await;
+    assert_eq!((market, quotes[0].mid), (1, "230.01".parse().unwrap()));
+    let alert = next_alert(&mut alerts).await;
+    assert_eq!(alert["alert"], "venue_message_refused");
+    assert!(alert["message"].contains("MSFT bid size 0 out of range"), "{alert:?}");
 }
 
 #[tokio::test]

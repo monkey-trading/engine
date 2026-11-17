@@ -122,30 +122,48 @@ fn a_json_escape_in_any_field_alpaca_writes_leaves_the_message_readable() {
 }
 
 #[test]
-fn malformed_messages_and_quotes_are_refused() {
-    let quote = |edit: &dyn Fn(&str) -> String| format!("[{}]", edit(QUOTE));
-    let cases = [
-        quote(&|q| q.replace("87.68", "8.768e1")),
-        quote(&|q| q.replace(r#""bs":1"#, r#""bs":0"#)),
-        quote(&|q| q.replace(r#""as":4"#, r#""as":-4"#)),
-        quote(&|q| q.replace(r#""bp":87.66"#, r#""bp":"87.66""#)),
-        quote(&|q| q.replace(r#""bp":87.66,"#, "")),
-        quote(&|q| q.replace(r#""as":4,"#, "")),
-        quote(&|q| q.replace(r#","t":"2021-02-22T15:51:45.335689322Z""#, "")),
-        quote(&|q| q.replace("2021-02-22T15:51:45.335689322Z", "1614009105335")),
-        quote(&|q| q.replace(r#""S":"AAPL","#, "")),
-        quote(&|q| q.replace(r#""S":"AAPL""#, r#""S":"NVDA""#)),
-        quote(&|q| q.replace(r#""T":"q""#, r#""T":"t""#)),
-        quote(&|q| q.replace(r#""T":"q""#, r#""T":"Q""#)),
-        format!("[{QUOTE},{}]", &CONNECTED[1..CONNECTED.len() - 1]),
-        r#"[{"T":"success","msg":"subscribed"}]"#.to_owned(),
-        QUOTE.to_owned(),
-        r#"[{"msg":"connected"}]"#.to_owned(),
-        "[".to_owned(),
-    ];
+fn malformed_messages_are_refused() {
+    let cases = [r#"[{"T":"success","msg":"subscribed"}]"#, QUOTE, r#"[{"msg":"connected"}]"#, "["];
     for case in cases {
-        assert!(matches!(session().read(&case), Err(Refusal::Message(_))), "accepted {case}");
+        assert!(matches!(session().read(case), Err(Refusal::Message(_))), "accepted {case}");
     }
+}
+
+#[test]
+fn a_refused_quote_costs_only_itself_and_not_the_quotes_batched_with_it() {
+    let msft = |edit: &dyn Fn(&str) -> String| edit(&QUOTE.replace(r#""S":"AAPL""#, r#""S":"MSFT""#));
+    let cases = [
+        msft(&|q| q.replace("87.68", "8.768e1")),
+        msft(&|q| q.replace(r#""bs":1"#, r#""bs":0"#)),
+        msft(&|q| q.replace(r#""as":4"#, r#""as":-4"#)),
+        msft(&|q| q.replace(r#""bp":87.66"#, r#""bp":"87.66""#)),
+        msft(&|q| q.replace(r#""bp":87.66,"#, "")),
+        msft(&|q| q.replace(r#""as":4,"#, "")),
+        msft(&|q| q.replace(r#","t":"2021-02-22T15:51:45.335689322Z""#, "")),
+        msft(&|q| q.replace("2021-02-22T15:51:45.335689322Z", "1614009105335")),
+        msft(&|q| q.replace(r#""S":"MSFT","#, "")),
+        msft(&|q| q.replace(r#""S":"MSFT""#, r#""S":"NVDA""#)),
+        msft(&|q| q.replace(r#""T":"q""#, r#""T":"t""#)),
+        msft(&|q| q.replace(r#""T":"q""#, r#""T":"Q""#)),
+    ];
+    let aapl =
+        Book { symbol: "AAPL".into(), bid: "87.66".parse().unwrap(), ask: "87.68".parse().unwrap(), ts: QUOTE_TS };
+    for refused in cases {
+        // Alone, the quote is refused and nothing is read; batched either side of a good quote, the
+        // good quote's book is read beside the refusal.
+        let alone = session().read(&format!("[{refused}]"));
+        let refused_alone =
+            matches!(&alone, Ok(Frame::PartlyRefused { books, refused }) if books.is_empty() && refused.len() == 1);
+        assert!(refused_alone, "{refused}: {alone:?}");
+        for batch in [format!("[{refused},{QUOTE}]"), format!("[{QUOTE},{refused}]")] {
+            let Ok(Frame::PartlyRefused { books, refused }) = session().read(&batch) else { panic!("{batch}") };
+            assert_eq!((books, refused.len()), (vec![book(&aapl)], 1), "{batch}");
+        }
+    }
+    // A control message batched with quotes is refused the same way.
+    let batched = format!("[{QUOTE},{}]", &CONNECTED[1..CONNECTED.len() - 1]);
+    let Ok(Frame::PartlyRefused { books, refused }) = session().read(&batched) else { panic!("{batched}") };
+    assert_eq!((books, refused), (vec![book(&aapl)], vec!["a success message batched with others".to_owned()]));
 }
 
 #[test]
@@ -165,16 +183,21 @@ fn no_refusal_names_text_alpaca_sent() {
         format!("[{}]", QUOTE.replace(r#""S":"AAPL""#, &format!(r#""S":"AAPL {echo}""#))),
     ];
     for message in cases {
-        match session().read(&message) {
-            Err(Refusal::Message(reason) | Refusal::Connection(reason)) => {
-                assert!(!reason.contains(echo), "{reason} for {message}")
-            }
+        let reasons = match session().read(&message) {
+            Err(Refusal::Message(reason) | Refusal::Connection(reason)) => vec![reason],
+            Ok(Frame::PartlyRefused { books, refused }) if books.is_empty() => refused,
             accepted => panic!("{message} accepted: {accepted:?}"),
-        }
+        };
+        assert!(reasons.iter().all(|reason| !reason.contains(echo)), "{reasons:?} for {message}");
     }
 }
 
 // ── Helpers ──
+
+/// `book` again: `Book` is not `Clone`.
+fn book(book: &Book) -> Book {
+    Book { symbol: book.symbol.clone(), ..*book }
+}
 
 /// A session for AAPL and MSFT.
 fn session() -> Session {
