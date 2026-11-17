@@ -28,6 +28,9 @@ use crate::tee::sealing::file_for;
 
 /// How long one follow stint runs before the member checks its turn again.
 const STINT: Duration = if cfg!(test) { Duration::from_secs(2) } else { Duration::from_secs(15) };
+/// The shortest stint a member runs: a shorter one may end before the stream's first frame, which
+/// reads as a failed stint, so with less left before its own turn's boundary it waits instead.
+const LEAST_STINT: Duration = if cfg!(test) { Duration::from_millis(250) } else { Duration::from_secs(1) };
 /// How long after a turn's boundary its member may take to serve, during which a member following it
 /// expects failed stints and pages none: five minutes, or half a turn when that is shorter.
 pub(crate) const COMING_UP: Millis = if TURN_MS / 2 < 300_000 { TURN_MS / 2 } else { 300_000 };
@@ -58,8 +61,9 @@ enum Holding {
     Hold,
     /// Take this turn's keys.
     Take(ScheduledTurn),
-    /// Follow the operator in effect, under the turn in effect, if any.
-    Follow(Option<ScheduledTurn>),
+    /// Follow the operator in effect, under the turn in effect, if any, until the boundary of this
+    /// member's own next turn, once drawn.
+    Follow(Option<ScheduledTurn>, Option<Millis>),
 }
 
 impl Holding {
@@ -67,7 +71,7 @@ impl Holding {
     fn taking(&self) -> Option<(u64, u64)> {
         match self {
             Self::Take(turn) => Some((turn.turn, turn.generation)),
-            Self::Hold | Self::Follow(_) => None,
+            Self::Hold | Self::Follow(..) => None,
         }
     }
 }
@@ -142,7 +146,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                 }
                 Err(e) => self.episodes.blocked(Step::ReadTurn, e),
             }
-            let turn = match holding {
+            let (turn, own_next) = match holding {
                 Ok(Holding::Hold) => return Ok(Turn::Hold),
                 Ok(Holding::Take(turn)) => {
                     // A member that has not followed yet builds its replica from the copy it holds,
@@ -281,7 +285,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                         }
                     }
                 }
-                Ok(Holding::Follow(turn)) => turn,
+                Ok(Holding::Follow(turn, own_next)) => (turn, own_next),
                 Err(_) => {
                     tokio::time::sleep(STINT).await;
                     continue;
@@ -298,7 +302,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                     }
                     Err(e) => {
                         self.episodes.blocked(Step::ResolveOperator, &e.context("resolving the operator in effect"));
-                        tokio::time::sleep(STINT).await;
+                        tokio::time::sleep(self.before_own_turn(own_next, STINT).await).await;
                         continue;
                     }
                 }
@@ -316,25 +320,31 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                         self.episodes.blocked(Step::OpenCopy, &e.context("opening the follower's copy"));
                         // As a failed stint: the next try resolves the other operator to bootstrap from.
                         (self.fallback.follow_holder, followed) = (!self.fallback.follow_holder, None);
-                        tokio::time::sleep(STINT).await;
+                        tokio::time::sleep(self.before_own_turn(own_next, STINT).await).await;
                         continue;
                     }
                 },
             };
             self.pin_posted(replica).await;
             let boundary = turn.as_ref().map(|turn| turn.boundary);
-            match replica.stint(self.cfg, operator, STINT).await {
+            // A member whose own turn is next follows only up to its boundary, then reads the turn.
+            let budget = self.before_own_turn(own_next, STINT).await;
+            if budget < LEAST_STINT {
+                tokio::time::sleep(budget).await;
+                continue;
+            }
+            match replica.stint(self.cfg, operator, budget).await {
                 Ok(_) => {
                     self.episodes.followed(replica.confirmed());
                     if let Some(resolved) = self.moved_on(operator.enclave).await {
                         followed = Some((resolved, number));
                     }
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    tokio::time::sleep(self.before_own_turn(own_next, Duration::from_secs(1)).await).await;
                 }
                 Err(e) if e.downcast_ref::<ReplicaRefused>().is_some() => {
                     self.episodes.diverged(&operator.origin, &e);
                     follower = None;
-                    tokio::time::sleep(STINT).await;
+                    tokio::time::sleep(self.before_own_turn(own_next, STINT).await).await;
                 }
                 Err(e) => {
                     let coming_up = self.coming_up(boundary).await;
@@ -352,7 +362,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                     // registry names and the one whose head is newest (#596).
                     self.fallback.follow_holder = !self.fallback.follow_holder;
                     followed = None;
-                    tokio::time::sleep(STINT).await;
+                    tokio::time::sleep(self.before_own_turn(own_next, STINT).await).await;
                 }
             }
         }
@@ -362,22 +372,27 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// effect at trusted time that names its release, and takes that turn while they are not; with no
     /// turn in effect, or none drawn, it holds while the vault names its release, so the node starts as
     /// it always has, opening its keys or taking them by an election's handover. Anything else it
-    /// follows, under the turn in effect, if any.
+    /// follows, under the turn in effect, if any, until its own next turn's boundary when the latest
+    /// drawn turn is that one.
     /// Error cases:
     /// - the vault or the schedule cannot be read, or no trusted time sample can be taken
     async fn holding(&mut self) -> anyhow::Result<Holding> {
         let at = self.vault.observe(View::Finalized, &[]).await?;
-        let turn = match crate::handover::turns::drawn(&self.vault, &at).await? {
-            true => {
+        let (turn, own_next) = match crate::handover::turns::latest_drawn(&self.vault, &at).await? {
+            Some(latest) => {
                 let reached = self.reached().await?;
-                crate::handover::turns::turn_at(&self.vault, &at, Some(reached)).await?
+                // The schedule draws a turn only within the turn before it, so a drawn turn whose boundary
+                // trusted time has yet to reach is the next one.
+                let own = latest.boundary > reached && latest.release == self.release.id();
+                let turn = crate::handover::turns::turn_at(&self.vault, &at, Some(reached)).await?;
+                (turn, own.then_some(latest.boundary))
             }
-            false => None,
+            None => (None, None),
         };
         let dir = &self.cfg.tee.sealing.as_ref().context("a member seals its keys")?.dir;
         let moving = self.signer_moving(&at).await?;
         if let Some(turn) = &turn
-            && let Some(holding) = self.skipped(turn).await
+            && let Some(holding) = self.skipped(turn, own_next).await
         {
             return Ok(holding);
         }
@@ -387,20 +402,24 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                 if turn.release == self.release.id()
                     && self.handed.is_some_and(|handed| handed.generation == Some(turn.generation)) =>
             {
-                Ok(Holding::Follow(Some(turn)))
+                Ok(Holding::Follow(Some(turn), own_next))
             }
             // A change of signer in flight moves past the keys of the turn the finalized view names.
-            Some(turn) if turn.release == self.release.id() && moving => Ok(Holding::Follow(Some(turn))),
+            Some(turn) if turn.release == self.release.id() && moving => Ok(Holding::Follow(Some(turn), own_next)),
             Some(turn)
                 if turn.release == self.release.id() && file_for(dir, &self.release, turn.generation).exists() =>
             {
                 Ok(Holding::Hold)
             }
             Some(turn) if turn.release == self.release.id() => Ok(Holding::Take(turn)),
-            Some(turn) => Ok(Holding::Follow(Some(turn))),
+            Some(turn) => Ok(Holding::Follow(Some(turn), own_next)),
             None => {
                 let current = self.vault.current_release(&at).await?;
-                Ok(if current.id == self.release.id() && !moving { Holding::Hold } else { Holding::Follow(None) })
+                Ok(if current.id == self.release.id() && !moving {
+                    Holding::Hold
+                } else {
+                    Holding::Follow(None, own_next)
+                })
             }
         }
     }
@@ -410,6 +429,14 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     async fn coming_up(&mut self, boundary: Option<Millis>) -> bool {
         let Some(boundary) = boundary else { return false };
         self.reached().await.is_ok_and(|reached| reached < boundary.saturating_add(COMING_UP))
+    }
+
+    /// `wait`, cut short where trusted time reaches `own_next`, this member's own next turn's boundary,
+    /// first; all of `wait` without one, or when trusted time cannot be read.
+    async fn before_own_turn(&mut self, own_next: Option<Millis>, wait: Duration) -> Duration {
+        let Some(boundary) = own_next else { return wait };
+        let Ok(reached) = self.reached().await else { return wait };
+        wait.min(Duration::from_millis(u64::try_from(boundary.saturating_sub(reached)).unwrap_or(0)))
     }
 
     /// The time true time has certainly reached: a trusted time sample's earliest bound and the

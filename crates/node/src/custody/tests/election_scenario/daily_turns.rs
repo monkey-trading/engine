@@ -92,6 +92,12 @@ const DAY_SECS: u64 = 86_400;
 /// window's minimum is set, is this budget plus two such reads at its providers' latency, each a fixed
 /// number of round trips (`custody::standby_keys`'s latency test).
 const SWITCH_BUDGET: Duration = Duration::from_secs(1);
+/// The most wall time from a boundary to its member's `TurnTaken`. The test clock steps over the
+/// boundary while the member follows, and a stint ends at its member's boundary only when trusted time
+/// runs through it, so the member's 2 s test stint runs out first: this measure cannot tell a member
+/// that ends its stint at the boundary from one that reads its turn after a whole stint and pause.
+/// `node::member::turn`'s tests hold the take to the boundary itself.
+const TAKE_BUDGET: Duration = Duration::from_secs(4);
 
 #[tokio::test]
 #[ignore = "requires Anvil, Python 3, and compiled contracts; scripts/dev-daily-rotation.sh runs it"]
@@ -258,6 +264,7 @@ async fn scenario() {
         // A minute past the boundary one block past it is mined, and the incumbent's next command
         // hands the operator key to the turn's. The incumbent held the office until its turn ended,
         // or, before any turn, until this one applied (`V53`).
+        let crossed = std::time::Instant::now();
         holder.node.advance_to(start + 60_000).await;
         chain.mine_at(start_secs + 30).await;
         // The holders post checkpoints: their posts wait for a block until the switch's checks of
@@ -282,8 +289,9 @@ async fn scenario() {
             );
             None
         } else {
-            let Switched { holder: next, head, scheduled, sealed, window, moved: (bytes, entries, whole) } =
+            let Switched { holder: next, head, scheduled, sealed, window, turn_taken, moved: (bytes, entries, whole) } =
                 switch(&chain, &members, holder, member, clock.clone(), &mut shared).await;
+            let taking = turn_taken.saturating_duration_since(crossed);
             holder = next;
             holders.push(member);
             let finalized = chain.view_at(chain.vault, currentReleaseCall {}, "finalized").await;
@@ -298,6 +306,7 @@ async fn scenario() {
             assert_eq!((scheduled.turn, source), (turn, Some(incumbent_account)), "turn {turn}: the handover source");
             assert_eq!(sealed, (members[member].release(), generation));
             assert!(window <= SWITCH_BUDGET, "turn {turn}: the switch took {window:?}, over {SWITCH_BUDGET:?}");
+            assert!(taking <= TAKE_BUDGET, "turn {turn}: TurnTaken came {taking:?} after the boundary");
             assert_eq!(
                 office(&holder.node).await.0,
                 at_boundary,
@@ -310,9 +319,11 @@ async fn scenario() {
                 named(incumbent)
             );
             println!(
-                "PASS: turn {turn}: the switch window was {:.3} s (budget {:.1} s), the tail {bytes} bytes in {entries} entries of a {whole}-byte log, with no whole-log replay, orders placed and cancelled on both sides of it, and {} follows {}",
+                "PASS: turn {turn}: the switch window was {:.3} s (budget {:.1} s), TurnTaken {:.3} s after the boundary (budget {:.1} s), the tail {bytes} bytes in {entries} entries of a {whole}-byte log, with no whole-log replay, orders placed and cancelled on both sides of it, and {} follows {}",
                 window.as_secs_f64(),
                 SWITCH_BUDGET.as_secs_f64(),
+                taking.as_secs_f64(),
+                TAKE_BUDGET.as_secs_f64(),
                 named(incumbent),
                 named(member)
             );

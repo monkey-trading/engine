@@ -97,8 +97,9 @@ impl Fixture {
         );
         cfg.node.log_dir = copy;
         cfg.history.dir = scratch_dir(&format!("{name}-history"));
-        let registry = Registry::default();
-        Self { cfg, log, keys, registry, heads: Heads::default(), time: Time::default() }
+        let time = Time::default();
+        let registry = Registry { time: time.clone(), ..Registry::default() };
+        Self { cfg, log, keys, registry, heads: Heads::default(), time }
     }
 
     /// The member, reading the stand-ins.
@@ -145,9 +146,11 @@ impl Fixture {
 
 /// The registry, the schedule and the vault, as the member reads them: two turns drawn for other
 /// members, then, once drawn, this member's, taken over from `source` when set, the turn before it
-/// from `prior` when set.
+/// from `prior` when set. As the schedule does, it draws a turn only once trusted time, its block
+/// time here, reaches the boundary of the turn before it.
 #[derive(Clone, Default)]
 struct Registry {
+    time: Time,
     hostname: Arc<Mutex<String>>,
     /// The signer the latest view names while a change of signer is not final, if any.
     moving: Arc<Mutex<Option<AccountId>>>,
@@ -231,7 +234,10 @@ impl CheckpointChain for Registry {
     }
 
     async fn scheduled_turn(&self, _at: &Observation, now_ms: Millis) -> anyhow::Result<Option<ScheduledTurn>> {
-        Ok(self.turns().into_iter().filter(|turn| turn.boundary <= now_ms).max_by_key(|turn| turn.boundary))
+        let turns = self.turns();
+        let reached = self.time.now_ms();
+        let drawn = turns.iter().position(|turn| turn.boundary > reached).map_or(turns.len(), |next| next + 1);
+        Ok(turns.into_iter().take(drawn).filter(|turn| turn.boundary <= now_ms).max_by_key(|turn| turn.boundary))
     }
 }
 
@@ -245,20 +251,33 @@ impl PostedHead for Heads {
     }
 }
 
-/// Trusted time, as the test sets it.
+/// Trusted time, as the test sets it: standing still, or running on from the instant it was set.
 #[derive(Clone, Default)]
-struct Time(Arc<Mutex<Millis>>);
+struct Time(Arc<Mutex<(Millis, Option<std::time::Instant>)>>);
 
 impl Time {
     fn set(&self, ms: Millis) {
-        *self.0.lock().unwrap() = ms;
+        *self.0.lock().unwrap() = (ms, None);
+    }
+
+    /// Sets trusted time to `ms` from now on, running on with the monotonic clock as a sample's reach
+    /// does: the instant it was set.
+    fn run_from(&self, ms: Millis) -> std::time::Instant {
+        let now = std::time::Instant::now();
+        *self.0.lock().unwrap() = (ms, Some(now));
+        now
+    }
+
+    fn now_ms(&self) -> Millis {
+        let (ms, from) = *self.0.lock().unwrap();
+        ms + from.map_or(0, |from| from.elapsed().as_millis() as Millis)
     }
 }
 
 impl Sampling for Time {
     async fn sample(&self) -> anyhow::Result<Sample> {
-        let ms = *self.0.lock().unwrap();
-        Ok(Sample { at: std::time::Instant::now(), earliest_ms: ms, latest_ms: ms + 1_000 })
+        let (ms, from) = *self.0.lock().unwrap();
+        Ok(Sample { at: from.unwrap_or_else(std::time::Instant::now), earliest_ms: ms, latest_ms: ms + 1_000 })
     }
 }
 
@@ -272,6 +291,17 @@ impl Operator {
     /// Serves `/v1/stream` from the log in `log`, closing each connection once it has sent the entries
     /// from the requested seq; a request from seq 0 gets nothing unless `from_start`.
     async fn start(log: std::path::PathBuf, from_start: bool) -> Self {
+        Self::serve(log, from_start, false).await
+    }
+
+    /// `start` from the start of the log, holding each connection open once its entries are sent, as a
+    /// live operator's stream stays open: a stint following it runs its whole budget.
+    async fn live(log: std::path::PathBuf) -> Self {
+        Self::serve(log, true, true).await
+    }
+
+    /// `start`, holding each connection open once its entries are sent when `held`.
+    async fn serve(log: std::path::PathBuf, from_start: bool, held: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let host = listener.local_addr().unwrap().to_string();
         let connected = Arc::new(AtomicUsize::new(0));
@@ -281,7 +311,7 @@ impl Operator {
             get(move |ws: WebSocketUpgrade, uri: Uri| {
                 counted.fetch_add(1, Ordering::SeqCst);
                 let (log, from_start) = (log.clone(), from_start.load(Ordering::SeqCst));
-                async move { ws.on_upgrade(move |socket| stream(socket, uri, log, from_start)) }
+                async move { ws.on_upgrade(move |socket| stream(socket, uri, log, from_start, held)) }
             }),
         );
         let api = dev_config().api;
@@ -306,8 +336,14 @@ impl Operator {
 }
 
 /// Sends the log's entries from the seq the request names, each frame signed by the test key and
-/// bound to the request, then closes.
-async fn stream(mut socket: axum::extract::ws::WebSocket, uri: Uri, log: std::path::PathBuf, from_start: bool) {
+/// bound to the request, then closes, or, when `held`, waits for the member to.
+async fn stream(
+    mut socket: axum::extract::ws::WebSocket,
+    uri: Uri,
+    log: std::path::PathBuf,
+    from_start: bool,
+    held: bool,
+) {
     let path = uri.path_and_query().map(|query| query.as_str().to_owned()).unwrap_or_default();
     let field = |name: &str| path.split(['?', '&']).find_map(|part| part.strip_prefix(name)).map(str::to_owned);
     let challenge = engine_wire::parse_challenge(&field("challenge=").unwrap()).unwrap();
@@ -326,6 +362,10 @@ async fn stream(mut socket: axum::extract::ws::WebSocket, uri: Uri, log: std::pa
         if socket.send(Message::Text(frame.into())).await.is_err() {
             return;
         }
+    }
+    if held {
+        while let Some(Ok(_)) = socket.recv().await {}
+        return;
     }
     let _ = socket.send(Message::Close(None)).await;
 }

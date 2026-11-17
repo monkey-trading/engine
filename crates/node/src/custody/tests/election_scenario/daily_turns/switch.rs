@@ -135,6 +135,8 @@ pub(super) struct Switched {
     pub(super) sealed: (Release, u64),
     /// From the incumbent's last published command to the member's `TurnTaken`, on the wall clock.
     pub(super) window: Duration,
+    /// When the member's node sequenced `TurnTaken`, on the wall clock.
+    pub(super) turn_taken: std::time::Instant,
     /// The bytes and entries the tail carried, and the bytes of the whole log.
     pub(super) moved: (u64, u64, u64),
 }
@@ -192,7 +194,7 @@ pub(super) async fn switch(
     let opened = shared.metrics[incumbent].full_replays.get() + 1;
     shared.resume[incumbent].notify_one();
     shared.following(incumbent, opened).await;
-    Switched { holder, head: released.head, scheduled, sealed, window, moved: (bytes, entries, whole) }
+    Switched { holder, head: released.head, scheduled, sealed, window, turn_taken, moved: (bytes, entries, whole) }
 }
 
 /// The bytes and the entries, as the log's own lines, that the log in `dir` holds after the command at
