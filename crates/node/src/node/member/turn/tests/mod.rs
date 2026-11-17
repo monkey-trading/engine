@@ -268,6 +268,7 @@ impl Time {
         now
     }
 
+    /// The trusted time the test set, as it stands now.
     fn now_ms(&self) -> Millis {
         let (ms, from) = *self.0.lock().unwrap();
         ms + from.map_or(0, |from| from.elapsed().as_millis() as Millis)
