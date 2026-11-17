@@ -1,6 +1,7 @@
 //! Authenticated client actions with sequenced access evidence.
 
 use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 
 use axum::extract::{ConnectInfo, State};
 use axum::{Extension, Json};
@@ -16,10 +17,14 @@ use engine_core::event::Event;
 use tracing::field::display;
 use tracing::{Span, debug};
 
-use crate::access::{ScreeningRequest, screen};
+use crate::access::{AccessClient, Claim, ScreeningRequest, ScreeningSlot, SlotKind, SlotRefusal, screen};
 use crate::api::state::BeforeCredit;
 use crate::api::{AmountBody, ApiError, ApiResult, ApiState, SessionKeyRequest, SessionKeyRevocationRequest};
 use crate::clock::now_ms;
+
+/// The wait an account or client over its share of the screening slots is told to retry after: a
+/// slot is given back as soon as the source answers.
+const SHARE_RETRY: Duration = Duration::from_secs(1);
 
 /// Places an order and returns the events it produced.
 /// Error cases:
@@ -37,7 +42,8 @@ pub(super) async fn place_order(
     let cmd = if s.access_enforced() {
         let auth = req.auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
         let hash = order_hash(&signature_domain(&s), &req, auth.nonce, auth.expires_at);
-        let evidence = api_screen(&s, peer, req.account, hash).await?;
+        let kind = if req.reduce_only { SlotKind::Reducing } else { SlotKind::Opening };
+        let evidence = api_screen(&s, peer, req.account, hash, kind).await?;
         Command::AccessOrder { request: req, evidence }
     } else {
         Command::PlaceOrder(req)
@@ -98,7 +104,7 @@ pub(super) async fn close_all(
         .await?;
     let auth = req.auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
     let hash = close_all_hash(&signature_domain(&s), &req, auth.nonce, auth.expires_at);
-    let evidence = api_screen(&s, peer, req.account, hash).await?;
+    let evidence = api_screen(&s, peer, req.account, hash, SlotKind::Reducing).await?;
     let cmd = Command::AccessCloseAll { request: req, evidence };
     Ok(Json(s.submit(cmd).await?))
 }
@@ -193,7 +199,7 @@ pub(super) async fn withdraw(
     let cmd = if access {
         let auth = auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
         let hash = withdrawal_hash(&signature_domain(&s), b.account, b.amount, auth.nonce, auth.expires_at);
-        let evidence = api_screen(&s, peer, b.account, hash).await?;
+        let evidence = api_screen(&s, peer, b.account, hash, SlotKind::Reducing).await?;
         Command::AccessWithdraw { request: b, evidence, payout_available: s.payouts_enabled }
     } else {
         Command::Withdraw { account: b.account, amount: b.amount, auth }
@@ -220,22 +226,11 @@ pub(super) async fn attest_eligibility(
         client_ip(&peer),
     )
     .await?;
-    // A wallet declares for free, so declarations hold at most half the API's screening slots until
-    // they are sequenced: however many arrive, orders keep a slot.
-    let _declaring = s
-        .access
-        .as_ref()
-        .map(|client| {
-            client.declaration_slots.try_acquire().map_err(|_| {
-                debug!("declaration refused: its screening slots are full");
-                client.declaration_slots_full.raise(&"declaration screening slots");
-                ApiError::NotReady("declaration screening is at capacity")
-            })
-        })
-        .transpose()?;
+    // A wallet declares for free, so declarations hold at most half the API's screening slots while
+    // they are screened: however many arrive, orders keep a slot.
     let auth = &request.auth;
     let hash = eligibility_hash(&signature_domain(&s), request.account, request.class, auth.nonce, auth.expires_at);
-    let evidence = api_screen(&s, peer, request.account, hash).await?;
+    let evidence = api_screen(&s, peer, request.account, hash, SlotKind::Declaration).await?;
     Ok(Json(s.submit(Command::AttestEligibility { request, evidence }).await?))
 }
 
@@ -250,7 +245,8 @@ pub(super) fn signature_domain(state: &ApiState) -> eip712::Eip712Domain {
 }
 
 /// Screens the client address: the socket peer, or the one a trusted proxy's PROXY protocol header
-/// names (`ConnectInfo`), never a user-supplied forwarding header.
+/// names (`ConnectInfo`), never a user-supplied forwarding header, while the request holds a screening
+/// slot as `kind`.
 ///
 /// TODO: the host controls the network, so a malicious host can present any address as the peer, or
 /// as the configured proxy and name any client in its header; a relay or NAT on the host can present
@@ -262,20 +258,34 @@ pub(super) async fn api_screen(
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     account: engine_core::types::AccountId,
     request_hash: eip712::B256,
+    kind: SlotKind,
 ) -> Result<AccessEvidence, ApiError> {
     let Some(Extension(ConnectInfo(peer))) = peer else {
         return Ok(AccessEvidence::Failed { reason: SourceFailure::MissingPeer });
     };
-    let _permit = state
-        .access
-        .as_ref()
-        .map(|client| client.api_slots.try_acquire().map_err(|_| ApiError::Unavailable))
-        .transpose()?;
+    let claim = Claim { account, client: Some(peer.ip()), request: request_hash, kind };
+    let _slot = state.access.as_deref().map(|client| take_slot(client, claim)).transpose()?;
     Ok(screen(
         state.access.as_deref(),
         &ScreeningRequest { request_hash, account: Some(account), payer: None, peer: Some(peer.ip()) },
     )
     .await)
+}
+
+/// A screening slot for `claim`, or the answer its refusal gets: a copy of a request still being
+/// screened conflicts with it, an account or client over its share is told to slow down, and a request
+/// that finds every slot it may take held is told to retry.
+/// Error cases:
+/// - a copy of the request holds a slot: `Conflict`
+/// - the request's account or client holds its share: `RateLimited`
+/// - declarations hold their half, or every slot the request may take is held: `NotReady`
+fn take_slot(client: &AccessClient, claim: Claim) -> Result<ScreeningSlot<'_>, ApiError> {
+    client.api_slots.take(claim).map_err(|refusal| match refusal {
+        SlotRefusal::Duplicate => ApiError::Conflict("the same request is already being screened"),
+        SlotRefusal::Share => ApiError::RateLimited(SHARE_RETRY),
+        SlotRefusal::Declarations => ApiError::NotReady("declaration screening is at capacity"),
+        SlotRefusal::Full => ApiError::NotReady("screening is at capacity"),
+    })
 }
 
 /// Mock custody only: credits an account without a chain deposit, under a fresh reference.
@@ -290,19 +300,12 @@ pub(super) async fn dev_deposit(State(s): State<ApiState>, Json(b): Json<AmountB
     let chain_ref = format!("dev:{}:{:016x}", now_ms(), rand::random::<u64>());
     let cmd = if s.access_enforced() {
         let deposit = AccessDeposit { account: Some(b.account), payer: Some(b.account), amount: b.amount, chain_ref };
-        let _permit = s
-            .access
-            .as_ref()
-            .map(|client| client.api_slots.try_acquire().map_err(|_| ApiError::Unavailable))
-            .transpose()?;
+        let request_hash = deposit_screening_hash(&deposit);
+        let claim = Claim { account: b.account, client: None, request: request_hash, kind: SlotKind::Opening };
+        let _slot = s.access.as_deref().map(|client| take_slot(client, claim)).transpose()?;
         let evidence = screen(
             s.access.as_deref(),
-            &ScreeningRequest {
-                request_hash: deposit_screening_hash(&deposit),
-                account: deposit.account,
-                payer: deposit.payer,
-                peer: None,
-            },
+            &ScreeningRequest { request_hash, account: deposit.account, payer: deposit.payer, peer: None },
         )
         .await;
         Command::AccessDeposit { deposit, evidence }

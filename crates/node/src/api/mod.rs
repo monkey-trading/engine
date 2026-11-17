@@ -90,6 +90,8 @@ pub enum ApiError {
     NotImplemented(&'static str),
     /// The answer waits on something that has not happened yet; asking again later may succeed.
     NotReady(&'static str),
+    /// A copy of a request the node is still handling; the first copy's answer stands.
+    Conflict(&'static str),
     /// A signed request whose nonce is not the account's next.
     InvalidNonce {
         expected: u64,
@@ -234,6 +236,7 @@ impl IntoResponse for ApiError {
             ApiError::BodyTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "request body too large".to_owned()),
             ApiError::BodyTimeout => (StatusCode::REQUEST_TIMEOUT, "request body not received in time".to_owned()),
             ApiError::NotImplemented(m) => (StatusCode::NOT_IMPLEMENTED, m.to_owned()),
+            ApiError::Conflict(m) => (StatusCode::CONFLICT, m.to_owned()),
             ApiError::NotReady(m) => {
                 let body = Json(json!({ "error": m }));
                 return (StatusCode::SERVICE_UNAVAILABLE, [(RETRY_AFTER, "5")], body).into_response();

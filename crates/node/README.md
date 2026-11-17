@@ -666,6 +666,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/access_tests/pre_deposit.rs` — a wallet's setup before its first deposit: the order of its declaration and session keys, what stays refused until a deposit credits it, both deposit orders, engine refusals, and the reads and scans it meets
 - `src/api/access_tests/pre_deposit_budgets.rs` — what those requests spend: a token from the client's share and the shared budget, nothing when refused before the log, what a refused wallet sees, and a pending-deposit wallet's declaration past an empty budget
 - `src/api/access_tests/reissue.rs` — a reissue request screened like a withdrawal, by account and peer, refused with 403 before the log, and a request for an approval that does not exist refused with 404 before any screening call
+- `src/api/access_tests/screening_slots.rs` — the screening slots under load: one wallet's burst holds only its share, a client its own, a copy of a signed request or a repeat declaration holds none, new orders leave closes and withdrawals the reserve, and a request refused for want of a slot gets `Retry-After` and raises `api_screening_slots_full`
 - `src/api/access_tests/session_keys.rs` — a registered session key trades for its account without the wallet until revoked, a withdrawal it signs refuses as out of scope in the log, an expired, mis-scoped, or rate-flooding key is refused before sequencing, and a never-credited account registers one only after declaring, with its cancels, stale nonces, and missing signatures
 - `src/api/access_tests/source.rs` — the mock screening source the access tests answer with
 - `src/api/access_tests/spreads.rs` — the `V52` dev scenario: fills paying their bands on the open
@@ -697,6 +698,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   tier falling thirty days on with the short open, a withdrawal stopped at the initial requirement, the
   close-out at BTC's own bands, the account read, replay and a restart
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
+- `src/access/slots.rs` — the API's screening slots: each account's and each client's share, the reserve for closes and withdrawals, and one slot per signed request
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
 - `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof, at the
   checkpoint the vault accepted when one is retained, for the vault's `claimDistribution`
@@ -2452,7 +2454,8 @@ Each of these never-credited requests must expire within five minutes (400 other
 token from its client's share of a budget all clients share (429 `too many new wallets are being set
 up; try again later` with `Retry-After` when either is out). A declaration from an account with a
 pending deposit takes neither, only a token from a bucket of its own at the share's rate and one from a budget all such declarations share. A declaration also waits for a screening slot (503 `declaration screening is at capacity` with
-`Retry-After` when declarations hold their share). See [access-source configuration](../../config/access-source.md) for the budgets' rates and the
+`Retry-After` when declarations hold their share). An account that has declared, credited or not, gets 403
+`account has already declared` for another declaration. See [access-source configuration](../../config/access-source.md) for the budgets' rates and the
 growth they allow.
 Authenticated policy refusals consume the nonce. The recorded source supplies geography
 and sanctions classifications; missing, unknown, stale or unauthenticated evidence fails closed.
@@ -2461,7 +2464,11 @@ statements, custody holds, operator alerts, and the local scenario.
 
 An expiry more than five minutes ahead is sequenced and rejected with `expiry_too_far`, which uses
 the nonce. Requests that both pass API admission for one nonce are sequenced, and the engine rejects
-the second with `invalid_nonce`.
+the second with `invalid_nonce`; a copy of a signed request still being screened gets 409 `the same
+request is already being screened` instead. Each screened request holds one of the API's screening
+slots while the source answers, within its account's and its client's share (429 past either), and
+gets 503 `screening is at capacity` with `Retry-After` when every slot it may take is held, a reserve
+of them being kept for closes and withdrawals; see [access-source configuration](../../config/access-source.md).
 
 The first start records `auth`, and under `eip712` the custody chain id and vault, in the log;
 changing any of them needs a fresh log, removed while the node is stopped. The history index in

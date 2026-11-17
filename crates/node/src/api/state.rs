@@ -76,8 +76,9 @@ impl ApiState {
     /// has paid, takes neither, and is held to the share's rate for the account alone.
     /// Error cases:
     /// - as `authorise`, except that `before_credit` may admit a never-credited account
-    /// - a never-credited account declares again, manages session keys before declaring, or signs an
-    ///   expiry beyond `MAX_EXPIRY_AHEAD_MS`
+    /// - an account declares again, which the engine can only refuse
+    /// - a never-credited account manages session keys before declaring, or signs an expiry beyond
+    ///   `MAX_EXPIRY_AHEAD_MS`
     /// - a never-credited account's admitted request is over its client's share or the combined budget,
     ///   or a declaration with a pending deposit is over the share's rate for its account or client,
     ///   or the budget all paid declarations share: `SetupLimited`
@@ -153,7 +154,7 @@ impl ApiState {
         let (credited, declared, paid, next, last_sequenced, last_seq) = self
             .query(move |e| {
                 let credited = e.accounts().contains_key(&account);
-                let declared = !credited && e.eligibility(account).is_some();
+                let declared = e.eligibility(account).is_some();
                 let paid = declaration && !credited && !declared && e.has_pending_deposit(account);
                 (credited, declared, paid, e.next_request_nonce(account), e.now(), e.last_seq())
             })
@@ -171,12 +172,13 @@ impl ApiState {
             }
         }
         self.check_fresh(&auth, next, last_sequenced)?;
+        // Only what the engine could act on: not a second declaration, which it refuses from any account,
+        if declaration && declared {
+            debug!("request refused: account has already declared");
+            return Err(ApiError::Forbidden("account has already declared"));
+        }
         if !credited {
-            // Only what the engine could act on: not a second declaration, nor an expiry it refuses.
-            if declaration && declared {
-                debug!("request refused: account has already declared");
-                return Err(ApiError::Forbidden("account has already declared"));
-            }
+            // nor a never-credited account's expiry it refuses.
             if let Err(Reject::ExpiryTooFar { latest }) = auth.check_expiry(self.clock.now_ms().max(last_sequenced)) {
                 debug!(latest, "request refused: expiry too far ahead");
                 return Err(ApiError::BadRequest(format!(

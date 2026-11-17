@@ -113,27 +113,14 @@ async fn absent_sources_refuse_without_network_and_api_capacity_does_not_consume
     assert_eq!(screen(None, &request).await, AccessEvidence::Failed { reason: SourceFailure::NotConfigured });
     let server = server(Behavior::Valid).await;
     let client = client(&server.url, 4096);
-    let _all_api_slots = client.api_slots.acquire_many(2).await.unwrap();
-    assert!(client.api_slots.try_acquire().is_err());
+    let _all_api_slots = client.api_slots.fill();
+    let close =
+        Claim { account: AccountId([3; 20]), client: None, request: B256::repeat_byte(3), kind: SlotKind::Reducing };
+    assert_eq!(client.api_slots.take(close).err(), Some(SlotRefusal::Full));
     assert!(
         matches!(client.screen(&request).await, AccessEvidence::Screened(_)),
         "custody retains an independent path"
     );
-}
-
-#[test]
-fn declarations_leave_an_order_a_slot_at_every_accepted_capacity() {
-    for slots in 2..=17 {
-        let config: AccessSection = toml::from_str(&format!(
-            "source='0x{}'\nendpoint='http://127.0.0.1:9'\ntimeout='100ms'\nmax_age='1s'\nmax_response_bytes=4096\nmax_in_flight={slots}",
-            "11".repeat(20),
-        ))
-        .unwrap();
-        let client = AccessClient::new(&config).unwrap();
-        let (declaring, all) = (client.declaration_slots.available_permits(), client.api_slots.available_permits());
-        assert_eq!(all, slots);
-        assert!((1..all).contains(&declaring), "{declaring} of {all}");
-    }
 }
 
 #[tokio::test]
@@ -162,7 +149,8 @@ fn query() -> ScreeningRequest {
 
 fn client(endpoint: &str, limit: usize) -> AccessClient {
     let config: AccessSection = toml::from_str(&format!(
-        "source='0x{}'\nendpoint='{endpoint}'\ntimeout='100ms'\nmax_age='1s'\nmax_response_bytes={limit}\nmax_in_flight=2",
+        "source='0x{}'\nendpoint='{endpoint}'\ntimeout='100ms'\nmax_age='1s'\nmax_response_bytes={limit}\nmax_in_flight=2\n\
+         max_in_flight_per_account=2\nmax_in_flight_per_client=2\nreserved_in_flight=0",
         "11".repeat(20),
     )).unwrap();
     AccessClient::new(&config).unwrap()

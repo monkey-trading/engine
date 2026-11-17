@@ -71,6 +71,9 @@ timeout = "2s"
 max_age = "30s"
 max_response_bytes = 4096
 max_in_flight = 8
+max_in_flight_per_account = 2
+max_in_flight_per_client = 4
+reserved_in_flight = 2
 CONFIG
 for edit in "127.0.0.1:$api_port" "127.0.0.1:$metrics_port" "$work/log"; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"

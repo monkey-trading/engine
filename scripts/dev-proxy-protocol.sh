@@ -87,6 +87,9 @@ timeout = "2s"
 max_age = "30s"
 max_response_bytes = 4096
 max_in_flight = 8
+max_in_flight_per_account = 2
+max_in_flight_per_client = 4
+reserved_in_flight = 2
 EOF
 for edit in "[::]:$api_port" "per_ip = { per_second = 1, burst = $burst }" 'trusted = ["::1/128"]'; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"

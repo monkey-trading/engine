@@ -32,7 +32,8 @@ impl Source {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let key = SigningKey::from_slice(&[0x77; 32]).unwrap();
         let config: AccessSection = toml::from_str(&format!(
-            "source='{}'\nendpoint='http://{}'\ntimeout='2s'\nmax_age='60s'\nmax_response_bytes=4096\nmax_in_flight=4",
+            "source='{}'\nendpoint='http://{}'\ntimeout='2s'\nmax_age='60s'\nmax_response_bytes=4096\nmax_in_flight=4\n\
+             max_in_flight_per_account=4\nmax_in_flight_per_client=4\nreserved_in_flight=0",
             eip712::address(key.verifying_key()),
             listener.local_addr().unwrap()
         ))
