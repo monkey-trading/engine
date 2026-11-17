@@ -92,12 +92,13 @@ const DAY_SECS: u64 = 86_400;
 /// window's minimum is set, is this budget plus two such reads at its providers' latency, each a fixed
 /// number of round trips (`custody::standby_keys`'s latency test).
 const SWITCH_BUDGET: Duration = Duration::from_secs(1);
-/// The most wall time from a boundary to its member's `TurnTaken`. The test clock steps over the
-/// boundary while the member follows, and a stint ends at its member's boundary only when trusted time
-/// runs through it, so the member's 2 s test stint runs out first: this measure cannot tell a member
-/// that ends its stint at the boundary from one that reads its turn after a whole stint and pause.
-/// `node::member::turn`'s tests hold the take to the boundary itself.
-const TAKE_BUDGET: Duration = Duration::from_secs(4);
+/// The most wall time from a boundary to its member's `TurnTaken`: about three times the longest
+/// measured on a development machine, 2.2 to 5.2 s, for a CI runner's slower reads. It cannot tell a
+/// member that ends its following at the boundary from one that reads its turn after a whole stint and
+/// pause, measured at 2.5 to 4.3 s: the test clock steps over the boundary mid-stint, which only trusted
+/// time running through the boundary would end, and the take's reads and the incumbent's answer share
+/// the scenario's thread with its own steps. `node::member::turn`'s tests hold the take to the boundary.
+const TAKE_BUDGET: Duration = Duration::from_secs(15);
 
 #[tokio::test]
 #[ignore = "requires Anvil, Python 3, and compiled contracts; scripts/dev-daily-rotation.sh runs it"]
