@@ -292,3 +292,77 @@ contract FaultProofTest is LivenessTest {
         return abi.encodePacked(r, s, v);
     }
 }
+
+/// Pairs one member's own actions put out of the proof's reach, as `SECURITY.md` states it: a proof needs
+/// two heads binding the same turn, position and release, and heads of different assignments prove
+/// nothing. Both pairs below are one member's, under one signer epoch.
+contract FaultProofLimitsTest is LivenessTest {
+    function setUp() public {
+        _deployLiveness();
+    }
+
+    /// Alice's enclave signs a head at seq `s`; she moves her candidacy to another approved release,
+    /// whose enclave takes the keys and signs another link at `s`. Both heads bind her one assignment
+    /// of the turn, each a revision the schedule recorded for it, and no proof convicts her.
+    function test_AReleaseMoveBetweenTwoHistoriesIsNotProvable() public {
+        _startTurn();
+        _beat();
+        FaultProof faults = new FaultProof(vault);
+        LogHeads.HeadV2 memory a = _nextHead();
+        bytes memory sigA = _sign(a, _signerKey());
+        vm.prank(address(governance));
+        registry.setReleaseApproval(alice, _digest(77), CONFIG, true);
+        vm.prank(alice);
+        registry.setRelease(_digest(77), CONFIG);
+        LogHeads.HeadV2 memory b = _nextHead();
+        b.link = keccak256("the second history");
+        bytes memory sigB = _sign(b, _signerKey());
+        assertEq(a.seq, b.seq);
+        assertEq(a.turn, b.turn);
+        assertEq(a.position, b.position);
+        assertTrue(a.release != b.release && a.generation != b.generation);
+        (address memberA,) = schedule.revisionOf(a.turn, a.position, 0);
+        (address memberB, OperatorSchedule.Revision memory moved) = schedule.revisionOf(b.turn, b.position, 1);
+        assertEq(memberA, alice);
+        assertEq(memberB, alice);
+        assertEq(moved.release, b.release);
+        uint64 epoch = vault.signerEpoch();
+        vm.expectRevert(FaultProof.DifferentAssignment.selector);
+        faults.prove(epoch, FaultProof.Evidence(a, sigA, 0), FaultProof.Evidence(b, sigB, 1));
+    }
+
+    /// Alice is drawn for two turns in a row, so her enclave keeps the keys in one generation. A head at
+    /// seq `s` signed before the boundary binds the first turn; after a rollback, the head at `s` signed
+    /// after it binds the second. One member, release, generation and signer epoch, two histories: no
+    /// proof convicts her.
+    function test_ARollbackAcrossAMembersOwnBoundaryIsNotProvable() public {
+        address[] memory members = new address[](2);
+        uint256[] memory stakes = new uint256[](2);
+        (members[0], members[1], stakes[0], stakes[1]) = (alice, bob, 40_000e18, 30_000e18);
+        setId = _rotate(members, stakes);
+        turn = _nextTurn() + 1;
+        _relayPicking(turn, setId, alice);
+        _relayPicking(turn + 1, setId, alice);
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        _beat();
+        _draw(turn + 1);
+        FaultProof faults = new FaultProof(vault);
+        vm.warp(schedule.boundary(turn + 1) - 5);
+        LogHeads.HeadV2 memory a = _nextHead();
+        bytes memory sigA = _sign(a, _signerKey());
+        vm.warp(schedule.boundary(turn + 1) + 5);
+        LogHeads.HeadV2 memory b = _nextHead();
+        b.link = keccak256("the second history");
+        bytes memory sigB = _sign(b, _signerKey());
+        assertEq(a.seq, b.seq);
+        assertEq(a.release, b.release);
+        assertEq(a.generation, b.generation, "the repeat turn continues the generation");
+        assertEq(b.turn, a.turn + 1);
+        assertEq(schedule.turnOf(a.turn).candidate, alice);
+        assertEq(schedule.turnOf(b.turn).candidate, alice);
+        uint64 epoch = vault.signerEpoch();
+        vm.expectRevert(FaultProof.DifferentAssignment.selector);
+        faults.prove(epoch, FaultProof.Evidence(a, sigA, 0), FaultProof.Evidence(b, sigB, 0));
+    }
+}

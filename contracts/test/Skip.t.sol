@@ -15,6 +15,10 @@ abstract contract SkipTest is LivenessTest {
     uint16 internal constant TAKE = 2;
     uint64 internal constant BUDGET = 10;
 
+    /// @dev The release `_incumbentHead` names: by default one no assignment recorded, as an operator
+    /// outside the set runs.
+    bytes32 internal incumbentRelease = keccak256("earlier");
+
     function _newSchedule() internal override returns (OperatorSchedule) {
         return new OperatorSchedule(
             registry,
@@ -74,7 +78,7 @@ abstract contract SkipTest is LivenessTest {
     /// still holds the keys of an earlier turn.
     function _incumbentHead() internal view returns (LogHeads.HeadV2 memory head) {
         head = _nextHead();
-        (head.turn, head.position, head.release, head.generation) = (turn - 1, 0, keccak256("earlier"), 1);
+        (head.turn, head.position, head.release, head.generation) = (turn - 1, 0, incumbentRelease, 1);
     }
 }
 
@@ -724,40 +728,48 @@ contract UntakenTurnTest is SkipTest {
         assertEq(schedule.skipDueAt(), (block.timestamp / INTERVAL + TAKE + 1) * INTERVAL, "a window from the change");
     }
 
-    function test_AnUntakenTurnsPromotionNamesTheNextQualifiedMemberTheSourceIncluded() public {
+    function test_AnUntakenTurnsPromotionNamesTheNextQualifiedMemberBeforeTheBeatingSource() public {
         address[] memory order = new address[](3);
         (order[0], order[1], order[2]) = (bob, alice, carol);
         _startSourced(order);
-        address key = schedule.promotable(alice);
+        // Alice, the source, still holds the keys and beats, refusing bob's take.
+        incumbentRelease = registry.candidateOf(alice).release;
+        address key = schedule.promotable(carol);
         _beatingThrough(MISSES + 1);
         (, uint16 position) = schedule.promote();
-        assertEq(position, 1, "alice, the source, qualifies as #595 qualifies a member");
-        assertEq(vault.checkpointSigner(), key, "the incumbent's own standby key: its old key is fenced out");
+        assertEq(position, 2, "alice, at position 1, holds the keys and comes last");
+        assertEq(vault.checkpointSigner(), key, "carol's standby key: the incumbent's old key is fenced out");
+        assertTrue(schedule.heldKeys(turn, alice));
     }
 
     function test_AnUntakenTurnWithNoMemberToPromoteRefusesThePromotionAndItsTimeHolds() public {
         address[] memory order = new address[](1);
         order[0] = bob;
         _startSourced(order);
+        // Alice, the source, still holds the keys and beats.
+        incumbentRelease = registry.candidateOf(alice).release;
         uint64 dueAt = (_boundarySlot() + MISSES + 2) * INTERVAL;
         uint64 before = schedule.promotionDueAt();
-        // Carol and dave lose their listings and alice's standby key is voided: past bob, no one qualifies,
-        // which leaves the count where it was, so the incumbent's fence holds.
+        // Carol and dave lose their listings, and bob's and alice's standby keys are voided: no one
+        // qualifies, which leaves the count where it was, so the incumbent's fence holds.
         vm.prank(carol);
         registry.deregister();
         vm.prank(dave);
         registry.deregister();
+        _voidStandby(bob);
         _voidStandby(alice);
         assertEq(schedule.promotionDueAt(), before, "who qualifies moved the count");
         _beatingThrough(MISSES + 3);
         assertEq(schedule.promotionDueAt(), dueAt, "the untaken count from the boundary");
         vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.NoQualifiedPosition.selector, turn));
         schedule.promote();
-        // A standby key registered now qualifies alice at once: the time the incumbent stopped by stands.
-        _registerStandby(alice);
+        // A standby key registered now qualifies alice at once, the key holder, named as no other member
+        // qualifies, on her own standby key, which fences her old key out: the time she stopped by stands.
+        address key = _registerStandby(alice);
         assertEq(schedule.promotionDueAt(), dueAt, "a registration moved the count");
         schedule.promote();
         assertEq(schedule.turnOf(turn).candidate, alice);
+        assertEq(vault.checkpointSigner(), key);
     }
 
     /// @dev Moves `member` to another approved release, which voids its standby key.
