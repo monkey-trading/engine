@@ -14,7 +14,7 @@ use crate::feeds::tests::fake::{FakeEngine, WAIT, coinbase_levels, fast, kraken_
 use crate::feeds::tests::rwa_support::around_the_clock;
 use crate::feeds::venue::confirm::Confirmation;
 use crate::feeds::venue::quotes::counts;
-use crate::feeds::venue::setup::next_backoff;
+use crate::feeds::venue::setup::{next_attempt, next_backoff};
 use crate::metrics::Metrics;
 use crate::sequencer::Request;
 use crate::test_support::capture_alerts;

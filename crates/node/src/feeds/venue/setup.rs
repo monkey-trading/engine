@@ -1,15 +1,16 @@
 //! What every venue connection shares: its timing from the config, the TLS client config, and the
-//! backoff between attempts.
+//! reconnect loop with its backoff between attempts.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use rustls::crypto::ring;
 use rustls::{ClientConfig, RootCertStore};
+use tokio::time::{Instant, sleep};
 
 use crate::config::VenuesSection;
-use crate::feeds::venue::Timing;
+use crate::feeds::venue::{Timing, VenueFeed};
 
 impl Timing {
     /// The timing a venue section configures: `min_quote_spacing` is the per-symbol sequencing
@@ -27,6 +28,36 @@ impl Timing {
             stale_after: venues.stale_after,
             ping_interval: venues.ping_interval,
             max_delay: venues.max_delay,
+        }
+    }
+}
+
+impl VenueFeed {
+    /// Connects and relays until the connection fails, then retries: at once after a connection that
+    /// sequenced fresh quotes of its own, though never within `timing.reconnect_min` of its attempt,
+    /// else after a backoff that doubles while attempts sequence none (see `next_attempt`).
+    /// Error cases:
+    /// - the sequencer has gone away
+    pub(super) async fn run(mut self) -> anyhow::Result<()> {
+        let mut backoff = self.timing.reconnect_min;
+        self.publish_status();
+        loop {
+            (self.quoted, self.sent_own) = (false, false);
+            let attempted = Instant::now();
+            let Err(error) = self.relay().await;
+            self.report.up = false;
+            self.settle().await;
+            if self.tx.is_closed() {
+                // The supervisor logs what the task returns, so it is redacted as a log line is.
+                return Err(anyhow!(self.redact(&format!("{error:#}"))).context("sequencer gone"));
+            }
+            // Healthy only on its own quotes: the engine's fresh quote may be a sibling's.
+            let healthy = self.quoted && self.sent_own;
+            let (wait, next) = next_attempt(backoff, healthy, attempted.elapsed(), &self.timing);
+            self.dropped(&error, wait);
+            self.publish_status();
+            sleep(wait).await;
+            backoff = next;
         }
     }
 }

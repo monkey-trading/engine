@@ -1422,8 +1422,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the new share units, keeping a restart's pending splits and re-anchoring to a mark when the
   engine splits without the walk following
 - `src/feeds/venue/mod.rs` — the venue task: connect, subscribe, sequence each symbol's newest
-  quote when its mid moves or the engine's quote needs refreshing, reconnect, and hold back
-  quotes the engine would refuse
+  quote when its mid moves or the engine's quote needs refreshing, and hold back quotes the
+  engine would refuse
 - `src/feeds/venue/adapter.rs` — a venue's protocol on one connection, whichever adapter speaks it
 - `src/feeds/venue/alerts.rs` — the venue task's alerts: outages, silent and stale symbols, a clock
   ahead of the host's, and refused messages
@@ -1464,8 +1464,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the emit path arming its timer and clearing its memory, and the engine's index compared at every
   millisecond against an engine handed every update, under sequencer delays inside and past the
   refresh margin
-- `src/feeds/venue/setup.rs` — the timing from the config, the TLS client config and reconnect
-  backoff every connection shares
+- `src/feeds/venue/setup.rs` — the timing from the config, the TLS client config, and the
+  reconnect loop every connection shares: at once after a connection that quoted drops, with
+  backoff while attempts fail
 - `src/feeds/venue/auth.rs` — what a connection authenticates with: an API key, or an OAuth client
   of the venue's token endpoint whose bearer token the handshake carries, refetched three quarters
   of the way through its life, and the `venue_token_failed` alert; its tests, against the loopback

@@ -33,8 +33,10 @@ async fn a_healthy_connection_reconnects_at_once_and_a_second_failure_in_a_row_w
     let (second, _) = accept(&listener).await;
     assert!(dropped.elapsed() < timing.reconnect_min, "reconnected {:?} after the drop", dropped.elapsed());
 
-    // That connection drops before it sends a quote, the second failure in a row, though the engine
-    // still holds a fresh quote from the venue: the next attempt waits.
+    // That connection sends no quote, though the engine held a fresh one from the venue as it
+    // opened, and drops past `reconnect_min`: the second failure in a row, so the next attempt
+    // waits the backoff.
+    sleep(timing.reconnect_min).await;
     drop(second);
     let dropped = Instant::now();
     let _third = accept(&listener).await;

@@ -37,7 +37,7 @@ use resubscribe::Resubscription;
 mod setup;
 pub use setup::tls_config;
 mod status;
-use setup::{next_attempt, next_backoff};
+use setup::next_backoff;
 pub use status::run_reporting;
 mod stale;
 #[cfg(test)]
@@ -247,34 +247,6 @@ impl VenueFeed {
             delayed: false,
             standing: StandingBooks::default(),
             report: status::Report::default(),
-        }
-    }
-
-    /// Connects and relays until the connection fails, then retries: at once after a connection that
-    /// sequenced fresh quotes of its own, though never within `timing.reconnect_min` of its attempt,
-    /// else after a backoff that doubles while attempts sequence none (see `setup::next_attempt`).
-    /// Error cases:
-    /// - the sequencer has gone away
-    async fn run(mut self) -> anyhow::Result<()> {
-        let mut backoff = self.timing.reconnect_min;
-        self.publish_status();
-        loop {
-            (self.quoted, self.sent_own) = (false, false);
-            let attempted = Instant::now();
-            let Err(error) = self.relay().await;
-            self.report.up = false;
-            self.settle().await;
-            if self.tx.is_closed() {
-                // The supervisor logs what the task returns, so it is redacted as a log line is.
-                return Err(anyhow!(self.redact(&format!("{error:#}"))).context("sequencer gone"));
-            }
-            // Healthy only on its own quotes: the engine's fresh quote may be a sibling's.
-            let healthy = self.quoted && self.sent_own;
-            let (wait, next) = next_attempt(backoff, healthy, attempted.elapsed(), &self.timing);
-            self.dropped(&error, wait);
-            self.publish_status();
-            sleep(wait).await;
-            backoff = next;
         }
     }
 
