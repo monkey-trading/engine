@@ -9,7 +9,7 @@ use engine_core::command::{AdminCommand, Command, OrderKind, Sequenced};
 use engine_core::event::Event;
 use engine_core::market::QuoteCurrency;
 use engine_core::types::{AccountId, MarketId, Side};
-use engine_core::volume_tier::{AccountVolume, DayVolume, WINDOW_DAYS, day_of};
+use engine_core::volume_tier::{AccountVolume, DayVolume, MIN_HOLD_MS, WINDOW_DAYS, day_of};
 use engine_core::{Engine, Fixed};
 use serde_json::json;
 
@@ -241,14 +241,20 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
         session_keys["keys"].as_object().and_then(|keys| keys.values().next().cloned()).expect("a key");
     let tiers = h.engine.params().expect("params").volume_tiers.clone();
     let today = day_of(h.ts);
-    let book_of = |tier: usize| -> Option<String> {
-        let cap = tiers[tier].threshold.div_int(tiers[tier].day_divisor);
-        (tier > 0).then(|| {
-            let days = (today - WINDOW_DAYS as i64 + 1..=today).map(|day| DayVolume { day, volume: cap }).collect();
-            serde_json::to_string(&AccountVolume { days, ..AccountVolume::default() }).expect("a book encodes")
-        })
+    let book_text = |days: Vec<DayVolume>| {
+        serde_json::to_string(&AccountVolume { days, ..AccountVolume::default() }).expect("a book encodes")
     };
-    let volume_books: Vec<Option<String>> = (0..mix.tiers.len()).map(book_of).collect();
+    // A tier above 0 has counted its cap on each day of the window. Tier 0 has counted what it has
+    // traded: each position's opening notional on the day it matured, as the engine counts it.
+    let volume_books: Vec<Option<String>> = (0..mix.tiers.len())
+        .map(|tier| {
+            (tier > 0).then(|| {
+                let cap = tiers[tier].threshold.div_int(tiers[tier].day_divisor);
+                book_text((today - WINDOW_DAYS as i64 + 1..=today).map(|day| DayVolume { day, volume: cap }).collect())
+            })
+        })
+        .collect();
+    let matured_on = day_of(h.ts - 3_600_000 + MIN_HOLD_MS);
 
     // Named accounts' entries are carried over; the closed-out ones' cash is reset.
     let mut accounts = String::from("{");
@@ -359,8 +365,12 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
             order_id += 1;
         }
         entry(&mut accounts, &key, &serde_json::to_string(&account).expect("an account encodes"));
-        if let Some(text) = &volume_books[tier] {
-            entry(&mut volumes, &key, text);
+        match &volume_books[tier] {
+            Some(text) => entry(&mut volumes, &key, text),
+            None => {
+                let volume = Fixed::from_int(mix.position_usd * held.len() as i64);
+                entry(&mut volumes, &key, &book_text(vec![DayVolume { day: matured_on, volume }]));
+            }
         }
         entry(&mut scores, &key, &toxicity.to_string());
         let mut live = session_keys.clone();
@@ -470,6 +480,10 @@ impl Counts {
 fn check(h: &Harness, mix: &Mix) {
     let engine = &h.engine;
     assert_eq!(engine.accounts().len(), mix.accounts);
+    // Every account that holds a position has traded, so has a volume book.
+    for (id, account) in engine.accounts() {
+        assert!(account.positions.is_empty() || engine.account_volume(*id).is_some(), "{id:?} has no volume book");
+    }
     for (id, market) in engine.markets() {
         let positions = engine.accounts().values().filter_map(|account| account.positions.get(id));
         let (qty, cost) = positions.fold((Fixed::ZERO, Fixed::ZERO), |(q, c), p| (q + p.qty, c + p.cost()));
