@@ -835,6 +835,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/stats/bench.rs` — the ignored cost benchmarks at 100k accounts: a scan, `observe`, and each command's
   cost across a scan interval with the scan inline and handed to the worker, the worker's copy
   of the engine in memory, and how far the worker falls behind at 1000 and 5000 commands a second
+- `src/stats/launch_bench.rs` — the ignored scan benchmark on the core's launch book (100k accounts at the
+  latest protocol on the 34 genesis markets, `crates/core/tests/common/launch_book/`, which `lib.rs` mounts as
+  `common` under `cfg(test)`): the full and light scans, the worker's copy of the engine in memory, and
+  the snapshot encoding
 - `src/stats/tests.rs`, `src/stats/tests/` — the record against the engine: volume and levels, the
   close-out map and each position's close-out price against engine close-outs, the account read's
   cost (`closeout_cost.rs`, ignored), MONKEY totals and epochs, bounds, recovery

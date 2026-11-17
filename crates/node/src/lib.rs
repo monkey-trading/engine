@@ -49,6 +49,10 @@ pub use sequencer_thread::run_dedicated;
 mod telemetry;
 pub use telemetry::{Telemetry, init_logging, init_telemetry};
 mod tee;
+// The core's protocol-test harness, whose launch book the node's benchmarks build on.
+#[cfg(test)]
+#[path = "../../core/tests/common/mod.rs"]
+mod common;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]

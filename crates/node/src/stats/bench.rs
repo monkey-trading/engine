@@ -46,7 +46,7 @@ fn engine_with_accounts() -> (Rig, Engine) {
     (rig, engine)
 }
 
-fn percentile(times: &mut [u128], per_cent: usize) -> u128 {
+pub(super) fn percentile(times: &mut [u128], per_cent: usize) -> u128 {
     times.sort_unstable();
     times[(times.len() * per_cent / 100).min(times.len() - 1)]
 }
@@ -122,7 +122,7 @@ fn command_cost_across_a_scan_interval() {
 }
 
 /// This process's resident memory in KiB, from `ps`.
-fn rss_kib() -> u64 {
+pub(super) fn rss_kib() -> u64 {
     let out = std::process::Command::new("ps")
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
         .output()

@@ -95,6 +95,8 @@ an index: load only the rule whose hint matches the current action.
   against a root, with signed eligibility, authenticated screening evidence,
   durable outage retries and uncredited custody holds in `access/`. Unit tests sit
   inline; protocol tests are in `tests/` by area, with the shared harness in `tests/common/`.
+  `tests/common/launch_book/` builds a launch-scale book for the benchmarks (`tests/launch_book_benchmark.rs`, with
+  `engine-node`'s `stats::launch_bench`) and `tests/launch_book.rs` holds it to its mix.
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
   `tests/invariants/` holds the property tests. Its `README.md` lists every file.
@@ -524,7 +526,7 @@ an index: load only the rule whose hint matches the current action.
   settings), and `retry`, which repeats each download after a failure. Its `README.md` covers the
   build, what the guest exposes, the guest's clock, the attestation layout, booting on a host, and
   the release steps.
-- **research/** — studies that set protocol parameters from data, outside the build and CI except the close-spread study's `fixtures/` and the benchmark-cap study's `fixtures/` and `results/refused.csv`.
+- **research/** — studies that set protocol parameters from data, outside the build and CI except the close-spread study's `fixtures/`, the benchmark-cap study's `fixtures/` and `results/refused.csv`, and the cap study's `data/derived/market_mix.csv`, which the launch book reads.
   `cap-calibration/` calibrates the house exposure-cap floors by Monte Carlo (#111): scripts that
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
   `data/derived/`), the Python model behind `run.py`, its tests, and `results/`. Its `README.md`
@@ -828,8 +830,8 @@ an index: load only the rule whose hint matches the current action.
   reaches a family only through another is left to the full runs on `main` and nightly. Contracts
   run the scenarios on Anvil, and a scenario's scripts run it alone. `agents/` (but for the review-delta helper in
   `agents/skills/agent-code-review/scripts/`), `research/` (but for the close-spread study's
-  `fixtures/` and the benchmark-cap study's `fixtures/` and `results/refused.csv`, which `engine-core`
-  tests read), the root `README.md`, `SECURITY.md`,
+  `fixtures/`, the benchmark-cap study's `fixtures/` and `results/refused.csv`, and the cap study's
+  `data/derived/market_mix.csv`, which `engine-core` tests read), the root `README.md`, `SECURITY.md`,
   `AGENTS.md`, and `CLAUDE.md`, and the `README.md` of `image/` and of each crate change none. A
   push to `main`, the nightly run, a manual run, a workflow change, a failed diff, or any path the
   list does not name runs every job, so whatever a PR or a group skipped runs once it lands. When a
@@ -890,6 +892,13 @@ Run from the repo root:
   `origin/main`)
 - Sequencer latency scenario (optimized dev profile, quiet CPU window):
   `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture --test-threads=1`
+- Launch-book latency (#905: 100k accounts at the latest protocol on the 34 genesis markets, with positions, resting
+  orders, volume books, scores and session keys, built by `crates/core/tests/common/launch_book/`; the proposal's
+  shares are `Mix::proposal`): `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored
+  --nocapture --test-threads=1 launch_book_latency` (`launch_book_price_attribution` runs apart, on books with
+  parts taken away), and its stats scans and worker copy:
+  `cargo test -p engine-node --lib stats::launch_bench -- --ignored --nocapture --test-threads=1`; the builder's own
+  test: `cargo test -p engine-core --test launch_book`
 - Property tests: `cargo test -p engine-core --test invariants`
 - Production genesis and its calendars: `cargo test -p engine-node --test production_genesis`
 - Production node template: `cargo test -p engine-node --test production_node_template`
