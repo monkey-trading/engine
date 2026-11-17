@@ -25,16 +25,17 @@ for longer than `max_age_ms`. That holds for the crypto markets and for the vend
 ### A crypto venue is down or quiet
 
 BTC-USD and ETH-USD are priced from Coinbase and Kraken only, with `min_sources = 2` and
-`max_age_ms = 1000`. Coinbase is read on two connections, Advanced Trade and Exchange
-(`coinbase_exchange`), as the one source `coinbase`: one of them failing costs nothing, and the
-engine holds the later-stamped of their quotes. If a venue goes down on every connection, both
-markets have no price: no fills and no close-outs until it is back. This halts those markets. A book that stands is kept quoting by the
-connection's pings for about five seconds past its last change, and for about a second once the
-venue stops answering them, so a symbol whose book shows no change for more than about six seconds
-halts its own market. A venue can also stream one product minutes behind while the others on the same
-connection are current, as Coinbase did on 16 November 2026: `venue_stale` names the product and the
-age of its quotes, and the node resubscribes the product alone, then on a new connection if it stays
-stale, repeating with backoff until it is current.
+`max_age_ms = 1000`. Each venue is read on two connections, quoted as its one source: Coinbase on
+Advanced Trade and Exchange (`coinbase_exchange`), and Kraken on two connections to its v2 feed. One
+connection failing costs nothing, and the engine holds the later-stamped of a source's quotes. If a
+venue goes down on every connection, both markets have no price: no fills and no close-outs until it
+is back. This halts those markets. A book that stands is kept quoting by the connection's pings for
+about five seconds past its last change, and for about a second once the venue stops answering them,
+so a symbol whose book shows no change for more than about six seconds halts its own market. A venue
+can also stream one product minutes behind while the others on the same connection are current, as
+Coinbase did on 16 November 2026: `venue_stale` names the product and the age of its quotes, and the
+node resubscribes the product alone, then on a new connection if it stays stale, repeating with
+backoff until it is current.
 
 **Why it is the case to watch.** At the owner's decided terms (1% margin, 100x, up to $1M, close-out
 at 50% of margin) a full 100x position closes out about 0.5% from its entry and loses more than its

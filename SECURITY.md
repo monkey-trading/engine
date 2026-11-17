@@ -649,9 +649,9 @@ whole basis points), and past that the market has no price. This rests on those 
 pong behind what they sent before reading its ping, as they were measured to; Massive's,
 TraderMade's and CME Group's connections, which were not measured, re-date nothing; nor does
 Coinbase Exchange's. Two connections of one venue, such as Coinbase's on Advanced Trade and on
-Exchange, carry one source name, and the engine holds one quote a source, the later-stamped, so a
-venue read twice still counts once, and either connection keeps its leg while the other fails. The
-ping bound holds against the host, which cannot make a pong overtake what the venue sent before it,
+Exchange, or Kraken's two, carry one source name, and the engine holds one quote a source, the
+later-stamped, so a venue read twice still counts once, and either connection keeps its leg while
+the other fails. The ping bound holds against the host, which cannot make a pong overtake what the venue sent before it,
 but not against a venue lagging upstream of its own send queue. On 16 November 2026 Coinbase
 answered pings at once while it served one product's book, snapshot and updates, from a source 5 to
 18 minutes behind its own, and kept the connection's other product current. Prices stayed safe

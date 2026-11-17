@@ -79,8 +79,8 @@ fn vendor_settings_that_would_fail_or_could_be_forged_are_refused() {
         ("massive url must be one of its", |c| c[2].url = "wss://socket.massive.com/crypto".into()),
         ("tradermade url must be on tradermade.com", |c| c[5].url = "wss://stream.example.com/feedAdv".into()),
         ("massive lists market 20 contract ESZ6 twice", |c| {
-            let futures = c[3].symbols[0].clone();
-            c[4].symbols.push(futures)
+            let again = VenueSymbol { symbol: "ES:Z6".into(), ..c[3].symbols[0].clone() };
+            c[3].symbols.push(again)
         }),
         ("massive lists symbol ESZ6 twice", |c| c[3].symbols[1].symbol = "ESZ6".into()),
         ("massive lists url wss://socket.massive.com/stocks twice", |c| c[3].url = c[4].url.clone()),
