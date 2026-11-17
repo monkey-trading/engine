@@ -25,7 +25,16 @@ while IFS=$'\t' read -r n challenge path; do
     --challenge "$challenge" --path "$path" --headers "$answers/$n.headers" --body "$answers/$n.body"
   count=$((count + 1))
 done < "$answers/answers"
-# The scenario's seven fixed reads (the list, the epochs, the two pages, the moved list, the restarted
-# epochs and the restarted list) are saved on every run; its polls for a state to arrive add a variable number.
-[ "$count" -ge 7 ] || { echo "only $count answers were saved" >&2; exit 1; }
+# Each read the scenario makes on every run must be among the saved answers, whichever route it
+# is: the operator list before, after the delegation and after the restart, the epoch list before
+# and after the restart, and the two pages. Its polls for a state to arrive save more of the lists.
+need() {
+  local have
+  have=$(cut -f3 "$answers/answers" | grep -cxF -- "$2" || true)
+  [ "$have" -ge "$1" ] || { echo "$have answers of $2 were saved, $1 needed" >&2; exit 1; }
+}
+need 3 /v1/operators
+need 2 /v1/monkey/distributions
+need 1 '/v1/monkey/distributions?limit=2'
+need 1 '/v1/monkey/distributions?limit=2&before=1'
 echo "engine verify-response verified $count answers"
