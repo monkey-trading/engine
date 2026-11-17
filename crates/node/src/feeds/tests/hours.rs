@@ -31,6 +31,12 @@ const US500: MarketId = 20;
 const AAPL: MarketId = 40;
 /// Short enough that a symbol counted as silent while its market is closed would alert in the test.
 const TIMEOUT: Duration = Duration::from_millis(400);
+/// The silence timeout of a feed quoting live, where a test asserts that no alert fires. The venue
+/// stand-in quotes every 20 ms, so silence here is the test's runtime thread, which the sequencer,
+/// the stand-in and the feed share, stalling: a loaded runner held it past 400 ms and alerted a live symbol. A held-back
+/// or closed symbol's count restarts at every check and cannot alert at any timeout, so a long one
+/// costs the tests nothing but the waits that make a regression show.
+const QUOTING: Duration = Duration::from_secs(2);
 /// How long a wait for the feeds or the sequencer lasts. A wait ends the moment its condition holds,
 /// so the ceiling only bounds a hang, and a loaded machine is not mistaken for one. Unlike the
 /// feeds' own timeout, `TIMEOUT`, it is no part of what the tests check.
@@ -60,7 +66,7 @@ async fn quotes_stamped_while_a_market_is_closed_are_held_back_without_a_silence
     start_venue(&node, Venue::Kraken, &[(AAPL, "AAPL", None)]).await;
 
     // Kraken quotes Apple throughout: through several silence windows, nothing reaches the engine.
-    tokio::time::sleep(TIMEOUT * 3).await;
+    tokio::time::sleep(QUOTING * 2).await;
     assert!(priced(&applied, AAPL).is_empty());
     assert_no_feed_alert(&mut alerts);
 
@@ -111,7 +117,7 @@ async fn a_live_connection_is_kept_by_its_traffic_while_every_market_is_closed()
     stream(ws, || vec![r#"{"channel":"heartbeat"}"#.to_owned()]);
 
     // The traffic keeps the connection: no outage, no silence, no reconnect over several windows.
-    tokio::time::sleep(TIMEOUT * 3).await;
+    tokio::time::sleep(QUOTING * 2).await;
     assert_no_feed_alert(&mut alerts);
     assert!(timeout(Duration::from_millis(100), listener.accept()).await.is_err(), "reconnected despite traffic");
 }
@@ -199,6 +205,8 @@ async fn contracts_the_market_does_not_take_are_held_back_without_an_alert() {
     };
     let learned = wait_for(WAIT, || Some(quoted_june("kraken")?.max(quoted_june("bitstamp")?))).await;
     wait_for(WAIT, || (commands(&applied).len() >= learned + RUN).then_some(())).await;
+    // December is held back from here, so a window past its last quote shows whether it counts as silent.
+    tokio::time::sleep(QUOTING + TIMEOUT).await;
     let after = commands(&applied);
     assert!(!contracts(&after[learned..]).contains(&"ESZ6".into()), "December quoted after both feeds learned");
     assert!(events_of(&applied).iter().all(|e| !matches!(e, Event::PricesRejected { .. })));
@@ -241,7 +249,7 @@ async fn a_contract_the_listing_does_not_name_is_alerted_once_and_held_back() {
     };
     assert_eq!((unlisted["symbol"].as_str(), unlisted["market"].as_str()), ("ESZ26", "20"));
     // Over several silence windows it is alerted neither again nor as silent, and never sequenced.
-    tokio::time::sleep(TIMEOUT * 3).await;
+    tokio::time::sleep(QUOTING * 2).await;
     assert_no_feed_alert(&mut alerts);
     assert!(priced(&applied, US500).iter().all(|(_, contracts)| !contracts.contains(&Some("ESZ26".into()))));
 }
@@ -445,7 +453,7 @@ async fn listen_and_serve(venue: Venue, names: &[&str]) -> String {
 
 /// Starts `venue`'s feed for `symbols` into `node`, reading the venue at `url`.
 fn start_feed(node: &Node, venue: Venue, symbols: &[(MarketId, &str, Option<&str>)], url: &str) {
-    start_feed_timed(node, venue, symbols, url, fast(TIMEOUT));
+    start_feed_timed(node, venue, symbols, url, fast(QUOTING));
 }
 
 /// `start_feed` with `timing`.

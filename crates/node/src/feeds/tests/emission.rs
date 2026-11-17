@@ -83,7 +83,9 @@ async fn a_quote_stamped_ahead_of_the_host_clock_is_sequenced_as_it_is_read() {
 async fn a_venue_clock_ahead_of_the_hosts_counts_as_quoting_with_no_alert() {
     let (_guard, mut alerts) = capture_alerts();
     let (listener, url) = listen().await;
-    let window = Duration::from_millis(500);
+    // Long enough that the runtime thread, shared with the sequencer, stalled on a loaded runner,
+    // does not count a quoting venue as silent.
+    let window = Duration::from_secs(2);
     let (mut rx, _feed) = spawn_feed(Venue::Kraken, &url, &[(1, "BTC/USD")], fast(window));
     let (ws, _) = accept(&listener).await;
 
@@ -93,7 +95,7 @@ async fn a_venue_clock_ahead_of_the_hosts_counts_as_quoting_with_no_alert() {
     stream(ws, || vec![kraken_book("BTC/USD", "100", "101", now_ms() + 800)]);
     let (_, quotes) = next_prices(&mut rx).await;
     assert!(quotes[0].ts > now_ms(), "held for the clock instead of sequenced at once");
-    sleep(window * 3).await;
+    sleep(window * 2).await;
     if let Ok(alert) = alerts.try_recv() {
         panic!("the venue was alerted: {alert:?}");
     }
