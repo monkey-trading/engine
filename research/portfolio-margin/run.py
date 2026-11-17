@@ -10,6 +10,7 @@ Usage (from a virtualenv with requirements.txt, in this directory):
     python -I run.py checks      crisis days, the alternatives, the bounds, the close-spread shortfalls
     python -I run.py outage      one member shut: matched opposite accounts, an operator choosing the timing
     python -I run.py proposal    results/proposal.toml, the backtest tables and results/report.md
+    python -I run.py cadence     crypto's 50 ms grids read every 60 s against the hourly bars' one-jump reading (results/cadence.csv)
     python -I run.py sensitivity the groups stage again at other quantiles and horizons (results/sensitivity.csv)
     python -I run.py all         every stage after `derive`, from the committed data
 
@@ -30,7 +31,7 @@ sys.path.insert(0, str(HERE))
 from pm import io  # noqa: E402
 from pm.common import CANDIDATES, DERIVED, RESULTS  # noqa: E402
 
-STAGES = ("horizon", "comove", "groups", "coverage", "checks", "outage", "proposal", "sensitivity")
+STAGES = ("horizon", "comove", "groups", "coverage", "checks", "outage", "proposal", "cadence", "sensitivity")
 
 
 def manifest(stage: str, started: float, **extra) -> None:
@@ -72,6 +73,7 @@ def stage_groups(ctx):
     out = groups.run(ctx, CANDIDATES)
     rows = out.pop("rows")
     io.write_rows("groups_rows.csv", rows)
+    io.write_rows("saving_by_allowance.csv", out.pop("saving_table"))
     io.write_json("groups.json", out)
 
 
@@ -85,7 +87,7 @@ def stage_coverage(ctx):
     io.write_rows("lone_leverage.csv", coverage.lone_leverage(ctx, params))
     # every candidate group, kept or not, at the proposal's share and at none and half, for BTC-USD and ETH-USD's 100x
     every = [coverage.lone_leverage(ctx, context.params_from(io.read_json("groups.json"), phi, kept_only=False), f"all_groups_phi{phi}")
-             for phi in (0.0, 0.5, io.read_json("groups.json")["phi"])]
+             for phi in (0.0, 0.5)]
     io.write_rows("lone_leverage_all_groups.csv", [r for rows in every for r in rows])
 
 
@@ -115,9 +117,16 @@ def stage_proposal(ctx):
     (RESULTS / "proposal.toml").write_text(report.toml(g))
     with (RESULTS / "groups_rows.csv").open() as fh:
         rows = [{k: (float(v) if k not in ("group", "pair") else v) for k, v in r.items()} for r in csv.DictReader(fh)]
-    hvs, bt = report.backtest(rows, g["phi"])
+    hvs, bt = report.backtest(rows, g)
     io.write_rows("hedged_vs_single.csv", hvs)
     io.write_rows("backtest.csv", bt)
+
+
+def stage_cadence(ctx):
+    from pm import cadence
+
+    io.write_rows("cadence.csv", cadence.table())
+    io.write_rows("cadence_z_of_bands.csv", cadence.z_of_bands(ctx))
 
 
 def stage_sensitivity(ctx):
@@ -130,9 +139,9 @@ def stage_sensitivity(ctx):
         c = replace(ctx, q=q, h=h)
         out = groups.run(c, CANDIDATES)
         out.pop("rows")
-        row = {"quantile": q, "horizon_s": h, "scale": c.scale, "phi": out["phi"], "kept": "|".join(n for n, g in out["groups"].items() if g["kept"])}
+        row = {"quantile": q, "horizon_s": h, "scale": c.scale, "kept": "|".join(n for n, g in out["groups"].items() if g["kept"])}
         for n, g in out["groups"].items():
-            row[f"{n}_phi_min"], row[f"{n}_saving"], row[f"{n}_factor_bps"] = g["phi_min"], g["saving_at_phi"], g["factor"] * 1e4
+            row[f"{n}_phi"], row[f"{n}_saving"], row[f"{n}_mean_rho_bps"] = g["phi"], g["saving_at_phi"], 1e4 * sum(g["rho"].values()) / len(g["rho"])
         rows.append(row)
     io.write_rows("sensitivity.csv", rows)
 
