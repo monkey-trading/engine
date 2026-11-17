@@ -16,7 +16,8 @@
 //! neither prices nor an order, which `V2` never fills; under `V13`, which runs as `V12` does, a
 //! stress change, as under `V17`; under `V14` alone its cap and missing rates; under `V15` a reducing order
 //! resting below the minimum; and under `V16` a history clamped by a lowered memory; so the
-//! checks cannot pass vacuously.
+//! checks cannot pass vacuously. Every session also checks the close-out index against a full
+//! assessment at every check site (`closeout_index`).
 
 mod access;
 mod charges;
@@ -41,7 +42,7 @@ use engine_core::market::QuoteCurrency;
 use engine_core::price::compute_index;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::MarketId;
-use engine_core::{Engine, Fixed};
+use engine_core::{CloseoutOracle, Engine, Fixed};
 use proptest::test_runner::{Config, RngSeed, TestCaseError, TestRunner};
 use session::{Session, command, session};
 
@@ -256,6 +257,7 @@ fn config() -> Config {
 
 /// `h` after its genesis, with the session's deposits for the three traders.
 fn funded(mut h: Harness, session: &Session) -> Harness {
+    h.engine.set_closeout_oracle(CloseoutOracle { verify: true, ..CloseoutOracle::default() });
     for (n, amount) in (1..).zip(session.funding) {
         h.deposit(acct(n), &amount.to_string());
     }

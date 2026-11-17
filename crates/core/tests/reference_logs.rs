@@ -1,6 +1,7 @@
 //! Reference logs: every committed log in `tests/reference/` replays through `Engine::apply` to the
 //! state root it recorded after each command. One log is committed per protocol version and never
-//! regenerated, so a change that alters any root fails here, naming the first diverging seq.
+//! regenerated, so a change that alters any root fails here, naming the first diverging seq. The
+//! replay checks the close-out index against a full assessment at every check site.
 
 mod common;
 
@@ -13,7 +14,7 @@ use common::reference::{ReferenceEntry, root_hex};
 use common::{BTC, Harness, acct};
 use engine_core::command::Command;
 use engine_core::types::Side;
-use engine_core::{Engine, Fixed};
+use engine_core::{CloseoutOracle, Engine, Fixed};
 
 #[test]
 fn every_reference_log_replays_to_its_committed_roots() {
@@ -88,6 +89,7 @@ fn verify_roots(entries: &[ReferenceEntry]) -> Result<(), String> {
         return Err("empty log".into());
     }
     let mut engine = Engine::new();
+    engine.set_closeout_oracle(CloseoutOracle { verify: true, ..CloseoutOracle::default() });
     entries.iter().try_for_each(|entry| {
         let seq = entry.sequenced.seq;
         // A panic is caught so the failure still names the log and the seq.

@@ -2036,6 +2036,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "chrono-tz",
+ "engine-core",
  "hex",
  "k256 0.14.0",
  "proptest",

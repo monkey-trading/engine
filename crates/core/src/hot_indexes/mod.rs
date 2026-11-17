@@ -290,9 +290,11 @@ impl HotIndexes {
 
 impl Engine {
     /// Rebuilds the derived indexes a deserialized engine lacks, as its next command would, for a
-    /// reader that uses restored state before applying anything.
+    /// reader that uses restored state before applying anything, and keys every account in the
+    /// close-out index before the first command.
     pub fn restore_indexes(&mut self) {
         self.ensure_hot_indexes();
+        self.rebuild_closeout_index();
     }
 
     /// Restores transient indexes from authoritative state once after construction or recovery.

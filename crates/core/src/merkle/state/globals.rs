@@ -149,6 +149,7 @@ impl Engine {
             tree: _,
             command_ms: _,
             hot_indexes: _,
+            closeout_index: _,
         } = self;
         Globals {
             params,

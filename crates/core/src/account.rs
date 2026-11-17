@@ -69,6 +69,13 @@ impl Position {
         }
     }
 
+    /// `unrealised`, with `None` where it overflows.
+    pub(crate) fn checked_unrealised(&self, mark: Fixed, version: ProtocolVersion) -> Option<Fixed> {
+        let change = Fixed::from_raw(mark.raw().checked_sub(self.entry.raw())?);
+        let rounding = if version >= ProtocolVersion::V5 { Rounding::Down } else { Rounding::TowardZero };
+        change.checked_mul_div(self.qty, Fixed::ONE, rounding)
+    }
+
     /// `entry * qty`, kept per market in aggregate so house NAV is O(markets).
     pub fn cost(&self) -> Fixed {
         self.entry.mul(self.qty)

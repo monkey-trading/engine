@@ -229,6 +229,9 @@ pub struct Engine {
     /// Derived account and trigger indexes; rebuilt once after deserialization.
     #[serde(skip)]
     pub(crate) hot_indexes: Option<crate::hot_indexes::HotIndexes>,
+    /// The accounts a close-out check must close out; built at recovery, at an activation, or first used.
+    #[serde(skip)]
+    pub(crate) closeout_index: crate::closeout_index::CloseoutIndex,
     /// The state tree as of the last root under `V9`; absent until then.
     #[serde(skip)]
     pub(crate) tree: Option<StateTree>,
