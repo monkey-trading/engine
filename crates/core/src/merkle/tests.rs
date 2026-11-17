@@ -91,6 +91,7 @@ fn keys_leaves_the_root_and_proofs_match_an_evm_toolchain() {
             .iter()
             .map(|m| MarketProof { market: m.market, leaf: m.leaf.clone(), siblings: m.siblings.clone() })
             .collect(),
+        levels: vec![],
     };
     assert!(proof.verify(fixture.root));
 }

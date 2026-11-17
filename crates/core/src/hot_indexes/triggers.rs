@@ -143,7 +143,7 @@ impl Engine {
     /// are never negative, from `V52` every fill pays its bands at a size multiplier of at least 1x,
     /// and only a pure close is clamped, to the ceiling (`Engine::bounded_close_charge`). Zero before
     /// `V74`, which keys each limit at its price.
-    pub(super) fn least_fill_rate(&self, market: MarketId) -> i64 {
+    pub(crate) fn least_fill_rate(&self, market: MarketId) -> i64 {
         if self.protocol_version < ProtocolVersion::V74 {
             return 0;
         }
@@ -157,7 +157,7 @@ impl Engine {
 /// `m + floor(m x rate) <= price`, and a sell's lowest with `m - floor(m x rate) >= price`, a rate of
 /// 100% or more taken as just under it. A rate of zero keys the limit at its price, as does a product
 /// past the `i128` range, which only widens what a price visits.
-fn reach(price: Fixed, side: Side, rate: i64) -> Fixed {
+pub(crate) fn reach(price: Fixed, side: Side, rate: i64) -> Fixed {
     let (limit, rate) = (price.raw(), i128::from(rate).clamp(0, WHOLE_TENTH_BPS - 1));
     let key = match side {
         Side::Buy => limit
@@ -221,6 +221,8 @@ mod tests {
             qty: Fixed::from_int(1),
             kind: OrderKind::Limit { price: Fixed::from_int(100) },
             reduce_only: false,
+            take_profit: None,
+            stop_loss: None,
         };
         let (buy, sell) = (order(1, Side::Buy), order(2, Side::Sell));
         let mut indexes = HotIndexes::default();

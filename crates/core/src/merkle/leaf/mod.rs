@@ -173,6 +173,7 @@ impl AccountLeaf {
             positions,
             opened_at: _,
             orders: _,
+            levels: _,
             toxicity_bps,
             toxicity_fraction,
             toxicity_history,

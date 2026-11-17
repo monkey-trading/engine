@@ -336,6 +336,8 @@ fn order(h: &mut Harness, market: MarketId, side: Side, qty: &str, quoted: &str)
         kind: OrderKind::Market { quoted: f(quoted), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let Command::PlaceOrder(request) = client.order(h.engine.next_request_nonce(client.account), request) else {
         unreachable!()

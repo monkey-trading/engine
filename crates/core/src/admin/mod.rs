@@ -89,6 +89,7 @@ impl Engine {
     ///   (`Engine::check_rollover_change`, `Engine::check_corporate_bounds_change`), and `UpsertMarket`
     ///   loosening a listed market's price rules without a notice or past its launch rules
     /// - `SetNotice` and `ClearNotice` with any error case of `Engine::set_notice` and `Engine::clear_notice`
+    /// - from `V79`, `UpsertMarket` naming no minimum level distance, or moving one past its bounds
     ///
     /// A `voted` command is a passed vote's, whose seven days' notice replaces the parameter, markup
     /// and ceiling notices. From `V56` new parameters and listings set the baseline, and the values in
@@ -147,6 +148,7 @@ impl Engine {
                 self.check_corporate_listing(spec)?;
                 self.check_listing_ceilings(spec)?;
                 self.check_markout_floor(spec)?;
+                self.check_level_distance_listing(spec)?;
                 if spec.schedule.has_exceptions() && self.protocol_version < ProtocolVersion::V4 {
                     return Err(format!("dated closures and special sessions need protocol {:?}", ProtocolVersion::V4));
                 }

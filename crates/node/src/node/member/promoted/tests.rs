@@ -185,6 +185,8 @@ async fn sequence_a_trade(dir: &std::path::Path) -> u64 {
         },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let filled = node.submit(Command::PlaceOrder(order)).await;
     assert!(filled.iter().any(|event| matches!(event, engine_core::event::Event::Fill(_))), "{filled:?}");

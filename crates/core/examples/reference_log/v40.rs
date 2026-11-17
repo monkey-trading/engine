@@ -246,6 +246,8 @@ fn order(h: &mut Harness, client: &Client, side: Side, qty: &str, kind: OrderKin
         kind,
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let Command::PlaceOrder(request) = client.order(nonce, request) else { unreachable!("a signed order") };
     let auth = request.auth.as_ref().unwrap();
@@ -266,6 +268,8 @@ fn reduce(h: &mut Harness, client: &Client, qty: &str, quoted: &str) -> Vec<Even
         kind: OrderKind::Market { quoted: f(quoted), max_slippage_bps: None },
         reduce_only: true,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let Command::PlaceOrder(request) = client.order(nonce, request) else { unreachable!("a signed order") };
     let auth = request.auth.as_ref().unwrap();

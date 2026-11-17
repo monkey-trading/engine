@@ -34,7 +34,8 @@ pub struct AccessSection {
     pub max_in_flight_per_account: NonZeroUsize,
     /// How many of them one client's requests may hold, for every account it acts for.
     pub max_in_flight_per_client: NonZeroUsize,
-    /// How many of them only closes, close-alls, withdrawals and payout reissues may take.
+    /// How many of them only closes, close-alls, take-profit and stop-loss requests, withdrawals and
+    /// payout reissues may take.
     pub reserved_in_flight: usize,
 }
 

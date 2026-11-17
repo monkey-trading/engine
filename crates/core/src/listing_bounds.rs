@@ -1,6 +1,7 @@
 //! Listing bounds, from `V52`: a listed market's spread and margin bands move only as a listing
 //! notice of at least seven days names them, and only within bounds its launch bands set. From `V60`
-//! so does its weekend margin (`weekend`), to none or to a rate the listing's validation allows.
+//! so does its weekend margin (`weekend`), to none or to a rate the listing's validation allows, and
+//! from `V79` its minimum level distance (`levels`), from its launch value to twice it.
 //!
 //! A notice may name a market's spread bands, margin bands and financing markup (`V49`'s markup
 //! notice is the notice naming only a markup), and a relisting applies each named value once, from
@@ -24,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::Fixed;
 use crate::close_spread::launch_close_charge_tenth_bps;
 use crate::engine::Engine;
+use crate::levels::check_level_distance_range;
 use crate::market::{MarketSpec, PriceRules, Tier, validate_tiers};
 use crate::params::MAX_RATE_BPS;
 use crate::protocol::ProtocolVersion;
@@ -49,6 +51,9 @@ pub struct ListingNotice {
     /// From `V76`, price rules, left out of the encoding when none are named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub price_rules: Option<PriceRules>,
+    /// From `V79`, a minimum level distance, left out of the encoding when none is named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_level_distance_bps: Option<i64>,
     /// The sequenced time the named values may apply from.
     pub effective_at: Millis,
 }
@@ -66,6 +71,11 @@ pub struct LaunchBands {
     /// while none are recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub price_rules: Option<PriceRules>,
+    /// From `V79`, the minimum level distance in force at activation or at the market's first listing
+    /// after it, which bounds the distances a notice or a vote may set. Left out of the encoding while
+    /// unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_level_distance_bps: Option<i64>,
 }
 
 /// What a listing changes that its market's notice names, so applying it spends those values, and
@@ -78,6 +88,7 @@ pub(crate) struct ListingChange {
     markup: bool,
     weekend: bool,
     price_rules: bool,
+    distance: bool,
 }
 
 impl ListingNotice {
@@ -89,6 +100,7 @@ impl ListingNotice {
             markup_bps: Some(markup_bps),
             weekend_margin_bps: None,
             price_rules: None,
+            min_level_distance_bps: None,
             effective_at,
         }
     }
@@ -100,6 +112,7 @@ impl ListingNotice {
             && self.markup_bps.is_none()
             && self.weekend_margin_bps.is_none()
             && self.price_rules.is_none()
+            && self.min_level_distance_bps.is_none()
     }
 }
 
@@ -142,8 +155,9 @@ impl Engine {
     }
 
     /// `spec` as its market's launch bands, with its launch close charge under the parameters in
-    /// force, none before parameters are set, and from `V76` its price rules.
-    fn launch_of(&self, spec: &MarketSpec) -> LaunchBands {
+    /// force, none before parameters are set, from `V76` its price rules, and from `V79` its minimum level
+    /// distance.
+    pub(crate) fn launch_of(&self, spec: &MarketSpec) -> LaunchBands {
         LaunchBands {
             price_rules: (self.protocol_version >= ProtocolVersion::V76).then_some(spec.price_rules),
             spread_tiers: spec.spread_tiers.clone(),
@@ -152,6 +166,9 @@ impl Engine {
                 .params
                 .as_ref()
                 .map_or(0, |params| launch_close_charge_tenth_bps(params, spec)),
+            min_level_distance_bps: spec
+                .min_level_distance_bps
+                .filter(|_| self.protocol_version >= ProtocolVersion::V79),
         }
     }
 
@@ -170,6 +187,7 @@ impl Engine {
     ///   would fail `MarketSpec::validate` with
     /// - price rules before `V76`, ones the listing would fail `MarketSpec::validate` with, or ones
     ///   looser in any rule than the market's launch rules
+    /// - a minimum level distance before `V79`, or one outside its launch value to twice it
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_listing(&mut self, market: MarketId, notice: &ListingNotice) -> Result<(), String> {
         if self.protocol_version < ProtocolVersion::V52 {
@@ -211,6 +229,12 @@ impl Engine {
             MarketSpec { price_rules, ..listed.spec.clone() }.validate()?;
             check_price_rules_within_launch(market, &price_rules, launch)?;
         }
+        if let Some(bps) = notice.min_level_distance_bps {
+            if self.protocol_version < ProtocolVersion::V79 {
+                return Err(format!("a minimum level distance notice needs protocol {:?}", ProtocolVersion::V79));
+            }
+            check_level_distance_range(bps, launch.min_level_distance_bps)?;
+        }
         self.check_notice_time("a listing notice", notice.effective_at)?;
         self.operator_bounds.markups.insert(market, notice.clone());
         Ok(())
@@ -218,22 +242,25 @@ impl Engine {
 
     /// Checks a listing's spread bands are written as the version in force lists them, and that a
     /// relisting changes a listed market's markup (from `V49`), its spread and margin bands (from
-    /// `V52`), its weekend margin (from `V60`) and price rules that loosen any rule (from `V76`) only to
-    /// the values its notice names, once that notice's time has come. A `voted` relisting's notice is
-    /// its vote's, and it is held to the bounds a notice is: each changed band table within its market's
-    /// launch bands, a weekend margin `MarketSpec::validate` admits, and loosened price rules within the
-    /// launch rules. Changes are measured from the baseline (`Engine::baseline_spec`). Returns what
-    /// applying the listing spends.
+    /// `V52`), its weekend margin (from `V60`), price rules that loosen any rule (from `V76`) and its
+    /// minimum level distance (from `V79`) only to the values its notice names, once that notice's time
+    /// has come. A `voted` relisting's notice is its vote's, and it is held to the bounds a notice is:
+    /// each changed band table within its market's launch bands, a weekend margin
+    /// `MarketSpec::validate` admits, loosened price rules within the launch rules, and a distance from
+    /// its launch value to twice it. Changes are measured from the baseline (`Engine::baseline_spec`).
+    /// Returns what applying the listing spends.
     /// Error cases:
     /// - spread bands `check_spread_tiers` refuses
     /// - from `V59`, changed spread bands `Engine::check_tiered_listing` refuses, or a first listing's
     ///   bands `Engine::check_tiered_first_listing` refuses
-    /// - unless `voted`, a changed markup, spread band table, margin band table or weekend margin, or
-    ///   from `V76` price rules looser in any rule, no notice names, or whose notice takes effect later
-    ///   than the sequenced time
+    /// - from `V79`, a listed market's minimum level distance left out
+    /// - unless `voted`, a changed markup, spread band table, margin band table or weekend margin, from
+    ///   `V76` price rules looser in any rule, or from `V79` a changed distance, no notice names, or whose
+    ///   notice takes effect later than the sequenced time
     /// - if `voted`, a changed spread band table whose rate at some notional is below the launch rate
     ///   there or above twice it, a changed margin band table whose requirement at some notional is
-    ///   below launch's, or from `V76` loosened price rules looser in any rule than the launch rules
+    ///   below launch's, from `V76` loosened price rules looser in any rule than the launch rules, or
+    ///   from `V79` a distance outside its launch value to twice it
     pub(crate) fn check_listing_change(&self, spec: &MarketSpec, voted: bool) -> Result<ListingChange, String> {
         check_spread_tiers(&spec.spread_tiers, spec.asset_class, self.protocol_version)?;
         let markup = self.check_markup_change(spec, voted)?;
@@ -285,6 +312,17 @@ impl Engine {
                 change.price_rules = true;
             }
         }
+        if self.protocol_version >= ProtocolVersion::V79 && spec.min_level_distance_bps != listed.min_level_distance_bps
+        {
+            let bps = spec.min_level_distance_bps.ok_or("a listed market keeps a minimum level distance")?;
+            if voted {
+                check_level_distance_range(bps, launch.min_level_distance_bps)?;
+            } else {
+                let named = notice.filter(|notice| notice.min_level_distance_bps == Some(bps));
+                self.check_noticed(spec.id, "minimum level distance", named)?;
+                change.distance = true;
+            }
+        }
         Ok(change)
     }
 
@@ -312,6 +350,9 @@ impl Engine {
         }
         if change.price_rules {
             notice.price_rules = None;
+        }
+        if change.distance {
+            notice.min_level_distance_bps = None;
         }
         if notice.names_nothing() {
             self.operator_bounds.markups.remove(&spec.id);

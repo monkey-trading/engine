@@ -29,8 +29,8 @@ const ORDERS: usize = 2_500_000;
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_activation() {
     // The version before the latest: move this with `LATEST`, so the case stays one activation.
-    let before = ProtocolVersion::V77;
-    assert_eq!(ProtocolVersion::LATEST, ProtocolVersion::V78, "move `before` to the version one back");
+    let before = ProtocolVersion::V78;
+    assert_eq!(ProtocolVersion::LATEST, ProtocolVersion::V79, "move `before` to the version one back");
     let mix = Mix { version: before, ..Mix::proposal(accounts()) };
     let mut book = build(&mix, NAMED);
     assert_eq!(book.h.engine.protocol_version(), before);
@@ -79,6 +79,7 @@ fn rekey(book: &mut Book, market: MarketId, case: &str) {
         markup_bps: None,
         weekend_margin_bps: None,
         price_rules: None,
+        min_level_distance_bps: None,
         effective_at,
     };
     let events = book.operate(AdminCommand::AnnounceListing { market, notice: notice.clone() });

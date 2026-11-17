@@ -384,6 +384,8 @@ fn order(market: u32, side: Side, qty: &str, quoted: &str) -> Command {
         kind: OrderKind::Market { quoted: quoted.parse().unwrap(), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     })
 }
 

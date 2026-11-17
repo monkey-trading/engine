@@ -192,6 +192,7 @@ fn a_pending_listing_notice_is_listed_in_the_market_reads_units_and_across_a_res
         weekend_margin_bps: None,
         price_rules: None,
         effective_at,
+        min_level_distance_bps: Some(45),
     };
     let events = operate(&mut seq, &clock, AdminCommand::AnnounceListing { market: 1, notice: notice.clone() });
     assert_eq!(events, [Event::AdminApplied]);
@@ -199,6 +200,7 @@ fn a_pending_listing_notice_is_listed_in_the_market_reads_units_and_across_a_res
     assert_eq!(state.listing_notices.into_iter().collect::<Vec<_>>(), [(1, notice.clone())]);
     let listed = serde_json::to_value(read(&mut seq)).unwrap();
     assert_eq!(listed["listing_notices"]["1"]["spread_tiers"][0]["tenth_bps"], 40, "{listed}");
+    assert_eq!(listed["listing_notices"]["1"]["min_level_distance_bps"], 45, "{listed}");
     drop(seq);
 
     let mut recovered = start(&dir, &clock, false);

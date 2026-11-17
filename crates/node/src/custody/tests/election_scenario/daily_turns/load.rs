@@ -109,6 +109,8 @@ pub(super) fn generate(
                 kind: OrderKind::Limit { price: price.parse().unwrap() },
                 reduce_only: false,
                 auth: None,
+                take_profit: None,
+                stop_loss: None,
             };
             let signature = eip712::sign(&key, &eip712::order_hash(&domain, &order, nonce, expires_at));
             order.auth = Some(RequestAuth { nonce, expires_at, signature });

@@ -41,6 +41,8 @@ fn resting(index: u32, client_id: u64, price: i64) -> Command {
         kind: OrderKind::Limit { price: Fixed::from_int(price) },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     })
 }
 

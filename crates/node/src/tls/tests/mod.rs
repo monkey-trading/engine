@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use engine_core::Fixed;
 use engine_core::auth::ClientAuth;
-use engine_core::command::{OrderKind, OrderRequest};
+use engine_core::command::OrderKind;
 use engine_core::types::{AccountId, Side};
 use governor::{Quota, clock::DefaultClock};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -445,17 +445,9 @@ fn rate(per_second: u32, burst: u32) -> RateLimit {
 /// A market buy order from `account`, as JSON.
 fn order(account: AccountId) -> String {
     let kind = OrderKind::Market { quoted: Fixed::from_int(100), max_slippage_bps: None };
-    let req = OrderRequest {
-        account,
-        client_id: 1,
-        market: 1,
-        side: Side::Buy,
-        qty: Fixed::ONE,
-        kind,
-        reduce_only: false,
-        auth: None,
-    };
-    serde_json::to_string(&req).unwrap()
+    let side = Side::Buy;
+    serde_json::json!({ "account": account, "client_id": 1, "market": 1, "side": side, "qty": Fixed::ONE, "kind": kind })
+        .to_string()
 }
 
 /// Sends one request on `conn` and returns the status and body.

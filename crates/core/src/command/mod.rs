@@ -126,6 +126,12 @@ pub enum Command {
         request: CloseAllRequest,
         evidence: AccessEvidence,
     },
+    /// From `V79`, sets, moves or removes the levels of a position, with the API's actual screening
+    /// input as `AccessCloseAll` has.
+    AccessSetPositionLevels {
+        request: PositionLevelsRequest,
+        evidence: AccessEvidence,
+    },
     Admin(AdminCommand),
     /// An admin command the operator signed, from `V8`. From `V8`, an unsigned `Admin` operator
     /// command is refused once any deposit or house capital is credited. Boxed: admin commands are
@@ -385,6 +391,30 @@ pub struct OrderRequest {
     /// Only reduce an existing position, never open or flip it.
     #[serde(default)]
     pub reduce_only: bool,
+    /// From `V79`, the take profit the position the order leaves on its side takes (`levels`), which
+    /// keeps its own while this is unset; left out of the encoding, and of the signed struct, while the
+    /// order names no level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub take_profit: Option<Fixed>,
+    /// From `V79`, the stop loss the position the order leaves on its side takes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_loss: Option<Fixed>,
+    /// The account's signature, nonce, and expiry, where the log's rules require them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<RequestAuth>,
+}
+
+/// From `V79`, a client's request to set, move or remove the levels of its position in `market`, as
+/// it signs and posts it: the position takes exactly the levels named, and one left out is removed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PositionLevelsRequest {
+    pub account: AccountId,
+    pub market: MarketId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub take_profit: Option<Fixed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_loss: Option<Fixed>,
     /// The account's signature, nonce, and expiry, where the log's rules require them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<RequestAuth>,

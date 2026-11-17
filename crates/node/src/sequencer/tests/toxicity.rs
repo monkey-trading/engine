@@ -6,6 +6,8 @@ use super::*;
 use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::toxicity::default_markout_floor_bps;
 
+use crate::sequencer::fixture_tests::finished_genesis_under;
+
 const V9_REFERENCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v9.jsonl");
 
 #[test]
@@ -62,7 +64,7 @@ fn a_funded_log_under_the_operator_takes_the_weighting_unsigned_and_activates_th
         vault: operator.vault,
         chain_id: operator.chain_id,
         clock: stamps.clone(),
-        genesis: finished_genesis(&log_entries(&dir)),
+        genesis: finished_genesis_under(&log_entries(&dir), &ceilings),
         close_spread_ceilings: ceilings,
         ..sequencer_config(&dir, manifest)
     };

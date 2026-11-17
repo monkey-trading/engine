@@ -43,6 +43,8 @@ fn quote_read_cost() {
         kind: OrderKind::Market { quoted: Fixed::from_int(100), max_slippage_bps: Some(10_000) },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     apply(&mut engine, Command::PlaceOrder(order));
     // A funded account that is declined at the first tier top, and one with 150 USD, whose ladder

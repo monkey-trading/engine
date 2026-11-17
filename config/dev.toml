@@ -397,6 +397,7 @@ spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", ten
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
 markout_floor_bps = "1"
+min_level_distance_bps = 30 # its close-spread ceiling, as production proposes
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
 
 [[genesis.markets]]
@@ -411,6 +412,7 @@ spread_tiers = [{ up_to = "1000000", tenth_bps = 30 }, { up_to = "5000000", tent
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
 markout_floor_bps = "1"
+min_level_distance_bps = 30 # its close-spread ceiling, as production proposes
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
 
 # --- FX: Sun 17:00 to Fri 17:00 New York ------------------------------------
@@ -426,6 +428,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "10000000", tenth_bps = 4 }, { up_to = "50000000", tenth_bps = 8 }, { tenth_bps = 16 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 5, min_sources = 2 }
 markout_floor_bps = "0.1"
+min_level_distance_bps = 17 # its close-spread ceiling, as production proposes
 financing = { benchmark = "ESTR", markup_bps = 80, day_basis = 360 }
 
 [genesis.markets.schedule]
@@ -447,6 +450,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", tenth_bps = 7 }, { up_to = "25000000", tenth_bps = 14 }, { tenth_bps = 28 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "0.5"
+min_level_distance_bps = 18 # its close-spread ceiling, as production proposes
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 [genesis.markets.schedule]
@@ -474,6 +478,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", tenth_bps = 9 }, { up_to = "25000000", tenth_bps = 18 }, { tenth_bps = 36 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "0.5"
+min_level_distance_bps = 19 # its close-spread ceiling, as production proposes
 financing = { benchmark = "ESTR", markup_bps = 250, day_basis = 360 }
 
 [genesis.markets.schedule]
@@ -501,6 +506,7 @@ margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1"
+min_level_distance_bps = 25 # its close-spread ceiling, as production proposes
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 [genesis.markets.schedule]
@@ -532,6 +538,7 @@ margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1"
+min_level_distance_bps = 25 # its close-spread ceiling, as production proposes
 weekend_margin_bps = 750
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
@@ -560,6 +567,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1"
+min_level_distance_bps = 25 # its close-spread ceiling, as production proposes
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 [genesis.markets.schedule]

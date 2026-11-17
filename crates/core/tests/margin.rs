@@ -257,9 +257,10 @@ fn a_close_out_judges_and_ranks_an_account_at_the_index_it_fills_at() {
 #[test]
 fn a_listing_before_any_parameters_is_applied_without_a_close_out_check() {
     let mut engine = Engine::new();
-    // From `V54` a new listing names its markout floor.
+    // From `V54` a new listing names its markout floor, and from `V79` its minimum level distance.
     let mut btc = MarketSpec {
         markout_floor_bps: Some(f("1")),
+        min_level_distance_bps: Some(20),
         ..market(BTC, "BTC-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000)
     };
     btc.convert_spread_tiers();
@@ -305,5 +306,7 @@ fn reduce_only(account: AccountId, market: MarketId, side: Side, qty: &str, quot
         kind: OrderKind::Market { quoted: f(quoted), max_slippage_bps: None },
         reduce_only: true,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     })
 }

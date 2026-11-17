@@ -11,6 +11,7 @@ mod touched;
 use crate::account::Position;
 use crate::emissions::TokenUnits;
 use crate::engine::{Engine, Markout};
+use crate::levels::PositionLevels;
 use crate::merkle::exit::ExitLeaves;
 use crate::merkle::leaf::{
     deposit_key, deposit_transaction_key, emission_ledger_hash, emission_ledger_key, legacy_deposit_key,
@@ -18,10 +19,10 @@ use crate::merkle::leaf::{
 use crate::merkle::{
     AccountLeaf, DistributionProof, MarketLeaf, SparseMerkleTree, account_key, corporate_action_key,
     corporate_reference_key, credited_ref_hash, credited_ref_key, distribution_hash, distribution_key, eligibility_key,
-    entitlement_hash, entitlement_key, exit_terms_key, globals_key, held_deposit_key, json_hash, market_key,
-    markout_hash, markout_key, order_hash, order_key, pending_deposit_key, period_result_hash, period_result_key,
-    position_hash, position_key, request_nonce_hash, request_nonce_key, session_key_hash, session_key_key, staked_hash,
-    staked_key, withdrawal_approval_hash, withdrawal_queue_hash, withdrawal_queue_key,
+    entitlement_hash, entitlement_key, exit_terms_key, globals_key, held_deposit_key, json_hash, levels_hash,
+    levels_key, market_key, markout_hash, markout_key, order_hash, order_key, pending_deposit_key, period_result_hash,
+    period_result_key, position_hash, position_key, request_nonce_hash, request_nonce_key, session_key_hash,
+    session_key_key, staked_hash, staked_key, withdrawal_approval_hash, withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::protocol::ProtocolVersion;
 use crate::staking::UsdcUnits;
@@ -41,6 +42,8 @@ pub(crate) struct StateTree {
     pub(super) version: ProtocolVersion,
     pub(super) accounts: BTreeMap<AccountId, AccountLeaf>,
     pub(super) positions: BTreeMap<(AccountId, MarketId), Position>,
+    /// From `V79`, each position's levels.
+    pub(super) levels: BTreeMap<(AccountId, MarketId), PositionLevels>,
     pub(super) markets: BTreeMap<MarketId, MarketLeaf>,
     pub(super) entitlements: BTreeMap<AccountId, TokenUnits>,
     distributions: BTreeMap<AccountId, UsdcUnits>,
@@ -167,6 +170,12 @@ impl Engine {
         }));
         changes.extend(markouts.into_iter().map(|index| (markout_key(index), self.markout(index).map(markout_hash))));
         changes.extend(self.open_time_leaves(&positions));
+        let levels_leaves = self.levels_leaves(&positions);
+        changes.extend(
+            levels_leaves
+                .iter()
+                .map(|((id, market), levels)| (levels_key(*id, *market), levels.as_ref().map(levels_hash))),
+        );
         let position_leaves: Vec<((AccountId, MarketId), Option<Position>)> = positions
             .into_iter()
             .map(|(id, market)| {
@@ -240,6 +249,12 @@ impl Engine {
             match pos {
                 Some(pos) => state.positions.insert(id, pos),
                 None => state.positions.remove(&id),
+            };
+        }
+        for (id, levels) in levels_leaves {
+            match levels {
+                Some(levels) => state.levels.insert(id, levels),
+                None => state.levels.remove(&id),
             };
         }
         for (id, entitled) in entitlement_leaves {

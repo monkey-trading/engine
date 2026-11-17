@@ -31,6 +31,7 @@ use crate::engine::{Engine, MarketState};
 use crate::event::Event;
 use crate::execution::{Exec, PriceGuard};
 use crate::fixed::Rounding;
+use crate::levels::FillCause;
 use crate::types::{AccountId, MarketId, Millis, Side};
 
 /// How long before a weekend gap starts its weekend margin applies: two hours.
@@ -234,7 +235,7 @@ impl Engine {
                 liquidation: true,
             };
             match self.execute_at(exec, mark, fx_mark) {
-                Ok(fill) => self.after_fill(fill, events),
+                Ok(fill) => self.after_fill(fill, FillCause::WeekendCloseOut, events),
                 Err(_) => break,
             }
         }

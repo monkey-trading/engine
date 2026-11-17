@@ -17,13 +17,13 @@ use super::spreads::{Operator, fill_event, order_events, price};
 use super::*;
 use crate::clock::Clock;
 
-const WTI: MarketId = 32;
+pub(super) const WTI: MarketId = 32;
 /// Friday 23 October 2026, 16:00 in Chicago: the dev node's first WTI weekend close after `NOW`.
-const CLOSE: i64 = 1_792_789_200_000;
+pub(super) const CLOSE: i64 = 1_792_789_200_000;
 /// Two hours before it, when the weekend margin starts to apply to opens and adds.
 const FROM: i64 = CLOSE - 7_200_000;
 /// Sunday 25 October 2026, 17:00 in Chicago: WTI's reopening.
-const REOPEN: i64 = 1_792_965_600_000;
+pub(super) const REOPEN: i64 = 1_792_965_600_000;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn dev_scenario_wti_meets_its_weekend_margin_from_two_hours_before_the_close() {

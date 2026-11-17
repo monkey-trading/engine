@@ -64,12 +64,13 @@ pub enum Reject {
     CloseSpreadCeiling {
         ceiling_bps: i64,
     },
-    /// A limit or stop order from an account that already rests `max`, the parameters' cap.
+    /// A limit or stop order from an account that already rests `max`, the parameters' cap, or from
+    /// `V79` a position's first level with no slot free.
     TooManyOrders {
         max: usize,
     },
     /// From `V66`, a limit or stop order from an account that already rests `max`, the resting-order
-    /// limit of its volume tier `tier`.
+    /// limit of its volume tier `tier`, or from `V79` a position's first level with no slot free.
     TierOrderLimit {
         tier: usize,
         max: usize,
@@ -124,4 +125,14 @@ pub enum Reject {
     },
     /// A batch request (cancel-all or close-all) sequenced before `V44` activated.
     BatchUnsupported,
+    /// From `V79`, a take profit or stop loss less than `min_distance_bps`, its market's minimum
+    /// distance, beyond `reference`, the closing price it triggers on or an entry order's price, on its
+    /// own side, or on the other side of it.
+    LevelTooClose {
+        level: Fixed,
+        min_distance_bps: i64,
+        reference: Fixed,
+    },
+    /// A take profit or stop loss named before `V79` activated.
+    LevelsUnsupported,
 }

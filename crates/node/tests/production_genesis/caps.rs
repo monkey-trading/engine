@@ -200,6 +200,8 @@ impl LaunchNode {
             kind,
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         };
         let events = self.apply(access::order(&self.engine, TRADER, request));
         let outcome = events.iter().find_map(|event| match event {

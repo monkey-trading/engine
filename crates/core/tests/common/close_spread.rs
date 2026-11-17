@@ -157,6 +157,8 @@ pub fn order(
         kind: OrderKind::Market { quoted: f(quoted), max_slippage_bps: None },
         reduce_only,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let nonce = h.engine.next_request_nonce(client.account);
     let expires_at = h.ts + 60_000;
@@ -190,6 +192,8 @@ pub fn rest_as(
         kind,
         reduce_only,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let nonce = h.engine.next_request_nonce(client.account);
     let expires_at = h.ts + 60_000;

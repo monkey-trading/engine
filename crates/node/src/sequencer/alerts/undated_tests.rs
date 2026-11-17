@@ -205,6 +205,8 @@ fn signed_calendar_fallback(log_dir: &Path, restart: bool) -> anyhow::Result<(u6
             kind: OrderKind::Market { quoted: Fixed::from_int(100_000), max_slippage_bps: None },
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         }),
     )?;
     ensure!(filled.iter().any(|event| matches!(event, Event::Fill(_))), "marked position fills");

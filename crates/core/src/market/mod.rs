@@ -76,6 +76,10 @@ pub struct MarketSpec {
     /// (`weekend`), in bps; zero for none, and left out of the encoding then.
     #[serde(default, skip_serializing_if = "is_zero_bps")]
     pub weekend_margin_bps: i64,
+    /// From protocol `V79`, how far beyond its reference price a take profit or stop loss must lie, in
+    /// bps (`levels`). Left out of the encoding while unset, as it is before `V79`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_level_distance_bps: Option<i64>,
 }
 
 /// The currency a market's prices are quoted in. Any other than USD names the FX market whose index
@@ -148,6 +152,7 @@ impl MarketSpec {
     /// - futures contracts that are unnamed, named twice, or out of roll order
     /// - a markout floor outside `toxicity::MARKOUT_FLOOR_BPS`
     /// - a weekend margin outside 0..=10000 bps, or other than zero on a market that is always open
+    /// - a minimum level distance outside 1..=10000 bps
     pub fn validate(&self) -> Result<(), String> {
         if self.symbol.is_empty() {
             return Err("symbol is empty".into());
@@ -187,6 +192,9 @@ impl MarketSpec {
         }
         if self.weekend_margin_bps != 0 && self.schedule == Schedule::AlwaysOpen {
             return Err("weekend_margin_bps needs a weekly schedule".into());
+        }
+        if self.min_level_distance_bps.is_some_and(|bps| !(1..=MAX_RATE_BPS).contains(&bps)) {
+            return Err("min_level_distance_bps must be in 1..=10000".into());
         }
         validate_contracts(&self.contracts)
     }

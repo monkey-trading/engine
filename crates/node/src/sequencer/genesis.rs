@@ -7,6 +7,7 @@
 use anyhow::{Context, bail};
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
+use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::params::NotionalWeighting;
@@ -104,8 +105,9 @@ impl GenesisProgress {
     /// the config hash the node attests names the genesis its engine runs under. The log's genesis is
     /// compared in the form a config gives it under the latest protocol (see `restated`): parameters
     /// set before `V11` take the config's toxicity notional weighting, or, once the node has carried
-    /// one into the log, that one. A genesis that form leaves one config load refuses, under rules
-    /// newer than the log, is refused first: no config can name it, so the log needs replacing.
+    /// one into the log, that one, and a log from before `V40` takes `ceilings`, the config's
+    /// close-spread ceilings. A genesis that form leaves one config load refuses, under rules newer
+    /// than the log, is refused first: no config can name it, so the log needs replacing.
     /// Error cases:
     /// - genesis started, and config load under `client_auth` and `operator` would refuse it (see
     ///   `check_genesis`)
@@ -113,6 +115,7 @@ impl GenesisProgress {
     pub fn ensure_matches(
         &self,
         genesis: &[Command],
+        ceilings: &[CloseSpreadCeiling],
         client_auth: &ClientAuth,
         operator: Operator,
     ) -> anyhow::Result<()> {
@@ -123,7 +126,7 @@ impl GenesisProgress {
             Some(Command::Admin(AdminCommand::SetParams(config))) => config.toxicity.notional,
             _ => None,
         };
-        let ran = self.restated(self.carried.or(config_weighting));
+        let ran = self.restated(self.carried.or(config_weighting), ceilings);
         if let Err(refused) = check_genesis_commands(client_auth, operator, ran.clone()) {
             let replace = if self.followed { MOVE_LOG } else { FRESH_LOG };
             bail!(
@@ -152,10 +155,15 @@ impl GenesisProgress {
     }
 
     /// The genesis the log ran, as the config of a node that resumes the log gives it (see
-    /// `restated`), with `weighting` the one the node carries into the log.
+    /// `restated`), with `weighting` the one the node carries into the log and `ceilings` its
+    /// close-spread ceilings.
     #[cfg(test)]
-    pub(crate) fn as_config(&self, weighting: Option<NotionalWeighting>) -> Vec<Command> {
-        self.restated(weighting)
+    pub(crate) fn as_config(
+        &self,
+        weighting: Option<NotionalWeighting>,
+        ceilings: &[CloseSpreadCeiling],
+    ) -> Vec<Command> {
+        self.restated(weighting, ceilings)
     }
 
     /// Whether the genesis window sequenced the ceiling install, or a log that predates ceilings
@@ -170,10 +178,19 @@ impl GenesisProgress {
     /// widest divergence bound among the genesis markets, spread bands and size multipliers set
     /// before `V52` take the tenths of a bp, class floors and 1x floor `V52` converts them to, and
     /// parameters and listings set before `V54` take the form its activation gives them
-    /// (`ProtocolParams::convert_to_score` and `MarketSpec::convert_to_floored`), and parameters set
-    /// before `V59` the launch volume tier table (`ProtocolParams::convert_to_tiered`).
-    fn restated(&self, weighting: Option<NotionalWeighting>) -> Vec<Command> {
+    /// (`ProtocolParams::convert_to_score` and `MarketSpec::convert_to_floored`), parameters set
+    /// before `V59` the launch volume tier table (`ProtocolParams::convert_to_tiered`), and listings
+    /// made before `V79` the minimum level distance its activation gives them, their close-spread
+    /// ceiling: the genesis's own, or for a log from before `V40`, which installs none, the one in
+    /// `ceilings` that the `V40` upgrade carries.
+    fn restated(&self, weighting: Option<NotionalWeighting>, ceilings: &[CloseSpreadCeiling]) -> Vec<Command> {
         let mut genesis = self.commands.clone();
+        let installed = genesis.iter().find_map(|cmd| match cmd {
+            Command::Admin(AdminCommand::SetCloseSpreadCeilings { ceilings }) => Some(ceilings.clone()),
+            _ => None,
+        });
+        let ceilings = installed.unwrap_or_else(|| ceilings.to_vec());
+        let ceiling_of = |market| ceilings.iter().find(|c| c.market == market).map(|c| c.max_close_spread_bps);
         let mut widest = None;
         for cmd in &mut genesis {
             match cmd {
@@ -181,6 +198,7 @@ impl GenesisProgress {
                     widest = widest.max(Some(spec.price_rules.max_divergence_bps));
                     spec.convert_spread_tiers();
                     spec.convert_to_floored();
+                    spec.min_level_distance_bps = spec.min_level_distance_bps.or_else(|| ceiling_of(spec.id));
                 }
                 Command::Admin(AdminCommand::SetParams(params)) => params.raise_size_multipliers(),
                 _ => {}

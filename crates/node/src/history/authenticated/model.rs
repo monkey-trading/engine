@@ -206,6 +206,9 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         Event::SessionKeyRegistered { .. } => "session_key_registered",
         Event::SessionKeyRevoked { .. } => "session_key_revoked",
         Event::SessionKeyRejected { .. } => "session_key_rejected",
+        Event::PositionLevelsSet { .. } => "position_levels_set",
+        Event::PositionLevelTriggered { .. } => "position_level_triggered",
+        Event::PositionLevelsRemoved { .. } => "position_levels_removed",
         // Listed, not matched by a wildcard, so a new event does not compile until it is classified.
         Event::HouseCapitalMoved { .. }
         | Event::CorporateActionScheduled { .. }

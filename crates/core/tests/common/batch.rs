@@ -120,6 +120,8 @@ pub fn singles(
                 kind: OrderKind::Market { quoted: entry.quoted, max_slippage_bps },
                 reduce_only: true,
                 auth: None,
+                take_profit: None,
+                stop_loss: None,
             };
             let nonce = h.engine.next_request_nonce(client.account);
             let expires_at = h.ts + 60_000;

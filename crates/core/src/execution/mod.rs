@@ -13,14 +13,15 @@
 
 use crate::Fixed;
 use crate::access::AccessEvidence;
-use crate::account::RestingOrder;
+use crate::account::{Position, RestingOrder};
 use crate::auth::RequestScope;
 use crate::command::{OrderKind, OrderRequest};
 use crate::eip712::order_hash;
 use crate::engine::Engine;
-use crate::event::{CancelReason, Event, Fill, Reject};
+use crate::event::{Event, Fill, Reject};
 use crate::fixed::Rounding;
 use crate::holding_fee;
+use crate::levels::FillCause;
 use crate::protocol::ProtocolVersion;
 use crate::toxicity::FillMark;
 use crate::types::{AccountId, MarketId, OrderId, Side};
@@ -55,13 +56,13 @@ pub(crate) struct Exec {
 }
 
 /// A priced fill that has passed its price guard but is not yet booked.
-struct Priced {
+pub(crate) struct Priced {
     qty: Fixed,
-    delta: Fixed,
-    price: Fixed,
-    mid: Fixed,
+    pub(crate) delta: Fixed,
+    pub(crate) price: Fixed,
+    pub(crate) mid: Fixed,
     /// The FX index the fill converts to USD at; `None` for a USD market.
-    fx: Option<Fixed>,
+    pub(crate) fx: Option<Fixed>,
     spread_bps: i64,
     increases: bool,
 }
@@ -96,12 +97,14 @@ impl Engine {
         {
             return reject(reason, events);
         }
-        self.place_validated(req, events);
+        self.place_validated(req, FillCause::Order, events);
     }
 
-    /// Fills or rests an order that has passed authorisation, access screening and validation.
-    /// Emits acceptance or rejection, as `place_order` does after those checks.
-    fn place_validated(&mut self, req: &OrderRequest, events: &mut Vec<Event>) {
+    /// Fills or rests an order that has passed authorisation, access screening and validation, its fill
+    /// booked as `cause`. Emits acceptance or rejection, as `place_order` does after those checks. From
+    /// `V79` a market order's levels are checked against its priced fill before it is booked, and the
+    /// position the fill leaves on the order's side takes them.
+    fn place_validated(&mut self, req: &OrderRequest, cause: FillCause, events: &mut Vec<Event>) {
         let reject = |reason, events: &mut Vec<Event>| {
             events.push(Event::OrderRejected { account: req.account, client_id: req.client_id, reason })
         };
@@ -123,10 +126,12 @@ impl Engine {
                     guard: PriceGuard::Quote { quoted, max_bps },
                     liquidation: false,
                 };
-                match self.execute(exec, events) {
+                let checked = |engine: &Self, priced: &Priced, share| engine.check_order_levels(req, priced, share);
+                match self.execute_checked(exec, events, checked) {
                     Ok(fill) => {
                         events.push(Event::OrderAccepted { account: req.account, client_id: req.client_id, order_id });
-                        self.after_fill(fill, events);
+                        self.after_fill(fill, cause, events);
+                        self.attach_levels(req.account, req.market, req.side, req.levels(), events);
                     }
                     Err(reason) => reject(reason, events),
                 }
@@ -141,6 +146,8 @@ impl Engine {
                     qty: req.qty,
                     kind: req.kind,
                     reduce_only: req.reduce_only,
+                    take_profit: req.take_profit,
+                    stop_loss: req.stop_loss,
                 };
                 self.index_order(req.account, &order, true);
                 self.accounts.get_mut(&req.account).expect("validated").orders.insert(order_id, order);
@@ -156,20 +163,6 @@ impl Engine {
         }
     }
 
-    /// Fills resting orders whose trigger the live price has reached: a stop's price, and a limit's
-    /// price or, from `V74`, the mid where the market's least fill rate first lets it fill. While a
-    /// market is closed, or its FX market has no price, nothing triggers, so the first fresh price
-    /// after that fills everything that gapped through, at that price.
-    pub(crate) fn trigger_resting(&mut self, market_id: MarketId, events: &mut Vec<Event>) {
-        let Some(mid) = self.trigger_mid(market_id) else { return };
-        self.ensure_hot_indexes();
-        self.key_triggers(market_id);
-        let resting = self.hot_indexes.as_ref().expect("initialized").triggered(market_id, mid);
-        for (order_id, account) in resting {
-            self.trigger_order(order_id, account, mid, events);
-        }
-    }
-
     /// Prices and risk-checks one fill, then books it. From `V13` the market's stress level is
     /// re-evaluated first, so the fill pays the level its inputs set now, after any fill before it;
     /// nothing else is mutated on error.
@@ -182,6 +175,20 @@ impl Engine {
     /// - not enough margin, from `V64` at the account's tier's margin floor, or no house capacity, for
     ///   the risk the fill adds
     pub(crate) fn execute(&mut self, exec: Exec, events: &mut Vec<Event>) -> Result<Fill, Reject> {
+        self.execute_checked(exec, events, |_, _, _| Ok(()))
+    }
+
+    /// `execute`, with `check` run on the priced fill, at the account's best-price share, before anything
+    /// is booked, so its refusal refuses the fill.
+    /// Error cases:
+    /// - as `execute`
+    /// - `check`'s refusal
+    pub(crate) fn execute_checked(
+        &mut self,
+        exec: Exec,
+        events: &mut Vec<Event>,
+        check: impl FnOnce(&Self, &Priced, Option<i64>) -> Result<(), Reject>,
+    ) -> Result<Fill, Reject> {
         if self.protocol_version >= ProtocolVersion::V13 {
             let nav = self.house_nav();
             self.refresh_stress(exec.market, nav, events);
@@ -189,10 +196,12 @@ impl Engine {
         // The account's tier, read once: its best-price share prices the fill, and its margin floor
         // raises the initial requirement risk is checked against.
         let tier = self.tier_in_force(exec.account);
-        let priced = self.price(&exec, tier.map(|tier| tier.best_price_share_bps))?;
+        let share = tier.map(|tier| tier.best_price_share_bps);
+        let priced = self.price(&exec, share)?;
         if priced.increases && !exec.liquidation {
             self.check_risk(&exec, &priced, &HouseTotals::of(self), self.margin_floor_of(tier))?;
         }
+        check(self, &priced, share)?;
         Ok(self.book(&exec, priced))
     }
 
@@ -210,10 +219,12 @@ impl Engine {
         Ok(self.book(&exec, priced))
     }
 
-    /// Records a fill and writes off any balance the account can no longer cover.
-    pub(crate) fn after_fill(&mut self, fill: Fill, events: &mut Vec<Event>) {
-        let account = fill.account;
+    /// Records a fill, from `V79` removes the levels of a position it closed or turned (`levels`), and
+    /// writes off any balance the account can no longer cover.
+    pub(crate) fn after_fill(&mut self, fill: Fill, cause: FillCause, events: &mut Vec<Event>) {
+        let (account, market, side, qty, position) = (fill.account, fill.market, fill.side, fill.qty, fill.position);
         events.push(Event::Fill(fill));
+        self.settle_levels(account, market, position - side.signed(qty), position, cause, events);
         self.settle_bad_debt(account, events);
     }
 
@@ -222,58 +233,6 @@ impl Engine {
         let id = self.next_order_id;
         self.next_order_id += 1;
         id
-    }
-
-    /// The live mid resting orders in `market_id` trigger against, or `None` while the market is
-    /// closed, has no valid index, or its FX market has no price.
-    fn trigger_mid(&self, market_id: MarketId) -> Option<Fixed> {
-        let market = &self.markets[&market_id];
-        if !market.open || self.live_fx(market_id).is_err() {
-            return None;
-        }
-        market.index(self.now).ok().map(|index| index.mid)
-    }
-
-    /// Fills one resting order if `mid` has reached its trigger. A limit the spread keeps out of
-    /// reach stays resting; any other failure cancels it, and from `V40` a reversal the market's
-    /// close-spread ceiling refuses fills its closing slice before the cancel.
-    fn trigger_order(&mut self, order_id: OrderId, account: AccountId, mid: Fixed, events: &mut Vec<Event>) {
-        let Some(order) = self.accounts.get(&account).and_then(|acct| acct.orders.get(&order_id)).cloned() else {
-            return;
-        };
-        let (triggered, guard) = match (order.kind, order.side) {
-            (OrderKind::Limit { price }, Side::Buy) => (mid <= price, PriceGuard::Limit(price)),
-            (OrderKind::Limit { price }, Side::Sell) => (mid >= price, PriceGuard::Limit(price)),
-            (OrderKind::Stop { price }, Side::Buy) => (mid >= price, PriceGuard::None),
-            (OrderKind::Stop { price }, Side::Sell) => (mid <= price, PriceGuard::None),
-            // `place_order` fills market orders immediately; they never rest.
-            (OrderKind::Market { .. }, _) => unreachable!("market orders never rest"),
-        };
-        if !triggered {
-            return;
-        }
-        let exec = Exec {
-            account,
-            order_id,
-            market: order.market,
-            side: order.side,
-            qty: order.qty,
-            reduce_only: order.reduce_only,
-            guard,
-            liquidation: false,
-        };
-        match self.execute(exec, events) {
-            Ok(fill) => {
-                self.remove_order(account, order_id);
-                self.after_fill(fill, events);
-            }
-            Err(Reject::Slippage { .. }) => {}
-            Err(Reject::CloseSpreadCeiling { .. }) => self.fill_closing_slice(account, order_id, &order, guard, events),
-            Err(_) => {
-                self.remove_order(account, order_id);
-                events.push(Event::OrderCancelled { account, order_id, reason: CancelReason::Unfillable });
-            }
-        }
     }
 
     /// The live price for a fill and the slice of it that adds risk. Notional bounds are in USD; the
@@ -286,7 +245,7 @@ impl Engine {
     /// - a live price beyond the slippage bound or the limit
     ///
     /// `share` is the account's best-price share (`Engine::best_price_share`).
-    fn price(&self, exec: &Exec, share: Option<i64>) -> Result<Priced, Reject> {
+    pub(crate) fn price(&self, exec: &Exec, share: Option<i64>) -> Result<Priced, Reject> {
         let market = &self.markets[&exec.market];
         if !market.open {
             return Err(Reject::MarketClosed);
@@ -308,12 +267,31 @@ impl Engine {
         level: usize,
         share: Option<i64>,
     ) -> Result<Priced, Reject> {
+        let pos = self.accounts[&exec.account].position(exec.market);
+        let toxicity_bps = if exec.liquidation { 0 } else { self.toxicity_add_on_bps(exec.account) };
+        self.price_with(exec, pos, mid, fx, level, share, toxicity_bps)
+    }
+
+    /// The price for a fill against position `pos` at index `mid`, converting to USD at `fx`, at stress
+    /// level `level`, best-price share `share` and toxicity add-on `toxicity_bps`, as `price_at` gives it
+    /// for the account's position.
+    /// Error cases:
+    /// - as `price_at`
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn price_with(
+        &self,
+        exec: &Exec,
+        pos: Position,
+        mid: Fixed,
+        fx: Option<Fixed>,
+        level: usize,
+        share: Option<i64>,
+        toxicity_bps: i64,
+    ) -> Result<Priced, Reject> {
         let params = self.params.as_ref().expect("callers check params are set");
         let market = &self.markets[&exec.market];
         let currency = market.spec.quote_currency;
         let usd = |amount, rounding| currency.to_usd(amount, fx, rounding);
-        let acct = &self.accounts[&exec.account];
-        let pos = acct.position(exec.market);
 
         let qty = if exec.reduce_only {
             if pos.qty.is_zero() || pos.qty.signum() == exec.side.sign() {
@@ -335,7 +313,6 @@ impl Engine {
 
         let stress = &params.stress_levels[level];
         let bands = AccountBands::at(&market.spec.spread_tiers, share);
-        let toxicity_bps = if exec.liquidation { 0 } else { self.toxicity_add_on_bps(exec.account) };
         // From `V52` the slice that closes the position pays the size spread too.
         let finer = self.protocol_version >= ProtocolVersion::V52;
         let (close_from, close_to) = if finer { closing(pos.qty, delta) } else { (Fixed::ZERO, Fixed::ZERO) };
@@ -469,6 +446,7 @@ mod quote;
 pub use quote::{Quote, Quoter};
 mod risk;
 use risk::HouseTotals;
+mod trigger;
 mod validation;
 
 #[cfg(test)]

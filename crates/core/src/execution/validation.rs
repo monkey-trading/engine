@@ -23,23 +23,18 @@ impl Engine {
     ///   own index and at its FX market's last mark in any other, is below the market's minimum, or
     ///   whose FX market has no mark yet; a reduce-only order is never checked, and from `V15`
     ///   neither is one that can only reduce the account's position in that market — opposite side,
-    ///   quantity at most the position
+    ///   quantity at most the position; from `V79` each market holding levels uses a slot
+    /// - levels `Engine::check_named_levels` refuses
     pub(super) fn validate_order(&self, req: &OrderRequest) -> Result<(), Reject> {
         let invalid = |reason: &str| Err(Reject::InvalidOrder { reason: reason.into() });
         let (price, rests) = match req.kind {
             OrderKind::Market { quoted, .. } => (quoted, false),
             OrderKind::Limit { price } | OrderKind::Stop { price } => (price, true),
         };
-        let (params, market, acct) = self.orderable(req.account, req.market, req.qty, Some(price))?;
+        let (_, market, acct) = self.orderable(req.account, req.market, req.qty, Some(price))?;
+        self.check_named_levels(req)?;
         if rests && self.protocol_version >= ProtocolVersion::V14 {
-            match self.order_limit(req.account) {
-                Some((tier, max)) if acct.orders.len() >= max => return Err(Reject::TierOrderLimit { tier, max }),
-                Some(_) => {}
-                None if acct.orders.len() >= params.max_resting_orders => {
-                    return Err(Reject::TooManyOrders { max: params.max_resting_orders });
-                }
-                None => {}
-            }
+            self.check_order_slot(req.account)?;
             // A reduce-only order never adds risk, as a reducing fill pays no minimum; from `V15`
             // neither does an order that can only reduce the account's position in this market. A
             // fill checks the minimum only on the slice that grows |position| (`price`), so the

@@ -49,6 +49,8 @@ async fn empty_windows_reach_confirmed_collateral_while_finality_is_frozen() {
             kind: OrderKind::Market { quoted: usdc("100"), max_slippage_bps: None },
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         }))
         .await;
     assert!(fills.iter().any(|event| matches!(event, Event::Fill(fill) if fill.qty == usdc("1"))));

@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use engine_core::auth::ClientAuth;
+use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::Command;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
@@ -84,14 +85,22 @@ impl TestSequencer {
     /// As `start`, stamping commands on `clock`, which trusted time admits, on a log whose genesis is
     /// `genesis`, as the config gives it.
     pub fn start_at(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>, genesis: Vec<Command>) -> Self {
-        Self::boot(dir, stream_capacity, clock, genesis, ProtocolVersion::LATEST)
+        Self::boot(
+            dir,
+            stream_capacity,
+            clock,
+            genesis,
+            dev_config().genesis.close_spread_ceilings,
+            ProtocolVersion::LATEST,
+        )
     }
 
     /// As `start`, activating `V18`: a version that signs each withdrawal when it is approved, as logs
     /// written before `V22` do.
     pub fn start_v18(dir: &Path, stream_capacity: usize) -> Self {
-        let genesis = genesis_commands(&dev_config().genesis);
-        Self::boot(dir, stream_capacity, Arc::new(SystemClock), genesis, ProtocolVersion::V18)
+        let genesis = dev_config().genesis;
+        let (commands, ceilings) = (genesis_commands(&genesis), genesis.close_spread_ceilings);
+        Self::boot(dir, stream_capacity, Arc::new(SystemClock), commands, ceilings, ProtocolVersion::V18)
     }
 
     /// Boots an explicit V23 fixture for historical unsigned/admission/storage assertions, the last before access screening.
@@ -101,22 +110,39 @@ impl TestSequencer {
 
     /// Historical V23 fixture on a controlled clock, on a log whose genesis is `genesis`.
     pub fn start_legacy_at(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>, genesis: Vec<Command>) -> Self {
-        Self::boot(dir, stream_capacity, clock, genesis, ProtocolVersion::V23)
+        Self::start_legacy_under(dir, stream_capacity, clock, genesis, dev_config().genesis.close_spread_ceilings)
     }
 
-    /// Boots as the node does, activating `version`.
+    /// `start_legacy_at` under a config adopting `ceilings`.
+    pub fn start_legacy_under(
+        dir: &Path,
+        stream_capacity: usize,
+        clock: Arc<dyn Clock>,
+        genesis: Vec<Command>,
+        ceilings: Vec<CloseSpreadCeiling>,
+    ) -> Self {
+        Self::boot(dir, stream_capacity, clock, genesis, ceilings, ProtocolVersion::V23)
+    }
+
+    /// Boots as the node does under a config adopting `ceilings`, activating `version`.
     fn boot(
         dir: &Path,
         stream_capacity: usize,
         clock: Arc<dyn Clock>,
         genesis: Vec<Command>,
+        ceilings: Vec<CloseSpreadCeiling>,
         version: ProtocolVersion,
     ) -> Self {
         let (stream, _) = broadcast::channel(stream_capacity);
         let (withdrawals_tx, withdrawals) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
         let key = Arc::new(EnclaveKey::test_key());
-        let cfg = SequencerConfig { clock: clock.clone(), genesis, ..sequencer_config(dir, manifest_tx) };
+        let cfg = SequencerConfig {
+            clock: clock.clone(),
+            genesis,
+            close_spread_ceilings: ceilings,
+            ..sequencer_config(dir, manifest_tx)
+        };
         let metrics = cfg.metrics.clone();
         let mut seq = Sequencer::recover(cfg, key, stream.clone(), withdrawals_tx).expect("sequencer recovers");
         let stats = stats();

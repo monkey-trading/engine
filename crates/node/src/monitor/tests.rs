@@ -410,6 +410,8 @@ fn buy(market: MarketId, qty: &str, quoted: Fixed) -> Command {
         kind: OrderKind::Market { quoted, max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     })
 }
 

@@ -3,13 +3,15 @@
 //! ```text
 //! SIGNER_KEY=<private key> cargo run -p engine-core --example sign_request -- \
 //!     <chain id> <vault> <nonce> <expires at> \
-//!     <order|cancel|cancel_all|close_all|withdrawal|eligibility|session_key_registration|session_key_revocation> \
+//!     <order|cancel|cancel_all|close_all|position_levels|withdrawal|eligibility|session_key_registration|
+//!     session_key_revocation> \
 //!     '<body>'
 //! ```
 //!
 //! The account's private key comes from `SIGNER_KEY`, never the command line, where other users
 //! could read it. `<body>` is the unsigned JSON body of `POST /v1/orders`, `/v1/orders/cancel`,
-//! `/v1/orders/cancel-all`, `/v1/positions/close-all`, `/v1/withdrawals`, `/v1/eligibility`, or
+//! `/v1/orders/cancel-all`, `/v1/positions/close-all`, `/v1/positions/levels`, `/v1/withdrawals`,
+//! `/v1/eligibility`, or
 //! `POST` or `DELETE /v1/session-keys`; the output is that body with its `auth` added. The nonce is
 //! the signer's `next_nonce` from `GET /v1/accounts/{address}/nonce`, and the key's own for a request
 //! a session key signs. `<expires at>` is the latest time, in milliseconds since the
@@ -22,10 +24,12 @@ use alloy_primitives::hex;
 use anyhow::{Context, anyhow, bail};
 use engine_core::access::EligibilityClass;
 use engine_core::auth::RequestAuth;
-use engine_core::command::{CancelAllRequest, CancelRequest, CloseAllRequest, OrderRequest, WithdrawalRequest};
+use engine_core::command::{
+    CancelAllRequest, CancelRequest, CloseAllRequest, OrderRequest, PositionLevelsRequest, WithdrawalRequest,
+};
 use engine_core::eip712::{
-    self, cancel_all_hash, cancel_hash, close_all_hash, eligibility_hash, order_hash, session_key_registration_hash,
-    session_key_revocation_hash, withdrawal_hash,
+    self, cancel_all_hash, cancel_hash, close_all_hash, eligibility_hash, order_hash, position_levels_hash,
+    session_key_registration_hash, session_key_revocation_hash, withdrawal_hash,
 };
 use engine_core::types::{AccountId, Millis};
 use k256::ecdsa::SigningKey;
@@ -64,8 +68,8 @@ fn main() -> anyhow::Result<()> {
     let [chain_id, vault, nonce, expires_at, kind, body] = args.as_slice() else {
         bail!(
             "usage: SIGNER_KEY=<private key> sign_request <chain id> <vault> <nonce> <expires at> \
-             <order|cancel|cancel_all|close_all|withdrawal|eligibility|session_key_registration|\
-             session_key_revocation> <body>"
+             <order|cancel|cancel_all|close_all|position_levels|withdrawal|eligibility|\
+             session_key_registration|session_key_revocation> <body>"
         );
     };
     let key = std::env::var("SIGNER_KEY").context("SIGNER_KEY")?;
@@ -92,6 +96,10 @@ fn main() -> anyhow::Result<()> {
         "close_all" => {
             close_all_hash(&domain, &serde_json::from_value::<CloseAllRequest>(body.clone())?, nonce, expires_at)
         }
+        "position_levels" => {
+            let levels: PositionLevelsRequest = serde_json::from_value(body.clone())?;
+            position_levels_hash(&domain, &levels, nonce, expires_at)
+        }
         "withdrawal" => {
             let withdrawal: WithdrawalRequest = serde_json::from_value(body.clone())?;
             withdrawal_hash(&domain, withdrawal.account, withdrawal.amount, nonce, expires_at)
@@ -105,8 +113,8 @@ fn main() -> anyhow::Result<()> {
             session_key_revocation_hash(&domain, key.account, key.session_key, nonce, expires_at)
         }
         other => bail!(
-            "unknown request kind {other:?}; expected order, cancel, cancel_all, close_all, withdrawal, eligibility, \
-             session_key_registration, or session_key_revocation"
+            "unknown request kind {other:?}; expected order, cancel, cancel_all, close_all, position_levels, withdrawal, \
+             eligibility, session_key_registration, or session_key_revocation"
         ),
     };
     body["auth"] = serde_json::to_value(RequestAuth { nonce, expires_at, signature: eip712::sign(&key, &hash) })?;

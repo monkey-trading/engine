@@ -10,6 +10,7 @@ use crate::corporate::cash::{usd_down, valuation_fx};
 use crate::engine::Engine;
 use crate::event::{CancelReason, Event};
 use crate::fixed::Rounding;
+use crate::levels::{LevelsRemoved, PositionLevels};
 use crate::types::{AccountId, OrderId, Side};
 
 /// Why a split fails when a scaled position quantity leaves the input bound.
@@ -26,9 +27,19 @@ struct ScaledAccount {
     balance: Option<Fixed>,
     /// Signed USD realised on the fraction rounded off the position, when one was rounded off.
     in_lieu: Option<Fixed>,
-    /// Each resting order in the market, with its scaled kind and quantity, or `None` to cancel it.
-    orders: Vec<(OrderId, Option<(OrderKind, Fixed)>)>,
+    /// Each resting order in the market, with its scaled kind, quantity and from `V79` levels, or `None`
+    /// to cancel it.
+    orders: Vec<(OrderId, Option<ScaledOrder>)>,
+    /// From `V79`, the position's scaled levels, `None` when the split took them off; unset when it held
+    /// none.
+    levels: Option<Option<PositionLevels>>,
+    /// From `V79`, the levels the split took off the position: rounded to zero, or a level scaled out of
+    /// range.
+    dropped: Option<PositionLevels>,
 }
+
+/// A resting order's scaled kind and quantity, and from `V79` its scaled levels when it names any.
+type ScaledOrder = (OrderKind, Fixed, Option<PositionLevels>);
 
 impl Engine {
     /// Scales all current-unit references atomically while retaining cash and historical notionals.
@@ -82,6 +93,7 @@ impl Engine {
         for account in affected {
             let state = &self.accounts[&account];
             let (mut position_change, mut balance, mut in_lieu) = (None, None, None);
+            let (mut levels_change, mut dropped) = (None, None);
             if let Some(position) = state.positions.get(&action.market).copied() {
                 let (qty, remainder) = scale_quantity(position.qty, new, old)?;
                 if qty.abs() > Fixed::MAX_INPUT {
@@ -104,6 +116,14 @@ impl Engine {
                 market.client_qty = market.client_qty - position.qty + qty;
                 market.client_cost = market.client_cost - position.cost() + rounded.cost();
                 position_change = Some((!qty.is_zero()).then_some(rounded));
+                // From `V79` the position's levels scale as its resting orders' prices do, and go with
+                // a position rounded away or a level scaled out of range.
+                if let Some(levels) = state.levels.get(&action.market).copied() {
+                    let side = if position.qty.is_positive() { Side::Buy } else { Side::Sell };
+                    let kept = (!qty.is_zero()).then(|| scale_levels(levels, side, old, new)).flatten();
+                    dropped = kept.is_none().then_some(levels);
+                    levels_change = Some(kept);
+                }
             }
             let mut orders = Vec::new();
             for order in state.orders.values().filter(|o| o.market == action.market) {
@@ -124,9 +144,14 @@ impl Engine {
                 };
                 // A resting quantity was within the input bound, so its product with a `u32` fits.
                 let qty = scale_quantity(order.qty, new, old)?.0;
-                match scaled {
-                    Some((kind, price)) if price.is_positive() && !qty.is_zero() && qty <= Fixed::MAX_INPUT => {
-                        orders.push((order.order_id, Some((kind, qty))));
+                // From `V79` an entry order's levels scale as its position's would.
+                let named = PositionLevels::named(order.take_profit, order.stop_loss);
+                let levels = named.map(|levels| scale_levels(levels, order.side, old, new));
+                match (scaled, levels) {
+                    (Some((kind, price)), None | Some(Some(_)))
+                        if price.is_positive() && !qty.is_zero() && qty <= Fixed::MAX_INPUT =>
+                    {
+                        orders.push((order.order_id, Some((kind, qty, levels.flatten()))));
                     }
                     _ => {
                         market.resting.remove(&order.order_id);
@@ -134,7 +159,8 @@ impl Engine {
                     }
                 }
             }
-            scaled.push(ScaledAccount { account, position: position_change, balance, in_lieu, orders });
+            let (position, levels) = (position_change, levels_change);
+            scaled.push(ScaledAccount { account, position, balance, in_lieu, orders, levels, dropped });
         }
         let markouts = self
             .markouts
@@ -153,7 +179,7 @@ impl Engine {
             new_units: new,
             old_units: old,
         });
-        for ScaledAccount { account, position, balance, in_lieu, orders } in scaled {
+        for ScaledAccount { account, position, balance, in_lieu, orders, levels, dropped } in scaled {
             let state = self.accounts.get_mut(&account).expect("a scaled account exists");
             let held = state.positions.contains_key(&action.market);
             match position {
@@ -169,12 +195,24 @@ impl Engine {
             if let Some(balance) = balance {
                 state.balance = balance;
             }
+            match levels {
+                Some(Some(scaled)) => {
+                    state.levels.insert(action.market, scaled);
+                }
+                Some(None) => {
+                    state.levels.remove(&action.market);
+                }
+                None => {}
+            }
             let mut cancelled = Vec::new();
             for (order_id, change) in orders {
                 match change {
-                    Some((kind, qty)) => {
+                    Some((kind, qty, levels)) => {
                         let order = state.orders.get_mut(&order_id).expect("a scaled order rests");
                         (order.kind, order.qty) = (kind, qty);
+                        if let Some(levels) = levels {
+                            (order.take_profit, order.stop_loss) = (levels.take_profit, levels.stop_loss);
+                        }
                     }
                     None => {
                         state.orders.remove(&order_id);
@@ -187,6 +225,10 @@ impl Engine {
             self.scale_volume_lots(account, action.market, new, old);
             if held {
                 self.record_position(account, action.market);
+            }
+            if levels.is_some() {
+                // The split moved every price in the market, so each level is keyed again.
+                self.record_levels(account, action.market);
             }
             for order_id in resting.into_iter().chain(cancelled.iter().copied()) {
                 self.record_order(account, order_id);
@@ -206,6 +248,10 @@ impl Engine {
                 order_id,
                 reason: CancelReason::Split,
             }));
+            if let Some(PositionLevels { take_profit, stop_loss }) = dropped {
+                let (market, reason) = (action.market, LevelsRemoved::Split);
+                events.push(Event::PositionLevelsRemoved { account, market, take_profit, stop_loss, reason });
+            }
             if held && self.accounts[&account].positions.is_empty() {
                 // Removing the last position settles any debt the account was waiting to write off.
                 self.settle_bad_debt(account, events);
@@ -223,6 +269,23 @@ impl Engine {
         self.rekey_triggers(action.market);
         Ok(())
     }
+}
+
+/// A position's levels on `side` (long for a buy) scaled by `new / old` as resting orders' prices are:
+/// its take profit as a limit closing it, its stop loss as a stop, so neither fires sooner; `None` when
+/// either rounds to zero or leaves the input bound.
+fn scale_levels(levels: PositionLevels, side: Side, old: u32, new: u32) -> Option<PositionLevels> {
+    // The take profit closes a long as a sell limit, rounded up, and the stop loss as a sell stop,
+    // rounded down; a short's the other way.
+    let (take, stop) = match side {
+        Side::Buy => (Rounding::Up, Rounding::Down),
+        Side::Sell => (Rounding::Down, Rounding::Up),
+    };
+    let scaled = |level: Option<Fixed>, rounding| match level {
+        None => Some(None),
+        Some(level) => scale(level, old, new, rounding).ok().filter(|price| price.is_valid_input()).map(Some),
+    };
+    Some(PositionLevels { take_profit: scaled(levels.take_profit, take)?, stop_loss: scaled(levels.stop_loss, stop)? })
 }
 
 /// `value × numerator / denominator`, rounded once as `rounding` says.

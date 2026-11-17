@@ -106,6 +106,8 @@ pub(super) async fn order_events(
         kind: OrderKind::Market { quoted: quoted.parse().unwrap(), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let hash = eip712::order_hash(&eip712::domain(31_337, VAULT), &request, nonce, expires_at);
     request.auth = Some(RequestAuth { nonce, expires_at, signature: eip712::sign(client, &hash) });
@@ -312,6 +314,7 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
         weekend_margin_bps: None,
         price_rules: None,
         effective_at: due,
+        min_level_distance_bps: None,
     };
     operator.applies(&node, AdminCommand::AnnounceListing { market: BTC, notice }).await;
     node.move_time((NOTICE_MS - 1) as u64).await;

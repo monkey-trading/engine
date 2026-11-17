@@ -229,6 +229,8 @@ pub(super) fn market_order(
         kind: OrderKind::Market { quoted: fixed(quoted), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let cmd = access::order(&seq.engine, seed, request);
     sequenced(seq, cmd)

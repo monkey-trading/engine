@@ -18,8 +18,8 @@ use crate::limits::{SHARED_CAP_FULL, ThrottledAlert, client_key};
 /// What a request takes a slot as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SlotKind {
-    /// A close (a reduce-only order), a close-all, a withdrawal or a payout reissue: any free slot,
-    /// the reserve included.
+    /// A close (a reduce-only order), a close-all, a position's take profit and stop loss, a withdrawal
+    /// or a payout reissue: any free slot, the reserve included.
     Reducing,
     /// Any other order, or a dev deposit: a free slot outside the reserve.
     Opening,

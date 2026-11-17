@@ -81,6 +81,8 @@ pub fn order(h: &Harness, client: &Client, kind: OrderKind) -> OrderRequest {
         kind,
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let Command::PlaceOrder(request) = client.order(h.engine.next_request_nonce(client.account), request) else {
         unreachable!()

@@ -18,7 +18,7 @@ use crate::test_support::{TRADER, deposit, logged_history, withdraw};
 
 #[tokio::test]
 async fn dev_scenario_authenticated_history_and_paired_restart_preserve_all_public_pages() {
-    let cfg = configuration("whole-37-public-history");
+    let mut cfg = configuration("whole-37-public-history");
     let reference = crate::sequencer::fixture_tests::signed_fixture(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/reference/v2.jsonl"
@@ -39,7 +39,10 @@ async fn dev_scenario_authenticated_history_and_paired_restart_preserve_all_publ
     writer.sync().unwrap();
     drop(writer);
     let clock = Arc::new(TestClock::at(last_ts + 1_000));
-    let genesis = crate::sequencer::fixture_tests::finished_genesis(&reference);
+    // The node resumes under the genesis the reference log finished, with a ceiling for each market it lists.
+    cfg.genesis.close_spread_ceilings = crate::sequencer::fixture_tests::ceilings_for(&reference);
+    let genesis =
+        crate::sequencer::fixture_tests::finished_genesis_under(&reference, &cfg.genesis.close_spread_ceilings);
     let node = Node::start_resuming(cfg, clock.clone(), genesis.clone()).await.unwrap();
     for n in 0..9 {
         node.submit(deposit(100, &format!("whole37-{n}"))).await;

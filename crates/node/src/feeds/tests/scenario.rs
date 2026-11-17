@@ -272,6 +272,8 @@ impl Node {
             kind,
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         };
         self.access_command(move |engine| crate::test_support::access::order(engine, 1, order)).await
     }
@@ -287,6 +289,8 @@ impl Node {
             kind,
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         };
         self.access_command(move |engine| crate::test_support::access::order(engine, 1, order)).await
     }

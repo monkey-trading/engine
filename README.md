@@ -67,6 +67,14 @@ gain held past the hold curve pays 9% and 8% where tier 0 pays 10%, and the same
 financing markup at each rollover; tiers 1 to 3 weigh their MONKEY emission losses 1.1, 1.25 and 1.5
 times. A higher tier never pays more than a lower one.
 
+From V79 a trader can attach a take profit and a stop loss to a position, on the order that opens it or
+adds to it, or afterwards; an order naming one level keeps the other. Each closes the whole position
+once the price the account would close it at reaches it: the trader's own closing price, spreads and
+tiers included, so a change of stress or of the account's tier can fire a level without the index
+moving. A stop loss fills at that price, including any gap; a take profit fills at its level or better.
+A level must lie at least its market's minimum distance beyond the closing price, both levels go when
+the position closes or reverses, and a market's levels use one of the account's resting-order slots.
+
 Losing trades pay nothing. Winning trades pay a share of the profit they realise, which from protocol
 V55 falls with how long the position was held: the whole gain on a close within 10 seconds of the
 open, falling to the standard 10% at 15 minutes. Adding to a position moves its open time to the
@@ -378,7 +386,7 @@ cargo run -p engine-node -- replay --log data/dev/log
 ```
 
 The local configuration accepts unsigned requests (`auth = "none"`). With `auth = "eip712"`, each
-order, cancel, cancel-all, close-all, and withdrawal must carry its account's EIP-712 signature, its
+order, cancel, cancel-all, close-all, levels request, and withdrawal must carry its account's EIP-712 signature, its
 next nonce, and an expiry at most five minutes ahead, and replay checks every one. The first start records this
 setting in the log, so changing it later needs a fresh log: with the node stopped, remove
 `data/dev/log`, and the node rebuilds the account history index in `data/dev/history` from the new

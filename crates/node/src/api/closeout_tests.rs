@@ -24,6 +24,8 @@ async fn the_account_read_names_a_close_out_price_below_a_longs_mark_and_none_fo
         kind: OrderKind::Market { quoted: "100000".parse().unwrap(), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     assert_eq!(node.post("/v1/orders", serde_json::to_value(order).unwrap()).await.0, StatusCode::OK);
     let (_, view) = node.get(&format!("/v1/accounts/{trader}")).await;

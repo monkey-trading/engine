@@ -160,12 +160,13 @@ pub enum AdminAction {
         effective_at: DateTime<Utc>,
     },
     /// Give notice of a listed market's new spread bands, margin bands and/or financing markup, in
-    /// bps a year (from V52), weekend margin (from V60) and/or price rules (from V76): an `upsert-market`
-    /// carrying them applies only from `--effective-at`, at least seven days after the notice is logged,
-    /// with each spread rate from its launch rate to twice it, the margin requirement at or above
-    /// launch's, the weekend margin from 0, none, to 10000 bps, which each margin band charges at least
-    /// over the market's weekend gap, and price rules no looser than launch's. Tighter price rules need
-    /// no notice. It replaces that market's pending notice.
+    /// bps a year (from V52), weekend margin (from V60), price rules (from V76) and/or minimum level
+    /// distance (from V79): an `upsert-market` carrying them applies only from `--effective-at`, at least
+    /// seven days after the notice is logged, with each spread rate from its launch rate to twice it, the
+    /// margin requirement at or above launch's, the weekend margin from 0, none, to 10000 bps, which each
+    /// margin band charges at least over the market's weekend gap, price rules no looser than launch's,
+    /// and the minimum level distance from its launch value to twice it. Tighter price rules need no
+    /// notice. It replaces that market's pending notice.
     AnnounceListing {
         market: MarketId,
         /// A TOML market spec whose spread bands a later `upsert-market` applies, such as the file it
@@ -183,6 +184,9 @@ pub enum AdminAction {
         /// From V76, a TOML market spec whose price rules a later `upsert-market` applies.
         #[arg(long)]
         price_rules_from: Option<PathBuf>,
+        /// From V79, how far beyond its reference price a take profit or stop loss must lie, in bps.
+        #[arg(long)]
+        min_level_distance_bps: Option<i64>,
         /// When the new values may apply from, in RFC 3339 (`2027-01-01T00:00:00Z`).
         #[arg(long)]
         effective_at: DateTime<Utc>,

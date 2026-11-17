@@ -273,6 +273,8 @@ async fn an_account_with_a_position_gets_a_closing_price() {
         kind: engine_core::command::OrderKind::Market { quoted: Fixed::from_int(100_000), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     }));
     rig.subscribe("[1]");
     let quote = rig.within(INTERVAL).await.expect("quotes").remove(0);

@@ -52,7 +52,7 @@ an index: load only the rule whose hint matches the current action.
   activation gives a listing with no floor its asset class's; `tests/toxicity_*.rs`), from `V62` a stress trigger on the
   house's marked loss to its clients over the trailing day (`house_loss/`: NAV less net capital moved in, one result per
   15-minute slot, every market at the level whose threshold the loss is above, each launch threshold kept by notice and
-  by vote, `tests/house_loss.rs`, `tests/house_loss_accounting.rs` and `tests/house_loss_bounds.rs`; from `V67` a weekend close-out pays at least the level the loss sets, `tests/house_loss_weekend.rs`), from `V74` a price re-checking only the resting limits it could fill, each keyed at the mid where its market's least fill rate, the lower of its least band and its close-spread ceiling, first lets it fill (`hot_indexes/triggers.rs`, `tests/resting_reach.rs`), signed client
+  by vote, `tests/house_loss.rs`, `tests/house_loss_accounting.rs` and `tests/house_loss_bounds.rs`; from `V67` a weekend close-out pays at least the level the loss sets, `tests/house_loss_weekend.rs`), from `V74` a price re-checking only the resting limits it could fill, each keyed at the mid where its market's least fill rate, the lower of its least band and its close-spread ceiling, first lets it fill (`hot_indexes/triggers.rs`, `tests/resting_reach.rs`), from `V79` take-profit and stop-loss levels on a position (`levels/`: named on an order or set by a screened request, each at least the market's `min_level_distance_bps` beyond the closing price it triggers on, firing when the account's own closing price reaches it, removed by every full close, a reversal and a split to zero, one resting-order slot per market; keyed by the mid where that price can first reach it in `hot_indexes/levels.rs`, re-keyed whenever an input to it moves, the keys exact by a search that proves no mid past them fires (`levels/keys.rs`) and checked against pricing every level in `levels/tests.rs`; the levels leaf in `merkle/levels.rs`; `tests/levels.rs` and `tests/levels/`), signed client
   requests (EIP-712, per-account
   nonces, and expiries, and from `V41` session keys: one account-signed registration authorises a
   short-lived in-browser key to place and cancel orders on its own nonce sequence, in
@@ -151,7 +151,7 @@ an index: load only the rule whose hint matches the current action.
   refund of the vault's deposit at an id through the receipt the root holds there),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
-  `/v1/session-keys` registration and revocation a session key trades under (from `V41`), admission before a first deposit (`api/state.rs`: a never-credited account may declare, then manage its session keys, each within the fresh-account budgets in `limits/`, set by `[api.fresh_accounts]` apart from `api.per_ip` and `api.per_account` and capped in a production build (`config/fresh_accounts.rs`), with a declaration from an account with a pending deposit exempt from both, and nothing else; declarations hold at most half the API's screening slots), from `V66` a credited account's per-account and session-key buckets at its volume tier's request rate, read from the API's engine copy (`ApiState::read`), the bursts set in `[api.request_bursts]` as seconds of that rate and capped in a production build (`config/request_bursts.rs`), and a 429 naming the tier and its rate (`limits/`), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
+  `/v1/session-keys` registration and revocation a session key trades under (from `V41`), admission before a first deposit (`api/state.rs`: a never-credited account may declare, then manage its session keys, each within the fresh-account budgets in `limits/`, set by `[api.fresh_accounts]` apart from `api.per_ip` and `api.per_account` and capped in a production build (`config/fresh_accounts.rs`), with a declaration from an account with a pending deposit exempt from both, and nothing else; declarations hold at most half the API's screening slots), from `V66` a credited account's per-account and session-key buckets at its volume tier's request rate, read from the API's engine copy (`ApiState::read`), the bursts set in `[api.request_bursts]` as seconds of that rate and capped in a production build (`config/request_bursts.rs`), and a 429 naming the tier and its rate (`limits/`), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), `/v1/positions/levels` and an order's `take_profit` and `stop_loss` (from `V79`, `api/actions.rs`), screened and admitted as close-all is, the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps, and with `[api.tls.acme]` a public CA certificate for that
   key, obtained and renewed over ACME TLS-ALPN-01 answered on the API's listener, in `tls/acme/`,
   which a restart or the member's next daily turn under the same key serves again from the member's
@@ -272,7 +272,7 @@ an index: load only the rule whose hint matches the current action.
   latest checkpoint (`api/house_state.rs`,
   `sequencer/house.rs`), the market read's `pricing` (`api/pricing.rs`: fresh sources against `min_sources` and each source's state, from the quotes the engine holds at its last stamp) and the signed `/v1/notice` read of the operator's status notice (from `V78`, read from the engine's state, `api/notice.rs`), also the signed stream's `notice` frames at its start and on each change (`notice=1`, `api/stream/notice.rs`), and the signed `/v1/status` read, also the signed stream's `status` frames, of what holds the sequencer (one relaxed store per change), trusted time, each venue connection's symbols (published by the connection's task, `feeds/status.rs`) and the open markets with no price (`api/operating.rs`, `status.rs`), the account read (`api/account.rs`) with the toxicity score, tier and add-on from `V54` and the
   volume tier, counted and pending volume, each tier's progress and each market's best-price bound from `V59`, the
-  initial and maintenance requirements, withdrawable cash and each market's maximum leverage (`margin_standing`), and
+  initial and maintenance requirements, withdrawable cash and each market's maximum leverage (`margin_standing`), from `V79` each position's levels and each market's `min_level_distance_bps` in the market read, and
   under `[portfolio_margin]` the portfolio requirement with each offset group's part (Warning `portfolio_grid_mismatch`
   while the grid does not fit the listings), the
   signed quote ladder's steps at the account's own band bounds, checkpoint posting
@@ -487,7 +487,8 @@ an index: load only the rule whose hint matches the current action.
   section is protocol: it is sequenced into the log as admin commands on first boot, all or
   nothing, and credits house capital from config only under mock custody. Loading refuses a genesis
   value the engine would reject or an entry listed twice, and recovery refuses a log whose genesis
-  did not apply in full or is not the config's, and one whose genesis no current config can give,
+  did not apply in full or is not the config's, and one whose genesis no current config can give (a genesis from before `V79` compares with each market at its
+  close-spread ceiling for a minimum level distance),
   which needs a fresh log. `node.auth`, with `custody.chain_id` and
   `custody.vault` under `eip712`, and `operator.public_key`, with the same chain id and vault, are
   recorded in the log when it first activates the protocol versions that need them, so changing
@@ -543,7 +544,8 @@ an index: load only the rule whose hint matches the current action.
   `anvil.toml` name none, so a log started from them keeps resuming, and fresh dev nodes keep the parameters' cap
   and `api.per_account` until a notice names them), and from `V68` their fee and financing discounts and emissions
   boosts (#614, D1; `dev.toml` and `anvil.toml` name none, so a log started from them has none, as no notice can
-  raise a benefit above launch's); a deployment's node sections complete it
+  raise a benefit above launch's), and from `V79` each market's minimum level distance at its close-spread ceiling
+  (#633, D6, proposed for the owner to confirm; `dev.toml` and `anvil.toml` the same); a deployment's node sections complete it
   into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
@@ -658,6 +660,13 @@ an index: load only the rule whose hint matches the current action.
   refused the 26th naming tier 0, its next requests refused with 429 naming tier 0's rate, a wallet at tier 2
   resting 30 orders under its own rate, its tier falling thirty days on with the 30 orders left resting and a
   new one refused at 25, restart and replay;
+  `dev-position-levels.sh`, the V79 take-profit and stop-loss levels on a dev node: a BTC long's levels set on
+  its order and a stop loss inside 30 bps of the closing price or above it refused, the levels kept through an add,
+  a partial close and Cancel all, a gap through the stop loss filled at the closing price, a stop loss firing on a
+  raised stress floor with the index unchanged, a take profit filled once the closing price reaches it, a resting
+  limit's levels attaching to its fill, a stop loss above the close-out filled with no close-out, levels removed by a
+  reversal and a close-out, a tier-0 wallet refused levels past its 25th slot, a WTI stop loss filled at the first
+  price after the weekend, the history by kind, restart and replay;
   `dev-volume-benefits.sh`, the V68 tier benefits on a dev node: a tier 2 and a tier 0 wallet each holding a winning
   position 45 minutes and paying 9% and 10% of the gain, one over a rollover with the tier 2 wallet's markup a tenth
   lower, one closed after 2 minutes at the curve's rate for both, and a loss in one MONKEY period weighed 1.25 times
@@ -834,7 +843,7 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin and spreads), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels and spreads), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
@@ -1090,6 +1099,9 @@ Run from the repo root:
   and ETH trading and signed account reads under `config/dev.toml`'s fixture group on deterministic time); the
   requirement's cost at 100k holders: `cargo test -p engine-core --test portfolio_margin_benchmark --locked --
   --ignored --nocapture --test-threads=1`
+- Position levels dev scenario: `./scripts/dev-position-levels.sh` (runs the isolated access-screened BTC, ETH and
+  WTI levels scenario through the signed order and levels routes, the account and market reads, the history and the
+  operator's stress floor over TLS, on deterministic time across a weekend, restart and public replay)
 - Tier limits dev scenario: `./scripts/dev-tier-limits.sh` (runs the isolated access-screened BTC limit
   orders of a tier-0 and a tier-2 wallet, 429s, the account read and thirty days, on deterministic time,
   restart and public replay)

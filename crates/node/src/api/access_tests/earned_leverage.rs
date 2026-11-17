@@ -139,7 +139,7 @@ async fn leverage(node: &Node, account: AccountId) -> (u64, Value) {
 }
 
 /// `client`'s signed withdrawal of `amount` dollars through the withdrawal route; the events it gives.
-async fn withdraw(node: &Node, client: &SigningKey, amount: i64) -> Value {
+pub(super) async fn withdraw(node: &Node, client: &SigningKey, amount: i64) -> Value {
     let account = eip712::address(client.verifying_key());
     let nonce = node.state.query(move |engine| engine.next_request_nonce(account)).await.unwrap();
     let (amount, expires_at) = (Fixed::from_int(amount), node.clock.now_ms() + 60_000);

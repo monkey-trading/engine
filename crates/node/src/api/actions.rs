@@ -7,11 +7,11 @@ use axum::extract::{ConnectInfo, State};
 use axum::{Extension, Json};
 use engine_core::access::{AccessDeposit, AccessEvidence, EligibilityRequest, SourceFailure};
 use engine_core::command::{
-    CancelAllRequest, CancelRequest, CloseAllRequest, Command, OrderRequest, WithdrawalRequest,
+    CancelAllRequest, CancelRequest, CloseAllRequest, Command, OrderRequest, PositionLevelsRequest, WithdrawalRequest,
 };
 use engine_core::eip712::{
     self, cancel_all_hash, cancel_hash, close_all_hash, deposit_screening_hash, eligibility_hash, order_hash,
-    withdrawal_hash,
+    position_levels_hash, withdrawal_hash,
 };
 use engine_core::event::Event;
 use tracing::field::display;
@@ -107,6 +107,31 @@ pub(super) async fn close_all(
     let evidence = api_screen(&s, peer, req.account, hash, SlotKind::Reducing).await?;
     let cmd = Command::AccessCloseAll { request: req, evidence };
     Ok(Json(s.submit(cmd).await?))
+}
+
+/// Sets, moves or removes the take profit and stop loss of the account's position in one market, on one
+/// signature, one nonce and one screening: from `V79` the position takes exactly the levels the request
+/// names.
+/// Error cases:
+/// - the request is not authorised for its account
+/// - the API's screening capacity is full
+/// - the sequencer has stopped, or sequencing is halted
+pub(super) async fn set_position_levels(
+    State(s): State<ApiState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Json(mut req): Json<PositionLevelsRequest>,
+) -> ApiResult<Vec<Event>> {
+    let auth = req.auth.take();
+    req.auth = s
+        .authorise(req.account, auth, true, |domain, auth| {
+            position_levels_hash(domain, &req, auth.nonce, auth.expires_at)
+        })
+        .await?;
+    let auth = req.auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
+    let hash = position_levels_hash(&signature_domain(&s), &req, auth.nonce, auth.expires_at);
+    // A level arranges a close, so it takes a slot as a close does, the reserve included.
+    let evidence = api_screen(&s, peer, req.account, hash, SlotKind::Reducing).await?;
+    Ok(Json(s.submit(Command::AccessSetPositionLevels { request: req, evidence }).await?))
 }
 
 /// Registers a session key the account signed for: the key may place and cancel orders for the

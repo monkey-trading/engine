@@ -107,6 +107,8 @@ fn check(version: &str, mut h: Harness, vector: Vector) {
             kind: OrderKind::Market { quoted: vector.mid, max_slippage_bps: None },
             reduce_only: vector.reduce_only,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         }))
     };
     let fill = only_fill(&events);
