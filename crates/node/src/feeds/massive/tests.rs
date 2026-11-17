@@ -16,7 +16,7 @@ fn a_connection_authenticates_then_subscribes_on_its_feed_channel() {
     assert_eq!(forex.read(CONNECTED), Ok(Frame::Books(vec![])));
     let subscription = json!({ "action": "subscribe", "params": "C.EUR-USD,C.GBP-USD" }).to_string();
     assert_eq!(forex.read(AUTHENTICATED), Ok(Frame::Reply(vec![subscription])));
-    assert_eq!(forex.read(SUBSCRIBED), Ok(Frame::Books(vec![])));
+    assert_eq!(forex.read(SUBSCRIBED), Ok(Frame::Subscribed));
 
     // The channel follows the URL's path, whatever follows it.
     let mut forex = Session::new("wss://socket.massive.com/forex?cluster=1", "ms-key", &["EUR-USD"]);

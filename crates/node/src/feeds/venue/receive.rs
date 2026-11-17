@@ -31,7 +31,11 @@ impl VenueFeed {
                 refused.iter().for_each(|reason| self.refuse(reason, text));
                 books
             }
-            Ok(Frame::Control | Frame::Subscribed) => return Ok(()),
+            Ok(Frame::Subscribed) => {
+                self.subscribed = true;
+                return Ok(());
+            }
+            Ok(Frame::Control) => return Ok(()),
             Ok(Frame::Reply(messages)) => {
                 return timeout(self.timing.timeout, link.send_all(messages)).await.context("reply timed out")?;
             }
@@ -45,6 +49,7 @@ impl VenueFeed {
                 bail!("resyncing: {reason}");
             }
         };
+        self.subscribed |= !books.is_empty();
         // A book's age by its venue time shows a venue streaming it from behind, current stream or not.
         books.iter().for_each(|book| self.note_age(&book.symbol, book.ts, now));
         // The adapter has kept what the message changes; only the quotes wait for the stream.

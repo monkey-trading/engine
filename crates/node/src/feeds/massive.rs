@@ -77,10 +77,12 @@ impl Session {
         let events: Vec<Event> =
             serde_json::from_str(text).map_err(|e| Refusal::Message(format!("unparseable message: {e}")))?;
         let mut books = Vec::new();
+        let mut subscribed = false;
         for event in events {
             match (event.ev, event.status) {
                 ("status", Some("auth_success")) => return Ok(Frame::Reply(vec![self.subscription()])),
-                ("status", Some("connected" | "success")) => {}
+                ("status", Some("connected")) => {}
+                ("status", Some("success")) => subscribed = true,
                 ("status", Some("auth_failed")) => {
                     return Err(Refusal::Connection(format!(
                         "authentication failed: {}",
@@ -94,6 +96,9 @@ impl Session {
                 ("C" | "Q", _) => books.extend(quote(&event).map_err(Refusal::Message)?),
                 (other, _) => return Err(Refusal::Message(format!("unexpected event {other}"))),
             }
+        }
+        if subscribed && books.is_empty() {
+            return Ok(Frame::Subscribed);
         }
         Ok(Frame::Books(books))
     }
