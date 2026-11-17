@@ -28,8 +28,7 @@ def crisis_days(ctx: Ctx, params: model.Params, top: int = 12) -> list[dict]:
             for i in idx:
                 loss = abs(pair[i]) * size
                 rows.append({"group": g.name, "why": why, "date": d[i], "factor_move": float(f[i]), "pair_move_per_long_leg": float(pair[i]),
-                             "pair_loss_over_trigger_equity": loss / (ctx.level * R), "pair_loss_over_R": loss / R, "pair_loss_over_pp": loss / pp,
-                             "factor_over_launch_shock": abs(f[i]) / (g.factor * ctx.level / ctx.scale)})
+                             "pair_loss_over_trigger_equity": loss / (ctx.level * R), "pair_loss_over_R": loss / R, "pair_loss_over_pp": loss / pp})
         cal = {"group": g.name, "why": "history", "date": f"{d[0]}..{d[-1]}", "factor_move": float(np.quantile(np.abs(f), 0.995)),
                "pair_move_per_long_leg": float(np.quantile(np.abs(pair), 0.995))}
         rows.append(cal)
@@ -81,9 +80,9 @@ def bounds(ctx: Ctx, params: model.Params) -> list[dict]:
         k = (pp - float(model.closing_cost(ctx.specs, book, ctx.level)[0])) / shock_part
         for q, h in ((ctx.q, ctx.h), (0.999, ctx.h), (ctx.q, 300), (0.999, 300), (ctx.q, 3600)):
             s = horizon.ratio(tab, h, q) / ctx.level
-            row = {"group": g.name, "q": q, "horizon_s": h, "factor": calibrate.up(np.quantile(np.abs(f), q) * s)}
+            row = {"group": g.name, "q": q, "horizon_s": h}
             for i, m in enumerate(g.members[:6]):
-                row[f"rho_{m}"] = calibrate.up(np.quantile(np.abs(e[:, i]), q) * s)
+                row[f"rho_{m}"] = calibrate.up(np.quantile(np.abs(e[:, i]), q) * s / abs(beta[i]))
             row["multiple_to_per_position_pair"] = k
             rows.append(row)
     return rows

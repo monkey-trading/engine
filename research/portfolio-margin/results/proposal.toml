@@ -1,49 +1,40 @@
 # Portfolio margin's launch values, proposed by research/portfolio-margin (#914) for the owner's
-# confirmation on #913. Shocks are in tenths of a basis point of notional, rounded up; loadings in
+# confirmation on #913. Residual shocks are in tenths of a basis point per unit of loading-weighted exposure, rounded up (there is no factor shock); loadings in
 # thousandths. A shock is the tail quantile of the move over the horizon divided by the close-out
 # level (50% at launch); a weekend shock is the gap's quantile, undivided.
-# The section's name and keys are a proposal: #639's F1 fixes the table the engine reads.
+# A group's floor share is a share of its matched exposure's per-position requirement (#913's D5 as revised);
+# unmatched exposure keeps its own requirement. The section's name and keys are a proposal: #639's F1 fixes
+# the table the engine reads.
 [genesis.params.portfolio_margin]
 quantile_bps = 9950
 horizon_ms = 60000
-floor_share_bps = 8000
 
-[[genesis.params.portfolio_margin.groups]]
-name = "crypto"
-factor_tenth_bps = 720
-members = [
-  { market = "BTC-USD", loading_milli = 690, residual_tenth_bps = 229 },
-  { market = "ETH-USD", loading_milli = 1060, residual_tenth_bps = 289 },
-  { market = "SOL-USD", loading_milli = 1250, residual_tenth_bps = 314 },
-]
+# crypto: dropped: at its floor share 0.9 its offsets save 10% of the matched requirement, no more than 15%
 
 [[genesis.params.portfolio_margin.groups]]
 name = "fx"
-factor_tenth_bps = 96
-weekend_factor_tenth_bps = 1176
+floor_share_bps = 7000
 members = [
-  { market = "EUR-USD", loading_milli = 900, residual_tenth_bps = 49, weekend_residual_tenth_bps = 695 },
-  { market = "GBP-USD", loading_milli = 910, residual_tenth_bps = 40, weekend_residual_tenth_bps = 333 },
-  { market = "AUD-USD", loading_milli = 1190, residual_tenth_bps = 59, weekend_residual_tenth_bps = 641 },
+  { market = "EUR-USD", loading_milli = 900, residual_tenth_bps = 54, weekend_residual_tenth_bps = 772 },
+  { market = "GBP-USD", loading_milli = 910, residual_tenth_bps = 45, weekend_residual_tenth_bps = 366 },
+  { market = "AUD-USD", loading_milli = 1190, residual_tenth_bps = 50, weekend_residual_tenth_bps = 539 },
 ]
 
 [[genesis.params.portfolio_margin.groups]]
 name = "metals"
-factor_tenth_bps = 586
-weekend_factor_tenth_bps = 2963
+floor_share_bps = 7000
 members = [
-  { market = "XAU-USD", loading_milli = 610, residual_tenth_bps = 170, weekend_residual_tenth_bps = 1886 },
-  { market = "XAG-USD", loading_milli = 1390, residual_tenth_bps = 170, weekend_residual_tenth_bps = 1886 },
+  { market = "XAU-USD", loading_milli = 610, residual_tenth_bps = 280, weekend_residual_tenth_bps = 3091 },
+  { market = "XAG-USD", loading_milli = 1390, residual_tenth_bps = 122, weekend_residual_tenth_bps = 1357 },
 ]
 
-# shares: dropped: no floor share below 1 keeps its books' loss past balance within the allowance
+# shares: dropped: at its floor share 0.9 its offsets save 10% of the matched requirement, no more than 15%
 
 [[genesis.params.portfolio_margin.groups]]
 name = "us_index"
-factor_tenth_bps = 263
-weekend_factor_tenth_bps = 4064
+floor_share_bps = 6000
 members = [
-  { market = "US500", loading_milli = 960, residual_tenth_bps = 54, weekend_residual_tenth_bps = 386 },
-  { market = "US100", loading_milli = 1220, residual_tenth_bps = 110, weekend_residual_tenth_bps = 1285 },
-  { market = "US30", loading_milli = 820, residual_tenth_bps = 117, weekend_residual_tenth_bps = 861 },
+  { market = "US500", loading_milli = 960, residual_tenth_bps = 56, weekend_residual_tenth_bps = 402 },
+  { market = "US100", loading_milli = 1220, residual_tenth_bps = 90, weekend_residual_tenth_bps = 1053 },
+  { market = "US30", loading_milli = 820, residual_tenth_bps = 143, weekend_residual_tenth_bps = 1049 },
 ]

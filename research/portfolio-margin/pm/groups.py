@@ -1,5 +1,10 @@
 """The `groups` stage: fit every candidate group, find the floor share each needs, keep or drop it.
 
+Under the revised D5 only matched exposure (`model.requirement`) gets the grid's credit, floored at the
+group's own share of the matched part's per-position requirement; unmatched exposure keeps its
+requirement exactly. A group's share is therefore calibrated on hedged books alone (a pair hedged in
+full and in half), and a lone leg is run too, to confirm it is unchanged.
+
 For each candidate group (D3) the loadings and shocks are fitted (`calibrate`). A group's *floor
 share* is the smallest `phi` on a 0.1 grid at which its books (two pairs, each hedged in full and each leg alone), run on the account simulator
 at two tiers and four sizes, lose past their balance no more often than 2 times as often as
@@ -39,7 +44,7 @@ def fit_all(ctx: Ctx, candidates: dict[str, list[str]]) -> dict:
 
 def to_group(name: str, d: dict) -> model.Group:
     w = d["weekend"]
-    return model.Group(name, d["members"], d["fit"]["beta"], d["fit"]["factor"], d["fit"]["rho"], w.get("factor", 0.0), w.get("rho", {}))
+    return model.Group(name, d["members"], d["fit"]["beta"], 0.0, d["fit"]["rho"], 1.0, 0.0, w.get("rho", {}))
 
 
 def pair_books(g: model.Group) -> list[tuple[str, str]]:
@@ -50,7 +55,7 @@ def books(ctx: Ctx, g: model.Group):
     """(members, size, hedge) of the books tested: each pair hedged in full and each leg alone."""
     for a, b in pair_books(g):
         for size in test_sizes(ctx.specs[a]):
-            for hedge in (1.0, 0.0):  # in full, and the leg alone
+            for hedge in (1.0, 0.5, 0.0):  # in full, in half, and the leg alone (unchanged by the rule)
                 yield [a, b], size, hedge
 
 
@@ -71,7 +76,7 @@ def evaluate(ctx: Ctx, g: model.Group, phis=PHI_GRID) -> list[dict]:
         for tier in TIERS_USED:
             floor = TIER_FLOORS[tier]
             r_b = sim.simulate(w, ctx.specs, model.Params([g], 1.0), "bands", members, n0, starts, floor, ctx.level)
-            for phi in phis:
+            for phi in (phis if hedge > 0 else (0.0,)):  # a lone leg is run at no floor, the rule's loosest
                 r_p = sim.simulate(w, ctx.specs, model.Params([g], phi), "portfolio", members, n0, starts, floor, ctx.level)
                 rows.append({"pair": "/".join(members), "size": size, "hedge": hedge, "tier": tier, "phi": phi, **summary(r_b, "bands"),
                              **summary(r_p, "port"), "saving": float(1 - (r_p["e0"] / r_b["e0"]).mean())})
@@ -86,13 +91,14 @@ def summary(r: dict, tag: str) -> dict:
 
 
 def passes(rows: list[dict], ratio: float = RATE_RATIO) -> bool:
+    rows = [r for r in rows if r["hedge"] > 0]
     return all(r["port_rate"] <= ratio * r["bands_rate"] + RATE_SLACK and r["port_size"] <= ratio * r["bands_size"] + SIZE_SLACK for r in rows)
 
 
 def floor_share(rows: list[dict], ratio: float = RATE_RATIO) -> float:
     """The smallest grid share at which every tested book passes at `ratio`, or 1.0."""
     for phi in PHI_GRID:
-        if passes([r for r in rows if r["phi"] == phi], ratio):
+        if passes([r for r in rows if r["phi"] == phi and r["hedge"] > 0], ratio):
             return phi
     return 1.0
 
@@ -106,38 +112,30 @@ def saving(rows: list[dict], phi: float) -> float:
 def run(ctx: Ctx, candidates: dict[str, list[str]]) -> dict:
     fits = fit_all(ctx, candidates)
     out = {"quantile": ctx.q, "horizon_s": ctx.h, "level": ctx.level, "horizon_scale": ctx.scale, "groups": {}}
-    rows = {}
+    rows, table = {}, []
     for name, d in fits.items():
         g = to_group(name, d)
         rows[name] = evaluate(ctx, g)
         f = d["fit"]
+        phi = float(floor_share(rows[name]))
+        sv = saving(rows[name], phi)
+        by = {str(r): float(floor_share(rows[name], r)) for r in (1.0, 1.5, 2.0, 3.0)}
+        kept = phi < 1.0 and sv > MIN_SAVING
         out["groups"][name] = {
-            "members": g.members, "kept": True, "reason": "", "phi_min": float(floor_share(rows[name])),
-            "phi_min_by_allowance": {str(r): float(floor_share(rows[name], r)) for r in (1.0, 1.5, 2.0, 3.0)},
-            "beta": g.beta, "factor": g.factor, "rho": g.rho, "weekend": d["weekend"],
+            "members": g.members, "kept": kept, "phi": phi, "saving_at_phi": float(sv), "phi_by_allowance": by,
+            "reason": "kept" if kept else ("dropped: no floor share below 1 keeps its hedged books' loss past balance within the allowance" if phi >= 1.0
+                                          else f"dropped: at its floor share {phi} its offsets save {sv:.0%} of the matched requirement, no more than {MIN_SAVING:.0%}"),
+            "beta": g.beta, "rho": g.rho, "weekend": d["weekend"],
             "fit": {"hours": f["hours"], "beta_halves": f["beta_halves"], "r2": f["r2"],
                     "factor_move_hour": f["factor_hour"], "rho_move_hour": f["rho_hour"]},
         }
-    # D5 sets one share: the largest the kept groups need, and a group whose saving at that share
-    # is too small to be worth its parameters leaves, the one that forces the share up most first, which can
-    # lower the share, until none is left to go.
-    kept = set(out["groups"])
-    while True:
-        phi = max([out["groups"][n]["phi_min"] for n in kept], default=1.0)
-        failing = [n for n in kept if out["groups"][n]["phi_min"] >= 1.0 or saving(rows[n], phi) <= MIN_SAVING]
-        if not failing:
-            break
-        gone = {max(failing, key=lambda n: out["groups"][n]["phi_min"])}  # the one forcing the share up most
-        for n in gone:
-            sv = saving(rows[n], phi)
-            out["groups"][n]["reason"] = (
-                "dropped: no floor share below 1 keeps its books' loss past balance within the allowance" if out["groups"][n]["phi_min"] >= 1.0
-                else f"dropped: at the proposal's floor share {phi} its offsets save {sv:.0%} of the per-position requirement, no more than {MIN_SAVING:.0%}")
-        kept -= gone
-    out["phi"] = float(max([out["groups"][n]["phi_min"] for n in kept], default=1.0))
-    for n, g in out["groups"].items():
-        g["kept"] = n in kept
-        g["reason"] = g["reason"] or "kept"
-        g["saving_at_phi"] = float(saving(rows[n], out["phi"]))
+        for allowance, p in by.items():
+            for r in rows[name]:
+                if r["phi"] == p and r["hedge"] == 1.0:
+                    table.append({"group": name, "allowance": float(allowance), "phi": p, "pair": r["pair"], "size": r["size"], "tier": r["tier"], "saving": r["saving"]})
+        lone = [r for r in rows[name] if r["hedge"] == 0.0]
+        out["groups"][name]["lone_unchanged"] = {"max_abs_rate_diff": max(abs(r["port_rate"] - r["bands_rate"]) for r in lone),
+                                                 "max_abs_leverage_diff": max(abs(r["port_leverage"] - r["bands_leverage"]) for r in lone)}
     out["rows"] = [{"group": n, **r} for n in out["groups"] for r in rows[n]]
+    out["saving_table"] = table
     return out

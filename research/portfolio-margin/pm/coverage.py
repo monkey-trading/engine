@@ -105,7 +105,7 @@ def lone_leverage(ctx: Ctx, params: model.Params, label: str = "proposal") -> li
                 R = model.requirement(ctx.specs, params, {m: sizes}, floor)
                 lev_pp, lev_R = sizes / pp, sizes / R
                 i = int(np.argmax(lev_R / lev_pp))
-                rows.append({"params": label, "phi": params.phi, "group": g.name, "market": m, "tier": tier, "launch_max_leverage": launch_max,
+                rows.append({"params": label, "phi": params.phi if params.phi is not None else "per group", "group": g.name, "market": m, "tier": tier, "launch_max_leverage": launch_max,
                              "max_leverage_bands": float(lev_pp.max()), "max_leverage_rule": float(lev_R.max()),
                              "rule_over_launch": float(lev_R.max() / launch_max), "max_ratio_to_own_bands": float((lev_R / lev_pp).max()),
                              "at_size_usd": float(sizes[i]), "rule_leverage_there": float(lev_R[i]), "bands_leverage_there": float(lev_pp[i])})

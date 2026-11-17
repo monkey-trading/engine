@@ -1,7 +1,7 @@
-quantile,horizon_s,scale,phi,kept,crypto_phi_min,crypto_saving,crypto_factor_bps,us_index_phi_min,us_index_saving,us_index_factor_bps,metals_phi_min,metals_saving,metals_factor_bps,fx_phi_min,fx_saving,fx_factor_bps,shares_phi_min,shares_saving,shares_factor_bps
-0.99,60,0.147217,0.8,crypto|us_index|metals|fx,0.8,0.18307,66.5,0.6,0.175398,23.6,0.8,0.2,52,0.7,0.2,9,1,0.2,34.9
-0.995,60,0.129099,0.8,crypto|us_index|metals|fx,0.8,0.176979,72,0.6,0.160444,26.3,0.8,0.2,58.6,0.7,0.2,9.6,1,0.2,34.9
-0.999,60,0.204625,0.7,fx,0.8,0.219516,159.3,0.5,0.149629,73.6,0.8,0.18,130.7,0.7,0.191818,24.7,1,0.3,100.9
-0.995,10,0.0527046,0.8,crypto|us_index|metals|fx,0.8,0.2,29.4,0.7,0.199532,10.8,0.8,0.2,24,0.7,0.2,4,1,0.2,14.3
-0.995,300,0.288675,0.8,metals|fx,0.8,0.15,160.9,0.5,0.1,58.8,0.8,0.1805,131,0.7,0.150772,21.4,1,0.2,77.9
-0.995,3600,1,0.7,metals,0.8,0.1875,557.1,0.3,0.075,203.6,0.7,0.15,453.6,0,0.118105,74.2,1,0.3,269.8
+quantile,horizon_s,scale,kept,crypto_phi,crypto_saving,crypto_mean_rho_bps,us_index_phi,us_index_saving,us_index_mean_rho_bps,metals_phi,metals_saving,metals_mean_rho_bps,fx_phi,fx_saving,fx_mean_rho_bps,shares_phi,shares_saving,shares_mean_rho_bps
+0.99,60,0.147217,us_index|metals|fx,0.9,0.1,25.7333,0.6,0.274926,8.26667,0.7,0.3,18.45,0.7,0.265553,4.53333,0.9,0.1,84.85
+0.995,60,0.129099,us_index|metals|fx,0.9,0.1,28.5333,0.6,0.26054,9.63333,0.7,0.3,20.1,0.7,0.260955,4.96667,0.9,0.1,90.925
+0.999,60,0.204625,us_index|metals|fx,0.9,0.075,73.5,0.5,0.201716,25.2,0.6,0.22856,56.95,0.7,0.192312,11.9333,0.9,0.1,197.15
+0.995,10,0.0527046,us_index|metals|fx,0.9,0.1,11.6667,0.6,0.30857,3.96667,0.7,0.3,8.25,0.7,0.289933,2.03333,0.9,0.1,37.14
+0.995,300,0.288675,us_index|metals|fx,0.9,0.075,63.7,0.5,0.217349,21.5,0.7,0.229646,44.9,0.7,0.201266,11,0.9,0.1,203.235
+0.995,3600,1,metals|fx,0.9,0.0625,220.633,0.5,0.125,74.3,0.7,0.15,155.5,0,0.219593,38.0333,0.9,0.1,703.93

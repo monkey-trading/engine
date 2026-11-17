@@ -37,8 +37,8 @@ def params_from(groups_json: dict, phi: float | None = None, kept_only: bool = T
         if kept_only and not g["kept"]:
             continue
         w = g.get("weekend", {})
-        gs.append(model.Group(name, g["members"], g["beta"], g["factor"], g["rho"], w.get("factor", 0.0), w.get("rho", {})))
-    return model.Params(gs, groups_json["phi"] if phi is None else phi, groups_json.get("level", LEVEL))
+        gs.append(model.Group(name, g["members"], g["beta"], 0.0, g["rho"], g["phi"], 0.0, w.get("rho", {})))
+    return model.Params(gs, phi, groups_json.get("level", LEVEL))
 
 
 __all__ = ["CANDIDATES", "Ctx", "make", "params_from"]

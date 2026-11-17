@@ -20,7 +20,7 @@ class FakeWindow:
 
 
 def group():
-    return model.Group("fx", ["EUR-USD", "GBP-USD"], {"EUR-USD": 1.0, "GBP-USD": 1.0}, 0.001, {"EUR-USD": 0.0005, "GBP-USD": 0.0005})
+    return model.Group("fx", ["EUR-USD", "GBP-USD"], {"EUR-USD": 1.0, "GBP-USD": 1.0}, 0.001, {"EUR-USD": 0.0005, "GBP-USD": 0.0005}, 0.5)
 
 
 def run(w, rule, phi, tier_floor=0.0):

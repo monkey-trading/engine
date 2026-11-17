@@ -48,8 +48,7 @@ def hourly_fit(hr, members: list[str], q: float, scale: float, level: float) -> 
         "beta_halves": {m: (round(float(a), 2), round(float(b), 2)) for m, a, b in zip(members, beta1, beta2)},
         "factor_hour": quantile(np.abs(f), q),
         "rho_hour": {m: quantile(np.abs(e[:, i]), q) for i, m in enumerate(members)},
-        "factor": up(quantile(np.abs(f), q) * scale / level),
-        "rho": {m: up(quantile(np.abs(e[:, i]), q) * scale / level) for i, m in enumerate(members)},
+        "rho": {m: up(quantile(np.abs(e[:, i]), q) * scale / level / abs(beta[i])) for i, m in enumerate(members)},
         "r2": {m: float(1 - e[:, i].var() / r[:, i].var()) for i, m in enumerate(members)},
     }
 
@@ -98,13 +97,11 @@ def weekend_fit(hr, members, beta: dict, q: float, window=("2024-10-28", "2026-1
         "weeks": len(g),
         "long_weeks": len(long_),
         "tail_ratio_factor": ratio_f,
-        "factor_gap": quantile(np.abs(f), q),
-        "factor": up(quantile(np.abs(f), q) * ratio_f),
         "rho": {}, "rho_gap": {}, "tail_ratio_rho": {},
     }
     for i, m in enumerate(members):
         ratio = max(1.0, quantile(np.abs(el[:, i]), q) / quantile(np.abs(ew[:, i]), q))
         out["rho_gap"][m] = quantile(np.abs(e[:, i]), q)
         out["tail_ratio_rho"][m] = ratio
-        out["rho"][m] = up(quantile(np.abs(e[:, i]), q) * ratio)
+        out["rho"][m] = up(quantile(np.abs(e[:, i]), q) * ratio / abs(b[i]))
     return out

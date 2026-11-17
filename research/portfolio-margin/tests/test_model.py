@@ -8,7 +8,7 @@ def specs():
 
 
 def group():
-    return model.Group("fx", ["EUR-USD", "GBP-USD"], {"EUR-USD": 1.0, "GBP-USD": 1.0}, 0.001, {"EUR-USD": 0.0005, "GBP-USD": 0.0005}, 0.01, {"EUR-USD": 0.004, "GBP-USD": 0.004})
+    return model.Group("fx", ["EUR-USD", "GBP-USD"], {"EUR-USD": 1.0, "GBP-USD": 1.0}, 0.001, {"EUR-USD": 0.0005, "GBP-USD": 0.0005}, 0.5, 0.01, {"EUR-USD": 0.004, "GBP-USD": 0.004})
 
 
 def test_staircase_charges_each_slice_at_its_band():
@@ -29,29 +29,44 @@ def test_no_group_is_per_position_margin():
     assert model.requirement(s, p, book)[0] == model.per_position(s, book)[0]
 
 
-def test_the_requirement_never_exceeds_per_position_margin_and_holds_the_floor():
+def test_the_requirement_never_exceeds_per_position_margin_and_holds_the_matched_floor():
     s = specs()
-    book = {"EUR-USD": np.array([1e6, 1e6, 3e7]), "GBP-USD": np.array([-1e6, 0.0, -3e7])}
+    book = {"EUR-USD": np.array([1e6, 1e6, 3e7, 5e5]), "GBP-USD": np.array([-1e6, 0.0, -3e7, -1e6])}
     for phi in (0.0, 0.3, 0.8, 1.0):
         p = model.Params([group()], phi)
         r, pp = model.requirement(s, p, book), model.per_position(s, book)
         assert (r <= pp + 1e-9).all()
-        assert (r >= phi * pp - 1e-9).all()
+        assert (r >= (1 - 0) * 0 + 0).all()
+    assert model.requirement(s, model.Params([group()], 1.0), book).tolist() == model.per_position(s, book).tolist()
 
 
-def test_a_full_floor_share_is_per_position_margin():
-    s = specs()
-    book = {"EUR-USD": np.array([4e6]), "GBP-USD": np.array([-4e6])}
-    assert model.requirement(s, model.Params([group()], 1.0), book)[0] == model.per_position(s, book)[0]
-
-
-def test_offsetting_loadings_cancel_the_factor_term_only():
+def test_a_lone_position_and_a_same_side_book_keep_their_per_position_requirement_exactly():
     s = specs()
     p = model.Params([group()], 0.0)
-    hedged = {"EUR-USD": np.array([1e5]), "GBP-USD": np.array([-1e5])}
-    same = {"EUR-USD": np.array([1e5]), "GBP-USD": np.array([1e5])}
-    diff = model.model_term(s, p, same)[0] - model.model_term(s, p, hedged)[0]
-    assert abs(diff - 0.001 * 2e5) < 1e-6
+    for book in ({"EUR-USD": np.array([4e6])}, {"EUR-USD": np.array([4e6]), "GBP-USD": np.array([2e6])}):
+        assert model.requirement(s, p, book)[0] == model.per_position(s, book)[0]
+
+
+def test_matched_exposure_is_the_gross_loading_weighted_exposure_less_the_absolute_net():
+    g = group()
+    g.beta = {"EUR-USD": 1.0, "GBP-USD": 2.0}
+    book = {"EUR-USD": np.array([3e6]), "GBP-USD": np.array([-1e6])}  # x = +3m and -2m
+    assert model.matched_exposure(g, book)[0] == 4e6
+    # the larger side is matched in part: 2/3 of EUR-USD against all of GBP-USD
+    f = model._group_arrays(g, book, False)
+    assert abs(f["EUR-USD"][0] - 2 / 3) < 1e-12 and f["GBP-USD"][0] == 1.0
+
+
+def test_a_partly_matched_book_pays_its_unmatched_part_at_bands_and_the_floor_on_the_rest():
+    s = specs()
+    g = group()
+    book = {"EUR-USD": np.array([3e6]), "GBP-USD": np.array([-1e6])}
+    p = model.Params([g], 0.5)
+    pp_eur, pp_gbp = (model.per_position(s, {m: v}) [0] for m, v in book.items())
+    unmatched = pp_eur / 3
+    matched_pp = pp_eur * 2 / 3 + pp_gbp
+    r = model.requirement(s, p, book)[0]
+    assert r >= unmatched + 0.5 * matched_pp - 1e-6 and r <= unmatched + matched_pp + 1e-6
 
 
 def test_closing_cost_is_the_ceiling_over_the_level():
