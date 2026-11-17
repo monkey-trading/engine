@@ -95,6 +95,8 @@ an index: load only the rule whose hint matches the current action.
   against a root, with signed eligibility, authenticated screening evidence,
   durable outage retries and uncredited custody holds in `access/`. Unit tests sit
   inline; protocol tests are in `tests/` by area, with the shared harness in `tests/common/`.
+  `tests/common/launch_book/` builds a launch-scale book for the benchmarks (`tests/launch_book_benchmark.rs`, with
+  `engine-node`'s `stats::launch_bench`) and `tests/launch_book.rs` holds it to its mix.
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
   `tests/invariants/` holds the property tests. Its `README.md` lists every file.
@@ -884,6 +886,12 @@ Run from the repo root:
   `origin/main`)
 - Sequencer latency scenario (optimized dev profile, quiet CPU window):
   `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture --test-threads=1`
+- Launch-book latency (#905: 100k accounts at the latest protocol on the 34 genesis markets, with positions, resting
+  orders, volume books, scores and session keys, built by `crates/core/tests/common/launch_book/`; the proposal's
+  shares are `Mix::proposal`): `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored
+  --nocapture --test-threads=1`, and its stats scans and worker copy:
+  `cargo test -p engine-node --lib stats::launch_bench -- --ignored --nocapture --test-threads=1`; the builder's own
+  test: `cargo test -p engine-core --test launch_book`
 - Property tests: `cargo test -p engine-core --test invariants`
 - Production genesis and its calendars: `cargo test -p engine-node --test production_genesis`
 - Production node template: `cargo test -p engine-node --test production_node_template`

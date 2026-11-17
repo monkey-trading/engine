@@ -203,8 +203,8 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
     // below the level of any one position it holds, so the step closes every position; one step up
     // its position's gain is the dollar and more above the level of all of them.
     let mut closeout_cash = Vec::new();
-    for index in 0..named.closeouts.len() {
-        let mut account = h.engine.accounts()[&named.closeouts[index].account].clone();
+    for (index, client) in named.closeouts.iter().enumerate() {
+        let mut account = h.engine.accounts()[&client.account].clone();
         account.balance = Fixed::ZERO;
         let at = Some((CLOSEOUT_MARKET, f(&closeout_mark(index + 1)), None));
         let (equity, _) = h.engine.equity_and_margin(&account, at);

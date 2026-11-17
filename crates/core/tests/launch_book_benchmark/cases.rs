@@ -216,7 +216,8 @@ pub fn close_outs(book: &mut Book, budget_us: u128) {
     let others: Vec<MarketId> = book.h.engine.markets().keys().copied().filter(|id| *id != CLOSEOUT_MARKET).collect();
     let markets = book.h.engine.markets().len();
     let mut times = Vec::new();
-    for step in 0..book.named.closeouts.len() {
+    let closeouts: Vec<AccountId> = book.named.closeouts.iter().map(|client| client.account).collect();
+    for (step, account) in closeouts.iter().enumerate() {
         // A new move window, and every market quoted now, so every position can close.
         book.h.advance(70_000);
         for id in &others {
@@ -230,7 +231,7 @@ pub fn close_outs(book: &mut Book, budget_us: u128) {
             .iter()
             .filter_map(|e| if let Event::CloseOut { account, .. } = e { Some(*account) } else { None })
             .collect();
-        assert_eq!(closed, [book.named.closeouts[step].account], "step {step} closes out its account alone");
+        assert_eq!(closed, [*account], "step {step} closes out its account alone");
         let fills = events.iter().filter(|e| matches!(e, Event::Fill(_))).count();
         assert_eq!(fills, markets, "the account's position in every market closes");
         times.push(us);
@@ -258,8 +259,17 @@ pub fn rollover(book: &mut Book, budget_us: u128) {
         assert!(total(book) < before, "the rollover charges financing: {events:?}");
         times.push(us);
     }
-    let (_, p99, _) = report("rollover", &mut times, &format!("positions={}", book.positions));
+    let positions: usize = book.h.engine.accounts().values().map(|a| a.positions.len()).sum();
+    let extra = format!("positions={positions} us_per_position_p50={:.3}", times_p50(&times) as f64 / positions as f64);
+    let (_, p99, _) = report("rollover", &mut times, &extra);
     within("rollover_max", p99, budget_us);
+}
+
+/// The median of `times`, which need not be sorted.
+fn times_p50(times: &[u128]) -> u128 {
+    let mut sorted = times.to_vec();
+    sorted.sort_unstable();
+    sorted[sorted.len() / 2]
 }
 
 /// The engine's encoding for a snapshot, and the recovery of it: decoding, rebuilding the
