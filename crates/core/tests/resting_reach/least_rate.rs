@@ -1,23 +1,26 @@
 //! What the keys rest on: from `V74` no fill pays less of its index than its market's least fill rate,
-//! the lower of its least spread band and its close-spread ceiling. Opens, adds through the bands,
-//! partial and pure closes and reversals at stress levels 0 and 1, with and without a toxicity tier, at
-//! volume tiers 0 and 3, under bands below the ceiling and under bands a relisting raised above it.
+//! the lower of its least spread band and its close-spread ceiling. At stress levels 0 and 1, with and
+//! without a toxicity tier, and at volume tiers 0 and 3: an open, an add through the bands, a partial
+//! and a pure close and a short, then under bands below the ceiling a reversal and its close, and under
+//! bands a relisting raised above it the reversal refused at the ceiling and the short closed instead.
 
 use super::*;
+use engine_core::Fixed;
+use engine_core::event::Reject;
 use engine_core::volume_tier::{AccountVolume, DayVolume, day_of};
+
+use crate::common::events::{only_fill, rejection};
 
 /// TIGHT's launch bands, in tenths of a bp: 5bp to $1m, 10bp to $5m and 20bp above.
 const LAUNCH: [(Option<i64>, i64); 3] = [(Some(1_000_000), 50), (Some(5_000_000), 100), (None, 200)];
-/// The trades each case makes at a mid of 100,000: an open, an add through the second band, a partial
-/// and a pure close, a short, a reversal and its close.
-const TRADES: [(Side, &str); 7] = [
-    (Side::Buy, "1"),
-    (Side::Buy, "40"),
-    (Side::Sell, "5"),
-    (Side::Sell, "36"),
-    (Side::Sell, "2"),
-    (Side::Buy, "4"),
-    (Side::Sell, "2"),
+/// The trades each case makes at a mid of 100,000 before the reversal, each with the position it
+/// leaves: an open, an add through the second band, a partial and a pure close, and a short.
+const TRADES: [(Side, &str, &str); 5] = [
+    (Side::Buy, "1", "1"),
+    (Side::Buy, "40", "41"),
+    (Side::Sell, "5", "36"),
+    (Side::Sell, "36", "0"),
+    (Side::Sell, "2", "-2"),
 ];
 
 #[test]
@@ -30,20 +33,39 @@ fn no_fill_pays_less_than_the_least_fill_rate_its_limits_are_keyed_at() {
             for toxic in [false, true] {
                 for tier in [0, 3] {
                     let (mut h, a) = staged(raised, ceiling, level, toxic, tier);
-                    for (side, qty) in TRADES {
-                        for fill in fills(&trade(&mut h, &a, TIGHT, side, qty, "100000")) {
-                            let paid = (fill.price - fill.index).mul_int(fill.side.sign()).raw();
-                            let least = fill.index.raw() * rate / 100_000;
-                            let case = format!("raised {raised}, level {level}, toxic {toxic}, tier {tier}: {fill:?}");
-                            assert!(paid >= least, "{case} pays {paid} under {least}");
-                            exact += usize::from(paid == least);
-                        }
+                    let case = format!("raised {raised}, level {level}, toxic {toxic}, tier {tier}");
+                    let mut pays = |fill: &Fill| {
+                        let paid = (fill.price - fill.index).mul_int(fill.side.sign()).raw();
+                        let least = fill.index.raw() * rate / 100_000;
+                        assert!(paid >= least, "{case}: {fill:?} pays {paid} under {least}");
+                        exact += usize::from(paid == least);
+                    };
+                    for (side, qty, after) in TRADES {
+                        pays(only_fill(&trade(&mut h, &a, TIGHT, side, qty, "100000")));
+                        assert_eq!(held(&h, &a), f(after), "{case}");
                     }
+                    // The reversal's blended charge is over the ceiling only under the raised bands.
+                    let events = trade(&mut h, &a, TIGHT, Side::Buy, "4", "100000");
+                    let (side, after) = if raised {
+                        assert_eq!(rejection(&events), &Reject::CloseSpreadCeiling { ceiling_bps: ceiling }, "{case}");
+                        (Side::Buy, "-2")
+                    } else {
+                        pays(only_fill(&events));
+                        (Side::Sell, "2")
+                    };
+                    assert_eq!(held(&h, &a), f(after), "{case}");
+                    pays(only_fill(&trade(&mut h, &a, TIGHT, side, "2", "100000")));
+                    assert_eq!(held(&h, &a), Fixed::ZERO, "{case}");
                 }
             }
         }
         assert!(exact > 0, "no fill pays exactly the rate with raised bands {raised}");
     }
+}
+
+/// The client's position in TIGHT.
+fn held(h: &Harness, client: &Client) -> Fixed {
+    h.engine.accounts()[&client.account].positions.get(&TIGHT).map_or(Fixed::ZERO, |position| position.qty)
 }
 
 /// TIGHT listed at `LAUNCH` with a `ceiling` in bps, under parameters whose levels charge 1x and 2bp

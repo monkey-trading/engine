@@ -1,6 +1,6 @@
 //! What a rule set supports, for the code paths that ask of a version rather than compare it.
 
-use super::ProtocolVersion;
+use crate::protocol::ProtocolVersion;
 
 impl ProtocolVersion {
     /// Whether access screening applies; the standalone legacy V25 rules predate access.

@@ -3,9 +3,9 @@
 //! its close-spread ceiling, first lets it fill. Each limit still fills on the first price its fill
 //! price reaches; a limit refused before its price is checked is cancelled only once a price comes
 //! within its reach, and a stop still triggers at its price; the stress refresh a visit ran moves to
-//! the next fill, close-out or the command's end; and the keys follow bands raised above the ceiling
-//! and bands lowered again. `V73` keeps the earlier visits. No fill pays less than the rate the keys
-//! take (`resting_reach/least_rate.rs`).
+//! the next fill, close-out or the command's end; and resting limits' keys follow bands raised, a
+//! ceiling that takes effect below them, and bands lowered again. `V73` keeps the earlier visits. No
+//! fill pays less than the rate the keys take (`resting_reach/least_rate.rs`).
 
 mod common;
 #[path = "resting_reach/least_rate.rs"]
@@ -66,11 +66,17 @@ fn each_limit_fills_on_the_first_price_its_fill_price_reaches_as_before() {
 fn a_limit_refused_before_its_price_is_checked_is_cancelled_once_a_price_reaches_it() {
     // WIDE's 1bp first band keys a buy at 99990 at 99980.002 and a sell at 100010 at 100020.002:
     // 99988 and 100012 pass the price but not that key, 99975 and 100025 pass both.
-    let cases: [(&str, Side, Place); 5] = [
+    let cases: [(&str, Side, Place); 7] = [
         ("a reduce-only limit whose position has gone", Side::Sell, |h, a| {
             trade(h, a, WIDE, Side::Buy, "1", "100000");
             let id = resting(&rest_as(h, a, WIDE, Side::Sell, "1", limit("100010"), true));
             trade(h, a, WIDE, Side::Sell, "1", "100000");
+            id
+        }),
+        ("a reduce-only limit whose position has turned", Side::Sell, |h, a| {
+            trade(h, a, WIDE, Side::Buy, "1", "100000");
+            let id = resting(&rest_as(h, a, WIDE, Side::Sell, "1", limit("100010"), true));
+            trade(h, a, WIDE, Side::Sell, "2", "100000");
             id
         }),
         ("a reversal over the ceiling", Side::Sell, |h, a| {
@@ -80,6 +86,11 @@ fn a_limit_refused_before_its_price_is_checked_is_cancelled_once_a_price_reaches
         ("new risk in a reduce-only market", Side::Buy, |h, a| {
             let id = resting(&rest(h, a, WIDE, Side::Buy, "1", limit("99990")));
             h.operator_admin(AdminCommand::SetReduceOnly { market: Some(WIDE), reduce_only: true });
+            id
+        }),
+        ("new risk while every market is reduce-only", Side::Buy, |h, a| {
+            let id = resting(&rest(h, a, WIDE, Side::Buy, "1", limit("99990")));
+            h.operator_admin(AdminCommand::SetReduceOnly { market: None, reduce_only: true });
             id
         }),
         ("new risk below the minimum notional", Side::Buy, |h, a| {
@@ -179,28 +190,41 @@ fn a_stress_change_a_visit_ran_moves_to_the_close_out_that_follows() {
 }
 
 #[test]
-fn the_keys_follow_a_ceiling_below_raised_bands_and_lowered_bands() {
+fn the_keys_follow_raised_bands_a_ceiling_below_them_and_lowered_bands() {
     let mut h = tight();
-    let a = client(&mut h, 1, "10000000");
+    let (a, b) = (client(&mut h, 1, "10000000"), client(&mut h, 2, "10000000"));
     h.price(TIGHT, "100000");
     trade(&mut h, &a, TIGHT, Side::Buy, "1", "100000");
-    // A ceiling adopted at the 6bp launch close charge, then bands raised from 5bp to 10bp by notice:
-    // a close clamps to the ceiling below the bands, so a sell at 99935 is keyed at 99995, not at
-    // 100035 as 10bp would key it, and fills at 99996, at the ceiling.
-    let effective_at = h.ts + NOTICE_MS;
-    let ceiling = 6;
+    // An orphaned reduce-only sell at 100100, which a price that reaches it cancels: from 100150.075...
+    // at the 5bp launch band, and from 100200.2... at 10bp.
+    trade(&mut h, &b, TIGHT, Side::Buy, "1", "100000");
+    let orphan = resting(&rest_as(&mut h, &b, TIGHT, Side::Sell, "1", limit("100100"), true));
+    trade(&mut h, &b, TIGHT, Side::Sell, "1", "100000");
+    // Bands raised from 5bp to 10bp by notice, and a ceiling at the 6bp launch close charge logged an
+    // hour later, so it takes effect after them.
+    let (notice, raised_at) = spread_notice(&h, TIGHT, tenths(&[(None, 100)]));
+    h.operator_admin(notice);
+    h.advance(3_600_000);
+    let (ceiling, adopted_at) = (6, h.ts + NOTICE_MS);
     let adoption = AdminCommand::AdoptCloseSpreadCeiling {
         market: TIGHT,
         max_close_spread_bps: ceiling,
-        effective_at,
+        effective_at: adopted_at,
         listing: None,
     };
     h.operator_admin(adoption);
-    h.advance_to(effective_at);
-    relist(&mut h, tenths(&[(None, 100)]));
+    h.advance_to(raised_at);
+    h.operator_admin(AdminCommand::UpsertMarket(with_spreads(&h, TIGHT, tenths(&[(None, 100)]))));
+    // The raised bands re-key the orphan: 100175 leaves it, and 100201 reaches and cancels it.
+    assert!(!cancelled(&h.price(TIGHT, "100175"), orphan));
+    assert!(cancelled(&h.price(TIGHT, "100201"), orphan));
+    // A sell at 99935 is keyed from 100035.03... at 10bp, so 99996 leaves it. Once the ceiling applies,
+    // a close clamps to it below the bands, which re-keys the sell from 99994.99..., and 99996 fills it
+    // at the ceiling.
     h.price(TIGHT, "99800");
     let first = resting(&rest(&mut h, &a, TIGHT, Side::Sell, "1", limit("99935")));
-    assert!(fills(&h.price(TIGHT, "99990")).is_empty());
+    assert!(fills(&h.price(TIGHT, "99996")).is_empty());
+    h.advance_to(adopted_at);
     let filled: Vec<_> =
         fills(&h.price(TIGHT, "99996")).iter().map(|fill| (fill.order_id, fill.price, fill.spread_bps)).collect();
     assert_eq!(filled, [(first, f("99936.0024"), ceiling)]);

@@ -1,12 +1,12 @@
-//! What resting orders add to a price at 100k accounts (#700). A price visits every resting order
-//! its mid has reached (`hot_indexes`, `triggered`). Before `V74` a limit is reached at its price, and
-//! one the spread keeps out of reach fails on slippage and stays resting, so the same orders are
-//! visited, and priced, on every price; from `V74` a limit is reached only where its market's least
-//! fill rate lets it fill, so a price visits none of them. Each case loads that many such limits into
-//! market 1, tier 0's 25 an account, and times the price command's stamp, which every later price
-//! waits behind (`wait_bench::price_wait_budget` holds a batch's median wait to 1 ms). The last case
-//! is every account at tier 0's limit; a second test holds that many limits away from the price, which
-//! no price visits under any version. Run in a quiet CPU window:
+//! What resting orders add to a price at 100k accounts (#700), under the latest protocol. A price
+//! visits every resting order its mid has reached (`hot_indexes`, `triggered`). Before `V74` a limit
+//! is reached at its price, and one the spread keeps out of reach fails on slippage and stays resting,
+//! so the same orders are visited, and priced, on every price; from `V74` a limit is reached only where
+//! its market's least fill rate lets it fill, so a price visits none of them. Each case loads that many
+//! such limits into market 1 of its own rig, tier 0's 25 an account, and times the price command's
+//! stamp, which every later price waits behind (`wait_bench::price_wait_budget` holds a batch's median
+//! wait to 1 ms). The last case is every account at tier 0's limit; a second test holds that many limits
+//! away from the price, which no price visits under any version. Run in a quiet CPU window:
 //! `cargo test -p engine-node --lib sequencer::resting_bench -- --ignored --nocapture --test-threads=1`.
 
 use engine_core::Fixed;
@@ -44,11 +44,15 @@ fn resting(index: u32, client_id: u64, price: i64) -> Command {
     })
 }
 
-/// A 100k-account rig on the development genesis that admits `MOST` resting orders an account.
-fn rig(name: &str) -> Rig {
+/// A 100k-account rig on the development genesis that admits `MOST` resting orders an account, holding
+/// `load` limits at `price` and then running the latest protocol (`Rig::activate_latest`).
+fn loaded(name: &str, load: u32, price: i64) -> Rig {
     let mut genesis = dev_config().genesis;
     genesis.params.max_resting_orders = MOST;
-    Rig::with_genesis(name, &genesis)
+    let mut rig = Rig::with_genesis(name, &genesis);
+    place(&mut rig, &mut 0, load, price);
+    rig.activate_latest();
+    rig
 }
 
 /// Places resting limits at `price` until `placed` reaches `load`, `PER_ACCOUNT` an account.
@@ -84,21 +88,18 @@ fn stamps(rig: &mut Rig, step: &mut u32, samples: usize) -> Vec<u128> {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn resting_orders_price_stamp() {
-    let mut rig = rig("resting-orders");
-    let (mut placed, mut step) = (0u32, 0u32);
+    // The rig rests orders only before it activates the latest protocol, so each load has its own.
     for load in LOADS {
-        place(&mut rig, &mut placed, load, OUT_OF_REACH);
+        let mut rig = loaded(&format!("resting-orders-{load}"), load, OUT_OF_REACH);
         let samples = if load >= 1_000_000 { 20 } else { 200 };
-        report(&format!("price_stamp_rechecking_{load}_resting_orders"), stamps(&mut rig, &mut step, samples));
+        report(&format!("price_stamp_with_{load}_resting_orders_out_of_reach"), stamps(&mut rig, &mut 0, samples));
     }
 }
 
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn resting_orders_away_from_the_price() {
-    let mut rig = rig("resting-orders-away");
-    let (mut placed, mut step) = (0u32, 0u32);
     let load = PER_ACCOUNT * ACCOUNTS;
-    place(&mut rig, &mut placed, load, AWAY);
-    report(&format!("price_stamp_with_{load}_resting_orders_away"), stamps(&mut rig, &mut step, 200));
+    let mut rig = loaded("resting-orders-away", load, AWAY);
+    report(&format!("price_stamp_with_{load}_resting_orders_away"), stamps(&mut rig, &mut 0, 200));
 }

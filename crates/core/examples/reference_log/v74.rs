@@ -66,10 +66,11 @@ pub(crate) fn session(h: &mut Harness) {
     only_fill(&reduce(h, &client, BTC, Side::Sell, "0.1", &low.to_string()));
     untouched(&h.price(BTC, &sell_at.to_string()), reducing);
     let events = h.price(BTC, &(sell_at + share(sell_at, 2 * RATE)).to_string());
-    assert!(
-        events.iter().any(|event| matches!(event, Event::OrderCancelled { order_id, reason: CancelReason::Unfillable, .. } if *order_id == reducing)),
-        "{events:?}"
-    );
+    let mut cancelled = events.iter().filter_map(|event| match event {
+        Event::OrderCancelled { order_id, reason, .. } => Some((*order_id, *reason)),
+        _ => None,
+    });
+    assert!(cancelled.any(|cancel| cancel == (reducing, CancelReason::Unfillable)), "{events:?}");
 
     // A price 1% above the day's start raises BTC to level 2 and passes a sell limit it leaves unpriced;
     // the next price reaches the limit and prices it at level 2, short of its limit.

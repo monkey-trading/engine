@@ -1489,3 +1489,10 @@ window a slot for every 15 minutes of the day before. A BTC price, which visits 
 against 409 / 459: the loss is read from the house NAV the stress check already sums over the
 markets, so it adds a slot's record and a search of at most 98 slots per market, and no scan of the
 accounts. The budget is twice `V61`'s p99 plus 200 us, which a scan of the accounts would exceed.
+
+Limits out of reach from `V74` (`out_of_reach_limits_latency` in `tests/hot_path_benchmark/resting_reach.rs`,
+against `V73` running the same prices), measured on 17 November 2026 on the machine above with other
+workspace builds running: each of 100,000 accounts rests a limit buy of 0.01 BTC at 100,005, which every
+price at 100,000 or 100,001 passes and BTC's 1bp first band keeps out of reach. A price took 48,436 /
+51,335 us p50 / p99 under `V73`, which prices every one of those limits, and 0 / 2 us under `V74`, which
+visits none. The budget is the resting case's 200 us p99.
