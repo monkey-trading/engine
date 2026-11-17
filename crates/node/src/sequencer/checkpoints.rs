@@ -226,6 +226,7 @@ impl Sequencer {
     /// Error cases:
     /// - as `paced_checkpoint`
     fn attempt_checkpoint(&mut self, paced: bool) -> anyhow::Result<()> {
+        let _diag = crate::sequencer::pipeline::Diag("checkpoint", std::time::Instant::now());
         if self.frozen() {
             debug!("no checkpoint signed: sequencing is frozen after a detected log rollback");
             return Ok(());
@@ -382,6 +383,7 @@ impl Sequencer {
         health: Option<crate::checkpoints::Health>,
         lifecycle: Option<LifecycleEvidence>,
     ) -> anyhow::Result<()> {
+        let _diag = crate::sequencer::pipeline::Diag("custody_status", std::time::Instant::now());
         if let (Some(gate), Some(evidence)) = (&mut self.gate, &lifecycle) {
             gate.halted = evidence.halts_withdrawals();
             gate.retired = evidence.signer_retired();

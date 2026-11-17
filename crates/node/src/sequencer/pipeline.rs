@@ -205,6 +205,16 @@ fn run_syncs(queue: &Receiver<Arc<SyncJob>>, shared: &Arc<Shared>, sync: impl Fn
     }
 }
 
+/// Diagnostic: reports a sequencer step over 2 ms when dropped.
+pub(super) struct Diag(pub(super) &'static str, pub(super) Instant);
+impl Drop for Diag {
+    fn drop(&mut self) {
+        if self.1.elapsed() > std::time::Duration::from_millis(2) {
+            eprintln!("DIAG {} us={}", self.0, self.1.elapsed().as_micros());
+        }
+    }
+}
+
 impl Release {
     /// Takes the answers of `other`, a batch that wrote nothing, to go out with this one: the writes
     /// before it are what it waited for, and this release's sync covers them.
@@ -274,6 +284,7 @@ impl Sequencer {
     /// Error cases:
     /// - the buffered write fails, or a file handle cannot be duplicated
     pub(super) fn stage(&mut self, batch: Batch) -> anyhow::Result<Release> {
+        let _diag = Diag("stage", std::time::Instant::now());
         let withdrawals = self.outbox.iter().any(|msg| matches!(msg.body, StreamBody::Withdrawal(_)));
         let directory = withdrawals || !batch.syncs.is_empty() || !self.after_sync.is_empty();
         let job = Arc::new(self.log.begin_sync(directory)?);
@@ -301,6 +312,7 @@ impl Sequencer {
     /// Error cases:
     /// - a checkpoint cannot be posted
     fn finish(&mut self, release: Release) -> anyhow::Result<()> {
+        let _diag = Diag("finish", std::time::Instant::now());
         let Release { job, batch, last_seq, staged: _, head, stamp, outbox, marks, house, schedule, stats, after } =
             release;
         self.marks.deliver_stats(stats);

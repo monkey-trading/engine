@@ -24,6 +24,19 @@ pub(super) fn tail_holds(batches: &[(u128, u128)]) -> bool {
     batches.iter().filter(|(p99, probe)| *p99 <= allowed_us(*probe)).count() >= TAIL_BATCHES
 }
 
+/// Diagnostic: runs `round` six times, then fails if any round failed.
+pub(super) fn repeat(round: fn()) {
+    let failed: Vec<usize> = (0..6)
+        .filter(|n| {
+            println!("ROUND {n}");
+            let failed = std::panic::catch_unwind(round).is_err();
+            println!("ROUND {n} {}", if failed { "FAILED" } else { "passed" });
+            failed
+        })
+        .collect();
+    assert!(failed.is_empty(), "rounds {failed:?} failed");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

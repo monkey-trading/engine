@@ -96,7 +96,9 @@ impl Sequencer {
             };
             let pipeline = self.pipeline.as_mut().expect("check_hold found a batch in flight");
             if held || pipeline.in_flight.len() >= MAX_IN_FLIGHT {
+                let began = std::time::Instant::now();
                 self.await_sync(deadline, held).await?;
+                eprintln!("DIAG in_flight_full waited_us={}", began.elapsed().as_micros());
                 continue;
             }
             if let Some(request) = pipeline.kept.take() {

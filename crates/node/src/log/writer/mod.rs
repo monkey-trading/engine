@@ -268,8 +268,13 @@ impl LogWriter {
         // since carries none.
         let new = self.begun != Some(self.appended);
         if let Some((_, out)) = self.open.as_mut().filter(|_| self.unsynced && new) {
+            let began = std::time::Instant::now();
             out.flush().context("flushing log")?;
+            let flushed = began.elapsed();
             file = Some(out.get_ref().try_clone().context("duplicating the log file handle")?);
+            if began.elapsed() > std::time::Duration::from_millis(2) {
+                eprintln!("DIAG begin_sync flush_us={} total_us={}", flushed.as_micros(), began.elapsed().as_micros());
+            }
         }
         let dir = directory
             .then(|| self.dir_handle.try_clone().context("duplicating the log directory handle"))

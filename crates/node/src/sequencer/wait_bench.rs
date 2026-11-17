@@ -337,6 +337,9 @@ impl Clock for StampClock {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn price_wait_budget() {
+    tail::repeat(price_wait_round);
+}
+fn price_wait_round() {
     const EVERY: u64 = 25;
     const PRICES: usize = 600;
     const BATCHES: usize = 5;
@@ -396,7 +399,9 @@ fn price_wait_budget() {
             let started = Instant::now();
             while started.elapsed() < std::time::Duration::from_millis(2 * PRICES as u64 * BATCHES as u64 + 500) {
                 let read: crate::sequencer::Query = Box::new(move |engine: &Engine| {
-                    drop((engine.account_proof(id), engine.exit_proof(id), engine.distributable_excess()));
+                    let (us, _) =
+                        time(|| (engine.account_proof(id), engine.exit_proof(id), engine.distributable_excess()));
+                    (us > 2_000).then(|| eprintln!("DIAG read us={us}"));
                 });
                 if tx.blocking_send(crate::sequencer::Request::Query(read)).is_err() {
                     return;
