@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use engine_core::command::Command;
 use engine_core::price::SourceQuote;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 use tokio::sync::mpsc::Receiver;
@@ -19,6 +20,7 @@ use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
 use crate::log::Manifest;
 use crate::sequencer::pipeline::Batch;
+use crate::sequencer::resting_bench;
 use crate::sequencer::{Sequencer, SequencerConfig};
 use crate::tee::EnclaveKey;
 use crate::test_support::{dev_config, empty_custody_frontier, sample_around, scratch_dir, sequencer_config};
@@ -95,6 +97,15 @@ impl Rig {
             }
         }
         self.seq.flush().unwrap();
+    }
+
+    /// Activates the latest protocol over the log so far, as a node does at boot, and reports the
+    /// checkpoint after it final. The rig's accounts and orders are unsigned, which only `V23` and
+    /// earlier take, so a bench loads them first.
+    pub(super) fn activate_latest(&mut self) {
+        self.seq.activate_protocol().unwrap();
+        assert_eq!(self.seq.engine.protocol_version(), ProtocolVersion::LATEST);
+        self.checkpoint_final();
     }
 
     /// Signs a checkpoint of the state so far and reports it final.
@@ -310,17 +321,19 @@ impl Clock for StampClock {
     }
 }
 
-/// The time from a price entering the channel to its stamp, with the work that used to hold it back
-/// going on: proof reads on the sequencer, a checkpoint every `EVERY` prices, and a disk whose every
-/// sync stalls 10 ms. Prices come 2 ms apart and the real `run` loop sequences them, in `BATCHES`
-/// batches measured separately. A price that waited for a stalled sync would wait out the stall
-/// behind every checkpoint (over a tenth of the batch's prices), so a batch's p90 must stay under
-/// the stall; a per-price slowdown moves the median on every batch. A scheduler hiccup on a loaded
-/// runner lifts wall-clock waits without any work behind them (a stall of the runner's CPU covers a
-/// tenth of a batch in 120 ms), so the median must hold on every batch while the p90 must hold on at
-/// least one of five windows; every batch is reported in full. A slow runner lifts the p99 alone (30 us
-/// to 250 us on unchanged code), so each batch's p99 is held to a multiple of the p99 of a probe thread
-/// woken beside every price (`tail`), and three of the five batches must hold it.
+/// The time from a price entering the channel to its stamp, under the latest protocol, with the
+/// work that used to hold it back going on: proof reads on the sequencer, a checkpoint every
+/// `EVERY` prices, a disk whose every sync stalls 10 ms, and `ACCOUNTS` resting limits every price
+/// passes but the spread keeps out of reach (`resting_bench`), which from `V74` no price visits.
+/// Prices come 2 ms apart and the real `run` loop sequences them, in `BATCHES` batches measured
+/// separately. A price that waited for a stalled sync would wait out the stall behind every
+/// checkpoint (over a tenth of the batch's prices), so a batch's p90 must stay under the stall; a
+/// per-price slowdown moves the median on every batch. A scheduler hiccup on a loaded runner lifts
+/// wall-clock waits without any work behind them (a stall of the runner's CPU covers a tenth of a
+/// batch in 120 ms), so the median must hold on every batch while the p90 must hold on at least one
+/// of five windows; every batch is reported in full. A slow runner lifts the p99 alone (30 us to
+/// 250 us on unchanged code), so each batch's p99 is held to a multiple of the p99 of a probe
+/// thread woken beside every price (`tail`), and three of the five batches must hold it.
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn price_wait_budget() {
@@ -331,6 +344,8 @@ fn price_wait_budget() {
     const P90_US: u128 = 5_000;
     const SYNC_STALL: std::time::Duration = std::time::Duration::from_millis(10);
     let mut rig = Rig::new("wait-budget");
+    resting_bench::place(&mut rig, &mut 0, ACCOUNTS, resting_bench::OUT_OF_REACH);
+    rig.activate_latest();
     let clock = Arc::new(StampClock { inner: TestClock::default(), stamps: Default::default() });
     rig.seq.clock = clock.clone();
     rig.seq.checkpoint_every = EVERY;

@@ -187,6 +187,10 @@ this crate and reproduce the signed state roots exactly.
   once; the member's haircut starts at the penalty and falls linearly to nothing over its decay, each
   stretch of its time in office after the mirror withholds the haircut's integral, and a close pays the
   member its part of the operator's share for the time it kept, the stakers taking the rest
+- From protocol `V74`, a price re-checks only the resting limits it could fill
+  (`src/hot_indexes/triggers.rs`): a limit is keyed at the mid where its market's least fill rate, the
+  lower of its least spread band and its close-spread ceiling, first lets it fill, so a limit the spread
+  keeps out of reach costs a price nothing
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -294,6 +298,9 @@ this crate and reproduce the signed state roots exactly.
   roll position
 - `src/hot_indexes/mod.rs` — derived holder, trigger, pending-receipt and above-frontier coverage indexes, rebuilt after recovery
 - `src/hot_indexes/tests.rs` — the rebuild's coverage: the finalised base, whole skipped spans, and the runs a span merges
+- `src/hot_indexes/triggers.rs` — the trigger index: each market's resting orders by the mid at which a price
+  first reaches them, from `V74` a limit at the mid where its market's least fill rate first lets it fill,
+  re-keyed when that rate moves, and each order's key kept for its removal
 - `src/marks.rs` — venue prices, and marking a market and the markets that convert at its index
 - `src/corporate/` — authenticated instruction types and scheduling (`mod.rs`), actual venue
   boundary validation (`calendar.rs`), checked dividend cash transfers and recorded-FX
@@ -391,6 +398,15 @@ this crate and reproduce the signed state roots exactly.
 - `tests/tier_limits.rs` — a fresh wallet's 25 resting orders and the refusal naming its tier, each tier's
   limit, a falling tier's orders staying, a table naming no limit, the request rate and the account
   read, and activation over resting orders
+- `tests/resting_reach.rs` — `V74`: each limit filling on the first price its fill price reaches, as
+  under `V73`; a limit refused before its price is checked (reduce-only with its position gone, a
+  reversal over the ceiling, new risk in a reduce-only market or below the minimum notional, a spread
+  that reaches the price) cancelled only once a price reaches it; a reduce-only limit filling once its
+  position is back; stops unchanged; a stress change a visit ran moving to the close-out after it; and
+  keys following a ceiling below raised bands, lowered bands and a restart
+- `tests/resting_reach/least_rate.rs` — `V74`: no fill paying less of its index than its market's least
+  fill rate, through opens, adds, closes and reversals at two stress levels, with and without a toxicity
+  tier, at volume tiers 0 and 3, under bands below the ceiling and bands raised above it
 - `tests/tier_limit_bounds.rs` — a table's limits held named, at or below launch's and never falling
   with the tier, a lower limit noticed, and the refusal of a limit before V66
 - `tests/tier_benefits.rs` — the fee a tier pays at a hold, the markup a rollover charges, the weight a
@@ -499,6 +515,7 @@ this crate and reproduce the signed state roots exactly.
 - `src/eip712.rs` — the EIP-712 domain, the request types clients and the operator sign, and signer
   recovery
 - `src/protocol.rs` — protocol versions, and how to add one
+- `src/protocol/support.rs` — what a rule set supports: access screening, deposit finality, and `V2`
 - `src/merkle/mod.rs` — the state tree's layout and the sparse Merkle tree
 - `src/merkle/leaf/mod.rs` — each leaf's key and value hash, and the account leaf;
   `src/merkle/leaf/market.rs` the market leaf
@@ -629,7 +646,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V73` parts (`v15.rs` to `v73.rs`)
+  `V15` to `V74` parts (`v15.rs` to `v74.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1261,6 +1278,26 @@ draw from it is in the log; from then the turn in effect (V71) or the refused tu
 promotion. Before the mirror records a block time nothing is forgotten. Its log is `v73.jsonl`, and its session is in
 `examples/reference_log/v73.rs`.
 
+Protocol V74 re-checks against each price only the resting limits it could fill. Up to V73 a price
+visited every limit whose price its index mid had passed, so a limit the spread kept out of reach was
+priced, and failed on slippage, on every price in its market. From V74 the trigger index
+(`src/hot_indexes/triggers.rs`) keys a limit at the index mid where its market's least fill rate first
+lets it fill: the lower of its least spread band and its close-spread ceiling, since every spread part
+is non-negative, every fill pays its bands at a size multiplier of at least 1x from V52, and only a pure
+close is clamped, to the ceiling. A buy at `P` is keyed at the highest mid `m` with
+`m + floor(m × r / 100,000) <= P` and a sell at the lowest with `m - floor(m × r / 100,000) >= P`, `r` in
+tenths of a bp; a stop keeps its price. The index records the rate each market is keyed at and re-keys
+the market at the next price or placement that finds another, after a relisting, a passed vote or a
+ceiling adoption, and an activation rebuilds it. A limit a price leaves out of reach is not priced, so:
+the stress refresh that pricing ran first waits for the next fill, close-out or the command's end, and
+the stress level, and the prices of the fills after it, can differ; a limit refused before its price is
+checked is cancelled only once a price reaches it, or never: reduce-only with its position gone or
+turned, new risk in a reduce-only market (its own flag, every market's, or a vote's restriction) or
+below the minimum notional, a spread at its size that reaches the price, and a reversal over the
+ceiling, whose closing slice fills first if it can; and such a limit rests until then, and fills if a
+later change lets it, as a reduce-only limit does once its position reopens. Its log is `v74.jsonl`, and
+its session is in `examples/reference_log/v74.rs`.
+
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
 is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
@@ -1379,7 +1416,9 @@ Price updates use transient account-by-market and trigger-price indexes, and fro
 the markouts it may match through a transient index by account, market, side and quantity left. Triggered orders retain
 order-id priority, including limit orders whose spread prevents an immediate fill. Both indexes
 are excluded from serialization and state roots, and rebuilt from accounts after recovery. They
-apply to every historical protocol version without changing its events or roots.
+apply to every historical protocol version without changing its events or roots. From `V74` the
+trigger index keys a limit at the mid where its market's least fill rate first lets it fill, so a
+price no longer visits the limits the spread keeps out of its reach (protocol V74 below).
 
 Run `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture --test-threads=1`
 in a quiet CPU window. The optimized dev profile benchmarks 100 samples per scenario; setup and
@@ -1394,6 +1433,7 @@ command-processing regression guards, not an end-to-end service latency promise.
 | Dispersed book, one account in the repriced market | 1,000 and 100,000 | 200 us |
 | Every account holds the repriced market | 100,000 | 250 ms |
 | Dormant resting orders in the repriced market | 100,000 | 200 us |
+| From `V74`, a limit per account that every price passes and the first band keeps out of reach, against `V73` | 100,000 | 200 us |
 | Daily rollover with financing on every position | 100,000 | 500 ms |
 | Finalising a MONKEY emission period in which every account lost (one sample) | 100,000 | 500 ms |
 | A signed empty cancel-all, the floor of a signed command (one sample per account) | 100,000 | 2 ms |
@@ -1449,3 +1489,10 @@ window a slot for every 15 minutes of the day before. A BTC price, which visits 
 against 409 / 459: the loss is read from the house NAV the stress check already sums over the
 markets, so it adds a slot's record and a search of at most 98 slots per market, and no scan of the
 accounts. The budget is twice `V61`'s p99 plus 200 us, which a scan of the accounts would exceed.
+
+Limits out of reach from `V74` (`out_of_reach_limits_latency` in `tests/hot_path_benchmark/resting_reach.rs`,
+against `V73` running the same prices), measured on 17 November 2026 on the machine above with other
+workspace builds running: each of 100,000 accounts rests a limit buy of 0.01 BTC at 100,005, which every
+price at 100,000 or 100,001 passes and BTC's 1bp first band keeps out of reach. A price took 48,436 /
+51,335 us p50 / p99 under `V73`, which prices every one of those limits, and 0 / 2 us under `V74`, which
+visits none. The budget is the resting case's 200 us p99.

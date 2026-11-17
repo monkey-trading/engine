@@ -47,7 +47,7 @@ an index: load only the rule whose hint matches the current action.
   activation gives a listing with no floor its asset class's; `tests/toxicity_*.rs`), from `V62` a stress trigger on the
   house's marked loss to its clients over the trailing day (`house_loss/`: NAV less net capital moved in, one result per
   15-minute slot, every market at the level whose threshold the loss is above, each launch threshold kept by notice and
-  by vote, `tests/house_loss.rs`, `tests/house_loss_accounting.rs` and `tests/house_loss_bounds.rs`; from `V67` a weekend close-out pays at least the level the loss sets, `tests/house_loss_weekend.rs`), signed client
+  by vote, `tests/house_loss.rs`, `tests/house_loss_accounting.rs` and `tests/house_loss_bounds.rs`; from `V67` a weekend close-out pays at least the level the loss sets, `tests/house_loss_weekend.rs`), from `V74` a price re-checking only the resting limits it could fill, each keyed at the mid where its market's least fill rate, the lower of its least band and its close-spread ceiling, first lets it fill (`hot_indexes/triggers.rs`, `tests/resting_reach.rs`), signed client
   requests (EIP-712, per-account
   nonces, and expiries, and from `V41` session keys: one account-signed registration authorises a
   short-lived in-browser key to place and cancel orders on its own nonce sequence, in
@@ -928,7 +928,8 @@ Run from the repo root:
   `cargo test -p engine-node --lib stats::tests::closeout_cost -- --ignored --nocapture`
 - What a price waits behind on the sequencer's thread at 100k accounts (stamp, batch sync, reads,
   checkpoint parts, payout release), and the wait from a price entering the channel to its stamp
-  while reads and checkpoints run (`price_wait_budget`, which CI runs):
+  while reads and checkpoints run, beside 100k limits the spread keeps out of reach (`price_wait_budget`,
+  which CI runs):
   `cargo test -p engine-node --lib sequencer::wait_bench -- --ignored --nocapture --test-threads=1`
 - What resting orders add to a price at 100k accounts, out of the spread's reach and away from the
   price (#700):

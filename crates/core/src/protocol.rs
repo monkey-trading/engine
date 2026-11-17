@@ -25,6 +25,8 @@
 
 use serde::{Deserialize, Serialize};
 
+mod support;
+
 /// A rule set, in activation order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -472,24 +474,25 @@ pub enum ProtocolVersion {
     /// that lags the chain keeps a set until the draws from it are mirrored, where an earlier version
     /// counted from the sequenced time alone.
     V73,
+    /// A price re-checks only the resting limits it could fill. A limit is indexed at the index mid
+    /// where its market's least fill rate, the lower of its least spread band and its close-spread
+    /// ceiling, first lets it fill, since no fill pays less, and a market's limits are re-keyed once
+    /// that rate moves, by a relisting, a passed vote or a ceiling adoption. A stop keeps its trigger
+    /// at its price. A limit a price leaves out of that reach is not priced, where an earlier version
+    /// priced every limit past its price:
+    /// - the stress refresh that pricing runs first waits for the next fill, close-out or the
+    ///   command's end, so the stress level, and the prices of the fills that follow, can differ;
+    /// - a limit refused before its price is checked is cancelled as unfillable only once a price
+    ///   comes within its reach, or never: a reduce-only limit whose position has gone or turned, new
+    ///   risk in a market that is reduce-only (by its own flag, every market's, or a vote's
+    ///   restriction) or below its minimum notional, a spread at its size that reaches the price, and
+    ///   a reversal over the ceiling, whose closing slice fills first if it can;
+    /// - until then such a limit rests, and fills if a later change lets it, as a reduce-only limit
+    ///   does once its position reopens.
+    V74,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V73;
-
-    /// Whether access screening applies; the standalone legacy V25 rules predate access.
-    pub fn supports_access(self) -> bool {
-        self == Self::V24 || self >= Self::V26
-    }
-
-    /// Whether this rule set credits exact receipts with withdrawal principal locks.
-    pub fn supports_deposit_finality(self) -> bool {
-        self >= ProtocolVersion::V20
-    }
-
-    /// Whether this is `V2`, which engine state leaves out of its encoding.
-    pub fn is_v2(&self) -> bool {
-        *self == ProtocolVersion::V2
-    }
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V74;
 }

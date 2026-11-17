@@ -1,10 +1,12 @@
-//! What resting orders add to a price at 100k accounts (#700). A price visits every resting order
-//! its mid has reached (`hot_indexes`, `triggered`), and a limit the spread keeps out of reach stays
-//! resting, so the same orders are visited, and priced, on every price. Each case loads that many
-//! such limits into market 1, tier 0's 25 an account, and times the price command's stamp, which
-//! every later price waits behind (`wait_bench::price_wait_budget` holds a batch's median wait to
-//! 1 ms). The last case is every account at tier 0's limit; a second test holds that many limits
-//! away from the price, which no price visits. Run in a quiet CPU window:
+//! What resting orders add to a price at 100k accounts (#700), under the latest protocol. A price
+//! visits every resting order its mid has reached (`hot_indexes`, `triggered`). Before `V74` a limit
+//! is reached at its price, and one the spread keeps out of reach fails on slippage and stays resting,
+//! so the same orders are visited, and priced, on every price; from `V74` a limit is reached only where
+//! its market's least fill rate lets it fill, so a price visits none of them. Each case loads that many
+//! such limits into market 1 of its own rig, tier 0's 25 an account, and times the price command's
+//! stamp, which every later price waits behind (`wait_bench::price_wait_budget` holds a batch's median
+//! wait to 1 ms). The last case is every account at tier 0's limit; a second test holds that many limits
+//! away from the price, which no price visits under any version. Run in a quiet CPU window:
 //! `cargo test -p engine-node --lib sequencer::resting_bench -- --ignored --nocapture --test-threads=1`.
 
 use engine_core::Fixed;
@@ -21,10 +23,10 @@ const MOST: usize = 250;
 /// Out-of-reach limits in market 1, per case.
 const LOADS: [u32; 6] = [0, 1_000, 10_000, 100_000, 1_000_000, PER_ACCOUNT * ACCOUNTS];
 
-/// A limit buy at 100,005: every price (`Rig::price`, 100,000 or 100,001) reaches it, and market 1's
+/// A limit buy at 100,005: every price (`Rig::price`, 100,000 or 100,001) passes it, and market 1's
 /// 2 bps first band (the development genesis's BTC-USD, #688) puts a fill at 100,020 or more, past
-/// the limit, so it stays resting.
-const OUT_OF_REACH: i64 = 100_005;
+/// the limit, so it stays resting. From `V74` it is reached only at a mid of about 99,985.
+pub(super) const OUT_OF_REACH: i64 = 100_005;
 /// A limit buy at 90,000, below every price, which no price reaches.
 const AWAY: i64 = 90_000;
 
@@ -42,15 +44,19 @@ fn resting(index: u32, client_id: u64, price: i64) -> Command {
     })
 }
 
-/// A 100k-account rig on the development genesis that admits `MOST` resting orders an account.
-fn rig(name: &str) -> Rig {
+/// A 100k-account rig on the development genesis that admits `MOST` resting orders an account, holding
+/// `load` limits at `price` and then running the latest protocol (`Rig::activate_latest`).
+fn loaded(name: &str, load: u32, price: i64) -> Rig {
     let mut genesis = dev_config().genesis;
     genesis.params.max_resting_orders = MOST;
-    Rig::with_genesis(name, &genesis)
+    let mut rig = Rig::with_genesis(name, &genesis);
+    place(&mut rig, &mut 0, load, price);
+    rig.activate_latest();
+    rig
 }
 
 /// Places resting limits at `price` until `placed` reaches `load`, `PER_ACCOUNT` an account.
-fn place(rig: &mut Rig, placed: &mut u32, load: u32, price: i64) {
+pub(super) fn place(rig: &mut Rig, placed: &mut u32, load: u32, price: i64) {
     while *placed < load {
         let events = rig.seq.sequence(resting(*placed / PER_ACCOUNT, u64::from(*placed), price)).unwrap().unwrap();
         assert!(events.iter().any(|e| matches!(e, Event::OrderAccepted { .. })), "order {placed} rests: {events:?}");
@@ -82,21 +88,18 @@ fn stamps(rig: &mut Rig, step: &mut u32, samples: usize) -> Vec<u128> {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn resting_orders_price_stamp() {
-    let mut rig = rig("resting-orders");
-    let (mut placed, mut step) = (0u32, 0u32);
+    // The rig rests orders only before it activates the latest protocol, so each load has its own.
     for load in LOADS {
-        place(&mut rig, &mut placed, load, OUT_OF_REACH);
+        let mut rig = loaded(&format!("resting-orders-{load}"), load, OUT_OF_REACH);
         let samples = if load >= 1_000_000 { 20 } else { 200 };
-        report(&format!("price_stamp_rechecking_{load}_resting_orders"), stamps(&mut rig, &mut step, samples));
+        report(&format!("price_stamp_with_{load}_resting_orders_out_of_reach"), stamps(&mut rig, &mut 0, samples));
     }
 }
 
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn resting_orders_away_from_the_price() {
-    let mut rig = rig("resting-orders-away");
-    let (mut placed, mut step) = (0u32, 0u32);
     let load = PER_ACCOUNT * ACCOUNTS;
-    place(&mut rig, &mut placed, load, AWAY);
-    report(&format!("price_stamp_with_{load}_resting_orders_away"), stamps(&mut rig, &mut step, 200));
+    let mut rig = loaded("resting-orders-away", load, AWAY);
+    report(&format!("price_stamp_with_{load}_resting_orders_away"), stamps(&mut rig, &mut 0, 200));
 }

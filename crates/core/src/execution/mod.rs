@@ -156,12 +156,14 @@ impl Engine {
         }
     }
 
-    /// Fills resting orders whose trigger the live price has reached. While a market is closed, or
-    /// its FX market has no price, nothing triggers, so the first fresh price after that fills
-    /// everything that gapped through, at that price.
+    /// Fills resting orders whose trigger the live price has reached: a stop's price, and a limit's
+    /// price or, from `V74`, the mid where the market's least fill rate first lets it fill. While a
+    /// market is closed, or its FX market has no price, nothing triggers, so the first fresh price
+    /// after that fills everything that gapped through, at that price.
     pub(crate) fn trigger_resting(&mut self, market_id: MarketId, events: &mut Vec<Event>) {
         let Some(mid) = self.trigger_mid(market_id) else { return };
         self.ensure_hot_indexes();
+        self.key_triggers(market_id);
         let resting = self.hot_indexes.as_ref().expect("initialized").triggered(market_id, mid);
         for (order_id, account) in resting {
             self.trigger_order(order_id, account, mid, events);
