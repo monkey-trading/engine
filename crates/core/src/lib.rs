@@ -114,6 +114,7 @@ pub mod merkle;
 pub mod operator_bounds;
 pub mod operator_faults;
 pub mod params;
+pub mod portfolio;
 pub mod price;
 pub mod protocol;
 pub mod session;

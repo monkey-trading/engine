@@ -646,7 +646,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/mod.rs` — REST routes, read handlers and the request span
 - `src/api/account.rs` — `GET /v1/accounts/{address}`: an account's balance, equity, margin, initial
   and maintenance requirements, withdrawable cash, each market's maximum leverage, positions, orders,
-  toxicity, close-outs, close fees, from `V59` its volume tier and from `V60` its weekend margins
+  toxicity, close-outs, close fees, from `V59` its volume tier, from `V60` its weekend margins, and
+  under `[portfolio_margin]` its portfolio requirement
 - `src/api/reads.rs` — `GET /v1/markets`: every market with its live state, how it is priced
   (`pricing.rs`), and from `V60` its weekend margin window
 - `src/api/operating.rs` — `GET /v1/status`: the server's operating state (`src/status.rs`: what holds
@@ -692,6 +693,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   refused the 26th naming tier 0, its next requests refused with 429 naming tier 0's rate, a wallet at
   tier 2 resting 30 orders under its own rate, the tier falling thirty days on with the 30 orders
   left resting and a new one refused at 25, the account read, replay and a restart
+- `src/api/access_tests/portfolio_margin.rs` — the portfolio margin dev scenario under the dev config's
+  BTC-USD and ETH-USD group: a pair's portfolio requirement below its bands and at least the floor
+  share of them, BTC alone at its bands, both after a 2% move in BTC, the pair's BTC leg alone after
+  its ETH leg closes, each read verified as `engine verify-response` verifies it
 - `src/api/access_tests/earned_leverage.rs` — the `V64` dev scenario: a fresh wallet's BTC short
   refused at 25x by tier 0's margin floor and opened at 19.8x, 50x at tier 1 and 100x at tier 2, the
   tier falling thirty days on with the short open, a withdrawal stopped at the initial requirement, the
@@ -2606,6 +2611,21 @@ from the account and its session keys, beyond which a request gets 429 with `Ret
 naming the `tier` and its `requests_per_second`. From `V68`, `volume` also gives the tier's
 `fee_discount_bps`, `financing_discount_bps` and `emissions_boost_bps`. A tier naming no rate leaves `api.per_account`, which
 also holds accounts never credited, the operator and an account's payout reissue requests.
+With a `[portfolio_margin]` section the read adds `portfolio_margin`, the account's requirement if
+margin were set by the risk of its whole book; nothing the engine decides reads it.
+`{"margin", "initial_margin", "maintenance_margin", "groups"}`: the portfolio requirement R =
+min(PP, max(φ × PP, M)) at the markets' own bands, PP being `margin` and φ the grid's
+`floor_share_bps`, with M each offset group's worst loss over its factor and residual shocks, the bands
+of every position in no group, and the cost of closing every position at its close-spread ceiling over
+the close-out level; R at initial bands, at the tier floor and weekend margins `initial_margin` takes,
+with each group's weekend shocks over its window, no offset for a group with a held member that cannot
+trade, and at least the tier floor on the sum of the account's notionals; R at the close-out level; and
+by group name, for each group the account holds a member of, `{"members", "net_notional",
+"worst_loss", "binding_direction", "offset"}`: the members held, the loading-weighted net notional,
+the worst loss, `down`, `up` or `either` for which way the group's factor moves in it, and the group's
+bands less its worst loss and the cost of closing its positions. A grid that no longer fits the
+listings (a group's listed members in two asset classes, on two schedules, or quoted outside USD)
+gives none, with Warning `portfolio_grid_mismatch`.
 `GET /v1/markets` gives each market's `weekend_margin_bps` (left out when none) and, for a market
 with one, `weekend_margin`: `{"weekend_margin_bps", "from", "close", "reopen"}` for its next or
 current weekend gap, or nothing while no gap starts within 366 days or before V60 activates.

@@ -345,6 +345,7 @@ impl Scenario {
             stats: crate::test_support::stats(),
             emission_budget: Some(emission_budget),
             staking_terms: None,
+            portfolio_margin: None,
             status: Default::default(),
             collateral: None,
             listing: Default::default(),

@@ -1,6 +1,7 @@
 use super::*;
 
 mod genesis;
+mod portfolio;
 mod registry;
 
 use engine_core::types::MarketId;
