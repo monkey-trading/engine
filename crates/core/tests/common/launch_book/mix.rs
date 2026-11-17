@@ -45,6 +45,9 @@ pub struct Mix {
     pub origin: Option<Origin>,
     /// Every account lost in the open emission period, so its close allocates to each.
     pub period_losses: bool,
+    /// The share of accounts whose cash leaves them at their close-out level after a move of 1%
+    /// against every position they hold, instead of `balance`.
+    pub near_level: u64,
 }
 
 /// The time origin and epoch length a case that closes a period or an epoch sets: the deployment's
@@ -93,6 +96,7 @@ impl Mix {
             stakers: 0,
             origin: None,
             period_losses: false,
+            near_level: 0,
         }
     }
 }

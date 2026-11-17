@@ -19,4 +19,4 @@ pub use build::{Book, CLOSEOUT_MARKET, MARK, NamedCounts, build, closeout_mark};
 #[allow(unused_imports)]
 pub use genesis::*;
 #[allow(unused_imports)]
-pub use mix::{Mix, Origin, Weak, WeakKind};
+pub use mix::{Mix, Origin, Rng, Weak, WeakKind};

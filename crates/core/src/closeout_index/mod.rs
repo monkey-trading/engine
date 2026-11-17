@@ -12,7 +12,8 @@
 //! re-values the unkeyed accounts it touches. The check site then calls `close_out` only on the
 //! accounts below their level, in account order. A call it skips would find the account at or above
 //! its level and do nothing, and no close-out changes another account's decision, so the calls it
-//! makes, their events and the state they leave are today's.
+//! makes, their events and the state they leave are today's. Keys bound the per-position requirement,
+//! the one every close-out reads.
 //!
 //! A weekend gap's close-out uses the same keys: a keyed account whose valuation at its marks lies
 //! inside its ranges, and whose key shows it meeting the requirement with every weekend margin, is
@@ -37,7 +38,8 @@ use crate::types::{AccountId, MarketId};
 #[cfg(feature = "closeout-oracle")]
 pub use oracle::{CloseoutCoverage, CloseoutOracle};
 
-/// Positions a command may key, across every refresh it runs: about 2 ms of keying on CI.
+/// Positions a command may key, across every refresh it runs, so the keying a mass event leaves is
+/// spread over the commands after it.
 const KEYING_ALLOWANCE: usize = 2_000;
 
 /// The close-out index, built at the first check site and rebuilt when the protocol version moves.
@@ -222,6 +224,10 @@ impl Engine {
     /// call `close_out` on, in account order: each below its level at the valuations now, or not valued
     /// without an overflow. The call on any other would find it at or above its level.
     pub(crate) fn closeout_accounts(&mut self, market: Option<MarketId>) -> Vec<AccountId> {
+        #[cfg(feature = "closeout-oracle")]
+        if self.closeout_index.oracle.full_check {
+            return self.full_check_accounts(market);
+        }
         self.refresh_closeout_index();
         let index = &self.closeout_index;
         let below = match market {
@@ -229,7 +235,7 @@ impl Engine {
             None => index.below.iter().copied().collect(),
         };
         #[cfg(feature = "closeout-oracle")]
-        let below = self.oracle_check_site(market, below);
+        self.oracle_check_site(market, &below);
         below
     }
 
@@ -238,7 +244,11 @@ impl Engine {
     /// requirement with its weekend margins at its marks. Before parameters, when nothing is held,
     /// every holder.
     pub(crate) fn weekend_closeout_accounts(&mut self, closing: &BTreeSet<MarketId>) -> Vec<AccountId> {
-        if self.params.is_none() {
+        #[cfg(feature = "closeout-oracle")]
+        let full_check = self.closeout_index.oracle.full_check;
+        #[cfg(not(feature = "closeout-oracle"))]
+        let full_check = false;
+        if self.params.is_none() || full_check {
             return self.weekend_holders(closing);
         }
         self.refresh_closeout_index();
@@ -281,3 +291,6 @@ impl Engine {
         self.oracle_refreshed();
     }
 }
+
+#[cfg(test)]
+mod tests;

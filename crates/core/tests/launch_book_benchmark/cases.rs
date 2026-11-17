@@ -1,16 +1,16 @@
 //! The launch book's cases, each timing one command of the engine's own `apply`, with its inputs
 //! built beforehand.
 
-use engine_core::Engine;
 use engine_core::access::AccessDeposit;
 use engine_core::command::{Command, OrderKind, OrderRequest};
 use engine_core::eip712;
 use engine_core::event::Event;
 use engine_core::session::Schedule;
 use engine_core::types::{AccountId, MarketId, Side};
+use engine_core::{Engine, Fixed};
 
 use crate::common::close_spread::evidence;
-use crate::common::launch_book::{Book, CLOSEOUT_MARKET, MARK, benchmark_batch, closeout_mark, price_command};
+use crate::common::launch_book::{Book, CLOSEOUT_MARKET, MARK, Rng, benchmark_batch, closeout_mark, price_command};
 use crate::common::session_keys::trade_cmd;
 use crate::common::{BTC, Client, f};
 use crate::report::{noted, report, rss_mib, timed, within};
@@ -156,6 +156,27 @@ pub fn price_rounds(book: &mut Book, budget_us: u128) {
         1e6 / p50 as f64,
         per_market.join(",")
     );
+}
+
+/// `prices` prices of BTC-USD walking from where it is about a basis point a price, with a jump of a
+/// fifth of a percent to a percent one price in fifty, as a price at launch moves, printed under
+/// `name` with the accounts they close out; returns the p99.
+pub fn price_walk(book: &mut Book, name: &str, prices: usize) -> u128 {
+    let mut draws = Rng::new(0x7761_6c6b);
+    let mut mid = Fixed::from_int(MARK);
+    let (mut times, mut closed) = (Vec::with_capacity(prices), 0);
+    for _ in 0..prices {
+        book.h.advance(1);
+        let step = if draws.below(50) == 0 { 20 + draws.below(81) as i64 } else { draws.below(3) as i64 };
+        mid = mid.mul_bps(if draws.below(2) == 0 { 10_000 + step } else { 10_000 - step });
+        let cmd = price_command(&book.h, BTC, &mid.to_string(), book.h.ts);
+        let (events, us) = timed(|| book.apply(cmd));
+        closed += events.iter().filter(|e| matches!(e, Event::CloseOut { .. })).count();
+        times.push(us);
+    }
+    let holders = book.holders[&BTC];
+    let (_, p99, _) = report(name, &mut times, &format!("holders={holders} closeouts={closed} end_mid={mid}"));
+    p99
 }
 
 /// A price in an FX market and in BTC-USD on `book`, printed under `variant`.

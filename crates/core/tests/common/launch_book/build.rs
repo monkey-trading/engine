@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use engine_core::access::AccessPolicy;
-use engine_core::account::{Position, RestingOrder};
+use engine_core::account::{Account, Position, RestingOrder};
 use engine_core::command::{AdminCommand, Command, OrderKind, Sequenced};
 use engine_core::emissions::{PeriodResult, TokenUnits};
 use engine_core::event::Event;
+use engine_core::fixed::Rounding;
 use engine_core::market::QuoteCurrency;
 use engine_core::types::{AccountId, MarketId, Side};
 use engine_core::volume_tier::{AccountVolume, DayVolume, MIN_HOLD_MS, WINDOW_DAYS, day_of};
@@ -29,6 +30,8 @@ pub const MARK: i64 = 100;
 /// ETH-USD, where the book's in-band resting orders are sells, which a fall does not reach.
 pub const CLOSEOUT_MARKET: MarketId = 2;
 const CLOSEOUT_QTY: &str = "3000";
+/// The stream that draws which accounts are near their level, apart from each account's own.
+const NEAR_LEVEL_DRAWS: u64 = 0x6e65_6172_6c65_7665;
 
 /// How many of each named account a book makes. Each is a real client, signing its own commands.
 #[derive(Clone, Copy, Debug)]
@@ -99,6 +102,19 @@ impl Book {
     pub fn account(&self, index: u64) -> AccountId {
         address(0xb7, self.first_filler + index)
     }
+}
+
+/// Cash leaving `account`, each position worth `position_usd` at the mark, at its close-out level
+/// after a 1% move against every position: the requirement at the level and 1% of the notional.
+fn near_level_cash(engine: &Engine, account: &Account, position_usd: i64) -> Fixed {
+    let notional = Fixed::from_int(position_usd);
+    let level_bps = engine.params().expect("params").closeout_level_bps;
+    let required: Fixed = account
+        .positions
+        .keys()
+        .map(|id| engine.markets()[id].spec.floored_margin_for(notional, 0, Rounding::Up))
+        .sum();
+    required.mul_bps_rounded(level_bps, Rounding::Up) + notional.mul_bps(100).mul_int(account.positions.len() as i64)
 }
 
 /// The price of `mark` plus `micro` millionths.
@@ -361,6 +377,10 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
         if let Some(weak) = weak {
             account.balance = weak_cash(&h.engine, &account, weak.market, &weak.kind);
             weak_accounts += 1;
+        }
+        // A draw of its own, so a book with no such accounts is the one before the share was added.
+        if mix.near_level > 0 && Rng::new(index ^ NEAR_LEVEL_DRAWS).below(100) < mix.near_level {
+            account.balance = near_level_cash(&h.engine, &account, mix.position_usd);
         }
         let key = key_of(account_id);
         for slot in 0..order_count {

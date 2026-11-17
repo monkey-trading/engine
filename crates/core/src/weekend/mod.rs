@@ -195,7 +195,7 @@ impl Engine {
     fn weekend_close_outs(&mut self, closing: &BTreeSet<MarketId>, at: Millis, events: &mut Vec<Event>) {
         let accounts = self.weekend_closeout_accounts(closing);
         #[cfg(feature = "closeout-oracle")]
-        let accounts = self.oracle_weekend_site(closing, at, accounts);
+        self.oracle_weekend_site(closing, at, &accounts);
         for account in accounts {
             self.weekend_close_out(account, closing, at, events);
         }

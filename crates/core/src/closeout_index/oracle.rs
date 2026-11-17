@@ -15,8 +15,8 @@ use crate::types::{AccountId, MarketId, Millis};
 /// How an engine's close-out checks run under test.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CloseoutOracle {
-    /// Every check site acts on every account today's full check visits: the market's holders, every
-    /// account with positions, or every holder of a closing market.
+    /// Every check site acts on every account today's full check visits, without the index: the
+    /// market's holders, every account with positions, or every holder of a closing market.
     pub full_check: bool,
     /// The index is checked against a full assessment of every account at the end of each refresh,
     /// each check site's accounts against the full check's, and each close-out against changing
@@ -35,6 +35,8 @@ pub struct CloseoutCoverage {
     pub rebands: u64,
     pub keys: u64,
     pub weekend_skips: u64,
+    /// Accounts a weekend gap's close-out closed out, under `verify`.
+    pub weekend_closeouts: u64,
     /// Calls a check site left out, under `verify`.
     pub skipped_calls: u64,
     /// Accounts a check site named below their level with nothing that can trade, under `verify`.
@@ -72,59 +74,63 @@ impl Engine {
         self.closeout_index.coverage
     }
 
-    /// The accounts a check site acts on: under `full_check` today's, and under `verify` the index's,
-    /// checked to be among today's and to leave out only accounts `next_closeout` finds nothing to
-    /// close on.
-    pub(crate) fn oracle_check_site(&mut self, market: Option<MarketId>, below: Vec<AccountId>) -> Vec<AccountId> {
-        let full: Vec<AccountId> = match market {
+    /// The accounts today's full check visits at a check site: `market`'s holders, or every account
+    /// with positions.
+    pub(crate) fn full_check_accounts(&mut self, market: Option<MarketId>) -> Vec<AccountId> {
+        match market {
             Some(id) => {
                 self.ensure_hot_indexes();
                 let holders = &self.hot_indexes.as_ref().expect("built above").holders;
                 holders.get(&id).into_iter().flatten().copied().collect()
             }
             None => self.accounts.iter().filter(|(_, acct)| !acct.positions.is_empty()).map(|(id, _)| *id).collect(),
-        };
-        if self.closeout_index.oracle.verify {
-            let level_bps = self.params.as_ref().expect("a check site has parameters").closeout_level_bps;
-            let named: BTreeSet<AccountId> = below.iter().copied().collect();
-            assert!(named.iter().all(|account| full.contains(account)), "the index named a non-holder: {below:?}");
-            for account in full.iter().filter(|account| !named.contains(account)) {
-                assert!(
-                    self.next_closeout(*account, level_bps).is_none(),
-                    "the index skipped {account:?}, which the full check closes out"
-                );
-            }
-            let untradeable = below.iter().filter(|account| self.next_closeout(**account, level_bps).is_none()).count();
-            let coverage = &mut self.closeout_index.coverage;
-            coverage.skipped_calls += (full.len() - named.len()) as u64;
-            coverage.below_untradeable += untradeable as u64;
         }
-        if self.closeout_index.oracle.full_check { full } else { below }
     }
 
-    /// The accounts a weekend gap's close-out over `closing` at `at` acts on, as `oracle_check_site`
-    /// gives a check site's.
-    pub(crate) fn oracle_weekend_site(
-        &mut self,
-        closing: &BTreeSet<MarketId>,
-        at: Millis,
-        candidates: Vec<AccountId>,
-    ) -> Vec<AccountId> {
-        let full = self.weekend_holders(closing);
-        if self.closeout_index.oracle.verify {
-            assert!(
-                candidates.iter().all(|account| full.contains(account)),
-                "a weekend candidate holds none of {closing:?}"
-            );
-            for account in full.iter().filter(|account| !candidates.contains(account)) {
-                assert!(
-                    self.next_weekend_closeout(*account, closing, at).is_none(),
-                    "the index skipped {account:?}, which the weekend close-out closes out"
-                );
-            }
-            self.closeout_index.coverage.skipped_calls += (full.len() - candidates.len()) as u64;
+    /// Under `verify`, checks a check site's accounts, `below`, are among today's and leave out only
+    /// accounts `next_closeout` finds nothing to close on.
+    pub(crate) fn oracle_check_site(&mut self, market: Option<MarketId>, below: &[AccountId]) {
+        if !self.closeout_index.oracle.verify {
+            return;
         }
-        if self.closeout_index.oracle.full_check { full } else { candidates }
+        let full = self.full_check_accounts(market);
+        let level_bps = self.params.as_ref().expect("a check site has parameters").closeout_level_bps;
+        let named: BTreeSet<AccountId> = below.iter().copied().collect();
+        assert!(named.iter().all(|account| full.contains(account)), "the index named a non-holder: {below:?}");
+        for account in full.iter().filter(|account| !named.contains(account)) {
+            assert!(
+                self.next_closeout(*account, level_bps).is_none(),
+                "the index skipped {account:?}, which the full check closes out"
+            );
+        }
+        let untradeable = below.iter().filter(|account| self.next_closeout(**account, level_bps).is_none()).count();
+        let coverage = &mut self.closeout_index.coverage;
+        coverage.skipped_calls += (full.len() - named.len()) as u64;
+        coverage.below_untradeable += untradeable as u64;
+    }
+
+    /// Under `verify`, checks a weekend gap's close-out over `closing` at `at` acts on `candidates`
+    /// among today's accounts and leaves out only accounts it would find meeting their requirement.
+    pub(crate) fn oracle_weekend_site(&mut self, closing: &BTreeSet<MarketId>, at: Millis, candidates: &[AccountId]) {
+        if !self.closeout_index.oracle.verify {
+            return;
+        }
+        let full = self.weekend_holders(closing);
+        assert!(
+            candidates.iter().all(|account| full.contains(account)),
+            "a weekend candidate holds none of {closing:?}"
+        );
+        for account in full.iter().filter(|account| !candidates.contains(account)) {
+            assert!(
+                self.next_weekend_closeout(*account, closing, at).is_none(),
+                "the index skipped {account:?}, which the weekend close-out closes out"
+            );
+        }
+        let closed = candidates.iter().filter(|account| self.next_weekend_closeout(**account, closing, at).is_some());
+        let closed = closed.count() as u64;
+        let coverage = &mut self.closeout_index.coverage;
+        coverage.skipped_calls += (full.len() - candidates.len()) as u64;
+        coverage.weekend_closeouts += closed;
     }
 
     /// Under `verify`, what a close-out of `account` must leave as it is.

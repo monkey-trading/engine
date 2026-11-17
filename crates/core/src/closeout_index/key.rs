@@ -16,7 +16,7 @@ use crate::closeout_index::markets::MarketRules;
 use crate::closeout_index::valuation::{LIMIT, Valuations, abs, add, at_level, margin_of, position_value, sub};
 use crate::engine::Engine;
 use crate::fixed::Rounding;
-use crate::market::MarketSpec;
+use crate::market::{MarketSpec, Tier};
 use crate::types::MarketId;
 
 /// The least a range may reach on its loss side, as a share of the price or FX index: one bp.
@@ -135,8 +135,8 @@ impl Key {
         charge: Rounding,
     ) -> Option<()> {
         let held = self.positions.iter().find(|keyed| keyed.market == market)?.max_notional;
-        let (old_margin, old_weekend) = requirements(old, held, charge)?;
-        let (new_margin, new_weekend) = requirements(new, held, charge)?;
+        let (old_margin, old_weekend) = requirements(&old.margin_tiers, old.weekend_margin_bps, held, charge)?;
+        let (new_margin, new_weekend) = requirements(&new.margin_tiers, new.weekend_margin_bps, held, charge)?;
         self.margin = add(sub(self.margin, old_margin)?, new_margin)?;
         self.weekend_margin = add(sub(self.weekend_margin, old_weekend)?, new_weekend)?;
         self.settle(level_bps, charge)
@@ -204,8 +204,10 @@ impl Engine {
             headroom: Fixed::ZERO,
         };
         for (point, (price, fx)) in points.iter().zip(ranges) {
-            let fxs = fx.map_or([point.fx; 2], |range| [Some(range.low), Some(range.high)]);
-            let mut corners = [price.low, price.high].into_iter().flat_map(|at| fxs.map(|fx| (at, fx)));
+            // A USD position's FX index is none at every corner, so it has two.
+            let fx_ends = fx.map(|range| [Some(range.low), Some(range.high)]);
+            let fxs = fx_ends.as_ref().map_or(std::slice::from_ref(&point.fx), |ends| ends.as_slice());
+            let mut corners = [price.low, price.high].into_iter().flat_map(|at| fxs.iter().map(move |fx| (at, *fx)));
             let (worst, best, max_notional) =
                 corners.try_fold((None::<Fixed>, None::<Fixed>, Fixed::ZERO), |(worst, best, most), (at, fx)| {
                     let (pnl, notional) =
@@ -217,8 +219,8 @@ impl Engine {
                     ))
                 })?;
             let (worst, best) = (worst?, best?);
-            let rules = MarketRules::of(point.spec);
-            let (required, weekend) = requirements(&rules, max_notional, charge)?;
+            let (required, weekend) =
+                requirements(&point.spec.margin_tiers, point.spec.weekend_margin_bps, max_notional, charge)?;
             key.worst_pnl = add(key.worst_pnl, worst)?;
             key.pnl_span = add(key.pnl_span, abs(worst)?.max(abs(best)?))?;
             key.margin = add(key.margin, required)?;
@@ -297,15 +299,15 @@ fn scaled(value: Fixed, share: Fixed, rounding: Rounding) -> Option<Fixed> {
     value.checked_mul_div(share, Fixed::ONE, rounding)
 }
 
-/// The requirement at `rules`' bands for a position of `notional`, and with each band at least the
-/// market's weekend margin.
-fn requirements(rules: &MarketRules, notional: Fixed, charge: Rounding) -> Option<(Fixed, Fixed)> {
-    let required = margin_of(&rules.margin_tiers, notional, 0, charge)?;
-    let weekend = margin_of(&rules.margin_tiers, notional, rules.weekend_margin_bps.max(0), charge)?;
+/// The requirement at margin bands `tiers` for a position of `notional`, and with each band at least
+/// the market's weekend margin, `weekend_bps`.
+fn requirements(tiers: &[Tier], weekend_bps: i64, notional: Fixed, charge: Rounding) -> Option<(Fixed, Fixed)> {
+    let required = margin_of(tiers, notional, 0, charge)?;
+    let weekend = margin_of(tiers, notional, weekend_bps.max(0), charge)?;
     Some((required, weekend))
 }
 
-#[cfg(feature = "closeout-oracle")]
+#[cfg(any(test, feature = "closeout-oracle"))]
 impl Engine {
     /// The headroom `key`'s ranges give at the bands in force and `level_bps`, computed afresh as keying
     /// computes it, or `None` below zero.

@@ -14,7 +14,7 @@ use common::reference::{ReferenceEntry, root_hex};
 use common::{BTC, Harness, acct};
 use engine_core::command::Command;
 use engine_core::types::Side;
-use engine_core::{CloseoutOracle, Engine, Fixed};
+use engine_core::{CloseoutCoverage, CloseoutOracle, Engine, Fixed};
 
 #[test]
 fn every_reference_log_replays_to_its_committed_roots() {
@@ -25,6 +25,32 @@ fn every_reference_log_replays_to_its_committed_roots() {
         .filter_map(|path| verify_roots(&read(path)).err().map(|e| format!("{}: {e}", name(path))))
         .collect();
     assert!(failures.is_empty(), "reference logs no longer replay to their committed roots:\n{}", failures.join("\n"));
+}
+
+/// The logs reach every part of the close-out index the oracle counts, so the replay's check of it
+/// cannot pass vacuously.
+#[test]
+fn the_reference_logs_reach_every_part_of_the_close_out_index() {
+    let mut total = CloseoutCoverage::default();
+    for path in reference_logs() {
+        let mut engine = Engine::new();
+        engine.set_closeout_oracle(CloseoutOracle { verify: true, ..CloseoutOracle::default() });
+        for entry in read(&path) {
+            engine.apply(&entry.sequenced).expect("every reference log replays");
+        }
+        let seen = engine.closeout_coverage();
+        total.builds += seen.builds;
+        total.price_crossings += seen.price_crossings;
+        total.fx_crossings += seen.fx_crossings;
+        total.headroom_moves += seen.headroom_moves;
+        total.relevels += seen.relevels;
+        total.rebands += seen.rebands;
+        total.keys += seen.keys;
+        total.weekend_skips += seen.weekend_skips;
+        total.skipped_calls += seen.skipped_calls;
+        total.below_untradeable += seen.below_untradeable;
+    }
+    println!("{total:?}");
 }
 
 #[test]

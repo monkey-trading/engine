@@ -95,7 +95,11 @@ an index: load only the rule whose hint matches the current action.
   own deposit records match, and receipt-backed held deposits in the same form, `tests/exit/credits.rs`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
   with house NAV and exposure caps in `engine/house.rs`, per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
-  `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,
+  `markouts.rs`, `closeout.rs` with, from any version, the derived close-out index in `closeout_index/` (a check site
+  closes out only the accounts it finds below their level, each other account keyed by price ranges its corners show
+  it at or above its level within; built at recovery and inside an activation, moving no root; its test-only
+  `closeout-oracle` feature, enabled by this crate's own tests alone, checks it against the full check,
+  `tests/invariants/closeout_index.rs`), `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,
   `corporate/` for dividend/split instructions, from `V76` within `corporate/bounds.rs`, captures and ex-date adjustments,
   `admin/`, `stress.rs`, `auth.rs`). `withdrawal.rs` reserves FIFO requests and creates
   whole-USDC partial approvals under the V22 rules; `merkle/withdrawal.rs` proves each approval
