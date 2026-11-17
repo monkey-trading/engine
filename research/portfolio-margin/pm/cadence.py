@@ -1,4 +1,4 @@
-"""How much of the hourly bars' conservatism is each bar being one jump, measured on crypto's 60 s grids.
+"""How much of the hourly bars' conservatism is each bar being one jump, measured on crypto's 50 ms grids read every 60 s.
 
 The account simulator reads one mark an hour, so a move inside the hour reaches it as a single jump
 from the hour's open to its close, and a position is closed only after it. The grids (the rogue-operator

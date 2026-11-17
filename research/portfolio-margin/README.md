@@ -41,8 +41,8 @@ to approve.
 | group | floor share | members, loadings | residual shocks (bp) | weekend residual shocks (bp) |
 |---|---|---|---|---|
 | fx | 0.7 | EUR-USD 0.90, GBP-USD 0.91, AUD-USD 1.19 | 5.4, 4.5, 5.0 | 77.2, 36.6, 53.9 |
-| metals | 0.7 | XAU-USD 0.61, XAG-USD 1.39 | 28.0, 12.2 | 309.1, 135.7 |
-| us_index | 0.6 | US500 0.96, US100 1.22, US30 0.82 | 5.6, 9.0, 14.3 | 40.2, 105.3, 104.9 |
+| metals | 0.8 | XAU-USD 0.61, XAG-USD 1.39 | 28.0, 12.2 | 309.1, 135.7 |
+| us_index | 0.7 | US500 0.96, US100 1.22, US30 0.82 | 5.6, 9.0, 14.3 | 40.2, 105.3, 104.9 |
 
 **Dropped:** crypto (BTC-USD 0.69, ETH-USD 1.06, SOL-USD 1.25) and the US shares each need a floor share of 0.9 at the 2 times
 allowance, and a hedged pair then saves 10%, under the 15% a group must save to be worth its parameters. The shares' overnight and
@@ -54,13 +54,13 @@ much as the same books under per-position margin, plus a slack of 0.2 points and
 
 | group | 1x | 1.5x | 2x (proposed) | 3x |
 |---|---|---|---|---|
-| fx | 0.9, saves 10% | 0.7, 26% (21 to 30) | 0.7, 26% | 0.7, 26% |
-| metals | 1.0, none | 0.8, 20% | 0.7, 30% | 0.7, 30% |
-| us_index | 1.0, none | 0.7, 21% (10 to 30) | 0.6, 26% (10 to 40) | 0.5, 31% (10 to 50) |
+| fx | 1.0, none | 0.9, 10% | 0.7, 26% (21 to 30) | 0.7, 26% |
+| metals | 1.0, none | 0.9, 10% | 0.8, 20% | 0.7, 30% |
+| us_index | 1.0, none | 0.9, 10% | 0.7, 21% (10 to 30) | 0.7, 21% |
 | crypto | 1.0, none | 0.9, 10% | 0.9, 10% | 0.9, 10% |
 | shares | 0.9, 10% | 0.9, 10% | 0.9, 10% | 0.9, 10% |
 
-At tier 1 the same pair saves 7% (fx, up to 27%), 15% (metals, up to 30%) and 10% (indexes, up to 40%) at the proposed shares, and at
+At tier 1 the same pair saves 7% (fx, up to 27%), 10% (metals, up to 20%) and 8% (indexes, up to 30%) at the proposed shares, and at
 tier 0 nothing, whose 5% margin floor is the requirement. Each tier and size is a row of `saving_by_allowance.csv`. The 2 times
 allowance is this study's choice; the owner can pick another.
 
@@ -86,18 +86,18 @@ Each file is in `results/`; the stage that writes it is in `run.py`.
 - **Loadings and stability** (`groups.json`): loadings are slopes on the group's equal-weighted mean (the factor, used to fit and
   not proposed); halves of the window agree within 0.15 (gold 0.72 then 0.58, silver 1.28 then 1.42, EUR-USD 0.95 then 0.82).
 - **The hourly bars as jumps** (`cadence.csv`, `cadence_z_of_bands.csv`). The simulator reads one mark an hour, so each hour is one
-  jump and a position closes only after it. On crypto's 60 s grids the same hours can be read every 60 s. For a long or short
+  jump and a position closes only after it. On crypto's 50 ms grids (the rogue-operator study's sampled hours, stress hours left out) the same hours can be read every 60 s. For a long or short
   opened at an hour's start with equity `e`, closed when its loss reaches half of it, the share of hours that end past the balance
   and the mean excess loss past it, as a fraction of the hourly reading:
 
   | market | margin `e` | `e` over the hour's s.d. | past balance, 60 s over hourly | excess, 60 s over hourly |
   |---|---|---|---|---|
   | BTC-USD | 0.25%, 0.5%, 1%, 2% | 0.5, 1.1, 2.2, 4.3 | 0.26, 0.15, 0.05, 0.11 | 0.13, 0.06, 0.01, 0.04 |
-  | ETH-USD | 0.25%, 0.5%, 1%, 2% | 0.4, 0.8, 1.5, 3.0 | 0.43, 0.08, 0.11, 0.04 | 0.08, 0.04, 0.03, 0.003 |
+  | ETH-USD | 0.25%, 0.5%, 1%, 2% | 0.4, 0.8, 1.5, 3.05 | 0.43, 0.08, 0.11, 0.04 | 0.08, 0.04, 0.03, 0.003 |
   | SOL-USD | 0.25%, 0.5%, 1%, 2% | 0.4, 0.7, 1.4, 2.8 | 0.26, 0.10, 0.02, 0.03 | 0.03, 0.04, 0.02, 0.03 |
 
-  **So the hourly bars overstate loss past balance by roughly 4 to 25 times in rate and 8 to 300 times in size at the margins the launch
-  bands use for crypto, and beyond 4 standard deviations there are no events left to compare.** The first bands of FX, indexes and
+  **So the hourly bars overstate loss past balance by roughly 2 to 50 times in rate and 8 to 300 times in size at margins of 0.25% to 2%. The 2% cells
+  (3 to 4 standard deviations) each rest on one stratum-weighted event, so read the series as noisy there; beyond that there are no events left to compare.** The first bands of FX, indexes and
   metals sit at 4.3 to 5.7 (FX), 1.8 to 2.5 (indexes) and 1.5 to 3.2 (metals) hourly standard deviations: inside the range measured
   for crypto except the FX majors, whose bands are beyond it. This is read from lone legs. A hedged pair's residual needs both
   legs on one grid, and the grids share only five sampled hours between BTC-USD and ETH-USD, so the effect on a hedge, and
@@ -112,30 +112,30 @@ Each file is in `results/`; the stage that writes it is in `run.py`.
   so the members' joint tails stay as the data has them. **At 99.5% over 60 s every book meets the standard, per-position margin too**: today's
   first band at the close-out level is 1.2 to 2.6 times the 60-second move for ETH-USD, BTC-USD, the US indexes and the metals, 4.8 times for EUR-USD,
   10.8 times for SOL-USD and 8.5 to 23.6 times for the shares (`implied_horizon.csv`). Over one hour, lone positions fare identically under both rules (0.8% to
-  4.4% fail), and hedged pairs fail 0.10% against 0.05% (fx), 0.95% against 0.49% (metals) and 0.71% against 0.53% (indexes). Over a weekend gap, the shares of
-  pair books within 0.5% are 92% under the rule against 62% under the bands (fx), 79% against 46% (indexes) and 38% against 50% (metals); the rule runs
-  a gap-start check on every matched book where today's runs it only on a market with a weekend rate (V60), so part of the gain is the check.
+  4.4% fail), and hedged pairs fail 0.10% against 0.05% (fx), 0.76% against 0.49% (metals) and 0.67% against 0.53% (indexes). Over a weekend gap, the shares of
+  pair books within 0.5% are 54% under the rule against 62% under the bands (fx), 25% against 50% (metals) and 38% against 46% (indexes): the rule is looser there, because
+  the matched part is charged no more than per-position margin, which over a weekend gap is zero for a market with no weekend rate (V60), and the grid's weekend shocks bind only for the markets that have one.
 - **A hedged book against a single position** (`hedged_vs_single.csv`): the hedged pair under the rule loses past
-  its balance far less often and by less than one position under its bands at the same tier, on the same history: at tier 2, fx 0.19% against 2.1%
-  (size 0.01 against 0.34 bp of gross), metals 3.2% against 5.7% (0.68 against 2.5 bp), indexes 1.3% against 8.9% (0.14 against 2.3 bp). Against the same hedged
+  its balance far less often and by less than one position under its bands at the same tier, on the same history: at tier 2, fx 0.20% against 2.1%
+  (size 0.02 against 0.34 bp of gross), metals 2.9% against 5.7% (0.65 against 2.5 bp), indexes 1.9% against 8.9% (0.22 against 2.3 bp). Against the same hedged
   pair under the bands the rule is no worse by more than the allowance above.
 - **The long history's crisis days** (`crisis_days.csv`): each group's 12 worst days by its factor and by a hedged pair's residual since 2016 (Brexit and March
-  2020; January 2026's metals fall). A day is far past a 60-second standard: a hedged pair's day loses 4.6 to 15.4 times its equity at the trigger (fx), 6.6 to 10.1 (metals)
+  2020; January 2026's metals fall). A day is far past a 60-second standard: a hedged pair's day loses 4.6 to 15.4 times its equity at the trigger (fx), 5.7 to 8.9 (metals)
   and 4.6 to 7.8 (indexes), and 1.8 to 5.9, 2.3 to 3.5 and 2.1 to 3.5 times per-position margin, so per-position margin is no better there.
 - **Closing-cost shortfalls** (`ceiling_shortfall.csv`): at a close-out level of 25% (half launch's), per-position margin's first band falls short of its
   ceiling for 10 markets (BTC-USD, ETH-USD, the four FX majors and the four US and German indexes: BTC-USD's band is 25 bp against a 30 bp ceiling); at 50% and 75% none
   does. The cap leaves these exactly as today's.
-- **The alternatives** (`alternatives.csv`): on hedged pairs, a 50% spread credit on per-position margin releases 12% to 25%, the rule 11% to 40%, and a full
+- **The alternatives** (`alternatives.csv`): on hedged pairs, a 50% spread credit on per-position margin releases 12% to 25%, the rule 11% to 30%, and a full
   historical scenario requirement (the 60-second empirical 99.5% loss over the level) 82% to 96% and loses past balance 18% to 25% of moves over an hour: too thin
-  to rely on there (its rate over 60 s is 0.5% by construction). Over hour-long moves the spread credit fails in up to 1.1% of them, the rule in up to 1.7%, the bands in up to 0.7%.
+  to rely on there (its rate over 60 s is 0.5% by construction). Over hour-long moves the spread credit fails in up to 1.1% of them, the rule in up to 1.2%, the bands in up to 0.7%.
 - **Outages, halts and blocked corporate actions of one member** (`outage.csv`): a matched pair of opposite accounts, one member shut 4 to 168 hours, no protection of the
   hedge (D10), over 600 starts, at tier 2. The house's result per gross (positive is its gain; the clients' losses stop at their balances) at the start an operator would
-  choose is -72 to -90 bp (fx), -403 to -446 (metals) and -153 to -171 (indexes) at 24 and 168 hours under the rule, against -72 to -84, -388 to -441 and -150 to -169 under the bands. Mean results
-  differ by up to 10 bp. The share of starts with a loss past balance is larger under the rule: fx 3.8% and 27% against 1.2% and 15% at 24 and 168 hours, metals 39% and 61% against 25% and 50%,
+  choose is -72 to -90 bp (fx), -398 to -446 (metals) and -153 to -171 (indexes) at 24 and 168 hours under the rule, against -72 to -84, -388 to -441 and -150 to -169 under the bands. Mean results
+  differ by up to 7 bp. The share of starts with a loss past balance is larger under the rule: fx 3.8% and 27% against 1.2% and 15% at 24 and 168 hours, metals 34% and 57% against 25% and 50%,
   indexes 25% and 56% against 20% and 50%. The initial requirement's treatment of a group with a shut member (D10: no offset) is not simulated.
 - **Backtest** (`backtest.csv`): the hedged pair and the lone leg at each tier and size, mixed at hedged shares of flow 0, 10, 25, 50 and 100%, under both rules. At tier 2 with no hedged flow the
   rules are identical (house result per gross +2.9 bp in fx, -1.6 in metals, +5.9 in indexes; close-outs 52%, 60%, 66%; leverage unchanged). With half the flow hedged the house result goes from
-  +3.2 to +2.8 bp (fx), +6.3 to +4.0 (metals) and +7.1 to +6.2 (indexes), close-outs from 39% to 62%, 50% to 64% and 49% to 70%, and leverage up 16%, 22% and 14%. With all of it hedged, leverage is up 33%, 43% and 28%.
+  +3.2 to +3.0 bp (fx), +6.3 to +5.5 (metals) and +7.1 to +6.9 (indexes), close-outs from 39% to 43%, 50% to 53% and 49% to 53%, and leverage is up 16%, 13% and 11%. With all of it hedged, leverage is up 33%, 25% and 21%.
 - **Stricter bounds (D11)** (`bounds.csv`): the same groups at 99.9% and over 5 minutes and one hour; the residual shocks can rise to 3.6 times (fx), 3.2 times (metals) and 1.7 times (indexes) their proposed value before
   a hedged first-band pair needs per-position margin. Proposed: residual shocks up to the 99.9%, 5-minute values (fx 26.9, 20.9, 27.3 bp; metals 167.0, 72.5; indexes 49.7, 42.6, 66.6), and each floor share up to 1.0. The
   99.9% rows rest on an hour reference of 52 windows (the rogue grids' sampled hours), so their scales (0.205 at 60 s, 0.431 at 5 minutes) are noisy.
@@ -144,17 +144,16 @@ Each file is in `results/`; the stage that writes it is in `run.py`.
 
 | quantile | horizon | scale on the hour | groups kept | floor shares (fx / metals / indexes / crypto) |
 |---|---|---|---|---|
-| 99% | 60 s | 0.147 | us_index, metals, fx | 0.7 / 0.7 / 0.6 / 0.9 |
-| 99.5% | 60 s | 0.129 | us_index, metals, fx | 0.7 / 0.7 / 0.6 / 0.9 |
-| 99.9% | 60 s | 0.205 | us_index, metals, fx | 0.7 / 0.6 / 0.5 / 0.9 |
-| 99.5% | 10 s | 0.053 | us_index, metals, fx | 0.7 / 0.7 / 0.6 / 0.9 |
-| 99.5% | 300 s | 0.289 | us_index, metals, fx | 0.7 / 0.7 / 0.5 / 0.9 |
+| 99% | 60 s | 0.147 | us_index, metals, fx | 0.7 / 0.8 / 0.7 / 0.9 |
+| 99.5% | 60 s | 0.129 | us_index, metals, fx | 0.7 / 0.8 / 0.7 / 0.9 |
+| 99.9% | 60 s | 0.205 | metals, fx | 0.7 / 0.7 / 0.7 / 0.9 |
+| 99.5% | 10 s | 0.053 | us_index, metals, fx | 0.8 / 0.8 / 0.8 / 0.9 |
+| 99.5% | 300 s | 0.289 | us_index, metals, fx | 0.7 / 0.7 / 0.7 / 0.9 |
 | 99.5% | 3600 s | 1.000 | metals, fx | 0 / 0.7 / 0.5 / 0.9 |
 
-A looser quantile (99%) or a shorter horizon (10 s) keeps the same three groups and the same shares (savings 27% to 31% at tier 2). A tighter
-quantile (99.9%) or a longer horizon (5 minutes) keeps the groups and lowers the metals' and indexes' shares by 0.1 as the grid grows toward the bands, with smaller
-savings (19% to 23%; crypto's falls to 7%). Over an hour the indexes drop out (12% saving) and fx's own share is 0, because the grid itself binds. Crypto and
-the shares stay out at every standard.
+A looser quantile (99%) keeps the same three groups and shares (savings 20% to 27%). A shorter horizon (10 s) raises every share to 0.8. A tighter quantile (99.9%) lowers the metals' share to 0.7
+and drops the indexes (15% saving); a longer horizon (5 minutes) keeps the groups at 0.7 to 0.8 with the indexes' saving at 15%. Over an hour the indexes drop out (12% saving) and fx's own share
+is 0, because the grid itself binds. Crypto and the shares stay out at every standard.
 
 
 ## Method

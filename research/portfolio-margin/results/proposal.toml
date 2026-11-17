@@ -22,7 +22,7 @@ members = [
 
 [[genesis.params.portfolio_margin.groups]]
 name = "metals"
-floor_share_bps = 7000
+floor_share_bps = 8000
 members = [
   { market = "XAU-USD", loading_milli = 610, residual_tenth_bps = 280, weekend_residual_tenth_bps = 3091 },
   { market = "XAG-USD", loading_milli = 1390, residual_tenth_bps = 122, weekend_residual_tenth_bps = 1357 },
@@ -32,7 +32,7 @@ members = [
 
 [[genesis.params.portfolio_margin.groups]]
 name = "us_index"
-floor_share_bps = 6000
+floor_share_bps = 7000
 members = [
   { market = "US500", loading_milli = 960, residual_tenth_bps = 56, weekend_residual_tenth_bps = 402 },
   { market = "US100", loading_milli = 1220, residual_tenth_bps = 90, weekend_residual_tenth_bps = 1053 },

@@ -9,6 +9,6 @@
  "horizon_s": 60,
  "level": 0.5,
  "quantile": 0.995,
- "seconds": 2,
+ "seconds": 3,
  "seed": 914
 }

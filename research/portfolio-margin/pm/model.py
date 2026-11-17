@@ -156,10 +156,11 @@ def requirement(specs, params: Params, book, tier_floor: float = 0.0, weekend: b
         matched = {m: f[m] * book[m] for m in f}
         pp_m, pp_u = 0.0, 0.0
         for m in f:
+            if weekend and specs[m].weekend <= 0:
+                continue  # no requirement over a weekend gap today (V60), for the matched part too: R never exceeds it
             pp = staircase(specs[m].bands, book[m], max(tier_floor, specs[m].weekend if weekend else 0.0))
             pp_m = pp_m + f[m] * pp
-            if not weekend or specs[m].weekend > 0:
-                pp_u = pp_u + (1.0 - f[m]) * pp
+            pp_u = pp_u + (1.0 - f[m]) * pp
         grid = _grid(g, matched, weekend) + closing_cost(specs, matched, params.level)
         total = total + pp_u + np.minimum(pp_m, np.maximum(phi * pp_m, grid))
     return np.maximum(total, tier_floor * gross) if tier_floor else total

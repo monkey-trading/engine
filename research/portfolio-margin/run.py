@@ -10,7 +10,7 @@ Usage (from a virtualenv with requirements.txt, in this directory):
     python -I run.py checks      crisis days, the alternatives, the bounds, the close-spread shortfalls
     python -I run.py outage      one member shut: matched opposite accounts, an operator choosing the timing
     python -I run.py proposal    results/proposal.toml, the backtest tables and results/report.md
-    python -I run.py cadence     crypto's 60 s grids against the hourly bars' one-jump reading (results/cadence.csv)
+    python -I run.py cadence     crypto's 50 ms grids read every 60 s against the hourly bars' one-jump reading (results/cadence.csv)
     python -I run.py sensitivity the groups stage again at other quantiles and horizons (results/sensitivity.csv)
     python -I run.py all         every stage after `derive`, from the committed data
 

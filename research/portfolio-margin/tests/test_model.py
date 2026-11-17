@@ -36,7 +36,7 @@ def test_the_requirement_never_exceeds_per_position_margin_and_holds_the_matched
         p = model.Params([group()], phi)
         r, pp = model.requirement(s, p, book), model.per_position(s, book)
         assert (r <= pp + 1e-9).all()
-        assert (r >= (1 - 0) * 0 + 0).all()
+        assert (r >= phi * 0).all()
     assert model.requirement(s, model.Params([group()], 1.0), book).tolist() == model.per_position(s, book).tolist()
 
 
@@ -83,3 +83,17 @@ def test_weekend_values_apply_only_where_the_group_has_them():
     assert model.model_term(s, p, book, weekend=True)[0] > model.model_term(s, p, book)[0]
     g.rho_weekend = {}
     assert model.model_term(s, model.Params([g], 0.0), book, weekend=True)[0] == model.model_term(s, p, book)[0]
+
+
+def test_over_a_weekend_gap_the_rule_never_exceeds_per_position_margin_and_a_lone_leg_keeps_today_exactly():
+    s = specs()
+    p = model.Params([group()], 0.0)
+    for book in ({"EUR-USD": np.array([4e6]), "GBP-USD": np.array([-4e6])}, {"EUR-USD": np.array([4e6])}):
+        # EUR-USD and GBP-USD have no weekend rate, so none of this book has a requirement over the gap
+        assert model.requirement(s, p, book, 0.0, weekend=True)[0] == 0.0
+    s["GBP-USD"].weekend = 0.02
+    book = {"EUR-USD": np.array([4e6]), "GBP-USD": np.array([-4e6])}
+    base = model.staircase(s["GBP-USD"].bands, book["GBP-USD"], 0.02)[0]
+    assert model.requirement(s, p, book, 0.0, weekend=True)[0] <= base + 1e-9
+    lone = {"GBP-USD": np.array([4e6])}
+    assert model.requirement(s, p, lone, 0.0, weekend=True)[0] == model.staircase(s["GBP-USD"].bands, lone["GBP-USD"], 0.02)[0]
