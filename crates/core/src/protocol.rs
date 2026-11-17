@@ -472,11 +472,23 @@ pub enum ProtocolVersion {
     /// that lags the chain keeps a set until the draws from it are mirrored, where an earlier version
     /// counted from the sequenced time alone.
     V73,
+    /// A price re-checks only the resting limits it could fill. A limit is indexed at the index mid
+    /// where its market's least fill rate, the lower of its least spread band and its close-spread
+    /// ceiling, first lets it fill, since no fill pays less; it is re-keyed when either moves, by a
+    /// relisting, a passed vote or a ceiling adoption. A stop keeps its trigger at its price. A price
+    /// that leaves a limit out of that reach does not price it, so the stress refresh pricing runs
+    /// first waits for the next fill, close-out or the command's end, and the stress level it leaves,
+    /// which later fills pay, can differ. A limit refused before its price is checked is cancelled
+    /// only once a price comes within its reach, or never: a reduce-only limit whose position has
+    /// gone or turned, new risk in a reduce-only market or below the minimum notional, a spread at its
+    /// size that reaches the price, or a reversal over the ceiling, whose closing slice fills first if
+    /// it can. Until then it rests, and fills if a later change lets it.
+    V74,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V73;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V74;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

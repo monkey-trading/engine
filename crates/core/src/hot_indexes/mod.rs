@@ -4,13 +4,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Fixed;
 use crate::access::{AccessDeposit, UncreditedReceipt};
-use crate::account::RestingOrder;
-use crate::command::OrderKind;
 use crate::deposits::DepositStatus;
 use crate::engine::Engine;
 use crate::protocol::ProtocolVersion;
 use crate::toxicity::MarkoutLegs;
-use crate::types::{AccountId, MarketId, OrderId, Side};
+use crate::types::{AccountId, MarketId};
+
+mod triggers;
+use triggers::Triggers;
 
 #[derive(Debug, Default)]
 pub(crate) struct HotIndexes {
@@ -54,12 +55,6 @@ pub(crate) struct HotIndexes {
     /// Test-only: run insertions and extensions, bounding the rebuild's index work.
     #[cfg(test)]
     pub(crate) run_insertions: usize,
-}
-
-#[derive(Debug, Default)]
-struct Triggers {
-    below: BTreeMap<(Fixed, OrderId), AccountId>,
-    above: BTreeMap<(Fixed, OrderId), AccountId>,
 }
 
 impl HotIndexes {
@@ -291,34 +286,6 @@ impl HotIndexes {
             }
         }
     }
-
-    /// The triggered subset in the same time priority as the authoritative resting book.
-    pub(crate) fn triggered(&self, market: MarketId, mid: Fixed) -> Vec<(OrderId, AccountId)> {
-        let Some(book) = self.triggers.get(&market) else { return Vec::new() };
-        let mut orders: Vec<_> = book
-            .below
-            .range(..=(mid, OrderId::MAX))
-            .chain(book.above.range((mid, 0)..))
-            .map(|((_, id), account)| (*id, *account))
-            .collect();
-        orders.sort_unstable_by_key(|(id, _)| *id);
-        orders
-    }
-
-    fn order(&mut self, account: AccountId, order: &RestingOrder, insert: bool) {
-        let (price, below) = match (order.kind, order.side) {
-            (OrderKind::Limit { price }, Side::Sell) | (OrderKind::Stop { price }, Side::Buy) => (price, true),
-            (OrderKind::Limit { price }, Side::Buy) | (OrderKind::Stop { price }, Side::Sell) => (price, false),
-            (OrderKind::Market { .. }, _) => return,
-        };
-        let book = self.triggers.entry(order.market).or_default();
-        let index = if below { &mut book.below } else { &mut book.above };
-        if insert {
-            index.insert((price, order.order_id), account);
-        } else {
-            index.remove(&(price, order.order_id));
-        }
-    }
 }
 
 impl Engine {
@@ -387,6 +354,9 @@ impl Engine {
                 indexes.terminal_deposit_holds.entry(recorded.receipt.transaction_reference()).or_insert(held);
             }
         }
+        for market in self.markets.keys() {
+            indexes.key_triggers(*market, self.least_fill_rate(*market), std::iter::empty());
+        }
         for (account, state) in self.accounts.iter() {
             for market in state.positions.keys() {
                 indexes.holders.entry(*market).or_default().insert(*account);
@@ -445,13 +415,6 @@ impl Engine {
             holders.insert(account);
         } else {
             holders.remove(&account);
-        }
-    }
-
-    /// Updates a trigger at the same boundary as the authoritative resting order.
-    pub(crate) fn index_order(&mut self, account: AccountId, order: &RestingOrder, insert: bool) {
-        if let Some(indexes) = self.hot_indexes.as_mut() {
-            indexes.order(account, order, insert);
         }
     }
 }

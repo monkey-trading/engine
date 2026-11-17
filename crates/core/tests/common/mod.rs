@@ -74,7 +74,7 @@ pub struct Harness {
 
 impl Harness {
     /// No commands yet, at the harness start time.
-    fn empty() -> Self {
+    pub fn empty() -> Self {
         Harness {
             engine: Engine::new(),
             log: vec![],

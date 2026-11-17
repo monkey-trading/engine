@@ -168,6 +168,19 @@ pub fn order(
 
 /// Places a signed, screened resting order of `kind`.
 pub fn rest(h: &mut Harness, client: &Client, market: MarketId, side: Side, qty: &str, kind: OrderKind) -> Vec<Event> {
+    rest_as(h, client, market, side, qty, kind, false)
+}
+
+/// `rest`, reduce-only when `reduce_only` is set.
+pub fn rest_as(
+    h: &mut Harness,
+    client: &Client,
+    market: MarketId,
+    side: Side,
+    qty: &str,
+    kind: OrderKind,
+    reduce_only: bool,
+) -> Vec<Event> {
     let mut request = OrderRequest {
         account: client.account,
         client_id: 7,
@@ -175,7 +188,7 @@ pub fn rest(h: &mut Harness, client: &Client, market: MarketId, side: Side, qty:
         side,
         qty: f(qty),
         kind,
-        reduce_only: false,
+        reduce_only,
         auth: None,
     };
     let nonce = h.engine.next_request_nonce(client.account);
