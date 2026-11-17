@@ -534,12 +534,13 @@ a set with no members is in effect, the operator signs the governed commands wit
 as with rotation off. A drawn turn keeps `rotationEnabled()` true from its boundary after the switch
 turns off, until an installation; the node mirrors the registry's named turn with each finalised
 staking frontier. While votes govern, your key, as the turn's operator,
-keeps benchmark rates, its own stress floor (level 1 at most, lapsing after 72 hours), reduce-only
-and corporate actions; `SetParams`, `UpsertMarket`, the parameter, markup and listing notices and
-close-spread adoptions it signs are refused, and so are the node's own protocol activation and access
-policy, which wait for a vote. A relisting a runbook asks for (a futures contract, a price rule, a
-calendar) is then a normal vote: propose it at least seven days, plus the window it takes to pass,
-before it must apply.
+keeps benchmark rates, its own stress floor (level 1 at most, lapsing after 72 hours), reduce-only,
+and before V76 corporate actions; `SetParams`, `UpsertMarket`, the parameter, markup and listing
+notices and close-spread adoptions it signs are refused, from V76 so are corporate actions
+([corporate-actions.md](corporate-actions.md)), and so are the node's own protocol activation and
+access policy, which wait for a vote. A relisting a runbook asks for (a futures contract, a price rule,
+a calendar) or a corporate action is then a normal vote: propose it at least seven days, plus the
+window it takes to pass, before it must apply, and a corporate action two trading days more.
 
 - **Before proposing a command a release added** (a protocol activation, a new field), every member
   moves to a release that knows it: a node whose release cannot decode a proposal's bytes mirrors it as

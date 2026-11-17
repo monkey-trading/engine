@@ -124,6 +124,16 @@ pub struct FinancingSpec {
     pub day_basis: i64,
 }
 
+impl PriceRules {
+    /// Whether any rule is looser than `other`'s: fewer sources, a longer freshness bound or a wider
+    /// divergence bound.
+    pub fn looser_than(&self, other: &PriceRules) -> bool {
+        self.min_sources < other.min_sources
+            || self.max_age_ms > other.max_age_ms
+            || self.max_divergence_bps > other.max_divergence_bps
+    }
+}
+
 impl MarketSpec {
     /// Checks the listing is internally consistent and every rate is in range.
     /// Error cases:

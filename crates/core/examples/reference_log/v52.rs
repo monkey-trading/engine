@@ -78,6 +78,7 @@ pub(crate) fn session(h: &mut Harness) {
         margin_tiers: Some(doubled.margin_tiers.clone()),
         markup_bps: None,
         weekend_margin_bps: None,
+        price_rules: None,
         effective_at: due,
     };
     refused(&sign(h, AdminCommand::AnnounceListing { market: BTC, notice: notice(scaled(3)) }));

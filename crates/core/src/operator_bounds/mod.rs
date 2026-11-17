@@ -18,23 +18,27 @@
 //! a new profit fee curve, at or above its launch curve at every hold (`holding_fee`). From `V59` a
 //! notice may name a new volume tier table, within its launch bounds (`volume_tier`). From `V62` new
 //! stress parameters keep each launch house loss threshold at its level or above, at most its launch
-//! value (`house_loss`).
+//! value (`house_loss`). From `V76` a notice may name a new rollover time (`rollover`) and new corporate
+//! action bounds (`corporate::CorporateBounds`).
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::corporate::{CappedDividend, CorporateBounds};
 use crate::engine::Engine;
 use crate::holding_fee::{CurvePoint, spend_curve_notice};
 use crate::house_loss::LossTrigger;
 use crate::listing_bounds::{LaunchBands, ListingNotice};
 use crate::market::MarketSpec;
-use crate::params::{MAX_RATE_BPS, ProtocolParams, StressLevel};
+use crate::params::{MAX_RATE_BPS, ProtocolParams, Rollover, StressLevel};
 use crate::protocol::ProtocolVersion;
 use crate::toxicity::ScoreTier;
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis};
 use crate::volume_tier::{VolumeTier, spend_volume_tier_notice};
 
+mod held;
+pub(crate) mod rollover;
 mod rotation;
 
 /// How long before a rate change or an operator rotation takes effect it is logged: seven days.
@@ -70,6 +74,12 @@ pub struct ParamsNotice {
     /// From `V59`, a new volume tier table, left out of the encoding when none is named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume_tiers: Option<Vec<VolumeTier>>,
+    /// From `V76`, a new rollover time, left out of the encoding when none is named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollover: Option<Rollover>,
+    /// From `V76`, new corporate action bounds, left out of the encoding when none are named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corporate_bounds: Option<CorporateBounds>,
     /// The sequenced time the new values may apply from.
     pub effective_at: Millis,
 }
@@ -147,6 +157,17 @@ pub struct OperatorBounds {
     /// when it activates over them, which every later set of stress levels keeps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_loss_triggers: Option<Vec<LossTrigger>>,
+    /// From `V76`, the corporate action bounds in force when parameters are first set under `V76` or when
+    /// it activates over them, past which no later bounds loosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_corporate_bounds: Option<CorporateBounds>,
+    /// From `V76`, when the last rollover charged, which bounds what the next one charges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_rollover: Option<Millis>,
+    /// From `V76`, the dividends scheduled on short notice, in the order scheduled, which the cap counts
+    /// together; recording one drops those ex a week or more before it is scheduled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capped_dividends: Vec<CappedDividend>,
 }
 
 impl OperatorBounds {
@@ -165,6 +186,8 @@ impl ParamsNotice {
             && self.score_tiers.is_none()
             && self.profit_fee_curve.is_none()
             && self.volume_tiers.is_none()
+            && self.rollover.is_none()
+            && self.corporate_bounds.is_none()
     }
 }
 
@@ -204,6 +227,8 @@ impl Engine {
     /// - score tiers `Engine::check_score_tier_notice` refuses
     /// - from `V55`, a profit fee below its launch value; a curve `Engine::check_curve_notice` refuses
     /// - a volume tier table `Engine::check_volume_tier_notice` refuses
+    /// - a rollover or corporate bounds `Engine::check_rollover_notice` or
+    ///   `Engine::check_corporate_bounds_notice` refuses
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_params(&mut self, notice: &ParamsNotice) -> Result<(), String> {
         self.require_bounds_protocol("a parameter notice")?;
@@ -228,6 +253,8 @@ impl Engine {
         }
         self.check_curve_notice(notice.profit_fee_curve.as_deref())?;
         self.check_volume_tier_notice(notice.volume_tiers.as_deref())?;
+        self.check_rollover_notice(notice.rollover.as_ref())?;
+        self.check_corporate_bounds_notice(notice.corporate_bounds.as_ref())?;
         if notice.names_nothing() {
             return Err("a parameter notice names no rate".into());
         }
@@ -328,6 +355,8 @@ impl Engine {
     /// - from `V54`, changed score tiers `Engine::check_score_tier_change` refuses
     /// - a changed profit fee curve that fails `Engine::check_curve_change`
     /// - a changed volume tier table that fails `Engine::check_volume_tier_change`
+    /// - a changed rollover or corporate bounds that fail `Engine::check_rollover_change` or
+    ///   `Engine::check_corporate_bounds_change`
     pub(crate) fn check_rate_changes(&self, params: &ProtocolParams, voted: bool) -> Result<(), String> {
         let Some(current) = &self.baseline_params() else { return Ok(()) };
         // Recorded with the first parameters under `V35`, or at its activation over them.
@@ -365,6 +394,8 @@ impl Engine {
         self.check_score_tier_change(params, voted)?;
         self.check_curve_change(&params.profit_fee_curve, &current.profit_fee_curve, voted)?;
         self.check_volume_tier_change(params, current, voted)?;
+        self.check_rollover_change(&params.rollover, &current.rollover, voted)?;
+        self.check_corporate_bounds_change(&params.corporate_bounds, &current.corporate_bounds, voted)?;
         let stress = StressSettings::of(params);
         if self.protocol_version >= ProtocolVersion::V62 && params.stress_levels != current.stress_levels {
             self.check_loss_triggers_kept(&params.stress_levels)?;
@@ -381,15 +412,17 @@ impl Engine {
         }
     }
 
-    /// After new parameters apply: records the launch rates, score tiers, curve and volume tiers if
-    /// these are the first, and spends the notice of each rate, of the stress parameters, of the score
-    /// tiers, of the profit fee curve, and of the volume tier table, that changed.
+    /// After new parameters apply: records the launch rates, score tiers, curve, volume tiers and
+    /// corporate bounds if these are the first, and spends the notice of each rate, of the stress
+    /// parameters, of the score tiers, of the profit fee curve, of the volume tier table, of the rollover
+    /// and of the corporate bounds, that changed.
     pub(crate) fn settle_rate_changes(&mut self, before: Option<&ProtocolParams>, params: &ProtocolParams) {
         self.record_launch_rates();
         self.record_launch_score_tiers();
         self.record_launch_curve();
         self.record_launch_volume_tiers();
         self.record_launch_loss_triggers();
+        self.record_launch_corporate_bounds();
         let Some(before) = before else { return };
         let tiers = &params.toxicity.score_tiers;
         let spends_tiers = *tiers != before.toxicity.score_tiers;
@@ -410,83 +443,16 @@ impl Engine {
         }
         spend_curve_notice(notice, &before.profit_fee_curve, &params.profit_fee_curve);
         spend_volume_tier_notice(notice, &before.volume_tiers, &params.volume_tiers);
+        if params.rollover != before.rollover && notice.rollover.as_ref() == Some(&params.rollover) {
+            notice.rollover = None;
+        }
+        let bounds = Some(&params.corporate_bounds);
+        if params.corporate_bounds != before.corporate_bounds && notice.corporate_bounds.as_ref() == bounds {
+            notice.corporate_bounds = None;
+        }
         if notice.names_nothing() {
             self.operator_bounds.notice = None;
         }
-    }
-
-    /// Checks a relisting leaves priced the markets that hold positions and depend on its price: the
-    /// market itself, and the markets that convert at it. Price rules no tighter than those in force
-    /// (no more sources, no shorter freshness, no narrower divergence) always do. Tighter ones must
-    /// still give the market an index, from the quotes it keeps through the relisting, as trading
-    /// reads it, unless every affected market that holds positions is reduce-only.
-    /// Error cases:
-    /// - tighter price rules that give no index, in a market that holds positions and accepts new
-    ///   risk, or that markets holding positions and accepting new risk convert at
-    pub(crate) fn check_priceable(&self, spec: &MarketSpec) -> Result<(), String> {
-        let Some(market) = self.markets.get(&spec.id) else { return Ok(()) };
-        let (old, new) = (&market.spec.price_rules, &spec.price_rules);
-        let tighter = new.min_sources > old.min_sources
-            || new.max_age_ms < old.max_age_ms
-            || new.max_divergence_bps < old.max_divergence_bps;
-        if !tighter {
-            return Ok(());
-        }
-        // The market as the relisting leaves it: `UpsertMarket` drops the quotes stale under the old
-        // limit when a relisting raises it.
-        let mut relisted = market.clone();
-        relisted.spec = spec.clone();
-        if self.protocol_version >= ProtocolVersion::V33 && new.max_age_ms > old.max_age_ms {
-            relisted.drop_quotes_older_than(self.now, old.max_age_ms);
-        }
-        let index = relisted.index(self.now).ok();
-        let holders = &self.hot_indexes.as_ref().expect("apply builds derived indexes").holders;
-        for affected in self.markets.values() {
-            let own = affected.spec.id == spec.id;
-            let converts = affected.spec.quote_currency.fx_market() == Some(spec.id);
-            if !own && !converts {
-                continue;
-            }
-            // No index prices nothing; an index too high to convert a currency prices nothing in it.
-            let unpriced = match index {
-                None => true,
-                Some(index) => converts && !affected.spec.quote_currency.converts_at(index.mid),
-            };
-            let held = holders.get(&affected.spec.id).is_some_and(|accounts| !accounts.is_empty());
-            if !unpriced || !held || self.is_reduce_only(affected) {
-                continue;
-            }
-            return Err(if own {
-                format!(
-                    "market {} has open positions, so price rules it cannot price under need it reduce-only first",
-                    spec.id
-                )
-            } else {
-                format!(
-                    "market {} has open positions and converts at market {}, which the price rules cannot price under, so it needs to be reduce-only first",
-                    affected.spec.id, spec.id
-                )
-            });
-        }
-        Ok(())
-    }
-
-    /// From `V46`, checks a relisting leaves a market that holds positions on its benchmark: a first
-    /// rate is bound only by its range, so a new name would reach those positions past the cap. No
-    /// limit on the move would do, since fresh names walk any such limit within one second.
-    /// Error cases:
-    /// - a different benchmark, in a market that holds positions
-    pub(crate) fn check_held_benchmark(&self, spec: &MarketSpec) -> Result<(), String> {
-        let Some(market) = self.markets.get(&spec.id) else { return Ok(()) };
-        let current = &market.spec.financing.benchmark;
-        if self.protocol_version < ProtocolVersion::V46 || *current == spec.financing.benchmark {
-            return Ok(());
-        }
-        let holders = &self.hot_indexes.as_ref().expect("apply builds derived indexes").holders;
-        if holders.get(&spec.id).is_some_and(|accounts| !accounts.is_empty()) {
-            return Err(format!("market {} has open positions, so it stays on benchmark {current}", spec.id));
-        }
-        Ok(())
     }
 
     fn require_bounds_protocol(&self, what: &str) -> Result<(), String> {

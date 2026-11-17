@@ -97,6 +97,8 @@ async fn dev_scenario_a_gain_pays_the_fee_its_hold_gives_and_the_fee_moves_only_
             stress: None,
             profit_fee_curve: None,
             volume_tiers: None,
+            rollover: None,
+            corporate_bounds: None,
             effective_at: due,
             score_tiers: None,
         })
@@ -132,6 +134,8 @@ async fn dev_scenario_a_gain_pays_the_fee_its_hold_gives_and_the_fee_moves_only_
         closeout_level_bps: None,
         stress: None,
         profit_fee_curve: Some(extended.clone()),
+        rollover: None,
+        corporate_bounds: None,
         effective_at: due,
         score_tiers: None,
         volume_tiers: None,

@@ -57,7 +57,7 @@ impl Schedule {
     /// the clocks go back at both instants, taken at the first millisecond at or after it (see
     /// `Schedule::open_throughout`), so each of those is checked in turn; each minute costs a check,
     /// so callers bound the span.
-    fn next_change(&self, after: Millis, limit: Millis) -> Option<Millis> {
+    pub(crate) fn next_change(&self, after: Millis, limit: Millis) -> Option<Millis> {
         let Schedule::Weekly { tz, closures, special_sessions, .. } = self else { return None };
         let open = self.is_open(after);
         let changes = |at: &Millis| self.is_open(*at) != open;

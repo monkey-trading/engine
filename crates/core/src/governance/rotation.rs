@@ -4,14 +4,13 @@
 use crate::command::AdminCommand;
 use crate::engine::Engine;
 use crate::event::Event;
-use crate::governance::is_governed;
 use crate::protocol::ProtocolVersion;
 use crate::turns::{DRAW_LEAD_MS, boundary};
 use crate::types::Millis;
 
 impl Engine {
-    /// From `V56`, whether only a vote may apply `command`: while votes govern, a governed command, a
-    /// notice the vote's own notice replaces, or the legacy custody activation.
+    /// From `V56`, whether only a vote may apply `command`: while votes govern, a command a vote carries
+    /// (`Engine::votes_carry`), a notice the vote's own notice replaces, or the legacy custody activation.
     pub fn refused_outside_vote(&self, command: &AdminCommand) -> bool {
         self.governed_at(command, self.now)
     }
@@ -22,7 +21,7 @@ impl Engine {
     pub fn governed_at(&self, command: &AdminCommand, at: Millis) -> bool {
         self.protocol_version >= ProtocolVersion::V56
             && self.votes_govern(at)
-            && (is_governed(command)
+            && (self.votes_carry(command)
                 || matches!(
                     command,
                     AdminCommand::AnnounceParams(_)

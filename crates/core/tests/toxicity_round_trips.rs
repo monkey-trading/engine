@@ -134,6 +134,7 @@ fn a_close_out_takes_open_quantity_but_matches_none() {
         margin_tiers: Some(full.clone()),
         markup_bps: None,
         weekend_margin_bps: None,
+        price_rules: None,
         effective_at,
     };
     h.operator_admin(AdminCommand::AnnounceListing { market: BTC, notice });

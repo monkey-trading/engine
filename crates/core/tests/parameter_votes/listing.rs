@@ -58,6 +58,7 @@ fn the_operators_listing_notice_waits_for_rotation_to_end() {
         margin_tiers: None,
         markup_bps: Some(5),
         weekend_margin_bps: None,
+        price_rules: None,
         effective_at: h.ts + NOTICE_MS,
     };
     let announce = AdminCommand::AnnounceListing { market: BTC, notice };

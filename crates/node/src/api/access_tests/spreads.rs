@@ -290,6 +290,8 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
         stress,
         profit_fee_curve: None,
         volume_tiers: None,
+        rollover: None,
+        corporate_bounds: None,
         effective_at: due,
         score_tiers: None,
     };
@@ -308,6 +310,7 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
         margin_tiers: Some(noticed.margin_tiers.clone()),
         markup_bps: None,
         weekend_margin_bps: None,
+        price_rules: None,
         effective_at: due,
     };
     operator.applies(&node, AdminCommand::AnnounceListing { market: BTC, notice }).await;
@@ -352,6 +355,8 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
             closeout_level_bps: None,
             stress: None,
             score_tiers,
+            rollover: None,
+            corporate_bounds: None,
             effective_at,
             profit_fee_curve: None,
             volume_tiers: None,

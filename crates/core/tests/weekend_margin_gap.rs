@@ -105,6 +105,7 @@ fn a_noticed_weekend_margin_that_applies_inside_the_gap_closes_out_then_and_only
         margin_tiers: None,
         markup_bps: None,
         weekend_margin_bps: Some(OIL_WEEKEND_BPS),
+        price_rules: None,
         effective_at: h.ts + NOTICE_MS,
     };
     let events = h.operate(AdminCommand::AnnounceListing { market: OIL, notice });

@@ -174,6 +174,8 @@ fn announce_and_apply(h: &mut common::Harness, params: engine_core::params::Prot
         stress,
         profit_fee_curve: None,
         volume_tiers: None,
+        rollover: None,
+        corporate_bounds: None,
         effective_at: due,
         score_tiers: None,
     };

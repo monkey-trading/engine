@@ -85,13 +85,16 @@ impl Engine {
     /// - from `V60`, `UpsertMarket` with a weekend margin `Engine::check_weekend_listing` refuses; and
     ///   changing a listed market's weekend margin without a notice or a vote (`Engine::check_listing_change`)
     /// - from `V70`, `SetFaultProof` with any error case of `Engine::set_fault_proof`
+    /// - from `V76`, `SetParams` changing the rollover time or the corporate bounds outside their bounds
+    ///   (`Engine::check_rollover_change`, `Engine::check_corporate_bounds_change`), and `UpsertMarket`
+    ///   loosening a listed market's price rules without a notice or past its launch rules
     ///
     /// A `voted` command is a passed vote's, whose seven days' notice replaces the parameter, markup
     /// and ceiling notices. From `V56` new parameters and listings set the baseline, and the values in
     /// force stay the stricter of it and the restrictions (`governance`).
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, voted: bool, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {
-            AdminCommand::ScheduleCorporateAction(action) => self.schedule_corporate_action(action, events)?,
+            AdminCommand::ScheduleCorporateAction(action) => self.schedule_corporate_action(action, voted, events)?,
             AdminCommand::SetAccessPolicy(policy) => {
                 if policy.max_age_ms <= 0 || policy.source == crate::types::AccountId([0; 20]) {
                     return Err("access policy needs a nonzero source and positive freshness bound".into());
@@ -123,7 +126,7 @@ impl Engine {
                 }
                 self.check_restricted_levels(params)?;
                 let before = self.baseline_params().filter(|_| bounded);
-                self.next_rollover = Some(params.rollover.next_after(self.now));
+                self.next_rollover = Some(self.rescheduled_rollover(&params.rollover));
                 self.params = Some(params.clone());
                 self.rebase(None);
                 if bounded {

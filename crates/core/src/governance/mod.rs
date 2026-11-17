@@ -7,21 +7,23 @@
 //! staking mirror, credited once under its chain reference, with the admin command its bytes decode
 //! to canonically (`decode_command`).
 //!
-//! - A normal proposal names a governed command (`is_governed`). It is recorded when it is mirrored
-//!   and applies no sooner than seven days later, when the node sequences `ApplyProposal` naming it:
-//!   the vote's seven days are the notice, so `AnnounceParams`, `AnnounceMarkup` and `AnnounceListing`
-//!   give way to it, and every other check the command meets applies: the ±50% range of the launch
-//!   profit fee and close-out level, lower-only close-spread ceilings at or above their market's launch
-//!   close charge, the 1x floor on each stress level's size multiplier, a listing notice's bounds,
-//!   each changed spread band table from its launch rates to twice them and each changed margin band
-//!   table at or above launch's, the toxicity score's, each tier within ±50% of its launch score and
-//!   add-on and a market's markout floor fixed at its listing, the holding-time fee's, the base fee
-//!   never below its launch value and the curve at or above its launch curve at every hold, and from
-//!   `V62` each launch house loss threshold kept at its level or above, at most its launch value
-//!   (`house_loss`). A `SetParams` or `UpsertMarket`
-//!   applies only over the baseline it was mirrored against, so a change applied while it waits is
-//!   never undone by it, and a ceiling adoption only while none waits. It carries every field, so
-//!   members check it against the values in force when they vote.
+//! - A normal proposal names a governed command (`is_governed`), or from `V76` a corporate action. It
+//!   is recorded when it is mirrored and applies no sooner than seven days later, when the node
+//!   sequences `ApplyProposal` naming it: the vote's seven days are the notice, so `AnnounceParams`,
+//!   `AnnounceMarkup` and `AnnounceListing` give way to it, and every other check the command meets
+//!   applies: the ±50% range of the launch profit fee and close-out level, lower-only close-spread
+//!   ceilings at or above their market's launch close charge, the 1x floor on each stress level's size
+//!   multiplier, a listing notice's bounds, each changed spread band table from its launch rates to
+//!   twice them and each changed margin band table at or above launch's, the toxicity score's, each
+//!   tier within ±50% of its launch score and add-on and a market's markout floor fixed at its listing,
+//!   the holding-time fee's, the base fee never below its launch value and the curve at or above its
+//!   launch curve at every hold, from `V62` each launch house loss threshold kept at its level or
+//!   above, at most its launch value (`house_loss`), and from `V76` loosened price rules within the
+//!   market's launch rules, corporate bounds no looser than launch's, and a corporate action within the
+//!   bounds in force, but for a dividend's share of the mark. A `SetParams` or `UpsertMarket` applies
+//!   only over the baseline it was mirrored against, so a change applied while it waits is never undone
+//!   by it, and a ceiling adoption only while none waits. It carries every field, so members check it
+//!   against the values in force when they vote.
 //! - A fast-path proposal applies at once as a restriction (`restriction`): only a higher margin or
 //!   close-out level, a stress floor, a lower house or market cap, or reduce-only, refused if any
 //!   field moves the other way. A restriction never edits the baseline: the values in force are the
@@ -257,8 +259,9 @@ pub fn command_hash(command: &AdminCommand) -> B256 {
     keccak256(serde_json::to_vec(command).expect("admin commands serialise"))
 }
 
-/// Whether a normal vote may carry `command`: the parameters, listings, toxicity weighting,
-/// close-spread ceiling adoptions, the access policy and protocol activation.
+/// Whether every version's normal vote may carry `command`: the parameters, listings, toxicity
+/// weighting, close-spread ceiling adoptions, the access policy and protocol activation. From `V76`
+/// a vote also carries a corporate action (`Engine::votes_carry`).
 pub fn is_governed(command: &AdminCommand) -> bool {
     matches!(
         command,
@@ -272,6 +275,14 @@ pub fn is_governed(command: &AdminCommand) -> bool {
 }
 
 impl Engine {
+    /// Whether a normal vote may carry `command` under the rules in force: a governed command
+    /// (`is_governed`), and from `V76` a corporate action.
+    pub(crate) fn votes_carry(&self, command: &AdminCommand) -> bool {
+        is_governed(command)
+            || (self.protocol_version >= ProtocolVersion::V76
+                && matches!(command, AdminCommand::ScheduleCorporateAction(_)))
+    }
+
     /// The mirrored votes.
     pub fn governance(&self) -> &Governance {
         &self.governance
@@ -361,7 +372,7 @@ impl Engine {
         command: &AdminCommand,
         events: &mut Vec<Event>,
     ) -> Result<(), String> {
-        if !is_governed(command) {
+        if !self.votes_carry(command) {
             return Err("a normal vote changes only the governed parameters, listings, toxicity weighting, close-spread ceilings, the access policy or the protocol version".into());
         }
         if self.governance.pending.len() >= MAX_PENDING_CHANGES {

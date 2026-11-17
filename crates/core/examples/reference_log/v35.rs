@@ -37,6 +37,8 @@ pub(crate) fn session(h: &mut Harness) {
             stress: None,
             profit_fee_curve: None,
             volume_tiers: None,
+            rollover: None,
+            corporate_bounds: None,
             effective_at,
             score_tiers: None,
         })

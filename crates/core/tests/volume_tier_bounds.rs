@@ -480,6 +480,8 @@ fn notice(volume_tiers: Vec<VolumeTier>, effective_at: Millis) -> AdminCommand {
         score_tiers: None,
         profit_fee_curve: None,
         volume_tiers: Some(volume_tiers),
+        rollover: None,
+        corporate_bounds: None,
         effective_at,
     })
 }

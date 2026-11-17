@@ -30,6 +30,8 @@ fn curve_notice(curve: Vec<CurvePoint>, effective_at: i64) -> AdminCommand {
         stress: None,
         profit_fee_curve: Some(curve),
         volume_tiers: None,
+        rollover: None,
+        corporate_bounds: None,
         effective_at,
         score_tiers: None,
     })

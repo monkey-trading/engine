@@ -15,9 +15,10 @@ use crate::eip712::withdrawal_hash;
 use crate::engine::Engine;
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
+use crate::operator_bounds::rollover::financing_over;
 use crate::params::MAX_RATE_BPS;
 use crate::protocol::ProtocolVersion;
-use crate::types::{AccountId, MarketId};
+use crate::types::{AccountId, MarketId, Millis};
 use crate::withdrawal::{MIN_WITHDRAWAL, whole_usdc};
 
 impl Engine {
@@ -168,12 +169,14 @@ impl Engine {
         }
     }
 
-    /// Applies exactly the scheduled rollover, for chronological corporate-action catch-up.
+    /// Applies exactly the scheduled rollover, for chronological corporate-action catch-up. From `V76`
+    /// it charges a day's financing per day of the time since the last rollover (`Engine::rollover_span`).
     pub(crate) fn run_one_rollover(&mut self, events: &mut Vec<Event>) {
         let params = self.params.as_ref().expect("scheduled rollover has parameters");
         let rollover = params.rollover.clone();
         let at = self.next_rollover.expect("caller checks scheduled rollover");
-        self.charge_financing(events);
+        self.charge_financing(self.rollover_span(at), events);
+        self.record_rollover(at);
         if self.protocol_version >= ProtocolVersion::V18 {
             self.prune_benchmark_history(self.benchmark_date(at));
         }
@@ -183,11 +186,11 @@ impl Engine {
         }
     }
 
-    /// One day of overnight financing on every open position. Longs pay benchmark + markup; shorts
-    /// receive benchmark - markup, the markup less the account's tier's financing discount from `V68`,
-    /// the tier read at the rollover. From `V14` each benchmark with no rate is recorded with the markets
-    /// that use it, which accrue nothing.
-    fn charge_financing(&mut self, events: &mut Vec<Event>) {
+    /// One day of overnight financing on every open position, over `span` of a day from `V76`. Longs pay
+    /// benchmark + markup; shorts receive benchmark - markup, the markup less the account's tier's
+    /// financing discount from `V68`, the tier read at the rollover. From `V14` each benchmark with no
+    /// rate is recorded with the markets that use it, which accrue nothing.
+    fn charge_financing(&mut self, span: Millis, events: &mut Vec<Event>) {
         if self.protocol_version >= ProtocolVersion::V18 {
             self.benchmark_status(
                 self.benchmark_date(self.next_rollover.expect("charging a scheduled rollover")),
@@ -219,7 +222,8 @@ impl Engine {
                 // From `V68` each account's markup falls by its tier's discount at the rollover.
                 let discount_bps = engine.financing_discount_bps(*account, rollover);
                 acct.positions.iter().filter_map(move |(market, pos)| {
-                    engine.daily_financing(*market, *pos, discount_bps).map(|amount| (*account, *market, amount))
+                    let amount = engine.daily_financing(*market, *pos, discount_bps);
+                    amount.map(|amount| (*account, *market, financing_over(amount, span)))
                 })
             })
             .filter(|(_, _, amount)| !amount.is_zero())

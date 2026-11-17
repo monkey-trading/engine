@@ -9,6 +9,25 @@ this runbook is the sequence to follow. Read [reference.md](reference.md) first.
 An accepted instruction cannot be cancelled or replaced. A mistake in one is repaired by the owner
 deciding the remedy, not by sending another instruction: take your time over the inputs.
 
+From protocol `V76` the engine bounds each instruction by the parameters' `corporate_bounds`
+(`curl -sf $API/v1/house/state | jq .params.corporate_bounds`; `null` means launch's: 1000, 20, 2):
+
+- at least `min_trading_days` of the market's trading days close after the instruction is logged, the
+  previous close the last of them: sessions closing on that many distinct dates, the previous close at
+  least a day later for each date past the first. At launch, submit a dividend going ex on Wednesday by
+  Monday's close, and at least 24 hours before Tuesday's close;
+- a dividend logged less than seven days before `previous_close` is held, with every other such
+  dividend on the market whose ex-date open is within seven days of its own, to `max_dividend_bps` of
+  the market's mark when it is logged (10% at launch), in the shares held at its capture: after a split
+  scheduled to go ex first, enter it per post-split share against the mark divided by the split. A
+  larger dividend needs logging at least seven days before `previous_close`;
+- a split's ratio is at most `max_split_ratio` either way (20 to 1 or 1 to 20 at launch), it needs
+  logging at least seven days before `previous_close`, and it may not go ex at or before the previous
+  close of a dividend already pending on the market: schedule the split first;
+- while votes govern ([operator-candidate.md](operator-candidate.md) §7), the engine refuses the
+  operator's instruction: a member proposes it on the vote contract, and it applies seven days after
+  it passes, when the trading days above must still hold, so propose it well ahead.
+
 ## 1. Gather the inputs
 
 For each action, from the venue's or issuer's announcement:
@@ -82,8 +101,9 @@ The values above are examples: use the real figures.
 ## 4. Submit
 
 **Submit strictly before `previous_close`.** An instruction submitted at the close or later is
-rejected, because the engine cannot infer historical holdings. Aim to submit at least one full
-session earlier, so a rejection can be fixed.
+rejected, because the engine cannot infer historical holdings. From `V76` it must also come before
+`min_trading_days` of the market's trading days, the previous close the last (see the bounds above).
+Aim to submit at least one full session earlier than that, so a rejection can be fixed.
 
 1. Send it. **Changes the live system.** Needs the owner's approval of this admin command with the
    inputs above, including the withholding rate. It changes balances for every holder of the
@@ -101,6 +121,13 @@ session earlier, so a rejection can be fixed.
    | --- | --- | --- |
    | `the engine rejected the command: corporate boundaries must be an actual venue close and open` | `previous_close` or `ex_open` is not on the listed calendar, or the close is not the one immediately before the open. | Redo section 2. |
    | `the engine rejected the command: duplicate corporate action id` | The id was used before. | Choose another id. |
+   | `the engine rejected the command: a corporate action needs at least 2 of its market's trading days after it is scheduled, …` | From `V76`, too close to the ex-date. | Ask the owner; the action cannot be scheduled for that ex-date. |
+   | `the engine rejected the command: dividends on short notice total at most 1000bps of their market's mark within seven days; …` | From `V76`, the dividend, with the market's other short-notice dividends within seven days, is above the cap, and it is less than seven days before `previous_close`. | Check the amount, and any split before it, against the announcement; a real dividend this large needs submitting seven days ahead. |
+   | `the engine rejected the command: a split's ratio is at most 20 either way` | From `V76`, a split wider than the bound. | Ask the owner. |
+   | `the engine rejected the command: a split needs a notice of at least seven days before its previous close` | From `V76`, a split logged less than seven days before `previous_close`. | Ask the owner; it cannot go ex at that open. |
+   | `the engine rejected the command: the market has no mark to cap a short-notice dividend against` | From `V76`, the market has never had a price, so a dividend less than seven days ahead has no cap to meet. | Submit it at least seven days before `previous_close`. |
+   | `the engine rejected the command: a split may not apply before a pending dividend's previous close` | From `V76`, a dividend already pending would be paid on the split shares. | Ask the owner. |
+   | `the engine rejected the command: while rotation is on, only a passed vote changes this` | From `V76`, votes govern. | Ask a member to propose it on the vote contract. |
    | `the engine rejected the command: duplicate or inconsistent corporate action at this market boundary` | An action of the same kind is already scheduled for that market's opening, or the boundaries disagree with one that is. | Check the log for what exists (step 3). |
    | Any other `admin_rejected` reason | The text names the cause (for example a market that is not a share or index). | Fix the input. Nothing was recorded but the rejection. |
 

@@ -60,6 +60,7 @@ pub(crate) fn session(h: &mut Harness) {
         margin_tiers: None,
         markup_bps: None,
         weekend_margin_bps: Some(WEEKEND_BPS),
+        price_rules: None,
         effective_at: h.ts + NOTICE_MS,
     };
     refused(&h.operate_as(TURN_SEED, AdminCommand::AnnounceListing { market: AAPL, notice }));

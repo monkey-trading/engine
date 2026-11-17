@@ -33,6 +33,7 @@ pub(crate) fn params() -> ProtocolParams {
         max_resting_orders: DEFAULT_MAX_RESTING_ORDERS,
         profit_fee_curve: vec![],
         volume_tiers: vec![],
+        corporate_bounds: Default::default(),
     }
 }
 

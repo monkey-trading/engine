@@ -79,6 +79,10 @@ one being changed, "which the price rules cannot price under"). A venue's quote 
 own timestamp, and the feed's repeat rule only delays a repeat of an unchanged price, so a quiet mid
 leaves quotes older than a tighter limit even though the venues are healthy.
 
+From `V76` a tightening still applies at once, but undoing it is a loosening, which applies only seven
+days after a listing notice, or by a vote, and never past the market's launch rules: tighten only what
+the owner accepts for at least seven days.
+
 While votes govern ([operator-candidate.md](operator-candidate.md) §7: rotation on and a rotation set
 with members in effect), the engine refuses the operator's `upsert-market`: each change below is
 instead proposed as a normal vote, which applies seven days after the engine logs it, and is checked
@@ -106,8 +110,12 @@ operator's, must be in force before the change's `applies_at` in `GET /v1/house/
    1 for the edited market and for each market that converts at it **and is open**; a market closed
    on its schedule reads 0 whatever the limit, so check it at its next session. The `mark` in
    `/v1/markets` is the last stored value and stays after pricing is lost, so it proves nothing. If
-   one reads 0, restore the previous limit, which is always accepted, wait for a sample taken after
-   that and for the venues to quote again: loosening discards quotes stale under the tighter limit.
+   one reads 0, restore the previous limit, wait for a sample taken after that and for the venues to
+   quote again: loosening discards quotes stale under the tighter limit. Before `V76` the restore is
+   always accepted. From `V76` a looser limit applies only seven days after a listing notice
+   (`announce-listing <market> --price-rules-from <spec.toml>`), or by a vote, so before tightening,
+   ask the owner to accept the market staying reduce-only, or unpriced, for those seven days, and log
+   the notice of the restore at once, in the same window as the change.
    Resume normal trading as in [reduce-only.md](reduce-only.md#resume-normal-trading) only once
    `engine_market_priced` reads 1 for the market.
 

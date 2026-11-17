@@ -1,5 +1,8 @@
-//! Authenticated, pre-close corporate instructions and deterministic ex-date entitlements.
+//! Authenticated, pre-close corporate instructions and deterministic ex-date entitlements. From `V76`
+//! each instruction stays within the corporate bounds (`bounds`).
 
+mod bounds;
+pub use bounds::*;
 mod calendar;
 use crate::corporate::calendar::validate_boundaries;
 mod cash;
@@ -96,12 +99,15 @@ impl Engine {
         &self.corporate_actions
     }
 
-    /// Installs an immutable, authenticated instruction before its eligibility cutoff.
+    /// Installs an immutable, authenticated instruction before its eligibility cutoff. A `voted` one is a
+    /// passed vote's, whose seven days' notice a dividend above its bound needs.
     /// Error cases:
     /// - inactive rules, invalid/duplicate/late instruction, unsupported market or wrong boundaries
+    /// - from `V76`, an instruction outside the corporate bounds (`Engine::check_corporate_action_bounds`)
     pub(crate) fn schedule_corporate_action(
         &mut self,
         action: &CorporateAction,
+        voted: bool,
         events: &mut Vec<Event>,
     ) -> Result<(), String> {
         if self.protocol_version < ProtocolVersion::V23 {
@@ -129,6 +135,7 @@ impl Engine {
             return Err("market is blocked by a failed split".into());
         }
         validate_boundaries(&market.spec.schedule, action.previous_close, action.ex_open)?;
+        let capped = self.check_corporate_action_bounds(action, market, voted)?;
         if self.corporate_actions.values().any(|pending| {
             pending.instruction.market == action.market
                 && pending.instruction.ex_open == action.ex_open
@@ -143,6 +150,7 @@ impl Engine {
             action.id.clone(),
             CorporateEntitlement { instruction: action.clone(), quantities: None, failure: None },
         );
+        self.record_capped_dividend(capped);
         events.push(Event::CorporateActionScheduled { action: action.clone() });
         Ok(())
     }
