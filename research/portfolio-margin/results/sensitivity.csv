@@ -1,0 +1,7 @@
+quantile,horizon_s,scale,phi,kept,crypto_phi_min,crypto_saving,crypto_factor_bps,us_index_phi_min,us_index_saving,us_index_factor_bps,metals_phi_min,metals_saving,metals_factor_bps,fx_phi_min,fx_saving,fx_factor_bps,shares_phi_min,shares_saving,shares_factor_bps
+0.99,60,0.147217,0.8,us_index|metals|fx,0.9,0.18307,66.5,0.8,0.175398,23.6,0.8,0.2,52,0.6,0.2,9,1,0.2,34.9
+0.995,60,0.129099,0.8,us_index|metals|fx,0.9,0.176979,72,0.8,0.160444,26.3,0.8,0.2,58.6,0.6,0.2,9.6,1,0.2,34.9
+0.999,60,0.204625,0.5,fx,0.9,0.344516,159.3,0.8,0.201766,73.6,0.8,0.28,130.7,0.5,0.284493,24.7,1,0.5,100.9
+0.995,10,0.0527046,0.8,us_index|metals|fx,0.9,0.2,29.4,0.8,0.199532,10.8,0.8,0.2,24,0.8,0.2,4,1,0.2,14.3
+0.995,300,0.288675,0.8,metals|fx,0.9,0.15,160.9,0.8,0.1,58.8,0.8,0.1805,131,0.5,0.150772,21.4,1,0.2,77.9
+0.995,3600,1,0.7,metals,0.9,0.1875,557.1,0,0.075,203.6,0.7,0.15,453.6,0,0.118105,74.2,1,0.3,269.8
