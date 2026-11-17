@@ -20,7 +20,7 @@ use tokio::time::timeout;
 use crate::clock::now_ms;
 use crate::config::{Genesis, Venue, VenueConnection, VenueSymbol};
 use crate::feeds::tests::fake::{
-    accept, bitstamp_book, fast, kraken_book, listen, next_alert, next_text, send, stream,
+    accept, bitstamp_book, fast, kraken_book, listen, next_alert, next_text, rfc3339, send, stream,
 };
 use crate::feeds::tests::rwa_support::{around_the_clock, commands, events_of, listing, priced, wait_for};
 use crate::feeds::tests::scenario::Node;
@@ -347,6 +347,53 @@ async fn deadline_runs_from_the_open(venue: Venue) {
     let deadline = i64::try_from(TIMEOUT.as_millis()).unwrap();
     assert!(ended >= open_at + deadline * 9 / 10, "ended {}ms after the open", ended - open_at);
     timeout(WAIT, accept(&listener)).await.expect("no retry in time");
+}
+
+/// An Alpaca connection that quoted while Apple was open, was quiet through a closure, and is silent
+/// after Apple reopens is replaced within a read deadline of the open, and alerted. The no-fresh-quote
+/// count is off for a connection that has quoted, so what ends it is the symbol's silence count,
+/// which waits through the closure and runs from the open (`venue_symbol_silent`); the read deadline,
+/// reset at the open, ends it only if that count cannot (no symbol it quotes left to be silent).
+#[tokio::test]
+async fn a_connection_that_quoted_and_then_goes_silent_after_the_open_is_replaced_within_a_deadline() {
+    let (_guard, mut alerts) = capture_alerts();
+    let open_all = || MarketSpec { schedule: around_the_clock(None), ..listing(AAPL) };
+    let closed = |until| MarketSpec { schedule: around_the_clock(Some((now_ms() - 60_000, until))), ..listing(AAPL) };
+    let node = Node::boot("quoted-then-silent", &genesis(vec![open_all()])).await;
+    let applied = node.record();
+    let (listener, url) = listen().await;
+    start_feed_timed(&node, Venue::Alpaca, &[(AAPL, "AAPL", None)], &url, PINGING);
+
+    // Logged in and subscribed, the venue quotes every 20ms until told to stop, its pings answered.
+    let (mut ws, _login) = accept(&listener).await;
+    send(&mut ws, &[quiet_venue_script(Venue::Alpaca)[0].to_owned()]).await;
+    assert!(next_text(&mut ws).await.contains("subscribe"));
+    send(&mut ws, &[quiet_venue_script(Venue::Alpaca)[1].to_owned()]).await;
+    let quoting = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let live = quoting.clone();
+    let _serving = stream(ws, move || {
+        let at = rfc3339(now_ms());
+        let quote = format!(r#"[{{"T":"q","S":"AAPL","bp":230,"bs":3,"ap":230.02,"as":2,"t":"{at}"}}]"#);
+        if live.load(std::sync::atomic::Ordering::SeqCst) { vec![quote] } else { Vec::new() }
+    });
+    wait_for(WAIT, || priced(&applied, AAPL).first().map(|_| ())).await;
+    tokio::time::sleep(TIMEOUT / 2).await;
+
+    // Apple closes and the venue falls silent: several deadlines pass with the connection kept.
+    quoting.store(false, std::sync::atomic::Ordering::SeqCst);
+    node.relist(closed(now_ms() + LATER_MS)).await;
+    tokio::time::sleep(TIMEOUT * 3).await;
+    assert_no_feed_alert(&mut alerts);
+    assert!(timeout(Duration::from_millis(100), listener.accept()).await.is_err(), "reconnected in the closure");
+
+    // Apple reopens a moment from here and the venue stays silent, its pings answered.
+    let open_at = now_ms() + 300;
+    node.relist(closed(open_at)).await;
+    let (_retry, _) = timeout(WAIT, accept(&listener)).await.expect("the silent connection was not replaced");
+    let replaced = now_ms();
+    let deadline = i64::try_from(TIMEOUT.as_millis()).unwrap();
+    assert!(replaced >= open_at + deadline * 9 / 10, "replaced {}ms after the open", replaced - open_at);
+    assert_eq!(next_alert(&mut alerts).await["alert"].as_str(), "venue_symbol_silent");
 }
 
 // ── Helpers ──
