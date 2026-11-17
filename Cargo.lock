@@ -2043,6 +2043,7 @@ dependencies = [
  "serde_json",
  "sha3 0.10.9",
  "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]

@@ -10,6 +10,7 @@ pub use client::*;
 pub mod close_spread;
 pub mod emissions;
 pub mod house_loss;
+pub mod launch_book;
 pub mod reference;
 pub mod session_keys;
 pub mod spreads;

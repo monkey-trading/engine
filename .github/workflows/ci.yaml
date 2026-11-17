@@ -220,8 +220,10 @@ jobs:
                 # The scenarios' signed access source and request signer.
                 crates/node/examples/access_source.rs | crates/core/examples/sign_request.rs)
                   areas+=" rust vault_deposits dashboard_data proxy_protocol batch_orders production_secrets" ;;
-                # The latency budget's engine-core benchmark, and the harness it shares.
-                crates/core/tests/hot_path_benchmark* | crates/core/tests/common/*) areas+=" rust scenario_tests" ;;
+                # The latency budget's engine-core benchmarks, and the harness they share.
+                crates/core/tests/hot_path_benchmark* | crates/core/tests/launch_book_benchmark* \
+                  | crates/core/tests/common/*)
+                  areas+=" rust scenario_tests" ;;
                 crates/core/tests/short_turns.rs) areas+=" rust short_turns" ;;
                 # The replay fixture the checkpoint scenario's accounting test reaches.
                 crates/node/tests/fixtures/*) areas+=" rust vault_deposits" ;;
@@ -813,6 +815,10 @@ jobs:
         run: cargo test -p engine-node --lib --locked sequencer::wait_bench::price_wait_budget -- --ignored --nocapture
       - name: Check sequencer command latency at 100k accounts
         run: cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture --test-threads=1
+      - name: Check sequencer command latency on a launch-scale book at 100k accounts
+        run: cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1
+      - name: Check the stats record's cost on a launch-scale book at 100k accounts
+        run: cargo test -p engine-node --lib --locked stats::launch_bench -- --ignored --nocapture --test-threads=1
 
   dev-batch-orders:
     needs: [changes, engine-build]

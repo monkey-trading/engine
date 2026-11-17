@@ -285,4 +285,6 @@ impl Stats {
 #[cfg(test)]
 mod bench;
 #[cfg(test)]
+mod launch_bench;
+#[cfg(test)]
 pub(crate) mod tests;
