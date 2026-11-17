@@ -199,9 +199,10 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
     }
     h.engine.restore_indexes();
 
-    // Each close-out account's cash leaves it a dollar of equity at the mark it is closed out at,
-    // below the level of any one position it holds, so the step closes every position; one step up
-    // its position's gain is the dollar and more above the level of all of them.
+    // Each close-out account's cash leaves it a dollar of equity at the mark its step brings, below
+    // the close-out level of even one position, so the step closes every position it holds. One step
+    // up, the position's smaller loss lifts its equity above the level of the whole account, so no
+    // earlier step touches it.
     let mut closeout_cash = Vec::new();
     for (index, client) in named.closeouts.iter().enumerate() {
         let mut account = h.engine.accounts()[&client.account].clone();
@@ -251,7 +252,7 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
         {
             account["balance"] = json!(closeout_cash[index]);
         }
-        entry(&mut accounts, &format!("{key:?}"), &account.to_string());
+        entry(&mut accounts, &json!(key).to_string(), &account.to_string());
     }
     for (target, source) in [
         (&mut volumes, "volumes"),
@@ -260,7 +261,7 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
         (&mut eligibility, "eligibility"),
     ] {
         for (key, value) in state[source].as_object().into_iter().flatten() {
-            entry(target, &format!("{key:?}"), &value.to_string());
+            entry(target, &json!(key).to_string(), &value.to_string());
         }
     }
     let professional = json!("professional").to_string();
@@ -271,7 +272,7 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
     for id in &ids {
         let mut text = String::from("{");
         for (order, account) in state["markets"][id.to_string()]["resting"].as_object().into_iter().flatten() {
-            entry(&mut text, &format!("{order:?}"), &account.to_string());
+            entry(&mut text, &json!(order).to_string(), &account.to_string());
         }
         resting.insert(*id, text);
         quantity.insert(*id, (Fixed::ZERO, Fixed::ZERO));
