@@ -28,7 +28,7 @@ fn every_reference_log_replays_to_its_committed_roots() {
 }
 
 /// The logs reach every part of the close-out index the oracle counts, so the replay's check of it
-/// cannot pass vacuously.
+/// cannot pass vacuously: all but a weekend gap's skip, which `invariants/closeout_index.rs` reaches.
 #[test]
 fn the_reference_logs_reach_every_part_of_the_close_out_index() {
     let mut total = CloseoutCoverage::default();
@@ -50,7 +50,31 @@ fn the_reference_logs_reach_every_part_of_the_close_out_index() {
         total.skipped_calls += seen.skipped_calls;
         total.below_untradeable += seen.below_untradeable;
     }
-    println!("{total:?}");
+    let CloseoutCoverage {
+        builds,
+        price_crossings,
+        fx_crossings,
+        headroom_moves,
+        relevels,
+        rebands,
+        keys,
+        skipped_calls,
+        below_untradeable,
+        ..
+    } = total;
+    for (part, count) in [
+        ("builds", builds),
+        ("price crossings", price_crossings),
+        ("FX crossings", fx_crossings),
+        ("headroom moves", headroom_moves),
+        ("level moves", relevels),
+        ("listing moves", rebands),
+        ("keys", keys),
+        ("skipped calls", skipped_calls),
+        ("below accounts with nothing to close", below_untradeable),
+    ] {
+        assert!(count > 0, "no {part}: {total:?}");
+    }
 }
 
 #[test]
