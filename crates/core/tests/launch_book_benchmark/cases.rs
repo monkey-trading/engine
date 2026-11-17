@@ -160,22 +160,29 @@ pub fn price_rounds(book: &mut Book, budget_us: u128) {
 
 /// `prices` prices of BTC-USD walking from where it is about a basis point a price, with a jump of a
 /// fifth of a percent to a percent one price in fifty, as a price at launch moves, printed under
-/// `name` with the accounts they close out; returns the p99.
+/// `name` with the accounts they close out, and again for the prices that close out none, whose work
+/// is the close-out check's alone; returns the p99 of those.
 pub fn price_walk(book: &mut Book, name: &str, prices: usize) -> u128 {
     let mut draws = Rng::new(0x7761_6c6b);
     let mut mid = Fixed::from_int(MARK);
-    let (mut times, mut closed) = (Vec::with_capacity(prices), 0);
+    let (mut times, mut checks, mut closed) = (Vec::with_capacity(prices), Vec::with_capacity(prices), 0);
     for _ in 0..prices {
         book.h.advance(1);
         let step = if draws.below(50) == 0 { 20 + draws.below(81) as i64 } else { draws.below(3) as i64 };
         mid = mid.mul_bps(if draws.below(2) == 0 { 10_000 + step } else { 10_000 - step });
         let cmd = price_command(&book.h, BTC, &mid.to_string(), book.h.ts);
         let (events, us) = timed(|| book.apply(cmd));
-        closed += events.iter().filter(|e| matches!(e, Event::CloseOut { .. })).count();
+        let closing = events.iter().filter(|e| matches!(e, Event::CloseOut { .. })).count();
+        closed += closing;
         times.push(us);
+        if closing == 0 {
+            checks.push(us);
+        }
     }
     let holders = book.holders[&BTC];
-    let (_, p99, _) = report(name, &mut times, &format!("holders={holders} closeouts={closed} end_mid={mid}"));
+    let extra = format!("holders={holders} closeouts={closed} end_mid={mid}");
+    report(name, &mut times, &extra);
+    let (_, p99, _) = report(&format!("{name}_closing_none"), &mut checks, &format!("holders={holders}"));
     p99
 }
 

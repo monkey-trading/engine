@@ -86,6 +86,8 @@ pub(crate) enum Noted {
     Reband,
     Keyed,
     WeekendSkip,
+    WeekendRevaluation,
+    CarriedOver,
 }
 
 /// The counts the oracle reads; nothing without it.
@@ -103,6 +105,15 @@ impl Coverage {
 }
 
 impl CloseoutIndex {
+    /// The positions each command may key: `KEYING_ALLOWANCE`, or under test the oracle's.
+    fn keying_allowance(&self) -> usize {
+        #[cfg(feature = "closeout-oracle")]
+        if let Some(allowance) = self.oracle.keying_allowance {
+            return allowance;
+        }
+        KEYING_ALLOWANCE
+    }
+
     /// Forgets `account`, removing it from every set it is in; any queue entry is dropped when taken.
     fn forget(&mut self, account: AccountId) {
         match self.accounts.remove(&account) {
@@ -155,6 +166,9 @@ impl CloseoutIndex {
     /// Records whether the unkeyed `account` must be closed out.
     fn set_below(&mut self, account: AccountId, below: bool) {
         let Some(Standing::Unkeyed { markets, below: flag }) = self.accounts.get_mut(&account) else { return };
+        if *flag == below {
+            return;
+        }
         *flag = below;
         for id in markets.iter() {
             let keys = self.markets.get_mut(id).expect("an entered market is indexed");
@@ -206,11 +220,16 @@ impl CloseoutIndex {
             Some(Standing::Keyed(key)) => key.positions.iter().any(|pos| closing.contains(&pos.market)),
             _ => false,
         };
+        let mut revalued = false;
         for (id, keys) in self.markets.iter().filter(|(id, _)| engine.markets.contains_key(id)) {
             let at_marks = engine.weekend_valuation(*id);
-            if keys.seen != Some(at_marks) {
+            if keys.seen != Some(at_marks) && keys.keyed_count() > 0 {
+                revalued = true;
                 candidates.extend(keys.crossed(at_marks).into_iter().filter(holds_closing));
             }
+        }
+        if revalued {
+            self.coverage.note(Noted::WeekendRevaluation);
         }
         if keyed > candidates.len() {
             self.coverage.note(Noted::WeekendSkip);
@@ -241,9 +260,12 @@ impl Engine {
 
     /// The accounts a weekend gap's close-out over `closing` must call `weekend_close_out` on, in
     /// account order: every holder of a market in `closing` the index cannot show meeting the
-    /// requirement with its weekend margins at its marks. Before parameters, when nothing is held,
-    /// every holder.
+    /// requirement with its weekend margins at its marks. Before parameters, every holder; with
+    /// nothing closing, none.
     pub(crate) fn weekend_closeout_accounts(&mut self, closing: &BTreeSet<MarketId>) -> Vec<AccountId> {
+        if closing.is_empty() {
+            return Vec::new();
+        }
         #[cfg(feature = "closeout-oracle")]
         let full_check = self.closeout_index.oracle.full_check;
         #[cfg(not(feature = "closeout-oracle"))]

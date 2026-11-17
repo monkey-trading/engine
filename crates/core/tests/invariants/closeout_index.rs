@@ -9,8 +9,10 @@
 //! weekend gap of oil, silver, US Tech 100 and Japan 225, whose close-out the index also serves.
 //! Every command's events are equal across the three, and so are their state roots at each restore
 //! and at the end. The generated sessions must close accounts out on a price and at the gap, and
-//! the index must cross ranges on prices and FX indexes, move headrooms, key accounts and skip both
-//! check sites' calls, so the comparison cannot pass vacuously.
+//! the index must cross ranges on prices and FX indexes, move headrooms, key accounts, carry its
+//! keying queue from one command to the next (the indexed engine keys four positions a command),
+//! value a gap's holders at marks other than its keys' valuation, and skip both check sites' calls,
+//! so the comparison cannot pass vacuously.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -19,6 +21,7 @@ use engine_core::access::{AccessDeposit, AccessPolicy};
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest, Sequenced, WithdrawalRequest};
 use engine_core::eip712;
 use engine_core::event::Event;
+use engine_core::price::SourceQuote;
 use engine_core::types::{MarketId, Side};
 use engine_core::{CloseoutCoverage, CloseoutOracle, Engine, Fixed};
 use proptest::collection::vec;
@@ -28,7 +31,7 @@ use proptest::test_runner::{Config, RngSeed, TestRunner};
 use crate::common::close_spread::{attest, evidence, fund, source_key};
 use crate::common::launch_book::{benchmark_batch, price_command, production_harness};
 use crate::common::session_keys::{HOUR_MS, trade_cmd};
-use crate::common::{Client, Harness};
+use crate::common::{BTC, Client, Harness};
 
 const SEED: u64 = 0x5eed_0912;
 const CASES: u32 = 12;
@@ -152,7 +155,9 @@ fn the_index_closes_out_as_the_full_check_does() {
         headroom_moves,
         keys,
         weekend_skips,
+        weekend_revaluations,
         weekend_closeouts,
+        carried_over,
         skipped_calls,
         ..
     } = coverage;
@@ -162,7 +167,9 @@ fn the_index_closes_out_as_the_full_check_does() {
         ("headroom moves", headroom_moves),
         ("keys", keys),
         ("weekend skips", weekend_skips),
+        ("weekend valuations at marks off the keys'", weekend_revaluations),
         ("weekend close-outs", weekend_closeouts),
+        ("queues carried to a later command", carried_over),
         ("skipped calls", skipped_calls),
     ] {
         assert!(count > 0, "no {name}: {coverage:?}");
@@ -219,7 +226,12 @@ impl Run {
                 run.h.cmd(cmd);
             }
         }
-        run.h.engine.set_closeout_oracle(CloseoutOracle { verify: true, ..CloseoutOracle::default() });
+        // A few positions a command, so the queue carries from command to command under the oracle.
+        run.h.engine.set_closeout_oracle(CloseoutOracle {
+            verify: true,
+            keying_allowance: Some(4),
+            ..Default::default()
+        });
         run.full = copy(&run.h.engine);
         run.full.set_closeout_oracle(CloseoutOracle { full_check: true, ..CloseoutOracle::default() });
         run.restored = copy(&run.h.engine);
@@ -298,7 +310,8 @@ impl Run {
 
     /// Rolls over day by day, with the day's rates, to the day oil's weekend gap starts; opens each
     /// oil account's position, `oil`'s cash times its leverage in tenths, before the gap's margin
-    /// applies; and rolls over at the gap's start, where its close-out runs.
+    /// applies; publishes the gap's day's rates; quotes BTC-USD so that one of its venues ages out at
+    /// the gap's start, where its index is then other than its mark; and runs the gap's close-out.
     fn cross_weekend(&mut self, oil: &[(i64, i64)]) {
         let window = self.h.engine.markets()[&WTI].weekend_window().expect("oil keeps a weekend gap");
         while self.h.engine.next_rollover().is_some_and(|due| due < window.from) {
@@ -311,9 +324,25 @@ impl Run {
             let cmd = self.order(ACCOUNTS + slot, market, true, cash * tenths / 10, None);
             self.apply(cmd);
         }
-        while self.h.engine.next_rollover().is_some_and(|due| due <= window.close) {
+        while self.h.engine.next_rollover().is_some_and(|due| due < window.close) {
             self.roll_over();
         }
+        self.h.advance_to((window.close - 1_000).max(self.h.ts));
+        self.publish_benchmarks();
+        self.h.advance_to((window.close - 400).max(self.h.ts));
+        let mid = self.mids[&BTC];
+        let quote = |source: &str, bps: i64, ts| SourceQuote {
+            source: source.into(),
+            mid: mid.mul_bps(bps),
+            ts,
+            contract: None,
+        };
+        let quotes = vec![
+            quote("venue0", 9_995, self.h.ts),
+            quote("venue1", 10_015, self.h.ts),
+            quote("venue2", 10_000, self.h.ts - 700),
+        ];
+        self.apply(Command::Prices { market: BTC, quotes });
         self.h.advance_to(window.close.max(self.h.ts));
         self.apply(Command::Tick);
         self.quote_all();
@@ -434,5 +463,7 @@ fn add(total: &mut CloseoutCoverage, seen: CloseoutCoverage) {
     total.keys += seen.keys;
     total.weekend_skips += seen.weekend_skips;
     total.weekend_closeouts += seen.weekend_closeouts;
+    total.weekend_revaluations += seen.weekend_revaluations;
+    total.carried_over += seen.carried_over;
     total.skipped_calls += seen.skipped_calls;
 }

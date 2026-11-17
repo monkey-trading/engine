@@ -222,11 +222,13 @@ this crate and reproduce the signed state roots exactly.
   `ClearNotice` removes, whether or not votes govern, and that the state holds with the sequenced time it was
   set, so every node serves the same notice and a replay rebuilds it
 - A close-out check values only the accounts a move could bring to their level, under every protocol
-  version (`src/closeout_index/`): each account with positions is keyed by a price range per position,
-  and an FX range where its market converts, inside which the check's own valuation at the ranges'
-  corners shows it at or above its level, and each check site, a weekend gap's close-out included, calls
-  `close_out` only on the accounts its refresh finds below, in account order, as the full check does.
-  The index is derived, built at recovery and inside an activation, and moves no root or event
+  version (`src/closeout_index/`): each account with positions is keyed, where it can be, by a price
+  range per position, and an FX range where its market converts, inside which the check's own valuation
+  at the ranges' corners shows it at or above its level; each check site calls `close_out` only on the
+  accounts its refresh finds below, in account order, as the full check does, and a weekend gap's
+  close-out calls `weekend_close_out` only on the holders the keys do not show meeting the requirement
+  with every weekend margin. The index is derived, built at recovery and inside an activation, and moves
+  no root or event
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -524,6 +526,10 @@ this crate and reproduce the signed state roots exactly.
   grids
 - `tests/portfolio_margin_benchmark.rs` — the portfolio requirement's cost over 100k holders of
   BTC-USD against the per-position requirement's (ignored; "Portfolio requirement cost" below)
+- `tests/launch_book_memory.rs` — the close-out index's live bytes on the launch book, counted by the
+  binary's own allocator (ignored; "The launch book" below)
+- `tests/invariants/closeout_halt.rs` — an account a price takes past `Fixed`'s range halts the index's
+  check at the full check's command
 - `tests/params_notice.rs` — the V49 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
@@ -1745,8 +1751,10 @@ Run `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignore
 extra markets, taken away. `launch_book_price_walk` walks BTC-USD a thousand prices, about a basis point
 a price with a jump of 0.2% to 1% one price in fifty, on the book with its resting orders away from the
 price (`Mix::in_band` of zero) and no account, 1% and 10% of accounts a 1% move from their close-out
-level (`Mix::near_level`), each with the close-out index, held to the 10 ms bar, and with today's full
-check in its place, on books of their own; it prints the accounts each walk closes out.
+level (`Mix::near_level`), each on a book of its own with the close-out index; it prints the accounts
+each walk closes out, and holds the prices that close out none, the check's work alone, to the 10 ms
+bar. CI runs it beside `launch_book_latency`. With `LAUNCH_BOOK_FULL_CHECK` set, each walk runs again
+with today's full check in the index's place.
 `launch_book_memory` counts the bytes the close-out index keeps live on the book, beside the engine's
 and its other derived indexes', with an allocator of its own. `engine-node`'s `stats::launch_bench` runs the stats scans and the worker's
 copy on the same book. `tests/launch_book.rs` holds the builder to its mix.

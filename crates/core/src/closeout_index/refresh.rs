@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use crate::closeout_index::markets::MarketRules;
 use crate::closeout_index::valuation::{Assessment, Valuations};
-use crate::closeout_index::{CloseoutIndex, KEYING_ALLOWANCE, Noted, Standing};
+use crate::closeout_index::{CloseoutIndex, Noted, Standing};
 use crate::engine::Engine;
 use crate::fixed::Rounding;
 use crate::types::{AccountId, MarketId};
@@ -55,7 +55,7 @@ impl CloseoutIndex {
     /// accounts those unkeyed or touched, and keys queued accounts within the command's allowance.
     pub(super) fn refresh(&mut self, engine: &Engine, level_bps: i64, changed: BTreeSet<AccountId>) {
         if self.allowance_seq != engine.last_seq {
-            (self.allowance, self.allowance_seq) = (KEYING_ALLOWANCE, engine.last_seq);
+            (self.allowance, self.allowance_seq) = (self.keying_allowance(), engine.last_seq);
         }
         let charge = engine.charge_rounding();
         let mut marked = BTreeSet::new();
@@ -157,8 +157,11 @@ impl CloseoutIndex {
                 return;
             }
             self.coverage.note(Noted::HeadroomMove);
+            let weak = key.weekend_weak();
             if key.rebalance(acct.balance, self.level_bps, charge).is_some() {
-                self.place_weak(account);
+                if key.weekend_weak() != weak {
+                    self.place_weak(account);
+                }
                 return;
             }
         }
@@ -208,15 +211,20 @@ impl CloseoutIndex {
 
     /// Keys queued accounts while the command's allowance lasts, each charged a unit a position it
     /// holds, or one when its entry is dropped: it left the index, or is no longer unkeyed at or above
-    /// its level.
+    /// its level. A command keys no more positions than the allowance, but for an account holding
+    /// more than the whole of it, which is keyed alone as the command's first.
     fn key_queued(&mut self, engine: &Engine, valuations: &Valuations) {
-        while self.allowance > 0
-            && let Some(account) = self.queue.pop_front()
-        {
-            self.queued.remove(&account);
+        while let Some(&account) = self.queue.front() {
             let eligible = matches!(self.accounts.get(&account), Some(Standing::Unkeyed { below: false, .. }));
             let acct = engine.accounts.get(&account).filter(|_| eligible);
-            self.allowance = self.allowance.saturating_sub(acct.map_or(1, |acct| acct.positions.len().max(1)));
+            let cost = acct.map_or(1, |acct| acct.positions.len().max(1));
+            if cost > self.allowance && self.allowance < self.keying_allowance() {
+                self.coverage.note(Noted::CarriedOver);
+                break;
+            }
+            self.queue.pop_front();
+            self.queued.remove(&account);
+            self.allowance = self.allowance.saturating_sub(cost);
             if let Some(key) = acct.and_then(|acct| engine.key_account(acct, valuations, self.level_bps)) {
                 self.forget(account);
                 self.enter_keyed(account, key);

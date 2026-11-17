@@ -22,6 +22,7 @@
 mod access;
 mod charges;
 mod checks;
+mod closeout_halt;
 mod closeout_index;
 mod closing_charges;
 #[path = "../common/mod.rs"]

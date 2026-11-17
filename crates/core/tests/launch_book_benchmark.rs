@@ -61,22 +61,25 @@ fn launch_book_latency() {
 }
 
 /// A walk of BTC-USD (`cases::price_walk`) on the book with resting orders away from the price, and with
-/// no account, 1% and 10% of accounts a move of 1% from their close-out level, each with the close-out
-/// index and with today's full check in its place (#912), each on a book of its own; the index's walk is
-/// held to #904's price-to-stamp bar.
+/// no account, 1% and 10% of accounts a move of 1% from their close-out level, each on a book of its own
+/// with the close-out index (#912), whose prices that close out no account, the check's work alone, are
+/// held to #904's price-to-stamp bar. With `LAUNCH_BOOK_FULL_CHECK` set, each walk runs again on another
+/// book with today's full check in the index's place, for comparison.
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn launch_book_price_walk() {
     let accounts = std::env::var("LAUNCH_BOOK_ACCOUNTS").ok().map_or(ACCOUNTS, |n| n.parse().expect("a count"));
+    let compare = std::env::var_os("LAUNCH_BOOK_FULL_CHECK").is_some();
     for near_level in [0, 1, 10] {
-        for (check, full_check) in [("index", false), ("full_check", true)] {
+        for full_check in [false, true].into_iter().filter(|full| !full || compare) {
             let mix = Mix { in_band: 0, near_level, ..Mix::proposal(accounts) };
             let mut book = build(&mix, NamedCounts { adders: 1, openers: 0, closeouts: 0 });
             book.h.engine.set_closeout_oracle(CloseoutOracle { full_check, ..CloseoutOracle::default() });
-            let p99 =
-                cases::price_walk(&mut book, &format!("walk_btc_usd_near_level_{near_level}_{check}"), WALK_PRICES);
+            let check = if full_check { "full_check" } else { "index" };
+            let name = format!("walk_btc_usd_near_level_{near_level}_{check}");
+            let p99 = cases::price_walk(&mut book, &name, WALK_PRICES);
             if !full_check {
-                report::within(&format!("walk_btc_usd_near_level_{near_level}_p99"), p99, PRICE_TO_STAMP_P99_US);
+                report::within(&format!("{name}_closing_none_p99"), p99, PRICE_TO_STAMP_P99_US);
             }
         }
     }

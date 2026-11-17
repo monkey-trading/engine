@@ -363,6 +363,10 @@ jobs:
           cache-on-failure: true
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # A build of engine-core's tests turns its test-only `closeout-oracle` feature on across the
+      # workspace, so the library is linted again as the node's release build compiles it, without.
+      - name: Clippy engine-core without its test-only feature
+        run: cargo clippy -p engine-core --lib --locked -- -D warnings
 
   test:
     needs: changes
@@ -842,6 +846,8 @@ jobs:
         run: cargo test -p engine-core --test mass_events_benchmark --locked -- --ignored --nocapture --test-threads=1 mass_
       - name: Check what a price waits behind a mass close-out at 100k accounts
         run: cargo test -p engine-node --lib --locked sequencer::wait_bench::mass -- --ignored --nocapture --test-threads=1
+      - name: Check a walk of BTC-USD on launch-scale books with accounts near their close-out level
+        run: cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1 launch_book_price_walk
       - name: Check the stats record's cost on a launch-scale book at 100k accounts
         run: cargo test -p engine-node --lib --locked stats::launch_bench -- --ignored --nocapture --test-threads=1
 

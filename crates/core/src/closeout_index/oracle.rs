@@ -22,6 +22,9 @@ pub struct CloseoutOracle {
     /// each check site's accounts against the full check's, and each close-out against changing
     /// another account or a valuation.
     pub verify: bool,
+    /// Positions each command may key in place of the index's own allowance, so a test reaches the
+    /// queue carried from one command to the next.
+    pub keying_allowance: Option<usize>,
 }
 
 /// What the index did, so a test cannot pass without reaching each part.
@@ -35,6 +38,10 @@ pub struct CloseoutCoverage {
     pub rebands: u64,
     pub keys: u64,
     pub weekend_skips: u64,
+    /// Markets a weekend gap's close-out valued at marks other than the valuation their keys hold.
+    pub weekend_revaluations: u64,
+    /// Refreshes that left accounts queued for a later command.
+    pub carried_over: u64,
     /// Accounts a weekend gap's close-out closed out, under `verify`.
     pub weekend_closeouts: u64,
     /// Calls a check site left out, under `verify`.
@@ -58,6 +65,8 @@ impl CloseoutCoverage {
             Noted::Reband => &mut self.rebands,
             Noted::Keyed => &mut self.keys,
             Noted::WeekendSkip => &mut self.weekend_skips,
+            Noted::WeekendRevaluation => &mut self.weekend_revaluations,
+            Noted::CarriedOver => &mut self.carried_over,
         };
         *count += 1;
     }
@@ -199,7 +208,10 @@ impl Engine {
         let queued: BTreeSet<AccountId> = index.queue.iter().copied().collect();
         assert!(queued.len() == index.queue.len() && queued == index.queued, "the queue holds each account once");
         for (id, keys) in &index.markets {
-            let keyed = |account: &AccountId| matches!(index.accounts.get(account), Some(Standing::Keyed(key)) if key.positions.iter().any(|p| p.market == *id));
+            let keyed = |account: &AccountId| match index.accounts.get(account) {
+                Some(Standing::Keyed(key)) => key.positions.iter().any(|pos| pos.market == *id),
+                _ => false,
+            };
             assert!(keys.keyed().all(|account| keyed(&account)), "market {id} holds a stale key");
             assert!(
                 keys.unkeyed

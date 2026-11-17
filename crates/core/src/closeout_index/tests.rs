@@ -1,19 +1,20 @@
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngSeed, TestRunner};
 use serde_json::{Value, json};
 
 use super::key::Key;
-use super::valuation::{Valuation, Valuations, position_value};
+use super::valuation::{Assessment, LIMIT, Valuation, Valuations, position_value};
+use super::{CloseoutIndex, KEYING_ALLOWANCE, Standing};
 use crate::Fixed;
 use crate::account::{Account, Position};
 use crate::engine::{Engine, MarketState};
 use crate::fixed::Rounding;
 use crate::market::{MarketSpec, QuoteCurrency, floored_margin};
 use crate::protocol::ProtocolVersion;
-use crate::types::MarketId;
+use crate::types::{AccountId, MarketId};
 
 const BTC: MarketId = 1;
 const WTI: MarketId = 2;
@@ -169,7 +170,97 @@ fn a_moved_balance_level_or_band_gives_the_headroom_a_fresh_bound_gives() {
     });
 }
 
+#[test]
+fn a_command_keys_no_more_than_its_allowance_across_its_refreshes() {
+    // A thousand accounts of three positions each, every one far above its level, at the marks.
+    let mut engine = Engine::new();
+    engine.protocol_version = ProtocolVersion::LATEST;
+    for (id, price, _) in MARKETS.iter().take(3) {
+        let spec: MarketSpec = serde_json::from_value(listing(*id, "M", None, 0)).unwrap();
+        let mut market = MarketState::new(spec);
+        market.mark = Some(Fixed::from_int(*price));
+        engine.markets.insert(*id, market);
+    }
+    let accounts: Vec<AccountId> = (0..1_000u32).map(account).collect();
+    let hold = |engine: &mut Engine, entry_bp: i64| {
+        for id in &accounts {
+            let mut acct = Account { balance: Fixed::from_int(1_000_000), ..Account::default() };
+            for (market, price, _) in MARKETS.iter().take(3) {
+                let entry = Fixed::from_int(*price).mul_bps(10_000 + entry_bp);
+                acct.positions.insert(*market, Position { qty: Fixed::ONE, entry });
+            }
+            engine.accounts.insert(*id, acct);
+        }
+    };
+    hold(&mut engine, 0);
+    let mut index = CloseoutIndex::default();
+    index.build(&engine, 5_000);
+    let keyed = |index: &CloseoutIndex| index.accounts.values().filter(|s| matches!(s, Standing::Keyed(_))).count();
+    assert_eq!(keyed(&index), accounts.len(), "the build keys every account, with no allowance");
+    // New entries unkey every account; two refreshes of one command key one allowance between them.
+    engine.accounts.take_watched();
+    hold(&mut engine, 1);
+    engine.last_seq = Some(7);
+    let changed = engine.accounts.take_watched();
+    index.refresh(&engine, 5_000, changed);
+    index.refresh(&engine, 5_000, BTreeSet::new());
+    assert_eq!(keyed(&index) * 3, KEYING_ALLOWANCE - KEYING_ALLOWANCE % 3, "one command keys one allowance");
+    assert_eq!(index.queue.len(), index.queued.len());
+    // The next commands key the rest, and leave the queue empty.
+    for seq in 8..10 {
+        engine.last_seq = Some(seq);
+        index.refresh(&engine, 5_000, BTreeSet::new());
+    }
+    assert_eq!(keyed(&index), accounts.len());
+    assert!(index.queue.is_empty() && index.queued.is_empty());
+}
+
+#[test]
+fn no_key_is_made_or_kept_where_a_point_inside_could_overflow_the_check() {
+    let mut runner = TestRunner::new(Config { cases: 64, rng_seed: RngSeed::Fixed(SEED), ..Config::default() });
+    let (keyed, overflowed) = (Cell::new(0u32), Cell::new(0u32));
+    runner
+        .run(&book(), |(engine, acct, valuations, level_bps)| {
+            let charge = engine.charge_rounding();
+            let Some(mut key) = engine.key_account(&acct, &valuations, level_bps) else { return Ok(()) };
+            keyed.set(keyed.get() + 1);
+            // A balance whose sum with the key's PnL could leave a quarter of `Fixed`'s range.
+            let near_limit = Fixed::from_raw(LIMIT.raw() - 1);
+            prop_assert!(key.rebalance(near_limit, level_bps, charge).is_none(), "kept a key that could overflow");
+            let rich = Account { balance: near_limit, ..acct.clone() };
+            prop_assert!(
+                engine.key_account(&rich, &valuations, level_bps).is_none(),
+                "keyed an account that could overflow"
+            );
+            // And an assessment whose equity fold overflows, in market order as the check folds it,
+            // names the account for `close_out`.
+            let overflowing = Account { balance: Fixed::from_raw(i128::MAX - 1), ..acct };
+            let folded = overflowing.positions.iter().try_fold(overflowing.balance.raw(), |equity, (id, pos)| {
+                let spec = &engine.markets[id].spec;
+                let (price, fx) = (valuations[id].price.unwrap(), valuations[id].fx);
+                let (pnl, _) =
+                    position_value(engine.protocol_version, charge, spec.quote_currency, pos, price, fx).unwrap();
+                equity.checked_add(pnl.raw())
+            });
+            if folded.is_none() {
+                overflowed.set(overflowed.get() + 1);
+                prop_assert_eq!(engine.assess(&overflowing, &valuations, level_bps), Assessment::Below);
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert!(keyed.get() >= 16, "only {} cases keyed their account", keyed.get());
+    assert!(overflowed.get() >= 4, "only {} cases overflowed their equity", overflowed.get());
+}
+
 // ── Helpers ──
+
+/// The `n`th account.
+fn account(n: u32) -> AccountId {
+    let mut bytes = [0x5a; 20];
+    bytes[16..].copy_from_slice(&n.to_be_bytes());
+    AccountId(bytes)
+}
 
 /// Runs `test` over `strategy` from the fixed seed.
 fn run<S: Strategy>(strategy: &S, test: impl Fn(S::Value) -> Result<(), TestCaseError>) {
