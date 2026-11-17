@@ -103,6 +103,47 @@ impl crate::engine::Engine {
         }
     }
 
+    /// How many changed keys the engine holds for the next root. Grows with every applied command
+    /// until a root is computed or the record is discarded.
+    #[must_use]
+    pub fn changed_key_count(&self) -> usize {
+        self.accounts.touched_len()
+            + self.markets.touched_len()
+            + self.request_nonces.touched_len()
+            + self.credited_refs.touched_len()
+            + self.staking_refs.touched_len()
+            + self.period_results.touched_len()
+            + self.entitlements.touched_len()
+            + self.emission_ledgers.touched_len()
+            + self.staked.touched_len()
+            + self.distributions.touched_len()
+            + self.session_keys.touched_len()
+            + self.toxicity_scores.touched_len()
+            + self.markout_spreads.touched_len()
+            + self.volumes.touched_len()
+            + self.deposits.touched_len()
+            + self.deposit_transactions.touched_len()
+            + self.legacy_deposits.touched_len()
+            + self.withdrawal_queue.touched_len()
+            + self.withdrawal_approvals.touched_len()
+            + self.corporate_actions.touched_len()
+            + self.corporate_refs.touched_len()
+            + self.eligibility.touched_len()
+            + self.held_deposits.touched_len()
+            + self.pending_deposits.touched_len()
+            + self.changed.markouts.len()
+            + self.changed.positions.len()
+            + self.changed.orders.len()
+    }
+
+    /// Drops the record of what changed since the last root, for an engine that never computes a
+    /// root, such as a read-only copy: with no root to drain it, the record would grow with every
+    /// applied command. The next root then hashes every leaf, as for an engine rebuilt from its encoding.
+    pub fn discard_changed_keys(&mut self) {
+        self.tree = None;
+        self.clear_touched();
+    }
+
     /// The key of every entry, for a root with no tree to update.
     pub(super) fn every_key(&self) -> Touched {
         let accounts = || self.accounts.iter();

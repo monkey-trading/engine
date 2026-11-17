@@ -177,6 +177,9 @@ fn run(state: Vec<u8>, work: &Receiver<Job>, reply: &std::sync::mpsc::Sender<Don
                     let _ = reply.send(Done::Failed(format!("applying seq {}: {error}", sequenced.seq)));
                     return;
                 }
+                // The copy never computes a root, the only thing that drains the engine's record of
+                // changed keys, so it is dropped here or it grows for the life of the process.
+                engine.discard_changed_keys();
                 applied.fetch_add(1, Ordering::Relaxed);
             }
             Job::Read(read) => read(&engine),

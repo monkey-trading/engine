@@ -75,3 +75,37 @@ fn a_worker_given_a_command_out_of_sequence_stops_without_scanning() {
     let stopped = worker.wait().expect_err("the worker refuses the gap");
     assert!(stopped.contains("applying seq"), "{stopped}");
 }
+
+/// The worker's copy never computes a root, so nothing but the worker drains its record of changed keys:
+/// however many commands it applies the record stays empty, while the sequencer's own engine, which does
+/// compute roots, keeps recording what it changes.
+#[test]
+fn the_workers_copy_does_not_accumulate_changed_keys() {
+    let mut rig = Rig::new();
+    let worker = Background::start(&rig.engine).unwrap();
+    for step in 1..=200_i64 {
+        let ts = T0 + step * 1_000;
+        let seq = rig.engine.last_seq().unwrap() + 1;
+        let cmd = if step % 2 == 0 {
+            let quotes = ["a", "b"]
+                .map(|source| engine_core::price::SourceQuote {
+                    source: source.into(),
+                    mid: Fixed::from_int(100_000 + step),
+                    ts,
+                    contract: None,
+                })
+                .to_vec();
+            Command::Prices { market: BTC, quotes }
+        } else {
+            Command::Tick
+        };
+        let sequenced = Sequenced { seq, ts, cmd };
+        rig.engine.apply(&sequenced).unwrap();
+        assert!(worker.reader().send(Job::Apply(Box::new(sequenced))));
+    }
+    assert!(rig.engine.changed_key_count() > 0, "the sequencer's engine records until it computes a root");
+    let (sent, received) = std::sync::mpsc::channel();
+    let read = Box::new(move |engine: &Engine| sent.send(engine.changed_key_count()).unwrap());
+    assert!(worker.reader().read(read).is_ok());
+    assert_eq!(received.recv().unwrap(), 0);
+}
