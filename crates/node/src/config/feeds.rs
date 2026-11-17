@@ -74,7 +74,9 @@ pub struct VenuesSection {
     /// gap alerted.
     #[serde(with = "humantime_serde")]
     pub timeout: Duration,
-    /// The first reconnect delay; it doubles after each attempt that sequences no fresh quote.
+    /// The wait after an attempt that sequences no fresh quote of its own; it doubles after each
+    /// further one in a row. A connection that did reconnects at once when it drops, though never
+    /// within this of its own attempt.
     #[serde(with = "humantime_serde")]
     pub reconnect_min: Duration,
     #[serde(with = "humantime_serde")]

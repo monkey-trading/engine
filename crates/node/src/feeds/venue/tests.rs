@@ -211,10 +211,14 @@ fn a_connection_that_quoted_retries_at_once_and_one_that_did_not_backs_off() {
     let timing =
         Timing { reconnect_min: Duration::from_millis(500), reconnect_max: Duration::from_secs(30), ..fast(WAIT) };
     let grown = Duration::from_secs(8);
-    // A routine drop resets the backoff, whatever it had grown to.
-    assert_eq!(next_attempt(grown, true, &timing), (timing.reconnect_min, Duration::from_secs(1)));
+    let lived = Duration::from_secs(60);
+    // A routine drop reconnects at once and resets the backoff, whatever it had grown to.
+    assert_eq!(next_attempt(grown, true, lived, &timing), (Duration::ZERO, timing.reconnect_min));
+    // A healthy connection that lived under `reconnect_min` waits out the rest of it.
+    let brief = Duration::from_millis(200);
+    assert_eq!(next_attempt(grown, true, brief, &timing), (Duration::from_millis(300), timing.reconnect_min));
     // A failed attempt waits the current backoff and doubles it for the next.
-    assert_eq!(next_attempt(grown, false, &timing), (grown, Duration::from_secs(16)));
+    assert_eq!(next_attempt(grown, false, lived, &timing), (grown, Duration::from_secs(16)));
 }
 
 /// Every venue alert keys on its connection, venue, and subject alone, so its repeats share one

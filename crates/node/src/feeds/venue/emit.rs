@@ -121,6 +121,7 @@ impl VenueFeed {
                         let not_after = self.take_not_after(symbol, quote.ts);
                         let cmd = Command::Prices { market, quotes: vec![quote] };
                         self.tx.send(Request::Quote { cmd, not_after }).await.map_err(|_| anyhow!("sequencer gone"))?;
+                        self.sent_own = true;
                         let spent_to = spent.get(symbol).copied().unwrap_or_else(Instant::now).max(Instant::now());
                         spent.insert(symbol.clone(), spent_to + interval);
                     } else if let Some(wake) = wake {

@@ -150,8 +150,11 @@ struct VenueFeed {
     tx: mpsc::Sender<Request>,
     /// Whether the venue is in an alerted outage that no fresh quote has ended yet.
     down: bool,
-    /// Whether the current connection has sequenced a fresh quote.
+    /// Whether the current connection has sequenced a fresh quote: one the engine holds from this
+    /// venue, which may be another connection's.
     quoted: bool,
+    /// Whether the current connection has sent a quote of its own to the sequencer.
+    sent_own: bool,
     /// When each symbol last had a fresh quote sequenced, counted from the task's start, the
     /// venue's last recovery, or the last time the engine took no quote for it, and kept across
     /// routine reconnects.
@@ -224,6 +227,7 @@ impl VenueFeed {
             tx,
             down: false,
             quoted: false,
+            sent_own: false,
             last_quote,
             silent: BTreeSet::new(),
             stale: StaleRuns::default(),
@@ -246,15 +250,17 @@ impl VenueFeed {
         }
     }
 
-    /// Connects and relays until the connection fails, then retries after a backoff that doubles
-    /// while attempts sequence no fresh quote and resets once one does.
+    /// Connects and relays until the connection fails, then retries: at once after a connection that
+    /// sequenced fresh quotes of its own, though never within `timing.reconnect_min` of its attempt,
+    /// else after a backoff that doubles while attempts sequence none (see `setup::next_attempt`).
     /// Error cases:
     /// - the sequencer has gone away
     async fn run(mut self) -> anyhow::Result<()> {
         let mut backoff = self.timing.reconnect_min;
         self.publish_status();
         loop {
-            self.quoted = false;
+            (self.quoted, self.sent_own) = (false, false);
+            let attempted = Instant::now();
             let Err(error) = self.relay().await;
             self.report.up = false;
             self.settle().await;
@@ -262,7 +268,9 @@ impl VenueFeed {
                 // The supervisor logs what the task returns, so it is redacted as a log line is.
                 return Err(anyhow!(self.redact(&format!("{error:#}"))).context("sequencer gone"));
             }
-            let (wait, next) = next_attempt(backoff, self.quoted, &self.timing);
+            // Healthy only on its own quotes: the engine's fresh quote may be a sibling's.
+            let healthy = self.quoted && self.sent_own;
+            let (wait, next) = next_attempt(backoff, healthy, attempted.elapsed(), &self.timing);
             self.dropped(&error, wait);
             self.publish_status();
             sleep(wait).await;

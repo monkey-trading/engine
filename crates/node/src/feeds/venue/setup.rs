@@ -49,12 +49,18 @@ pub fn tls_config() -> anyhow::Result<Arc<ClientConfig>> {
     Ok(Arc::new(config))
 }
 
-/// The wait before the next connection attempt, and the backoff after that. A connection that
-/// sequenced a fresh quote retries after `reconnect_min`; otherwise the wait is `backoff`, and the
-/// next one doubles it up to `reconnect_max`.
-pub(super) fn next_attempt(backoff: Duration, quoted: bool, timing: &Timing) -> (Duration, Duration) {
-    let wait = if quoted { timing.reconnect_min } else { backoff };
-    (wait, next_backoff(wait, timing.reconnect_max))
+/// The wait before the next connection attempt, and the backoff after that, for a connection
+/// attempted `lived` ago. A `healthy` connection, one that sequenced fresh quotes of its own, ran
+/// until it dropped, so it reconnects as soon as `reconnect_min` has passed since it was attempted,
+/// at once after any but a brief one, and the backoff starts again at `reconnect_min`. One that
+/// sequenced none failed: it waits `backoff`, and the next failure doubles it up to
+/// `reconnect_max`. So the backoff applies from the second failure in a row, and attempts never
+/// start closer than `reconnect_min` apart, however a venue refuses or drops them.
+pub(super) fn next_attempt(backoff: Duration, healthy: bool, lived: Duration, timing: &Timing) -> (Duration, Duration) {
+    if healthy {
+        return (timing.reconnect_min.saturating_sub(lived), timing.reconnect_min);
+    }
+    (backoff, next_backoff(backoff, timing.reconnect_max))
 }
 
 /// The delay after `current`: double it, capped at `max`.

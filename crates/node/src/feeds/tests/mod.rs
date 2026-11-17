@@ -15,6 +15,7 @@ mod link;
 mod loss_trigger;
 mod mock;
 mod quiet;
+mod reconnect;
 mod redate;
 mod redundant;
 mod rwa;

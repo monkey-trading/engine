@@ -151,7 +151,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   bound
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
 - Live crypto prices from Coinbase and Kraken over WebSocket: one supervised task per
-  venue connection, quotes stamped with the venue's own time, and reconnects with backoff
+  venue connection, quotes stamped with the venue's own time, and reconnects at once after a
+  connection that quoted drops, with backoff while attempts fail
 - Prices only from sources reached over TLS that ends in the enclave: every venue endpoint is
   `wss://` on the venue's own domain, so the host can delay a source's quotes but not alter them
 - A bound on a price's age under a hostile host, on the monotonic clock: every venue connection
@@ -1523,6 +1524,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/tests/redundant.rs` — BTC-USD priced throughout while one of Coinbase's two
   connections, or one of Kraken's, serves a stale replay (for Coinbase also from the stand-in),
   stalls, or drops
+- `src/feeds/tests/reconnect.rs` — a connection that quoted reconnecting at once when it drops, and
+  a failure after that waiting `reconnect_min` before the next attempt
 - `src/feeds/tests/redate.rs` — a quiet book re-dated by a venue's answers: its stamps and the
   delay bound each carries, a delayed answer, the 5 s limit, a venue that stops answering, a later book replacing it, refused messages,
   a changed book dropped while the stream is behind, and emptied books; and, through the real
