@@ -429,7 +429,10 @@ an index: load only the rule whose hint matches the current action.
   `takeWindow` marked slots to the next member in its order, in a new generation with no signer change
   (`skip`, `skipDueAt`), and promotes past an incumbent that still beats once no assignment of a turn of
   two or more members is latched within `heartbeatMisses + 1`; `LogHeads.headRelease(epoch)` names the
-  release of the epoch's newest head.
+  release of the epoch's newest head, and `releaseCandidate` the key holder whose assignment recorded it,
+  which a skip passes over and a promotion takes last, after the members drawn or skipped to that never
+  received the keys; only a member that held the keys under an assignment of the turn (`heldKeys`) is
+  never named again in it (`test/KeyHolder.t.sol`).
   `src/FaultProof.sol` (from #597) takes two `engine.log-head.v2` heads of one signer epoch, turn,
   position and release that name different links at one seq, checks both against that epoch's signer
   (`signerAtEpoch`) and the assignment's revision each names (`OperatorSchedule.revisionOf`, one read

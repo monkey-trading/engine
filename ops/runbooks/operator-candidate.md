@@ -457,7 +457,10 @@ misses it is promoted at once.
   and the node registers a new one for the new release.
 - **A promotion.** Once `heartbeatMisses` witnessed slots (5 by default) pass with no head, anyone's
   `promote()` names the next qualified member, and the vault moves its signer to that member's standby
-  key in a new signer epoch. The promoted node first takes what any member holds past its copy, from the
+  key in a new signer epoch. It prefers a member that held nothing of the turn, then one drawn or
+  skipped to that never received the keys, and takes the key holder last; a member that held the keys
+  under an assignment of the turn is never named again in it (`cast call $SCHEDULE
+  'heldKeys(uint64,address)' <turn> <candidate>`). The promoted node first takes what any member holds past its copy, from the
   member that confirmed the head, then every other, then the outgoing operator's archive, and starts
   sequencing from its copy at once if the copy holds the outgoing epoch's latest head and the vault's
   latest checkpoint the promotion fixed; `promotion_start_refused` pages a copy that cannot, and the next
@@ -474,8 +477,9 @@ misses it is promoted at once.
   witnessed slots (`cast call $SCHEDULE 'takeWindow()'`, 2 by default) pass after the latest of the
   boundary's slot, the assignment's and the last signer change's with no latch, anyone's `skip()` names
   the next listed member in the turn's order that has held no assignment of the turn, other than the
-  one whose release signed the newest head
-  (`cast call $LOG_HEADS 'headRelease(uint64)' <epoch>`), which holds the keys, in a new generation,
+  key holder: the candidate whose assignment recorded the release that signed the newest head
+  (`cast call $SCHEDULE 'releaseCandidate(bytes32)' $(cast call $LOG_HEADS 'headRelease(uint64)'
+  <epoch>)`), whatever release it has moved to since, in a new generation,
   with no signer change; an unwitnessed slot, as through a chain outage, restarts the window, a
   promotion's assignment is never skipped, and no skip is due while the guardian has retired the signer. The timelock sets the window within its deployment bounds while no turn
   names the operator (`setTakeWindow`); the deployment's minimum must exceed the switch budget plus one
@@ -506,7 +510,8 @@ misses it is promoted at once.
   promotion moves the turn on. If no assignment of a turn is latched once `heartbeatMisses + 1` witnessed slots pass after
   the later of the boundary's slot and the last signer change, in a set of two or more members,
   `promote()` passes even while the incumbent posts heads, which bind its own earlier turn, naming the
-  next qualified member, the incumbent's own standby key included; the incumbent stops by its own clock
+  next qualified member and the incumbent, which holds the keys, last: its own standby key only when no
+  other member qualifies; the incumbent stops by its own clock
   before that, as `promotionDueAt()` counts this path too. With no member qualifying, the promotion is
   refused after the incumbent has stopped: use the governance fallback (rotation off, then
   `installOperator`).

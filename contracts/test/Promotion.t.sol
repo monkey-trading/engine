@@ -172,9 +172,12 @@ contract PromotionTest is LivenessTest {
 
     function test_OrderExhaustionRevertsNoQualifiedPosition() public {
         _startTurn();
-        for (uint256 i = 0; i < 3; ++i) {
+        // Bob, carol and dave held nothing of the turn; alice, drawn, never took its keys, so she comes
+        // last. Each then held the keys under a promotion, and none qualifies again.
+        for (uint256 i = 0; i < 4; ++i) {
             _lapse();
             schedule.promote();
+            assertEq(schedule.turnOf(turn).candidate == alice, i == 3);
         }
         _lapse();
         address signer = vault.checkpointSigner();
@@ -191,11 +194,14 @@ contract PromotionTest is LivenessTest {
         (, uint16 position) = schedule.promote();
         assertEq(position, 1);
         assertEq(schedule.turnOf(turn).candidate, bob);
-        // Positions 2 and 3 name bob and alice again, who have held the turn: carol takes position 4.
+        // Position 2 names bob again, who held the keys under his promotion, and position 3 alice, who
+        // held the draw but never the keys: carol, at position 4, held nothing of the turn and comes first.
         _lapse();
         (, position) = schedule.promote();
         assertEq(position, 4);
         assertEq(schedule.turnOf(turn).candidate, carol);
+        assertTrue(schedule.heldKeys(turn, bob));
+        assertFalse(schedule.heldKeys(turn, alice));
     }
 
     function test_AMemberWithoutAPromotableKeyOrListingIsPassed() public {

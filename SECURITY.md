@@ -436,7 +436,12 @@ default) pass with no head of the signer epoch, anyone promotes the next qualifi
 order, and the vault moves its signer to that member's vouched standby key in a new signer epoch, with
 no timelock; detection takes 5 to 6 intervals after the last landed head (about 6 minutes at the
 defaults, at most 10 under the deployment bounds), each promotion adds the promoted member's start,
-and each member in the order that fails to start adds one more detection window; a turn's member takes
+and each member in the order that fails to start adds one more detection window; a promotion names the
+first member in the order with a promotable standby key that did not hold the keys under an assignment
+of the turn, preferring one that held nothing of the turn to one drawn or skipped to that never received
+the keys, and the key holder last, the candidate whose assignment recorded the release that signed the
+signer epoch's newest head, which no release move of its own changes, so a holder that withholds the
+keys cannot use the order up and take the turn itself; a turn's member takes
 it with its first head under its assignment, which `LogHeads` latches, and once `takeWindow` witnessed
 slots (2 by default; the deployment's minimum exceeds the handover's switch budget plus one interval
 plus a head's inclusion, which the head tolerance bounds, at every interval the bounds allow, and the
@@ -447,12 +452,13 @@ leave the first skip's member that take, its first head signed before its node s
 promotion, before the untaken-turn promotion) pass after
 the latest of the boundary's slot, the assignment's and the last signer change's with no latch,
 anyone skips the turn to the next listed member in its order that has held no assignment of the turn,
-other than the one whose release signed the signer epoch's newest head, which holds the keys, in a new generation with no signer change, never past
+other than the key holder, in a new generation with no signer change, never past
 a promotion, whose member the missed heads pass, nor while the guardian has retired the signer, when no
 head can latch, and once `heartbeatMisses + 1` witnessed slots pass after the later of the boundary's slot
 and the last signer change with the turn's assignment unlatched, in a set of two or more members, anyone
 may promote the next qualified member even while the incumbent posts heads, which bind its own earlier
-turn and latch nothing, the incumbent's own standby key included, which fences its old key out; who
+turn and latch nothing, the incumbent, which holds the keys, last: its own standby key, which fences its
+old key out, only when no other member qualifies; who
 qualifies does not move the count, so no listing, release or standby change brings it earlier, and with
 none qualifying the promotion is refused after the incumbent has stopped, and the governance fallback
 below applies; an unwitnessed slot restarts both

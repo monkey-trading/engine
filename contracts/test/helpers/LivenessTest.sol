@@ -72,21 +72,36 @@ abstract contract LivenessTest is ScheduleTest {
         _relay(at, found);
     }
 
-    /// @dev The member `promote` names now by the rule, walked independently over `memberAt`: the first
-    /// position after the current one whose member has held no assignment of the turn, the registry
-    /// lists under its adopted key, and holds a promotable standby key.
+    /// @dev The member `promote` names now by the rule, walked independently over `memberAt`: of the
+    /// positions after the current one whose member the registry lists under its adopted key and that
+    /// holds a promotable standby key, the first that held nothing of the turn and is not the key holder;
+    /// else the first that held an assignment of it but not its keys and is not the key holder; else the
+    /// first that is the key holder holding no assignment, or a holder a promotion moved past.
     function _expectedPromotion() internal view returns (uint16 position, address member) {
         OperatorSchedule.Turn memory current = schedule.turnOf(turn);
         (,, address[] memory candidates,) = schedule.setOf(setId);
         uint256 end = schedule.MAX_DRAW_POSITIONS() + candidates.length;
-        for (position = current.position + 1; position < end; ++position) {
-            member = schedule.memberAt(setId, seed, turn, position);
-            if (
-                !schedule.heldTurn(turn, member) && registry.isListed(member)
-                    && registry.keyHolder(_key(member)) == member && schedule.promotable(member) != address(0)
-            ) return (position, member);
+        address holder = _keyHolder();
+        for (uint256 rank = 0; rank < 3; ++rank) {
+            for (position = current.position + 1; position < end; ++position) {
+                member = schedule.memberAt(setId, seed, turn, position);
+                bool assigned = schedule.heldTurn(turn, member);
+                bool keys = schedule.heldKeys(turn, member) || member == holder;
+                if (
+                    (assigned ? 1 : 0) + (keys ? 2 : 0) == rank && registry.isListed(member)
+                        && registry.keyHolder(_key(member)) == member && schedule.promotable(member) != address(0)
+                ) return (position, member);
+            }
         }
         return (0, address(0));
+    }
+
+    /// @dev The candidate whose enclave holds the keys: the one whose assignment recorded the release of
+    /// the signer epoch's newest head, or, before its first, the one whose standby key is the signer.
+    function _keyHolder() internal view returns (address) {
+        bytes32 release = logHeads.headRelease(vault.signerEpoch());
+        if (release == 0) return schedule.standbyHolder(vault.checkpointSigner());
+        return schedule.releaseCandidate(release);
     }
 
     function _slot() internal view returns (uint64) {

@@ -973,7 +973,8 @@ contract OperatorScheduleTest is ScheduleTest {
         console.log("close adopting 101 members, gas:", close);
         console.log("draw from 101 members, gas:", drawn);
         assertLt(close, 12_000_000);
-        assertLt(drawn, 450_000);
+        // Each draw records the drawn member's release and the source's, cold here.
+        assertLt(drawn, 500_000);
     }
 
     function _cool() internal {
