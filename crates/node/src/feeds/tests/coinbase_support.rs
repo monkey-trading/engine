@@ -7,7 +7,7 @@
 //! stayed current and its pings were answered at once; a product's subscriptions already made can
 //! fall behind while they stream; and a product can halt, its book no longer changing.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -48,12 +48,13 @@ pub struct Product {
 }
 
 /// How far behind the venue's own time each product's next subscriptions are served, in order, from
-/// when, and how far, each product's subscriptions made before then are, and the products halted.
+/// when, and how far, each product's subscriptions made before then are, and when each product
+/// halted.
 #[derive(Debug, Default)]
 struct Lags {
     planned: BTreeMap<&'static str, VecDeque<Duration>>,
     live: BTreeMap<&'static str, (Instant, Duration)>,
-    halted: BTreeSet<&'static str>,
+    halted: BTreeMap<&'static str, Millis>,
 }
 
 /// The endpoint, serving each connection until it closes or this is dropped.
@@ -101,9 +102,15 @@ impl CoinbaseVenue {
     }
 
     /// Halts `product`: its book no longer changes, so every subscription of it, on any connection,
-    /// gets its snapshot and no update after.
+    /// gets its snapshot, stamped when it halted as Coinbase stamps a book by its last change, and
+    /// no update after.
     pub fn halt(&self, product: &'static str) {
-        self.behind.lock().expect("the lags").halted.insert(product);
+        self.behind.lock().expect("the lags").halted.insert(product, now_ms());
+    }
+
+    /// Ends `product`'s halt: its books change again on every subscription.
+    pub fn resume(&self, product: &'static str) {
+        self.behind.lock().expect("the lags").halted.remove(product);
     }
 
     /// Serves every subscription of `product` already made, on any connection, from a source `lag`
@@ -138,7 +145,7 @@ impl Subscribed {
     }
 
     /// The answer to a feed's `request`: for a subscription, a snapshot of each product newly
-    /// subscribed, then the acknowledgement listing every product the connection holds; for an
+    /// subscribed, stamped at its halt if it is halted, then the acknowledgement listing every product the connection holds; for an
     /// unsubscription, the acknowledgement. A product it does not serve is passed over.
     fn answer(&mut self, request: &str, served: &[Product], behind: &Behind) -> Vec<String> {
         let request: Value = serde_json::from_str(request).expect("the feed sends JSON");
@@ -151,8 +158,9 @@ impl Subscribed {
                     let lags = &mut behind.lock().expect("the lags");
                     let lag = lags.planned.get_mut(product.id).and_then(VecDeque::pop_front).unwrap_or_default();
                     self.products.insert(product.id, (*product, lag, Instant::now()));
+                    let book_at = lags.halted.get(product.id).copied().unwrap_or_else(now_ms);
                     let sequence = self.next();
-                    answer.push(snapshot(sequence, product, now_ms() - millis(lag)));
+                    answer.push(snapshot(sequence, product, book_at - millis(lag)));
                 }
                 Some("unsubscribe") => {
                     self.products.remove(product.id);
@@ -178,7 +186,7 @@ impl Subscribed {
         let products: Vec<(Product, Duration)> = self
             .products
             .values()
-            .filter(|(product, _, _)| !halted.contains(product.id))
+            .filter(|(product, _, _)| !halted.contains_key(product.id))
             .map(|(product, lag, made)| {
                 let set_since = live.get(product.id).filter(|(set_at, _)| set_at >= made);
                 (*product, set_since.map_or(*lag, |(_, live)| *live))

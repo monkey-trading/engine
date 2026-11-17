@@ -1,13 +1,15 @@
 //! The node watching itself. Every second it reads the sequencer's queue depth and, through a query
 //! between batches, the house's NAV and exposure, each market's session and price, and the newest
 //! quote from each venue; it sets those as metrics and raises `market_no_price` for an open market
-//! a configured feed prices that has gone without a usable price for `alerts.no_price_after`. Each
-//! market no configured feed prices is named once, in its own `market_unfed` Warning, and never
+//! a configured feed prices that has gone without a usable price for `alerts.no_price_after`. It
+//! judges a price at the host clock once that is past the engine's time, so an outage that stops all
+//! sequencing still shows; the host clock decides only the alert, which goes to the host's operator.
+//! Each market no configured feed prices is named once, in its own `market_unfed` Warning, and never
 //! pages. A sequencer that answers no sample for that long raises `sequencer_stalled`, since no
 //! market can be priced meanwhile. A market priced from futures that prices from the last contract
 //! its listing names raises `futures_last_contract`, and one whose next contract's roll time has
-//! passed with no gap recorded raises `futures_roll_overdue`. It reads the engine's state, not the feeds, so any feed that
-//! sequences `Command::Prices` is covered.
+//! passed with no gap recorded raises `futures_roll_overdue`. It reads the engine's state, not the
+//! feeds, so any feed that sequences `Command::Prices` is covered.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -94,9 +96,18 @@ pub struct Stall {
 }
 
 impl Sample {
-    /// Reads a sample from `engine`.
+    /// Reads a sample from `engine`, judging each market's price at the engine's time.
+    #[cfg(test)]
     pub fn of(engine: &Engine) -> Self {
+        Self::at(engine, engine.now())
+    }
+
+    /// Reads a sample from `engine`, judging each market's price at host time `host_ms` or the
+    /// engine's time, whichever is later: with nothing sequenced, as through an outage of every venue
+    /// or of trusted time, the engine's time stands still, and its quotes would read as fresh.
+    pub fn at(engine: &Engine, host_ms: Millis) -> Self {
         let now = engine.now();
+        let priced_at = host_ms.max(now);
         let markets = engine
             .markets()
             .iter()
@@ -106,7 +117,7 @@ impl Sample {
                 open: market.open,
                 // The checks a fill makes: the market's own index, then its FX index.
                 price: market
-                    .index(now)
+                    .index(priced_at)
                     .map_err(Unpriced::Index)
                     .and_then(|_| engine.live_fx(*id).map(|_| ()).map_err(Unpriced::Fx)),
                 house_net_exposure: market
@@ -315,7 +326,7 @@ pub async fn run(
         metrics.queue_depth.set(queue_depth(&tx));
         let (reply, sample) = oneshot::channel();
         let query = Request::Query(Box::new(move |engine| {
-            let _ = reply.send(Sample::of(engine));
+            let _ = reply.send(Sample::at(engine, now_ms()));
         }));
         let answered = timeout(SAMPLE_EVERY, async {
             tx.send(query).await.map_err(|_| anyhow!("sequencer gone"))?;

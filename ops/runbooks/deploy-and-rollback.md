@@ -39,7 +39,9 @@ Nothing here touches a live system.
 
 1. Tag `v<version>` on a `main` commit whose CI run passed. Take `vmlinuz`, `initramfs.cpio.gz`,
    `OVMF.fd`, `measurement.json` and `SHA256SUMS` from that run's `image-first` artifact, or, once
-   the artifact has expired, from `gh workflow run ci.yaml --ref v<version>`.
+   the artifact has expired, from `gh workflow run ci.yaml --ref v<version>`. Before tagging, run
+   `scripts/dev-venue-load.sh --soak` on that commit. Check: it ends `test result: ok`, no market
+   unpriced for longer than 10 s through the dropped connections. Stop if it fails.
 2. On a second machine, rebuild: `scripts/build-image.sh --ref v<version> --no-cache <dir>`. Check:
    `diff <dir>/SHA256SUMS <ci>/SHA256SUMS` prints nothing. Stop if it differs.
 3. Assemble the config from the template, the benchmark publishers and the production genesis, and
