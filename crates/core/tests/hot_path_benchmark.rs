@@ -32,10 +32,10 @@ const SAMPLES: usize = 100;
 const HALTED: MarketId = 9;
 /// The markets the production genesis lists, which a close-all across every market names.
 const LAUNCH_MARKETS: usize = 37;
-/// The p99 budget for a signed batch command at 100k accounts. The 200 us of the unsigned commands
-/// above cannot hold for any signed one, whose signature recovery alone takes about that long
-/// (`empty_cancel_all_100k`); a batch must add little on top, and a close-all across every market
-/// measured about 270 us above that floor.
+/// The p99 bar for a signed command at 100k accounts, printed with its verdict and held by
+/// `P50_GUARD_US`. The 200 us of the unsigned commands above cannot hold for any signed one, whose
+/// signature recovery alone takes about that long (`empty_cancel_all_100k`); a batch must add little on
+/// top, and a close-all across every market measured about 270 us above that floor.
 const BATCH_BUDGET_US: u128 = 2_000;
 /// The guard on a signed command's p50, which a regression of its path moves and a runner's own
 /// scheduling stalls do not: CI's runners measured p50 0.6 to 1.2 ms for a fill on 17 November 2026,
