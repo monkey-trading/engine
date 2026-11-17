@@ -1703,3 +1703,45 @@ Run `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignore
 `launch_book_price_attribution` prices BTC-USD and EUR-USD on the book with its resting orders, or its
 extra markets, taken away. `engine-node`'s `stats::launch_bench` runs the stats scans and the worker's
 copy on the same book. `tests/launch_book.rs` holds the builder to its mix.
+
+### Mass events on the launch book
+
+A command that acts on every holder of a market, or on every account, holds the sequencer's thread for as
+long as it runs, and every price waits behind it. `mass_events_benchmark` times each such command once on a
+book of its own (#907), since a mass event changes the book it runs on, and prints
+`MASS <case> us=<microseconds> events=<n> ...` with the events it emitted by kind, then its standing
+against #904's bar of 500 ms on one command as `LAUNCH bar <case> ...`; a case over the bar prints `OVER`.
+`Mix` sets each book up: `weak` puts a share of a market's holders just across the line the command
+crosses, `also_hold` widens a market's holders, `origin`, `period_losses`, `stakers` and `house_capital` give
+the two closes something to close, `version` builds the book one version back, and `only` gives every
+account a single market.
+
+Run `cargo test -p engine-core --test mass_events_benchmark --locked -- --ignored --nocapture --test-threads=1 mass_`
+(`MASS_ACCOUNTS` and `MASS_ORDERS` run smaller books). CI holds each case to a guard of 3 s, above the bar,
+except an activation and the first price after a relisting (which re-keys), which the owner accepted over
+it (#904) and which are only reported. The cases:
+
+| Case | Book | Guard |
+| --- | --- | ---: |
+| The start of WTI's weekend gap: the Friday rollover with it, then the same with 20% of WTI's holders below the weekend margin | launch mix | 3 s |
+| A BTC-USD price a tenth down that closes out 20% of its holders, and one that closes out 50% | launch mix | 3 s |
+| A 5% move in the USD market with the most net client quantity, in the direction its clients gain, which puts the house behind and raises all 34 markets from level 0 to 2 (the in-band orders it reaches fill) | launch mix | 3 s |
+| A 2:1 split on AAPL, which half the accounts hold: the capture at the close and the adjustment at the next open | launch mix, AAPL widened | 3 s each |
+| A cash dividend on the same market: the same two commands | launch mix, AAPL widened | 3 s each |
+| The MONKEY period close, every account having lost in the period | launch mix, period results | 3 s |
+| The staking epoch close at 10k stakers | launch mix, stakers, house capital | 3 s |
+| `ActivateProtocol` to the latest version on a book one version back, and a decoded copy's rebuild of the transient indexes | launch mix, one version back | none |
+| A listing notice that doubles the bands of the market with the most resting orders (BTC-USD): the relisting, then the first price, which re-keys the market's resting book (V74), against the second | launch mix | 3 s, the first price none |
+| The same re-key with 2.5M resting orders in one market, every account at tier 0's, 1's, 2's and 3's limit | one market | 3 s, the first price none |
+
+The weekend case's Friday rollover falls at the gap's start, so its baseline with nobody below the margin is
+the rollover and the walk of every account, and the difference is the close-outs. A crash also fills the
+in-band resting buys it reaches. The listing's relisting and a ceiling adoption or vote change the rate the
+re-key reads in the same way, so the notice stands for all three. An order's key costs about the same at any
+count, so the 2.5M-order books are tier 0's limit at 100k accounts and each higher tier's limit over fewer
+accounts; a tier's limit at 100k accounts costs its limit over 25 times the figure.
+
+`engine-node`'s `sequencer::wait_bench::mass` runs the weekend close-out and the crash through the sequencer's
+`run` loop on the same book, with a price every 2 ms in a market no account holds, and prints the longest wait a
+price had behind each as `WAIT mass_<case> ...`, holding the longest wait to a guard of 10 s.
+

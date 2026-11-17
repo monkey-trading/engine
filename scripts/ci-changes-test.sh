@@ -85,6 +85,8 @@ case_ pull_request "rust scenario_tests" crates/node/src/api/access_tests/spread
 case_ pull_request "rust scenario_tests" crates/core/tests/launch_book_benchmark.rs
 case_ pull_request "rust scenario_tests" crates/core/tests/launch_book_benchmark/cases.rs
 case_ pull_request "rust scenario_tests" crates/node/src/stats/launch_bench.rs
+case_ pull_request "rust scenario_tests" crates/core/tests/mass_events_benchmark.rs crates/core/tests/mass_events_benchmark/closeouts.rs
+case_ pull_request "rust scenario_tests" crates/node/src/sequencer/wait_bench/mass.rs
 case_ pull_request "rust scenario_tests" crates/node/src/stats/bench.rs
 case_ pull_request "rust scenario_tests" config/production-genesis.toml
 case_ pull_request "rust scenario_tests" research/cap-calibration/data/derived/market_mix.csv

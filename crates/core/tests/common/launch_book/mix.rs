@@ -1,7 +1,9 @@
 //! The launch book's account mix: the shares #905 proposes, in one place, so the owner's changes to
 //! them are edits to `Mix::proposal`, and the deterministic draws that deal them out.
 
-use engine_core::types::MarketId;
+use engine_core::Fixed;
+use engine_core::protocol::ProtocolVersion;
+use engine_core::types::{MarketId, Millis};
 
 const MARKET_MIX: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../research/cap-calibration/data/derived/market_mix.csv");
@@ -27,6 +29,48 @@ pub struct Mix {
     /// Each position's size in USD at the book's mark of 100, and each account's cash.
     pub position_usd: i64,
     pub balance: i64,
+    /// The protocol version the book is at, which an activation case sets one before the latest.
+    pub version: ProtocolVersion,
+    /// Every account holds this market alone, as the mass re-key books do.
+    pub only: Option<MarketId>,
+    /// A share of accounts, in per cent, that also hold each market named, whatever the dealing gave them.
+    pub also_hold: Vec<(MarketId, u64)>,
+    /// Accounts set to cross a line one command later (`Weak`).
+    pub weak: Option<Weak>,
+    /// House capital credited after the genesis, in whole USD, so an epoch close has an excess.
+    pub house_capital: i64,
+    /// Accounts staking MONKEY, the first of those that are not named ones.
+    pub stakers: usize,
+    /// Where emissions' period 0 and staking's epoch 0 start, in place of the deployment's.
+    pub origin: Option<Origin>,
+    /// Every account lost in the open emission period, so its close allocates to each.
+    pub period_losses: bool,
+}
+
+/// The time origin and epoch length a case that closes a period or an epoch sets: the deployment's
+/// start is weeks past the book's clock.
+#[derive(Clone, Copy, Debug)]
+pub struct Origin {
+    /// The start, in milliseconds after the book's clock begins.
+    pub start_after: Millis,
+    pub epoch_ms: Millis,
+}
+
+/// A share of the holders of `market`, in per cent, set to cross a line the case's one command crosses.
+#[derive(Clone, Debug)]
+pub struct Weak {
+    pub market: MarketId,
+    pub share: u64,
+    pub kind: WeakKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum WeakKind {
+    /// Long in the market, with cash that leaves its equity a dollar under the close-out level once the
+    /// market's price is `price`, and above it at the book's mark.
+    FallsBelowAt(Fixed),
+    /// Cash equal to the margin requirement, which the weekend margin of the market lifts above it.
+    BelowWeekendMargin,
 }
 
 impl Mix {
@@ -41,6 +85,14 @@ impl Mix {
             session_keys: 2,
             position_usd: 5_000,
             balance: 100_000,
+            version: ProtocolVersion::LATEST,
+            only: None,
+            also_hold: Vec::new(),
+            weak: None,
+            house_capital: 0,
+            stakers: 0,
+            origin: None,
+            period_losses: false,
         }
     }
 }

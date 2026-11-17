@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use engine_core::access::AccessPolicy;
 use engine_core::account::{Position, RestingOrder};
 use engine_core::command::{AdminCommand, Command, OrderKind, Sequenced};
+use engine_core::emissions::{PeriodResult, TokenUnits};
 use engine_core::event::Event;
 use engine_core::market::QuoteCurrency;
 use engine_core::types::{AccountId, MarketId, Side};
@@ -14,8 +15,9 @@ use engine_core::{Engine, Fixed};
 use serde_json::json;
 
 use crate::common::close_spread::{attest, fund, rest, source_key, trade};
-use crate::common::launch_book::genesis::{BOOK_TIME, price_market, production_harness, publish_benchmarks};
-use crate::common::launch_book::mix::{Mix, Rng, market_weights};
+use crate::common::launch_book::counts::{Counts, check, weak_cash};
+use crate::common::launch_book::genesis::{BOOK_TIME, price_market, production_harness_at, publish_benchmarks};
+use crate::common::launch_book::mix::{Mix, Rng, WeakKind, market_weights};
 use crate::common::session_keys::{HOUR_MS, register};
 use crate::common::{CHAIN_ID, Client, Harness, VAULT, f};
 
@@ -66,6 +68,8 @@ pub struct Book {
     /// Accounts at each volume tier, and accounts resting orders.
     pub tiers: Vec<usize>,
     pub resting_accounts: usize,
+    /// Accounts set as `Mix::weak` says.
+    pub weak_accounts: usize,
     /// How long the assembly took, and how large the encoding it read was.
     pub assembled_in: Duration,
     pub encoded_bytes: usize,
@@ -127,7 +131,7 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
     let began = Instant::now();
     let named_total = counts.adders + counts.openers + counts.closeouts;
     assert!(mix.accounts >= named_total, "the named accounts are part of the book");
-    let mut h = production_harness();
+    let mut h = production_harness_at(mix.version, mix.origin);
     publish_benchmarks(&mut h);
     h.admin(AdminCommand::SetAccessPolicy(AccessPolicy { source: source_key(), max_age_ms: 10 * HOUR_MS }));
     let ids: Vec<MarketId> = h.engine.markets().keys().copied().collect();
@@ -316,6 +320,9 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
     let entry_price = Fixed::from_int(MARK);
 
     let mut order_id = next_order;
+    let mut weak_accounts = 0usize;
+    let mut stakes = String::from("{");
+    let mut period_results = String::from("{");
     for index in named_total as u64..mix.accounts as u64 {
         let account_id = address(0xb7, index);
         let mut rng = Rng::new(index);
@@ -325,18 +332,35 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
             let count = fewest + rng.below((most - fewest + 1) as u64) as usize;
             if count >= ids.len() { ids.clone() } else { rng.markets(count, &weights) }
         };
+        let mut held = held;
+        if let Some(only) = mix.only {
+            held = vec![only];
+        }
+        for (market, share) in &mix.also_hold {
+            if !held.contains(market) && rng.below(100) < *share {
+                held.push(*market);
+            }
+        }
         let tier = Rng::bucket(mix.tiers.iter().copied(), rng.below(100));
         let order_count = if rng.below(100) < mix.resting { tiers[tier].max_resting_orders } else { 0 };
+        let weak = mix.weak.as_ref().filter(|weak| held.contains(&weak.market) && rng.below(100) < weak.share);
         let mut account = skeleton.clone();
         for market in &held {
             let size = units[market];
-            let position =
-                Position { qty: if (index + u64::from(*market)) % 2 == 0 { size } else { -size }, entry: entry_price };
+            let long = match weak {
+                Some(weak) if matches!(weak.kind, WeakKind::FallsBelowAt(_)) && weak.market == *market => true,
+                _ => (index + u64::from(*market)) % 2 == 0,
+            };
+            let position = Position { qty: if long { size } else { -size }, entry: entry_price };
             account.positions.insert(*market, position);
             account.opened_at.insert(*market, h.ts - 3_600_000);
             let held = quantity.get_mut(market).expect("listed");
             held.0 += position.qty;
             held.1 += position.cost();
+        }
+        if let Some(weak) = weak {
+            account.balance = weak_cash(&h.engine, &account, weak.market, &weak.kind);
+            weak_accounts += 1;
         }
         let key = key_of(account_id);
         for slot in 0..order_count {
@@ -371,6 +395,15 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
                 let volume = Fixed::from_int(mix.position_usd * held.len() as i64);
                 entry(&mut volumes, &key, &book_text(vec![DayVolume { day: matured_on, volume }]));
             }
+        }
+        if (index - named_total as u64) < mix.stakers as u64 {
+            let units = TokenUnits(1_000_000_000_000_000_000_000 + u128::from(index) * 1_000_000_000_000_000);
+            entry(&mut stakes, &key, &serde_json::to_string(&units).expect("units encode"));
+        }
+        if mix.period_losses {
+            let loss = Fixed::from_int((index % 997 + 1) as i64);
+            let result = PeriodResult { realised: -loss, losses: loss, written_off: Fixed::ZERO };
+            entry(&mut period_results, &key, &serde_json::to_string(&result).expect("a result encodes"));
         }
         entry(&mut scores, &key, &toxicity.to_string());
         let mut live = session_keys.clone();
@@ -407,6 +440,14 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
         state[name] = json!(format!("@{name}@"));
         placeholders.push((format!("\"@{name}@\""), text + "}"));
     }
+    if mix.stakers > 0 {
+        state["staked"] = json!("@staked@");
+        placeholders.push(("\"@staked@\"".to_owned(), stakes + "}"));
+    }
+    if mix.period_losses {
+        state["period_results"] = json!("@period_results@");
+        placeholders.push(("\"@period_results@\"".to_owned(), period_results + "}"));
+    }
     state["credited_refs"] = json!("@credited_refs@");
     placeholders.push(("\"@credited_refs@\"".to_owned(), refs + "]"));
     for id in &ids {
@@ -418,6 +459,14 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
         market["client_cost"] = json!(base_cost + cost);
         market["resting"] = json!(format!("@resting{id}@"));
         placeholders.push((format!("\"@resting{id}@\""), resting.remove(id).expect("listed") + "}"));
+    }
+    if mix.house_capital > 0 {
+        // Capital after the genesis comes through the screened deposit and waits for finality, so the
+        // house's cash, and the vault's capacity behind it, are written in.
+        for field in ["house_cash", "withdrawal_cash"] {
+            let base: Fixed = state[field].as_str().map_or(Fixed::ZERO, |text| text.parse().expect("an amount"));
+            state[field] = json!(base + Fixed::from_int(mix.house_capital));
+        }
     }
     state["next_order_id"] = json!(order_id);
     state["markouts"] = json!([]);
@@ -444,51 +493,8 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
         orders: counts.orders,
         tiers: counts.tiers,
         resting_accounts: counts.resting_accounts,
+        weak_accounts,
         assembled_in: began.elapsed(),
         encoded_bytes,
-    }
-}
-
-/// What the book holds, counted from the engine over every account, the named ones included.
-struct Counts {
-    holders: BTreeMap<MarketId, usize>,
-    positions: usize,
-    orders: usize,
-    tiers: Vec<usize>,
-    resting_accounts: usize,
-}
-
-impl Counts {
-    fn of(engine: &Engine, tiers: usize) -> Self {
-        let mut counts =
-            Counts { holders: BTreeMap::new(), positions: 0, orders: 0, tiers: vec![0; tiers], resting_accounts: 0 };
-        for (id, account) in engine.accounts() {
-            for market in account.positions.keys() {
-                *counts.holders.entry(*market).or_default() += 1;
-            }
-            counts.positions += account.positions.len();
-            counts.orders += account.orders.len();
-            counts.resting_accounts += usize::from(!account.orders.is_empty());
-            counts.tiers[engine.volume_tier(*id)] += 1;
-        }
-        counts
-    }
-}
-
-/// What the engine reads back is what was written: the accounts, and each market's aggregates and
-/// resting orders from the accounts'.
-fn check(h: &Harness, mix: &Mix) {
-    let engine = &h.engine;
-    assert_eq!(engine.accounts().len(), mix.accounts);
-    // Every account that holds a position has traded, so has a volume book.
-    for (id, account) in engine.accounts() {
-        assert!(account.positions.is_empty() || engine.account_volume(*id).is_some(), "{id:?} has no volume book");
-    }
-    for (id, market) in engine.markets() {
-        let positions = engine.accounts().values().filter_map(|account| account.positions.get(id));
-        let (qty, cost) = positions.fold((Fixed::ZERO, Fixed::ZERO), |(q, c), p| (q + p.qty, c + p.cost()));
-        assert_eq!((market.client_qty, market.client_cost), (qty, cost), "market {id}'s aggregates");
-        let resting = engine.accounts().values().flat_map(|a| a.orders.values()).filter(|o| o.market == *id).count();
-        assert_eq!(market.resting.len(), resting, "market {id}'s resting orders");
     }
 }

@@ -139,7 +139,8 @@ jobs:
                   | crates/node/src/log/authenticated_tests*)
                   areas+=" rust attestation_verifier" ;;
                 crates/node/src/api/access_tests* | crates/node/src/api/benchmark_tests* \
-                  | crates/node/src/sequencer/wait_bench.rs | crates/node/src/stats/bench.rs \
+                  | crates/node/src/sequencer/wait_bench.rs | crates/node/src/sequencer/wait_bench/* \
+                  | crates/node/src/stats/bench.rs \
                   | crates/node/src/stats/launch_bench.rs)
                   areas+=" rust scenario_tests" ;;
                 crates/node/src/api/admin_tests* | crates/node/src/sequencer/fixture_tests.rs)
@@ -225,7 +226,7 @@ jobs:
                   areas+=" rust vault_deposits dashboard_data proxy_protocol batch_orders production_secrets" ;;
                 # The latency budget's engine-core benchmarks, and the harness they share.
                 crates/core/tests/hot_path_benchmark* | crates/core/tests/launch_book_benchmark* \
-                  | crates/core/tests/common/*)
+                  | crates/core/tests/mass_events_benchmark* | crates/core/tests/common/*)
                   areas+=" rust scenario_tests" ;;
                 crates/core/tests/short_turns.rs) areas+=" rust short_turns" ;;
                 # The replay fixture the checkpoint scenario's accounting test reaches.
@@ -822,6 +823,10 @@ jobs:
         run: cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture --test-threads=1
       - name: Check sequencer command latency on a launch-scale book at 100k accounts
         run: cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1 launch_book_latency
+      - name: Check the mass events on a launch-scale book at 100k accounts
+        run: cargo test -p engine-core --test mass_events_benchmark --locked -- --ignored --nocapture --test-threads=1 mass_
+      - name: Check what a price waits behind a mass close-out at 100k accounts
+        run: cargo test -p engine-node --lib --locked sequencer::wait_bench::mass -- --ignored --nocapture --test-threads=1
       - name: Check the stats record's cost on a launch-scale book at 100k accounts
         run: cargo test -p engine-node --lib --locked stats::launch_bench -- --ignored --nocapture --test-threads=1
 
