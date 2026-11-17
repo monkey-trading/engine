@@ -83,9 +83,14 @@ impl PortfolioMargin {
         Self { grid, health: Mutex::new(GridHealth { seq: None, misfit: true }) }
     }
 
-    /// The read of the grid `cfg` names, if it names one.
+    /// The read of the grid `cfg` names, if it names one. A node that names none reads nothing, so it
+    /// ends at once any episode a run with a grid left open (the router drops a resolve that ends none).
     pub(crate) fn configured(cfg: &NodeConfig) -> Option<Arc<Self>> {
-        cfg.portfolio_margin.clone().map(|grid| Arc::new(Self::new(grid)))
+        let Some(grid) = cfg.portfolio_margin.clone() else {
+            info!(alert_resolved = "portfolio_grid_mismatch", "no portfolio margin grid is configured");
+            return None;
+        };
+        Some(Arc::new(Self::new(grid)))
     }
 
     /// Raises Warning `portfolio_grid_mismatch` for a read of the engine at `seq` the grid did not fit,
