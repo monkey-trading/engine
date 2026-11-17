@@ -160,6 +160,23 @@ fn a_refused_quote_costs_only_itself_and_not_the_quotes_batched_with_it() {
             assert_eq!((books, refused.len()), (vec![book(&aapl)], 1), "{batch}");
         }
     }
+    // An element that does not deserialize at all is refused alone too: a numeric `t` or `S`, a
+    // missing `T`, a numeric `T`.
+    for broken in [
+        QUOTE.replace(r#""t":"2021-02-22T15:51:45.335689322Z""#, r#""t":1614009105335"#),
+        QUOTE.replace(r#""S":"AAPL""#, r#""S":7"#),
+        QUOTE.replace(r#""T":"q","#, ""),
+        QUOTE.replace(r#""T":"q""#, r#""T":1"#),
+    ] {
+        assert!(matches!(session().read(&format!("[{broken}]")), Err(Refusal::Message(_))), "{broken}");
+        for batch in
+            [format!("[{broken},{QUOTE}]"), format!("[{QUOTE},{broken}]"), format!("[{broken},{QUOTE},{broken}]")]
+        {
+            let Ok(Frame::PartlyRefused { books, refused }) = session().read(&batch) else { panic!("{batch}") };
+            assert_eq!(books, vec![book(&aapl)], "{batch}");
+            assert!(refused.iter().all(|reason| reason.starts_with("unparseable message")), "{refused:?}");
+        }
+    }
     // A control message batched with quotes is refused the same way.
     let batched = format!("[{QUOTE},{}]", &CONNECTED[1..CONNECTED.len() - 1]);
     let Ok(Frame::PartlyRefused { books, refused }) = session().read(&batched) else { panic!("{batched}") };
