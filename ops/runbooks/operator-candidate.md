@@ -324,7 +324,8 @@ drawn by its boundary is not drawn at all, and the member before it stays named.
   ([alerts.md](alerts.md)) page what it finds, each once per episode, and `member_follow_blocked`
   a step of following (reading the turn, resolving the operator, opening the copy, reading or
   pinning the posted head) that fails two polls in a row; each resolves once it works again.
-- **At the boundary.** A following node reads the vault, the schedule, the signers, the checkpoint
+- **At the boundary.** A following node whose turn is next stops following at the boundary by its
+  trusted time, not at the end of a stint. It reads the vault, the schedule, the signers, the checkpoint
   anchor at the vault's finalized checkpoint (the incumbent's checkpoint still in flight is in its
   copy, and its node resumes it as outstanding), the MONKEY budget and the latest posted log head,
   and takes its trusted time sample, all before it connects; one short stint then catches its copy

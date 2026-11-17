@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, ensure};
+use engine_core::types::Millis;
 use tracing::{debug, info};
 
 use crate::checkpoints::{CheckpointChain, HandoverSource, ScheduledTurn, View};
@@ -66,10 +67,10 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// What this member does when the latest agreed block's skip or promotion moved `finalised`, the
     /// turn in effect at trusted time, past what the finalised schedule shows: it takes the turn a skip
     /// names it for, holding keys it already sealed for it, and follows one a reassignment moved past it,
-    /// keys or not. A promotion naming it is its standby side's to start. A drawn holding it handed to a
-    /// skip's member it takes back once a reorg removes the skip. `None` when no reassignment of that turn
-    /// says otherwise.
-    pub(super) async fn skipped(&self, finalised: &ScheduledTurn) -> Option<Holding> {
+    /// keys or not, until `own_next`, its own next turn's boundary, if any. A promotion naming it is its
+    /// standby side's to start. A drawn holding it handed to a skip's member it takes back once a reorg
+    /// removes the skip. `None` when no reassignment of that turn says otherwise.
+    pub(super) async fn skipped(&self, finalised: &ScheduledTurn, own_next: Option<Millis>) -> Option<Holding> {
         let cfg = self.cfg;
         let dir = &cfg.tee.sealing.as_ref()?.dir;
         let assigned = self.latest().await.filter(|assigned| assigned.binding.turn == finalised.turn)?;
@@ -92,7 +93,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         if assigned.release == own && assigned.reason == Reason::Skip {
             let turn = assigned.as_scheduled(finalised);
             return Some(match given(turn.generation) && !restored {
-                true => Holding::Follow(Some(turn)),
+                true => Holding::Follow(Some(turn), own_next),
                 false if file_for(dir, &self.release, turn.generation).exists() => Holding::Hold,
                 false => {
                     info!(
@@ -109,7 +110,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let skipped_from = assigned.release != own && finalised.release == own;
         skipped_from.then(|| {
             debug!(turn = finalised.turn, "a reassignment moved past this member's turn: following");
-            Holding::Follow(Some(finalised.clone()))
+            Holding::Follow(Some(finalised.clone()), own_next)
         })
     }
 

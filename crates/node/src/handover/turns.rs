@@ -106,7 +106,18 @@ pub(crate) async fn sampled_now(cfg: &NodeConfig) -> anyhow::Result<Millis> {
 /// Error cases:
 /// - the schedule cannot be read
 pub(crate) async fn drawn(vault: &impl CheckpointChain, at: &Observation) -> anyhow::Result<bool> {
-    Ok(vault.scheduled_turn(at, engine_core::types::MAX_STAMP_MS).await?.is_some())
+    Ok(latest_drawn(vault, at).await?.is_some())
+}
+
+/// The drawn turn with the latest boundary in the finalised schedule at `at`, even one the finalised
+/// block has yet to reach; `None` where `drawn` is false.
+/// Error cases:
+/// - the schedule cannot be read
+pub(crate) async fn latest_drawn(
+    vault: &impl CheckpointChain,
+    at: &Observation,
+) -> anyhow::Result<Option<ScheduledTurn>> {
+    vault.scheduled_turn(at, engine_core::types::MAX_STAMP_MS).await
 }
 
 /// Whether the vault's finalised schedule has drawn a turn; `false` when it cannot be read.

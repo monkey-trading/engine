@@ -58,7 +58,7 @@ async fn a_skip_naming_this_member_takes_the_turn_before_the_finalised_schedule_
     }
     // With no reader, the finalised schedule alone decides: another member's turn, which it follows.
     let mut member = fixture.member();
-    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(Some(turn)) if turn.turn == 12));
+    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(Some(turn), _) if turn.turn == 12));
 }
 
 #[tokio::test]
@@ -69,7 +69,7 @@ async fn a_skip_this_member_gave_away_or_already_holds_keys_for_does_not_take_it
     assignments.set(Some(skip_of_own(fixture.release().id(), 0x0c)));
     let mut member = fixture.member_reading(&assignments);
     member.handed_over(Handed { generation: Some(SKIPPED), reached: None, head: None, to: None });
-    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(_)), "it took back the turn it handed over");
+    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(..)), "it took back the turn it handed over");
     let sealer = MockSealer { launch_digest: DIGEST };
     KeyStore::create(&fixture.keys, &sealer, fixture.cfg.file_sha256, SKIPPED, KeySet::generate().unwrap()).unwrap();
     let mut member = fixture.member_reading(&assignments);
@@ -88,12 +88,12 @@ async fn a_member_a_skip_or_a_promotion_moved_past_follows_whether_or_not_it_hol
         assignments.set(Some(Assigned { reason, ..skip_of_own([0x0e; 32], 0x0e) }));
         let mut member = fixture.member_reading(&assignments);
         match member.holding().await.unwrap() {
-            Holding::Follow(Some(turn)) => assert_eq!(turn.release, fixture.release().id(), "{reason:?}"),
+            Holding::Follow(Some(turn), _) => assert_eq!(turn.release, fixture.release().id(), "{reason:?}"),
             _ => panic!("{reason:?}: a member moved past took its turn"),
         }
         fixture.seal_own_turn();
         let mut member = fixture.member_reading(&assignments);
-        assert!(matches!(member.holding().await.unwrap(), Holding::Follow(Some(_))), "{reason:?}: it held");
+        assert!(matches!(member.holding().await.unwrap(), Holding::Follow(Some(_), _)), "{reason:?}: it held");
     }
 }
 
@@ -203,7 +203,7 @@ async fn a_member_that_handed_its_drawn_turn_to_a_skip_takes_it_back_once_a_reor
     assignments.set(Some(skipped));
     let mut member = fixture.member_reading(&assignments);
     member.handed_over(handed(Some(skipped)));
-    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(_)), "it took back what it handed on");
+    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(..)), "it took back what it handed on");
     assignments.set(Some(drawn));
     assert!(take_back(member.holding().await.unwrap()), "the member did not take back its drawn turn");
     // A reorg before the member's first read: that read already shows the draw.
@@ -214,7 +214,7 @@ async fn a_member_that_handed_its_drawn_turn_to_a_skip_takes_it_back_once_a_reor
     let mut member = fixture.member_reading(&assignments);
     member.handed_over(handed(Some(skipped)));
     assignments.failing.store(true, std::sync::atomic::Ordering::SeqCst);
-    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(_)), "a failed read took the turn back");
+    assert!(matches!(member.holding().await.unwrap(), Holding::Follow(..)), "a failed read took the turn back");
     assignments.failing.store(false, std::sync::atomic::Ordering::SeqCst);
     assert!(take_back(member.holding().await.unwrap()), "a failed first read lost the record");
     // Handed on to the draw's own member, or with no successor recorded, the drawn turn stays given.
@@ -222,7 +222,7 @@ async fn a_member_that_handed_its_drawn_turn_to_a_skip_takes_it_back_once_a_reor
         let mut member = fixture.member_reading(&assignments);
         member.handed_over(handed(to));
         assert!(
-            matches!(member.holding().await.unwrap(), Holding::Follow(_)),
+            matches!(member.holding().await.unwrap(), Holding::Follow(..)),
             "{to:?}: it took back a draw it handed on"
         );
     }

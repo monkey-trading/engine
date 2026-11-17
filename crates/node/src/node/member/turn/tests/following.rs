@@ -29,6 +29,47 @@ async fn a_member_follows_the_operator_in_effect_and_moves_at_the_boundary() {
     assert!(matches!(turn.unwrap(), Turn::Hold), "the member did not hold its turn once its keys were sealed");
 }
 
+/// A member whose own turn is next ends its following at that turn's boundary by trusted time and takes
+/// the turn at once, within a second of the boundary and not before it: a stint the operator's open
+/// stream would otherwise keep for all of `STINT`, the wait for the boundary with less than
+/// `LEAST_STINT` left, and the wait after a stint that failed on an operator that is down (#893).
+#[tokio::test]
+async fn a_following_member_takes_its_turn_at_the_boundary_not_at_the_end_of_a_stint() {
+    let (_guard, mut logged) = crate::test_support::capture_field("message");
+    // Whether the operator serves, and how long before the boundary trusted time starts running.
+    let cases = [(true, STINT * 3 / 4), (true, LEAST_STINT / 2), (false, STINT / 4)];
+    for (case, (serves, lead)) in cases.into_iter().enumerate() {
+        let fixture = Fixture::start(&format!("member-at-boundary-{case}"), true).await;
+        let operator = Operator::live(fixture.log.clone()).await;
+        fixture.registry.name(if serves { &operator.host } else { "127.0.0.1:9" });
+        fixture.registry.draw(fixture.release().id());
+        while logged.try_recv().is_ok() {}
+        let boundary = fixture.time.run_from(OWN - lead.as_millis() as Millis) + lead;
+        let mut member = fixture.member();
+        let taking = async {
+            loop {
+                match logged.recv().await {
+                    Some(event) if event["message"].contains("this member's turn has come") => {
+                        break std::time::Instant::now();
+                    }
+                    Some(_) => {}
+                    None => panic!("the log channel closed"),
+                }
+            }
+        };
+        let taken_at = tokio::select! {
+            taken_at = taking => taken_at,
+            _ = member.until_turn() => panic!("case {case}: the member left its wait before taking its turn"),
+        };
+        if serves && lead > LEAST_STINT {
+            assert!(operator.connections() > 0, "case {case}: the member did not follow before its turn");
+        }
+        assert!(taken_at >= boundary, "case {case}: the member took its turn before the boundary");
+        let late = taken_at - boundary;
+        assert!(late < std::time::Duration::from_secs(1), "case {case}: the member took its turn {late:?} late");
+    }
+}
+
 /// A member fetches its provider history while it follows, before its turn: its candles requests reach
 /// the endpoint with the operator's stream still the only thing it has taken (#884).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

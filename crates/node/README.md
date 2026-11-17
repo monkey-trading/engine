@@ -402,7 +402,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `src/node/member/tests.rs` covers the loop between holdings, the metrics listener answering
   through it and through a held future, and the process's own tasks running through it
 - `src/node/member/turn.rs` — `Member::until_turn`: what the member holds at trusted time, following
-  the operator in effect, re-resolved at each boundary, into a replica bootstrapped from its archive
+  the operator in effect, re-resolved at each boundary, up to its own next turn's boundary by trusted
+  time once that turn is drawn (#893), into a replica bootstrapped from its archive
   when the copy is empty, pinning the posted log head, also as a replica is built, each alert of its
   following paged once per episode and resolved under the fields it paged with (`turn/episodes.rs`:
   `member_follow_blocked` for a step failing two polls in a row), and taking its
