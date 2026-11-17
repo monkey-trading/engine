@@ -236,7 +236,15 @@ amount="$(jq -r '.entries[0].amount' <<< "$activity")"
 expect "activity begins at genesis" "$(jq -r .from_genesis <<< "$activity")" true
 
 step "GET /v1/monkey: the schedule, the totals, the distribution state"
-monkey="$(get /v1/monkey)"
+# The MONKEY period and a staking epoch end together. From V75 the epoch's close waits for the staking
+# frontier, which mock custody records within a second or so of the end, so the answer is read once no
+# close is pending.
+for _ in $(seq 1 15); do
+  monkey="$(get /v1/monkey)"
+  jq -e '.distribution.next_close_ms > .time_ms and .distribution.last_closed_epoch != null' <<< "$monkey" > /dev/null \
+    && break
+  sleep 1
+done
 expect "allocated" "$(jq -r .emissions.allocated <<< "$monkey")" "$amount"
 expect "period ms" "$(jq -r .emissions.period_ms <<< "$monkey")" 600000
 expect "halving periods" "$(jq -r .emissions.halving_periods <<< "$monkey")" 26280

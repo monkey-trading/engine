@@ -173,3 +173,12 @@ mod composed_reserves;
 
 #[path = "staking/withdrawal_reserve.rs"]
 mod withdrawal_reserve;
+
+#[path = "staking/support.rs"]
+mod support;
+
+#[path = "staking/unfinalised_deposits.rs"]
+mod unfinalised_deposits;
+
+#[path = "staking/mirror_frontier.rs"]
+mod mirror_frontier;

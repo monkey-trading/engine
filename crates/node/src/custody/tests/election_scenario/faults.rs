@@ -222,7 +222,7 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
     for _ in 0..2 {
         restock(&chain, &node).await;
         let from = node.query(|e| e.staking().and_then(|s| s.office.as_ref()).map(|o| o.since)).await.unwrap();
-        let events = next_epoch(&mut node).await;
+        let events = next_epoch(&mut node, &chain).await;
         let to = node.query(|e| e.now()).await.min(turn_end);
         let (kept, withheld) = part(&events, b);
         let cut = withheld * 10_000 / (kept + withheld);
@@ -244,7 +244,7 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
     node.submit(Command::TurnTaken { turn: later, release: releases[1] }).await;
     let assignment = chain.view(schedule, turnOfCall { turn: later }).await;
     restock(&chain, &node).await;
-    let events = next_epoch(&mut node).await;
+    let events = next_epoch(&mut node, &chain).await;
     assert!(node.query(|e| e.operator_faults().haircuts.is_empty()).await, "the spent haircut is dropped");
     let (kept, withheld) = part(&events, b);
     assert!(kept > 0 && withheld == 0, "{events:?}");

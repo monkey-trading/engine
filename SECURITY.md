@@ -373,7 +373,9 @@ follows the operator registry's elections, which the engine mirrors from finalis
 the incumbent's host can delay an elected key's takeover, bounded only by the custody watcher's
 stall alerts, and from V50, which splits the operator's share of each distribution among the
 operators by their sequenced time in office, the incumbent keeps earning the share through that
-delay; from V51 a registry that names a schedule rotates the operator daily instead: each election
+delay, and from V75 each distribution epoch's close waits for the same mirror to pass the epoch's end,
+so the host can delay a distribution, and an epoch it holds for a day past its end is skipped, but no
+close pays a stake set the mirror has not brought to the epoch's end; from V51 a registry that names a schedule rotates the operator daily instead: each election
 close adopts a rotation set seven days plus the finality margin before it takes effect, and anyone
 draws each 22:30 UTC turn from the set in effect at its draw deadline, a day before the boundary, until
 the boundary, with a seed relayed from Ethereum, so whoever can withhold every relay until a turn's

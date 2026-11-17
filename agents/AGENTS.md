@@ -57,7 +57,8 @@ an index: load only the rule whose hint matches the current action.
   nonces, and expiries, and from `V41` session keys: one account-signed registration authorises a
   short-lived in-browser key to place and cancel orders on its own nonce sequence, in
   `session_keys.rs`, where from `V42` the new addresses an account may introduce are a budget of
-  100 refilling one per hour of sequenced time; from `V44`, `Command::CancelAll` and
+  100 refilling one per hour of sequenced time, and from `V75` a key whose address is the operator key in
+  effect signs nothing (`tests/session_keys/operator_key.rs`); from `V44`, `Command::CancelAll` and
   `AccessCloseAll` in `execution/cancel.rs` and `execution/batch.rs`: one signed request cancels every resting order, or closes the named
   markets' whole positions as the single reduce-only market order, on one nonce, from `V45` at most
   `Fixed::MAX_INPUT` units per entry), USD settlement of markets quoted in other currencies, admin commands signed
@@ -85,7 +86,7 @@ an index: load only the rule whose hint matches the current action.
   notice one turn (`turns::TURN_MS`, `tests/short_turns.rs`), and a `production` node build refuses it), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
-  anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), from `V70` cut by a proven fault's haircut, which starts at the recorded penalty and falls linearly to nothing, the withheld part going to stakers (`operator_faults.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
+  anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), from `V70` cut by a proven fault's haircut, which starts at the recorded penalty and falls linearly to nothing, the withheld part going to stakers (`operator_faults.rs`), from `V75` a client's unfinalised deposit counted as its own cash, reserving only what its reversal would leave unpaid, and an epoch closed only once the mirror's finalised frontier has passed its end, within a day of it, `tests/staking/unfinalised_deposits.rs` and `tests/staking/mirror_frontier.rs`, cumulative distributions proven on chain; `Engine::distributable_excess` in `staking/excess.rs` reads what a close would distribute),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks). It does no IO and uses no clocks,
@@ -194,7 +195,7 @@ an index: load only the rule whose hint matches the current action.
   names, takes the keys — and the sealed tail segment, so no seq is missing — over HPKE after each
   release attests the other; the elected successor resolves the incumbent's handover endpoint from
   the registry's recorded source and fetches the published log first), the trusted time check against
-  Roughtime servers with sequenced time held to monotonic time's pace (`clock.rs`), the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
+  Roughtime servers with sequenced time held to monotonic time's pace (`clock.rs`), the custody adapter (mock, which from V75 records a staking frontier at the engine's time once an epoch has ended past it, `custody/mock_frontier.rs`, or EVM vault deposits over alloy, mirroring the
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
   authenticated in engine state rather than trusted from the host cursor, and from V37 the operator
   registry's rotation switches and elections in the same proven blocks, and from V51 its schedule's

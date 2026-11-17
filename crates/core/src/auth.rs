@@ -196,7 +196,8 @@ impl Engine {
     /// an account-signed request a refusal cannot replay behaves.
     /// Error cases:
     /// - `InvalidSignature`: not signed by `account` or, from `V41`, by one of its session keys
-    ///   within `scope`
+    ///   within `scope`; from `V75` a session key whose address is the operator key in effect is
+    ///   none, and spends no nonce
     /// - the rejections of `use_nonce`
     /// - `SessionKeyRevoked` or `SessionKeyExpired`: the key's state refuses it
     /// - `SessionKeyScope`: a live session key signed a `Funds` request
@@ -214,7 +215,12 @@ impl Engine {
         if scope == RequestScope::Keys || self.protocol_version < ProtocolVersion::V41 {
             return Err(Reject::InvalidSignature);
         }
-        let Some(key) = self.session_keys.get(&account).and_then(|keys| keys.keys.get(&signer)).copied() else {
+        // From `V75` the operator key in effect is no session key, though it was registered as one
+        // before it became the operator's: its sequence is the admin channel's.
+        let operator_key = self.protocol_version >= ProtocolVersion::V75
+            && self.operator.is_some_and(|operator| operator.address == signer);
+        let registered = self.session_keys.get(&account).and_then(|keys| keys.keys.get(&signer)).copied();
+        let Some(key) = registered.filter(|_| !operator_key) else {
             // A signer that has spent request nonces before — a pruned session key — keeps its
             // replay protection after pruning: the refusal still spends its nonce, so a captured
             // request cannot replay once the key is re-registered. The operator's sequence is

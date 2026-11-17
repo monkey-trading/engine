@@ -9,6 +9,9 @@ use engine_core::command::{Command, Sequenced};
 use engine_core::types::{AccountId, Millis};
 use serde_json::Value;
 
+use alloy::primitives::U64;
+
+use super::super::chain::Chain;
 use super::super::node::Node;
 use crate::log::LogEntry;
 
@@ -19,6 +22,19 @@ pub(super) async fn office(node: &Node) -> (BTreeMap<AccountId, Millis>, Millis)
         (office.served.clone(), e.now())
     })
     .await
+}
+
+/// Finalises the chain's latest block and waits until `node`'s staking mirror has completed a scan
+/// through it. From `V75` an epoch closes only once the mirror has passed its end, so the next command
+/// closes the day's epoch, as it would have before the close waited, and no close lands later between
+/// the turn's office checks.
+pub(super) async fn mirror_through_latest(chain: &Chain, node: &Node) {
+    let latest: u64 = chain.provider.request::<_, U64>("eth_blockNumber", ()).await.unwrap().to();
+    chain.finalize().await;
+    node.wait("the staking mirror to pass the latest block", move |e| {
+        e.staking().and_then(|staking| staking.completed_through).is_some_and(|scan| scan.block >= latest)
+    })
+    .await;
 }
 
 /// `served` with `by` more for `account`.

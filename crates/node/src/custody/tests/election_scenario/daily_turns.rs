@@ -251,11 +251,12 @@ async fn scenario() {
         let (start_secs, start) = (boundary_secs(turn), boundary_secs(turn) as Millis * 1000);
         let named = |index: usize| members[index].name;
 
-        // An hour before the boundary the relayer relays the next two turns' seeds; ten minutes
-        // before, a tick catches up the day's financing rollover, and the time in office stands.
+        // An hour before the boundary the relayer relays the next two turns' seeds, which the mirror passes;
+        // ten minutes before, a tick catches up the day's rollover and close, and the time in office stands.
         let relay_at = start_secs - 3_600;
         holder.node.advance_to(relay_at as Millis * 1000).await;
         let [next_seed, _] = seeds.relay(&chain, relay_at, [turn + 1, turn + 2]).await;
+        checks::mirror_through_latest(&chain, &holder.node).await;
         holder.node.advance_to(start - 600_000).await;
         holder.node.submit(Command::Tick).await;
         let (before, before_at) = office(&holder.node).await;

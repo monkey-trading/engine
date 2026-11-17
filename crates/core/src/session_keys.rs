@@ -6,7 +6,9 @@
 //! [`Command::RevokeSessionKey`](crate::command::Command::RevokeSessionKey). From `V41`, a request for the account signed by a registered,
 //! unexpired session key is accepted for orders and cancels only — never withdrawals — and runs on
 //! the key's own nonce sequence in `request_nonces` under the same per-request expiry cap as
-//! account-signed requests (see `auth`). Registrations and revocations are sequenced commands, so a
+//! account-signed requests (see `auth`). The operator's address is refused as a session key at the
+//! registration, and from `V75` a key registered before it became the operator key in effect signs
+//! nothing while it is. Registrations and revocations are sequenced commands, so a
 //! log replays to its roots; an account's keys are one leaf of the state tree, pruned and
 //! capped so it stays bounded.
 

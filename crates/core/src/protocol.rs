@@ -5,10 +5,10 @@
 //! from genesis before versions could activate, so `v1.jsonl` and `v2.jsonl` both replay under it.
 //!
 //! Adding a version:
-//! 1. Add a variant after the last one and point [`ProtocolVersion::LATEST`] at it; the node
-//!    activates `LATEST` on its next boot, at the next seq of each log. Activation is one-way: a
-//!    build that predates the version cannot read a log that activated it, so a rollback needs a
-//!    fresh log.
+//! 1. Add a variant after the last one and point [`ProtocolVersion::LATEST`], in `protocol/support.rs`,
+//!    at it; the node activates `LATEST` on its next boot, at the next seq of each log. Activation is
+//!    one-way: a build that predates the version cannot read a log that activated it, so a rollback
+//!    needs a fresh log.
 //! 2. Gate each changed rule on `self.protocol_version >= ProtocolVersion::Vn`, and leave the
 //!    earlier path as it is.
 //! 3. Keep the roots of earlier versions. Before `V9` the root hashes the engine's encoding, so
@@ -490,9 +490,10 @@ pub enum ProtocolVersion {
     /// - until then such a limit rests, and fills if a later change lets it, as a reduce-only limit
     ///   does once its position reopens.
     V74,
-}
-
-impl ProtocolVersion {
-    /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V74;
+    /// An epoch close counts a client's unfinalised deposit as the client's own cash, reserving for each
+    /// account only what its cash, and its marked equity, would fall below zero by were its deposits to
+    /// reverse. The latest epoch the staking mirror's finalised frontier has passed closes, while it
+    /// ended under a day before; an older one is skipped. A session key signs nothing while its address
+    /// is the operator key in effect, and spends no nonce.
+    V75,
 }

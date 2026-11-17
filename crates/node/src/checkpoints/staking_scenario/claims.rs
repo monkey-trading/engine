@@ -95,6 +95,25 @@ impl Scenario {
         assert!(matches!(events[..], [Event::Staked { .. }]), "{events:?}");
     }
 
+    /// Completes the staking mirror's scan through Anvil's latest block, stamped with its time, as the
+    /// custody watcher does for a finalised range: from `V75` an epoch closes only once that time has
+    /// passed its end. Anvil runs on the wall clock, past the scenario's epochs.
+    pub(super) async fn mirror_progress(&self) {
+        let block: serde_json::Value =
+            self.provider.request("eth_getBlockByNumber", ("latest", false)).await.expect("the latest block");
+        let field = |name: &str| block[name].as_str().unwrap_or_else(|| panic!("the block's {name}")).to_owned();
+        let number = u64::from_str_radix(field("number").trim_start_matches("0x"), 16).expect("a block number");
+        let time = u64::from_str_radix(field("timestamp").trim_start_matches("0x"), 16).expect("a block time");
+        let progress = Command::StakingProgress {
+            block: number,
+            block_hash: field("hash").parse::<B256>().expect("a block hash"),
+            block_time: Some(i64::try_from(time).expect("a block time in range") * 1_000),
+            named_turn: None,
+        };
+        let events = self.submit(progress).await;
+        assert!(!events.iter().any(|e| matches!(e, Event::AdminRejected { .. })), "{events:?}");
+    }
+
     /// Mirrors an unstake transaction's `UnstakeCompleted` event into the engine under its chain
     /// reference.
     pub(super) async fn mirror_unstake(&self, receipt: TransactionReceipt, account: AccountId, amount: TokenUnits) {

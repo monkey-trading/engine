@@ -11,7 +11,11 @@
 //! - **Epochs** are the half-open windows `[start + n·epoch_ms, start + (n+1)·epoch_ms)` of
 //!   sequenced time. The first command at or after an epoch's end closes it, before anything else
 //!   the command does, exactly as emission periods finalise; epochs no command witnessed are
-//!   skipped and distribute nothing.
+//!   skipped and distribute nothing. From `V75` the latest epoch whose end the mirror's completed
+//!   frontier has also passed closes, as an election waits for its effective time, while it ended
+//!   less than a day before; an older one is skipped too. A stalled mirror delays a close, and the
+//!   excess stays with the house for the next close it lets through, but no close pays a stake set
+//!   the mirror has not brought to the epoch's end.
 //! - **Distribution.** At an epoch's close, the excess is `min(NAV, house cash less every
 //!   unfinalised deposit) − floor`: the floor stays as house liquidity and principal still waiting
 //!   for Ethereum finality — the house's and each client's — stays locked, exactly as
@@ -20,7 +24,10 @@
 //!   distributes. Each staker receives `floor(excess · stake / total stake)` in USDC base units, so
 //!   every allocation is a whole USDC unit the vault pays exactly; the remainder is the house's.
 //!   From V28, unresolved negative client cash is reserved too: a partial liquidation cannot pay
-//!   stakers with an unfunded realised loss while another position cannot close.
+//!   stakers with an unfunded realised loss while another position cannot close. From `V75` a
+//!   client's unfinalised deposit is its own cash, which a reversal takes back first, so for each
+//!   account only what its cash, and its marked equity, would fall below zero by were its deposits to
+//!   reverse is reserved (`excess`).
 //!   House cash falls by the allocated total. Each account's cumulative distribution is a leaf of
 //!   its own in the state tree, which the vault checks a claim against.
 //! - **The operator's share**, from V47. While rotation is on, `floor(excess / 5)` credits the
@@ -49,6 +56,7 @@ use crate::engine::Engine;
 use crate::event::Event;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MAX_STAMP_MS, Millis};
+mod excess;
 mod office;
 pub use office::TimeInOffice;
 
@@ -57,6 +65,10 @@ pub(crate) const USDC_SCALE: i128 = 1_000;
 /// From `V47`, what the excess is divided by for the operator's share while rotation is on: a
 /// fifth, 20%. A constant, not a parameter, so the operator it pays cannot change it.
 const OPERATOR_SHARE_DIVISOR: u128 = 5;
+/// From `V75`, how long after its end an epoch can still close: a day. A mirror that has not passed an
+/// epoch's end a day after it has stalled rather than lagged, and with daily turns a day is one member's
+/// turn, after which the next member's node mirrors.
+const CLOSE_HORIZON_MS: Millis = 24 * 60 * 60 * 1000;
 
 /// A cumulative USDC distribution in USDC base units (6 decimals), as the vault pays it. Serializes
 /// as a decimal string, so no JSON client loses precision.
@@ -86,6 +98,8 @@ pub struct StakingConfig {
 pub struct Staking {
     pub config: StakingConfig,
     /// The epoch stake and NAV accrue to: the one the last command fell in, or 0 before the start.
+    /// From `V75` the first epoch no close has passed, which is earlier while a close waits for the
+    /// mirror.
     pub epoch: u64,
     /// USDC base units allocated across every closed epoch: to stakers, and from `V47` to the
     /// operator.
@@ -356,6 +370,8 @@ impl Engine {
     /// latest one distributes `NAV − floor` pro-rata to the staked snapshot, less from `V47` the
     /// operator's share while rotation is on, and from `V50` the share its time in office earned;
     /// the ones before it, whose end no command witnessed, distribute nothing, like emission periods.
+    /// From `V75` the latest epoch closes that the staking mirror's completed frontier has passed too,
+    /// within `CLOSE_HORIZON_MS` of its end (`mirrored_close`).
     pub(crate) fn finalise_staking(&mut self, events: &mut Vec<Event>) {
         let Some(staking) = &self.staking else { return };
         let (config, open) = (staking.config, staking.epoch);
@@ -363,7 +379,12 @@ impl Engine {
         if elapsed <= open {
             return;
         }
-        let closed = elapsed - 1;
+        let closed = if self.protocol_version >= ProtocolVersion::V75 {
+            let Some(closed) = self.mirrored_close(&config, open) else { return };
+            closed
+        } else {
+            elapsed - 1
+        };
         if closed > open {
             events.push(Event::DistributionEpochsSkipped { first: open, last: closed - 1 });
         }
@@ -405,7 +426,7 @@ impl Engine {
             allocated: UsdcUnits(allocated),
         });
         let staking = self.staking.as_mut().expect("read above");
-        staking.epoch = elapsed;
+        staking.epoch = closed + 1;
         staking.distributed.0 += allocated;
         if self.protocol_version >= ProtocolVersion::V50 {
             self.start_time_in_office();
@@ -414,6 +435,17 @@ impl Engine {
 }
 
 impl Engine {
+    /// From `V75`, the epoch a command closes, if any: the latest whose end both the sequenced time and
+    /// the staking mirror's completed frontier have passed, as an election waits for its effective time,
+    /// if `open` has not closed it and it ended less than `CLOSE_HORIZON_MS` ago. A stake set the mirror
+    /// has not brought to an epoch's end is never paid; an epoch older than the horizon is skipped by
+    /// the close that comes, which pays the excess it would have.
+    fn mirrored_close(&self, config: &StakingConfig, open: u64) -> Option<u64> {
+        let reached = self.finalised_chain_time()?;
+        let closed = config.epochs_elapsed(reached.min(self.now)).checked_sub(1).filter(|closed| *closed >= open)?;
+        (config.epoch_end(closed).saturating_add(CLOSE_HORIZON_MS) > self.now).then_some(closed)
+    }
+
     /// The operator's share of a close, `share` USDC base units, by recipient, with what a proven fault's
     /// haircut withheld from each part: from `V50` split by the open epoch's time in office, and from
     /// `V47` all to the account in office while rotation is on.
@@ -428,68 +460,6 @@ impl Engine {
     fn credit_distribution(&mut self, account: AccountId, amount: u128) {
         let distribution = self.distributions.entry(account).or_default();
         distribution.0 = distribution.0.checked_add(amount).expect("a claimable distribution fits a u128");
-    }
-
-    /// What an epoch close at the current state would distribute, in USD before the whole-USDC
-    /// rounding, or `None` before staking is initialised: house NAV and cash above the floor, less
-    /// the principal that can still reverse, the clients' debts and the withdrawal capacity. It
-    /// walks every account.
-    pub fn distributable_excess(&self) -> Option<Fixed> {
-        Some(self.excess_over(self.staking.as_ref()?.config.liquidity_floor))
-    }
-
-    /// The excess over `floor` that an epoch close distributes.
-    fn excess_over(&self, floor: Fixed) -> Fixed {
-        let nav = self.house_nav();
-        // The floor stays as house liquidity, and every principal still able to reverse stays
-        // locked, exactly as `house_capital` and a reversal take it back: the house's unfinalised
-        // deposits and each client's, whose realised gains are therefore not distributed until the
-        // deposit finalises. NAV can exceed that cash while clients' open positions sit
-        // underwater; the unrealised excess is not paid either.
-        // TODO: maintain the account reserve incrementally before account-count growth makes
-        // epoch close exceed its sequencing latency budget.
-        let (reserved, uncollectible, principal) = if self.protocol_version >= ProtocolVersion::V28 {
-            self.accounts.values().fold(
-                (0i128, 0i128, self.unfinalised_house_deposits.raw()),
-                |(reserved, uncollectible, principal), account| {
-                    let deficit = if self.protocol_version >= ProtocolVersion::V29 {
-                        self.equity_and_margin(account, None).0.raw().saturating_neg().max(0)
-                    } else {
-                        0
-                    };
-                    (
-                        reserved
-                            .saturating_add(account.unfinalised_deposits.raw())
-                            .saturating_add(account.balance.raw().saturating_neg().max(0)),
-                        uncollectible.saturating_add(deficit),
-                        principal.saturating_add(account.unfinalised_deposits.raw()),
-                    )
-                },
-            )
-        } else {
-            (self.accounts.values().map(|account| account.unfinalised_deposits).sum::<Fixed>().raw(), 0, 0)
-        };
-        // Reversible principal and outstanding client gains must remain covered together.
-        // Cash debt is already in the independent funded-cash ceiling, so it is not deducted here.
-        let principal = if self.protocol_version >= ProtocolVersion::V30 { principal } else { 0 };
-        let distributable_nav = Fixed::from_raw(nav.raw().saturating_sub(principal).saturating_sub(uncollectible));
-        let available_raw =
-            self.house_cash.raw().saturating_sub(self.unfinalised_house_deposits.raw()).saturating_sub(reserved);
-        let available = Fixed::from_raw(if self.protocol_version >= ProtocolVersion::V28 {
-            available_raw.max(0)
-        } else {
-            available_raw
-        });
-        let available = if self.protocol_version >= ProtocolVersion::V31 {
-            available.min(self.withdrawal_cash.expect("V31 requires V22 capacity").max(Fixed::ZERO))
-        } else {
-            available
-        };
-        if self.protocol_version >= ProtocolVersion::V28 {
-            Fixed::from_raw(distributable_nav.raw().min(available.raw()).saturating_sub(floor.raw()).max(0))
-        } else {
-            (nav.min(available) - floor).max(Fixed::ZERO)
-        }
     }
 }
 

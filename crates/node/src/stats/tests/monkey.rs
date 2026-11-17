@@ -163,3 +163,31 @@ fn a_closed_epoch_is_reported_with_what_it_measured_and_distributed() {
     assert_eq!(series["entries"][0]["value"], allocated.to_string());
     assert_eq!(series["unit"], "usdc_base_units");
 }
+
+/// From `V75` a close waits for the staking mirror: until the mirror passes the epoch's end, the view
+/// reports the epoch open, with its close due at that end.
+#[test]
+fn an_epoch_the_mirror_has_not_passed_is_reported_open() {
+    let mut rig = Rig::staking_at(engine_core::protocol::ProtocolVersion::V75);
+    rig.apply(
+        T0 + 1_000,
+        Command::Stake { account: TRADER, amount: TokenUnits(100), block: 1, chain_ref: "0xs:0".into() },
+    );
+    let end = rig.engine.staking().unwrap().config.epoch_end(0);
+    let held = rig.apply(end, Command::Tick);
+    assert!(!held.iter().any(|event| matches!(event, Event::DistributionEpochClosed { .. })), "{held:?}");
+    let view = json(rig.stats.monkey(&rig.engine));
+    let distribution = &view["distribution"];
+    assert_eq!(distribution["epoch"], 1);
+    assert_eq!(distribution["last_closed_epoch"], serde_json::Value::Null);
+    assert_eq!(distribution["next_close_ms"], end);
+
+    let block_hash = engine_core::eip712::B256::repeat_byte(2);
+    rig.apply(end + 1_000, Command::StakingProgress { block: 2, block_hash, block_time: Some(end), named_turn: None });
+    let closed = rig.apply(end + 2_000, Command::Tick);
+    assert!(closed.iter().any(|event| matches!(event, Event::DistributionEpochClosed { epoch: 0, .. })), "{closed:?}");
+    let view = json(rig.stats.monkey(&rig.engine));
+    assert_eq!(view["distribution"]["last_closed_epoch"], 0);
+    assert_eq!(view["distribution"]["last_closed_ms"], end);
+    assert_eq!(view["distribution"]["next_close_ms"], end + 86_400_000);
+}

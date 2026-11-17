@@ -1331,6 +1331,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/mod.rs` — the custody providers (mock and EVM), the USDC-to-`Fixed` conversion,
   and `ContractQuorum`, the custody providers' agreed reads of a contract at one block of the custody
   credit tag
+- `src/custody/mock_frontier.rs` — mock custody's staking frontier: from `V75`, a scan stamped at the
+  engine's time once an epoch has ended past the frontier, so a dev node's epochs keep closing
 - `src/custody/staking_terms.rs` — the staking contract's epoch and cooldown read through the custody
   quorum, and the check of `InitStaking` against them that the admin route and startup make; its tests,
   `src/custody/tests/staking_terms.rs`, cover the read, the comparison, the chain it must serve and an
@@ -2526,8 +2528,13 @@ strings. `GET /v1/monkey/distributions?limit=&before=` pages the closed distribu
 `close_seq` and `close_ms` of the command that closed it, `ended_ms`, `nav`, `floor`, `excess_usdc_units`,
 `allocated_usdc_units`, `stakers_usdc_units` with the number of `stakers` paid, `operator_shares` (every
 recipient with its `amount`: before `V50` none for a close with rotation off, and from `V50` each account
-whose time in office in the epoch earned a part) and `skipped` (the range of earlier epochs no command
-saw the end of, which that close distributed nothing for). It states where its data begins like the other
+whose time in office in the epoch earned a part) and `skipped` (the range of earlier epochs that close
+skipped, which it distributed nothing for: ones no command saw the end of, and from `V75` every
+unclosed epoch before the latest one both the sequenced time and the staking mirror have passed, such
+as one the mirror passed only a day after its end). From `V75` a close waits for the staking mirror to
+pass the epoch's end, so `close_ms` can come well after `ended_ms`, and `/v1/monkey`'s
+`distribution.next_close_ms`, the end of the engine's open epoch, can lie before `time_ms`; a node on
+mock custody records a frontier itself, at the engine's time once an epoch has ended past it. It states where its data begins like the other
 answers, and `retained_from_epoch` names the oldest epoch held, with `truncated` true once `[stats] distribution_limit`
 (5000 by default) has dropped older epochs. `GET /v1/stats/series?metric=&market=&resolution=(1m|1h|1d)&from_ms=&to_ms=&limit=` pages a
 metric's buckets oldest first: `nav`, `cash`, `withdrawal_queue`, `total_staked`, `total_allocated`,

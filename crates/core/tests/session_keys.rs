@@ -441,3 +441,6 @@ fn an_operator_signed_client_request_leaves_the_operator_nonce_unspent() {
     assert_eq!(rejection(&events), &Reject::InvalidSignature);
     assert_eq!(h.engine.next_request_nonce(operator.account), operator_nonce);
 }
+
+#[path = "session_keys/operator_key.rs"]
+mod operator_key;

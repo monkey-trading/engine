@@ -191,6 +191,12 @@ this crate and reproduce the signed state roots exactly.
   (`src/hot_indexes/triggers.rs`): a limit is keyed at the mid where its market's least fill rate, the
   lower of its least spread band and its close-spread ceiling, first lets it fill, so a limit the spread
   keeps out of reach costs a price nothing
+- From protocol `V75`, an epoch close counts a client's unfinalised deposit as the client's own cash,
+  reserving only what each account's cash, and its marked equity, would fall below zero by were its
+  deposits to reverse (`src/staking/excess.rs`); the latest epoch the staking mirror's finalised
+  frontier has passed closes, while it ended less than a day before, and an older one is skipped
+  (`src/staking.rs`); and a session key whose address is the operator key in effect signs nothing
+  (`src/auth.rs`)
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -510,8 +516,11 @@ this crate and reproduce the signed state roots exactly.
   entitlements
 - `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
   mirroring, the mirrored frontier with, from `V65`, the turn the registry names the operator by,
-  epoch finalisation, the operator's share from `V47`, claimable distributions, and
-  `distributable_excess`, the read-only figure an epoch close would distribute
+  epoch finalisation, which from `V75` waits for that frontier, the operator's share from `V47`, and
+  claimable distributions
+- `src/staking/excess.rs` — what an epoch close distributes, `distributable_excess`: house NAV and
+  cash above the floor, less what can still reverse and what clients cannot pay, within the
+  withdrawal capacity; from `V75` a client's unfinalised deposit reserves only its reversal's shortfall
 - `src/staking/office.rs` — from `V50`, each account's time in office in the open epoch, and the
   split of the operator's share by it
 - `src/staking/tests.rs` — staking tests: initialisation and validation, mirror crediting and
@@ -543,7 +552,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/eip712.rs` — the EIP-712 domain, the request types clients and the operator sign, and signer
   recovery
 - `src/protocol.rs` — protocol versions, and how to add one
-- `src/protocol/support.rs` — what a rule set supports: access screening, deposit finality, and `V2`
+- `src/protocol/support.rs` — `ProtocolVersion::LATEST`, and what a rule set supports: access
+  screening, deposit finality, and `V2`
 - `src/merkle/mod.rs` — the state tree's layout and the sparse Merkle tree
 - `src/merkle/leaf/mod.rs` — each leaf's key and value hash, and the account leaf;
   `src/merkle/leaf/market.rs` the market leaf
@@ -654,12 +664,24 @@ this crate and reproduce the signed state roots exactly.
 - `tests/staking/composed_reserves.rs` — combined principal, marked liabilities, receipt reversal and settlement
 - `tests/staking/marked_equity.rs` — closed-share FX insolvency, collectible NAV, settlement and activation boundaries
 - `tests/staking/negative_cash.rs` — partial liquidation, unresolved negative cash, finality reserves, and protected claim liquidity
+- `tests/staking/support.rs` — the `V75` staking tests' harness: access-screened staking at a chosen
+  version with the house 1,000 USDC above its floor and rotation on, and the mirror's frontier
+- `tests/staking/unfinalised_deposits.rs` — `V75`: a deposit unfinalised at a close leaves the excess,
+  the operator's share and the stake snapshot as they were, against `V74`, and a client trading on one
+  moves the excess by exactly what its reversal would cost
+- `tests/staking/mirror_frontier.rs` — `V75`: a close waits for the mirror to pass the epoch's end and
+  pays the stake it finalised by then, against `V74`; no frontier holds every close; epochs shorter than
+  the mirror's lag close in turn; a frontier ahead of the sequenced time closes no unended epoch; an
+  epoch the mirror passes a day after its end is skipped; and the activation holds an epoch due at it
 - `tests/staking.rs` — MONKEY staking and USDC distributions from `V25`: stake and unstake
   mirroring, epoch closes above and below the liquidity floor, pro-rata rounding, skipped epochs,
   and distribution proofs
 - `tests/session_keys.rs` — `V41` session keys: registration and revival, per-key nonces, the
   order/cancel-only scope, revocations and expiries, the per-account cap and its pruning, and
   cross-account isolation, with the shared harness in `tests/common/session_keys.rs`
+- `tests/session_keys/operator_key.rs` — `V75`: a session key registered before its address became
+  the operator key in effect signs nothing for the account, and the admin sequence stays the
+  operator's, against `V74`
 - `tests/session_keys_caps.rs` — session-key retention: the live cap and its pruning, `V41`'s
   lifetime cap, and `V42`'s refilling introduction budget (empty, hourly refill, carried partial
   hour, saturation, known addresses free, the activation crossing)
@@ -674,7 +696,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V74` parts (`v15.rs` to `v74.rs`)
+  `V15` to `V75` parts (`v15.rs` to `v75.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1325,6 +1347,33 @@ below the minimum notional, a spread at its size that reaches the price, and a r
 ceiling, whose closing slice fills first if it can; and such a limit rests until then, and fills if a
 later change lets it, as a reduce-only limit does once its position reopens. Its log is `v74.jsonl`, and
 its session is in `examples/reference_log/v74.rs`.
+
+Protocol V75 changes three rules. An epoch close counts a client's unfinalised deposit as the client's
+own cash. A vault deposit is credited at the sequencer's confirmation and unlocks at Ethereum finality,
+so one made in the minutes before a close is still unfinalised at it. Up to V74 the close reserved every
+client's unfinalised principal from house cash and house NAV, though that principal sits in the client's
+balance, so a deposit locked over a close cut what it paid, and the excess it held back paid the next
+close's stake snapshot and time in office. From V75 the close reserves, for each account, only what a
+reversal would leave the house to bear, since a reversal takes the deposit back from the client's cash
+first: `max(0, locked - cash)` from house cash and `max(0, locked - equity)` from house NAV, which with
+nothing locked are V28's negative cash and V29's negative equity (`src/staking/excess.rs`); the house's own
+unfinalised deposits stay reserved whole. An epoch also closes only once the staking mirror's finalised
+frontier (`Staking::completed_through`) has passed its end, as an election waits for its effective time:
+the latest epoch both the sequenced time and the frontier have passed closes, at the first command
+after the frontier passes it, and earlier unclosed ones are skipped. A frontier that advances steadily
+passes each end in turn, so a mirror that lags by more than an epoch still closes every epoch. An epoch can close only within a day of its end
+(`CLOSE_HORIZON_MS`): a mirror that has not passed it by then has stalled, and with daily turns a day is
+one member's turn. A mirror the host holds back delays the close, as it can delay any command, but no
+close pays a stake set the mirror has not brought to the epoch's end: an epoch older than the horizon is
+skipped at the close that comes, and its excess stays with the house for that close, which pays it to
+the stake set the mirror has brought to its own end and splits the operator's share by time in office
+since the last close. A close pays the stake mirrored when it runs: in the usual case, where the frontier
+lags, that is the first completed scan past the end, so a stake or unstake after the end within that
+scan counts; a frontier recorded ahead of the sequenced time also lets later scans in before the close.
+The activation runs before an epoch due at its command closes, so that close waits for the mirror too.
+Last, a request a session key signs is refused, spending no nonce, while the key's address is the
+operator key in effect, so a key an account registered before it became the operator's never trades on
+the admin sequence. Its log is `v75.jsonl`, and its session is in `examples/reference_log/v75.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

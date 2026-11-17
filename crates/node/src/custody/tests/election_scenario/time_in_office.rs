@@ -102,8 +102,11 @@ async fn dev_scenario_a_handover_halfway_through_an_epoch_splits_the_operators_s
     assert_eq!(node.query(|e| e.operator_election().last.map(|last| last.effective_at)).await, Some(handover_ms));
 
     // 4. The close at the epoch's start, with the house at the floor, pays no one and starts the
-    //    epoch's count; a client then loses at least $900 to the house.
+    //    epoch's count; a client then loses at least $900 to the house. From `V75` the close waits for
+    //    the mirror to pass the start, so a block stamped then is mirrored first.
     let start_ms = start_secs as Millis * 1000;
+    let block = chain.mine_at(start_secs).await;
+    node.wait("the mirror to pass the epoch's start", move |e| completed_through(e) >= Some(block)).await;
     node.advance_to(start_ms).await;
     node.submit(Command::Tick).await;
     let since = node.query(|e| e.staking().and_then(|staking| staking.office.as_ref()).map(|o| o.since)).await;
@@ -121,7 +124,7 @@ async fn dev_scenario_a_handover_halfway_through_an_epoch_splits_the_operators_s
 
     // 6. The close credits b and a about half the fifth each: b held the office twelve hours and a
     //    minute of the day, and a the rest.
-    let events = next_epoch(&mut node).await;
+    let events = next_epoch(&mut node, &chain).await;
     let (fifth, day) = (excess_of(&events).0 / 5, DISTRIBUTION_EPOCH_SECS as u128 * 1000);
     assert!(fifth >= 180_000_000, "{events:?}");
     let served = (handover_ms + 60_000 - start_ms) as u128;

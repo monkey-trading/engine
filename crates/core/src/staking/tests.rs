@@ -270,14 +270,20 @@ fn gains_on_unfinalised_trader_deposits_stay_undistributed() {
 }
 
 #[test]
-fn v28_negative_cash_reserves_saturate_without_overflow_or_distributing_insolvent_cash() {
-    for (version, cash) in [ProtocolVersion::V28, ProtocolVersion::V29, ProtocolVersion::V30]
+fn negative_cash_and_reversal_reserves_saturate_without_overflow_or_distributing_insolvent_cash() {
+    for (version, cash) in [ProtocolVersion::V28, ProtocolVersion::V29, ProtocolVersion::V30, ProtocolVersion::V75]
         .into_iter()
         .flat_map(|version| [i128::MIN, -1, 0, i128::MAX].into_iter().map(move |cash| (version, cash)))
     {
         let mut engine = engine(1_000);
         engine.protocol_version = version;
         engine.init_staking(&config(1_000)).unwrap();
+        if version >= ProtocolVersion::V75 {
+            engine.withdrawal_cash = Some(Fixed::from_raw(i128::MAX));
+            let time = Some(config(1_000).epoch_end(0));
+            let frontier = StakingCheckpoint { block: 1, block_hash: alloy_primitives::B256::repeat_byte(1), time };
+            engine.staking.as_mut().unwrap().completed_through = Some(frontier);
+        }
         engine.house_cash = Fixed::from_raw(cash);
         engine.staked.insert(AccountId([1; 20]), TokenUnits(1));
         for account in [AccountId([2; 20]), AccountId([3; 20])] {
@@ -347,4 +353,74 @@ fn v31_distribution_cannot_consume_cash_already_reserved_for_immutable_approvals
     assert_eq!(engine.distribution(AccountId([1; 20])), UsdcUnits(48_123_456));
     assert_eq!(engine.withdrawal_cash, Some(Fixed::from_raw(1_000_000_789)));
     assert_eq!(engine.house_cash, Fixed::from_raw(951_876_544_000));
+}
+
+#[test]
+fn v75_reserves_each_accounts_cash_shortfall_from_house_cash() {
+    // House NAV far above house cash, so the cash ceiling alone binds: a client deep underwater on an
+    // open position the test accounts do not hold.
+    let mut engine = engine(1_000);
+    engine.protocol_version = ProtocolVersion::V75;
+    engine.init_staking(&config(1_000)).unwrap();
+    engine.withdrawal_cash = Some(Fixed::from_int(1_000_000));
+    let spec: crate::market::MarketSpec = serde_json::from_value(serde_json::json!({
+        "id": 1, "symbol": "BIG", "asset_class": "crypto", "schedule": { "kind": "always_open" },
+        "margin_tiers": [{ "bps": 1_000 }], "spread_tiers": [{ "bps": 0 }],
+        "price_rules": { "max_age_ms": 1_000, "max_divergence_bps": 50, "min_sources": 2 },
+        "max_slippage_bps": 20, "house_cap_bps": 5_000,
+        "financing": { "benchmark": "SOFR", "markup_bps": 0, "day_basis": 365 },
+    }))
+    .expect("a valid listing");
+    let mut market = crate::engine::MarketState::new(spec);
+    market.mark = Some(Fixed::from_int(1));
+    market.client_qty = Fixed::ONE;
+    market.client_cost = Fixed::from_int(100_000);
+    engine.markets.insert(1, market);
+    engine.house_cash = Fixed::from_int(10_000);
+    // (cash, unfinalised deposit, what its reversal would leave the house to bear)
+    for (cash, locked, shortfall) in
+        [(1_000, 900, 0), (500, 900, 400), (0, 900, 900), (-100, 900, 1_000), (-100, 0, 100)]
+    {
+        let account = crate::account::Account {
+            balance: Fixed::from_int(cash),
+            unfinalised_deposits: Fixed::from_int(locked),
+            ..Default::default()
+        };
+        engine.accounts.insert(AccountId([2; 20]), account);
+        assert!(engine.house_nav() > engine.house_cash + Fixed::from_int(50_000));
+        let expected = Fixed::from_int(10_000 - 100 - shortfall);
+        assert_eq!(engine.distributable_excess(), Some(expected), "cash {cash}, locked {locked}");
+    }
+}
+
+#[test]
+fn v75_keeps_the_houses_unfinalised_deposits_reserved_whole() {
+    // (client unrealised gain, so house NAV binds when positive; the house's unfinalised deposit)
+    for (client_gain, house_locked) in [(0, 0), (0, 300), (200, 0), (200, 300)] {
+        let mut engine = engine(1_000);
+        engine.protocol_version = ProtocolVersion::V75;
+        engine.init_staking(&config(1_000)).unwrap();
+        engine.withdrawal_cash = Some(Fixed::from_int(1_000_000));
+        engine.house_cash = Fixed::from_int(1_000);
+        engine.unfinalised_house_deposits = Fixed::from_int(house_locked);
+        if client_gain > 0 {
+            let spec: crate::market::MarketSpec = serde_json::from_value(serde_json::json!({
+                "id": 1, "symbol": "BIG", "asset_class": "crypto", "schedule": { "kind": "always_open" },
+                "margin_tiers": [{ "bps": 1_000 }], "spread_tiers": [{ "bps": 0 }],
+                "price_rules": { "max_age_ms": 1_000, "max_divergence_bps": 50, "min_sources": 2 },
+                "max_slippage_bps": 20, "house_cap_bps": 5_000,
+                "financing": { "benchmark": "SOFR", "markup_bps": 0, "day_basis": 365 },
+            }))
+            .expect("a valid listing");
+            let mut market = crate::engine::MarketState::new(spec);
+            market.mark = Some(Fixed::from_int(client_gain + 1));
+            market.client_qty = Fixed::ONE;
+            market.client_cost = Fixed::from_int(1);
+            engine.markets.insert(1, market);
+        }
+        assert_eq!(engine.house_nav(), Fixed::from_int(1_000 - client_gain));
+        // The floor is 100: NAV or cash, whichever is lower, less the house's whole unfinalised deposit.
+        let expected = Fixed::from_int(1_000 - client_gain - house_locked - 100);
+        assert_eq!(engine.distributable_excess(), Some(expected), "gain {client_gain}, locked {house_locked}");
+    }
 }

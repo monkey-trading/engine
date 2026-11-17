@@ -302,9 +302,11 @@ pub enum Event {
         excess: UsdcUnits,
         allocated: UsdcUnits,
     },
-    /// From `V25`, the distribution epochs from `first` to `last` whose end no command witnessed;
-    /// they allocate nothing themselves, and the close that witnesses the range's end distributes
-    /// the whole excess then, to whoever is staked at that moment.
+    /// From `V25`, the distribution epochs from `first` to `last` whose end no command witnessed, and
+    /// from `V75` every unclosed epoch before the latest one both the sequenced time and the staking
+    /// mirror have passed, which includes ones the mirror passed only a day after their end; they allocate
+    /// nothing themselves, and the close after them distributes the whole excess then, to whoever is
+    /// staked at that moment.
     DistributionEpochsSkipped {
         first: u64,
         last: u64,

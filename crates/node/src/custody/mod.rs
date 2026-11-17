@@ -32,6 +32,7 @@ mod chain;
 mod credit;
 mod cursor;
 mod evm;
+mod mock_frontier;
 pub(crate) mod pending;
 use crate::custody::evm::DepositWatcher;
 mod quorum;
@@ -182,7 +183,8 @@ async fn read_final_on<R: crate::custody::evm::VaultReader + Sync>(
 /// A connected custody provider, ready to run.
 pub struct Custody {
     /// Credits quorum-proven vault deposits and reconciles their principal finality; `None` is the
-    /// mock, whose deposits come from the dev endpoint and whose withdrawals are only logged.
+    /// mock, whose deposits come from the dev endpoint, whose withdrawals are only logged, and which
+    /// from `V75` records a staking frontier at each epoch's end (`mock_frontier`).
     evm: Option<Box<DepositWatcher<Quorum<VaultRpc>>>>,
     access: Option<Arc<AccessClient>>,
 }
@@ -229,6 +231,7 @@ impl Custody {
             None => tokio::select! {
                 () = log_withdrawals(withdrawals) => Ok(()),
                 result = retry => result,
+                result = mock_frontier::run(tx) => result,
             },
             Some(watcher) => tokio::select! {
                 () = log_withdrawals(withdrawals) => Ok(()),

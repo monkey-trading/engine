@@ -103,6 +103,8 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
     }
     assert_eq!(s.staked(s.stakers[0]).await, TokenUnits(quarter));
     assert_eq!(s.staked(s.stakers[1]).await, TokenUnits(3 * quarter));
+    // The mirror completes its scan past both stakes, and past the epochs ahead.
+    s.mirror_progress().await;
 
     // 3. A restart across the epoch boundary, and the first tick closes epoch 0: the 559.92 USDC
     //    above the floor pays the stakers 25/75, and house cash falls by the allocated total.

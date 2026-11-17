@@ -114,7 +114,7 @@ async fn dev_scenario_the_elected_operator_and_a_staker_each_claim_their_share()
     //    much USDC above the floor: a fifth to the operator, and the rest to stakers 30:40:20. The
     //    operator also stakes, so its leaf holds both, and only the stakers' rounding stays behind.
     round_trip(&node, &trader_key, Side::Buy, "3", "100000", "99700").await;
-    let events = next_epoch(&mut node).await;
+    let events = next_epoch(&mut node, &chain).await;
     let excess = excess_of(&events).0;
     assert!(excess >= 900_000_000, "{events:?}");
     let share = excess / 5;
@@ -144,7 +144,7 @@ async fn dev_scenario_the_elected_operator_and_a_staker_each_claim_their_share()
     // 6. The client wins back more than the house has above the floor: the next close finds NAV
     //    below it, and pays neither the operator nor a staker.
     round_trip(&node, &trader_key, Side::Sell, "1", "100900", "100000").await;
-    let events = next_epoch(&mut node).await;
+    let events = next_epoch(&mut node, &chain).await;
     assert!(nav_below_floor(&events), "the closed epoch's NAV is not below the floor: {events:?}");
     assert!(!events.iter().any(|e| matches!(e, Event::OperatorShareAllocated { .. })), "{events:?}");
     assert_eq!(allocated_of(&events), UsdcUnits(0), "{events:?}");
@@ -153,7 +153,7 @@ async fn dev_scenario_the_elected_operator_and_a_staker_each_claim_their_share()
 
     // 7. The house earns above the floor again, and the operator leaves the new share unclaimed.
     round_trip(&node, &trader_key, Side::Buy, "3", "100000", "99500").await;
-    let events = next_epoch(&mut node).await;
+    let events = next_epoch(&mut node, &chain).await;
     let later = share_of(&events);
     assert!(later.0 > 0 && later.0 == excess_of(&events).0 / 5, "{events:?}");
     let entitled = node.query(move |e| e.distribution(operator)).await;
@@ -248,14 +248,19 @@ pub(super) async fn round_trip(node: &Node, key: &SigningKey, open: Side, qty: &
     }
 }
 
-/// Ticks at the end of the open epoch, closing it, and returns the tick's events.
-pub(super) async fn next_epoch(node: &mut Node) -> Vec<Event> {
+/// Ticks at the end of the open epoch, closing it, and returns the tick's events. From `V75` a close
+/// waits for the staking mirror to pass the epoch's end, so a block stamped at the end, or after the
+/// chain's latest, is mined and mirrored first.
+pub(super) async fn next_epoch(node: &mut Node, chain: &Chain) -> Vec<Event> {
     let end = node
         .query(|e| {
             let staking = e.staking().expect("the genesis stakes");
             staking.config.epoch_end(staking.config.epochs_elapsed(e.now()))
         })
         .await;
+    let at = u64::try_from(end / 1000).expect("a time after 1970").max(chain.latest_timestamp().await + 1);
+    let block = chain.mine_at(at).await;
+    node.wait("the mirror to pass the epoch's end", move |e| completed_through(e) >= Some(block)).await;
     node.advance_to(end).await;
     node.submit(Command::Tick).await
 }

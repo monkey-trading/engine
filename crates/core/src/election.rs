@@ -370,7 +370,7 @@ impl Engine {
     }
 
     /// The finalised block time the staking mirror has completed through, from `V37`.
-    fn finalised_chain_time(&self) -> Option<Millis> {
+    pub(crate) fn finalised_chain_time(&self) -> Option<Millis> {
         self.staking.as_ref().and_then(|staking| staking.completed_through).and_then(|checkpoint| checkpoint.time)
     }
 

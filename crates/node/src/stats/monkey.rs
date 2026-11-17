@@ -51,14 +51,18 @@ struct DistributionView {
     liquidity_floor: Fixed,
     nav: Fixed,
     /// What an epoch close would distribute at the last scan, in USD: house NAV and funded cash above
-    /// the floor, less reversible principal and client debts (`Engine::distributable_excess`).
+    /// the floor, less the house's unfinalised deposits, what clients' reversals could cost it, and
+    /// client debts (`Engine::distributable_excess`).
     excess_usd: Option<Fixed>,
     /// The seq of that scan.
     excess_seq: Option<u64>,
     /// The epoch the last command fell in.
     epoch: u64,
+    /// The last epoch the engine closed, and when it ended.
     last_closed_epoch: Option<u64>,
     last_closed_ms: Option<Millis>,
+    /// When the engine's open epoch ends, the earliest its close can run. From `V75` the close also
+    /// waits for the staking mirror to pass that end, so it can lie before `time_ms`.
     next_close_ms: Millis,
     /// USDC base units allocated across every closed epoch: to stakers, and from `V47` to the
     /// operator.
@@ -119,9 +123,9 @@ impl Stats {
                 excess_usd: inner.full.as_ref().and_then(|snapshot| snapshot.distribution_excess),
                 excess_seq: inner.full.as_ref().map(|snapshot| snapshot.seq),
                 epoch,
-                last_closed_epoch: epoch.checked_sub(1),
-                last_closed_ms: epoch.checked_sub(1).map(|closed| config.epoch_end(closed)),
-                next_close_ms: config.epoch_end(epoch),
+                last_closed_epoch: staking.epoch.checked_sub(1),
+                last_closed_ms: staking.epoch.checked_sub(1).map(|closed| config.epoch_end(closed)),
+                next_close_ms: config.epoch_end(staking.epoch),
                 distributed_usdc_units: staking.distributed,
                 last_distribution: inner.distribution.map(|last| LastDistribution {
                     epoch: last.epoch,

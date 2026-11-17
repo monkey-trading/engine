@@ -19,7 +19,9 @@ pub(crate) struct OperatorShare {
     pub amount: UsdcUnits,
 }
 
-/// Epochs no command witnessed the end of, which the close that did distributed nothing for.
+/// Epochs a close skipped, which it distributed nothing for: ones no command witnessed the end of, and
+/// from `V75` every unclosed epoch before the latest one the sequenced time and the staking mirror have
+/// both passed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub(crate) struct Skipped {
     pub first: u64,
@@ -31,7 +33,7 @@ pub(crate) struct Skipped {
 pub(crate) struct EpochClose {
     pub epoch: u64,
     /// The seq of the command that closed it, and its sequenced time: the first to reach the epoch's
-    /// end.
+    /// end, or from `V75` the first after the staking mirror passed it.
     pub close_seq: u64,
     pub close_ms: Millis,
     /// When the epoch ended.
@@ -49,7 +51,9 @@ pub(crate) struct EpochClose {
     /// `V47` or, before `V50`, for a close with rotation off; from `V50`, each account whose time in
     /// office in the epoch earned a part.
     pub operator_shares: Vec<OperatorShare>,
-    /// The epochs before this one that no command witnessed the end of, when there are any.
+    /// The epochs before this one that this close skipped, when there are any: ones no command witnessed
+    /// the end of, and from `V75` every unclosed epoch before this one, which the staking mirror passed
+    /// with it or only a day after its end.
     pub skipped: Option<Skipped>,
 }
 

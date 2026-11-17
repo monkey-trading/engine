@@ -109,7 +109,7 @@ async fn dev_scenario_the_operator_list_and_distribution_history_are_signed_read
     let mut closes = Vec::new();
     for _ in 0..3 {
         round_trip(&node, trader_key, Side::Buy, "3", "100000", "99700").await;
-        let events = next_epoch(&mut node).await;
+        let events = next_epoch(&mut node, &chain).await;
         assert!(allocated_of(&events).0 > 0, "{events:?}");
         for event in &events {
             if let Event::DistributionAllocated { account, amount, .. } = event {
