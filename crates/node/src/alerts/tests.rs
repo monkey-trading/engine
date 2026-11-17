@@ -210,6 +210,7 @@ async fn an_unreachable_webhook_is_given_up_counted_and_its_error_omits_the_url(
     let unreachable = TcpSocket::new_v4().unwrap();
     unreachable.bind("127.0.0.1:0".parse().unwrap()).unwrap();
     let port = unreachable.local_addr().unwrap().port();
+    assert!(TcpListener::bind(("127.0.0.1", port)).await.is_err(), "a receiver could be given the port");
     let url = format!("http://127.0.0.1:{port}/hook/secret-token");
     let err =
         webhook::post(&client().unwrap(), &secret(&url), &page(), GIVE_UP_SOON, &Counter::default()).await.unwrap_err();
