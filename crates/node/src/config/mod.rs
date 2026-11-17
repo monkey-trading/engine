@@ -144,8 +144,8 @@ pub struct NodeConfig {
     pub standby: Option<StandbySection>,
     /// The seed relayer, which runs beside the node in either mode.
     pub seed_relay: Option<SeedRelaySection>,
-    /// The offset groups and floor share the account read computes each account's portfolio
-    /// requirement under; nothing the engine decides reads it. Absent, the read gives none.
+    /// The offset groups, each with its floor share, the account read computes each account's
+    /// portfolio requirement under; nothing the engine decides reads it. Absent, the read gives none.
     pub portfolio_margin: Option<PortfolioGrid>,
     /// Sequenced as admin commands after protocol activation on a log's first boot, all or nothing,
     /// so the rules every fill ran under are part of the public record.

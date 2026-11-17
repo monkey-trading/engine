@@ -1079,6 +1079,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/telemetry.rs` — the metrics listener and alert webhook config, and the redacting
   `WebhookUrl`
 - `src/config/tests.rs` — config loading and validation tests
+- `src/config/tests/portfolio.rs` — the `[portfolio_margin]` section: the dev fixture group loads, and an
+  unknown key at each level, a malformed grid or one that does not fit the genesis listings fails the boot
 - `src/config/api_tests.rs` — the `[api]` heartbeat, quote and stats scan intervals' defaults and minimums, and the fresh-account budgets' check
 - `src/config/mock_key_tests.rs` — published mock-only signer opt-in and hardware refusal regressions
 - `src/config/custody_tests.rs` — independent provider configuration checks
@@ -2622,10 +2624,10 @@ grid (each matched part's own move, ρ, the group's factor cancelling on it) and
 at its close-spread ceilings over the close-out level, at most `1 - φ` of that share, φ the group's
 `floor_share_bps`, and never below zero, worked exactly and rounded down once.
 `{"margin", "initial_margin", "maintenance_margin", "groups"}`: `margin` less every group's credit, at
-the markets' own bands; the same at the bands `initial_margin` takes, with each group's weekend
-residual shocks from two hours before its members' weekend gap until they reopen, no credit for a
-group with a held member that cannot trade, and at least the tier floor on the sum of the account's
-notionals; the first at the close-out level; and by group name, for each group the account holds a
+the markets' own bands; the same at the bands `initial_margin` takes, the tier's margin floor
+included, with each group's weekend residual shocks from two hours before its members' weekend gap
+until they reopen, when the matched part of a market with no weekend rate keeps its bands, and no
+credit for a group with a held member that cannot trade; the first at the close-out level; and by group name, for each group the account holds a
 member of, `{"members", "net_notional", "matched_notional", "worst_loss", "binding_direction",
 "offset"}`: the members held, the loading-weighted net and matched exposure, the matched exposure's
 worst loss, `down`, `up` or `either` for which way the factor's move hurts the exposure left

@@ -15,10 +15,10 @@
 //! over the close-out level, at most `1 - φ` of that share, φ the group's floor share, and never
 //! below zero. The portfolio requirement is the per-position requirement less every group's credit,
 //! so it is never above per-position margin. At initial bands each band charges at least the
-//! account's tier floor and, over its market's weekend window, its weekend margin; a group takes its
-//! weekend shocks from two hours before its members' shared schedule starts a weekend gap until they
-//! reopen, and no credit while a member the account holds cannot trade; and the requirement is at
-//! least the tier floor on the sum of notionals.
+//! account's tier floor and, over its market's weekend window, its weekend margin. From two hours
+//! before a group's members' shared schedule starts a weekend gap until they reopen, the group takes
+//! its weekend shocks, and the matched part of a market with no weekend rate keeps its bands, taking
+//! no credit then. A group takes no credit while a member the account holds cannot trade.
 
 mod exposure;
 mod requirement;

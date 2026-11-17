@@ -167,6 +167,15 @@ fn the_credit_is_the_matched_parts_bands_less_its_charge_rounded_down_once() {
     assert_eq!(costly.credit(1, scale), Fixed::ZERO);
 }
 
+#[test]
+fn a_leg_left_out_of_the_credit_still_matches_its_side() {
+    // BTC brings no bands and no charge, as a market with no weekend rate does over its weekend, yet it
+    // still matches ETH in the ratio 1/1.05: the credit is ETH's matched part alone, 2,000/1.05, rounded
+    // down once.
+    let book = exposure([leg("10", "100000", "1", "0", 0), leg("-250", "4000", "1.05", "10000", PER_UNIT)]);
+    assert_eq!(book.credit(5_000, U512::from(CHARGE_SCALE)), "1904.761904761".parse().unwrap());
+}
+
 // ── Helpers ──
 
 /// An edit that breaks one part of a grid.

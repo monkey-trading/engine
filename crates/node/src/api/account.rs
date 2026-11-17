@@ -4,8 +4,7 @@
 //! margin each position needs, and under a `[portfolio_margin]` grid its portfolio requirement.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -57,19 +56,31 @@ pub(crate) struct AccountView {
     /// Why the configured grid gave no portfolio requirement: it does not fit the listings.
     #[serde(skip)]
     portfolio_refusal: Option<String>,
+    /// The last seq of the engine the read was taken from.
+    #[serde(skip)]
+    seq: Option<u64>,
 }
 
-/// The grid `[portfolio_margin]` names, and whether the account read may have left Warning
-/// `portfolio_grid_mismatch` open: so from the start, as an episode a run before left open is kept.
+/// The grid `[portfolio_margin]` names, and what the newest account read found of its fit.
 pub(crate) struct PortfolioMargin {
     grid: PortfolioGrid,
-    misfit: AtomicBool,
+    /// Locked only to apply one read's report, never across an await: reads finish out of order, and
+    /// only one taken from an engine at least as new as the last applied may move the alert.
+    health: Mutex<GridHealth>,
+}
+
+/// The seq of the engine the newest applied report read, and whether the account read may have left
+/// Warning `portfolio_grid_mismatch` open: so from the start, as an episode a run before left open is
+/// kept.
+struct GridHealth {
+    seq: Option<u64>,
+    misfit: bool,
 }
 
 impl PortfolioMargin {
     /// The read of `grid`, whose first fitting read ends any episode left open.
     pub(crate) fn new(grid: PortfolioGrid) -> Self {
-        Self { grid, misfit: AtomicBool::new(true) }
+        Self { grid, health: Mutex::new(GridHealth { seq: None, misfit: true }) }
     }
 
     /// The read of the grid `cfg` names, if it names one.
@@ -77,19 +88,25 @@ impl PortfolioMargin {
         cfg.portfolio_margin.clone().map(|grid| Arc::new(Self::new(grid)))
     }
 
-    /// Raises Warning `portfolio_grid_mismatch` for a read the grid did not fit, `refusal` saying why,
-    /// keyed by its name alone, and ends it at the first read after that the grid fits.
-    pub(crate) fn report(&self, refusal: Option<&str>) {
+    /// Raises Warning `portfolio_grid_mismatch` for a read of the engine at `seq` the grid did not fit,
+    /// `refusal` saying why, keyed by its name alone, and ends it at the first read after that the grid
+    /// fits. A read of an engine older than one already reported changes nothing.
+    pub(crate) fn report(&self, seq: Option<u64>, refusal: Option<&str>) {
+        let mut health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
+        if seq < health.seq {
+            return;
+        }
+        health.seq = seq;
         match refusal {
             Some(reason) => {
-                self.misfit.store(true, Ordering::Relaxed);
+                health.misfit = true;
                 warn!(
                     alert = "portfolio_grid_mismatch",
                     "the portfolio margin grid does not fit the listings, so the account read gives no portfolio \
                      requirement: {reason}"
                 );
             }
-            None if self.misfit.swap(false, Ordering::Relaxed) => {
+            None if std::mem::replace(&mut health.misfit, false) => {
                 info!(alert_resolved = "portfolio_grid_mismatch", "the portfolio margin grid fits the listings");
             }
             None => {}
@@ -114,7 +131,7 @@ pub(super) async fn account(State(s): State<ApiState>, Path(address): Path<Strin
     let view = s.read(move |e| account_view(e, id, read.as_deref().map(|portfolio| &portfolio.grid))).await?;
     let view = view.ok_or(ApiError::NotFound)?;
     if let Some(portfolio) = &portfolio {
-        portfolio.report(view.portfolio_refusal.as_deref());
+        portfolio.report(view.seq, view.portfolio_refusal.as_deref());
     }
     Ok(Json(view))
 }
@@ -146,5 +163,6 @@ pub(crate) fn account_view(e: &Engine, id: AccountId, grid: Option<&PortfolioGri
         weekend_margins: e.weekend_requirements(id),
         portfolio_margin,
         portfolio_refusal,
+        seq: e.last_seq(),
     })
 }

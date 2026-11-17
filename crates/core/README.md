@@ -292,10 +292,11 @@ this crate and reproduce the signed state roots exactly.
   ceiling over the close-out level, at most `1 - φ` of that share and never below zero, worked exactly
   in wide integers and rounded down once. The requirement is the per-position requirement less every
   credit, so exposure that offsets nothing, a lone position included, keeps its bands exactly. At
-  initial bands it takes the tier floor and the weekend margins band by band, a group's weekend
-  residuals over its members' weekend gap, no credit for a group with a held member that cannot
-  trade, and at least the tier floor on gross notional. The node serves it on the account read under
-  the grid its config names
+  initial bands it takes the tier floor and the weekend margins band by band, so a lone position meets
+  its tier exactly while matched exposure is credited at every tier; over a group's weekend gap and
+  the two hours before it, its weekend residuals, and no credit on the matched part of a market with
+  no weekend rate; and no credit for a group with a held member that cannot trade. The node serves it
+  on the account read under the grid its config names
 
 ## Repository Structure
 
@@ -463,10 +464,11 @@ this crate and reproduce the signed state roots exactly.
 - `src/portfolio/requirement.rs` — an account's portfolio requirement at marks, at the market's
   bands and at initial bands, and the account read's standing
 - `tests/portfolio_margin.rs` — a hedged book's credit and each group's part, a net short, an exact
-  hedge, a book that offsets nothing, the tier floor on gross notional, the weekend shocks, a member
-  that cannot trade, a grid that does not fit the listings, a lone position at its per-position
-  requirement in every market at every size, and the requirement between the floor shares and the
-  per-position requirement over random books and grids
+  hedge, a book that offsets nothing, the credit at tier 0's floor, the weekend shocks, no weekend
+  credit for markets with no weekend rate, a member that cannot trade, a grid that does not fit the
+  listings, a lone position at its per-position requirement in every market at every size and tier,
+  and the requirement between the floor shares and the per-position requirement over random books and
+  grids
 - `tests/portfolio_margin_benchmark.rs` — the portfolio requirement's cost over 100k holders of
   BTC-USD against the per-position requirement's (ignored; "Portfolio requirement cost" below)
 - `tests/params_notice.rs` — the V49 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay

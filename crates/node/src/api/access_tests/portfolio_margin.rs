@@ -87,22 +87,29 @@ async fn a_grid_that_does_not_fit_the_listings_gives_no_portfolio_requirement_an
 }
 
 #[test]
-fn a_misfit_grid_warns_and_the_next_read_it_fits_ends_the_warning() {
+fn a_misfit_grid_warns_and_the_next_newer_read_it_fits_ends_the_warning() {
     let (_guard, mut alerts, mut resolutions) = crate::test_support::capture_alerts_and_resolutions();
     let portfolio = PortfolioMargin::new(dev_config().portfolio_margin.expect("the dev config names a fixture group"));
     let taken = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<crate::test_support::Alert>| {
         std::iter::from_fn(|| rx.try_recv().ok()).count()
     };
     // The first read the grid fits ends an episode a run before may have left open, and only it.
-    portfolio.report(None);
-    portfolio.report(None);
+    portfolio.report(Some(1), None);
+    portfolio.report(Some(1), None);
     assert_eq!((taken(&mut alerts), taken(&mut resolutions)), (0, 1));
     // A misfit read warns, keyed by the name alone, and the next fitting read ends it, once.
-    portfolio.report(Some("group crypto: markets 1 and 10 differ in asset class or schedule"));
-    portfolio.report(Some("group crypto: markets 1 and 10 differ in asset class or schedule"));
-    portfolio.report(None);
-    portfolio.report(None);
+    let misfit = Some("group crypto: markets 1 and 10 differ in asset class or schedule");
+    portfolio.report(Some(2), misfit);
+    portfolio.report(Some(2), misfit);
+    portfolio.report(Some(3), None);
+    portfolio.report(Some(3), None);
     assert_eq!((taken(&mut alerts), taken(&mut resolutions)), (2, 1));
+    // A fitting read of an older engine, finishing after a misfit read of a newer one, ends nothing.
+    portfolio.report(Some(5), misfit);
+    portfolio.report(Some(4), None);
+    assert_eq!((taken(&mut alerts), taken(&mut resolutions)), (1, 0));
+    portfolio.report(Some(6), None);
+    assert_eq!(taken(&mut resolutions), 1);
 }
 
 /// Serves `node`'s API with `grid` as its `[portfolio_margin]`.

@@ -12,7 +12,7 @@ use crate::Fixed;
 use crate::account::{Account, Position};
 use crate::engine::{Engine, MarketState};
 use crate::fixed::Rounding;
-use crate::portfolio::exposure::{BPS, Exposure, Leg, ceil_div, narrow, wide};
+use crate::portfolio::exposure::{BPS, Exposure, Leg, narrow, wide};
 use crate::portfolio::{GroupMember, OffsetGroup, PortfolioGrid};
 use crate::types::{AccountId, MarketId};
 use crate::weekend::WEEKEND_LEAD_MS;
@@ -25,9 +25,9 @@ pub struct PortfolioStanding {
     /// member's normal shocks.
     pub margin: Fixed,
     /// The same at initial bands: each band charged at least the account's tier floor and, over its
-    /// market's weekend window, its weekend margin; each group's weekend shocks from two hours before
-    /// its members' weekend gap until they reopen, and no credit while a member the account holds
-    /// cannot trade; and at least the tier floor on the sum of the account's notionals.
+    /// market's weekend window, its weekend margin; from two hours before a group's weekend gap until
+    /// its members reopen, its weekend shocks, and no credit on the matched part of a market with no
+    /// weekend rate; and no credit for a group while a member the account holds cannot trade.
     pub initial_margin: Fixed,
     /// The close-out level's share of `margin`.
     pub maintenance_margin: Fixed,
@@ -73,8 +73,9 @@ enum Bands {
     /// The market's bands, and each member's normal shocks.
     Market,
     /// Each band at least `floor_bps`, the account's tier floor, and over its market's weekend window
-    /// its weekend margin; each member's weekend shocks over its group's weekend gap and the lead
-    /// before it, and no credit while a member the account holds cannot trade.
+    /// its weekend margin; over its group's weekend gap and the lead before it, each member's weekend
+    /// shocks and no credit on the matched part of a market with no weekend rate; and no credit while
+    /// a member the account holds cannot trade.
     Initial { floor_bps: i64 },
 }
 
@@ -109,8 +110,12 @@ impl Engine {
             .groups
             .iter()
             .filter_map(|group| {
-                let members: Vec<MarketId> =
-                    group.members.iter().map(|member| member.market).filter(|id| self.holds(acct, *id)).collect();
+                let members: Vec<MarketId> = group
+                    .members
+                    .iter()
+                    .map(|member| member.market)
+                    .filter(|id| self.holds_listed(acct, *id))
+                    .collect();
                 (!members.is_empty()).then(|| (group.name.clone(), self.group_standing(acct, group, members)))
             })
             .collect();
@@ -118,41 +123,33 @@ impl Engine {
     }
 
     /// `acct`'s portfolio requirement under `grid` at `bands`: the per-position requirement less each
-    /// group's credit, and at initial bands at least the tier floor on the sum of its notionals.
+    /// group's credit.
     fn portfolio_requirement(&self, acct: &Account, grid: &PortfolioGrid, bands: Bands) -> Fixed {
-        let (mut per_position, mut gross) = (Fixed::ZERO, U512::ZERO);
+        let mut per_position = Fixed::ZERO;
         for (id, pos) in &acct.positions {
             let Some(market) = self.markets.get(id) else { continue };
             let (_, notional) = self.notional_at_mark(market, pos);
             per_position += self.band_charge(market, notional, bands);
-            gross += wide(notional);
         }
         let credit: Fixed = grid
             .groups
             .iter()
             .filter_map(|group| self.group_exposure(acct, group, bands).map(|exposure| (group, exposure)))
-            .map(|(group, exposure)| exposure.credit(group.floor_share_bps, self.charge_scale()))
+            .map(|(group, exposure)| exposure.credit(group.floor_share_bps, self.grid_charge_scale()))
             .sum();
         // Each credit is at most its group's share of the bands, so this is at least zero.
-        let requirement = per_position - credit;
-        match bands {
-            Bands::Market => requirement,
-            // Every band charges at least the floor, so this stays at or below the per-position
-            // requirement.
-            Bands::Initial { floor_bps } => {
-                let floor = ceil_div(gross * U512::from(floor_bps.unsigned_abs()), U512::from(BPS));
-                requirement.max(narrow(floor))
-            }
-        }
+        per_position - credit
     }
 
     /// `group`'s loading-weighted exposure in `acct` at `bands`, or `None` when the account holds none
     /// of its members, or at initial bands while one it holds cannot trade.
     fn group_exposure(&self, acct: &Account, group: &OffsetGroup, bands: Bands) -> Option<Exposure> {
-        if !group.members.iter().any(|member| self.holds(acct, member.market)) {
+        let held = || group.members.iter().map(|member| member.market).filter(|id| self.holds_listed(acct, *id));
+        let initial = matches!(bands, Bands::Initial { .. });
+        // Before the weekend's calendar search, which a group whose markets are shut would discard.
+        if held().next().is_none() || initial && held().any(|id| self.tradeable_index(id).is_none()) {
             return None;
         }
-        let initial = matches!(bands, Bands::Initial { .. });
         let weekend = initial && self.group_weekend(group);
         let mut exposure = Exposure::default();
         for member in &group.members {
@@ -160,17 +157,17 @@ impl Engine {
             else {
                 continue;
             };
-            if initial && !pos.qty.is_zero() && self.tradeable_index(member.market).is_none() {
-                return None;
-            }
             let (price, notional) = self.notional_at_mark(market, pos);
             let rho = if weekend { member.weekend_residual_shock_bps } else { member.residual_shock_bps };
+            // Over the weekend, the matched part of a market with no weekend rate keeps its bands: it
+            // still matches the other side, but brings neither bands nor a charge to the credit.
+            let credited = !(weekend && market.spec.weekend_margin_bps == 0);
             exposure.add(Leg {
                 qty: pos.qty,
                 price,
                 loading: member.loading,
-                bands: self.band_charge(market, notional, bands),
-                charge: self.charge(member, notional, rho),
+                bands: if credited { self.band_charge(market, notional, bands) } else { Fixed::ZERO },
+                charge: if credited { self.grid_charge(member, notional, rho) } else { U512::ZERO },
                 residual: wide(notional) * U512::from(rho.unsigned_abs()),
             });
         }
@@ -179,33 +176,37 @@ impl Engine {
 
     /// `notional`'s grid charge in `member`'s market at a residual shock of `rho` bps: its own move,
     /// `rho / 10^4`, and the cost of closing it at its close-spread ceiling over the close-out level,
-    /// `ceiling / level`, both over the common denominator `charge_scale`, so no division rounds it.
+    /// `ceiling / level`, both over the common denominator `grid_charge_scale`, so no division rounds it.
     /// A market with no ceiling, or a log before its parameters, adds no closing cost.
-    fn charge(&self, member: &GroupMember, notional: Fixed, rho: i64) -> U512 {
+    fn grid_charge(&self, member: &GroupMember, notional: Fixed, rho: i64) -> U512 {
         let ceiling = self.params.as_ref().and_then(|_| self.close_spread_ceiling(member.market)).unwrap_or(0);
-        let per_unit = U512::from(rho.unsigned_abs()) * U512::from(self.closeout_level())
+        let per_unit = U512::from(rho.unsigned_abs()) * U512::from(self.grid_closeout_level())
             + U512::from(ceiling.unsigned_abs()) * U512::from(BPS);
         wide(notional) * per_unit
     }
 
     /// The scale every grid charge is at over `Fixed`'s: `10^4 × the close-out level` in bps.
-    fn charge_scale(&self) -> U512 {
-        U512::from(BPS) * U512::from(self.closeout_level())
+    fn grid_charge_scale(&self) -> U512 {
+        U512::from(BPS) * U512::from(self.grid_closeout_level())
     }
 
     /// The close-out level in bps, or all of it before parameters are set, when no close costs anything.
-    fn closeout_level(&self) -> u64 {
+    fn grid_closeout_level(&self) -> u64 {
         self.params.as_ref().map_or(BPS, |params| params.closeout_level_bps.unsigned_abs())
     }
 
     /// Whether `group`'s weekend shocks apply now: from `WEEKEND_LEAD_MS` before a weekend gap of its
-    /// members' shared schedule starts until they reopen, whatever their weekend margins. A gap lasts at
-    /// least `WEEKEND_GAP_MS`, far past the lead, so one that starts within the lead is under way at its
-    /// end.
+    /// members' shared schedule starts until they reopen, whatever their weekend margins. A member that
+    /// keeps a weekend gap holds that window. Otherwise the schedule is searched, minute by minute while
+    /// the venue is shut: only within the lead before a closure, since a group whose held members are
+    /// shut takes no credit and is not asked. A gap lasts at least `WEEKEND_GAP_MS`, far past the lead,
+    /// so one that starts within the lead is under way at its end.
     fn group_weekend(&self, group: &OffsetGroup) -> bool {
-        let Some(market) = group.members.iter().find_map(|member| self.markets.get(&member.market)) else {
-            return false;
-        };
+        let listed = || group.members.iter().filter_map(|member| self.markets.get(&member.market));
+        if listed().any(|market| market.weekend.is_some()) {
+            return listed().any(|market| market.weekend_margin_applies(self.now));
+        }
+        let Some(market) = listed().next() else { return false };
         let lead_end = self.now.saturating_add(WEEKEND_LEAD_MS);
         [self.now, lead_end].into_iter().any(|at| market.spec.schedule.weekend_gap_at(at).is_some())
     }
@@ -225,12 +226,12 @@ impl Engine {
             matched_notional: narrow(exposure.matched()),
             worst_loss: narrow(exposure.worst_loss()),
             binding_direction,
-            offset: exposure.credit(group.floor_share_bps, self.charge_scale()),
+            offset: exposure.credit(group.floor_share_bps, self.grid_charge_scale()),
         }
     }
 
     /// Whether `acct` holds a position in `market`, a listed one.
-    fn holds(&self, acct: &Account, market: MarketId) -> bool {
+    fn holds_listed(&self, acct: &Account, market: MarketId) -> bool {
         self.markets.contains_key(&market) && acct.positions.get(&market).is_some_and(|pos| !pos.qty.is_zero())
     }
 

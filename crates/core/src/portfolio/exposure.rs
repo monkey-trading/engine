@@ -7,7 +7,7 @@
 //! `MAX_LOADING`, 10^10 < 2^34 raw, and a group has at most one member per market id, 2^32, so a side's
 //! exposure stays below 2^223. A side's bands are below 2^127, since their sum over every side is the
 //! per-position requirement, a `Fixed`. A leg's grid charge is its notional times at most 10^4 × 10^4
-//! plus 10^4 × 10^4 (`Engine::charge`'s scale), below 2^155, and a side's below 2^187. So `credit`'s
+//! plus 10^4 × 10^4 (`Engine::grid_charge`'s scale), below 2^155, and a side's below 2^187. So `credit`'s
 //! largest product, 10^4 × (bands × exposure × 10^8 + charge × exposure), is below 2^425, inside
 //! `U512`.
 
@@ -25,7 +25,7 @@ pub(super) struct Leg {
     pub(super) qty: Fixed,
     pub(super) price: Fixed,
     pub(super) loading: Fixed,
-    /// Its per-position requirement.
+    /// Its per-position requirement, or nothing for a leg whose matched part takes no credit.
     pub(super) bands: Fixed,
     /// Its grid charge, its own move and the cost of closing it, at `Fixed`'s scale times the charge
     /// scale `Exposure::credit` takes.
@@ -54,15 +54,16 @@ pub(super) struct Exposure {
 impl Exposure {
     /// Adds `leg` to the side its loading-weighted exposure is on.
     pub(super) fn add(&mut self, leg: Leg) {
-        let magnitude = [leg.qty, leg.price, leg.loading]
-            .iter()
-            .fold(U512::from(1), |product, factor| product.saturating_mul(U512::from(factor.raw().unsigned_abs())));
+        const RANGE: &str = "within the range argument";
+        let magnitude = [leg.qty, leg.price, leg.loading].iter().fold(U512::from(1), |product, factor| {
+            product.checked_mul(U512::from(factor.raw().unsigned_abs())).expect(RANGE)
+        });
         let negative = leg.qty.is_negative() ^ leg.price.is_negative() ^ leg.loading.is_negative();
         let side = if negative { &mut self.short } else { &mut self.long };
-        side.exposure = side.exposure.saturating_add(magnitude);
-        side.bands += wide(leg.bands);
-        side.charge += leg.charge;
-        side.residual += leg.residual;
+        side.exposure = side.exposure.checked_add(magnitude).expect(RANGE);
+        side.bands = side.bands.checked_add(wide(leg.bands)).expect(RANGE);
+        side.charge = side.charge.checked_add(leg.charge).expect(RANGE);
+        side.residual = side.residual.checked_add(leg.residual).expect(RANGE);
     }
 
     /// Whether the net is below zero, and its magnitude at `Fixed`'s scale, rounded up.
