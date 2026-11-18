@@ -95,7 +95,11 @@ an index: load only the rule whose hint matches the current action.
   own deposit records match, and receipt-backed held deposits in the same form, `tests/exit/credits.rs`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
   with house NAV and exposure caps in `engine/house.rs`, per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
-  `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,
+  `markouts.rs`, `closeout.rs` with, from any version, the derived close-out index in `closeout_index/` (a check site
+  closes out only the accounts it finds below their level, the others keyed where they can be by price ranges whose
+  corners show them at or above their level; built at recovery and inside an activation, moving no root; its
+  test-only `closeout-oracle` feature, which this crate's tests turn on and nothing sets outside a test, checks it
+  against the full check, `tests/invariants/closeout_index.rs`), `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,
   `corporate/` for dividend/split instructions, from `V76` within `corporate/bounds.rs`, captures and ex-date adjustments,
   `admin/`, `stress.rs`, `auth.rs`). `withdrawal.rs` reserves FIFO requests and creates
   whole-USDC partial approvals under the V22 rules; `merkle/withdrawal.rs` proves each approval
@@ -924,7 +928,10 @@ Run from the repo root:
   orders, volume books, scores and session keys, built by `crates/core/tests/common/launch_book/`; the proposal's
   shares are `Mix::proposal`): `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored
   --nocapture --test-threads=1 launch_book_latency` (`launch_book_price_attribution` runs apart, on books with
-  parts taken away), and its stats scans and worker copy:
+  parts taken away, and `launch_book_price_walk` walks BTC-USD on books with accounts near their close-out level,
+  `LAUNCH_BOOK_FULL_CHECK=1` adding today's full check beside the index); the close-out index's live bytes:
+  `cargo test -p engine-core --test launch_book_memory --locked -- --ignored --nocapture`; and its stats scans and
+  worker copy:
   `cargo test -p engine-node --lib stats::launch_bench -- --ignored --nocapture --test-threads=1`; the builder's own
   test: `cargo test -p engine-core --test launch_book`
 - Mass-event latency (#907: the weekend gap's start, a crash, a stress level change, a split and a dividend, the MONKEY

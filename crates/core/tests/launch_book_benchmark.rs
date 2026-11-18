@@ -4,7 +4,8 @@
 //! `Mix::proposal`). Each case prints its p50, p99 and p999 in microseconds as `LAUNCH name ...`, and
 //! the case's cost per holder or per order where it scales. Run in a quiet CPU window:
 //! `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1 launch_book_latency`;
-//! `launch_book_price_attribution` runs apart.
+//! `launch_book_price_attribution` and `launch_book_price_walk` run apart, and the close-out index's
+//! memory is `launch_book_memory`'s.
 
 #[path = "launch_book_benchmark/cases.rs"]
 mod cases;
@@ -14,6 +15,7 @@ mod report;
 
 use cases::Bar;
 use common::launch_book::{Mix, NamedCounts, build};
+use engine_core::CloseoutOracle;
 use report::{exceeded, rss_mib};
 
 /// The proposal's book size; `LAUNCH_BOOK_ACCOUNTS` runs a smaller one.
@@ -22,6 +24,16 @@ const NAMED: NamedCounts = NamedCounts { adders: 100, openers: 100, closeouts: 3
 
 /// The budgets #904's launch bar sets, which #905's proposal asserts (microseconds).
 const PRICE_P99_US: u128 = 250_000;
+/// #904's price-to-stamp bar, a price's p99 at 100k holders of BTC-USD, which the close-out index
+/// (#912) holds a price on the book to.
+const PRICE_TO_STAMP_P99_US: u128 = 10_000;
+/// The prices of `launch_book_price_walk`'s walk on each book.
+const WALK_PRICES: usize = 1_000;
+/// The walk on the book with a tenth of its accounts near their level: after each jump, the prices
+/// that follow value thousands of unkeyed accounts until they are keyed again, the cost #912 expects to
+/// grow with the accounts near their level. #904's bar, which it meets locally (7.4 ms on 17 November
+/// 2026) with little to spare, is noted, and the guard CI holds it to is enforced.
+const NEAR_LEVEL_WALK: Bar = Bar { bar_us: PRICE_TO_STAMP_P99_US, guard_us: 30_000 };
 const SIGNED_P99_US: u128 = 2_000;
 /// The root over 100k changed accounts: #904's bar, which the book misses (CI measured 0.8 s on
 /// 17 November 2026, over the accounts a rollover financed), and the guard CI holds it to until the
@@ -42,13 +54,46 @@ fn launch_book_latency() {
     let mut book = build(&Mix::proposal(accounts), NAMED);
     cases::summary(&book, accounts, rss_before, rss_mib());
     cases::roots_and_proofs(&mut book, accounts);
-    cases::prices(&mut book, PRICE_P99_US, SINGLE_COMMAND_US);
+    cases::prices(&mut book, PRICE_TO_STAMP_P99_US, SINGLE_COMMAND_US);
     cases::price_rounds(&mut book, PRICE_P99_US);
     cases::signed_orders(&mut book, SIGNED_P99_US, SINGLE_COMMAND_US);
     cases::close_outs(&mut book, SINGLE_COMMAND_US);
     cases::rollover(&mut book, ROLLOVER, ROOT);
     cases::encoding_and_recovery(&mut book);
     println!("LAUNCH resident_mib={}", rss_mib());
+    let over = exceeded();
+    assert!(over.is_empty(), "over budget: {over:?}");
+}
+
+/// A walk of BTC-USD (`cases::price_walk`) on the book with resting orders away from the price, and with
+/// no account, 1% and 10% of accounts a move of 1% from their close-out level, each on a book of its own
+/// with the close-out index (#912), whose prices that close out no account, the check's work alone, are
+/// held to #904's price-to-stamp bar, and on the 10% book to `NEAR_LEVEL_WALK`. With
+/// `LAUNCH_BOOK_FULL_CHECK` set, each walk runs again on another book with today's full check in the
+/// index's place, for comparison.
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn launch_book_price_walk() {
+    let accounts = std::env::var("LAUNCH_BOOK_ACCOUNTS").ok().map_or(ACCOUNTS, |n| n.parse().expect("a count"));
+    let compare = std::env::var_os("LAUNCH_BOOK_FULL_CHECK").is_some();
+    for near_level in [0, 1, 10] {
+        for full_check in [false, true].into_iter().filter(|full| !full || compare) {
+            let mix = Mix { in_band: 0, near_level, ..Mix::proposal(accounts) };
+            let mut book = build(&mix, NamedCounts { adders: 1, openers: 0, closeouts: 0 });
+            book.h.engine.set_closeout_oracle(CloseoutOracle { full_check, ..CloseoutOracle::default() });
+            let check = if full_check { "full_check" } else { "index" };
+            let name = format!("walk_btc_usd_near_level_{near_level}_{check}");
+            let p99 = cases::price_walk(&mut book, &name, WALK_PRICES);
+            match (full_check, near_level) {
+                (true, _) => {}
+                (false, 10) => {
+                    report::noted(&format!("{name}_closing_none_p99_bar"), p99, NEAR_LEVEL_WALK.bar_us);
+                    report::within(&format!("{name}_closing_none_p99_guard"), p99, NEAR_LEVEL_WALK.guard_us);
+                }
+                (false, _) => report::within(&format!("{name}_closing_none_p99"), p99, PRICE_TO_STAMP_P99_US),
+            }
+        }
+    }
     let over = exceeded();
     assert!(over.is_empty(), "over budget: {over:?}");
 }

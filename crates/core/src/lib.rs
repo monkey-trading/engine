@@ -87,6 +87,9 @@ pub mod auth;
 pub mod benchmark;
 pub mod close_spread;
 mod closeout;
+mod closeout_index;
+#[cfg(feature = "closeout-oracle")]
+pub use closeout_index::{CloseoutCoverage, CloseoutOracle};
 pub mod command;
 pub mod corporate;
 pub mod deposits;

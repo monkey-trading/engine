@@ -409,6 +409,7 @@ impl Engine {
                     self.hot_indexes = None;
                     self.ensure_hot_indexes();
                 }
+                self.rebuild_closeout_index();
             }
             AdminCommand::InitEmissions(schedule) => self.init_emissions(schedule)?,
             AdminCommand::InitStaking(config) => self.init_staking(config)?,

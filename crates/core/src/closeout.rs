@@ -14,7 +14,8 @@
 use std::collections::BTreeMap;
 
 use crate::Fixed;
-use crate::account::{Account, Position};
+use crate::account::Position;
+use crate::closeout_index::Valuation;
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::execution::{Exec, PriceGuard};
@@ -24,32 +25,18 @@ use crate::types::{AccountId, MarketId, Side};
 
 impl Engine {
     /// Closes out every account holding a position in `market_id` that has fallen below the
-    /// close-out level.
+    /// close-out level, in account order. The close-out index names them (`closeout_index`), so the
+    /// holders at or above their level are not valued.
     pub(crate) fn check_closeouts(&mut self, market_id: MarketId, events: &mut Vec<Event>) {
-        self.ensure_hot_indexes();
-        let accounts: Vec<_> = self
-            .hot_indexes
-            .as_ref()
-            .expect("initialized")
-            .holders
-            .get(&market_id)
-            .into_iter()
-            .flatten()
-            .copied()
-            .collect();
-        let level_bps = self.params.as_ref().expect("callers check params are set").closeout_level_bps;
-        for account in accounts {
-            self.close_out(account, level_bps, events);
-        }
+        let accounts = self.closeout_accounts(Some(market_id));
+        self.close_out_each(accounts, events);
     }
 
-    /// Closes out every account holding any position that has fallen below the close-out level.
-    ///
-    /// TODO: this scans every account once per rollover day and once per parameter change; index
-    /// accounts by margin headroom before the account count makes the scan a cost on the sequencer
-    /// path.
+    /// Closes out every account holding any position that has fallen below the close-out level, in
+    /// account order, as the close-out index names them.
     pub(crate) fn check_all_closeouts(&mut self, events: &mut Vec<Event>) {
-        self.close_out_where(|acct| !acct.positions.is_empty(), events);
+        let accounts = self.closeout_accounts(None);
+        self.close_out_each(accounts, events);
     }
 
     /// Checks executable positions after a custody reversal, then settles a flat shortfall.
@@ -74,13 +61,15 @@ impl Engine {
         }
     }
 
-    /// Closes out each account `selects`, in account order.
-    fn close_out_where(&mut self, selects: impl Fn(&Account) -> bool, events: &mut Vec<Event>) {
+    /// Closes out each of `accounts`, in turn.
+    fn close_out_each(&mut self, accounts: Vec<AccountId>, events: &mut Vec<Event>) {
         let level_bps = self.params.as_ref().expect("callers check params are set").closeout_level_bps;
-        let accounts: Vec<AccountId> =
-            self.accounts.iter().filter(|(_, acct)| selects(acct)).map(|(account, _)| *account).collect();
         for account in accounts {
+            #[cfg(feature = "closeout-oracle")]
+            let before = self.oracle_before_close_out(account);
             self.close_out(account, level_bps, events);
+            #[cfg(feature = "closeout-oracle")]
+            self.oracle_after_close_out(account, before);
         }
     }
 
@@ -116,7 +105,11 @@ impl Engine {
     /// account is at or above the close-out level or nothing it holds can trade now. Positions
     /// count at their last marks; from `V6`, one in a market that can trade counts at the index it
     /// would fill at, so the account is judged and ranked at the prices it is closed at.
-    fn next_closeout(&self, account: AccountId, level_bps: i64) -> Option<(MarketId, Position, Fixed, Fixed)> {
+    pub(crate) fn next_closeout(
+        &self,
+        account: AccountId,
+        level_bps: i64,
+    ) -> Option<(MarketId, Position, Fixed, Fixed)> {
         let acct = self.accounts.get(&account)?;
         let at_index = self.protocol_version >= ProtocolVersion::V6;
         // The index each held market could fill at now, for those that can trade.
@@ -125,8 +118,9 @@ impl Engine {
         };
         let (indexes, (equity, margin)) = if at_index {
             let indexes = tradeable();
+            // The close-out index values accounts by the same `Valuation`, so the two cannot drift.
             let valued = self.equity_and_margin_at(acct, |market_id, market, pos| {
-                indexes.get(&market_id).copied().unwrap_or((market.mark.unwrap_or(pos.entry), market.fx_mark))
+                Valuation::at(market, indexes.get(&market_id).copied()).price_for(pos)
             });
             (Some(indexes), valued)
         } else {

@@ -1,6 +1,7 @@
 //! Reference logs: every committed log in `tests/reference/` replays through `Engine::apply` to the
 //! state root it recorded after each command. One log is committed per protocol version and never
-//! regenerated, so a change that alters any root fails here, naming the first diverging seq.
+//! regenerated, so a change that alters any root fails here, naming the first diverging seq. The
+//! replay checks the close-out index against a full assessment at every check site.
 
 mod common;
 
@@ -13,7 +14,7 @@ use common::reference::{ReferenceEntry, root_hex};
 use common::{BTC, Harness, acct};
 use engine_core::command::Command;
 use engine_core::types::Side;
-use engine_core::{Engine, Fixed};
+use engine_core::{CloseoutCoverage, CloseoutOracle, Engine, Fixed};
 
 #[test]
 fn every_reference_log_replays_to_its_committed_roots() {
@@ -24,6 +25,56 @@ fn every_reference_log_replays_to_its_committed_roots() {
         .filter_map(|path| verify_roots(&read(path)).err().map(|e| format!("{}: {e}", name(path))))
         .collect();
     assert!(failures.is_empty(), "reference logs no longer replay to their committed roots:\n{}", failures.join("\n"));
+}
+
+/// The logs reach every part of the close-out index the oracle counts, so the replay's check of it
+/// cannot pass vacuously: all but a weekend gap's skip, which `invariants/closeout_index.rs` reaches.
+#[test]
+fn the_reference_logs_reach_every_part_of_the_close_out_index() {
+    let mut total = CloseoutCoverage::default();
+    for path in reference_logs() {
+        let mut engine = Engine::new();
+        engine.set_closeout_oracle(CloseoutOracle { verify: true, ..CloseoutOracle::default() });
+        for entry in read(&path) {
+            engine.apply(&entry.sequenced).expect("every reference log replays");
+        }
+        let seen = engine.closeout_coverage();
+        total.builds += seen.builds;
+        total.price_crossings += seen.price_crossings;
+        total.fx_crossings += seen.fx_crossings;
+        total.headroom_moves += seen.headroom_moves;
+        total.relevels += seen.relevels;
+        total.rebands += seen.rebands;
+        total.keys += seen.keys;
+        total.weekend_skips += seen.weekend_skips;
+        total.skipped_calls += seen.skipped_calls;
+        total.below_untradeable += seen.below_untradeable;
+    }
+    let CloseoutCoverage {
+        builds,
+        price_crossings,
+        fx_crossings,
+        headroom_moves,
+        relevels,
+        rebands,
+        keys,
+        skipped_calls,
+        below_untradeable,
+        ..
+    } = total;
+    for (part, count) in [
+        ("builds", builds),
+        ("price crossings", price_crossings),
+        ("FX crossings", fx_crossings),
+        ("headroom moves", headroom_moves),
+        ("level moves", relevels),
+        ("listing moves", rebands),
+        ("keys", keys),
+        ("skipped calls", skipped_calls),
+        ("below accounts with nothing to close", below_untradeable),
+    ] {
+        assert!(count > 0, "no {part}: {total:?}");
+    }
 }
 
 #[test]
@@ -88,6 +139,7 @@ fn verify_roots(entries: &[ReferenceEntry]) -> Result<(), String> {
         return Err("empty log".into());
     }
     let mut engine = Engine::new();
+    engine.set_closeout_oracle(CloseoutOracle { verify: true, ..CloseoutOracle::default() });
     entries.iter().try_for_each(|entry| {
         let seq = entry.sequenced.seq;
         // A panic is caught so the failure still names the log and the seq.

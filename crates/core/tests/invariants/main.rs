@@ -16,11 +16,15 @@
 //! neither prices nor an order, which `V2` never fills; under `V13`, which runs as `V12` does, a
 //! stress change, as under `V17`; under `V14` alone its cap and missing rates; under `V15` a reducing order
 //! resting below the minimum; and under `V16` a history clamped by a lowered memory; so the
-//! checks cannot pass vacuously.
+//! checks cannot pass vacuously. Every session also checks the close-out index against a full
+//! assessment at every check site (`closeout_index`), and the sessions must move keys to a new
+//! close-out level and to a market's new bands, and cross keys' ranges on a price.
 
 mod access;
 mod charges;
 mod checks;
+mod closeout_halt;
+mod closeout_index;
 mod closing_charges;
 #[path = "../common/mod.rs"]
 mod common;
@@ -41,7 +45,7 @@ use engine_core::market::QuoteCurrency;
 use engine_core::price::compute_index;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::MarketId;
-use engine_core::{Engine, Fixed};
+use engine_core::{CloseoutOracle, Engine, Fixed};
 use proptest::test_runner::{Config, RngSeed, TestCaseError, TestRunner};
 use session::{Session, command, session};
 
@@ -60,6 +64,9 @@ fn generated_sessions_hold_the_invariants_and_reach_every_checked_path() {
     // Coverage is recorded per protocol version, from the same sessions whose invariants are
     // checked.
     let reached: RefCell<BTreeMap<ProtocolVersion, BTreeSet<&str>>> = RefCell::default();
+    // Keys the close-out index moved to a new level and to new bands or currency, and ranges prices
+    // crossed, under the oracle.
+    let moved: RefCell<(u64, u64, u64)> = RefCell::default();
     let result = TestRunner::new(config()).run(&session(), |session| {
         let v12 = || {
             let mut h = Harness::v12();
@@ -158,6 +165,11 @@ fn generated_sessions_hold_the_invariants_and_reach_every_checked_path() {
                     check_v16(&h.engine).map_err(fail)?;
                 }
             }
+            let seen = h.engine.closeout_coverage();
+            let mut moved = moved.borrow_mut();
+            moved.0 += seen.relevels;
+            moved.1 += seen.rebands;
+            moved.2 += seen.price_crossings;
         }
         Ok(())
     });
@@ -245,6 +257,11 @@ fn generated_sessions_hold_the_invariants_and_reach_every_checked_path() {
     .filter(|(version, path)| paths(*version).contains(path))
     .collect();
     assert!(early.is_empty(), "sessions before `V14` reach {early:?}");
+    let (relevels, rebands, crossings) = moved.into_inner();
+    assert!(
+        relevels > 0 && rebands > 0 && crossings > 0,
+        "the close-out index moved {relevels} keys to a level, {rebands} to bands and crossed {crossings} times"
+    );
 }
 
 // ── Helpers ──
@@ -256,6 +273,7 @@ fn config() -> Config {
 
 /// `h` after its genesis, with the session's deposits for the three traders.
 fn funded(mut h: Harness, session: &Session) -> Harness {
+    h.engine.set_closeout_oracle(CloseoutOracle { verify: true, ..CloseoutOracle::default() });
     for (n, amount) in (1..).zip(session.funding) {
         h.deposit(acct(n), &amount.to_string());
     }

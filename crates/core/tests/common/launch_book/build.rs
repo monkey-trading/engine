@@ -16,8 +16,9 @@ use serde_json::json;
 
 use crate::common::close_spread::{attest, fund, rest, source_key, trade};
 use crate::common::launch_book::counts::{Counts, check, weak_cash};
+use crate::common::launch_book::encode::{entry, key_of};
 use crate::common::launch_book::genesis::{BOOK_TIME, price_market, production_harness_at, publish_benchmarks};
-use crate::common::launch_book::mix::{Mix, Rng, WeakKind, market_weights};
+use crate::common::launch_book::mix::{Mix, NEAR_LEVEL_DRAWS, Rng, WeakKind, market_weights, near_level_cash};
 use crate::common::session_keys::{HOUR_MS, register};
 use crate::common::{CHAIN_ID, Client, Harness, VAULT, f};
 
@@ -110,20 +111,6 @@ fn address(prefix: u8, index: u64) -> AccountId {
     let mut bytes = [prefix; 20];
     bytes[12..].copy_from_slice(&index.to_be_bytes());
     AccountId(bytes)
-}
-
-fn key_of(account: AccountId) -> String {
-    serde_json::to_string(&account).expect("an address encodes")
-}
-
-/// Appends `"key":value` to a JSON object under construction.
-fn entry(out: &mut String, key: &str, value: &str) {
-    if out.len() > 1 {
-        out.push(',');
-    }
-    out.push_str(key);
-    out.push(':');
-    out.push_str(value);
 }
 
 /// Builds the book.
@@ -361,6 +348,10 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
         if let Some(weak) = weak {
             account.balance = weak_cash(&h.engine, &account, weak.market, &weak.kind);
             weak_accounts += 1;
+        }
+        // A draw of its own, so a book with no such accounts is the one before the share was added.
+        if mix.near_level > 0 && Rng::new(index ^ NEAR_LEVEL_DRAWS).below(100) < mix.near_level {
+            account.balance = near_level_cash(&h.engine, &account, mix.position_usd);
         }
         let key = key_of(account_id);
         for slot in 0..order_count {

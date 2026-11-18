@@ -221,6 +221,14 @@ this crate and reproduce the signed state roots exactly.
   plain text, with no markup, link or control character, that the operator's signed `SetNotice` sets and
   `ClearNotice` removes, whether or not votes govern, and that the state holds with the sequenced time it was
   set, so every node serves the same notice and a replay rebuilds it
+- A close-out check values only the accounts a move could bring to their level, under every protocol
+  version (`src/closeout_index/`): each account with positions is keyed, where it can be, by a price
+  range per position, and an FX range where its market converts, inside which the check's own valuation
+  at the ranges' corners shows it at or above its level; each check site calls `close_out` only on the
+  accounts its refresh finds below, in account order, as the full check does, and a weekend gap's
+  close-out calls `weekend_close_out` only on the holders the keys do not show meeting the requirement
+  with every weekend margin. The index is derived, built at recovery and inside an activation, and moves
+  no root or event
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -363,6 +371,11 @@ this crate and reproduce the signed state roots exactly.
   tests (`tests.rs`)
 - `src/merkle/toxicity.rs` — the `V54` score and markout spread leaves
 - `src/closeout.rs` — account close-out and bad-debt write-off
+- `src/closeout_index/` — the close-out index: its state, bookkeeping and the check sites' entry
+  points (`mod.rs`), building it and refreshing it from what moved (`refresh.rs`), keys and their corner
+  bound (`key.rs`), each market's range and holder sets (`markets.rs`), the valuation the check reads and
+  the checked assessment of an account (`valuation.rs`), the hooks of the test-only `closeout-oracle`
+  feature, which only this crate's own tests enable (`oracle.rs`), and unit tests (`tests.rs`)
 - `src/benchmark.rs` — dated publisher snapshots, effective-date lookup, staleness, and retention;
   from `V46`, the cap on a signed rate (`split_by_cap`), which `check_held_benchmark` in
   `src/operator_bounds/` keeps a relisting from going around
@@ -513,6 +526,10 @@ this crate and reproduce the signed state roots exactly.
   grids
 - `tests/portfolio_margin_benchmark.rs` — the portfolio requirement's cost over 100k holders of
   BTC-USD against the per-position requirement's (ignored; "Portfolio requirement cost" below)
+- `tests/launch_book_memory.rs` — the close-out index's live bytes on the launch book, counted by the
+  binary's own allocator (ignored; "The launch book" below)
+- `tests/invariants/closeout_halt.rs` — an account a price takes past `Fixed`'s range halts the index's
+  check at the full check's command
 - `tests/params_notice.rs` — the V49 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
@@ -679,7 +696,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/corporate_actions.rs` and `tests/corporate_actions/` — signed scheduling, cash, split,
   calendar, missed rollover, restart and replay tests, with shared fixtures in `support.rs`
 - `tests/reference_logs.rs` — replays every reference log and fails at the first seq whose root
-  differs
+  differs, with the close-out index checked against a full assessment at every check site
 - `tests/invariants/` — property tests over generated sessions (`main.rs`), the session generator
   (`session.rs`), the per-version checks each command must pass (`checks.rs`), fills at one price
   (`rounding.rs`), spreads and margin against their exact
@@ -689,6 +706,10 @@ this crate and reproduce the signed state roots exactly.
   proof and entitlement proof checked, every emission budget accounted for, and no entitlement
   falling, under generated sessions
 - `tests/invariants/access.rs` — explicit signing keys and fresh source evidence for current tree sessions
+- `tests/invariants/closeout_index.rs` — the close-out index against today's full check at the latest
+  version on the production genesis's markets: three engines, one with the index, one with the full
+  check and one encoded and restored at random points, through prices, trades, cash, rollovers and a
+  weekend gap, with equal events and roots
 - `tests/state_root.rs` — the state root from `V9`: its activation, what each root rehashes,
   account proofs, and roots against a rebuild
 - `tests/fixtures/eip712.json` — EIP-712 test vectors: API bodies, wallet typed data, and
@@ -848,7 +869,10 @@ Two suites guard replay and accounting:
   and that no market is financed at a rollover that records its benchmark as having no rate; from
   `V15` it also checks that a resting order accepted below its market's minimum notional, or with no
   dollar value, can only reduce its account's position in that market; under `V16`, that no
-  account's toxicity history exceeds the memory in force.
+  account's toxicity history exceeds the memory in force. Under every version, every check site's
+  close-out index is checked against a full assessment of every account (`closeout-oracle`), and
+  `closeout_index.rs` runs three engines, with the index, with today's full check, and restored at
+  random points, on generated sessions at the latest version, which must give equal events and roots.
 
 Emission protocol V32 carries a write-off no period's realised losses can absorb forward as a
 per-account emission debt, capped at the loss weight the account earned and was not yet charged
@@ -1714,7 +1738,7 @@ Run `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignore
 
 | Case | Budget |
 | --- | ---: |
-| A price in BTC-USD, in EUR-USD inside its session, and in US 500 priced from futures: p99, cost per holder, and prices a second the market could take | p99 250 ms |
+| A price in BTC-USD, in EUR-USD inside its session, and in US 500 priced from futures: p99, cost per holder, and prices a second the market could take | p99 10 ms (#904's price-to-stamp bar) |
 | One price in every market in turn: the round, the rounds a second the thread could take, and each market's slowest price | 250 ms each |
 | A signed order that opens a position, and one that adds to an account holding all 34 markets | p99 2 ms |
 | A price of ETH-USD that closes out an account holding all 34 markets (30 accounts, one to a step) | 500 ms |
@@ -1724,7 +1748,16 @@ Run `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignore
 | The snapshot encoding in time and bytes, and its recovery: decoding, `restore_indexes` and the first command | none |
 
 `launch_book_price_attribution` prices BTC-USD and EUR-USD on the book with its resting orders, or its
-extra markets, taken away. `engine-node`'s `stats::launch_bench` runs the stats scans and the worker's
+extra markets, taken away. `launch_book_price_walk` walks BTC-USD a thousand prices, about a basis point
+a price with a jump of 0.2% to 1% one price in fifty, on the book with its resting orders away from the
+price (`Mix::in_band` of zero) and no account, 1% and 10% of accounts a 1% move from their close-out
+level (`Mix::near_level`), each on a book of its own with the close-out index; it prints the accounts
+each walk closes out, and holds the prices that close out none, the check's work alone, to the 10 ms
+bar, with the 10% book's noted against it and held to a 30 ms guard, since after each jump its prices
+value thousands of unkeyed accounts until they are keyed again. CI runs it beside `launch_book_latency`. With `LAUNCH_BOOK_FULL_CHECK` set, each walk runs again
+with today's full check in the index's place.
+`launch_book_memory` counts the bytes the close-out index keeps live on the book, beside the engine's
+and its other derived indexes', with an allocator of its own. `engine-node`'s `stats::launch_bench` runs the stats scans and the worker's
 copy on the same book. `tests/launch_book.rs` holds the builder to its mix.
 
 ### Mass events on the launch book

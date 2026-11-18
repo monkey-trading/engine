@@ -215,8 +215,7 @@ impl MarketSpec {
     /// `floor_bps`, each band's charge rounded as `rounding` says. With a floor of zero, the margin
     /// `margin_for` gives.
     pub fn floored_margin_for(&self, notional: Fixed, floor_bps: i64, rounding: Rounding) -> Fixed {
-        let bands = self.margin_tiers.iter().map(|tier| (tier.up_to, tier.bps.max(floor_bps)));
-        banded(bands, Fixed::ZERO, notional.abs(), |slice, bps| slice.mul_bps_rounded(bps, rounding))
+        floored_margin(&self.margin_tiers, notional, floor_bps, rounding)
     }
 
     /// The most leverage a position in the market can take or approach with each margin band charged
@@ -309,6 +308,19 @@ impl QuoteCurrency {
         }
     }
 
+    /// `to_usd`, with `None` where it panics or overflows: a non-zero amount with no index, or a zero
+    /// yen index.
+    pub(crate) fn checked_to_usd(self, amount: Fixed, fx: Option<Fixed>, rounding: Rounding) -> Option<Fixed> {
+        match (self, fx) {
+            (QuoteCurrency::Usd, _) => Some(amount),
+            (QuoteCurrency::Eur { .. } | QuoteCurrency::Gbp { .. }, Some(fx)) => {
+                amount.checked_mul_div(fx, Fixed::ONE, rounding)
+            }
+            (QuoteCurrency::Jpy { .. }, Some(fx)) => amount.checked_mul_div(Fixed::ONE, fx, rounding),
+            (_, None) => amount.is_zero().then_some(amount),
+        }
+    }
+
     /// `amount` in USD, in this currency at `fx`: the inverse of [`QuoteCurrency::to_usd`], rounded
     /// as `rounding` says.
     /// Panics on a non-zero amount in another currency with no index, which callers rule out.
@@ -372,6 +384,13 @@ pub(crate) fn validate_bounds(name: &str, up_tos: &[Option<Fixed>]) -> Result<()
         return Err(format!("{name}: bands must be positive and strictly increasing"));
     }
     Ok(())
+}
+
+/// Margin required for a position of `notional` (either sign) under margin bands `tiers`, each band
+/// charging at least `floor_bps`, each band's charge rounded as `rounding` says.
+pub(crate) fn floored_margin(tiers: &[Tier], notional: Fixed, floor_bps: i64, rounding: Rounding) -> Fixed {
+    let bands = tiers.iter().map(|tier| (tier.up_to, tier.bps.max(floor_bps)));
+    banded(bands, Fixed::ZERO, notional.abs(), |slice, bps| slice.mul_bps_rounded(bps, rounding))
 }
 
 /// Cost of moving from notional `from` to `to` (`from <= to`) through banded rates: each band's bps

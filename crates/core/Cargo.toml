@@ -13,6 +13,11 @@ repository.workspace = true
 # Five-minute operator turns, for development stacks only (`turns::TURN_MS`). A log written under it
 # replays only under it, and a `production` node build refuses it.
 short-turns = []
+# Test-only hooks on the close-out index (`closeout_index::oracle`): a full check in place of the
+# index, and checks of the index against it. This crate's own tests enable it below, which turns it on
+# across a workspace build of them, inert until a test sets an oracle; a build without this crate's
+# dev-dependencies, as the node's release build is, leaves it off.
+closeout-oracle = []
 
 [dependencies]
 alloy-primitives.workspace = true
@@ -26,6 +31,7 @@ sha3.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+engine-core = { workspace = true, features = ["closeout-oracle"] }
 alloy-dyn-abi.workspace = true
 anyhow.workspace = true
 hex.workspace = true

@@ -190,10 +190,12 @@ impl Engine {
 
     /// Closes out, at `at`, each account holding a market in `closing` whose equity is below its
     /// requirement with the weekend margins that apply then (`Engine::weekend_close_out`).
+    /// The close-out index names them (`Engine::weekend_closeout_accounts`), so the holders it shows
+    /// meeting that requirement are not valued.
     fn weekend_close_outs(&mut self, closing: &BTreeSet<MarketId>, at: Millis, events: &mut Vec<Event>) {
-        let holders = &self.hot_indexes.as_ref().expect("apply builds derived indexes").holders;
-        let accounts: BTreeSet<AccountId> =
-            closing.iter().flat_map(|id| holders.get(id).into_iter().flatten().copied()).collect();
+        let accounts = self.weekend_closeout_accounts(closing);
+        #[cfg(feature = "closeout-oracle")]
+        self.oracle_weekend_site(closing, at, &accounts);
         for account in accounts {
             self.weekend_close_out(account, closing, at, events);
         }
@@ -243,7 +245,7 @@ impl Engine {
     /// with the weekend margins that apply at `at`, both at its marks, or `None` when the equity
     /// meets the requirement or no position in `closing` can be valued: one in a market never marked,
     /// with no FX mark to convert at, or blocked by a failed split.
-    fn next_weekend_closeout(
+    pub(crate) fn next_weekend_closeout(
         &self,
         account: AccountId,
         closing: &BTreeSet<MarketId>,
