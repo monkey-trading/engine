@@ -216,6 +216,38 @@ fn a_command_keys_no_more_than_its_allowance_across_its_refreshes() {
 }
 
 #[test]
+fn a_weekend_gap_values_a_keyed_holder_only_when_its_marks_leave_its_ranges() {
+    let mut engine = Engine::new();
+    engine.protocol_version = ProtocolVersion::LATEST;
+    for (id, price, weekend) in [(BTC, 50_000, 0), (WTI, 70, 1_500)] {
+        let spec: MarketSpec = serde_json::from_value(listing(id, "M", None, weekend)).unwrap();
+        let mut market = MarketState::new(spec);
+        market.mark = Some(Fixed::from_int(price));
+        engine.markets.insert(id, market);
+    }
+    // One BTC-USD unit and 10 WTI at their marks, with cash well clear of the gap's requirement, so only
+    // a crossing can name the account. A long's range reaches up to twice its price.
+    let holder = account(1);
+    let mut acct = Account { balance: Fixed::from_int(1_000_000), ..Account::default() };
+    acct.positions.insert(BTC, Position { qty: Fixed::ONE, entry: Fixed::from_int(50_000) });
+    acct.positions.insert(WTI, Position { qty: Fixed::from_int(10), entry: Fixed::from_int(70) });
+    engine.accounts.insert(holder, acct);
+    let mut index = CloseoutIndex::default();
+    index.build(&engine, 5_000);
+    assert!(matches!(index.accounts.get(&holder), Some(Standing::Keyed(_))), "the account is keyed");
+    let closing = BTreeSet::from([WTI]);
+    assert_eq!(index.weekend_candidates(&engine, &closing), Vec::<AccountId>::new(), "marks at the keys' point");
+    // BTC-USD's mark lags to inside its range, then to outside it.
+    engine.markets.get_mut(&BTC).unwrap().mark = Some(Fixed::from_int(90_000));
+    assert_eq!(index.weekend_candidates(&engine, &closing), Vec::<AccountId>::new(), "marks inside the ranges");
+    engine.markets.get_mut(&BTC).unwrap().mark = Some(Fixed::from_int(120_000));
+    assert_eq!(index.weekend_candidates(&engine, &closing), vec![holder], "marks outside the ranges");
+    // It holds no market in `closing`, so a gap in another market does not name it.
+    let other = BTreeSet::from([EURUSD]);
+    assert_eq!(index.weekend_candidates(&engine, &other), Vec::<AccountId>::new());
+}
+
+#[test]
 fn no_key_is_made_or_kept_where_a_point_inside_could_overflow_the_check() {
     let mut runner = TestRunner::new(Config { cases: 64, rng_seed: RngSeed::Fixed(SEED), ..Config::default() });
     let (keyed, overflowed) = (Cell::new(0u32), Cell::new(0u32));
