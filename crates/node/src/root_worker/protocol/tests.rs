@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 
-use loom::sync::atomic::{AtomicU64, Ordering};
+use loom::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use loom::sync::{Arc, Mutex, Notify};
 use loom::thread;
 
@@ -77,33 +77,33 @@ fn a_target_already_reached_when_armed_needs_no_wake_and_leaves_none_armed() {
 }
 
 #[test]
-fn a_waited_commit_is_answered_ahead_of_reads_and_work_keeps_its_order() {
+fn a_waited_commit_goes_ahead_of_a_read_and_the_read_runs_with_nothing_more_sent() {
     let mut builder = loom::model::Builder::new();
     builder.preemption_bound = Some(3);
     builder.check(|| {
         let shared = Arc::new(Shared::default());
         let worker = {
             let shared = shared.clone();
-            thread::spawn(move || run_worker(&shared))
+            thread::spawn(move || run_worker(&shared, 3))
         };
+        // The sequencer: a leaf write, then a commit it waits on, with a read forwarded meanwhile and
+        // nothing sent after the commit's answer.
+        shared.send(Message::Work(Step::Advance));
+        shared.progress.set_commit_waiting(true);
         let reader = {
             let shared = shared.clone();
             thread::spawn(move || shared.send(Message::Read))
         };
-        // The sequencer: a leaf write, then a commit it waits on, then the release it answers.
-        shared.send(Message::Work(Step::Advance));
-        shared.progress.set_commit_waiting(true);
         shared.send(Message::Work(Step::Commit));
-        shared.answered.wait();
+        // The commit's answer, as its channel gives it: loom's `Notify` may wake with none.
+        while !shared.committed.load(Ordering::Acquire) {
+            shared.answered.wait();
+        }
         shared.progress.set_commit_waiting(false);
-        shared.send(Message::Work(Step::Release));
         reader.join().unwrap();
         worker.join().unwrap();
         let done = shared.done.lock().unwrap().clone();
-        let work: Vec<Step> =
-            done.iter().filter_map(|done| if let Done::Work(step) = done { Some(*step) } else { None }).collect();
-        assert_eq!(work, [Step::Advance, Step::Commit, Step::Release]);
-        assert!(done.contains(&Done::Read));
+        assert_eq!(done, [Done::Work(Step::Advance), Done::Work(Step::Commit), Done::Read]);
     });
 }
 
@@ -114,7 +114,6 @@ fn a_waited_commit_is_answered_ahead_of_reads_and_work_keeps_its_order() {
 enum Step {
     Advance,
     Commit,
-    Release,
 }
 
 enum Message {
@@ -135,6 +134,8 @@ struct Shared {
     progress: Progress<AtomicU64>,
     inbox: Mutex<VecDeque<Message>>,
     arrived: Notify,
+    /// The commit's answer, and its wake-up.
+    committed: AtomicBool,
     answered: Notify,
     done: Mutex<Vec<Done>>,
 }
@@ -147,13 +148,13 @@ impl Shared {
 }
 
 /// The worker's loop as the node runs it: each message is taken into its lane, each step's lane is
-/// `next_lane`'s, and it waits for a message only with every lane empty. It stops after the four
-/// messages the model sends.
-fn run_worker(shared: &Shared) {
+/// `next_lane`'s, a commit clears the flag before it is answered, and it waits for a message only when
+/// `next_lane` gives no step. It stops after the `messages` the model sends.
+fn run_worker(shared: &Shared, messages: usize) {
     let (mut work, mut reads) = (VecDeque::new(), 0);
     let mut last = Lane::Background;
     let mut handled = 0;
-    while handled < 4 {
+    while handled < messages {
         for message in shared.inbox.lock().unwrap().drain(..) {
             match message {
                 Message::Work(step) => work.push_back(step),
@@ -171,6 +172,8 @@ fn run_worker(shared: &Shared) {
                 let step = work.pop_front().expect("the work lane holds a step");
                 shared.done.lock().unwrap().push(Done::Work(step));
                 if step == Step::Commit {
+                    shared.progress.set_commit_waiting(false);
+                    shared.committed.store(true, Ordering::Release);
                     shared.answered.notify();
                 }
             }

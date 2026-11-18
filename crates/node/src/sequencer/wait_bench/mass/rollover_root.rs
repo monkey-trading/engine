@@ -81,7 +81,6 @@ pub(super) fn run() {
         found
     });
     let stop = Arc::new(AtomicBool::new(false));
-    // READS-BEGIN
     let reader = {
         let (tx, stop) = (tx.clone(), stop.clone());
         std::thread::spawn(move || {
@@ -107,7 +106,6 @@ pub(super) fn run() {
             (times, empty)
         })
     };
-    // READS-END
 
     let base = clock.stamps.lock().unwrap().len();
     let stamped = || clock.stamps.lock().unwrap().len() - base;
@@ -139,9 +137,7 @@ pub(super) fn run() {
         std::thread::sleep(Duration::from_micros(100));
     }
     stop.store(true, Ordering::Relaxed);
-    // READS-BEGIN
     let (mut reads, empty) = reader.join().unwrap();
-    // READS-END
     drop(tx);
     runner.join().unwrap();
     let checkpoints = watcher.join().unwrap();
@@ -196,10 +192,8 @@ pub(super) fn run() {
     report("mass_rollover_root_prices_behind", behind);
     report("mass_rollover_root_prices_in_window", in_window);
     report("mass_rollover_root_prices_after_rollover_done", after_done);
-    // READS-BEGIN
     println!("WAIT mass_rollover_root_account_proofs empty_answers={empty}");
     report("mass_rollover_root_account_proof_reads", std::mem::take(&mut reads));
-    // READS-END
     let verdict = if longest_window <= BAR_US { "within" } else { "OVER" };
     println!("WAIT bar mass_rollover_root longest_wait_us={longest_window} bar_us={BAR_US} {verdict}");
     assert!(first.is_some(), "a checkpoint follows the rollover");

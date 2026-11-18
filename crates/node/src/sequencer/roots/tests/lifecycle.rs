@@ -1,8 +1,9 @@
 //! The worker's life beside the sequencer's: roots stay inline until `V9`'s first root hands the tree
-//! over, and a worker that dies stops the sequencer.
+//! over, a worker that dies stops the sequencer, and root work no part can take leaves it idle.
 
 use engine_core::auth::ClientAuth;
 use engine_core::command::AdminCommand;
+use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
 
 use super::*;
@@ -62,4 +63,30 @@ async fn a_worker_that_panics_stops_the_idle_sequencer() {
     let error = ended.expect_err("the sequencer stops with its worker");
     assert!(format!("{error:#}").contains("the state root worker stopped"), "{error:#}");
     assert!(started.elapsed() < Duration::from_secs(10), "it stops promptly, not at a deadline");
+}
+
+#[tokio::test]
+async fn markets_alone_in_the_record_leave_the_sequencer_idle() {
+    let mut node = Node::new("roots-markets-idle", None);
+    let markets: Vec<engine_core::types::MarketId> = node.seq.engine.markets().keys().copied().collect();
+    let ts = node.seq.engine.now();
+    for market in &markets {
+        let quotes = ["venue-a", "venue-b"].map(|source| SourceQuote {
+            source: source.into(),
+            mid: Fixed::from_int(100),
+            ts,
+            contract: None,
+        });
+        let cmd = Command::Prices { market: *market, quotes: quotes.to_vec() };
+        node.seq.sequence(cmd).expect("the price applies").expect("trusted time admits it");
+    }
+    node.seq.flush().expect("the log flushes");
+    // A bound whose copy floor one changed market is over: only a commit takes the markets, so no part
+    // can bring them under it, and the sequencer must not keep copying empty parts out.
+    node.seq.roots.set_bounds(4, Duration::from_secs(3_600));
+    assert!(node.seq.engine.root_backlog() >= markets.len() && markets.len() > 1, "{markets:?}");
+    let running = node.run(Vec::new());
+    assert_eq!(running.batches_while_idle().await, 0, "the sequencer idles with only markets in the record");
+    let Stopped { ended, .. } = running.stop().await;
+    assert!(ended.is_ok(), "the sequencer drains: {ended:?}");
 }

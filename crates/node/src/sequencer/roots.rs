@@ -239,8 +239,8 @@ impl Sequencer {
 
     /// Whether there are leaf writes to copy out and room on the worker for them.
     fn root_copy_due(&self) -> bool {
-        let (bound, record) = (self.roots.bound, self.engine.root_backlog() as u64);
-        record > bound / EXTRACT_SHARE && self.roots.worker.pending() < QUEUE_SHARE * bound
+        let (bound, parts) = (self.roots.bound, self.engine.root_part_backlog() as u64);
+        parts > bound / EXTRACT_SHARE && self.roots.worker.pending() < QUEUE_SHARE * bound
     }
 
     /// Whether the sequencer has root work to do now rather than wait for a request: writes to copy
@@ -260,9 +260,10 @@ impl Sequencer {
             return true;
         }
         let (bound, record) = (self.roots.bound, self.engine.root_backlog() as u64);
+        let parts = self.engine.root_part_backlog() as u64;
         let pending = match bound.checked_sub(record * TOUCHED_WEIGHT + ROOT_RESERVE) {
             Some(pending) => pending,
-            None if record > bound / EXTRACT_SHARE => (QUEUE_SHARE * bound).saturating_sub(1),
+            None if parts > bound / EXTRACT_SHARE => (QUEUE_SHARE * bound).saturating_sub(1),
             // No progress of the worker's brings this wait within the bound: its deadline ends it.
             None => return false,
         };

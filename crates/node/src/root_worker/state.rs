@@ -11,7 +11,7 @@ use tracing::debug;
 
 use crate::root_worker::claims::Claims;
 use crate::root_worker::protocol::{Lane, Progress, Word};
-use crate::root_worker::{Outcome, Read, Work};
+use crate::root_worker::{Message, Outcome, Proved, Read, Work};
 
 /// Nodes freed in one step.
 const FREE_STEP: usize = 20_000;
@@ -50,7 +50,7 @@ enum Background {
     /// The watched accounts' claim proofs at a version just committed, which they pin.
     Capture { version: u64, accounts: Vec<AccountId> },
     /// A payout's first proofs at the version of the checkpoint at `seq`, which they pin.
-    Prove { version: u64, seq: u64, approvals: VecDeque<(AccountId, u64)>, proofs: Vec<super::Proved> },
+    Prove { version: u64, seq: u64, approvals: VecDeque<(AccountId, u64)>, proofs: Vec<Proved> },
 }
 
 impl WorkerState {
@@ -70,18 +70,18 @@ impl WorkerState {
     /// version is committed, and the vault's latest checkpoint apply at once, so every read the
     /// sequencer forwards after them sees them: the sequencer sends a release only once the commit it
     /// names has answered, or right after the tree that holds its version.
-    pub(super) fn take(&mut self, message: super::Message) {
+    pub(super) fn take(&mut self, message: Message) {
         match message {
-            super::Message::Work(Work::Install(tree)) if self.work.is_empty() && self.background.is_empty() => {
+            Message::Work(Work::Install(tree)) if self.work.is_empty() && self.background.is_empty() => {
                 self.cancel();
                 self.tree = *tree;
             }
-            super::Message::Work(Work::Release(seq, root)) if self.tree.release(seq, root) => self.queue_free(),
+            Message::Work(Work::Release(seq, root)) if self.tree.release(seq, root) => self.queue_free(),
             // Claims read nothing of the tree's, so the vault's checkpoint counts for every claim read
             // forwarded after it.
-            super::Message::Work(Work::Accept(latest)) => self.claims.accept(latest),
-            super::Message::Work(work) => self.work.push_back(work),
-            super::Message::Read(read) => self.reads.push_back(Reading::Read(read)),
+            Message::Work(Work::Accept(latest)) => self.claims.accept(latest),
+            Message::Work(work) => self.work.push_back(work),
+            Message::Read(read) => self.reads.push_back(Reading::Read(read)),
         }
     }
 
@@ -97,7 +97,7 @@ impl WorkerState {
         let lane = progress.next_lane(self.last, work, reads, background)?;
         self.last = lane;
         Some(match lane {
-            Lane::Work => self.work_step(),
+            Lane::Work => self.work_step(progress),
             Lane::Read => {
                 self.read_step();
                 0
@@ -115,7 +115,7 @@ impl WorkerState {
     }
 
     /// The sequencer's next message, in the order it sent them, returning the leaf writes it finished.
-    fn work_step(&mut self) -> u64 {
+    fn work_step<W: Word>(&mut self, progress: &Progress<W>) -> u64 {
         match self.work.pop_front().expect("next_lane picks a lane that holds a step") {
             Work::Install(tree) => {
                 self.cancel();
@@ -132,6 +132,9 @@ impl WorkerState {
             }
             Work::Commit(inputs, reply) => {
                 let answer = inputs.apply(&mut self.tree);
+                // Cleared before the answer, so the next step takes every lane with nothing more sent;
+                // the sequencer sets it again only for its next commit, once it holds this answer.
+                progress.set_commit_waiting(false);
                 // A sequencer that stopped waiting has stopped: its thread sees the closed channel.
                 let _ = reply.send(answer);
                 let version = self.tree.newest().expect("committed above").id();
@@ -157,7 +160,7 @@ impl WorkerState {
                 let approvals = approvals.into_iter().collect();
                 self.background.push_back(Background::Prove { version, seq, approvals, proofs: Vec::new() });
             }
-            Work::Accept(latest) => self.claims.accept(latest),
+            Work::Accept(_) => unreachable!("`take` applies the vault's checkpoint as it arrives"),
             #[cfg(test)]
             Work::Panic => panic!("a test panicked the state root worker"),
         }

@@ -1,6 +1,8 @@
 //! The leaf writes of the entries a root takes, each read from the state as it is when they are taken.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+use alloy_primitives::B256;
 
 use crate::access::{AccessDeposit, HeldDeposit};
 use crate::deposits::RecordedDeposit;
@@ -219,9 +221,9 @@ impl Engine {
 fn pending_leaf(
     reference: &str,
     deposit: &AccessDeposit,
-    receipts: &std::collections::BTreeMap<String, RecordedDeposit>,
+    receipts: &BTreeMap<String, RecordedDeposit>,
     version: ProtocolVersion,
-) -> (alloy_primitives::B256, LeafValue) {
+) -> (B256, LeafValue) {
     let receipt = receipts.get(reference).map(|recorded| PendingReceipt {
         deposit_id: recorded.receipt.deposit_id,
         account: deposit.account,
@@ -241,9 +243,9 @@ fn pending_leaf(
 fn held_leaf(
     reference: &str,
     hold: &HeldDeposit,
-    receipts: &std::collections::BTreeMap<String, RecordedDeposit>,
+    receipts: &BTreeMap<String, RecordedDeposit>,
     version: ProtocolVersion,
-) -> (alloy_primitives::B256, LeafValue) {
+) -> (B256, LeafValue) {
     let deposit = &hold.deposit;
     // Bound to the receipt's own authenticated vault caller, which a replacement records apart from
     // the terminal hold it keeps, screened for the orphan's caller; a booked surplus has none, by the

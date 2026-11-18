@@ -58,6 +58,35 @@ fn a_drawn_schedule_commits_the_inline_roots_and_reads_only_released_versions() 
     assert!(covered.approvals_proved > 10, "{covered:?}");
 }
 
+#[test]
+fn after_a_commit_a_queued_read_and_payout_proof_run_with_nothing_more_sent() {
+    let mut run = Run::new();
+    run.take(Op::Release, &mut Coverage::default()).unwrap();
+    run.command(1, acct(2));
+    let seq = run.h.engine.last_seq().expect("commands applied");
+    let (proved_at, approvals) = {
+        let (&at, proven) = run.proven.iter().next_back().expect("the first root is proven");
+        (at, proven.approvals.keys().copied().collect::<Vec<_>>())
+    };
+    assert!(!approvals.is_empty(), "the book holds approvals to prove");
+    // A payout proof and a read wait behind the commit the sequencer is waiting on.
+    run.state.take(Message::Work(Work::Prove(proved_at, approvals)));
+    let (reply, mut answer) = oneshot::channel();
+    run.state.take(Message::Read(Read::Account(acct(1), reply)));
+    let (commit_reply, committed) = sync_channel(1);
+    run.progress.set_commit_waiting(true);
+    run.state.take(Message::Work(Work::Commit(run.h.engine.commit_inputs(), commit_reply)));
+    while committed.try_recv().is_err() {
+        run.state.step(&run.progress).expect("the commit is answered");
+    }
+    // The sequencer has not cleared the flag yet, and sends nothing more: the worker goes on alone.
+    while run.state.step(&run.progress).is_some() {}
+    assert!(matches!(answer.try_recv(), Ok(Some(_))), "the read ran after the commit, against the released root");
+    let proved = run.state.take_outbox();
+    assert!(matches!(proved.as_slice(), [Outcome::Proved { seq: at, .. }] if *at == proved_at), "{proved:?}");
+    assert!(seq > proved_at);
+}
+
 // ── Helpers ──
 
 #[derive(Clone, Debug)]

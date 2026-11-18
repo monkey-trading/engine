@@ -5,10 +5,12 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, RngSeed, TestRunner};
 
 use super::*;
+use crate::Fixed;
 use crate::emissions::TokenUnits;
 use crate::merkle::tree::arena::Node;
 use crate::merkle::{SparseMerkleTree, keccak};
 use crate::types::AccountId;
+use crate::withdrawal::QueuedWithdrawal;
 
 #[test]
 fn every_root_and_proof_matches_the_oracle_through_random_batches() {
@@ -195,6 +197,38 @@ fn an_unchanged_write_copies_and_hashes_nothing() {
     assert_eq!(live(&tree), before, "no path was copied");
     let (again, work) = tree.commit(2, ProtocolVersion::LATEST, None);
     assert_eq!((again, work.nodes), (root, 0));
+}
+
+#[test]
+fn an_exit_entry_an_older_pinned_version_holds_is_pruned_once_that_version_goes() {
+    let account = AccountId([3; 20]);
+    let queued = QueuedWithdrawal {
+        account,
+        amount: Fixed::from_int(5),
+        remaining: Fixed::from_int(5),
+        requested_seq: 7,
+        ticket: 1,
+    };
+    let queue_key = crate::merkle::withdrawal_queue_key(7);
+    let hash = crate::merkle::withdrawal_queue_hash(&queued, ProtocolVersion::LATEST);
+    let mut tree = StateTree::default();
+    tree.advance(vec![LeafUpdate::valued(queue_key, Some((hash, LeafValue::Queued(queued))))]);
+    let (first, _) = tree.commit(1, ProtocolVersion::LATEST, None);
+    assert!(tree.release(1, first));
+    // A read pins the first version; the second holds the entry too.
+    let pinned = tree.released().expect("released").id();
+    tree.pin(pinned);
+    tree.advance(vec![LeafUpdate::hashed(key(1), Some(value(1)))]);
+    let (second, _) = tree.commit(2, ProtocolVersion::LATEST, None);
+    assert!(tree.release(2, second));
+    // The third lets the entry go, and its release drops the second while the pinned first holds it.
+    tree.advance(vec![LeafUpdate::valued(queue_key, None)]);
+    let (third, _) = tree.commit(3, ProtocolVersion::LATEST, None);
+    assert!(tree.release(3, third));
+    assert!(tree.index.queued.contains_key(&account), "the pinned version still finds it");
+    tree.unpin(pinned);
+    assert!(tree.version(pinned).is_none(), "the first version goes with its pin");
+    assert!(!tree.index.queued.contains_key(&account), "no version holds the entry: the index lets it go");
 }
 
 // ── Helpers ──

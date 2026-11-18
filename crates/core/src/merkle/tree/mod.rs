@@ -43,6 +43,9 @@ pub struct StateTree {
     /// Index entries the working version made since the last commit, and those it dropped.
     added: Vec<Association>,
     dropped: Vec<Association>,
+    /// Entries a dropped version's successor let go of that an older, pinned version still held,
+    /// pruned once nothing holds them.
+    unpruned: Vec<Association>,
 }
 
 /// One committed version: the tree of a root.
@@ -194,8 +197,8 @@ impl StateTree {
             Some(previous) => previous.dropped = dropped,
             // Entries the working version both made and dropped since it was empty.
             None => {
-                let gone: Vec<Association> = dropped.into_iter().filter(|entry| !self.holds(entry)).collect();
-                gone.iter().for_each(|entry| self.index.remove(entry));
+                self.unpruned.extend(dropped);
+                self.prune();
             }
         }
         self.added.clear();
@@ -244,12 +247,18 @@ impl StateTree {
             let version = self.versions.remove(at).expect("in range");
             newest -= 1;
             self.arena.release(version.root);
-            for entry in version.dropped {
-                if !self.holds(&entry) {
-                    self.index.remove(&entry);
-                }
-            }
+            self.unpruned.extend(version.dropped);
         }
+        self.prune();
+    }
+
+    /// Removes from the index every entry let go of that no version kept, nor the working one, holds.
+    fn prune(&mut self) {
+        let unpruned = std::mem::take(&mut self.unpruned);
+        let (held, gone): (Vec<Association>, Vec<Association>) =
+            unpruned.into_iter().partition(|entry| self.holds(entry));
+        gone.iter().for_each(|entry| self.index.remove(entry));
+        self.unpruned = held;
     }
 
     /// Whether a version kept, or the working one, holds `entry`.
@@ -272,11 +281,8 @@ impl StateTree {
         self.totals = totals;
         self.work = RootWork::default();
         self.dropped.clear();
-        for entry in std::mem::take(&mut self.added) {
-            if !self.holds(&entry) {
-                self.index.remove(&entry);
-            }
-        }
+        self.unpruned.append(&mut self.added);
+        self.prune();
     }
 
     /// Frees up to `budget` nodes no version holds any more, and returns how many it freed.

@@ -65,10 +65,10 @@ pub struct ClaimAnswer<P: Proved> {
     /// The latest checkpoint the node has seen the vault record in its signer epoch in force, `null`
     /// before it has seen one, or once the signer that recorded it is replaced or retired.
     pub accepted_seq: Option<u64>,
-    /// The newest checkpoint the node has created.
+    /// The newest checkpoint the node's log holds durably.
     pub newest_seq: u64,
-    /// The account's cumulative amount at the newest checkpoint: what the proof will name once the
-    /// vault accepts that checkpoint. Never below the proof's own `entitled`.
+    /// The account's cumulative amount at that checkpoint: what the proof will name once the vault
+    /// accepts it. Never below the proof's own `entitled`.
     pub newest_entitled: P::Amount,
     /// Whether the proof is against `accepted_seq`, so the vault checks it now, and goes on checking
     /// it as later checkpoints post; a withdrawal pause still holds a USDC claim. Otherwise the proof

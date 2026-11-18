@@ -99,12 +99,11 @@ pub(crate) struct RootWorker {
     sent: u64,
 }
 
-/// Reports the worker's end to the sequencer when its thread ends, a panic included, unless it ends
-/// because every sender is gone.
+/// Reports a panic of the worker's thread to the sequencer, which stops with it. The thread's other
+/// ends, every sender gone or the sequencer stopped, leave no one to tell.
 struct StopGuard {
     outcomes: Sender<Outcome>,
     shared: Arc<Shared>,
-    reason: Option<String>,
 }
 
 impl RootWorker {
@@ -274,10 +273,11 @@ impl RootWorker {
 
 impl Drop for StopGuard {
     fn drop(&mut self) {
-        let reason = if std::thread::panicking() { Some("it panicked".to_owned()) } else { self.reason.take() };
-        let Some(reason) = reason else { return };
-        error!("the state root worker stopped: {reason}");
-        let _ = self.outcomes.send(Outcome::Stopped(reason));
+        if !std::thread::panicking() {
+            return;
+        }
+        error!("the state root worker stopped: it panicked");
+        let _ = self.outcomes.send(Outcome::Stopped("it panicked".into()));
         self.shared.woken.notify_one();
     }
 }
@@ -286,7 +286,7 @@ impl Drop for StopGuard {
 /// did, and waits for a message only with every lane empty. It ends once every sender is gone and
 /// nothing is left to do.
 fn run(mut state: WorkerState, rx: &Receiver<Message>, shared: &Arc<Shared>, outcomes: Sender<Outcome>) {
-    let guard = StopGuard { outcomes, shared: shared.clone(), reason: None };
+    let guard = StopGuard { outcomes, shared: shared.clone() };
     loop {
         loop {
             match rx.try_recv() {

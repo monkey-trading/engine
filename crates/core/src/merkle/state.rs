@@ -205,6 +205,11 @@ impl Engine {
         self.changed_key_count()
     }
 
+    /// How many keys of that record a part takes: all but the markets', which wait for the root.
+    pub fn root_part_backlog(&self) -> usize {
+        self.changed_key_count() - self.markets.touched_len()
+    }
+
     /// What a protocol version change asks of a detached tree's owner before any later leaf write,
     /// clearing it.
     pub fn take_tree_event(&mut self) -> Option<TreeEvent> {

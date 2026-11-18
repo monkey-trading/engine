@@ -108,7 +108,8 @@ impl<W: Word> Progress<W> {
         self.finished.load() & !ARMED
     }
 
-    /// The sequencer's side, before it sends a commit and then after the commit's answer.
+    /// Set by the sequencer before it sends a commit, and cleared by the worker before it answers the
+    /// commit, and by the sequencer once it has the answer or the worker has gone.
     pub(crate) fn set_commit_waiting(&self, waiting: bool) {
         self.commit_waiting.store(u64::from(waiting));
     }
