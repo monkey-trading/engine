@@ -140,7 +140,9 @@ impl RowsStore {
         ensure!(bytes[8..16] == ts.to_be_bytes(), "{} holds another command's rows", path.display());
         ensure!(bytes[16..HEADER] == (expected as u64).to_be_bytes(), "{} counts other rows", path.display());
         let rows = bytes[HEADER..]
-            .chunks_exact(ROW)
+            .as_chunks::<ROW>()
+            .0
+            .iter()
             .map(|row| FinancingRow {
                 account: AccountId(row[..20].try_into().expect("20 bytes")),
                 market: u32::from_be_bytes(row[20..24].try_into().expect("4 bytes")),
