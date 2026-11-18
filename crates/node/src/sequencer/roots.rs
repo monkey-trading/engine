@@ -243,17 +243,35 @@ impl Sequencer {
     }
 
     /// Whether the sequencer has root work to do now rather than wait for a request: writes to copy
-    /// out, or a deferred checkpoint whose wait is within the bound or whose time is up.
+    /// out, or a deferred checkpoint whose wait is within the bound or whose time is up. Called before
+    /// each wait, it otherwise arms a wake-up, while a checkpoint is deferred, for the worker's progress
+    /// that makes work due: the wait within the bound, or, while the engine's record alone is over it,
+    /// room on the worker for more of the record.
     pub(super) fn root_work_due(&self) -> bool {
-        let deferred_ready = self.roots.deferred.is_some_and(|since| {
-            self.root_wait() <= self.roots.bound || TokioInstant::now().duration_since(since) >= self.roots.defer_max
-        });
-        self.roots.detached && (self.root_copy_due() || deferred_ready)
+        if !self.roots.detached {
+            return false;
+        }
+        if self.root_copy_due() {
+            return true;
+        }
+        let Some(since) = self.roots.deferred else { return false };
+        if TokioInstant::now().duration_since(since) >= self.roots.defer_max {
+            return true;
+        }
+        let (bound, record) = (self.roots.bound, self.engine.root_backlog() as u64);
+        let pending = match bound.checked_sub(record * TOUCHED_WEIGHT + ROOT_RESERVE) {
+            Some(pending) => pending,
+            None if record > bound / EXTRACT_SHARE => (QUEUE_SHARE * bound).saturating_sub(1),
+            // No progress of the worker's brings this wait within the bound: its deadline ends it.
+            None => return false,
+        };
+        // True when already reached, in which case nothing stays armed.
+        self.roots.worker.wake_at_pending(pending)
     }
 
     /// Handles a wake-up from the worker, the deferral's deadline, or idle time: takes the worker's
     /// reports, copies leaf writes out, and takes a deferred checkpoint whose wait is now within the
-    /// bound or whose time is up, arming a wake-up for the worker's progress otherwise.
+    /// bound or whose time is up.
     /// Error cases:
     /// - the worker has stopped, or the checkpoint cannot be written
     pub(super) fn root_wake(&mut self) -> anyhow::Result<()> {
@@ -269,14 +287,6 @@ impl Sequencer {
                 // takes the next one.
                 self.roots.deferred = None;
             }
-            return Ok(());
-        }
-        let touched = self.engine.root_backlog() as u64 * TOUCHED_WEIGHT + ROOT_RESERVE;
-        if let Some(pending) = self.roots.bound.checked_sub(touched)
-            && self.roots.worker.wake_at_pending(pending)
-        {
-            // Reached since the check above: the next wake-up takes it.
-            self.roots.worker.woken().notify_one();
         }
         Ok(())
     }

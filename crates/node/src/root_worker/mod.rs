@@ -256,11 +256,6 @@ impl RootWorker {
         }
     }
 
-    /// Notified when the worker reaches an armed wake-up, reports, or stops.
-    pub(crate) fn woken(&self) -> &Notify {
-        &self.shared.woken
-    }
-
     /// What the worker shares with the sequencer, for a wait that also holds the sequencer.
     pub(crate) fn shared(&self) -> Arc<Shared> {
         self.shared.clone()
