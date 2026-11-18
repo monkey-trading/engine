@@ -70,6 +70,9 @@ fn replay_in_parts(entries: &[ReferenceEntry], seed: u64, totals: &mut Totals) -
             // Before the first root under `V9` a node computes roots inline, then takes the tree.
             parted.state_root();
             tree = parted.detach_tree();
+            if tree.as_ref().is_some_and(|tree| tree.released().is_some()) {
+                return Err(format!("seq {seq}: a tree is handed over with a version released"));
+            }
             continue;
         };
         match parted.take_tree_event() {

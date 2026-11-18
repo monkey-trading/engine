@@ -112,8 +112,9 @@ impl Run {
     /// funded accounts and one with many withdrawals, its tree detached at its first root. The leaves
     /// later versions add are the core's `root_deltas` test's.
     fn new() -> Self {
+        // Deposits with no payer are credited under `V22`, and held from the version that needs one,
+        // which the schedules' deposits are, so held deposits' leaves change too.
         let mut h = Harness::zero_house_operated(ProtocolVersion::V22);
-        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V38 });
         h.price(BTC, "100");
         for account in 1..4 {
             h.deposit(acct(account), "100000");
@@ -121,6 +122,7 @@ impl Run {
         for _ in 0..40 {
             h.cmd(Command::Withdraw { account: acct(1), amount: f("1"), auth: None });
         }
+        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V38 });
         let mut run = Self {
             inline: Engine::new(),
             replayed: 0,
@@ -236,9 +238,9 @@ impl Run {
     }
 
     /// Reads `account`'s proofs once the work queued so far is done, so the newest released version
-    /// is known, and checks them against the inline engine's at that version. The exit read is sent
-    /// with the next release behind it, which moves the newest released version on while the read,
-    /// pinned to its own, takes its approvals a step at a time.
+    /// is known, and checks them against the inline engine's at that version. The next release arrives
+    /// once the exit read has taken its first step, and moves the newest released version on while
+    /// the read, pinned to its own, takes its approvals a step at a time.
     fn read(&mut self, account: AccountId, covered: &mut Coverage) -> Result<(), String> {
         self.until_idle_work();
         let at = self.released.map(|seq| &self.proven[&seq]);
@@ -257,11 +259,16 @@ impl Run {
         };
         let (reply, mut answer) = oneshot::channel();
         self.state.take(Message::Read(Read::Exit(account, reply)));
+        // The read's first step pins its version; the release arrives after it.
+        let mut steps = 0;
+        while matches!(self.state.reads.front(), Some(Reading::Read(_))) {
+            self.state.step(&self.progress).ok_or("the worker stalled before starting a read")?;
+            steps += 1;
+        }
         let next = self.unreleased.pop_front();
         if let Some((seq, root)) = next {
             self.state.take(Message::Work(Work::Release(seq, root)));
         }
-        let mut steps = 0;
         let exit = loop {
             if let Ok(exit) = answer.try_recv() {
                 break exit;
@@ -273,11 +280,16 @@ impl Run {
         if let Some((seq, _)) = next {
             self.released = Some(seq);
         }
-        if steps > 3 {
+        if steps > 2 {
             covered.multi_step_exits += 1;
         }
         if proof != want_proof || exit != want_exit {
-            return Err(format!("{account}: a read answered other than the newest released version at its start"));
+            let seqs = |proof: Option<u64>, exit: Option<u64>| format!("account at {proof:?}, exit at {exit:?}");
+            return Err(format!(
+                "{account}: a read answered {} where the newest released version at its start gives {}",
+                seqs(proof.as_ref().map(|p| p.seq), exit.as_ref().map(|e| e.seq)),
+                seqs(want_proof.as_ref().map(|p| p.seq), want_exit.as_ref().map(|e| e.seq)),
+            ));
         }
         if let Some(proof) = &proof {
             covered.proofs += 1;

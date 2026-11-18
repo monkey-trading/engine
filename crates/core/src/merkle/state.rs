@@ -152,10 +152,12 @@ impl Engine {
     }
 
     /// Hands the state tree to the caller, which computes this engine's roots from here on from
-    /// `take_root_delta` and `commit_inputs`; `state_root` refuses after it. `None` with no tree to
-    /// hand over: before the first root under `V9`, or after a decode.
+    /// `take_root_delta` and `commit_inputs`; `state_root` refuses after it. Its version is handed over
+    /// unreleased: the caller releases it only once it knows a checkpoint holds its root. `None` with
+    /// no tree to hand over: before the first root under `V9`, or after a decode.
     pub fn detach_tree(&mut self) -> Option<StateTree> {
-        let tree = self.tree.take()?;
+        let mut tree = self.tree.take()?;
+        tree.withhold();
         self.detached = Some(Detached::default());
         Some(tree)
     }

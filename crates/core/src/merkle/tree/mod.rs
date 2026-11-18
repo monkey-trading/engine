@@ -225,6 +225,12 @@ impl StateTree {
         true
     }
 
+    /// Marks every version unreleased, for a tree handed to an owner that releases each version only
+    /// once a checkpoint the log holds names its root.
+    pub(crate) fn withhold(&mut self) {
+        self.versions.iter_mut().for_each(|version| version.released = false);
+    }
+
     /// Drops every unpinned version older than the newest released one.
     fn drop_superseded(&mut self) {
         let Some(newest) = self.versions.iter().rposition(|v| v.released) else { return };

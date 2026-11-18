@@ -295,8 +295,7 @@ impl Sequencer {
         {
             return Ok(());
         }
-        // Root work defers a paced checkpoint before a member's confirmation is asked for, so a
-        // deferral never stops stamping.
+        // Before a member's confirmation is asked for, so a deferral never stops stamping.
         if self.defers_for_root_work(seq, paced) {
             return Ok(());
         }

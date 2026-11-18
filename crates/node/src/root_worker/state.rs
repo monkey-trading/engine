@@ -37,7 +37,7 @@ enum Reading {
     Exit {
         version: u64,
         account: AccountId,
-        proof: ExitProof,
+        proof: Box<ExitProof>,
         next: u64,
         reply: tokio::sync::oneshot::Sender<Option<ExitProof>>,
     },
@@ -186,7 +186,7 @@ impl WorkerState {
                     return;
                 };
                 self.tree.pin(version);
-                self.reads.push_front(Reading::Exit { version, account, proof, next: 1, reply });
+                self.reads.push_front(Reading::Exit { version, account, proof: Box::new(proof), next: 1, reply });
             }
             Reading::Exit { version, account, mut proof, next, reply } => {
                 let tree_version = self.tree.version(version).expect("a pinned version is kept");
@@ -200,7 +200,7 @@ impl WorkerState {
                 }
                 self.tree.unpin(version);
                 self.queue_free();
-                let _ = reply.send(Some(proof));
+                let _ = reply.send(Some(*proof));
             }
         }
     }

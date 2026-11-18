@@ -69,7 +69,6 @@ use crate::clock::Clock;
 use crate::history::derived::Derived;
 use crate::log::{LogEntry, LogWriter, SegmentedLog};
 use crate::metrics::Metrics;
-use crate::root_worker::Read;
 use crate::sequencer::alerts::{
     BenchmarkAlerts, DeficitAlert, LossAlert, alert_on, reinstated_receipt, resolve_reversal,
 };
@@ -134,7 +133,6 @@ pub struct Sequencer {
     fault_proof: Option<engine_core::operator_faults::FaultProofConfig>,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
-    /// The root worker, which holds the state tree once it is detached from the engine.
     roots: roots::Roots,
     accounting: Accounting,
     /// Startup and recovery wait for a signed, complete publisher attempt before catch-up.
@@ -240,14 +238,10 @@ impl Sequencer {
                         let answer = self.account_payouts(account, after, limit);
                         batch.later.push(Box::new(move || _ = reply.send(answer)));
                     }
-                    Request::AccountProof { account, reply } => self.forward_read(Read::Account(account, reply))?,
-                    Request::ExitProof { account, reply } => self.forward_read(Read::Exit(account, reply))?,
-                    Request::EntitlementClaim { account, reply } => {
-                        self.forward_read(Read::Entitlement(account, reply))?
-                    }
-                    Request::DistributionClaim { account, reply } => {
-                        self.forward_read(Read::Distribution(account, reply))?
-                    }
+                    read @ (Request::AccountProof { .. }
+                    | Request::ExitProof { .. }
+                    | Request::EntitlementClaim { .. }
+                    | Request::DistributionClaim { .. }) => self.forward_read(read)?,
                     Request::CheckpointStatus { posted, latest, health, lifecycle } => {
                         if let Some(latest) = latest {
                             self.roots.worker.accept(latest)?;
@@ -278,8 +272,7 @@ impl Sequencer {
                 self.refresh_log_check();
             }
             self.release_waiting_checkpoint()?;
-            self.take_root_outcomes()?;
-            self.copy_root_work()?;
+            self.root_batch_end()?;
             handover_stop = handover_stop.or_else(|| self.admitted_handover());
             batch.timing = sequenced.then_some(started);
             let release = self.stage(std::mem::take(&mut batch))?;

@@ -20,7 +20,7 @@ use tokio::time::Instant as TokioInstant;
 use tracing::{debug, info, warn};
 
 use crate::root_worker::{Outcome, Read, RootWorker, Shared};
-use crate::sequencer::Sequencer;
+use crate::sequencer::{Request, Sequencer};
 
 /// The longest the sequencer copies leaf writes out of its engine at a time.
 const PIECE_TIME: Duration = Duration::from_millis(1);
@@ -169,7 +169,7 @@ impl Sequencer {
         let (started, wait) = (Instant::now(), self.root_wait());
         let inputs = self.engine.commit_inputs();
         let (root, work) = self.roots.worker.commit(inputs)?;
-        self.metrics.state_root_commit_seconds.observe(started.elapsed().as_secs_f64());
+        self.metrics.state_root.commit_seconds.observe(started.elapsed().as_secs_f64());
         debug!(seq, wait, leaves = work.leaves, nodes = work.nodes, "state root committed");
         if self.roots.deferred.take().is_some() && std::mem::take(&mut self.roots.held) {
             info!(alert_resolved = "root_backlog_held", "a paced checkpoint's root work is done");
@@ -194,6 +194,14 @@ impl Sequencer {
         }
     }
 
+    /// The root work at a batch's end: the worker's reports, then a piece of leaf writes to copy out.
+    /// Error cases:
+    /// - the worker has stopped
+    pub(super) fn root_batch_end(&mut self) -> anyhow::Result<()> {
+        self.take_root_outcomes()?;
+        self.copy_root_work()
+    }
+
     /// Copies leaf writes out of the engine to the worker for up to `PIECE_TIME`, while the record
     /// is above `EXTRACT_FLOOR` and the worker has room.
     /// Error cases:
@@ -210,9 +218,9 @@ impl Sequencer {
             copied = true;
         }
         if copied {
-            self.metrics.state_root_piece_seconds.observe(started.elapsed().as_secs_f64());
+            self.metrics.state_root.piece_seconds.observe(started.elapsed().as_secs_f64());
         }
-        self.metrics.state_root_backlog.set(i64::try_from(self.root_wait()).unwrap_or(i64::MAX));
+        self.metrics.state_root.backlog.set(i64::try_from(self.root_wait()).unwrap_or(i64::MAX));
         Ok(())
     }
 
@@ -306,10 +314,17 @@ impl Sequencer {
         }
     }
 
-    /// Forwards a proof read from the API to the worker.
+    /// Forwards a proof or claim read from the API to the worker, which answers it on its reply.
     /// Error cases:
     /// - the worker has stopped
-    pub(super) fn forward_read(&self, read: Read) -> anyhow::Result<()> {
+    pub(super) fn forward_read(&self, request: Request) -> anyhow::Result<()> {
+        let read = match request {
+            Request::AccountProof { account, reply } => Read::Account(account, reply),
+            Request::ExitProof { account, reply } => Read::Exit(account, reply),
+            Request::EntitlementClaim { account, reply } => Read::Entitlement(account, reply),
+            Request::DistributionClaim { account, reply } => Read::Distribution(account, reply),
+            _ => unreachable!("only proof and claim reads are forwarded"),
+        };
         self.roots.worker.read(read).context("forwarding a proof read")
     }
 }
