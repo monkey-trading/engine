@@ -4,27 +4,6 @@ use super::*;
 use crate::sequencer::replay::Replay;
 
 impl ReplayedLog {
-    /// Reports whether actual recovery used a cache, for integrated startup assertions.
-    #[cfg(test)]
-    pub(crate) fn snapshot_sequence(&self) -> Option<u64> {
-        self.snapshot_seq
-    }
-
-    /// The last checkpoint the replay verified: the snapshot's it started at, or a later entry's.
-    pub(crate) fn last_checkpoint(&self) -> Option<&crate::log::Checkpoint> {
-        self.replayed.last_signed_checkpoint.as_ref()
-    }
-
-    /// Last engine command authenticated by the read-only replay.
-    pub(crate) fn last_seq(&self) -> Option<u64> {
-        self.replayed.engine.last_seq()
-    }
-
-    /// The emission schedule and progress the replayed log records, if it initialised emissions.
-    pub(crate) fn emissions(&self) -> Option<&engine_core::emissions::Emissions> {
-        self.replayed.engine.emissions()
-    }
-
     /// Requires a live reserved signature to occur in the same authenticated durable tail.
     /// Error cases:
     /// - a reserved checkpoint conflicts with the anchor or is absent from outstanding work
@@ -307,6 +286,7 @@ impl Sequencer {
             authorized,
             access_failed,
             last_marks,
+            derived,
             ..
         } = replayed;
         let replayed_last_marks = last_marks;
@@ -389,6 +369,7 @@ impl Sequencer {
             progress: Progress { genesis, activations, checkpoints, params_seq },
             command_prefix,
             prefixes: prefixes::retained(&prefix_ring),
+            derived: watch::channel(derived).0,
             snapshot_base: recovery_base,
             snapshot_work: recovery_work.clone(),
             snapshot_anchor_work: recovery_anchor_work.clone(),

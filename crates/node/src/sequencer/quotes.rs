@@ -6,11 +6,10 @@
 use std::time::Instant;
 
 use engine_core::command::Command;
-use engine_core::event::Event;
 use engine_core::types::Millis;
 use tracing::debug;
 
-use crate::sequencer::Sequencer;
+use crate::sequencer::{Sequencer, Stamped};
 
 impl Sequencer {
     /// Sequences `cmd`, a venue's quote, unless the monotonic clock has passed `not_after`, or the
@@ -18,7 +17,7 @@ impl Sequencer {
     /// longer: dropped as no quote, it returns `None`, as for a stamp trusted time refuses.
     /// Error cases:
     /// - as `sequence`
-    pub(super) fn sequence_quote(&mut self, cmd: Command, not_after: Instant) -> anyhow::Result<Option<Vec<Event>>> {
+    pub(super) fn sequence_quote(&mut self, cmd: Command, not_after: Instant) -> anyhow::Result<Option<Stamped>> {
         self.sequence_stamped(cmd, Some(not_after))
     }
 

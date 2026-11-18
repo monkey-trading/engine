@@ -82,6 +82,27 @@ impl ReplayedLog {
         Self { log: LogSource::Live(writer), replayed, snapshot_seq: None, legacy_authorizations: Default::default() }
     }
 
+    /// Reports whether actual recovery used a cache, for integrated startup assertions.
+    #[cfg(test)]
+    pub(crate) fn snapshot_sequence(&self) -> Option<u64> {
+        self.snapshot_seq
+    }
+
+    /// The last checkpoint the replay verified: the snapshot's it started at, or a later entry's.
+    pub(crate) fn last_checkpoint(&self) -> Option<&crate::log::Checkpoint> {
+        self.replayed.last_signed_checkpoint.as_ref()
+    }
+
+    /// Last engine command authenticated by the read-only replay.
+    pub(crate) fn last_seq(&self) -> Option<u64> {
+        self.replayed.engine.last_seq()
+    }
+
+    /// The emission schedule and progress the replayed log records, if it initialised emissions.
+    pub(crate) fn emissions(&self) -> Option<&engine_core::emissions::Emissions> {
+        self.replayed.engine.emissions()
+    }
+
     /// The cumulative command-prefix digest after the log's last command: the head commitment this
     /// node publishes on chain. A trailing checkpoint does not change it.
     pub fn head_link(&self) -> engine_core::eip712::B256 {

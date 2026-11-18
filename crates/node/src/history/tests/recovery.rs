@@ -134,7 +134,7 @@ fn the_writer_lets_readers_in_once_it_writes_the_tip() {
         seqs.iter().for_each(|seq| tx.try_send(command(*seq, 0, Vec::new())).unwrap());
         drop(tx);
         let (ready, readers) = watch::channel(false);
-        writer.run(rx, ready, tip).unwrap();
+        writer.run(rx, Deriver::none(), ready, tip).unwrap();
         assert_eq!(*readers.borrow(), let_in, "tip {tip:?}, wrote {seqs:?}");
     }
 }
@@ -218,7 +218,10 @@ async fn a_history_failure_names_its_cause() {
     drop(live);
     let backfills = Arc::new(Semaphore::new(MAX_BACKFILLS));
     let feed = Feed::new(subscriber, dir.clone(), trusted, backfills, Some(history.resume_at()));
-    let err = timeout(Duration::from_secs(10), history.run(feed)).await.unwrap().expect_err("the feed fails");
+    let err = timeout(Duration::from_secs(10), history.run(feed, Deriver::none()))
+        .await
+        .unwrap()
+        .expect_err("the feed fails");
     assert!(format!("{err:#}").contains("does not match its listing"), "{err:#}");
 }
 

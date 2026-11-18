@@ -497,4 +497,9 @@ pub enum ProtocolVersion {
     /// level or better. Levels use one order slot per market; full closes and reversals remove them. The
     /// distance moves by notice or vote, launch to twice it; activation gives an unset one the ceiling.
     V79,
+    /// A rollover logs one `Event::FinancingApplied` in place of an `Event::Financing` per position:
+    /// the positions and accounts charged, the net, and the root over each account's charges
+    /// (`financing`). The per-position rows are derived output (`Engine::take_derived`), at the same
+    /// amounts and in the same order; balances, house cash and state roots are as before.
+    V80,
 }

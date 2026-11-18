@@ -39,7 +39,9 @@ mod payout_tests;
 mod payouts;
 mod pipeline;
 pub(crate) mod prefixes;
+mod stamped;
 use pipeline::{Batch, Pipeline};
+pub use stamped::Stamped;
 #[cfg(test)]
 pub(crate) mod withdrawal_scenario;
 use access::AccessAlerts;
@@ -64,7 +66,8 @@ use tracing::{info, info_span, warn};
 use crate::benchmarks::BenchmarkSchedule;
 use crate::checkpoints::accounting::Accounting;
 use crate::clock::Clock;
-use crate::log::{CommandEntry, LogEntry, LogWriter, Offset, SegmentedLog};
+use crate::history::derived::Derived;
+use crate::log::{LogEntry, LogWriter, SegmentedLog};
 use crate::metrics::Metrics;
 use crate::sequencer::alerts::{
     BenchmarkAlerts, DeficitAlert, LossAlert, alert_on, reinstated_receipt, resolve_reversal,
@@ -146,6 +149,8 @@ pub struct Sequencer {
     progress: Progress,
     command_prefix: [u8; 32],
     prefixes: crate::log::PrefixRing,
+    /// The newest commands' derived rows, for the history index and the financing read.
+    derived: watch::Sender<crate::history::derived::DerivedRows>,
     snapshot_base: Option<RecoveryBase>,
     snapshot_work: Vec<crate::checkpoints::Work>,
     snapshot_anchor_work: Option<crate::checkpoints::Work>,
@@ -211,7 +216,7 @@ impl Sequencer {
                         let events = self.sequence(cmd)?;
                         sequenced |= events.is_some();
                         if let (Some(events), Some(reply)) = (events, reply) {
-                            batch.replies.push((reply, events));
+                            batch.replies.push((reply, events.to_vec()));
                         }
                     }
                     Request::Quote { cmd, not_after } => sequenced |= self.sequence_quote(cmd, not_after)?.is_some(),
@@ -322,7 +327,7 @@ impl Sequencer {
     /// nothing logged, when trusted time refuses the stamp.
     /// Error cases:
     /// - as `sequence_stamped`
-    fn sequence(&mut self, cmd: Command) -> anyhow::Result<Option<Vec<Event>>> {
+    fn sequence(&mut self, cmd: Command) -> anyhow::Result<Option<Stamped>> {
         self.sequence_stamped(cmd, None)
     }
 
@@ -332,7 +337,7 @@ impl Sequencer {
     /// - the log cannot be written
     /// - the engine rejects a queued required command
     /// - the engine refuses the sequence, which means this sequencer is broken
-    fn sequence_stamped(&mut self, mut cmd: Command, quote: Option<Instant>) -> anyhow::Result<Option<Vec<Event>>> {
+    fn sequence_stamped(&mut self, mut cmd: Command, quote: Option<Instant>) -> anyhow::Result<Option<Stamped>> {
         let Some(ts) = self.admitted_ts(quote) else {
             return Ok(None);
         };
@@ -365,17 +370,17 @@ impl Sequencer {
         Ok(Some(events))
     }
 
-    /// Applies one command at `ts`, logs it with its events, signs any approved withdrawal, and
-    /// checkpoints on schedule. The command's span carries its seq as `id`.
+    /// Applies one command at `ts`, logs it with its events (`log_command`), signs any approved
+    /// withdrawal, and checkpoints on schedule. The command's span carries its seq as `id`.
     /// Error cases:
     /// - the log cannot be written
     /// - the engine refuses the sequence, which means this sequencer is broken
-    fn stamp_once(&mut self, ts: Millis, cmd: Command) -> anyhow::Result<Vec<Event>> {
+    fn stamp_once(&mut self, ts: Millis, cmd: Command) -> anyhow::Result<Stamped> {
         if self.stopped() {
             // The common per-command boundary: a rollback that froze sequencing, or a fence that
             // closed, while this request was admitted — mid catch-up, or before its own stamp —
             // refuses here, like an unadmitted stamp, with nothing logged.
-            return Ok(Vec::new());
+            return Ok(Stamped::default());
         }
         let previous_schedule =
             house::set_params_of(&cmd).map(|_| self.engine.params().map(|params| params.rollover.clone()));
@@ -386,6 +391,8 @@ impl Sequencer {
         legacy::check_activation_ledger(&sequenced.cmd, &self.legacy_deposits)?;
         let version = self.engine.protocol_version();
         let events = self.engine.apply(&sequenced).context("sequencer produced an invalid sequence")?;
+        let derived = Derived::of(sequenced.seq, &events, self.engine.take_derived())?;
+        let derived = derived.map(|derived| (sequenced.seq, derived));
         #[cfg(test)]
         withdrawal_scenario::before_approval_log(&sequenced, &events)?;
         self.accounting.apply(&sequenced.cmd, &events)?;
@@ -406,11 +413,11 @@ impl Sequencer {
         self.log_check.applied(sequenced.seq, sequenced.ts, &events);
         self.next_seq += 1;
         self.last_ts = ts;
-        let mut entry = CommandEntry { sequenced, events: Some(events.clone()), seal: None };
-        let link = crate::log::command_seal::command_link(self.command_link, &entry)?;
-        self.seal_and_extend(&mut entry, link)?;
-        self.record(LogEntry::Command(entry))?;
-        self.command_link = link;
+        let stamped = self.log_command(sequenced, events)?;
+        let events: &[Event] = &stamped;
+        if let Some((seq, derived)) = derived {
+            self.derived.send_modify(|kept| kept.keep(seq, derived));
+        }
         if let Some(previous) = previous_schedule.filter(|_| events.contains(&Event::AdminApplied)) {
             self.note_benchmark_schedule(previous);
         }
@@ -457,16 +464,7 @@ impl Sequencer {
         {
             self.paced_checkpoint()?;
         }
-        Ok(events)
-    }
-
-    /// Appends an entry to the log and queues it for the stream at its offset.
-    /// Error cases:
-    /// - the log cannot be written
-    fn record(&mut self, entry: LogEntry) -> anyhow::Result<Offset> {
-        let offset = self.log.append(&entry)?;
-        self.outbox.push(Arc::new(StreamMsg::new(offset, entry)));
-        Ok(offset)
+        Ok(stamped)
     }
 }
 
@@ -494,6 +492,8 @@ mod metrics_tests;
 mod pace_tests;
 #[cfg(test)]
 mod resting_bench;
+#[cfg(test)]
+mod rollover_tests;
 #[cfg(test)]
 pub(crate) mod tests;
 #[cfg(test)]

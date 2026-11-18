@@ -464,6 +464,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/pipeline/hold_tests.rs` — the held-sync bound: one page, nothing stamped, a quiet node and a settling one paged at the deadline, a request arriving past it kept, and judged again when a younger batch crosses the bound while the resolution is written, a finished sync never paged, and an earlier run's episode resolved
 - `src/sequencer/wait_bench.rs` — what a price waits behind at 100k accounts, per occurrence, and the channel-to-stamp wait budget under reads and checkpoints, beside 100k limits the spread keeps out of reach, under the latest protocol
 - `src/sequencer/wait_bench/mass.rs` — what a price, one every 2 ms in a market no account holds, waits behind the weekend gap's start and a crash, each closing out a fifth of a market's holders, through the real `run` loop on the core's launch book, the longest wait held to a guard of 10 s (#907)
+- `src/sequencer/wait_bench/rollover.rs` — the same for a weekday's daily rollover and the MONKEY period close every account lost in (#933), and the rollover's apply and each part of its log entry, at the latest version and the one before it
 - `src/sequencer/resting_bench.rs` — what resting orders add to a price at 100k accounts under the latest protocol, out of the spread's reach and away from the price (#700)
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
@@ -524,6 +525,12 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   log's own state with the vault's root, and a superseded key's checkpoint the vault never accepted
 - `src/sequencer/prefixes.rs` — the cumulative command prefix after each of the latest commands the
   sequencer applied, which a handover checks a successor's tip against
+- `src/sequencer/stamped.rs` — a command's log entry built around its events encoded once
+  (`log/encoded.rs`): the seal's link, the command digest and the line, then the stream message,
+  which takes the events, so nothing copies them; what `stamp_once` hands back (`Stamped`), and the
+  newest commands' derived rows the sequencer publishes (`history/derived.rs`)
+- `src/sequencer/rollover_tests.rs` — from `V80`, a rollover's one aggregate, its rows kept and derived
+  again by a replay of the log, and three missed rollovers in one entry under the in-flight bound
 - `src/sequencer/house.rs` — the latest checkpoint, the seq of the latest `SetParams`, signed, unsigned or voted, and the pending parameter and listing notices, which `GET /v1/house/state` answers from, with the mirrored votes, the house's loss over the trailing day, and from `V70` the recorded fault proof contract, its penalty and the haircuts in force
 - `src/sequencer/governance.rs` — the `ApplyProposal` this node sequences for each passed change whose seven days have run
 - `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, with a pending parameter or listing notice, from `V62` the house's loss, and after a restart
@@ -571,7 +578,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log/suffix.rs` — recovery that replays only the suffix after a catalog-located checkpoint
 - `src/log/truncate.rs` — takeover truncation of a standby's copy at the checkpoint a promotion
   resumes from, dropping the unsigned tail
-- `src/log/writer/mod.rs` — appends, flushes, segment rotation, catalog folds, and catalog collection
+- `src/log/writer/mod.rs` — flushes, segment rotation, catalog folds, and catalog collection
+- `src/log/writer/append.rs` — appends: each entry's line, a command's encoded around its events encoded once
+  (`log/encoded.rs`), and the open segment's bookkeeping for it
 - `src/log/writer/output.rs` — the open segment's file and the entries appended but not yet written, which a sync job or an inline flush writes, and the inline write that refuses to run ahead of a sync job's entries
 - `src/log/writer/seal.rs` — sealing a completed segment: its fsync, durable manifest listing, and
   the staged next segment's exclusive link, inline or deferred as a `SealWork` riding the pipeline
@@ -643,6 +652,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   and a restart: a held quote ages out on monotonic time
 - `src/log/mod.rs` — the JSON-lines log format, stream offsets, and the single-file reader
 - `src/log/command_seal.rs` — domain-separated canonical command/event seals and predecessor links
+- `src/log/encoded.rs` — a command entry around its events encoded once, which gives the seal's link,
+  the command digest and the log line byte for byte as the typed entry does; `encoded/tests.rs` holds
+  every reference log's commands, every event, and the writer's segments to that
 - `src/log/segments.rs` — segment files, rotation, the manifest, and the recovery read, a segment
   at a time, with its checks
 - `src/log/reader.rs` — reads the log from any offset while it is being written, up to the last
@@ -796,6 +808,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/origin.rs` — CORS headers and preflight for the allowed browser origins, and the stream's `Origin` check
 - `src/api/origin_tests.rs` — listed, unlisted, and absent origins on reads, a POST, a preflight, a 429, and the stream
 - `src/api/history.rs` — the account history route: its parameters and limits
+- `src/api/financing.rs` — from `V80`, an account's charges at each rollover of a durable command, from the derived
+  rows the node keeps or the history stored, with their path to the root the rollover's `financing_applied` logs;
+  `financing/tests.rs` its proofs and refusals
 - `src/api/closeout_tests.rs` — the account read serving a position's close-out price, and none for a flat account
 - `src/api/claim_tests.rs` — MONKEY claim proofs while the vault lags: served at the accepted checkpoint, an entitlement that grew since, no accepted checkpoint, a restart, and a change of signer
 - `src/api/proof_tests.rs` — account proof and emission entitlement API tests, including the state
@@ -810,6 +825,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/history/mod.rs` — the history index: which events name an account, the startup check
   against the log and the rebuild when it fails, and the supervised task that follows the log into
   the index
+- `src/history/derived.rs` — the rows a command derives and the log does not carry, from `V80` a
+  rollover's per-position financing: the newest eight commands' kept in memory, compact, which the sequencer and
+  recovery's replay fill and the financing read proves from, and the `Deriver` that gives the index
+  each command's rows, from memory, from the store, or from a replay of the log when they are gone, which
+  drops the replay engine's change record after each command; `derived/store.rs` each command's rows on disk
+  under the history's `financing/` directory for its retention, taken only once they give the logged root;
+  `derived/tests.rs` the kept rows and their trees, the deriver's refusals, the stored rows checked against
+  the logged root, the store's pruning, and the legacy index's derived rows
 - `src/history/store.rs` — the index's SQLite schema, its writer, its page reader, and its discard;
   `src/history/store/tests.rs` covers them
 - `src/history/authenticated/` — dense account/kind lists, complete cursor pages, chronological expiry,
@@ -2173,7 +2196,7 @@ Endpoints: `GET /v1/health`, `GET /v1/status`, `GET /v1/notice`, `GET /v1/attest
 `GET /v1/markets`, `GET /v1/markets/{id}/marks`, `GET /v1/house`, `GET /v1/house/state`, `GET /v1/house/positions`,
 `GET /v1/monkey`, `GET /v1/monkey/activity`, `GET /v1/monkey/distributions`, `GET /v1/stats/series`, `GET /v1/operator`, `GET /v1/operators`,
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
-`GET /v1/accounts/{address}/history`, `GET /v1/accounts/{address}/proof`,
+`GET /v1/accounts/{address}/history`, `GET /v1/accounts/{address}/financing/{seq}`, `GET /v1/accounts/{address}/proof`,
 `GET /v1/accounts/{address}/emissions`, `POST /v1/orders`, `POST /v1/orders/cancel`,
 `POST /v1/orders/cancel-all`, `POST /v1/positions/close-all`, `POST /v1/positions/levels`,
 `POST /v1/withdrawals` (mock custody only until withdrawals are paid on-chain), `POST /v1/admin`
@@ -2572,6 +2595,25 @@ one event `type`: `deposited`, `deposit_rejected`, `custody_deposit_changed`,
 index that reads at most `limit + 1` entries, and at most 16 pages are read at once. Until the index
 has taken every command the log held when the node started, the route answers 503 (`history is
 catching up with the log`). History is public, like the log.
+
+From `V80` a rollover logs one `financing_applied` for its positions, and the index stores its
+per-position `financing` rows, which the command derives and the log does not carry, after the
+command's logged events: a row's index is past every logged event's, and the `financing_applied` at
+that seq covers it. The index takes the rows from those the sequencer keeps for the newest eight such
+commands, a week of rollovers, which recovery's replay and a member's replica seed, and writes each
+command's rows to `<history.dir>/financing/<seq>.rows`, kept for `history.retention` (about 18 MB a
+rollover at 440k positions). For a command whose rows are gone from memory it reads that file, taking
+its rows only once they give the root the log holds, and otherwise replays the log itself, counted in
+`engine_full_replays` with Warning `history_rows_replayed`, a replay a stop of the index ends. A rebuild of
+an authenticated generation takes the rows from its own replay and leaves the files as they are.
+`/v1/accounts/{address}/financing/{seq}` answers, for each rollover the command at `seq` ran, where its
+`financing_applied` sits, its time and root, and the account's charges with their path to that root
+(`engine_core::financing::FinancingProof`), or no proof when it charged the account nothing; anyone
+holding the root from the public log checks the rows without the other accounts'. It answers once the
+command is durable, from the rows kept in memory, or else from the history's file, read with the
+command from the log, one such read at a time, the last kept for the next; 404 when neither holds rows
+that give the logged root, as for a command past the history's retention, whose rows a replay of the
+log gives.
 `emission_allocated`, `staked`, `unstaked`, `staking_rejected`, `distribution_allocated`,
 `operator_share_allocated`, or `operator_share_withheld`.
 `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads

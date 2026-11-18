@@ -3,7 +3,7 @@
 
 mod alerts;
 mod copy;
-mod events;
+pub(crate) mod events;
 mod readers;
 mod scratch;
 mod staking_rpc;
@@ -40,6 +40,7 @@ use crate::api::{Feed, MAX_BACKFILLS, Signing};
 use crate::clock::test_clock::TestClock;
 use crate::clock::{Clock, SystemClock};
 use crate::config::{HistorySection, NodeConfig};
+use crate::history::derived::Deriver;
 use crate::history::{History, HistoryCheck, HistoryEvent, Reader};
 use crate::log::{self, LogEntry, LogReader, Manifest, Offset, SegmentedLog};
 use crate::metrics::Metrics;
@@ -73,6 +74,8 @@ pub struct TestSequencer {
     marks_rx: Option<mpsc::Receiver<crate::history::marks::MarkSample>>,
     /// The dashboard record the sequencer adds every command to.
     pub stats: crate::stats::Stats,
+    /// The newest commands' derived rows the sequencer keeps.
+    pub derived: watch::Receiver<crate::history::derived::DerivedRows>,
     task: JoinHandle<anyhow::Result<()>>,
 }
 
@@ -147,6 +150,7 @@ impl TestSequencer {
         let mut seq = Sequencer::recover(cfg, key, stream.clone(), withdrawals_tx).expect("sequencer recovers");
         let stats = stats();
         seq.track_stats(stats.clone());
+        let derived = seq.derived_rows();
         seq.pipeline_log_syncs().expect("log sync thread");
         // As the node does: older parameters take the config's notional weighting first.
         let weighting = dev_config().genesis.params.toxicity.notional.expect("the dev config weighs by notional");
@@ -164,7 +168,7 @@ impl TestSequencer {
         seq.track_marks(marks_tx);
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(seq.run(rx));
-        Self { tx, stream, manifest, withdrawals, metrics, marks_rx: Some(marks_rx), stats, task }
+        Self { tx, stream, manifest, withdrawals, metrics, marks_rx: Some(marks_rx), stats, derived, task }
     }
 
     pub fn take_marks(&mut self) -> mpsc::Receiver<crate::history::marks::MarkSample> {
@@ -235,7 +239,8 @@ impl TestHistory {
         let (reader, resume_at) = (history.reader(), history.resume_at());
         let feed =
             Feed::new(node.stream.subscribe(), dir.to_owned(), node.manifest.clone(), backfills, Some(resume_at));
-        Ok(Self { reader, resume_at, task: tokio::spawn(history.run(feed)) })
+        let deriver = Deriver::new(node.derived.clone(), Some((dir.to_owned(), node.manifest.clone())));
+        Ok(Self { reader, resume_at, task: tokio::spawn(history.run(feed, deriver)) })
     }
 
     /// The task's result once it has taken the whole log, which it ends with after the sequencer

@@ -306,7 +306,7 @@ impl Node {
         if trusted {
             sequencer.trust(sample_around(stamps.as_ref())).unwrap();
         }
-        let (tx, rx) = mpsc::channel(64);
+        let ((tx, rx), derived) = (mpsc::channel(64), sequencer.derived_rows());
         let sequencer_task = tokio::spawn(async move {
             sequencer.run(rx).await.unwrap();
         });
@@ -340,7 +340,7 @@ impl Node {
                 |rate: RateLimit| Quota::with_period(Duration::from_secs(3600)).unwrap().allow_burst(rate.burst),
                 DefaultClock::default(),
             )),
-            history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
+            history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1).with_derived(derived, None),
             marks: crate::test_support::marks_reader(),
             stats: crate::test_support::stats(),
             emission_budget: None,

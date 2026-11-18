@@ -164,6 +164,21 @@ pub(super) async fn shutdown_signal() -> anyhow::Result<()> {
     }
 }
 
+/// Starts history's task with its feed and the deriver of each command's derived rows, outside the
+/// supervised tasks: on shutdown it outlives the sequencer, so it can take the final checkpoint's
+/// capture, and stops at the end of the stream. Its own set still aborts it if the node's run returns
+/// early. Returns the set and the handle that stops an authenticated owner (`finish_history`).
+pub(super) fn spawn_history(
+    history: crate::history::History,
+    feed: crate::api::Feed,
+    deriver: crate::history::derived::Deriver,
+) -> (JoinSet<anyhow::Result<()>>, Option<crate::history::runtime::Stopper>) {
+    let stopper = history.stopper();
+    let mut task = JoinSet::new();
+    task.spawn(history.run(feed, deriver));
+    (task, stopper)
+}
+
 /// Ends history once the sequencer has drained. Authenticated history takes the rest of the
 /// stream; the legacy index takes no captures and resumes from its own cursor, so it stops at once.
 pub(super) async fn finish_history(

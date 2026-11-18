@@ -42,7 +42,10 @@ an index: load only the rule whose hint matches the current action.
   marks when the gap starts, a boundary the corporate timeline walks to like the reopening; moved
   only by a seven-day listing notice, or while rotation is on a passed vote, with no gap within
   seven days narrowed or removed, nor a held market's added or brought forward, by the operator's
-  calendar change), overnight financing, trading
+  calendar change), overnight financing (`financing/`: from `V18` each market's terms read once and each
+  account's balance written once, and from `V80` one `financing_applied` per rollover with a keccak Merkle root
+  over each account's charges, the per-position rows the command's derived output, `Engine::take_derived`,
+  `tests/financing_aggregate.rs`), trading
   sessions (from `V21` no quote stamped outside a market's hours prices it), markets priced from
   roll-adjusted front futures contracts (`futures.rs`), dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring (from `V54` a stick in `toxicity/`: markouts from
@@ -111,7 +114,8 @@ an index: load only the rule whose hint matches the current action.
   `tests/common/launch_book/` builds a launch-scale book for the benchmarks (`tests/launch_book_benchmark.rs`, with
   `engine-node`'s `stats::launch_bench`) and `tests/launch_book.rs` holds it to its mix; `tests/mass_events_benchmark.rs`
   runs the commands that act on every holder of a market, or every account, on it (#907), and `engine-node`'s
-  `sequencer::wait_bench::mass` times what a price waits behind two of them.
+  `sequencer::wait_bench::mass` times what a price waits behind two of them, and `sequencer::wait_bench::rollover` behind
+  the daily rollover and the MONKEY period close, with the rollover's apply and log entry in parts (#933).
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
   `tests/invariants/` holds the property tests.
@@ -146,7 +150,8 @@ an index: load only the rule whose hint matches the current action.
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads; `access/slots.rs`, the
   API's screening slots: a share per account and per client, a reserve for closes and withdrawals, and one
   slot per signed request),
-  sequencer (a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches), the public log with signed checkpoints (segmented, with a public archive), `engine
+  sequencer (each command's log entry built around its events encoded once, its seal's link, digest and line
+  byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches), the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published log, or with `--deposit` the
   refund of the vault's deposit at an id through the receipt the root holds there),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
@@ -164,7 +169,13 @@ an index: load only the rule whose hint matches the current action.
   `api/stream/quotes/`: a signed connection's executable quote subscription, read from
   `Engine::quote` at most every `api.quote_interval`, naming the toxicity add-on its prices include)
   and their offline checks, `engine
-  verify-response` and `engine verify-frames` (`verify/answers.rs`), the account history index (SQLite, derived from the log),
+  verify-response` and `engine verify-frames` (`verify/answers.rs`), the account history index (SQLite, derived from the log, with each command's derived rows after its logged
+  events: `history/derived.rs`, a `V80` rollover's per-position financing, the newest eight commands' kept in memory
+  by the sequencer, recovery's replay and a member's replica, each command's stored by the index as it takes them for its
+  retention (`history/derived/store.rs`, checked against the logged root when read), and the rest re-derived by a
+  replay of the log, Warning `history_rows_replayed`), the
+  `/v1/accounts/{address}/financing/{seq}` read of an account's charges and their path to the logged root
+  (`api/financing.rs`),
   the derived marks cache (SQLite beside the index, `history/marks/`: per-resolution OHLC buckets of each
   market's index-mark history served signed and paged at `/v1/markets/{id}/marks` with per-entry
   `log_derived`/`seeded_from_provider` provenance; recovery seeds it from the log's replay through a sink
@@ -951,7 +962,10 @@ Run from the repo root:
   and every case over it prints `OVER`): `cargo test -p engine-core --test
   mass_events_benchmark --locked -- --ignored --nocapture --test-threads=1 mass_` (`MASS_ACCOUNTS` and `MASS_ORDERS`
   scale it down), and what a price waits behind the weekend close-out and the crash through the sequencer:
-  `cargo test -p engine-node --lib sequencer::wait_bench::mass -- --ignored --nocapture --test-threads=1`
+  `cargo test -p engine-node --lib sequencer::wait_bench::mass -- --ignored --nocapture --test-threads=1`, and behind the
+  daily rollover and the MONKEY period close, with the rollover's apply and each part of its log entry at the latest
+  version and the one before it (#933): `cargo test -p engine-node --lib sequencer::wait_bench::rollover -- --ignored
+  --nocapture --test-threads=1`
 - Property tests: `cargo test -p engine-core --test invariants`
 - Production genesis and its calendars: `cargo test -p engine-node --test production_genesis`
 - Production node template: `cargo test -p engine-node --test production_node_template`

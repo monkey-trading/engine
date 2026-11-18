@@ -305,7 +305,10 @@ pub fn rollover(book: &mut Book, bar: Bar, root: Bar) {
         let (events, us) = timed(|| book.apply(Command::Tick));
         assert!(total(book) < before, "the rollover charges financing: {events:?}");
         times.push(us);
-        let charged: Vec<AccountId> = events
+        // From `V80` the rows are derived output; before it, the events.
+        let derived = book.h.engine.take_derived();
+        let rows: Vec<Event> = events.iter().cloned().chain(derived.iter().map(|row| row.event())).collect();
+        let charged: Vec<AccountId> = rows
             .iter()
             .filter_map(|e| if let Event::Financing { account, .. } = e { Some(*account) } else { None })
             .collect();

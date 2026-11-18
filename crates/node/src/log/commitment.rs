@@ -2,6 +2,7 @@
 
 use anyhow::Context;
 use engine_core::eip712::B256;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -12,9 +13,17 @@ use crate::log::CommandEntry;
 /// Error cases:
 /// - canonical command encoding fails
 pub(crate) fn command_digest(command: &CommandEntry) -> anyhow::Result<[u8; 32]> {
+    digest_of(command)
+}
+
+/// The command identity over `entry`, a command entry as it serializes, whose canonical bytes stream
+/// into the hash.
+/// Error cases:
+/// - canonical command encoding fails
+pub(crate) fn digest_of(entry: &impl Serialize) -> anyhow::Result<[u8; 32]> {
     let mut hash = Sha256::new();
     hash.update(b"engine.log.command.v1");
-    serde_json::to_writer(HashWriter(&mut hash), command).context("encoding authenticated command identity")?;
+    serde_json::to_writer(HashWriter(&mut hash), entry).context("encoding authenticated command identity")?;
     Ok(hash.finalize().into())
 }
 

@@ -19,6 +19,7 @@ use tokio::sync::{Semaphore, mpsc, watch};
 use tokio::task::spawn_blocking;
 use tracing::{debug, info};
 
+use crate::history::derived::{Deriver, Rows, indexed};
 use crate::history::{HistoryEvent, Page, PageQuery, account_of};
 use crate::log::{CommandEntry, Offset};
 use crate::sequencer::{StreamBody, StreamMsg};
@@ -153,13 +154,16 @@ impl Writer {
         Ok((Self { conn, path: path.to_owned(), retention_ms, schema }, progress))
     }
 
-    /// Takes commands from `rx` until every sender is gone, writing whatever is queued in one
-    /// transaction at a time. Sets `ready` once a command at or past `ready_at` is written.
+    /// Takes commands from `rx` until every sender is gone, with the rows each derived from
+    /// `deriver`, writing whatever is queued in one transaction at a time. Sets `ready` once a command
+    /// at or past `ready_at` is written.
     /// Error cases:
-    /// - a write fails (see `write`)
+    /// - a command's derived rows cannot be found (see `Deriver::rows`)
+    /// - a write fails (see `write_derived`)
     pub(super) fn run(
         mut self,
         mut rx: mpsc::Receiver<Arc<StreamMsg>>,
+        mut deriver: Deriver,
         ready: watch::Sender<bool>,
         ready_at: Option<u64>,
     ) -> anyhow::Result<()> {
@@ -171,7 +175,15 @@ impl Writer {
             {
                 batch.push(msg);
             }
-            let written = self.write(&batch)?;
+            let commands = batch
+                .iter()
+                .filter_map(|msg| match &msg.body {
+                    StreamBody::Command(command) => Some(command),
+                    _ => None,
+                })
+                .map(|command| Ok((command, deriver.rows(command)?)))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let written = self.write_derived(&commands)?;
             if let (Some(at), Some(seq)) = (ready_at, written)
                 && seq >= at
                 && !ready.send_replace(true)
@@ -183,23 +195,31 @@ impl Writer {
         Ok(())
     }
 
+    /// `write_derived` for the commands in `batch`, none of which derived rows.
+    /// Error cases:
+    /// - as `write_derived`
+    #[cfg(test)]
+    pub(super) fn write(&mut self, batch: &[Arc<StreamMsg>]) -> anyhow::Result<Option<u64>> {
+        let commands: Vec<_> = batch
+            .iter()
+            .filter_map(|msg| match &msg.body {
+                StreamBody::Command(command) => Some((command, None)),
+                _ => None,
+            })
+            .collect();
+        self.write_derived(&commands)
+    }
+
     /// In one transaction, which holds the write lock from its start and first checks the schema:
-    /// stores the account events of the commands in `batch`, records the last command as taken, and
-    /// drops events older than the retention allows. Returns the seq of that command, if `batch`
-    /// holds one.
+    /// stores the account events of `commands`, each command's derived rows after its logged events,
+    /// records the last command as taken, and drops events older than the retention allows. Returns
+    /// the seq of that command, if there is one.
     /// Error cases:
     /// - the file holds a schema this code did not create
     /// - the transaction fails
     /// - a seq is beyond SQLite's integer range, or an event or command cannot be encoded
-    pub(super) fn write(&mut self, batch: &[Arc<StreamMsg>]) -> anyhow::Result<Option<u64>> {
-        let commands: Vec<&CommandEntry> = batch
-            .iter()
-            .filter_map(|msg| match &msg.body {
-                StreamBody::Command(command) => Some(command),
-                _ => None,
-            })
-            .collect();
-        let Some(last) = commands.last() else {
+    pub(super) fn write_derived(&mut self, commands: &[(&CommandEntry, Option<Rows>)]) -> anyhow::Result<Option<u64>> {
+        let Some((last, _)) = commands.last() else {
             return Ok(None);
         };
         let tx =
@@ -209,13 +229,13 @@ impl Writer {
             let mut insert = tx
                 .prepare("INSERT OR REPLACE INTO events (seq, idx, account, kind, ts, event) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
                 .context("preparing the history insert")?;
-            for command in &commands {
+            for (command, derived) in commands {
                 let (seq, ts) = (i64::try_from(command.sequenced.seq).context("seq")?, command.sequenced.ts);
-                for (idx, event) in command.events.iter().flatten().enumerate() {
-                    let Some(account) = account_of(event) else {
+                for (idx, event) in indexed(command, derived.as_ref()).enumerate() {
+                    let Some(account) = account_of(&event) else {
                         continue;
                     };
-                    let json = serde_json::to_value(event).context("encoding an event")?;
+                    let json = serde_json::to_value(&*event).context("encoding an event")?;
                     let kind = json["type"].as_str().expect("events serialize with a type tag").to_owned();
                     let row = params![seq, idx as i64, &account.0[..], kind, ts, json.to_string()];
                     insert.execute(row).with_context(|| format!("storing event {seq}:{idx}"))?;

@@ -62,25 +62,27 @@ const GUARD: Duration = Duration::from_secs(10);
 
 /// A mass event on a walked book: the market whose holders it closes out, the time the prices are
 /// stamped at, and the stream's two prices, sent in turn.
-struct Case {
-    name: &'static str,
-    market: MarketId,
-    at: Millis,
+pub(super) struct Case {
+    pub(super) name: &'static str,
+    pub(super) market: MarketId,
+    pub(super) at: Millis,
     /// Whether the clock moves a millisecond on just before the event, which is then the first
     /// command stamped there.
-    step: bool,
-    event: Command,
-    prices: [Command; 2],
+    pub(super) step: bool,
+    pub(super) event: Command,
+    pub(super) prices: [Command; 2],
 }
 
 /// The book the event ran on, and the accounts it closed out.
-struct Outcome {
-    weak: usize,
-    closed: usize,
-    /// The financing events of the event's command, the fills it made, and the positions the book held.
-    financing: usize,
-    fills: usize,
-    positions: usize,
+pub(super) struct Outcome {
+    pub(super) weak: usize,
+    pub(super) closed: usize,
+    /// The positions the event's command financed, the fills it made, and the positions the book held.
+    pub(super) financing: usize,
+    pub(super) fills: usize,
+    pub(super) positions: usize,
+    /// The events the event's command logged.
+    pub(super) emitted: Vec<Event>,
 }
 
 /// The start of WTI's weekend gap, with a fifth of its holders below their weekend margin.
@@ -126,15 +128,19 @@ fn mass_crash() {
 
 /// The launch book with `SHARE` per cent of `market`'s holders set as `kind` says.
 fn book(market: MarketId, kind: WeakKind) -> Book {
-    let accounts = std::env::var("MASS_ACCOUNTS").ok().map_or(ACCOUNTS, |n| n.parse().expect("a count"));
-    let mix = Mix { weak: Some(Weak { market, share: SHARE, kind }), ..Mix::proposal(accounts) };
+    let mix = Mix { weak: Some(Weak { market, share: SHARE, kind }), ..Mix::proposal(accounts()) };
     build(&mix, NamedCounts { adders: 1, openers: 0, closeouts: 0 })
+}
+
+/// The proposal's book size; `MASS_ACCOUNTS` runs a smaller one.
+pub(super) fn accounts() -> usize {
+    std::env::var("MASS_ACCOUNTS").ok().map_or(ACCOUNTS, |n| n.parse().expect("a count"))
 }
 
 /// Lists a copy of BTC-USD, which no account holds, for the stream's prices. A listing after genesis
 /// needs a close-spread ceiling adopted seven days before it (`close_spread`), so BTC-USD's ceiling is
 /// written into the engine's encoding under the copy's id first, as the book writes its accounts in.
-fn stream_market(book: &mut Book) -> MarketId {
+pub(super) fn stream_market(book: &mut Book) -> MarketId {
     let id = book.h.engine.markets().keys().max().expect("listed markets") + 1;
     let ceiling = book.h.engine.close_spread_ceilings().expect("a ceiling registry")[&BTC];
     let mut text = serde_json::to_string(&book.h.engine).expect("encoding");
@@ -154,7 +160,7 @@ fn stream_market(book: &mut Book) -> MarketId {
 /// Walks the book's clock to a millisecond before `to` through the daily rollovers before it, each with
 /// its rates published first; a rollover at `to` itself gets its rates there and is left for the
 /// command at `to`.
-fn roll_to(book: &mut Book, to: Millis) {
+pub(super) fn roll_to(book: &mut Book, to: Millis) {
     while let Some(due) = book.h.engine.next_rollover().filter(|due| *due <= to) {
         book.h.advance_to(due - 1);
         let batch = benchmark_batch(&book.h);
@@ -199,7 +205,7 @@ fn sequencer(
 
 /// Runs `case` on `book`'s engine through the sequencer's `run` loop, prints the waits, and holds the
 /// longest to the guard.
-fn sequence(mut book: Book, case: Case) -> Outcome {
+pub(super) fn sequence(mut book: Book, case: Case) -> Outcome {
     let Case { name, market, at, step, event, prices } = case;
     let (holders, weak, positions) = (
         book.holders.get(&market).copied().unwrap_or(0),
@@ -288,6 +294,14 @@ fn sequence(mut book: Book, case: Case) -> Outcome {
     let verdict = if longest <= BAR_US { "within" } else { "OVER" };
     println!("WAIT bar mass_{name} longest_wait_us={longest} bar_us={BAR_US} {verdict}");
     assert!(longest < GUARD.as_micros(), "a price waited {longest}us behind {name}, past the guard");
-    let financing = emitted.iter().filter(|e| matches!(e, Event::Financing { .. })).count();
-    Outcome { weak, closed, financing, fills, positions }
+    // Each position financed: an event before `V80`, and from it a row its rollover's aggregate covers.
+    let financing = emitted
+        .iter()
+        .map(|e| match e {
+            Event::Financing { .. } => 1,
+            Event::FinancingApplied { positions, .. } => usize::try_from(*positions).expect("a count"),
+            _ => 0,
+        })
+        .sum();
+    Outcome { weak, closed, financing, fills, positions, emitted }
 }

@@ -8,7 +8,7 @@ use engine_core::params::ProtocolParams;
 use engine_core::protocol::ProtocolVersion;
 
 use crate::clock::test_clock::TestClock;
-use crate::log::{Manifest, Offset, segment_seq};
+use crate::log::{CommandEntry, Manifest, Offset, segment_seq};
 use crate::test_support::{
     SEGMENT_COMMANDS, TRADER, TestSequencer, deposit, dev_config, log_entries, log_messages, sample_around,
     scratch_dir, sequencer_config, trusted_now, withdraw,

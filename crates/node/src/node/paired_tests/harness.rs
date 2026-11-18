@@ -17,6 +17,7 @@ use crate::checkpoints::{CheckpointChain, VaultState, View, Work};
 use crate::clock::{Clock, SystemClock};
 use crate::config::{NodeConfig, SnapshotSection};
 use crate::history::Reader;
+use crate::history::derived::Deriver;
 use crate::history::runtime::TestState;
 use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, Manifest};
 use crate::node::preflight;
@@ -153,8 +154,9 @@ impl Node {
             Some(history.resume_at()),
         );
         let (tx, received) = mpsc::channel(16);
+        let deriver = Deriver::new(seq.derived_rows(), Some((cfg.node.log_dir.clone(), manifest.clone())));
         let sequencer = tokio::spawn(seq.run(received));
-        let history = tokio::spawn(history.run(feed));
+        let history = tokio::spawn(history.run(feed, deriver));
         Ok(Self { cfg, tx, reader, manifest, stream, snapshot_seq, sealing, clock, sequencer, history, custody })
     }
 

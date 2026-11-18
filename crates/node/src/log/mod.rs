@@ -10,6 +10,8 @@ pub use command_seal::CommandSeal;
 mod checked;
 mod commitment;
 pub(crate) use commitment::{PrefixRing, command_digest, extend_command_prefix};
+mod encoded;
+pub(crate) use encoded::{EncodedCommand, encode_events};
 mod truncate;
 pub(crate) use truncate::truncate_to_checkpoint;
 mod archive;

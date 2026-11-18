@@ -58,7 +58,7 @@ fn operate(seq: &mut Sequencer, clock: &TestClock, command: AdminCommand) -> Vec
     let key = SigningKey::from_slice(&[0x42; 32]).unwrap();
     let nonce = seq.engine.next_request_nonce(eip712::address(key.verifying_key()));
     let signed = sign(&key, &seq.operator, command, nonce, clock.now_ms() + 150_000);
-    seq.sequence(Command::SignedAdmin(Box::new(signed))).unwrap().expect("admitted")
+    seq.sequence(Command::SignedAdmin(Box::new(signed))).unwrap().expect("admitted").to_vec()
 }
 
 /// The seq of the last command in `dir`'s log that is a `SetParams`, rejected or not.

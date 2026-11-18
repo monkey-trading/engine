@@ -13,6 +13,7 @@ use crate::api::Feed;
 use crate::authenticated::Store;
 use crate::config::SnapshotSection;
 use crate::history::authenticated::{Head, Index};
+use crate::history::derived::{Deriver, Taken};
 use crate::history::reader::{Generation, Published, Reader};
 use crate::log::{CheckpointDomain, Offset};
 use crate::sequencer::{StreamBody, StreamMsg};
@@ -109,8 +110,8 @@ struct Actor {
     pending: Option<Box<Capture>>,
     /// Shared with the sealing endpoint: whether a `snapshot_write_failed` episode may be open.
     write_alert: WriteAlert,
-    /// Commands taken this turn and not yet indexed; one batch update indexes them.
-    commands: Vec<crate::log::CommandEntry>,
+    /// Commands taken this turn with their derived rows, not yet indexed; one batch update indexes them.
+    commands: Vec<Taken>,
     /// Shared with the sealing endpoint: how many physical entries this owner has taken, so a test
     /// can watch progress without joining the owner's queue.
     #[cfg(test)]
@@ -210,19 +211,21 @@ impl Runtime {
         *self.actor.ready.borrow()
     }
 
-    /// Forwards every physical entry, including checkpoint fences, with an explicit stop wakeup.
+    /// Forwards every physical entry, including checkpoint fences, with an explicit stop wakeup; the
+    /// owner takes each command's derived rows from `deriver`.
     /// Error cases:
     /// - verified backfill fails or the supervised storage owner stops
-    pub(crate) async fn run(self, mut feed: Feed) -> Result<()> {
+    pub(crate) async fn run(self, mut feed: Feed, deriver: Deriver) -> Result<()> {
         let Self { actor, input, received, mut repair, stopped, .. } = self;
         let guard = Stop { input: input.clone(), stopped: stopped.clone() };
+        let deriver = deriver.stopped_by(stopped.clone());
         // A test's collector sees the blocking owner's alerts; production logs to the global subscriber.
         #[cfg(test)]
         let collector = tracing::dispatcher::get_default(Clone::clone);
         let mut written = spawn_blocking(move || {
             #[cfg(test)]
             let _collector = tracing::dispatcher::set_default(&collector);
-            actor.run(received)
+            actor.run(received, deriver)
         });
         let forward = async {
             let mut repair_open = true;
@@ -266,14 +269,14 @@ impl Actor {
     /// Serializes mutations and releases optional captures before returning from shutdown.
     /// Error cases:
     /// - a history mutation, proof, required repair or complete-head publication check fails
-    fn run(mut self, mut input: mpsc::Receiver<Input>) -> Result<()> {
+    fn run(mut self, mut input: mpsc::Receiver<Input>, mut deriver: Deriver) -> Result<()> {
         while !self.stopped.load(Ordering::Acquire) {
             let Some(first) = input.blocking_recv() else { break };
-            self.take(first)?;
+            self.take(first, &mut deriver)?;
             let mut taken = 1;
             while taken < super::QUEUE && !self.stopped.load(Ordering::Acquire) {
                 let Ok(next) = input.try_recv() else { break };
-                self.take(next)?;
+                self.take(next, &mut deriver)?;
                 taken += 1;
             }
             if self.stopped.load(Ordering::Acquire) {
@@ -302,12 +305,12 @@ impl Actor {
     /// Repair signals are wakeups; current generation validity decides whether repair is needed.
     /// Error cases:
     /// - full verified repair or an exact command update fails
-    fn take(&mut self, input: Input) -> Result<()> {
+    fn take(&mut self, input: Input, deriver: &mut Deriver) -> Result<()> {
         if !self.generation.valid() {
             self.repair()?;
         }
         match input {
-            Input::Entry(message) => self.entry(message)?,
+            Input::Entry(message) => self.entry(message, deriver)?,
             Input::Seal(capture) => {
                 ensure!(self.pending.is_none(), "more than one in-flight history capture");
                 if let Err(error) = self.settle_pins() {
@@ -356,15 +359,18 @@ impl Actor {
         }
     }
 
-    /// Buffers commands for the turn's batch update; a captured checkpoint first indexes every
-    /// command up to it, so its history head is exactly the checkpoint's command.
+    /// Buffers commands, with their derived rows, for the turn's batch update; a captured checkpoint
+    /// first indexes every command up to it, so its history head is exactly the checkpoint's command.
     /// Error cases:
     /// - verified history ingestion, publication, or feed ordering fails
-    fn entry(&mut self, message: Arc<StreamMsg>) -> Result<()> {
+    /// - a command's derived rows cannot be found (`Deriver::rows`)
+    fn entry(&mut self, message: Arc<StreamMsg>, deriver: &mut Deriver) -> Result<()> {
         #[cfg(test)]
         self.taken.fetch_add(1, Ordering::AcqRel);
         if let StreamBody::Command(command) = &message.body {
-            self.commands.push(command.clone());
+            // A stop that ends a replay of the log leaves the command to the next start.
+            let Some(taken) = deriver.taken(command)? else { return Ok(()) };
+            self.commands.push(taken);
         }
         let at = message.offset;
         if self.pending.as_ref().is_some_and(|capture| capture.snapshot.offset <= at) {
@@ -394,13 +400,13 @@ impl Actor {
         let mut commands = std::mem::take(&mut self.commands);
         while !commands.is_empty() && !self.stopped.load(Ordering::Acquire) {
             let batch: Vec<_> = commands.drain(..commands.len().min(INDEX_BATCH)).collect();
-            if let Err(error) = self.current.index.ingest_batch(&batch) {
+            if let Err(error) = self.current.index.ingest_taken(&batch) {
                 if !self.current.index.requires_rebuild() {
                     return Err(error);
                 }
                 self.damaged(&error);
                 self.repair()?;
-                self.current.index.ingest_batch(&batch)?;
+                self.current.index.ingest_taken(&batch)?;
             }
         }
         if let Err(error) = self.publish() {

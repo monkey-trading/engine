@@ -1,5 +1,7 @@
 //! Domain-separated command-origin evidence, independent of custody authorizations.
 
+use std::io::{self, Write};
+
 use anyhow::{Context, ensure};
 use engine_core::eip712::{self, B256, Signature};
 use engine_core::types::AccountId;
@@ -21,12 +23,35 @@ pub struct CommandSeal {
 /// Error cases:
 /// - canonical command encoding fails
 pub(crate) fn command_link(previous: B256, command: &CommandEntry) -> anyhow::Result<B256> {
-    let payload = serde_json::to_vec(&(&command.sequenced, &command.events)).context("encoding command origin")?;
+    link_of(previous, &(&command.sequenced, &command.events))
+}
+
+/// The link after `previous` over `payload`, the command and its events as `command_link` pairs them,
+/// whose canonical bytes stream into the hash.
+/// Error cases:
+/// - canonical command encoding fails
+pub(crate) fn link_of(previous: B256, payload: &impl Serialize) -> anyhow::Result<B256> {
+    let mut inner = Keccak256::new();
+    serde_json::to_writer(KeccakWriter(&mut inner), payload).context("encoding command origin")?;
     let mut hash = Keccak256::new();
     hash.update(b"engine.command-origin.link.v1");
     hash.update(previous.0);
-    hash.update(Keccak256::digest(payload));
+    hash.update(inner.finalize());
     Ok(B256::from(<[u8; 32]>::from(hash.finalize())))
+}
+
+/// Feeds serde's canonical bytes directly into a keccak-256 state.
+struct KeccakWriter<'a>(&'a mut Keccak256);
+
+impl Write for KeccakWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Restarts the command chain at an already verified checkpoint, including snapshot C.

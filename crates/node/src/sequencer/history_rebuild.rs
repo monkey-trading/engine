@@ -4,6 +4,7 @@ use anyhow::{Result, ensure};
 use engine_core::types::{AccountId, Millis};
 
 use crate::history::authenticated::Index;
+use crate::history::derived::Taken;
 use crate::log::{CheckpointDomain, LogEntry, SegmentedLog};
 use crate::sequencer::ReplayedLog;
 use crate::sequencer::replay::Replay;
@@ -68,14 +69,15 @@ pub(crate) fn rebuild_history_view(
         replay.apply(&entry)?;
         fingerprint.observe(&entry)?;
         if let LogEntry::Command(command) = entry {
-            batch.push(command);
+            let derived = replay.derived_at(command.sequenced.seq);
+            batch.push(Taken { command, derived });
             if batch.len() == REBUILD_BATCH {
-                index.ingest_batch(&batch)?;
+                index.ingest_taken(&batch)?;
                 batch.clear();
             }
         }
     }
-    index.ingest_batch(&batch)?;
+    index.ingest_taken(&batch)?;
     expected.verify(&fingerprint.finish())
 }
 
@@ -100,14 +102,14 @@ pub(crate) fn rebuild_history_prefix(
         if let LogEntry::Command(command) = entry {
             let seq = command.sequenced.seq;
             ensure!(seq <= expected.0, "repair source skipped its required command");
-            batch.push(command);
+            batch.push(Taken { derived: replay.derived_at(seq), command });
             if seq == expected.0 {
-                index.ingest_batch(&batch)?;
+                index.ingest_taken(&batch)?;
                 reached = true;
                 return Err(ReachedPrefix.into());
             }
             if batch.len() == REBUILD_BATCH {
-                index.ingest_batch(&batch)?;
+                index.ingest_taken(&batch)?;
                 batch.clear();
             }
         }

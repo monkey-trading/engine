@@ -852,6 +852,8 @@ jobs:
         run: cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1 launch_book_price_walk
       - name: Check the level path of a price at 100k take-profit and stop-loss levels
         run: cargo test -p engine-core --lib --locked levels::tests::the_level_path -- --ignored --nocapture --test-threads=1
+      - name: Check what a price waits behind the daily rollover and the MONKEY period close at 100k accounts
+        run: cargo test -p engine-node --lib --locked sequencer::wait_bench::rollover -- --ignored --nocapture --test-threads=1
       - name: Check the stats record's cost on a launch-scale book at 100k accounts
         run: cargo test -p engine-node --lib --locked stats::launch_bench -- --ignored --nocapture --test-threads=1
 

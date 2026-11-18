@@ -18,6 +18,7 @@ mod attestation;
 mod benchmark_schedule;
 mod distributions;
 mod exit;
+pub(crate) mod financing;
 mod history;
 mod house_state;
 mod marks;
@@ -295,6 +296,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/access/holds/{chain_ref}", get(access::hold))
         .route("/v1/access/pending/{chain_ref}", get(access::pending))
         .route("/v1/accounts/{address}/history", get(history::history))
+        .route("/v1/accounts/{address}/financing/{seq}", get(financing::financing))
         .route("/v1/accounts/{address}/proof", get(proof))
         .route("/v1/accounts/{address}/emissions", get(emissions))
         .route("/v1/accounts/{address}/distributions", get(distributions::distributions))

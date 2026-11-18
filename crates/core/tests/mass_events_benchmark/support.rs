@@ -55,7 +55,7 @@ pub fn tally(events: &[Event]) -> String {
         count(|e| matches!(e, Event::CloseOut { .. })),
         count(|e| matches!(e, Event::Fill(_))),
         count(|e| matches!(e, Event::OrderCancelled { .. })),
-        count(|e| matches!(e, Event::Financing { .. })),
+        financed(events),
         count(|e| matches!(e, Event::StressChanged { .. })),
         count(|e| matches!(e, Event::CorporateDividend { .. })),
         count(|e| matches!(e, Event::CorporateCashInLieu { .. })),
@@ -90,11 +90,24 @@ pub fn roll_to(book: &mut Book, to: Millis) {
     book.h.advance_to(to);
 }
 
-/// Checks a rollover's `Financing` events against the positions held before it: one for each, or one for
+/// Checks the positions a rollover financed (`financed`) against those held before it: one for each, or one for
 /// each but those the command's own close-outs closed first (`closed`, one fill each).
 pub fn assert_financed(events: &[Event], held: usize, closed: usize) {
-    let financed = count(events, |e| matches!(e, Event::Financing { .. }));
+    let financed = financed(events);
     assert!(financed == held || financed + closed == held, "{financed} financed, {closed} closed, of {held}");
+}
+
+/// The positions `events` financed: an `Event::Financing` each before `V80`, and from it the rows each
+/// rollover's `Event::FinancingApplied` covers.
+pub fn financed(events: &[Event]) -> usize {
+    events
+        .iter()
+        .map(|e| match e {
+            Event::Financing { .. } => 1,
+            Event::FinancingApplied { positions, .. } => usize::try_from(*positions).expect("a count"),
+            _ => 0,
+        })
+        .sum()
 }
 
 /// The positions the book holds now.

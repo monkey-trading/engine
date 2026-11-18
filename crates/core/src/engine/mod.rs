@@ -2,11 +2,11 @@
 //!
 //! Single-threaded and deterministic. Time comes only from the sequencer's stamp. This file holds
 //! the state, dispatch, time, sessions, and USD valuation; house NAV and the exposure caps set
-//! from it live in `house.rs`; per-market state lives in `market.rs`,
-//! venue prices and marks in `marks.rs`, funds and financing in `funds.rs`, admin in `admin/`,
-//! stress levels in `stress.rs`, client request auth in `auth.rs`, session-key registrations and
-//! revocations in `session_keys.rs`, orders and pricing in
-//! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, reserved FIFO
+//! from it live in `house.rs`; per-market state lives in `market.rs`, the engine's read accessors
+//! in `reads.rs`, venue prices and marks in `marks.rs`, funds in `funds.rs`, the rollover's
+//! financing in `financing/`, admin in `admin/`, stress levels in `stress.rs`, client request auth
+//! in `auth.rs`, session-key registrations and revocations in `session_keys.rs`, orders and pricing
+//! in `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, reserved FIFO
 //! withdrawals in `withdrawal.rs`, MONKEY staking and USDC distributions in `staking.rs`, and the
 //! elected operator key in `election.rs`, and an account's equity and margin in `margin.rs`.
 
@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 mod house;
 mod margin;
+mod reads;
 pub use margin::MarginStanding;
 mod market;
 
@@ -239,6 +240,9 @@ pub struct Engine {
     /// catch-up; this does not.
     #[serde(skip)]
     pub(crate) command_ms: Millis,
+    /// The last command's derived output, which the log does not carry (`Engine::take_derived`).
+    #[serde(skip)]
+    pub(crate) derived: Vec<crate::financing::FinancingRow>,
 }
 
 impl Engine {
@@ -265,6 +269,7 @@ impl Engine {
             return Err(SequenceError::StampOutOfRange { seq: sequenced.seq, got: sequenced.ts });
         }
         self.ensure_hot_indexes();
+        self.derived = Vec::new();
         self.last_seq = Some(sequenced.seq);
         let last_now = self.now;
         self.now = sequenced.ts;
@@ -449,51 +454,5 @@ impl Engine {
             self.process_withdrawal_queue(&mut events);
         }
         Ok(events)
-    }
-
-    /// Seq of the last applied command, or `None` before genesis.
-    pub fn last_seq(&self) -> Option<u64> {
-        self.last_seq
-    }
-
-    /// Sequenced time of the last applied command.
-    pub fn now(&self) -> Millis {
-        self.now
-    }
-
-    /// The protocol parameters, once set.
-    pub fn params(&self) -> Option<&ProtocolParams> {
-        self.params.as_ref()
-    }
-
-    /// The protocol version in force.
-    pub fn protocol_version(&self) -> ProtocolVersion {
-        self.protocol_version
-    }
-
-    /// How client requests are authorised from `V3`, once recorded.
-    pub fn client_auth(&self) -> Option<&ClientAuth> {
-        self.client_auth.as_ref()
-    }
-
-    /// The nonce `account`'s next signed request must carry; for the operator's address, its next
-    /// admin command's.
-    pub fn next_request_nonce(&self, account: AccountId) -> u64 {
-        self.request_nonces.get(&account).copied().unwrap_or(0)
-    }
-
-    /// Who signs admin commands from `V8`, once recorded.
-    pub fn operator(&self) -> Option<&Operator> {
-        self.operator.as_ref()
-    }
-
-    /// Every listed market, by id.
-    pub fn markets(&self) -> &BTreeMap<MarketId, MarketState> {
-        &self.markets
-    }
-
-    /// Every account that has ever been credited, by id.
-    pub fn accounts(&self) -> &BTreeMap<AccountId, Account> {
-        &self.accounts
     }
 }
