@@ -1,14 +1,15 @@
 //! What the liveness rule reads from the chain, every call at one block a strict majority of the
 //! custody providers agrees on (`standby_key::chain::AgreedBlock`), and the calls a liveness caller
 //! sends: the vault's signer, the registry's rotation state, the schedule's heartbeat rule, marks,
-//! turn and promotion time, and the epoch's stored head, as `contracts/src/` declares them.
+//! turn and promotion time, the epoch's stored head, and a turn's fallback seed waiting on its block
+//! hash, as `contracts/src/` declares them.
 
 use alloy::primitives::{Address, B256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 use anyhow::Context;
 use engine_core::types::AccountId;
-use futures_util::future::{BoxFuture, try_join3};
+use futures_util::future::{BoxFuture, try_join, try_join3};
 use futures_util::{StreamExt, TryStreamExt, stream};
 
 use crate::seed_relay::schedule::DRAW_LEAD;
@@ -46,6 +47,12 @@ sol! {
     function witness() external returns (bool marked);
     function promote() external returns (uint64 turn, uint16 position);
     function skip() external returns (uint64 turn, uint16 position);
+    function rotationSwitch() external view returns (bool);
+    function seedReceiver() external view returns (address);
+    function relayedSeed(uint64 turn) external view returns (bytes32);
+    function fallbackHash(uint64 turn) external view returns (bytes32);
+    function fallbackBlock(uint64 turn) external view returns (uint256);
+    function fixFallback(uint64 turn) external returns (bool ready);
 }
 
 /// The schedule's heartbeat rule, in its own units.
@@ -121,6 +128,16 @@ pub(crate) struct View {
 
 /// The set a turn was drawn from, the turn, the turn drawn before it, and its source.
 pub(crate) type TurnSet = (u32, u64, u64, AccountId);
+
+/// A turn whose draw deadline has passed with no relayed seed, whose fallback the seed receiver has yet
+/// to fix (`SeedReceiver.fixFallback`), that receiver, and the block its first fix landed in, zero for
+/// none yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PendingFallback {
+    pub receiver: Address,
+    pub turn: u64,
+    pub fixed_in: u64,
+}
 
 /// A rotation-set member as the liveness rule reaches it: where its node answers, and the standby key
 /// it signs confirmations with.
@@ -252,6 +269,36 @@ pub(crate) fn set_effective<B: AgreedBlock>(
             return Ok(None);
         }
         Ok(Some(call(block, "liveness_set", schedule, setOfCall { setId: set }).await?.effectiveAt))
+    })
+}
+
+/// The turn whose draw deadline last passed by `block`'s time, when no seed was relayed for it and the
+/// receiver the schedule reads seeds from has recorded no fallback block hash for it, while the registry's
+/// rotation switch is on so the turn may be drawn, or, whatever the switch, once a block is fixed for it:
+/// a switch turned on again before the turn's boundary lets it be drawn only from that block. `None`
+/// otherwise. It makes two rounds of reads.
+/// Error cases:
+/// - a call fails, or its return does not decode
+pub(crate) fn pending_fallback<'a, B: AgreedBlock>(
+    block: &'a B,
+    domain: &'a StandbyDomain,
+) -> BoxFuture<'a, anyhow::Result<Option<PendingFallback>>> {
+    Box::pin(async move {
+        let turn = crate::seed_relay::schedule::last_final_turn(block.time());
+        let (rotating, receiver) = try_join(
+            call(block, "liveness_fallback_switch", domain.registry, rotationSwitchCall {}),
+            call(block, "liveness_seed_receiver", domain.schedule, seedReceiverCall {}),
+        )
+        .await?;
+        let (relayed, recorded, fixed_in) = try_join3(
+            call(block, "liveness_relayed_seed", receiver, relayedSeedCall { turn }),
+            call(block, "liveness_fallback_hash", receiver, fallbackHashCall { turn }),
+            call(block, "liveness_fallback_block", receiver, fallbackBlockCall { turn }),
+        )
+        .await?;
+        let fixed_in = u64::try_from(fixed_in).unwrap_or(u64::MAX);
+        let pending = relayed.is_zero() && recorded.is_zero() && (rotating || fixed_in != 0);
+        Ok(pending.then_some(PendingFallback { receiver, turn, fixed_in }))
     })
 }
 

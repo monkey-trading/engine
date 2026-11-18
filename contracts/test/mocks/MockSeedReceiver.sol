@@ -26,6 +26,15 @@ contract MockSeedReceiver {
         answer = seed;
     }
 
+    /// @dev Every turn's fallback is fixed at once, to `fallbackHash`.
+    function fixFallback(uint64) external pure returns (bool) {
+        return true;
+    }
+
+    function fallbackHash(uint64 turn) public pure returns (bytes32) {
+        return keccak256(abi.encode("mock fallback block", turn));
+    }
+
     function seedOf(uint64 turn) external view returns (bytes32) {
         if (answer != 0) return answer;
         if (failure == Failure.NoRelayedSeed) revert SeedReceiver.NoRelayedSeed(turn);

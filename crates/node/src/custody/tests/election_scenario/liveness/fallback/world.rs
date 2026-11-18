@@ -1,5 +1,5 @@
-//! The successor-fallback scenario's world: the chain, the members and their callers, the synthetic
-//! log, and the holder whose poster and rule run.
+//! The successor-fallback scenario's world: the chain, the members and their callers and fixers, the
+//! synthetic log, and the holder whose poster and rule run.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
@@ -134,25 +134,35 @@ impl World {
             log_heads,
         };
         let (samples, _) = sampling(clock.clone());
+        // Each member's liveness caller and fallback fixer, sending from its account one call at a time.
         let callers = members
             .iter()
             .enumerate()
-            .map(|(i, member)| {
+            .flat_map(|(i, member)| {
+                let liveness = LivenessSection { caller: chain.accounts[6 + i], min_balance: U256::from(1) };
+                let endpoint = || Endpoint::new(cfg.checkpoints.as_ref().unwrap(), &liveness, cfg.custody.chain_id);
+                let reader = |name| crate::custody::StandbyReader::connect_named(&cfg.custody, log_heads, name);
+                let sends = Arc::new(crate::liveness::fallback::Sends::default());
                 let caller = Caller {
-                    chain: crate::custody::StandbyReader::connect_named(&cfg.custody, log_heads, "caller").unwrap(),
-                    sending: Endpoint::new(
-                        cfg.checkpoints.as_ref().unwrap(),
-                        &LivenessSection { caller: chain.accounts[6 + i], min_balance: U256::from(1) },
-                        cfg.custody.chain_id,
-                    )
-                    .unwrap(),
+                    chain: reader("caller").unwrap(),
+                    sending: endpoint().unwrap(),
                     domain,
                     copy: member.copy.clone(),
                     min_balance: U256::from(1),
                     poll: crate::liveness::caller::POLL,
                     clock: clock.clone(),
+                    sends: sends.clone(),
                 };
-                tokio::spawn(caller.run())
+                let fixer = crate::liveness::fallback::Fixer {
+                    chain: reader("fixer").unwrap(),
+                    sending: endpoint().unwrap(),
+                    chain_id: cfg.custody.chain_id,
+                    vault: chain.vault,
+                    poll: crate::liveness::caller::POLL,
+                    min_balance: U256::from(1),
+                    sends,
+                };
+                [tokio::spawn(caller.run()), tokio::spawn(fixer.run())]
             })
             .collect();
         Self {

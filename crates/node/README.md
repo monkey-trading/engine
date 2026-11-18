@@ -311,6 +311,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `src/liveness/link/durable_tests.rs`
 - `src/liveness/caller.rs` — a member's liveness caller: witnesses, skips, promotions and relayed heads from its
   own account; `src/liveness/caller/tests.rs`
+- `src/liveness/fallback.rs` — a member's fallback fixer, for the process's life, from the same account: fixes of a
+  turn's fallback seed (`SeedReceiver.fixFallback`) through a reader of its own, the account's balance in one
+  `liveness_caller_unfunded` episode with the caller's, and `seed_fallback_lapsed` for a fixed block past
+  `ArbSys`'s reach; `src/liveness/fallback/tests.rs`, with the caller's and the fixer's sends one at a time
 - `src/liveness/fake.rs` — the fake chain the rule's tests set
 - `src/node/liveness.rs` — the operator's wiring of the rule, a promoted start's checkpoints after
   finality and retired work, and the watch that stops on a reorged promotion

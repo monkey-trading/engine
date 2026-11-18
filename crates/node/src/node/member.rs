@@ -218,13 +218,20 @@ pub(crate) struct Member<'a, C = CheckpointRpc, H = PostedHeads, T = Roughtime> 
     answering: Option<Arc<Answering>>,
     /// What it reads a turn's reassignments through, and whom it follows past them (#596).
     fallback: turn::Fallback,
+    /// Held for each send from the liveness caller's account, shared with the process's fallback fixer.
+    sends: Arc<crate::liveness::fallback::Sends>,
 }
 
 impl<'a> Member<'a> {
     /// The member `cfg` runs, with `start`'s stand-in measurement under the mock TEE.
     /// Error cases:
     /// - the vault, the posted-head reader, the sealing or the attestor cannot be built
-    pub(super) fn new(cfg: &'a NodeConfig, start: &KeyStart, metrics: Arc<Metrics>) -> anyhow::Result<Self> {
+    pub(super) fn new(
+        cfg: &'a NodeConfig,
+        start: &KeyStart,
+        metrics: Arc<Metrics>,
+        sends: Arc<crate::liveness::fallback::Sends>,
+    ) -> anyhow::Result<Self> {
         let vault = crate::handover::vault_reader(cfg)?.context("a rotation-set member reads the vault")?;
         let sealer = sealer(cfg.tee.provider, start)?;
         let release = Release { launch_digest: sealer.platform()?.launch_digest, config_sha256: cfg.file_sha256 };
@@ -251,6 +258,7 @@ impl<'a> Member<'a> {
             checked,
             answering,
             fallback,
+            sends,
         })
     }
 }
@@ -286,6 +294,7 @@ impl<'a, T: Sampling> Member<'a, CheckpointRpc, PostedHeads, T> {
             checked,
             answering: answering.map(Arc::new),
             fallback: Default::default(),
+            sends: Arc::default(),
         }
     }
 }

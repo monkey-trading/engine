@@ -8,7 +8,9 @@ length of a day (86400): a shorter one, with the draw deadline a turn earlier an
 before it, is for development stacks only, whose engines a production build refuses. `SeedRelay` on Ethereum proves the mix from an EIP-4788
 beacon block root and sends it to `SeedReceiver` on Arbitrum through Arbitrum's inbox. From the draw
 deadline the receiver's answer for the turn is final: the relayed mix, or, if none arrived, the last
-relayed seed hashed with the turn number.
+relayed seed hashed with the turn number and with the hash of the Arbitrum block that the turn's
+first `fixFallback` (or `draw`) call from its deadline landed in, once a call from a later block has
+recorded it.
 
 Anyone may relay, and every relay of a turn carries the same seed, so the relay needs one working
 relayer among the rotation set. Every member's node runs one under `[seed_relay]`, in either mode,
@@ -65,7 +67,8 @@ the alert ends once both upcoming turns have their seeds. The message names the 
   the relay was deployed with the new fork's version, a new relay and a receiver that names it, both
   with the schedule's turn length (`cast call $SCHEDULE 'turnLength()(uint64)'`, 86400) and beacon
   genesis time (`'beaconGenesisTime()(uint64)'`); the schedule refuses a receiver of another turn
-  length. Both are the owner's to schedule; until then every turn draws from the fallback.
+  length. Both are the owner's to schedule; until then every turn draws from the fallback ("When
+  `seed_missing` fires" below).
 - **"waited … for a block: replacing it at its nonce"**: the relayer's transaction stayed pending,
   usually because the base fee rose past its fee cap, and the relayer replaced it at the same nonce
   with fees a quarter higher. It keeps one relay in flight at a time, so nothing queues behind it.
@@ -101,7 +104,13 @@ health and the `rpc_url` and `providers` in `[seed_relay]`. Read the balance you
 ## When `seed_missing` fires
 
 The turn whose draw deadline last passed has no relayed seed, so it draws from the last relayed seed
-hashed with its number. That outcome is fixed: nothing can change the turn now. Every member's
+hashed with its number and an Arbitrum block's hash, which the members' nodes fix within
+seconds of the deadline: `cast call $RECEIVER 'fallbackHash(uint64)(bytes32)' $n` is nonzero once they
+have, and the turn can then be drawn as usual. If it stays zero, send `cast send $RECEIVER
+'fixFallback(uint64)' $n` twice, a block apart, at once: a block left unrecorded for 256 blocks
+(about a minute) is never recorded (`FallbackExpired`), and the turn is never drawn, so the member
+before it stays named; each member's node then raises `seed_fallback_lapsed` until the turn's boundary.
+Every member's
 relayer failed, or every relay was withheld, so look at `seed_relay_failed` on each member's node and
 follow the section above. The next turn's draw deadline is a day later. The alert ends once a turn
 reaches its draw deadline with its seed.

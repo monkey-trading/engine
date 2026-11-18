@@ -324,7 +324,8 @@ an index: load only the rule whose hint matches the current action.
   clock before the earliest promotion (`liveness/fence.rs`, `api/signing.rs`), with `/v1/operator`
   naming its enclave and the vault's signer epoch; every member between its turns answers on its
   handover endpoint, with `[liveness]` witnesses, promotes and relays signed heads from the stream
-  (`liveness/caller.rs`), keeps a standby key sealed for its release (`standby_key/`), has it vouched
+  (`liveness/caller.rs`) and, for the process's life, fixes the fallback of a turn with no relayed seed
+  from the same account (`liveness/fallback.rs`), keeps a standby key sealed for its release (`standby_key/`), has it vouched
   by the operator's `POST /v1/standby/vouch` or a member and writes the registration for its candidate
   to send (`node/member/standby.rs`), with `[api.tls.acme]` keeps a public certificate for the standby
   TLS key, answering the CA's TLS-ALPN-01 validation on the API's listener while it follows
@@ -469,7 +470,9 @@ an index: load only the rule whose hint matches the current action.
   with) and to `randao_mixes`, and sends it through Arbitrum's inbox as a retryable ticket;
   `src/SeedReceiver.sol` on Arbitrum records it only from the relay's aliased address, for that epoch and
   before the draw deadline, and answers each turn's final seed, the last earlier seed hashed with the
-  turn number when none arrived; the schedule falls back to its own last seed only on the receiver's
+  turn number and the hash of the Arbitrum block its first `fixFallback` from the deadline landed in
+  when none arrived, which a draw's first call fixes and a second, a block later, draws from; the
+  schedule falls back to its own last seed, hashed the same way, only on the receiver's
   `NoRelayedSeed`, and the timelock replaces the receiver after an Ethereum fork.
   `src/ParameterVote.sol` takes the votes that change the engine's governed parameters while rotation is on: a
   member of the schedule's rotation set in effect proposes a command, members of that set vote yes with the weights
@@ -721,7 +724,8 @@ an index: load only the rule whose hint matches the current action.
   parts with a two-slot take window: a skip past a stopped member while the holder trades, a late take
   whose head latches nothing once a skip passes over the key holder, a paused chain across a boundary
   with nothing due in the first resumed block, and a promotion past a beating incumbent that refuses
-  every successor and stops first;
+  every successor and stops first, and the members' fallback fixers fixing the fallback of a turn no
+  relay seeded;
   `dev-liveness.sh`, the minute-scale liveness scenario (#595) on Anvil with a chain-backed `ArbSys`
   stand-in and trusted time on the chain's clock: the real head poster, liveness rule, member links and
   liveness callers; v2 heads at confirmed seqs and the turn's latch, relayed heads with the operator's

@@ -31,7 +31,8 @@
 # head latches it; B taking the keys late from C latches nothing once a skip names D, passing over C,
 # whose release signed the newest head, and D's head latches within a slot; across a paused chain no skip or promotion is due
 # in the first resumed block; and with A refusing every successor, A stops by its own clock before the
-# promotion past it, which lands within the bound, and A's checkpoint is refused.
+# promotion past it, which lands within the bound, and A's checkpoint is refused; for the turn after,
+# which no relay seeded, the members' fallback fixers fix its fallback to a block made from its draw deadline.
 # Needs Anvil, Forge, Python 3, Cargo, and installed Soldeer dependencies. No external RPC or keys are used.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

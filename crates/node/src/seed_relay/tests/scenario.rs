@@ -7,7 +7,8 @@
 //! - A relay proving another epoch's mix reverts on Ethereum, and a seed from another sender, or for
 //!   another epoch, reverts on Arbitrum.
 //! - With the beacon node stopped, relaying fails (`seed_relay_failed`); once the next turn's draw
-//!   deadline passes, `seed_missing` fires, and that turn draws from the fallback.
+//!   deadline passes, `seed_missing` fires, and that turn draws from the fallback, which folds in the
+//!   hash of the Arbitrum block its first `fixFallback` landed in, recorded by a second from a later one.
 //!
 //! The daily turns scenario relays its seeds through the same fixture to another chain's receiver.
 
@@ -44,6 +45,9 @@ sol! {
     function seedOf(uint64 turn) external view returns (bytes32);
     function seedEpoch(uint64 turn) external view returns (uint64);
     function drawDeadline(uint64 turn) external view returns (uint64);
+    function fixFallback(uint64 turn) external returns (bool);
+    function fallbackBlock(uint64 turn) external view returns (uint256);
+    function fallbackHash(uint64 turn) external view returns (bytes32);
     error NotRelay(address sender);
     error WrongEpoch(uint64 turn, uint64 epoch, uint64 expected);
 }
@@ -121,8 +125,19 @@ async fn dev_scenario_three_daily_seeds_reach_arbitrum_and_a_missing_one_alerts(
     let missing = wait_for("seed_missing", next(&mut alerts, "seed_missing")).await;
     assert_eq!(missing["level"], "ERROR");
     assert!(missing["message"].contains(&format!("turn {}'s seed", first + 4)), "{missing:?}");
+    // Its fallback folds in the hash of the block the first fix landed in, recorded by the next.
+    arbitrum.etch_arb_sys().await;
+    let fix = TransactionRequest::default().from(arbitrum.accounts[0]).to(receiver);
+    let fix = fix.input(fixFallbackCall { turn: first + 4 }.abi_encode().into());
+    let committed = transact(&arbitrum.client, fix.clone()).await;
+    assert!(committed.status(), "the first fix records its block");
+    assert!(transact(&arbitrum.client, fix).await.status(), "a later block records its hash");
+    let fixed_in = committed.block_number.unwrap();
+    assert_eq!(arbitrum.view(receiver, fallbackBlockCall { turn: first + 4 }).await, U256::from(fixed_in));
+    let block_hash = committed.block_hash.unwrap();
+    assert_eq!(arbitrum.view(receiver, fallbackHashCall { turn: first + 4 }).await, block_hash);
     let last = B256::from(dev_mix(seed_epoch(first + 3, GENESIS).unwrap()));
-    let fallback = keccak256((last, first + 4).abi_encode_params());
+    let fallback = keccak256((last, first + 4, block_hash).abi_encode_params());
     assert_eq!(arbitrum.view(receiver, seedOfCall { turn: first + 4 }).await, fallback);
     relayer.abort();
     bridge.abort();
@@ -174,6 +189,13 @@ impl Chain {
     async fn warp(&self, time: u64) {
         self.rpc("evm_setNextBlockTimestamp", json!([time])).await;
         self.rpc("evm_mine", json!([])).await;
+    }
+
+    /// Etches the chain-backed `ArbSys` stand-in at 0x64, so the chain's blocks are its Arbitrum blocks.
+    async fn etch_arb_sys(&self) {
+        let stand_in = deploy(&self.client, self.accounts[0], "ChainArbSys.sol/ChainArbSys.json", &[]).await;
+        let code: Bytes = self.client.request("eth_getCode", (stand_in, "latest")).await.unwrap();
+        self.rpc("anvil_setCode", json!(["0x0000000000000000000000000000000000000064", code])).await;
     }
 
     async fn impersonate(&self, account: Address) {

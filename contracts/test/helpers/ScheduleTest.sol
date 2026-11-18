@@ -6,12 +6,14 @@ import {OperatorRegistry} from "../../src/OperatorRegistry.sol";
 import {OperatorSchedule} from "../../src/OperatorSchedule.sol";
 import {SeedReceiver} from "../../src/SeedReceiver.sol";
 import {Vault} from "../../src/Vault.sol";
+import {MockArbSys} from "../mocks/MockArbSys.sol";
 import {RegistryTest} from "./RegistryTest.sol";
 
 /// @notice A registry and vault naming each other, with a schedule over a seed receiver the test
 /// relays to and the vault's log heads, deployed in November 2026 so every turn's seed epoch follows
-/// mainnet's beacon genesis. Every candidate the tests register also registers a standby key,
-/// vouched by the vault's signer, so closes adopt it.
+/// mainnet's beacon genesis, and an `ArbSys` stand-in at 0x64 for the blocks a fallback seed folds in.
+/// Every candidate the tests register also registers a standby key, vouched by the vault's signer, so
+/// closes adopt it.
 abstract contract ScheduleTest is RegistryTest {
     /// Mainnet's beacon genesis time.
     uint64 internal constant GENESIS = 1606824023;
@@ -33,6 +35,10 @@ abstract contract ScheduleTest is RegistryTest {
 
     function _deploySchedule() internal {
         vm.warp(START);
+        if (address(0x64).code.length == 0) {
+            vm.etch(address(0x64), address(new MockArbSys()).code);
+            MockArbSys(address(0x64)).setBlockNumber(100_000_000);
+        }
         _deployRegistry();
         receiver = new SeedReceiver(relay, GENESIS, _turnLength());
         schedule = _newSchedule();
@@ -197,10 +203,20 @@ abstract contract ScheduleTest is RegistryTest {
         (members[0], stakes[0], members[1], stakes[1]) = (a, 30_000e18, b, 20_000e18);
     }
 
-    /// @dev Warps to `turn`'s draw deadline, unless past it, and draws it.
-    function _draw(uint64 turn) internal returns (address) {
+    /// @dev Warps to `turn`'s draw deadline, unless past it, and draws it; for a turn with no relayed
+    /// seed, the first call fixes its fallback's block, and the draw follows in the next.
+    function _draw(uint64 turn) internal returns (address drawn) {
         uint64 opensAt = schedule.drawDeadline(turn);
         if (block.timestamp < opensAt) vm.warp(opensAt);
-        return schedule.draw(turn);
+        drawn = schedule.draw(turn);
+        if (drawn != address(0)) return drawn;
+        _nextArbitrumBlock();
+        drawn = schedule.draw(turn);
+    }
+
+    /// @dev Moves the `ArbSys` stand-in on one block.
+    function _nextArbitrumBlock() internal {
+        MockArbSys arbitrum = MockArbSys(address(0x64));
+        arbitrum.setBlockNumber(arbitrum.arbBlockNumber() + 1);
     }
 }

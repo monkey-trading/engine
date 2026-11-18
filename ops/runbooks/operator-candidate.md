@@ -304,8 +304,12 @@ release, keeps its place for that close and any within an epoch length after it:
 release's standby key within an epoch, or the next close with the quorum leaves the member out. Each
 key registered starts that epoch afresh for the next move. Without a quorum the latest set stands, less the
 members no longer eligible. Each carried member is weighted by no more than its votes at the close.
-Anyone draws turn `n`, which starts at 22:30 UTC on day `n` of the Unix epoch, from a day before that
-boundary until it: `cast send $SCHEDULE 'draw(uint64)' $n`. Turns are
+Anyone draws turn `n`, which starts at 22:30 UTC on day `n` of the Unix
+epoch, from a day before that boundary until it: `cast send $SCHEDULE 'draw(uint64)' $n`. For a turn
+with no relayed seed the receiver must first fix the Arbitrum block whose hash seeds it, which the
+members' nodes do within seconds of the deadline; until then a `draw` only moves that on and
+draws no one, so send it again from a later block. A block left unrecorded for 256 blocks (about a
+minute) is never recorded, and the turn can never be drawn. Turns are
 a day long: `cast call $SCHEDULE 'turnLength()(uint64)'` answers 86400, and a production node refuses
 a schedule that answers anything else (`custody_chain_inconsistent`). Shorter turns exist only in
 development builds (the `short-turns` feature), which a production build refuses to compile. Draw each
@@ -431,11 +435,14 @@ misses it is promoted at once.
 - **What every member's node does between its turns.** It follows the operator, syncing its copy every
   200 ms, and answers on its registered handover endpoint: its copy's status, signed by its standby key,
   the copy's latest entries, and vouches for other candidates' standby keys. With `[liveness]` it also
-  witnesses each slot, skips once `skipDueAt()` passes, promotes once `promotionDueAt()` passes, and
+  witnesses each slot, skips once `skipDueAt()` passes, promotes once `promotionDueAt()` passes,
   relays the operator's signed heads
-  from its stream when the chain's head is older than two thirds of an interval. Fund
+  from its stream when the chain's head is older than two thirds of an interval. From the same account,
+  for the node's whole life, following or holding a turn, it fixes the fallback of a turn whose draw
+  deadline passed with no relayed seed (`SeedReceiver.fixFallback`, two calls a poll apart), so the turn
+  can be drawn for the rest of its window. Fund
   `liveness.caller` apart from every relayer; `liveness_caller_unfunded` pages below
-  `liveness.min_balance`.
+  `liveness.min_balance`, following or holding a turn.
   ```toml
   [liveness]
   caller = "0x..."        # an account the checkpoint endpoint signs for, apart from every relayer

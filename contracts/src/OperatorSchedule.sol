@@ -18,8 +18,9 @@ import {Vault} from "./Vault.sol";
 /// (`OperatorRegistry._adopt`). A set holds each member's admin key as adopted. An empty set replaces
 /// one with members, and no turn is drawn from it.
 /// @notice Anyone draws turn `n` from its draw deadline, a turn before its boundary (with day-long
-/// turns, 22:30 UTC on day `n`), until that boundary. The seed and the set, the one in effect at the
-/// deadline, are fixed by then, so the moment of the draw picks neither. Position by position, the
+/// turns, 22:30 UTC on day `n`), until that boundary. The set, the one in effect at the deadline, is fixed
+/// by then, and so is a relayed seed; a fallback seed is fixed by the block of the first fix from the
+/// deadline, whose hash no caller knows when it sends it. So the moment of the draw picks neither. Position by position, the
 /// turn's seed picks a member with probability proportional to its weight, with replacement, and the
 /// first one the registry lists under the admin key the set adopted takes the turn; after 64 positions
 /// a scan of every member, from an index the seed fixes, takes the first available, so a turn goes
@@ -56,11 +57,14 @@ import {Vault} from "./Vault.sol";
 /// @notice Every assignment of a turn, drawn, skipped to or promoted, is kept by its position with its
 /// releases and generations, and `turns` follows the latest.
 /// @dev Seeds come from `seedReceiver`, which the registry's timelock replaces when an Ethereum fork
-/// needs a new relay and receiver. A turn the receiver has no seed for, because no seed was relayed at
-/// or before it, draws from `keccak256(abi.encode(seedAnchor, turn))`, where `seedAnchor` is the last
-/// drawn turn's seed when the receiver was replaced, so no later draw changes it; only that refusal
-/// falls back, and any other failure of the read reverts the draw, so a caller cannot pick the
-/// fallback by limiting gas. Not upgradeable.
+/// needs a new relay and receiver. A turn with no relayed seed draws only once the receiver has fixed
+/// the hash `h` of an Arbitrum block made from its deadline (`SeedReceiver.fixFallback`): the first
+/// draw call fixes the block and draws no one, and a draw from a later block draws. A turn the
+/// receiver has no seed for, because no seed was relayed at or before it, draws from
+/// `keccak256(abi.encode(seedAnchor, turn, h))`, where `seedAnchor` is the last drawn turn's seed when
+/// the receiver was replaced, so no later draw changes it; only that refusal falls back, and any other
+/// failure of the read reverts the draw, so a caller cannot pick the fallback by limiting gas. Not
+/// upgradeable.
 contract OperatorSchedule is SeedSchedule {
     /// @notice A rotation set's member, its admin key as adopted, and the sum of the weights up to
     /// and including its own.
@@ -358,7 +362,8 @@ contract OperatorSchedule is SeedSchedule {
     /// @notice Replaces the seed receiver for every turn drawn from now on: the registry's timelock
     /// names a new one when an Ethereum fork needs a new relay. Until the new receiver has a seed
     /// relayed, turns draw from the fallback over the last drawn turn's seed, which this call fixes as
-    /// `seedAnchor`. The new receiver keeps the schedule's turn length.
+    /// `seedAnchor`, and the block hash the new receiver fixes for each turn. The new receiver keeps the
+    /// schedule's turn length.
     function setSeedReceiver(SeedReceiver receiver) external {
         if (msg.sender != address(registry.governance())) revert UnauthorizedGovernance();
         // A receiver without code, or numbering turns by another length, is refused.
@@ -411,8 +416,10 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @notice Draws turn `turn` from the set in effect at its draw deadline: anyone may call from the
-    /// deadline until the turn's boundary, while the registry's rotation switch is on.
-    /// @return candidate The member drawn.
+    /// deadline until the turn's boundary, while the registry's rotation switch is on. For a turn with
+    /// no relayed seed, a call before the receiver has fixed its fallback's block hash moves that on
+    /// and draws no one: call again from a later block.
+    /// @return candidate The member drawn, or zero when the call only moved the fallback on.
     function draw(uint64 turn) external returns (address candidate) {
         if (!registry.rotationSwitch()) revert RotationOff();
         uint64 opensAt = drawDeadline(turn);
@@ -423,6 +430,7 @@ contract OperatorSchedule is SeedSchedule {
         uint32 setId = setAt(opensAt);
         if (setId == 0) revert NoSetInEffect();
         if (sets[setId].members.length == 0) revert EmptySet(setId);
+        if (!seedReceiver.fixFallback(turn)) return address(0);
         bytes32 seed = _seed(turn);
         (uint16 position, Member memory member) = _pick(setId, seed, turn);
         candidate = member.candidate;
@@ -826,7 +834,7 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @dev Turn `turn`'s final seed: the receiver's, or, only when it refuses with `NoRelayedSeed`,
-    /// the hash of `seedAnchor` with `turn`.
+    /// the hash of `seedAnchor` with `turn` and the block hash the receiver fixed for the turn.
     function _seed(uint64 turn) private view returns (bytes32) {
         try seedReceiver.seedOf(turn) returns (bytes32 seed) {
             return seed;
@@ -839,7 +847,7 @@ contract OperatorSchedule is SeedSchedule {
         }
         bytes32 anchor = seedAnchor;
         if (anchor == 0) revert NoSeed(turn);
-        return keccak256(abi.encode(anchor, turn));
+        return keccak256(abi.encode(anchor, turn, seedReceiver.fallbackHash(turn)));
     }
 
     /// @dev The first position whose member the registry lists under the admin key the set adopted:
