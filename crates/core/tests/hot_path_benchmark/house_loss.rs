@@ -11,15 +11,16 @@ use engine_core::Fixed;
 use engine_core::event::Event;
 use engine_core::house_loss::{SLOT_MS, WINDOW_MS};
 
-/// A `V62` command's p99 may be twice `V61`'s and this much more, room for a noisy runner: the slot's
+/// A `V62` price's p99 may be twice `V61`'s and this much more, room for a noisy runner: the slot's
 /// record and a search of at most 98 slots in each market's stress check take a few microseconds, and a
-/// scan of the 100k accounts would take milliseconds.
+/// scan of the 100k accounts would take milliseconds. A fill's p50 is held by `hold_fill`.
 const ADDED_BUDGET_US: u128 = 200;
 
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn house_loss_latency() {
-    let mut p99s = Vec::new();
+    let mut price_p99s = Vec::new();
+    let mut earlier_fill_p50 = None;
     for version in [ProtocolVersion::V61, ProtocolVersion::V62] {
         let mut h = fixture(version);
         let client = Client::new(1);
@@ -40,24 +41,25 @@ fn house_loss_latency() {
         let began = Instant::now();
         h.engine.state_root();
         let root = began.elapsed().as_micros();
-        let mut row = Vec::new();
         for (name, mut times) in [("price", prices), ("fill", fills)] {
             times.sort_unstable();
             let (p50, p99) = (times[times.len() / 2 - 1], times[times.len() * 99 / 100 - 1]);
             println!("LATENCY house_loss_{name}_{version:?} accounts=100000 p50_us={p50} p99_us={p99}");
-            row.push(p99);
+            if name == "price" {
+                price_p99s.push(p99);
+            } else {
+                hold_fill(&format!("house_loss_fill_{version:?}"), p50, p99, earlier_fill_p50);
+                earlier_fill_p50 = Some(p50);
+            }
         }
         println!("LATENCY house_loss_root_{version:?} accounts=100000 us={root}");
         if version >= ProtocolVersion::V62 {
             let slots = h.engine.house_loss().expect("V62 reads the loss");
             assert!(slots.loss.is_negative() && slots.level == 0, "the fixture's loss stays under zero: {slots:?}");
         }
-        p99s.push(row);
     }
-    for (index, name) in ["price", "fill"].iter().enumerate() {
-        let (before, after) = (p99s[0][index], p99s[1][index]);
-        assert!(after <= 2 * before + ADDED_BUDGET_US, "a V62 {name}'s p99 {after}us against V61's {before}us");
-    }
+    let (before, after) = (price_p99s[0], price_p99s[1]);
+    assert!(after <= 2 * before + ADDED_BUDGET_US, "a V62 price's p99 {after}us against V61's {before}us");
 }
 
 /// `scored_fixture` at `version` for 100k accounts, each holding 0.01 BTC, with a third stress level
