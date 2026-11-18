@@ -196,18 +196,20 @@ fn the_reader_yields_only_what_the_writer_has_flushed() {
     let mut follower = LogReader::open(&dir, Offset::start_of(0), manifest.clone()).unwrap();
     assert_eq!(seqs(&mut follower), [0]);
 
-    // One batch, all on disk before it is flushed: a line longer than the write buffer goes
-    // straight to the file, and starting a segment completes the one before it.
-    assert!(line(&large(1)).len() > 8 * 1024);
+    // One batch, all on disk before it is flushed: starting a segment completes the one before it,
+    // and a sync job writes the rest before its sync publishes them.
     for entry in [large(1), cmd(2), large(3)] {
         writer.append(&entry).unwrap();
     }
+    let job = writer.begin_sync(false).unwrap();
+    job.write().unwrap();
     assert_eq!(log_entries(&dir), [cmd(0), large(1), cmd(2), large(3)]);
     let mut fresh = LogReader::open(&dir, Offset::start_of(0), manifest.clone()).unwrap();
     assert_eq!(seqs(&mut fresh), [0]);
     assert!(seqs(&mut follower).is_empty());
 
-    writer.flush().unwrap();
+    job.sync().unwrap();
+    writer.finish_sync(&job);
     assert_eq!(seqs(&mut follower), [1, 2, 3]);
     assert_eq!(seqs(&mut fresh), [1, 2, 3]);
 }

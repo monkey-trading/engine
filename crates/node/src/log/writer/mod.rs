@@ -1,18 +1,20 @@
 //! Writer publication: canonical completed descriptors and actual flushed-byte commitments.
 
 use std::fs::{self, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::{Context, ensure};
 use tokio::sync::watch;
 use tracing::{info, warn};
 
+pub(super) mod output;
 pub(super) mod seal;
 
 use crate::log::catalog::{CheckpointLocator, LazyCatalogView};
 use crate::log::segments::{Segment, command_seq, segment_name};
+use crate::log::writer::output::Output;
 use crate::log::writer::seal::SealWork;
 use crate::log::{ActivePrefix, CatalogBoundary, LogEntry, LogWriter, Manifest, Offset, offset_of};
 
@@ -20,11 +22,15 @@ use crate::log::{ActivePrefix, CatalogBoundary, LogEntry, LogWriter, Manifest, O
 /// whole receipts, so a few turns drain what one checkpoint's folds retire.
 const MAX_CATALOG_GC_TURNS: usize = 8;
 
-/// A batch's bytes written to the operating system and waiting to reach storage, with the segment
-/// seals rotation deferred to this job. `sync` can run on any thread; `LogWriter::finish_sync`
-/// publishes the batch and the seals once it has.
+/// A batch's entries, still to be written and to reach storage, with the segment seals rotation
+/// deferred to this job. `write` and `sync` can run on any thread, the jobs in the order they were
+/// taken; `LogWriter::finish_sync` publishes the batch and the seals once it has.
 pub(crate) struct SyncJob {
-    file: Option<fs::File>,
+    file: Option<Arc<fs::File>>,
+    /// The entries the batch appended, taken by the first `write`.
+    bytes: Mutex<Vec<u8>>,
+    /// Whether the job carried entries or a seal for the sync thread to write.
+    carried: bool,
     dir: Option<fs::File>,
     epoch: u64,
     /// Bytes of the entries appended since the job before this one was taken.
@@ -54,13 +60,27 @@ impl SyncJob {
         self.seals.is_empty() && self.dir.is_none() && next.file.is_some() && self.segment == next.segment
     }
 
-    /// Syncs each deferred segment seal, then the segment's data and, if asked for, the directory.
+    /// Writes the batch's entries to its segment, once, with every earlier job's already written.
+    /// A job covered by the next one is written and left to that job's sync.
     /// Error cases:
-    /// - a seal, or either sync, fails
+    /// - the write fails
+    pub(crate) fn write(&self) -> anyhow::Result<()> {
+        let bytes = std::mem::take(&mut *self.bytes.lock().unwrap_or_else(PoisonError::into_inner));
+        if let Some(file) = self.file.as_deref().filter(|_| !bytes.is_empty()) {
+            (&*file).write_all(&bytes).context("writing log")?;
+        }
+        Ok(())
+    }
+
+    /// Runs each deferred segment seal, which writes and syncs the segment rotation completed, then
+    /// writes this batch's entries and syncs the segment's data and, if asked for, the directory.
+    /// Error cases:
+    /// - a seal, the write, or either sync fails
     pub(crate) fn sync(&self) -> anyhow::Result<()> {
         for seal in &self.seals {
             seal.run()?;
         }
+        self.write()?;
         if let Some(file) = &self.file {
             file.sync_data().context("syncing log")?;
         }
@@ -110,11 +130,11 @@ impl LogWriter {
 
     /// Syncs actual bytes while leaving backfill's published physical frontier unchanged.
     /// Error cases:
-    /// - buffered write, file sync or directory sync fails
+    /// - a sync job holds entries not yet written, or the write, file sync or directory sync fails
     pub(crate) fn sync_unpublished(&mut self) -> anyhow::Result<()> {
+        self.write_pending()?;
         if let Some((_, output)) = self.open.as_mut().filter(|_| self.unsynced) {
-            output.flush().context("flushing unpublished checkpoint")?;
-            output.get_ref().sync_data().context("syncing unpublished checkpoint")?;
+            output.file().sync_data().context("syncing unpublished checkpoint")?;
             self.unsynced = false;
             #[cfg(test)]
             {
@@ -190,7 +210,7 @@ impl LogWriter {
     /// Error cases:
     /// - completing the current segment or starting a new one fails
     /// - a withdrawal or checkpoint comes before any command in this segment
-    /// - the write to the buffer or file fails
+    /// - the entry cannot be encoded
     pub fn append(&mut self, entry: &LogEntry) -> anyhow::Result<Offset> {
         ensure!(!self.listing_unsettled, "the open segment's listing may be durable, so nothing is appended to it");
         let offset = offset_of(self.last, entry)?;
@@ -202,11 +222,10 @@ impl LogWriter {
         let (segment, out) = self.open.as_mut().context("log entry before the first command of its segment")?;
         let mut line = serde_json::to_vec(entry).context("encoding log entry")?;
         line.push(b'\n');
-        // Set first: the buffer may reach the file before `flush`, and those bytes need syncing too.
         self.unsynced = true;
         self.appended += 1;
         self.appended_bytes += line.len() as u64;
-        out.write_all(&line).context("writing log entry")?;
+        out.push(&line);
         if let LogEntry::Checkpoint(checkpoint) = entry {
             segment.checkpoints.push(CheckpointLocator {
                 segment_first_seq: segment.first_seq,
@@ -226,11 +245,11 @@ impl LogWriter {
     /// a command must be durable before its effects are acknowledged to clients or read from disk
     /// by the stream, and in a confidential VM the guest page cache is lost whenever the VM stops.
     /// Error cases:
-    /// - the write to the file, or the sync, fails
+    /// - a sync job holds entries not yet written, or the write to the file, or the sync, fails
     pub fn flush(&mut self) -> anyhow::Result<()> {
+        self.write_pending()?;
         if let Some((_, out)) = self.open.as_mut().filter(|_| self.unsynced) {
-            out.flush().context("flushing log")?;
-            out.get_ref().sync_data().context("syncing log")?;
+            out.file().sync_data().context("syncing log")?;
             self.unsynced = false;
             #[cfg(test)]
             {
@@ -263,21 +282,21 @@ impl LogWriter {
         self.flush()
     }
 
-    /// Hands every buffered entry to the operating system and returns the sync that makes them
-    /// durable, for a thread other than the writer's to run: nothing is published until
-    /// `finish_sync`, and the writer still counts the entries unsynced until then, so an inline
-    /// `sync` or `flush` in between syncs them again rather than trusting a sync not yet done.
+    /// Hands every entry appended since the last job to a new one, which writes them and makes them
+    /// durable, for a thread other than the writer's to run in the order the jobs were taken:
+    /// nothing is published until `finish_sync`, and the writer still counts the entries unsynced
+    /// until then. An inline `sync` or `flush` waits for every such job first (`write_pending`).
     /// With `directory`, the job also syncs the directory entries.
     /// Error cases:
-    /// - the buffered write fails, or a file handle cannot be duplicated
+    /// - the directory handle cannot be duplicated
     pub(crate) fn begin_sync(&mut self, directory: bool) -> anyhow::Result<SyncJob> {
-        let mut file = None;
+        let (mut file, mut bytes) = (None, Vec::new());
         // Entries a job already took are that job's to sync, so a batch that appended nothing
-        // since carries none.
+        // since carries none. The entries ride the job, so this thread makes no call on the file.
         let new = self.begun != Some(self.appended);
         if let Some((_, out)) = self.open.as_mut().filter(|_| self.unsynced && new) {
-            out.flush().context("flushing log")?;
-            file = Some(out.get_ref().try_clone().context("duplicating the log file handle")?);
+            bytes = out.take();
+            file = Some(out.file().clone());
         }
         let dir = directory
             .then(|| self.dir_handle.try_clone().context("duplicating the log directory handle"))
@@ -291,8 +310,10 @@ impl LogWriter {
         let seals = std::mem::take(&mut self.pending_seals);
         self.taken_seals += seals.len() as u64;
         let appended_bytes = self.appended_bytes - std::mem::replace(&mut self.begun_bytes, self.appended_bytes);
-        let segment = segment.map(|s| s.first_seq);
-        Ok(SyncJob { file, dir, epoch: self.appended, appended_bytes, segment, last, active, seals })
+        let carried = !bytes.is_empty() || !seals.is_empty();
+        self.handed += u64::from(carried);
+        let (bytes, segment) = (Mutex::new(bytes), segment.map(|s| s.first_seq));
+        Ok(SyncJob { file, bytes, carried, dir, epoch: self.appended, appended_bytes, segment, last, active, seals })
     }
 
     /// Takes `job`, which has run, as done: its entries are durable, so the writer no longer counts
@@ -313,6 +334,7 @@ impl LogWriter {
             self.list_deferred(seal);
         }
         self.taken_seals -= job.seals.len() as u64;
+        self.handed -= u64::from(job.carried);
         let current = self.open.as_ref().map(|(segment, _)| segment.first_seq);
         self.manifest.send_if_modified(|published| {
             if published.flushed > job.last {
@@ -324,6 +346,24 @@ impl LogWriter {
             }
             true
         });
+    }
+
+    /// Writes on this thread the entries no job has taken, for an inline flush, sync or seal: first
+    /// the tails of segments rotation completed whose seals wait for the next job, then the open
+    /// segment's, so each file holds its entries in order.
+    /// Error cases:
+    /// - a sync job still holds entries or a seal: its writes would land after these, so the
+    ///   pipeline must be settled first
+    /// - a write fails
+    pub(super) fn write_pending(&mut self) -> anyhow::Result<()> {
+        ensure!(self.handed == 0, "an inline log write while {} sync jobs hold unwritten entries", self.handed);
+        for seal in &self.pending_seals {
+            seal.write_tail()?;
+        }
+        if let Some((_, out)) = self.open.as_mut() {
+            out.write_pending().context("writing log")?;
+        }
+        Ok(())
     }
 
     /// The offset of the last entry appended, or `None` before the first: a follower resumes the
@@ -420,14 +460,14 @@ impl LogWriter {
         };
         if self.seals_deferred {
             self.defer_segment_seal(&staged, &path)?;
-            self.open = Some((Segment::empty(first_seq), BufWriter::new(file)));
+            self.open = Some((Segment::empty(first_seq), Output::new(file)));
         } else {
             let published = self.complete_and_link(&staged, &path);
             // The staging name only held the new file until its link to `path`.
             let removed = fs::remove_file(&staged).with_context(|| format!("removing {}", staged.display()));
             published?;
             removed?;
-            self.open = Some((Segment::empty(first_seq), BufWriter::new(file)));
+            self.open = Some((Segment::empty(first_seq), Output::new(file)));
             // A flush syncs only the segment's data, so its name is made durable here.
             self.dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))?;
         }
@@ -435,6 +475,16 @@ impl LogWriter {
             info!(alert_resolved = "log_rotation_failed", "log segments rotate again");
         }
         Ok(())
+    }
+}
+
+impl Drop for LogWriter {
+    /// Writes the pending entries, unsynced, as a buffered file does on drop, unless a sync job
+    /// still holds earlier ones: written now, these would land ahead of them.
+    fn drop(&mut self) {
+        if self.handed == 0 {
+            let _ = self.write_pending();
+        }
     }
 }
 

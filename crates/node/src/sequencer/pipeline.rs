@@ -2,17 +2,19 @@
 //! last batch reaches storage. Total order is all a stamp needs, and the sync only has to finish
 //! before anything the batch produced leaves the sequencer.
 //!
-//! At the end of a batch the sequencer writes its entries to the operating system, takes everything
-//! the batch will release (replies, stream messages, signed withdrawals, mark reports, house reads,
-//! the stats worker's jobs) and queues that behind a `SyncJob`. When the sync thread reports a job
-//! done, the batch is released in the order the batches were taken: the manifest publishes it as
-//! flushed first, then its messages go out. A failed sync stops the node, as an inline one does.
+//! At the end of a batch the sequencer hands its entries to a `SyncJob`, takes everything the batch
+//! will release (replies, stream messages, signed withdrawals, mark reports, house reads, the stats
+//! worker's jobs) and queues that behind the job. The sync thread writes each job's entries and
+//! syncs them, in the order the jobs were taken, so the sequencer's thread makes no call on the log
+//! file: a filesystem may hold a write to a file while a sync of it runs. When the sync thread
+//! reports a job done, the batch is released in the order the batches were taken: the manifest
+//! publishes it as flushed first, then its messages go out. A failed sync stops the node, as an inline one does.
 //! Batches that queue up while a sync runs share the next one. Without the thread
 //! (`pipeline_log_syncs` not called), a batch syncs in line.
 //!
-//! Segment rotation defers to the same thread: at a boundary the writer flushes the full segment
-//! and swaps the open file on the sequencer, and the seal — the segment's fsync, its durable
-//! manifest listing, and the staged next segment's exclusive link — rides that batch's `SyncJob`,
+//! Segment rotation defers to the same thread: at a boundary the writer swaps the open file on the
+//! sequencer, and the seal — the full segment's last entries and fsync, its durable manifest
+//! listing, and the staged next segment's exclusive link — rides that batch's `SyncJob`,
 //! publishing in `finish_sync` before anything of the new segment is released. The on-disk order
 //! is what an inline seal gives: the old segment is listed before the new one takes its name.
 
@@ -193,15 +195,13 @@ fn run_syncs(queue: &Receiver<Arc<SyncJob>>, shared: &Arc<Shared>, sync: impl Fn
     }
     let _close = Close(shared);
     while let Ok(first) = queue.recv() {
-        // Group commit: one sync covers every job queued behind the one being synced, as they were
-        // written to the same file before it.
+        // Group commit: each job's entries are written in turn, and one sync covers every job
+        // queued behind the one being synced, as they were written to the same file before it.
         let group: Vec<Arc<SyncJob>> = std::iter::once(first).chain(queue.try_iter()).collect();
         let mut result = Ok(());
         for (index, job) in group.iter().enumerate() {
-            if group.get(index + 1).is_some_and(|next| job.covered_by(next)) {
-                continue;
-            }
-            result = sync(job);
+            result =
+                if group.get(index + 1).is_some_and(|next| job.covered_by(next)) { job.write() } else { sync(job) };
             if result.is_err() {
                 break;
             }
@@ -438,3 +438,5 @@ impl Sequencer {
 mod hold_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod write_tests;

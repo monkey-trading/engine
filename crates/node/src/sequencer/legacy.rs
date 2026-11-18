@@ -64,7 +64,7 @@ impl Sequencer {
             error!(alert = "legacy_withdrawal_unproven", %account, nonce, "inherited withdrawal lacks canonical finality proof");
             bail!("inherited withdrawal lacks canonical finality proof");
         }
-        self.log.sync()?;
+        self.sync_log(true)?;
         let signature = self.key.sign_withdrawal(self.chain_id, &self.vault.0, account, amount, nonce);
         info!(%account, nonce, "withdrawal signed");
         self.record(LogEntry::Withdrawal(SignedWithdrawal {

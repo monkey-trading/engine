@@ -68,7 +68,7 @@ impl Sequencer {
             return Ok(());
         };
         let Deferred { checkpoint, progress, context } = deferred;
-        self.log.sync_unpublished()?;
+        self.sync_log(false)?;
         let prepared = (|| {
             let (catalog, catalog_pin) = self.log.seal_catalog_boundary_unpublished()?;
             let snapshot = self.snapshot_payload(checkpoint, progress, context, catalog.checkpoint.offset)?;

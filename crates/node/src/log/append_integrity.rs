@@ -1,7 +1,7 @@
 //! Recovered appends use the same descriptor whose complete actual prefix was checked.
 
 use std::fs::OpenOptions;
-use std::io::{BufWriter, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
@@ -15,7 +15,7 @@ use crate::log::segments::{Segment, segment_name};
 /// Error cases:
 /// - opening, exact length, actual prefix hash or same-descriptor IO validation fails
 /// - the torn line cannot be dropped
-pub(super) fn open_active(directory: &Path, segment: &Segment) -> Result<BufWriter<std::fs::File>> {
+pub(super) fn open_active(directory: &Path, segment: &Segment) -> Result<std::fs::File> {
     let path = directory.join(segment_name(segment.first_seq));
     let file = OpenOptions::new()
         .read(true)
@@ -43,5 +43,5 @@ pub(super) fn open_active(directory: &Path, segment: &Segment) -> Result<BufWrit
     }
     ensure!(hex::encode(hash.finalize()) == segment.info().sha256, "recovered active log bytes changed before append");
     ensure!(file.metadata()?.len() == segment.bytes, "recovered active log length changed during append validation");
-    Ok(BufWriter::new(file))
+    Ok(file)
 }

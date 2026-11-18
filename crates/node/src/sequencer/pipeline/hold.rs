@@ -164,9 +164,10 @@ impl Sequencer {
     }
 
     /// `settle_async` for a caller that cannot wait on the runtime. The sequencer's thread is
-    /// blocked meanwhile, as an inline sync would. Production reaches it only with the pipeline
-    /// drained — setup, before `run` submits a batch, and the end of `run`, after `settle_async` —
-    /// so it carries no hold bound.
+    /// blocked meanwhile, as an inline sync would. Production reaches it with the pipeline drained —
+    /// setup, before `run` submits a batch, and the end of `run`, after `settle_async` — or right
+    /// before an inline sync of the log (`sync_log`), which blocks the thread in the same way, so it
+    /// carries no hold bound.
     /// Error cases:
     /// - as `settle_async`
     pub(in crate::sequencer) fn settle(&mut self) -> anyhow::Result<()> {
@@ -176,5 +177,15 @@ impl Sequencer {
             self.complete(done)?;
         }
         Ok(())
+    }
+
+    /// Syncs the log in line, once every batch in flight is written and released: the writer
+    /// writes nothing on this thread ahead of a sync job's entries (`LogWriter::write_pending`).
+    /// With `published`, the sync publishes what it made durable, as `LogWriter::sync` does.
+    /// Error cases:
+    /// - a sync in flight failed, or the log cannot be written or synced
+    pub(in crate::sequencer) fn sync_log(&mut self, published: bool) -> anyhow::Result<()> {
+        self.settle()?;
+        if published { self.log.sync() } else { self.log.sync_unpublished() }
     }
 }

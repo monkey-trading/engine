@@ -58,6 +58,7 @@ fn a_snapshot_after_a_long_outage_applies_first_and_a_rejected_one_catches_up_no
     stale.as_of = "2026-10-19".parse().unwrap();
     let rejected = f.submit(f.signed(stale, 0x42, 60_000));
     assert!(rejected.iter().any(|event| matches!(event, Event::AdminRejected { .. })), "{rejected:?}");
+    f.seq.flush().unwrap();
     assert!(!commands(&log_entries(&f.dir)).iter().any(|command| matches!(command, Command::Tick)));
     assert_eq!((f.seq.engine.next_rollover(), f.balance()), before);
     assert!(f.seq.benchmark_sync);
@@ -69,6 +70,7 @@ fn a_snapshot_after_a_long_outage_applies_first_and_a_rejected_one_catches_up_no
     assert!(!f.seq.benchmark_sync);
     // The snapshot's own drain, not a later command, finishes the catch-up.
     assert!(!f.seq.engine.catch_up_pending(f.clock.true_ms()));
+    f.seq.flush().unwrap();
     let logged = commands(&log_entries(&f.dir));
     let snapshot = logged.iter().rposition(|command| matches!(command, Command::SignedAdmin(_))).unwrap();
     assert!(logged[snapshot + 1..].iter().all(|command| matches!(command, Command::Tick)), "{logged:?}");
