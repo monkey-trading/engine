@@ -121,7 +121,7 @@ async fn serve_node(
         None => handover::check_rotation(cfg, chain_read).await?,
     }
     if cfg.node.auth == AuthMode::None {
-        warn!("API authentication is OFF: development only");
+        warn!("node.auth = \"none\" records unsigned client auth in the log; account requests still need signatures");
     }
     // Before the keys, so a store that does not open refuses before a handover takes them.
     let certificates = match ready.as_mut() {
