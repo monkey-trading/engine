@@ -204,6 +204,14 @@ contract OperatorRegistry {
     /// @notice Releases the timelock approved, keyed by `keccak256(abi.encode(candidate, release))`.
     mapping(bytes32 approval => bool approved) public releaseApproved;
 
+    /// @dev A rotation set a close is choosing: its first `count` members, their admin keys and weights.
+    struct Chosen {
+        address[] members;
+        address[] keys;
+        uint256[] weights;
+        uint256 count;
+    }
+
     Operator private current;
     Election private pending;
     /// @notice The operator the last election to take effect replaced, for its successor's handover.
@@ -377,6 +385,7 @@ contract OperatorRegistry {
         staking.lockBond(msg.sender, registration.bond);
         if (releaseApproved[keccak256(abi.encode(msg.sender, release))]) _enlist(msg.sender);
         // A release approved before this registration (or while it was away) lists it at once.
+        _endKeylessRun(msg.sender);
     }
 
     /// @notice The EIP-712 digest the admin key signs to authorize `candidate`'s registration of
@@ -530,6 +539,7 @@ contract OperatorRegistry {
         if (registered.adminKey == address(0) || registered.release != release) return;
         if (approved) {
             if (listed[candidate] == 0) _enlist(candidate);
+            _endKeylessRun(candidate);
         } else if (listed[candidate] != 0) {
             _delist(candidate);
         }
@@ -861,39 +871,81 @@ contract OperatorRegistry {
         if (winner == current.candidate || delegated * BPS < uint256(p.quorumBps) * total) return address(0);
     }
 
-    /// @dev Adopts the rotation set the close of `epoch` makes in the schedule, to take effect seven
-    /// days plus the finality margin from now: every eligible listed candidate holding a promotable
-    /// standby key, with its admin key and votes, and whether a quorum of total stake is delegated to
-    /// listed candidates, whether or not they hold one.
+    /// @dev Adopts in the schedule the rotation set the close of `epoch` makes, to take effect seven days
+    /// plus the finality margin from now. The quorum counts only the votes of the eligible listed
+    /// candidates holding a promotable standby key. Without it the set is the latest adopted set less
+    /// the members no longer eligible or registered under another admin key. With it the set is those
+    /// with votes, by their votes, and the members of the latest set still eligible under their adopted
+    /// keys but between standby keys, unless sets have carried them with none since an epoch length ago
+    /// or longer with no promotable key held since (`OperatorSchedule.carryWithoutKey`): a member
+    /// upgrading its release keeps its place for at least one close and one epoch length, however soon
+    /// a late close's successor follows it, and a quorum then carries it no further until it holds a
+    /// key again. Each weight a set carries is at most the member's votes now, and a member with none
+    /// leaves.
     function _adopt(uint64 epoch, Parameters memory p) private {
         uint256 total = staking.totalStaked();
-        uint256 delegated = 0;
-        uint256 count = 0;
         uint256 listedCount = candidateList.length;
-        address[] memory eligible = new address[](listedCount);
-        address[] memory keys = new address[](listedCount);
-        uint256[] memory votes = new uint256[](listedCount);
-        for (uint256 i = 0; i < listedCount; ++i) {
+        Chosen memory chosen =
+            Chosen(new address[](listedCount), new address[](listedCount), new uint256[](listedCount), 0);
+        bool quorum = _keyed(total, p, chosen) * BPS >= uint256(p.quorumBps) * total;
+        if (!quorum) chosen.count = 0;
+        _carry(total, p, quorum, chosen);
+        (address[] memory members, address[] memory keys, uint256[] memory weights, uint256 count) =
+            (chosen.members, chosen.keys, chosen.weights, chosen.count);
+        assembly ("memory-safe") {
+            mstore(members, count)
+            mstore(keys, count)
+            mstore(weights, count)
+        }
+        schedule.adopt(epoch, uint64(block.timestamp + NOTICE + p.finalityMargin), members, keys, weights, quorum);
+    }
+
+    /// @dev Adds to `chosen` the eligible listed candidates of `total` stake under `p` that hold a
+    /// promotable standby key and have votes, by their votes, and returns the votes of those holding a key.
+    function _keyed(uint256 total, Parameters memory p, Chosen memory chosen)
+        private
+        view
+        returns (uint256 keyedVotes)
+    {
+        for (uint256 i = 0; i < candidateList.length; ++i) {
             address candidate = candidateList[i];
             uint256 cast = staking.votes(candidate);
-            delegated += cast;
             if (!_eligible(candidate, cast, total, p) || schedule.promotable(candidate) == address(0)) continue;
-            (eligible[count], keys[count], votes[count]) = (candidate, candidates[candidate].adminKey, cast);
-            ++count;
+            keyedVotes += cast;
+            if (cast > 0) _add(chosen, candidate, candidates[candidate].adminKey, cast);
         }
-        assembly ("memory-safe") {
-            mstore(eligible, count)
-            mstore(keys, count)
-            mstore(votes, count)
+    }
+
+    /// @dev Adds to `chosen` each member of the latest set the close carries, in that set's order: one
+    /// still listed and eligible under the admin key the set adopted, and with `quorum` only one with no
+    /// promotable standby key, which a quorum does not adopt by votes, that the schedule carries
+    /// (`carryWithoutKey`). Its weight is the lesser of its weight there and its votes now, and one with
+    /// no votes leaves.
+    function _carry(uint256 total, Parameters memory p, bool quorum, Chosen memory chosen) private {
+        uint32 latest = schedule.setCount();
+        uint256 below = 0;
+        for (uint256 j = 0;; ++j) {
+            OperatorSchedule.Member memory member = schedule.memberOf(latest, j);
+            if (member.candidate == address(0)) break;
+            (address candidate, address adminKey, uint256 weight) =
+                (member.candidate, member.adminKey, member.cumulative - below);
+            below = member.cumulative;
+            uint256 cast = staking.votes(candidate);
+            if (listed[candidate] == 0 || candidates[candidate].adminKey != adminKey) continue;
+            if (!_eligible(candidate, cast, total, p)) continue;
+            bool keyless = schedule.promotable(candidate) == address(0);
+            if (quorum && !keyless) continue;
+            if (cast < weight) weight = cast;
+            if (weight == 0) continue;
+            if (keyless && !schedule.carryWithoutKey(candidate, quorum, p.epochLength)) continue;
+            _add(chosen, candidate, adminKey, weight);
         }
-        schedule.adopt(
-            epoch,
-            uint64(block.timestamp + NOTICE + p.finalityMargin),
-            eligible,
-            keys,
-            votes,
-            delegated * BPS >= uint256(p.quorumBps) * total
-        );
+    }
+
+    /// @dev Appends `candidate` under `adminKey` with `weight` to `chosen`.
+    function _add(Chosen memory chosen, address candidate, address adminKey, uint256 weight) private pure {
+        uint256 at = chosen.count++;
+        (chosen.members[at], chosen.keys[at], chosen.weights[at]) = (candidate, adminKey, weight);
     }
 
     /// @dev The eligible candidate with the most votes, the earlier registration on a tie, other
@@ -924,6 +976,11 @@ contract OperatorRegistry {
         Candidate storage registered = candidates[candidate];
         return registered.bond >= p.minSelfBond && releaseApproved[keccak256(abi.encode(candidate, registered.release))]
             && cast * BPS >= uint256(p.eligibilityBps) * total;
+    }
+
+    /// @dev Tells the schedule, if one is named, that `candidate` may hold a promotable standby key again.
+    function _endKeylessRun(address candidate) private {
+        if (address(schedule) != address(0)) schedule.endKeylessRun(candidate);
     }
 
     /// @dev Makes an election whose time has come the operator in effect.

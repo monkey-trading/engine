@@ -616,8 +616,9 @@ contract OperatorScheduleTest is ScheduleTest {
 
     function test_AQuorumCloseWithNoEligibleCandidateAdoptsAnEmptySet() public {
         _rotateTwo(alice, bob);
+        // With no quorum required, a close with no eligible candidate still has one.
         OperatorRegistry.Parameters memory strict = _parameters();
-        strict.eligibilityBps = 10_000;
+        (strict.eligibilityBps, strict.quorumBps) = (10_000, 0);
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setParameters, (strict)));
         assertFalse(registry.isEligible(alice));
         address[] memory none = new address[](0);
@@ -930,11 +931,16 @@ contract OperatorScheduleTest is ScheduleTest {
         schedule.releaseMoved(alice);
         vm.expectRevert(OperatorSchedule.UnauthorizedRegistry.selector);
         schedule.adopt(0, 0, new address[](0), new address[](0), new uint256[](0), true);
+        vm.expectRevert(OperatorSchedule.UnauthorizedRegistry.selector);
+        schedule.carryWithoutKey(alice, false, 1 days);
+        vm.expectRevert(OperatorSchedule.UnauthorizedRegistry.selector);
+        schedule.endKeylessRun(alice);
     }
 
     /// @notice Reports, before refunds and with cold storage as in their own transactions, a close
     /// adopting the most members a set can hold, the candidate cap's limit plus the operator's place
-    /// beyond it, and a draw from them.
+    /// beyond it, the closes after it, which check each member of that set for a carry: with the quorum,
+    /// with it while all but one member are between standby keys, and below it; and a draw from them.
     function test_GasOfAnAdoptionAndADrawAtTheMemberLimit() public {
         OperatorRegistry.Parameters memory wide = _parameters();
         wide.maxCandidates = uint16(registry.CANDIDATE_LIMIT());
@@ -963,6 +969,40 @@ contract OperatorScheduleTest is ScheduleTest {
         (, uint64 effectiveAt, address[] memory members,) = schedule.setOf(1);
         assertEq(members.length, registry.CANDIDATE_LIMIT() + 1);
 
+        _cool();
+        _closeNext();
+        uint256 again = vm.lastCallGas().gasTotalUsed;
+
+        // Every member but the named operator moves to a new release, which voids its standby key, and
+        // the operator's added stake alone makes the quorum: the close carries the hundred with no key.
+        for (uint256 i = 0; i < 100; ++i) {
+            address member = makeAddr(string(abi.encode("member", i)));
+            vm.prank(address(governance));
+            registry.setReleaseApproval(member, _digest(1_000 + i), CONFIG, true);
+            vm.prank(member);
+            registry.setRelease(_digest(1_000 + i), CONFIG);
+            assertEq(schedule.promotable(member), address(0));
+        }
+        _stake(deployerKey, staking.totalStaked());
+        _delegate(deployerKey, deployerKey);
+        _cool();
+        _closeNext();
+        uint256 keyless = vm.lastCallGas().gasTotalUsed;
+        (,, address[] memory third,) = schedule.setOf(3);
+        assertEq(third.length, members.length, "the quorum carries the members between keys");
+
+        // A quorum of every vote: the undelegated stake keeps the next close below it.
+        wide.quorumBps = 10_000;
+        _govern(address(registry), abi.encodeCall(OperatorRegistry.setParameters, (wide)));
+        _stake(dave, MIN_BOND);
+        (uint64 epochLength,,,,,,) = registry.parameters();
+        vm.warp(uint256(registry.openEpochStart()) + epochLength);
+        _cool();
+        registry.closeEpoch();
+        uint256 carried = vm.lastCallGas().gasTotalUsed;
+        (,, address[] memory fourth,) = schedule.setOf(4);
+        assertEq(fourth.length, members.length, "below the quorum the set is carried whole");
+
         vm.warp(effectiveAt);
         uint64 turn = _nextTurn() + 1;
         _relay(turn, keccak256("seed"));
@@ -971,8 +1011,15 @@ contract OperatorScheduleTest is ScheduleTest {
         schedule.draw(turn);
         uint256 drawn = vm.lastCallGas().gasTotalUsed;
         console.log("close adopting 101 members, gas:", close);
+        console.log("close after it with the quorum, gas:", again);
+        console.log("close with the quorum carrying 100 members between keys, gas:", keyless);
+        console.log("close after it below the quorum, gas:", carried);
         console.log("draw from 101 members, gas:", drawn);
         assertLt(close, 12_000_000);
+        // Within half an Arbitrum block's 32M.
+        assertLt(again, 16_000_000);
+        assertLt(keyless, 16_000_000);
+        assertLt(carried, 16_000_000);
         // Each draw records the drawn member's release and the source's, cold here.
         assertLt(drawn, 500_000);
     }

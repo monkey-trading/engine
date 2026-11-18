@@ -14,11 +14,9 @@ import {Vault} from "./Vault.sol";
 /// @notice Names the operator by turns, a day long in production (`SeedSchedule`), for a registry that
 /// names this schedule. Every election close while rotation is on adopts a rotation set, which takes
 /// effect seven days plus the finality margin after its close, and no earlier than the set adopted
-/// before it; sets waiting to take effect queue in close order. With a quorum the set is the close's
-/// eligible candidates weighted by their votes; without one it is the latest adopted set less the
-/// members no longer eligible or registered under another admin key, their weights unchanged. A set
-/// holds each member's admin key as adopted. An empty set replaces one with members, and no turn is
-/// drawn from it.
+/// before it; sets waiting to take effect queue in close order. The registry chooses each set
+/// (`OperatorRegistry._adopt`). A set holds each member's admin key as adopted. An empty set replaces
+/// one with members, and no turn is drawn from it.
 /// @notice Anyone draws turn `n` from its draw deadline, a turn before its boundary (with day-long
 /// turns, 22:30 UTC on day `n`), until that boundary. The seed and the set, the one in effect at the
 /// deadline, are fixed by then, so the moment of the draw picks neither. Position by position, the
@@ -70,6 +68,12 @@ contract OperatorSchedule is SeedSchedule {
         address candidate;
         address adminKey;
         uint256 cumulative;
+    }
+
+    /// @dev A candidate's latest carry with no promotable standby key: the set, and when the run began.
+    struct Keyless {
+        uint32 setId;
+        uint64 since;
     }
 
     struct RotationSet {
@@ -235,6 +239,9 @@ contract OperatorSchedule is SeedSchedule {
     bytes32 public seedAnchor;
 
     mapping(uint32 setId => RotationSet) private sets;
+    /// @dev The last set that carried each candidate with no promotable standby key, and when the run of
+    /// sets carrying it with none that it ends began.
+    mapping(address candidate => Keyless) private keyless;
     mapping(uint64 turn => Turn) private turns;
     mapping(uint64 turn => mapping(uint16 position => Assignment)) private assignments;
     mapping(uint64 turn => mapping(uint16 position => Revision[])) private revisions;
@@ -362,11 +369,10 @@ contract OperatorSchedule is SeedSchedule {
         emit SeedReceiverChanged(address(receiver));
     }
 
-    /// @notice Adopts the rotation set a close of `epoch` makes, to take effect at `effectiveAt`, or
-    /// when the latest adopted set does if that is later, so sets take effect in the order adopted.
-    /// `candidates` are the registry's eligible candidates, with their admin keys and votes. With
-    /// `quorum` the set is those with votes; without, the latest adopted set less members not among
-    /// them under the key that set adopted. An empty set is adopted only after a set with members.
+    /// @notice Adopts the rotation set a close of `epoch` makes, as the registry chose it: `candidates`,
+    /// each distinct, with the admin keys they hold and positive `weights`. It takes effect at
+    /// `effectiveAt`, or when the latest adopted set does if that is later, so sets take effect in the
+    /// order adopted. An empty set is adopted only after a set with members.
     function adopt(
         uint64 epoch,
         uint64 effectiveAt,
@@ -375,13 +381,33 @@ contract OperatorSchedule is SeedSchedule {
         uint256[] calldata weights,
         bool quorum
     ) external onlyRegistry {
-        (address[] memory members, address[] memory keys, uint256[] memory kept) = quorum
-            ? _withVotes(candidates, adminKeys, weights)
-            : _stillEligible(candidates, adminKeys);
         RotationSet storage latest = sets[setCount];
-        if (members.length == 0 && latest.members.length == 0) return;
+        if (candidates.length == 0 && latest.members.length == 0) return;
         if (effectiveAt < latest.effectiveAt) effectiveAt = latest.effectiveAt;
-        _record(epoch, effectiveAt, quorum, members, keys, kept);
+        _record(epoch, effectiveAt, quorum, candidates, adminKeys, weights);
+    }
+
+    /// @notice Whether the set the registry is choosing carries `candidate`, a member of the latest set
+    /// with no promotable standby key, recording the carry if so: below the quorum always, and with
+    /// `quorum` until `epochLength` has passed since the unbroken run of sets carrying it with none began.
+    /// The run ends once the member holds a promotable key again, by registering one (`registerStandby`)
+    /// or moving to the release its key was registered for (`releaseMoved`), so a member that moves
+    /// releases again after that keeps its place as long again.
+    function carryWithoutKey(address candidate, bool quorum, uint64 epochLength) external onlyRegistry returns (bool) {
+        uint32 latest = setCount;
+        Keyless storage carried = keyless[candidate];
+        uint64 since = carried.since;
+        if (carried.setId != latest) since = uint64(block.timestamp);
+        if (quorum && block.timestamp >= uint256(since) + epochLength) return false;
+        (carried.setId, carried.since) = (latest + 1, since);
+        return true;
+    }
+
+    /// @notice Ends `candidate`'s run of carries with no key (`carryWithoutKey`) when it holds a promotable
+    /// standby key: the registry calls it when the candidate registers or the timelock approves the
+    /// release it holds, either of which can make a key it kept promotable again, as a move does.
+    function endKeylessRun(address candidate) public onlyRegistry {
+        if (promotable(candidate) != address(0)) delete keyless[candidate];
     }
 
     /// @notice Draws turn `turn` from the set in effect at its draw deadline: anyone may call from the
@@ -414,8 +440,10 @@ contract OperatorSchedule is SeedSchedule {
     /// @notice Gives the turn in effect, and the last drawn turn, a new generation where `candidate` is
     /// their latest assignment's member, recording it as a revision of that assignment with the
     /// candidate's new release: the registry calls it when the candidate's release moves. Both share
-    /// one.
+    /// one. A move that leaves the candidate a promotable standby key, back to the release it was
+    /// registered for, ends its run of carries with no key (`endKeylessRun`).
     function releaseMoved(address candidate) external onlyRegistry {
+        endKeylessRun(candidate);
         (uint64 inEffect, Turn memory current) = turnAt(uint64(block.timestamp));
         uint64 last = lastDrawnTurn;
         bytes32 release = _releaseOf(candidate);
@@ -649,6 +677,7 @@ contract OperatorSchedule is SeedSchedule {
         ) revert InvalidVouch(voucher);
         standbyOf[msg.sender] = Standby(key, release, uint64(block.timestamp));
         standbyHolder[key] = msg.sender;
+        delete keyless[msg.sender];
         emit StandbyRegistered(msg.sender, key, release, voucher);
     }
 
@@ -730,6 +759,13 @@ contract OperatorSchedule is SeedSchedule {
         return (set.epoch, set.effectiveAt, candidates, weights);
     }
 
+    /// @notice Member `index` of set `setId`, with the admin key it adopted and the weights up to its own;
+    /// zero past the set's last member.
+    function memberOf(uint32 setId, uint256 index) external view returns (Member memory member) {
+        Member[] storage members = sets[setId].members;
+        if (index < members.length) member = members[index];
+    }
+
     /// @notice Turn `turn` as drawn; zero when it was not.
     function turnOf(uint64 turn) external view returns (Turn memory) {
         return turns[turn];
@@ -774,9 +810,9 @@ contract OperatorSchedule is SeedSchedule {
         uint64 epoch,
         uint64 effectiveAt,
         bool quorum,
-        address[] memory members,
-        address[] memory keys,
-        uint256[] memory weights
+        address[] calldata members,
+        address[] calldata keys,
+        uint256[] calldata weights
     ) private {
         uint32 setId = ++setCount;
         RotationSet storage set = sets[setId];
@@ -787,63 +823,6 @@ contract OperatorSchedule is SeedSchedule {
             set.members.push(Member(members[i], keys[i], cumulative));
         }
         emit RotationSetAdopted(setId, epoch, effectiveAt, quorum, members, keys, weights);
-    }
-
-    /// @dev The eligible candidates with votes, their admin keys and votes.
-    function _withVotes(address[] calldata candidates, address[] calldata adminKeys, uint256[] calldata weights)
-        private
-        pure
-        returns (address[] memory members, address[] memory keys, uint256[] memory kept)
-    {
-        (members, keys, kept) = _arrays(candidates.length);
-        uint256 count = 0;
-        for (uint256 i = 0; i < candidates.length; ++i) {
-            if (weights[i] == 0) continue;
-            (members[count], keys[count], kept[count]) = (candidates[i], adminKeys[i], weights[i]);
-            ++count;
-        }
-        _trim(members, keys, kept, count);
-    }
-
-    /// @dev The members of the latest adopted set still among the eligible `candidates` under the
-    /// admin key that set adopted, with their weights in it.
-    function _stillEligible(address[] calldata candidates, address[] calldata adminKeys)
-        private
-        view
-        returns (address[] memory members, address[] memory keys, uint256[] memory kept)
-    {
-        (members, keys, kept) = _arrays(candidates.length);
-        Member[] storage inEffect = sets[setCount].members;
-        uint256 count = 0;
-        uint256 below = 0;
-        for (uint256 j = 0; j < inEffect.length; ++j) {
-            Member memory member = inEffect[j];
-            for (uint256 i = 0; i < candidates.length; ++i) {
-                if (candidates[i] != member.candidate) continue;
-                // A re-registration under another admin key leaves the set.
-                if (adminKeys[i] == member.adminKey) {
-                    (members[count], keys[count], kept[count]) =
-                    (member.candidate, member.adminKey, member.cumulative - below);
-                    ++count;
-                }
-                break;
-            }
-            below = member.cumulative;
-        }
-        _trim(members, keys, kept, count);
-    }
-
-    function _arrays(uint256 length) private pure returns (address[] memory, address[] memory, uint256[] memory) {
-        return (new address[](length), new address[](length), new uint256[](length));
-    }
-
-    /// @dev Shortens the three arrays to their first `count` entries.
-    function _trim(address[] memory members, address[] memory keys, uint256[] memory kept, uint256 count) private pure {
-        assembly ("memory-safe") {
-            mstore(members, count)
-            mstore(keys, count)
-            mstore(kept, count)
-        }
     }
 
     /// @dev Turn `turn`'s final seed: the receiver's, or, only when it refuses with `NoRelayedSeed`,

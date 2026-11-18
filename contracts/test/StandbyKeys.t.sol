@@ -294,8 +294,8 @@ contract StandbyKeysTest is LivenessTest {
         _register(dave, key, 7, _expiry(), vouch);
     }
 
-    /// Carol has no standby key at the close, so the set leaves her out; her votes still make the
-    /// quorum, which alice's and bob's alone would miss.
+    /// Carol has no standby key at the close, so the set leaves her out, and her votes do not count
+    /// toward the quorum.
     function test_ACandidateWithoutAPromotableKeyIsLeftOutAtAClose() public {
         _candidate(alice, 30_000e18, 1);
         _candidate(bob, 20_000e18, 2);
@@ -303,8 +303,8 @@ contract StandbyKeysTest is LivenessTest {
         _delegate(alice, alice);
         _delegate(bob, bob);
         _delegate(carol, carol);
-        // 225k staked and delegated to no one: 75k of 300k meets the 20% quorum, 50k would not.
-        _stake(voter, 225_000e18);
+        // 175k staked and delegated to no one: alice's and bob's 50k of 250k meet the 20% quorum.
+        _stake(voter, 175_000e18);
         _setRotation(true);
         (uint64 epochLength,,,,,,) = registry.parameters();
         assertGe(block.timestamp, uint256(registry.openEpochStart()) + epochLength, "the open epoch has ended");
@@ -326,5 +326,26 @@ contract StandbyKeysTest is LivenessTest {
         (,, address[] memory adopted,) = schedule.setOf(2);
         assertEq(adopted.length, 3);
         assertEq(adopted[2], carol);
+    }
+
+    /// Alice's and bob's votes would make the quorum with carol's, which has no standby key: carol's do
+    /// not count, so the close falls short and adopts nothing while no set was adopted before it.
+    function test_TheVotesOfACandidateWithoutAPromotableKeyDoNotMakeTheQuorum() public {
+        _candidate(alice, 30_000e18, 1);
+        _candidate(bob, 20_000e18, 2);
+        RegistryTest._candidate(carol, 25_000e18, 3);
+        _delegate(alice, alice);
+        _delegate(bob, bob);
+        _delegate(carol, carol);
+        // 225k staked and delegated to no one: 75k of 300k would meet the 20% quorum, 50k does not.
+        _stake(voter, 225_000e18);
+        _setRotation(true);
+        _closeNext();
+        assertEq(schedule.setCount(), 0, "no quorum and no set to carry");
+
+        _registerStandby(carol);
+        _closeNext();
+        (,, address[] memory adopted,) = schedule.setOf(1);
+        assertEq(adopted.length, 3, "with her key, her votes make the quorum");
     }
 }
