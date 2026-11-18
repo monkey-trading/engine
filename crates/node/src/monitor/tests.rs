@@ -19,6 +19,7 @@ use crate::feeds::configured_sources;
 use crate::sequencer::genesis_commands;
 
 mod futures;
+mod trusted_time;
 
 #[test]
 fn a_sample_reads_house_markets_and_each_venues_newest_quote() {
@@ -100,8 +101,8 @@ fn a_market_quoted_in_another_currency_is_priced_only_while_its_fx_market_is() {
     let t0 = Instant::now();
     let mut no_price = NoPrice::new(BTreeSet::from([DE40, EUR_USD]));
     let lines = capture(|| {
-        no_price.check(&Sample::of(&engine), t0, after);
-        no_price.check(&Sample::of(&engine), t0 + after, after);
+        no_price.check(&Sample::of(&engine), t0, after, true);
+        no_price.check(&Sample::of(&engine), t0 + after, after, true);
     });
     let summaries: Vec<_> = lines.iter().map(|line| (line.key(), line.summary.clone())).collect();
     let de40 = (
@@ -112,7 +113,7 @@ fn a_market_quoted_in_another_currency_is_priced_only_while_its_fx_market_is() {
     // Once EUR-USD quotes again, DE40 is priced and resolves.
     sequence(&mut engine, later, prices_at(EUR_USD, "1.08", later));
     assert_eq!(market(&engine, DE40).price, Ok(()));
-    let lines = capture(|| no_price.check(&Sample::of(&engine), t0 + after * 2, after));
+    let lines = capture(|| no_price.check(&Sample::of(&engine), t0 + after * 2, after, true));
     assert!(lines.iter().any(|line| line.key() == de40.0 && line.severity.is_none()), "{lines:?}");
 }
 
@@ -224,7 +225,7 @@ fn no_price_alerts_once_after_the_threshold_and_resolves_when_priced() {
     let unpriced = || sample(vec![market_sample(1, true, Err(PriceError::Stale { fresh: 0, needed: 2 }))]);
     let priced = || sample(vec![market_sample(1, true, Ok(()))]);
     let mut no_price = NoPrice::new(BTreeSet::from([1]));
-    let mut check = |sample: Sample, secs| capture(|| no_price.check(&sample, at(secs), after));
+    let mut check = |sample: Sample, secs| capture(|| no_price.check(&sample, at(secs), after, true));
     assert!(check(unpriced(), 0).is_empty());
     assert!(check(unpriced(), 4).is_empty());
     let [alert] = check(unpriced(), 5).try_into().unwrap();
@@ -251,7 +252,7 @@ fn a_market_no_configured_feed_prices_is_named_once_and_never_pages() {
         |ids: &[MarketId], open: bool| sample(ids.iter().map(|id| market_sample(*id, open, stale())).collect());
     // A feed prices market 1 only; markets 2 and 3 have none.
     let mut no_price = NoPrice::new(BTreeSet::from([1]));
-    let mut check = |sample: Sample, secs| capture(|| no_price.check(&sample, at(secs), after));
+    let mut check = |sample: Sample, secs| capture(|| no_price.check(&sample, at(secs), after, true));
 
     // Each unfed market raises its own Warning, keyed by the market, so one listing is not
     // swallowed by another's quiet window.
@@ -291,13 +292,13 @@ fn a_closed_or_briefly_unpriced_market_raises_nothing() {
     let stale = || Err(PriceError::Stale { fresh: 0, needed: 2 });
     let mut no_price = NoPrice::new(BTreeSet::from([1]));
     let lines = capture(|| {
-        no_price.check(&sample(vec![market_sample(1, false, stale())]), at(0), after);
-        no_price.check(&sample(vec![market_sample(1, false, stale())]), at(60), after);
+        no_price.check(&sample(vec![market_sample(1, false, stale())]), at(0), after, true);
+        no_price.check(&sample(vec![market_sample(1, false, stale())]), at(60), after, true);
         // Unpriced for 4s, priced, then unpriced again: the clock restarts.
-        no_price.check(&sample(vec![market_sample(1, true, stale())]), at(61), after);
-        no_price.check(&sample(vec![market_sample(1, true, Ok(()))]), at(65), after);
-        no_price.check(&sample(vec![market_sample(1, true, stale())]), at(66), after);
-        no_price.check(&sample(vec![market_sample(1, true, stale())]), at(70), after);
+        no_price.check(&sample(vec![market_sample(1, true, stale())]), at(61), after, true);
+        no_price.check(&sample(vec![market_sample(1, true, Ok(()))]), at(65), after, true);
+        no_price.check(&sample(vec![market_sample(1, true, stale())]), at(66), after, true);
+        no_price.check(&sample(vec![market_sample(1, true, stale())]), at(70), after, true);
     });
     assert!(lines.is_empty(), "{lines:?}");
 }
@@ -309,7 +310,7 @@ async fn the_monitor_pages_a_stalled_sequencer_resolves_it_and_stops_when_the_se
     let (layer, router) = channel(Routes::default(), metrics.clone());
     let _logging = set_default(registry().with(layer.with_filter(filter_fn(is_alert_callsite))));
     let (tx, mut rx) = mpsc::channel(8);
-    let monitor = tokio::spawn(run(tx, metrics, Duration::from_secs(3), BTreeMap::new()));
+    let monitor = tokio::spawn(run(tx, metrics, Duration::from_secs(3), BTreeMap::new(), watch::channel(None).1));
     // A stalled sequencer takes queries but answers none; dropping one would mean it is gone.
     let mut unanswered = Vec::new();
     for _ in 0..6 {

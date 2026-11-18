@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use engine_core::price::compute_index;
 use engine_core::types::MarketId;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep};
 
@@ -26,7 +26,7 @@ use crate::metrics::Metrics;
 use crate::monitor;
 use crate::sequencer::Request;
 use crate::tee::EnclaveKey;
-use crate::test_support::{capture_alerts_and_resolutions, dev_config, scratch_dir};
+use crate::test_support::{capture_alerts_and_resolutions, dev_config, scratch_dir, trusted_now};
 
 /// How often connections are dropped.
 const DROP_EVERY: Duration = Duration::from_secs(120);
@@ -84,7 +84,13 @@ async fn soak_live_venues() {
             (market, quoting.map(|conn| conn.venue.name().to_owned()).collect())
         })
         .collect();
-    tokio::spawn(monitor::run(tx.clone(), Arc::new(Metrics::new()), NO_PRICE_AFTER, sources));
+    tokio::spawn(monitor::run(
+        tx.clone(),
+        Arc::new(Metrics::new()),
+        NO_PRICE_AFTER,
+        sources,
+        watch::channel(Some(trusted_now())).1,
+    ));
     let mut feeds: Vec<_> = connections.iter().map(|conn| spawn(conn, timing, &tx)).collect();
     wait_priced(&tx, &MARKETS, DEADLINE * 3, "start").await;
 

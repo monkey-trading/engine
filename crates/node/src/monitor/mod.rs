@@ -1,9 +1,10 @@
 //! The node watching itself. Every second it reads the sequencer's queue depth and, through a query
 //! between batches, the house's NAV and exposure, each market's session and price, and the newest
 //! quote from each venue; it sets those as metrics and raises `market_no_price` for an open market
-//! a configured feed prices that has gone without a usable price for `alerts.no_price_after`. It
-//! judges a price at the host clock once that is past the engine's time, so an outage that stops all
-//! sequencing still shows; the host clock decides only the alert, which goes to the host's operator.
+//! a configured feed prices that has gone without a usable price for `alerts.no_price_after`, counted
+//! from trusted time's first sample, before which nothing is sequenced. It judges a price at the host
+//! clock once that is past the engine's time, so an outage that stops all sequencing still shows; the
+//! host clock decides only the alert, which goes to the host's operator.
 //! Each market no configured feed prices is named once, in its own `market_unfed` Warning, and never
 //! pages. A sequencer that answers no sample for that long raises `sequencer_stalled`, since no
 //! market can be priced meanwhile. A market priced from futures that prices from the last contract
@@ -22,13 +23,14 @@ use engine_core::fixed::Rounding;
 use engine_core::price::PriceError;
 use engine_core::types::{MarketId, Millis};
 use engine_core::{Engine, Fixed};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{Instant, MissedTickBehavior, interval, timeout};
 use tracing::{error, info, warn};
 
 use crate::clock::now_ms;
 use crate::metrics::{MarketLabel, Metrics, QuoteLabels, to_f64};
 use crate::sequencer::Request;
+use crate::trusted_time;
 
 const SAMPLE_EVERY: Duration = Duration::from_secs(1);
 
@@ -185,10 +187,13 @@ impl NoPrice {
     }
 
     /// Fires `market_no_price` once an open market a configured feed prices has been unpriced for
-    /// `after`, and resolves it when the market is priced again or closes. Names each market no
-    /// configured feed prices in a `market_unfed` Warning of its own the first time a sample holds
-    /// it, so one unfed market's episode does not swallow another's.
-    pub fn check(&mut self, sample: &Sample, now: Instant, after: Duration) {
+    /// `after`, and resolves it when the market is priced again or closes. Counts nothing until
+    /// `sampled`, trusted time's first sample of the run: nothing is stamped before it, and a late one
+    /// raises its own alerts. A later halt keeps the count going: a market stays unpriced after it
+    /// until its feeds quote again. Names each market no configured feed prices in a
+    /// `market_unfed` Warning of its own the first time a sample holds it, so one unfed market's
+    /// episode does not swallow another's.
+    pub fn check(&mut self, sample: &Sample, now: Instant, after: Duration, sampled: bool) {
         for market in
             sample.markets.iter().filter(|market| !self.fed.contains(&market.id) && self.named.insert(market.id))
         {
@@ -198,6 +203,9 @@ impl NoPrice {
                 "no configured feed prices {}: it cannot trade, and does not page market_no_price",
                 market.symbol
             );
+        }
+        if !sampled {
+            return;
         }
         for market in sample.markets.iter().filter(|market| self.fed.contains(&market.id)) {
             match (&market.price, market.open) {
@@ -308,6 +316,7 @@ impl Stall {
 
 /// Samples every second until the sequencer goes away. A sample the sequencer has not answered
 /// within a second is skipped; the queue depth is still recorded, so a stalled sequencer shows.
+/// `samples` holds trusted time's latest sample, none before the run's first.
 /// Error cases:
 /// - the sequencer has gone away
 pub async fn run(
@@ -315,6 +324,7 @@ pub async fn run(
     metrics: Arc<Metrics>,
     no_price_after: Duration,
     sources: BTreeMap<MarketId, BTreeSet<String>>,
+    samples: watch::Receiver<Option<trusted_time::Sample>>,
 ) -> anyhow::Result<()> {
     let started_ms = now_ms();
     let mut every = interval(SAMPLE_EVERY);
@@ -340,7 +350,7 @@ pub async fn run(
         let sample = sample?;
         stall.check(true, Instant::now(), no_price_after);
         sample.record(&metrics, &sources, started_ms);
-        no_price.check(&sample, Instant::now(), no_price_after);
+        no_price.check(&sample, Instant::now(), no_price_after, samples.borrow().is_some());
         last_contract.check(&sample);
         roll_overdue.check(&sample);
     }

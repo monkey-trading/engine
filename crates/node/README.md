@@ -1605,6 +1605,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/monitor/tests.rs` — monitor tests
 - `src/monitor/tests/futures.rs` — the futures warnings: a market on its last listed contract, and
   one past a roll time with no gap recorded
+- `src/monitor/tests/trusted_time.rs` — `market_no_price` counted from trusted time's first sample,
+  and through a later halt
 - `src/alerts/mod.rs` — the tracing layer that picks up alert lines, the router, and the page
   format
 - `src/alerts/episodes.rs` — one page per episode start and end

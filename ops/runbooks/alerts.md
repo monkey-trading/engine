@@ -96,7 +96,7 @@ Rebuilt from the log. None changes the books.
 
 | Alert | Level | Meaning and response |
 | --- | --- | --- |
-| `market_no_price` | Critical | An open market a feed prices has no usable price. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "A market has no price". |
+| `market_no_price` | Critical | An open market a feed prices has no usable price, counted from trusted time's first sample of the run, before which nothing is sequenced: a late first sample raises `trusted_time_no_sample` when a round makes none and `trusted_time_unavailable` past its grace, not this. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "A market has no price". |
 | `market_unfed` | Warning | No configured feed prices this market, so it cannot trade. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Find what is down". |
 | `venue_feed_down` | Warning | A venue or vendor connection is down and retrying, for CME also when it has no bearer token to connect with. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "A crypto venue is down or quiet", "CME Group's feed" and "Alpaca's feed". |
 | `venue_symbol_silent` | Warning | A symbol has had no fresh quote while its market is open. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "A crypto venue is down or quiet". |
