@@ -120,7 +120,7 @@ jobs:
                 # The cap study's market mix deals out the launch book's holdings.
                 research/cap-calibration/data/derived/market_mix.csv) areas+=" rust scenario_tests" ;;
                 # Read by no build, test, scenario, or image.
-                agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
+                agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | docs/* | research/* | image/README.md \
                   | crates/core/README.md | crates/node/README.md | crates/verify/README.md \
                   | crates/verify-wasm/README.md | crates/wire/README.md | scripts/seed-relay-fixtures.sh) ;;
                 # The contracts' tests read the engine's proof vectors and the withdrawal vector, which

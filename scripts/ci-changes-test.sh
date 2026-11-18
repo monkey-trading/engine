@@ -45,6 +45,7 @@ case_() {
 }
 
 case_ pull_request "" README.md agents/AGENTS.md research/launch-caps/run.py
+case_ pull_request "" docs/trading-rules.md docs/a-new-page.md SECURITY.md
 case_ pull_request "rust $feeds" crates/node/src/feeds/tests/toxicity.rs
 case_ pull_request "rust" crates/core/src/volume_tier/tests.rs crates/core/tests/toxicity.rs
 case_ pull_request "rust" crates/node/src/stats/tests/closeout_cost.rs crates/node/src/sequencer/resting_bench.rs
