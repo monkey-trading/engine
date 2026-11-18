@@ -1,4 +1,6 @@
-//! Checked cash transfers in USD at the same recorded FX marks used for financing valuation.
+//! Checked cash transfers in USD at the same recorded FX marks used for financing valuation. A cash
+//! dividend credits a long net of its withholding rate and debits a short gross, each amount rounded
+//! down for the account.
 
 use crate::Fixed;
 use crate::corporate::{Adjustment, CorporateEntitlement};

@@ -262,7 +262,10 @@ at `min_sources = 2`. Alpaca's errors are named by code and Alpaca's meaning of 
 ### Benchmark rates
 
 Financing uses dated rates from a separate worker ([deploy-and-rollback.md](deploy-and-rollback.md),
-section 5). It does not affect prices.
+section 5). It does not affect prices. Each rollover takes the latest observation dated on or before
+its local date, and the weekdays below are Monday to Friday. A failed publisher fetch keeps every
+rate already sequenced, and still counts as attempted, so it holds back neither the other benchmarks
+nor a start.
 
 - `benchmark_fetch_failed`, `benchmark_sync_failed`, `benchmark_schedule_watch_failed` (Warnings): a
   publisher fetch or a call to the node failed; the worker retries by itself. Check the

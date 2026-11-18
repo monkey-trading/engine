@@ -1,3 +1,6 @@
+//! Approval funding proofs: only exact pending receipts are retained, and their storage does not
+//! grow with uncredited chain history.
+
 use super::*;
 use alloy::primitives::B256;
 

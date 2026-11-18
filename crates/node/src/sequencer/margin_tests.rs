@@ -1,3 +1,6 @@
+//! The margin and solvency dev scenario on the dev genesis, and a genesis with no house capital
+//! that trades and alerts on a house deficit.
+
 use super::*;
 use crate::sequencer::fixture_tests::replay_trusted as replay;
 use std::io::Write;

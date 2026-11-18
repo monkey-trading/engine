@@ -23,16 +23,27 @@ pub enum Publisher {
 #[serde(deny_unknown_fields)]
 pub struct BenchmarkSource {
     pub publisher: Publisher,
+    /// The official publisher's own HTTPS host on port 443, with no credentials or fragment, read
+    /// against compiled-in roots with no proxy or redirect; loopback HTTP only under the mock TEE.
     pub endpoint: String,
 }
 
+/// `[benchmarks]`: the publishers the separate worker (`engine admin sync-benchmarks`) fetches dated
+/// rates from. With it, every start holds ordinary sequencing until a signed snapshot has attempted
+/// every listed benchmark (`benchmark_sync_pending`).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BenchmarkSection {
+    /// How often a watching worker fetches and signs a snapshot, at most 24 hours; it also fetches
+    /// before each rollover, and retries a failed or refused submission within the shorter of this
+    /// and the node-call timeout.
     #[serde(with = "humantime_serde")]
     pub interval: Duration,
+    /// Each publisher fetch's deadline. The fetch before a rollover starts early enough for one per
+    /// source and three calls to the node.
     #[serde(with = "humantime_serde")]
     pub timeout: Duration,
+    /// One official publisher per benchmark, covering every genesis market's benchmark.
     pub sources: Vec<BenchmarkSource>,
 }
 

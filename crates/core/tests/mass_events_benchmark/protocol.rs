@@ -61,7 +61,9 @@ fn least_rate(book: &Book, market: MarketId) -> i64 {
 }
 
 /// Doubles every band of `market`, the most a notice may raise them, from seven days on, walks the clock
-/// there and times the next price, which re-keys the market's resting book, then the one after.
+/// there and times the next price, which re-keys the market's resting book, then the one after. A
+/// ceiling adoption or a passed vote changes the rate the re-key reads as the relisting does, so this
+/// case stands for all three.
 fn rekey(book: &mut Book, market: MarketId, case: &str) {
     let resting = book.h.engine.markets()[&market].resting.len();
     let rate_before = least_rate(book, market);

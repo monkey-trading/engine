@@ -1,3 +1,5 @@
+//! The operator list's reader against stand-in providers, which the proposals' tests share.
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

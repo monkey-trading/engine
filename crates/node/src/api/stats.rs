@@ -1,6 +1,7 @@
 //! The House and MONKEY pages' data beyond `/v1/house`: `GET /v1/monkey`, `GET /v1/house/positions`,
 //! `GET /v1/stats/series`, `GET /v1/monkey/activity` and `GET /v1/monkey/distributions`. Each reads the in-memory record on the
-//! sequencer's thread, between batches, and is signed like every other `/v1` answer.
+//! sequencer's thread, between batches, and is signed like every other `/v1` answer. An answer goes
+//! out only once the log holds the state it was read from (`ApiState::query_durable`).
 
 use axum::Json;
 use axum::extract::{Query, State};

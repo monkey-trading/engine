@@ -1,6 +1,8 @@
 //! Parameter votes held to the volume tier table's bounds: the vote that activates `V59` gives the
 //! parameters the launch table, a voted table needs no notice but stays no more generous than
-//! launch, and a voted relisting keeps each tier's spread within its launch spread to twice it.
+//! launch, and a voted relisting keeps each tier's spread within its launch spread to twice it. From
+//! `V64` a voted table keeps each margin floor at or above launch's, and from `V66` each limit named
+//! and at or below launch's.
 
 use super::*;
 use common::weekend::{genesis_with_tiers, globex};

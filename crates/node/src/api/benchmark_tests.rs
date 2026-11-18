@@ -1,4 +1,5 @@
-//! V19 deterministic dev scenario through the real publisher worker, signed admin API, TLS, and log.
+//! V19 deterministic dev scenario through the real publisher worker, signed admin API, TLS, and log:
+//! financing charged at each rollover's dated rate, across a restart.
 
 use super::*;
 use std::fs;

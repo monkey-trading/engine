@@ -198,8 +198,8 @@ authorizes a checkpoint. If its balance runs out or the endpoint's key is lost, 
 ## Secrets
 
 Webhook URLs, vendor API keys and RPC credentials. The config names them and the operator delivers
-their values into the enclave; `crates/node/README.md`, "Delivered secrets", has the design and what a
-host can do at each step. Keep the values in a bundle file on the admin workstation, never on the node's
+their values into the enclave; the module documentation of `crates/node/src/secrets/mod.rs` has the
+design and what a host can do at each step. Keep the values in a bundle file on the admin workstation, never on the node's
 host, with one entry for every name the config uses:
 
 ```toml

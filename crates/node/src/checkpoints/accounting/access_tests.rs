@@ -1,3 +1,6 @@
+//! Pending and held deposits' accounting from real engine output, against independently computed
+//! reconciliation totals.
+
 use super::*;
 
 use engine_core::Engine;

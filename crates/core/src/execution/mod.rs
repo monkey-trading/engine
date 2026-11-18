@@ -10,6 +10,9 @@
 //! Before `V52` normal trades fill at the mid; from `V52` every fill pays its bands' charge. A market
 //! quoted in another currency than USD fills only while its FX market has a price, and its realised
 //! PnL converts to USD at that FX index.
+//!
+//! From `V52` reduce-only orders, closing limits and stops, close-alls and close-outs pay the bands as
+//! well, so a round trip pays them twice. A close-out pays no toxicity add-on.
 
 use crate::Fixed;
 use crate::access::AccessEvidence;

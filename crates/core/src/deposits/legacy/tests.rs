@@ -1,3 +1,5 @@
+//! Legacy migration, independent release, ambiguous receipts and recovery commitments.
+
 use super::*;
 use crate::access::CreditScreening;
 use crate::deposits::{DepositStatus, DepositUpdate};

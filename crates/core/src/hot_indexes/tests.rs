@@ -1,3 +1,6 @@
+//! Holder membership across recovery, and the rebuild's receipt coverage: the finalised base, whole
+//! skipped spans, and the runs a span merges.
+
 use super::*;
 use crate::account::Position;
 use crate::deposits::{CustodyCheckpoint, DepositBeneficiary, DepositReceipt, RecordedDeposit};

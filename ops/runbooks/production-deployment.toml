@@ -14,8 +14,8 @@
 # never reset it (#36): a start before trading opens cancels each idle period's budget for good.
 start = "2027-01-01T00:00:00Z" # OWNER: 00:00:00 UTC on the day restricted mainnet trading opens
 
-# `TimelockController` and the `Vault` constructor, in seconds (contracts/README.md,
-# "Governance and deployment"). The delay and the exit period stand as #360 set them.
+# `TimelockController` and the `Vault` constructor, in seconds (ops/runbooks/deploy-and-rollback.md,
+# "Deploy the contracts"). The delay and the exit period stand as #360 set them.
 [timelock]
 min_delay = 259200 # 3 days
 

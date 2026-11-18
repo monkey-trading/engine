@@ -11,6 +11,7 @@
 //! (`acme`), so browsers trust the API's domain too. The CA validates the domain by TLS-ALPN-01
 //! (RFC 8737) on this listener: a handshake offering `acme-tls/1` gets the challenge certificate
 //! while one is being answered, and every other handshake the served certificate with `http/1.1`.
+//! A validation connection passes the same connection caps and handshake timeout as any other.
 
 use std::io::{self, ErrorKind};
 use std::pin::Pin;

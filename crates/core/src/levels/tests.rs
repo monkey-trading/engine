@@ -2,7 +2,9 @@
 //! once pricing every level in a market on each of its prices, emit the same events and reach the same
 //! roots, and every key the index takes for current is the key its inputs give. The sessions hold longs
 //! and shorts of many sizes in a USD market, in one converting at its own index and in one converting at
-//! another's, and move prices, FX indices, stress, time and levels.
+//! another's, and move prices, FX indices, stress, time and levels. Doubled bands and a lowered ceiling
+//! each fire a level at a mid the new inputs reach and the old do not, and an ignored case times the
+//! level path at 100k levels.
 
 use crate::Fixed;
 use crate::access::AccessPolicy;

@@ -1,7 +1,8 @@
 //! The rollover's bounds from `V76`, through `Engine::apply`: the operator moves the rollover time only
 //! as a seven-day notice names it, a new time never brings the next rollover earlier than the one due,
 //! and a rollover charges for the time since the last. So moving the rollover minute by
-//! minute charges nothing more, and financing never runs faster than a day's per day.
+//! minute charges nothing more, and financing never runs faster than a day's per day. The activation
+//! takes the rollover before the one due as the last, so a daylight saving day charges its own hours.
 
 mod common;
 

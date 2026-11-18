@@ -1,6 +1,19 @@
 //! Crash-durable nonce ownership for one log's dedicated relayer. Host rollback or deletion of
 //! this file is not detectable without sealed or remote storage; signatures authenticate only
 //! the checkpoint. This store never supplies evidence of inclusion or custody finality.
+//!
+//! The reservation is `checkpoint-submission.json` in `node.log_dir`, written before the send, so a
+//! lost answer or a restart reuses its explicit nonce and polls the transactions it knows; keep it
+//! with the log. `checkpoint-submission.lock` serializes posting, and `checkpoint-submission.json.tmp`
+//! stages each atomic replacement. Recovery refuses a live reservation the recovered log's outstanding
+//! work does not hold (`sequencer::recovery`). Pending work at the relayer that is not the
+//! reservation's, a nonce another sender consumed, or a fee too low to be mined pauses posting for
+//! the operator: nothing bumps a fee or cancels. Once finalized vault progress makes a reservation
+//! obsolete, the next checkpoint may reuse its still-free nonce, recording the obsolete prefix as
+//! `reused_through`; an obsolete call that later consumes it must be proven, from finalized
+//! transactions, to be that prefix's own vault call before the successor moves on. A reverted send
+//! moves to the next nonce once finalized history shows its own call consumed the reserved one and
+//! the vault at that block lacks the checkpoint.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};

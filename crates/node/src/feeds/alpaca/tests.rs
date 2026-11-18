@@ -1,3 +1,5 @@
+//! The adapter against the message shapes Alpaca documents.
+
 use super::*;
 
 use serde_json::Value;

@@ -86,7 +86,9 @@ contract FaultProof {
     }
 
     /// @dev The assignment's member, once `evidence`'s head binds the release and generation of the
-    /// revision it names; generations count from one, so a revision past the last never matches.
+    /// revision it names; generations count from one, so a revision past the last never matches. One
+    /// indexed read per head, so a proof costs the same however many revisions the member adds by moving
+    /// its release.
     function _checkRevision(OperatorSchedule schedule, Evidence calldata evidence) private view returns (address) {
         LogHeads.HeadV2 calldata head = evidence.head;
         (address candidate, OperatorSchedule.Revision memory revision) =

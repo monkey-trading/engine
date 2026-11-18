@@ -166,6 +166,9 @@ contract WithdrawalHandler is WithdrawalTest {
     }
 }
 
+/// Deposits, approvals, claims, reissues, signer rotations, timelock and guardian pauses, retirements
+/// and clock advances, mixed: tokens are conserved, roots retained and each approval paid once, the
+/// guardian's pauses are counted and bounded, and a retired signer stays retired until a new one.
 contract WithdrawalInvariantTest is WithdrawalTest {
     WithdrawalHandler private handler;
     uint256 private initialBalance;

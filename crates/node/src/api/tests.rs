@@ -1,3 +1,6 @@
+//! API tests, with the dev scenarios of the resumable stream and archive and of account history,
+//! and `Retry-After`.
+
 use super::serve_tests::serve_history;
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};

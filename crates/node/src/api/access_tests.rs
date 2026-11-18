@@ -1,4 +1,5 @@
-//! Authenticated API refusals use the actual transport peer and are durable before reply.
+//! Authenticated API refusals use the actual transport peer and are durable before reply, and a
+//! pending deposit is credited by the signed declaration it waited for.
 
 mod admission;
 mod batch;

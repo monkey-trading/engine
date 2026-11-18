@@ -29,7 +29,9 @@ impl Engine {
     }
 
     /// Authorises the request, then cancels every resting order the account holds, in order id
-    /// order, each with the event a single cancel emits. An account with none emits nothing.
+    /// order, each with the event a single cancel emits. An account with none emits nothing. From `V79`
+    /// it leaves each position's take profit and stop loss (`levels`), while a cancelled entry order's
+    /// levels go with it.
     /// Error cases:
     /// - before `V44`
     /// - the signature, nonce, or request expiry fails (see `Engine::authorise`)

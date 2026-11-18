@@ -6,7 +6,9 @@
 //! same validation and execution as one sent alone, so spreads, the close-spread ceiling, the
 //! profit fee, the emissions weight, stress and the house caps are that order's. The entries run in list order, each seeing the state the one before left, and a
 //! refused entry does not stop the rest. Authorisation and access screening run once, for the
-//! whole request, which uses one nonce.
+//! whole request, which uses one nonce. A close-all is signed as `CloseAllRequest`, its list as
+//! `CloseEntry[]` in order, and a cancel-all as `CancelAllRequest`; before `V44` both are refused as
+//! `Reject::BatchUnsupported`, using no nonce.
 
 use std::collections::BTreeSet;
 

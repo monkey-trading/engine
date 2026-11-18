@@ -1,7 +1,8 @@
 //! The levels leaves, from `V79`: kind 29 holds a position's take profit and stop loss (`levels`), keyed
 //! by its account (`address`) and market (`uint32`) as the position's own leaf is, with the value hash
 //! `keccak256(abi.encode(bool hasTakeProfit, int128 takeProfit, bool hasStopLoss, int128 stopLoss))`,
-//! an absent level encoding as `false, 0`. A position without levels has no such leaf.
+//! an absent level encoding as `false, 0`. A position without levels has no such leaf, and an account
+//! proof proves that absence for it (`NoLevelsProof`, checked with `verify_absent`).
 
 use std::collections::BTreeSet;
 

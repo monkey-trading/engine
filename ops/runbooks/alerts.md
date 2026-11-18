@@ -93,6 +93,7 @@ Rebuilt from the log. None changes the books.
 | `marks_prior_rows_dropped` | Warning | Prior marks rows failed authentication and were not imported. Those rows are rebuilt from the log. Nothing to do. |
 | `marks_samples_dropped` | Warning | The marks queue was full; dropped samples reseed at the next recovery. Dropped samples reseed at the next recovery. If it repeats, look at the sequencer's load (`engine_sequencer_queue_depth`). |
 | `marks_seed_failed` | Warning | Seeding the marks cache from the log failed; it is reset for re-derivation. See [restart-and-recovery.md](restart-and-recovery.md), "Rebuild the derived stores". |
+| `stats_scan_inline` | Warning | The dashboard's background scan worker stopped, so its account scans run on the sequencer's thread and add to what each price waits behind. The books are unaffected. A restart starts the worker again: see [restart-and-recovery.md](restart-and-recovery.md). |
 | `marks_backfill_failed` | Warning | The optional provider candle backfill failed and retries. The optional backfill retries. History older than the log may be missing meanwhile. |
 
 ## Prices, markets and books

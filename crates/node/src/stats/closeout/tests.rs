@@ -1,3 +1,6 @@
+//! A position's estimated close-out price across margin bands, and for a market that converts its own
+//! quote currency.
+
 use super::*;
 use crate::test_support::dev_config;
 

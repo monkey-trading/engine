@@ -439,7 +439,11 @@ impl Engine {
     /// the staking mirror's completed frontier have passed, as an election waits for its effective time,
     /// if `open` has not closed it and it ended less than `CLOSE_HORIZON_MS` ago. A stake set the mirror
     /// has not brought to an epoch's end is never paid; an epoch older than the horizon is skipped by
-    /// the close that comes, which pays the excess it would have.
+    /// the close that comes, which pays the excess it would have. A frontier that advances steadily
+    /// passes each end in turn, so a mirror lagging by more than an epoch still closes every epoch. A
+    /// close pays the stake mirrored when it runs: where the frontier lags, as it usually does, the first
+    /// completed scan past the end, so a stake or unstake after the end within that scan counts; a
+    /// frontier recorded ahead of the sequenced time lets later scans in before the close too.
     fn mirrored_close(&self, config: &StakingConfig, open: u64) -> Option<u64> {
         let reached = self.finalised_chain_time()?;
         let closed = config.epochs_elapsed(reached.min(self.now)).checked_sub(1).filter(|closed| *closed >= open)?;

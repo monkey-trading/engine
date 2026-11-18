@@ -1,4 +1,30 @@
 //! The guest clock a node with real attestation must run on before it opens its keys.
+//!
+//! Every bound the node keeps in monotonic time rests on that clock's rate: a price's age, the pace
+//! of sequenced time, a trusted time sample's age, the Roughtime round trips that place it, and
+//! through them `time.max_drift`. The image keeps the rate out of the host's hands in three parts:
+//!
+//! - Secure TSC. Every vCPU launches with SEV_FEATURES `0x201` (SNPActive, SecureTSC). The guest's
+//!   RDTSC, RDTSCP and TSC MSR read the processor's TSC scaled by the GUEST_TSC_SCALE in the guest's
+//!   encrypted VMSA plus its GUEST_TSC_OFFSET, and the processor's TSC ratio and the hypervisor's
+//!   offset do not apply (AMD64 APM vol. 2, 15.36.18). The firmware sets each launched vCPU's scale
+//!   from the frequency the host asks for, and the kernel takes the values for the vCPUs it starts
+//!   from the firmware's TSC_INFO answer (SEV-SNP firmware ABI, 7.9 and 8.18.2.2). The kernel reads
+//!   the frequency from GUEST_TSC_FREQ, corrected by the TSC_FACTOR in the secrets page, and stops
+//!   the guest if the host intercepts that read or RDTSC (Linux `arch/x86/coco/sev/`).
+//! - The kernel times on the TSC: Secure TSC marks it reliable, `no-kvmclock` on the measured
+//!   command line keeps out kvm-clock, and the image's kernel has no CPU frequency scaling or ACPI
+//!   processor driver, so nothing the host supplies marks the TSC unstable once it has registered.
+//! - This check. At boot the host can still have the kernel mark the TSC unstable, through CPUID
+//!   leaves naming another hypervisor (the firmware checks only the standard and extended leaves) or
+//!   firmware tables, and it picks the frequency at launch, so a node with `configfs_tsm` refuses to
+//!   start with `clocksource_unprotected` unless the kernel times on the TSC at
+//!   `MIN_GUEST_TSC_FREQ_MHZ` or more. The bound rests on the APM's statement that GUEST_TSC_FREQ
+//!   reports the guest TSC's effective frequency, which only SEV-SNP hardware can confirm.
+//!
+//! The report carries no SEV features (ABI, Table 27), but the launch digest covers each vCPU's VMSA,
+//! SEV_FEATURES included, measured as if its TSC scale and offset were zero, since the firmware sets
+//! them afterwards (ABI, 8.18.2.2). A launch without Secure TSC measures to another digest.
 
 use std::fs::File;
 use std::os::unix::fs::FileExt;
@@ -14,7 +40,7 @@ const GUEST_TSC_FREQ_MSR: u64 = 0xC001_0134;
 const GUEST_TSC_FREQ_MHZ_MASK: u64 = 0x3_FFFF;
 /// The least frequency the check accepts. Under it the firmware rounds the host's requested
 /// frequency below what the hardware reports, and the kernel calibrates against clocks the host
-/// emulates instead (`image/README.md`, "The guest's clock"). 1000 MHz also bounds the whole-MHz
+/// emulates instead (`docs/enclave.md`, "The guest's clock"). 1000 MHz also bounds the whole-MHz
 /// rounding to 0.1%, the most a bound resting on the clock's rate can give up.
 const MIN_GUEST_TSC_FREQ_MHZ: u64 = 1000;
 

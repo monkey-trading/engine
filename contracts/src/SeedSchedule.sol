@@ -60,6 +60,7 @@ abstract contract SeedSchedule {
     }
 
     /// @notice The beacon epoch whose RANDAO mix seeds turn `turn`.
+    /// @dev With day-long turns, consecutive turns' epochs are 225 apart.
     function seedEpoch(uint64 turn) public view returns (uint64) {
         // In 256 bits, so a turn too early for its seed time is refused by name rather than underflowing.
         uint256 time = uint256(turn) * turnLength + boundaryOffset;

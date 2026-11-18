@@ -1,3 +1,5 @@
+//! A turn's superseded members read from a stand-in node, in the order their assignments were made.
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

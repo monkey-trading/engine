@@ -250,6 +250,7 @@ contract OperatorRegistry {
 
     /// @notice The close of `epoch` elected `candidate`, whose `adminKey` and `release` take effect at
     /// `effectiveAt`.
+    /// @dev A liveness promotion emits it too, so the engine mirrors a promotion as an election.
     event Elected(
         uint64 indexed epoch, address indexed candidate, address adminKey, bytes32 release, uint64 effectiveAt
     );
@@ -481,6 +482,9 @@ contract OperatorRegistry {
     /// neither the operator it replaces nor the candidate it names may move: the election keeps the
     /// release and the handover source it was made with. A turn member's move names the new release
     /// at once for its turn in effect and its last drawn turn, each in a new generation.
+    /// @dev Each approval a move withdraws is reported as `ReleaseApprovalChanged(candidate, left,
+    /// false)`. A delisted candidate's move relists it, so keeping a candidate off the list means
+    /// withdrawing every release approved for it.
     function setRelease(bytes calldata launchDigest, bytes32 configHash) external {
         Candidate storage registered = candidates[msg.sender];
         if (registered.adminKey == address(0)) revert NotRegistered();
@@ -642,6 +646,7 @@ contract OperatorRegistry {
     /// mirrors this with its seven-day log notice before its key signs. No candidacy changes: the
     /// replaced operator keeps its release, approvals and listing, and the installed candidate,
     /// when registered, keeps its own and moves with `setRelease` like any operator in effect.
+    /// @dev The replaced operator's later moves change only its candidacy, never the vault's release.
     function installOperator(address candidate, address adminKey, bytes calldata launchDigest, bytes32 configHash)
         external
         onlyGovernance
@@ -852,7 +857,8 @@ contract OperatorRegistry {
 
     /// @dev The eligible candidate with the most votes, the earlier registration on a tie, when the
     /// role moves to it: it is not the operator in effect, and a quorum of total stake is delegated
-    /// to approved candidates. The zero address otherwise.
+    /// to approved candidates. The zero address otherwise. The operator in effect serves no minimum
+    /// term: it keeps the role on a tie in votes only when it registered first.
     function _winner(Parameters memory p) private view returns (address winner) {
         uint256 total = staking.totalStaked();
         uint256 delegated = 0;

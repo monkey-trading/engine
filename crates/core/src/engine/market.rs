@@ -1,3 +1,6 @@
+//! Per-market state: the listing, venue quotes, marks, client position totals, resting orders,
+//! stress, and a futures market's roll position; and each market's session and live FX index.
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};

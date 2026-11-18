@@ -5,6 +5,11 @@ import {ECDSA} from "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
 import {Vault} from "../src/Vault.sol";
 import {WithdrawalTest} from "./helpers/WithdrawalTest.sol";
 
+/// `test/fixtures/withdrawal.json` is the vector the Rust signer and this vault share: the exact domain
+/// and type, the approval leaf's key and value, four ordered siblings, the accepted root, the hashes,
+/// and a signature by the published test key `0x1234`. It is independent of the protocol reference
+/// logs. This checks its digest, recovered signer, proof and exact payout at the fixture's chain and
+/// address; `crates/node/src/withdrawals.rs` reads the same file.
 contract WithdrawalVectorTest is WithdrawalTest {
     function test_SharedRustSolidityDigestSignatureAndApprovalProofVector() public {
         string memory fixture = vm.readFile("test/fixtures/withdrawal.json");

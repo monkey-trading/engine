@@ -1,3 +1,6 @@
+//! The vault calls an account, its unfinalised credits in batches, a staker and a deposit id are
+//! given, and the root a published log's prefix reproduces.
+
 use engine_core::merkle::{DistributionProof, ExitTerms};
 use engine_core::staking::UsdcUnits;
 

@@ -1,4 +1,6 @@
-//! Local TLS operator scenario with controlled venue boundaries and public-log recovery.
+//! Local TLS operator scenario with controlled venue boundaries and public-log recovery: the signed
+//! corporate-action dev scenario, a dividend followed by a split through the admin route over TLS,
+//! then a restart and a replay of the public log.
 
 use super::*;
 

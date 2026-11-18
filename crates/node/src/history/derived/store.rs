@@ -2,7 +2,9 @@
 //! the history lists once the rows have left memory (`DerivedRows`). The history writes a command's rows
 //! as it takes them, one file a command, `<seq>.rows`: its stamp, its row count and its rows. The host
 //! holds the files, so a reader takes a file's rows only once they give the aggregates the log holds
-//! for the command (`Derived::checked`).
+//! for the command (`Derived::checked`). The files sit in `<history.dir>/financing/`, about 18 MB a
+//! rollover at 440k positions. A rebuild of an authenticated history generation takes its rows from its
+//! own replay and leaves the files as they are.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};

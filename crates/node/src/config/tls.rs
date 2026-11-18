@@ -29,7 +29,8 @@ pub struct ApiTlsSection {
 #[serde(deny_unknown_fields)]
 pub struct AcmeSection {
     /// The API's DNS name, lowercase: the certificate's only identifier. The CA connects to it on
-    /// port 443, which the host forwards unmodified to `node.listen`.
+    /// port 443, which the host forwards unmodified to `node.listen`. It is part of the attested
+    /// config, so changing it is a new release.
     pub domain: String,
     /// The CA's ACME directory, over https.
     pub directory_url: String,

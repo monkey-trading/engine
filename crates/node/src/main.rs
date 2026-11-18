@@ -56,7 +56,8 @@ enum Cmd {
         chain_id: Option<u64>,
         #[arg(long, requires = "chain_id")]
         vault: Option<AccountId>,
-        /// Pin an enclave signer obtained from a verified attestation or the vault.
+        /// Pin an enclave signer obtained from a verified attestation or the vault. A log holding
+        /// signed withdrawals needs it, or `--attestation`, to authenticate them.
         #[arg(long)]
         signer: Option<AccountId>,
         /// Verify historical signers against this deployment's finalized vault history.

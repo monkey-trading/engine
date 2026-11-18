@@ -1,3 +1,6 @@
+//! Legacy activation inputs: ledger tampering, unrelated funds, deferred reservations, and the
+//! provenance a historical replay recovers.
+
 use super::*;
 use crate::log::{CommandEntry, LogEntry};
 use crate::sequencer::Replayed;

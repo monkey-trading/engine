@@ -21,7 +21,8 @@
 //! names the key the finalised registry installed before the log mirrored it, its own configured key
 //! alone, since an elected or installed operator's secrets are its own. A node whose config still
 //! names a key the log has since rotated away from takes that key until the log opens; what a bundle
-//! can do bounds this (below).
+//! can do bounds this (below). A real enclave takes no bundle a published test key signs
+//! (`config/test-keys.toml`).
 //!
 //! What the host can do at each step:
 //! - read the bundle: no, only the one-time key's holder can, and the quote proves who that is.

@@ -1,5 +1,6 @@
 //! The operator key's rotation, from `V35`: a signed `RotateOperator` takes effect seven days after
-//! it is logged, and from then the old key signs nothing.
+//! it is logged, and from then the old key signs nothing, and the new one signs under the chain and
+//! vault the log's `Operator` records.
 
 use crate::engine::Engine;
 use crate::operator_bounds::{NOTICE_MS, PendingRotation};

@@ -1,3 +1,6 @@
+//! The access source's IO and its failure paths: requests carry the real peer, and a malformed,
+//! mismatched, oversized, failed or timed-out answer fails closed.
+
 use super::*;
 
 use std::sync::{Arc, Mutex};

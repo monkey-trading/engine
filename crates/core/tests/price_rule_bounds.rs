@@ -2,7 +2,8 @@
 //! sources, a longer freshness bound or a wider divergence bound) only as a seven-day listing notice
 //! names them, and never past the market's launch rules, while tighter rules apply at once. So the
 //! operator, who is also its enclave's host, cannot widen a market's freshness bound, hold the venue
-//! streams back, and trade an old price against the house.
+//! streams back, and trade an old price against the house. The activation takes each listed market's
+//! rules, and the corporate bounds in force, as launch's.
 
 mod common;
 

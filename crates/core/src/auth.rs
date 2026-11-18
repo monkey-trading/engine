@@ -7,7 +7,9 @@
 //! account's registered session key may sign orders and cancels within its expiry, on the key's
 //! own nonce sequence; a revoked or expired key and a key signing a withdrawal refuse with their
 //! own rejections, and any registration or revocation not signed by the account key refuses as an
-//! invalid signature (see `session_keys`).
+//! invalid signature (see `session_keys`). Under `V24` and from `V26`, the rule sets that screen
+//! access, every client request needs a signature under the domain the log records, also in a dev log
+//! that records `Unsigned`.
 
 use serde::{Deserialize, Serialize};
 

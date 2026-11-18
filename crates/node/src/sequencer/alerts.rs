@@ -25,7 +25,10 @@ pub(super) struct DeficitAlert {
     recovered_since: Option<Instant>,
 }
 
-/// Conditions last emitted for benchmarks used by the active catalogue.
+/// Conditions last emitted for benchmarks used by the active catalogue. An undated rate that applies
+/// resolves `benchmark_rate_missing`, and a dated one both that and `benchmark_rate_undated`. A
+/// benchmark no listed market uses after an accepted market update has its alerts resolved after that
+/// command's rollover events, those raised before a restart included.
 #[derive(Default)]
 pub(super) struct BenchmarkAlerts {
     tracked: BTreeMap<String, BenchmarkConditions>,

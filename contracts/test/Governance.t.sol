@@ -5,6 +5,7 @@ import {TimelockController} from "@openzeppelin-contracts/governance/TimelockCon
 import {Vault} from "../src/Vault.sol";
 import {WithdrawalTest} from "./helpers/WithdrawalTest.sol";
 
+/// The timelock's powers: access and delay, signer rotation, independent pauses and release approvals.
 contract GovernanceTestCases is WithdrawalTest {
     function test_ConstructorRejectsMissingUndeployedOrZeroDelayTimelock() public {
         vm.expectRevert(Vault.InvalidGovernance.selector);

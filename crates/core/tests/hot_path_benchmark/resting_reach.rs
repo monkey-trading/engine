@@ -2,6 +2,9 @@
 //! rests a limit buy of 0.01 BTC at 100,005, which every price at 100,000 or 100,001 passes but BTC's
 //! 1bp first band keeps out of reach. `V73` prices every one of them on every price; from `V74` a price
 //! visits none, so it holds the resting case's budget (`command_latency`).
+//!
+//! Measured on 17 November 2026 on a Mac17,9 with 15 logical CPUs and 24 GiB RAM, with other workspace
+//! builds running: a price took 48,436 / 51,335 us p50 / p99 under `V73` and 0 / 2 us under `V74`.
 
 use super::common::close_spread::rest;
 use super::common::session_keys::funded_at;

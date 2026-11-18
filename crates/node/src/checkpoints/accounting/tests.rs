@@ -1,3 +1,5 @@
+//! Accounting against oracles that recompute cash and credit references, and its arithmetic bounds.
+
 use super::*;
 
 use std::collections::{BTreeMap, BTreeSet};

@@ -1,3 +1,5 @@
+//! The adapter against the message shapes CME documents, and the config check on a symbol's contract.
+
 use super::*;
 
 use serde_json::Value;

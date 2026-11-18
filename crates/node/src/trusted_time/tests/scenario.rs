@@ -4,7 +4,8 @@
 //! with a Critical alert, and removing the skew resumes it. With the servers silent, sequencing
 //! runs on for the grace, then halts with a Critical alert until they answer again. Stamps never
 //! run backwards, and nothing refused reaches the log. The API's signing clock, fed the same
-//! samples, reads a time exactly while the sequencer stamps.
+//! samples, reads a time exactly while the sequencer stamps. Run it alone with
+//! `cargo test -p engine-node trusted_time::tests::scenario`.
 
 use std::path::PathBuf;
 

@@ -3,7 +3,9 @@
 //! raises a share, and with every listed market's bands keeps each tier's spread from its launch
 //! spread to twice it; a listing's new bands are held to the same at every tier. Votes are held to
 //! the same bounds (`parameter_votes/volume_tiers.rs`). From `V64` a table keeps each tier's margin
-//! floor at or above launch's, and before it a floor charges nothing.
+//! floor at or above launch's, and before it a floor charges nothing. From `V61` an activation checks
+//! every listing, and every first listing an adoption binds, against `launch_volume_tiers`, and an
+//! adoption is held to the tiers when adopted.
 
 mod common;
 

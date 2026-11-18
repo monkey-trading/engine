@@ -1,3 +1,6 @@
+//! The `[feeds]` section's vendor connections and their checks, and a production build's refusal of a
+//! genesis market fewer venues quote than its `min_sources`.
+
 use super::*;
 
 use chrono::DateTime;

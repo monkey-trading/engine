@@ -1,3 +1,6 @@
+//! The state's field roots and branches, checked against mainnet fields and their roots recorded in
+//! `tests/fixtures/seed-relay-state-fields.json`.
+
 use super::*;
 use crate::seed_relay::ssz::is_valid_merkle_branch;
 

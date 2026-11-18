@@ -1,5 +1,5 @@
 //! The config file's hash, which the attestation binds, and a production build's refusal of mock
-//! providers.
+//! providers, of fresh-account budgets and request bursts above its values, and of an `http` origin.
 
 use super::*;
 

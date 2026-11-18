@@ -5,6 +5,7 @@ import {ECDSA} from "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
 import {Vault} from "../src/Vault.sol";
 import {WithdrawalTest} from "./helpers/WithdrawalTest.sol";
 
+/// Reissues across repeated rotations, including epochs with no checkpoint and reused signer addresses.
 contract SignerHistoryTest is WithdrawalTest {
     function test_OldRootReissueHasSignerHistoryWithoutAnEpochTwoCheckpoint() public {
         Vault.Withdrawal memory approval = _approval(7, 10e6);

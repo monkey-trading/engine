@@ -9,6 +9,8 @@ import {WithdrawalTest} from "./helpers/WithdrawalTest.sol";
 import {FeeOnTransferToken} from "./mocks/FeeOnTransferToken.sol";
 import {WithdrawalToken} from "./mocks/WithdrawalToken.sol";
 
+/// Signed withdrawals: replay, time and epoch boundaries, signature tampering, fee tokens, failure
+/// rollback and reentrancy.
 contract WithdrawalsTest is WithdrawalTest {
     function test_RelayerPaysOnlyTheApprovedAccountAndEmitsReconciliationFields() public {
         Vault.Withdrawal memory withdrawal = _approval(7, 123_456_789);

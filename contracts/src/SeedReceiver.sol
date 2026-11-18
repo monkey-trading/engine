@@ -110,7 +110,9 @@ contract SeedReceiver is SeedSchedule {
     /// @notice Turn `turn`'s final seed: its relayed seed, or from its draw deadline, once
     /// `fixFallback` has recorded its block hash `h`, `keccak256(abi.encode(s, turn, h))`, where `s` is
     /// the seed of the latest earlier turn that has one.
-    /// @dev The fallback reads back through the turns with no seed, one storage read each.
+    /// @dev The fallback reads back through the turns with no seed, one storage read each. Refuses
+    /// with `NoRelayedSeed` while no turn up to `turn` has a relayed seed, and with `FallbackNotFixed`
+    /// while `fixFallback` has not recorded the block hash.
     function seedOf(uint64 turn) external view returns (bytes32 seed) {
         seed = relayedSeed[turn];
         if (seed != 0) return seed;

@@ -8,6 +8,10 @@ import {LivenessTest} from "./helpers/LivenessTest.sol";
 
 /// `engine.log-head.v2` heartbeats while a turn names the operator: the version switch, live heads'
 /// signing-time window, held heads' block binding, relays, and the latch of each turn's assignment.
+/// Covers the switch both ways, the v2 known-answer vector, each window and block rule at its edges, a
+/// cached held head refused after a burst of blocks and slow production, repeated seqs, every bound
+/// field, and latches: the first head, later heads, superseded and earlier-generation assignments, a
+/// held first head, and consecutive turns of one member.
 contract LogHeadsV2Test is LivenessTest {
     uint256 private constant TOLERANCE_MS = 30_000;
     uint64 private constant HEAD_BLOCKS = 200;

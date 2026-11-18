@@ -50,6 +50,7 @@ contract LogHeads {
     /// `confirmer` is the member whose enclave confirmed holding the log through `seq`, bound but not
     /// checked; `blockNumber` and `blockHash` are a recent Arbitrum block for a held head, zero for a
     /// live one.
+    /// @dev Any other `hold` reverts `InvalidHold`.
     struct HeadV2 {
         uint64 seq;
         bytes32 link;
@@ -90,6 +91,7 @@ contract LogHeads {
     mapping(uint64 epoch => bytes32 release) public headRelease;
 
     event HeadPosted(uint64 indexed epoch, uint64 indexed seq, bytes32 link);
+    /// @notice A v2 heartbeat was recorded as the epoch's newest head.
     event HeadPostedV2(
         uint64 indexed epoch,
         uint64 indexed seq,
@@ -99,6 +101,7 @@ contract LogHeads {
         uint8 hold,
         uint64 signedAt
     );
+    /// @notice A head latched turn `turn`'s assignment at `position`, as `latches` records it.
     event TurnLatched(
         uint64 indexed turn,
         uint16 indexed position,
@@ -239,7 +242,8 @@ contract LogHeads {
     }
 
     /// @dev Latches the head's assignment when it is the turn in effect's current one, on the release
-    /// the registry names for its member, and nothing has latched it.
+    /// the registry names for its member, and nothing has latched it. A head live or held may latch; one
+    /// binding a superseded assignment still counts as a heartbeat but latches nothing.
     function _latch(OperatorSchedule schedule, uint64 epoch, bytes32 release, HeadV2 calldata head) private {
         if (latches[head.turn][head.position].at != 0) return;
         (uint64 turn, OperatorSchedule.Turn memory current) = schedule.turnAt(uint64(block.timestamp));
@@ -253,7 +257,7 @@ contract LogHeads {
     }
 
     /// @dev The `engine.log-head.v2` digest: every field packed after the domain, the chain, the vault
-    /// and the epoch, in two parts that concatenate to one packed encoding.
+    /// and the epoch, in two parts that concatenate to one packed encoding of 261 bytes.
     function _digestV2(uint64 epoch, HeadV2 calldata head) private view returns (bytes32) {
         return keccak256(
             bytes.concat(

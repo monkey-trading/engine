@@ -1,3 +1,5 @@
+//! Ethereum's reads and sends over stub provider and signing endpoints.
+
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 

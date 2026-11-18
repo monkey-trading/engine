@@ -1,6 +1,9 @@
 //! The toxicity score from `V54`, end to end through `Engine::apply`: a markout from the fill's
 //! index in units of its market's markout spread, a decayed size-capped edge over the root of its
-//! squared weights, tiers only from 20 decayed fills, and close-outs left unmarked.
+//! squared weights, tiers only from 20 decayed fills, and close-outs left unmarked; a markout due in a
+//! venue gap; and the markout spread's grid, window and floor, the intervals a closure or an unpriced
+//! moment ends, from `V58` one a quote expiry alone ends, and an activation to `V63` ending an open
+//! interval where one to an earlier version keeps it.
 
 mod common;
 

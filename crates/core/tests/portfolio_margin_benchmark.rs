@@ -1,6 +1,17 @@
 //! What the portfolio requirement costs over 100k holders of BTC-USD against the per-position
 //! requirement (`Engine::equity_and_margin`): each account holds a two-market group, long BTC-USD and
 //! short ETH-USD, and an ungrouped AAPL position. Fixture construction is outside the timed passes.
+//! Run with `cargo test -p engine-core --test portfolio_margin_benchmark --locked -- --ignored
+//! --nocapture --test-threads=1`.
+//!
+//! Measured on 17 November 2026 on a Mac17,9 with 15 logical CPUs and 24 GiB RAM, with other workspace
+//! builds running (load average about 26, so the absolute figures run high), each account holding
+//! $100k of BTC-USD long and $100k of ETH-USD short, loading 1.25, in one offset group and $20k of AAPL
+//! in none: a pass over every holder took 13,929 / 15,899 us p50 / max of 30 passes for
+//! `Engine::equity_and_margin`, 139 ns a holder, and 63,064 / 68,601 us for `Engine::portfolio_margin`,
+//! 630 ns a holder, about 4.5 times the per-position requirement, which also sums equity. The figures do
+//! not separate the group's exact credit, worked in 512-bit integers, from the rest of the pass. Nothing
+//! on the sequencer reads the portfolio requirement.
 
 mod common;
 

@@ -1,3 +1,7 @@
+//! The record against the engine: volume and levels, the close-out map and each position's close-out
+//! price against the engine's close-outs, the account read's cost (`closeout_cost`, ignored), MONKEY
+//! totals and epochs, bounds, and recovery.
+
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest, Sequenced};
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::Event;

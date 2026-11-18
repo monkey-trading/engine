@@ -1,5 +1,11 @@
 //! A member's wait for its turn: what it holds at trusted time, following the operator in effect
 //! between its holdings, and taking its turn with the tail past its copy's tip.
+//!
+//! Each try at a turn logs under a `take` span naming the turn. A take that waits on an unfinal
+//! signer epoch or a latest block short of the boundary keeps following the incumbent through the
+//! wait, counting no failure; after any other failed take an undamaged replica follows the incumbent
+//! for a stint before the next try, and the tries that leave the turn to a whole-log start count per
+//! holding (`tries`).
 
 use std::cell::RefCell;
 use std::rc::Rc;

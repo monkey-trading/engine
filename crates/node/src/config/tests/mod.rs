@@ -1,3 +1,5 @@
+//! Loading the config and the checks it must pass.
+
 use super::*;
 
 mod genesis;

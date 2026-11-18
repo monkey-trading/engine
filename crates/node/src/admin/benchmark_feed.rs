@@ -1,4 +1,12 @@
 //! The separate publisher worker: it alone holds the operator key and uses the signed admin API.
+//! Without `--watch` it fetches and signs one snapshot. It shares the operator nonce with every other
+//! admin client and reads it before each fetch, so a signed admin change made while it fetches
+//! consumes that nonce and the stale attempt cannot apply its observations under the new schedule.
+//! A watching worker follows the node's durable rollover schedule (`benchmark_watch`), fetching at
+//! once on a change, and reads `GET /v1/benchmarks` (the next rollover, the retained history, any
+//! undated rate the cap measures from, and the protocol version) so a snapshot covers downtime
+//! before a missed rollover is charged. Its dev scenario is
+//! `cargo test -p engine-node dev_scenario_benchmark_worker`.
 
 use std::time::Duration;
 

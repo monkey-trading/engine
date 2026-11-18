@@ -68,7 +68,7 @@ pub struct DailyTurns {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub taken: Option<TakenTurn>,
     /// From `V72`, the set of each turn's first refused assignment, for each turn not before the turn
-    /// in effect; the set is kept for the turn's promotion.
+    /// in effect; the set is kept for the turn's promotion. A refusal logged before `V72` is not recorded.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub refused: BTreeMap<u64, u32>,
 }
@@ -333,7 +333,8 @@ impl Engine {
     /// From `V72` it keeps the sets of the refused turns too (`DailyTurns::refused`). From `V73` it
     /// counts from the block time the staking mirror has completed, when that is earlier than the
     /// sequenced time, since every schedule event stamped before it has been mirrored, and forgets
-    /// nothing before the mirror records one: a lagging mirror keeps a set until its draws arrive.
+    /// nothing before the mirror records one: a lagging mirror keeps a set until its draws arrive. A set
+    /// forgotten before one of these versions activated stays forgotten, so a promotion needing it is refused.
     fn prune_sets(&mut self) {
         if self.protocol_version < ProtocolVersion::V71 {
             while !self.still_drawable() {

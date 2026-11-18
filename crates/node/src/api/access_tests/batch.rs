@@ -1,3 +1,7 @@
+//! `POST /v1/orders/cancel-all` and `/v1/positions/close-all`: one screening request, one log entry
+//! and one nonce each; refusals for a stale nonce, a forged or altered request and a stranger; and a
+//! session key signing both forms until revoked.
+
 use engine_core::command::{CancelAllRequest, CloseAllRequest, CloseEntry};
 
 use super::session_keys::{delete, registration, revocation, session_order};

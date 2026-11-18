@@ -51,7 +51,8 @@ fn mass_weekend_gap_start() {
     finish();
 }
 
-/// One price of BTC-USD a tenth down that closes out `share` per cent of the accounts holding it.
+/// One price of BTC-USD a tenth down that closes out `share` per cent of the accounts holding it, and
+/// also fills the book's in-band resting buys it reaches.
 fn crash(share: u64) {
     let mix = Mix {
         weak: Some(Weak { market: BTC, share, kind: WeakKind::FallsBelowAt(f(CRASH_MID)) }),

@@ -1,3 +1,8 @@
+//! Session keys through the API: a registered key trades for its account without the wallet until
+//! revoked, a withdrawal it signs is refused as out of scope in the log, an expired, mis-scoped or
+//! rate-flooding key is refused before sequencing, and a never-credited account registers one only
+//! after declaring.
+
 use super::*;
 
 #[tokio::test]

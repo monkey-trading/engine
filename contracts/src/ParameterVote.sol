@@ -104,6 +104,8 @@ contract ParameterVote {
     error VotingClosed(uint256 id, uint64 closesAt);
     error AlreadyVoted(uint256 id, address member);
 
+    /// @dev Takes the operator schedule, whose registry it reads, and each path's window, from one second
+    /// to `MAX_WINDOW` (`InvalidWindow` otherwise).
     constructor(OperatorSchedule schedule_, uint64 normalWindow_, uint64 fastWindow_) {
         if (address(schedule_).code.length == 0) revert ZeroAddress();
         if (normalWindow_ == 0 || normalWindow_ > MAX_WINDOW || fastWindow_ == 0 || fastWindow_ > MAX_WINDOW) {

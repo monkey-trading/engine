@@ -5,6 +5,7 @@ import {Vault} from "../src/Vault.sol";
 import {WithdrawalTest} from "./helpers/WithdrawalTest.sol";
 import {ECDSA} from "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
 
+/// Approval proofs: retained roots, fork parents the fence refuses, and proof and signature tampering.
 contract WithdrawalProofsTest is WithdrawalTest {
     function test_MissingRootAndCheckpointBeforeApprovalCannotPay() public {
         Vault.Withdrawal memory withdrawal = _approval(0, 1);

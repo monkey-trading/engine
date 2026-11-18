@@ -6,6 +6,9 @@ import {SeedReceiver} from "../src/SeedReceiver.sol";
 import {SeedSchedule} from "../src/SeedSchedule.sol";
 import {MockArbSys} from "./mocks/MockArbSys.sol";
 
+/// The schedule's mainnet values, the turn lengths a deployment may take and five-minute turns, the
+/// relay's alias, wrong senders and epochs, draw deadlines, replays, and the fallback against a
+/// reference model.
 contract SeedReceiverTest is Test {
     /// Mainnet's beacon genesis time.
     uint64 internal constant GENESIS = 1606824023;

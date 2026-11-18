@@ -1,4 +1,5 @@
-//! The exit terms over the smallest custody state: the frontier at zero and no live receipt.
+//! The exit terms over the smallest custody state: the frontier at zero and no live receipt, where from
+//! `V39` a sole reversed deposit at id 0 stays out of `unheld`.
 
 use alloy_primitives::B256;
 use engine_core::Fixed;

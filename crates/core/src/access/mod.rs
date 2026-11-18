@@ -1,4 +1,10 @@
 //! Recorded access policy, signed client eligibility, and screening inputs for V24.
+//!
+//! A declaration always needs the account's signature, as every client request does under these rules
+//! (`auth`), and signs its class's exact statement. Like an order or a withdrawal, it carries the
+//! source's signed evidence for its account and peer, which the engine checks against the recorded
+//! source and freshness bound on every replay. `config/access-source.md` gives the source's domain,
+//! freshness and subject binding.
 
 use serde::{Deserialize, Serialize};
 

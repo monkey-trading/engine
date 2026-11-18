@@ -1,3 +1,6 @@
+//! The log's format, segments and writer: offsets and entries through the file format, segments
+//! and their manifest, and what opening a log refuses or recovers from.
+
 use super::*;
 use std::fs;
 use std::io::Write as _;

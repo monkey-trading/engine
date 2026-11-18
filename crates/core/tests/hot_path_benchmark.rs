@@ -1,4 +1,41 @@
 //! Optimized dev-profile command latency; fixture construction is outside timed samples.
+//!
+//! Run in a quiet CPU window:
+//! `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture --test-threads=1`.
+//! Each scenario takes `SAMPLES` samples after a first command builds the transient indexes, so setup
+//! and index recovery are outside the timings. A sample times `Engine::apply`, its events' allocation
+//! and drop included, and leaves out log I/O, checkpoint hashing and signatures, but for the signed
+//! scenarios: their requests are signed, so the signature check is in, and they run under the latest
+//! version, so a close-all's fills pay every spread and fee rule in force. The budgets guard command
+//! processing against regressions; they promise no end-to-end service latency.
+//!
+//! The budgets, at 100k accounts unless named:
+//! - a price with a dispersed book, one account in the repriced market, at 1k and 100k: 200 us p99;
+//! - a price in a market every account holds, which still visits every holder: 250 ms p99;
+//! - a price in a market holding dormant resting orders: 200 us p99;
+//! - the daily rollover, which still finances and checks every position: 500 ms p99;
+//! - finalising an emission period in which every account lost, one sample: 500 ms;
+//! - the first command after a year-long gap with quotes held across it, and one at the last stamp the
+//!   engine accepts, one sample each: 5 ms;
+//! - signed commands (`hold_fill`): an empty cancel-all, the floor of a signed command, one sample per
+//!   account; a cancel-all of 100 resting orders; a close-all across `LAUNCH_MARKETS` markets; and the
+//!   fills of `toxicity`, `volume` and `house_loss`: the p99 printed against a 2 ms bar, the p50 held
+//!   to 2.5 ms and, for a later protocol version, to twice the earlier version's plus 200 us;
+//! - the later versions' prices, each against the version before: `house_loss`, `resting_reach` and
+//!   `levels`.
+//!
+//! Measured on 23 October 2026 with rustc 1.96.0, the optimized dev profile, incremental compilation off
+//! and two build jobs, on a Mac17,9 with 15 logical CPUs and 24 GiB RAM, against the same scenarios
+//! before the transient indexes (p50 / p99 in us, before then after): dispersed 1k 3 / 6, 1 / 5;
+//! dispersed 100k 1,287 / 1,733, <1 / 1; concentrated 100k 22,631 / 23,597, 20,554 / 24,040; dormant
+//! resting 100k 12,656 / 16,346, <1 / <1; financed rollover 100k 33,341 / 37,129, 32,669 / 34,991. The
+//! runs were sequential, with other workspace builds paused. The budgets leave room for hosted runners
+//! and still reject the former scans of a dispersed book and of dormant orders. Finalising an emission
+//! period in which 100k accounts lost took 35 ms, one sample on 25 October 2026 on the same machine
+//! with other builds running.
+//!
+//! A Cargo target shared across worktrees can leave a crate built from other source: touch
+//! `crates/core/src/lib.rs` before each build, and check the compile path in the build log.
 
 mod common;
 #[path = "hot_path_benchmark/house_loss.rs"]

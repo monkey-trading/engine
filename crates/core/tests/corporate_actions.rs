@@ -1,4 +1,6 @@
-//! Corporate actions exercise the public signed command path and Engine::apply boundaries.
+//! Corporate actions exercise the public signed command path and Engine::apply boundaries: signed
+//! scheduling, cash, splits and their rounding, calendars, missed rollovers and bounded catch-up,
+//! emissions, restart and replay, with shared fixtures in `corporate_actions/support.rs`.
 
 #[path = "corporate_actions/cash.rs"]
 mod cash;

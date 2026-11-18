@@ -1,4 +1,5 @@
-//! Dated financing survives legal rollover rescheduling without inventing a missing predecessor.
+//! Dated financing survives legal rollover rescheduling without inventing a missing predecessor:
+//! calendar and time-zone changes, retention boundaries, and the earliest and latest engine stamps.
 
 mod common;
 
