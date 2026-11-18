@@ -48,7 +48,7 @@ use crate::feeds::venue::{Pending, VenueFeed};
 /// answers pings holds its leg of the index: this plus `max_delay` plus the market's `max_age_ms`
 /// past the venue's sending of the stalled book, about this plus `max_age_ms` when nothing delays
 /// the pongs, while the leg stays within the market's `max_divergence_bps` of the other sources
-/// (`SECURITY.md`). Each second of it is a second a stalled book can price the market. In six hours
+/// (`docs/security-model.md`). Each second of it is a second a stalled book can price the market. In six hours
 /// of Coinbase, Kraken and Bitstamp books, re-dating cut Kraken's time without a fresh BTC-USD quote
 /// from 5.4% to 2.1% with any limit from 4 s to 6 s, the rest being outages and stalls no pong
 /// covers; 5 s keeps a second over the longest quiet book seen live, 4.2 s.

@@ -34,8 +34,8 @@ monkeytrading has not launched and holds no real funds.
 ## How it works
 
 This section summarises the rules a trader meets, and [the trading rules](docs/trading-rules.md) set
-out each of them in full, with the values the engine launches with. [SECURITY.md](SECURITY.md)
-states what each part of the system is trusted for.
+out each of them in full, with the values the engine launches with. The
+[security model](docs/security-model.md) states what each part of the system is trusted for.
 
 ### Prices and orders
 

@@ -41,7 +41,7 @@ than its current votes. Without a quorum, the close keeps the previous set, less
 are no longer eligible. The schedule draws each daily turn from the set in effect, using the seed
 relayed from Ethereum for that turn. When no seed was relayed, the draw takes two calls a block
 apart: the first records the block whose hash the fallback seed folds in, and the second draws.
-[SECURITY.md](../SECURITY.md#the-seed-relay) states what Arbitrum's sequencer can do to a fallback draw.
+[The security model](../docs/security-model.md#the-seed-relay) states what Arbitrum's sequencer can do to a fallback draw.
 
 A timelock with a nonzero delay governs the vault and the registry, with the deployment's multisig
 as its proposer. The timelock rotates the signing key, approves releases, pauses deposits or

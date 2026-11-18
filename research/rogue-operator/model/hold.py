@@ -2,7 +2,7 @@
 
 Replies and stream entries go out only once their batch is durable, so a host that stalls the
 batch's sync holds a trade nobody outside has seen. It can let the sync finish, or kill the node,
-and the restarted log never had the trade (SECURITY.md, #541). The node raises a Critical alert
+and the restarted log never had the trade (docs/security-model.md, #541). The node raises a Critical alert
 and stops stamping once a batch is held past 5 s, so a hold of up to `hold` seconds is silent;
 every client sees replies and new stream entries stall for its length, and a kill is a restart.
 

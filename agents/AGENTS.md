@@ -494,7 +494,7 @@ an index: load only the rule whose hint matches the current action.
   and checks the clock against public Roughtime servers, citing each server's key source;
   `feeds.provider = "venues"` prices its crypto markets from live venues instead, leaving the others
   unpriced. `[feeds.venues]`'s `ping_interval` and `max_delay` bound how far behind a venue's stream
-  may be, with `SECURITY.md` stating the resulting bound on a price's age. `anvil.toml` runs EVM custody against the vault on a local Anvil chain. The optional
+  may be, with `docs/security-model.md` stating the resulting bound on a price's age. `anvil.toml` runs EVM custody against the vault on a local Anvil chain. The optional
   `[api.tls.acme]` names the API's domain and the ACME CA that certifies its key. The `[genesis]`
   section is protocol: it is sequenced into the log as admin commands on first boot, all or
   nothing, and credits house capital from config only under mock custody. Loading refuses a genesis
@@ -928,11 +928,13 @@ an index: load only the rule whose hint matches the current action.
   `engine-core`. `api.md`, the API reference: every route with its request and answer, request
   signing, signed answers, limits and the stream; keep it in step with `crates/node/src/api/`.
   `enclave.md`, what the enclave guest takes from the host and how its clock is protected; keep it
-  in step with `image/` and `crates/node/src/tee/clock.rs`.
-- **SECURITY.md** — the security policy: the private reporting address, response times,
-  coordinated disclosure, safe harbour, scope, and supported versions; the README's Security
-  section points to it. Keep its scope, the parts it marks as still being built, and its known gaps
-  in step with the code.
+  in step with `image/` and `crates/node/src/tee/clock.rs`. `security-model.md`, what each component
+  guarantees and its known limits, one section per component, which `SECURITY.md` links; keep each
+  limit in step with the code.
+- **SECURITY.md** — the security policy: the private reporting channels, response times,
+  containment, coordinated disclosure, safe harbour, the scope table, the findings that matter
+  most, the operator-key rule, out of scope, what counts as a new finding, supported versions and
+  the bug bounty; the README's Security section points to it.
 - **LICENSE** — Apache License 2.0.
 
 ## Commands

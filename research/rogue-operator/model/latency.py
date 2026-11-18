@@ -2,7 +2,7 @@
 
 The host can hold every venue's stream back by up to `max_delay` and set the clock so the held
 quotes still look fresh, so the engine's index can run up to `max_delay + max_age_ms` (3 s in
-production) behind the venues while the host sees them live (SECURITY.md, #510). At each decision
+production) behind the venues while the host sees them live (docs/security-model.md, #510). At each decision
 the operator therefore knows the engine's next `lag` seconds of index exactly, and trades a
 position of `-1`, `0` or `+1` units of its size against it.
 

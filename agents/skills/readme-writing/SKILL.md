@@ -185,18 +185,29 @@ what the system can be trusted for. In this order:
 2. **What happens next:** response times, how a report is handled, and how fixes are disclosed and
    credited.
 3. **Safe harbour.**
-4. **Scope:** what is covered, as a short list or table of the components, one line each.
-5. **What each component is trusted for, and its known limits:** one `###` heading per component
-   (the engine, the trading server, custody, the enclave, price feeds, operator rotation, and so
-   on). Under each, first what the component guarantees, then its known limits as a list. Each
-   limit is one item of one to three sentences: what an attacker or failure can do, what bounds
-   it, and, where it applies, what a report about it alone needs to add to count as new. Group
-   limits under the component a reader would look in, never in one long running section.
-6. **Supported versions** and **bug bounty**, short.
+4. **Scope:** what is covered, as a short list or table of the components, one line each, then the
+   findings that matter most, the findings that start from an operator's key, what is out of
+   scope, and what counts as a new finding.
+5. **Supported versions** and **bug bounty**, short.
 
-A limit is a commitment, so the rewrite keeps every one, with its exact bound, and never softens or
+The policy stays at about 200 lines. It links, near the top and from the scope, to
+`docs/security-model.md`, which holds what each component is trusted for and its known limits:
+one `##` heading per component (the engine, the trading server, custody, the enclave, price feeds,
+operator rotation, and so on). Under each, first what the component guarantees, then its known
+limits as a list. Each limit is one item of one to three sentences: what an attacker or failure
+can do, what bounds it, and, where it applies, what a report about it alone needs to add to count
+as new. Group limits under the component a reader would look in, never in one long running
+section. The model opens with links to its component sections, grouped as a reader would look for
+them.
+
+A limit is a commitment, so a rewrite keeps every one, with its exact bound, and never softens or
 drops one to shorten the page. A limit is stated as the system as it is today, never as "until",
-"from version", or an issue number. A page this long opens with links to its component sections.
+"from version", or an issue number.
+
+The policy speaks as "we" for the project's commitments: its response times, containment,
+disclosure and safe harbour. This is the one exception to the rule against "we" in
+[Sentences](#sentences). The security model, every other page under `docs/`, the READMEs and the
+console's interface copy keep that rule.
 
 ### An operator runbook (`ops/runbooks/`)
 
@@ -272,7 +283,8 @@ for its help text, and the owner's examples there apply here.
 - **No comma-chained facts joined by "and … so …".** Three facts are three sentences.
 - **Name every subject.** No "this", "it" or "that" for something the sentence has not named.
 - **Formal register.** "Does not", "cannot", "you would", never "won't", "can't" or "you'd". Never
-  "we" or "I".
+  "we" or "I", except for the project's commitments in a security policy
+  ([A security policy](#a-security-policy-securitymd)).
 - **Read it aloud.** A sentence you would not say to a colleague, or would have to say twice, is
   rewritten.
 

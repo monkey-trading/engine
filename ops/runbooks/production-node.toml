@@ -225,7 +225,7 @@ reconnect_max = "30s"
 stale_after = "1s"
 min_quote_spacing = "10ms"
 # A stream further behind than max_delay, by its pings on the monotonic clock, counts as no quote.
-# max_delay less ping_interval is the round trip tolerated. SECURITY.md states the bound this gives.
+# max_delay less ping_interval is the round trip tolerated. docs/security-model.md states the bound.
 ping_interval = "500ms"
 max_delay = "2s"
 

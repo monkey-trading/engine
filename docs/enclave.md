@@ -3,8 +3,8 @@
 This page describes the boundary between the trading server's confidential virtual machine and the
 host that runs it: what the guest takes from the host, and how it keeps the host from altering the
 rate of its clock. [The image's README](../image/README.md) describes how the image is built,
-booted and released, and [SECURITY.md](../SECURITY.md) states what each part of the system is
-trusted for.
+booted and released, and [the security model](security-model.md) states what each part of the
+system is trusted for.
 
 ## What the guest takes from the host
 

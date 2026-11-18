@@ -20,7 +20,7 @@
 //!   candidate registers in place of the old one;
 //! - restoring a copy after the key's turn or promotion has moved on gives a key the schedule no
 //!   longer lists, which does not open; restoring one beside a deleted turn-key file, within the same
-//!   promotion, opens a copy of the signer's key the host kept, the two-copies residual `SECURITY.md`
+//!   promotion, opens a copy of the signer's key the host kept, the two-copies residual `docs/security-model.md`
 //!   states;
 //! - altering it, or giving another release's or kind's file its name, fails authenticated
 //!   decryption, and the start refuses.
