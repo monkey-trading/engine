@@ -256,10 +256,37 @@ fn a_replica_stores_every_rollovers_rows_for_the_index_that_resumes_from_it() {
         replica.apply(entry).unwrap();
     }
     // Every rollover's rows, the oldest included, are stored, and give the logged root.
+    let rollovers_seqs = rollovers.clone();
     for seq in rollovers {
         let derived = store.derived(&command_at(&entries, seq)).unwrap().unwrap_or_else(|| panic!("no rows at {seq}"));
         let [aggregate] = &derived.aggregates[..] else { panic!("one rollover at {seq}") };
         assert_eq!(ChargesTree::new(derived.rows_of(aggregate)).root(), aggregate.root, "seq {seq}");
+    }
+
+    // A replica built again over files in place rewrites none; it writes a file that is missing or damaged.
+    let replicate = || {
+        let mut replica = LiveReplay::new(domain, [rig.signer()].into());
+        replica.store_rows_in(store.clone());
+        entries.iter().for_each(|entry| replica.apply(entry).unwrap());
+    };
+    let file = |seq: u64| history.join("financing").join(format!("{seq}.rows"));
+    let identity = |seq: u64| {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(file(seq)).map(|meta| (meta.ino(), meta.mtime_nsec())).ok()
+    };
+    let (valid, missing, damaged) = (rollovers_seqs[0], rollovers_seqs[1], rollovers_seqs[2]);
+    let before: Vec<_> = rollovers_seqs.iter().map(|seq| identity(*seq)).collect();
+    std::fs::remove_file(file(missing)).unwrap();
+    let mut bytes = std::fs::read(file(damaged)).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    std::fs::write(file(damaged), &bytes).unwrap();
+    let damaged_identity = identity(damaged);
+    replicate();
+    assert_eq!(identity(valid), before[0], "a file holding the rows is not rewritten");
+    assert!(identity(missing).is_some(), "a missing file is written");
+    assert_ne!(identity(damaged), damaged_identity, "a damaged file is written again");
+    for seq in &rollovers_seqs {
+        assert!(store.derived(&command_at(&entries, *seq)).unwrap().is_some(), "rows stored at {seq}");
     }
 }
 

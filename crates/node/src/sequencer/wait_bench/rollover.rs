@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 
 use crate::common::BTC;
 use crate::common::launch_book::{Mix, NamedCounts, Origin, build, price_command};
-use crate::history::derived::Derived;
+use crate::history::derived::{Derived, RowsStore};
 use crate::log::{CheckpointDomain, EncodedCommand, encode_events};
 use crate::sequencer::wait_bench::mass::{Case, Outcome, accounts, roll_to, sequence, stream_market};
 use crate::sequencer::wait_bench::time;
@@ -121,4 +121,44 @@ fn rollover_parts() {
             apply_us + derive_us + entry_us
         );
     }
+}
+
+/// What a member's replica adds to a build over 30 rollovers, which store each rollover's rows
+/// (`LiveReplay::store_rows_in`): the launch book's rollover rows stored at 30 seqs a day apart with no
+/// file in place, and again with every file in place, where the replica skips each (`RowsStore::holds`).
+/// The replica's replay is the same in both. Prints `REPLICA ...`.
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn replica_rows() {
+    const ROLLOVERS: u64 = 30;
+    const DAY_MS: i64 = 24 * 3_600_000;
+    let mut book = build(&Mix::proposal(accounts()), NAMED);
+    let due = book.h.engine.next_rollover().expect("a rollover is due");
+    roll_to(&mut book, due);
+    let marks: Vec<_> = book.h.engine.markets().iter().filter_map(|(id, m)| m.mark.map(|mark| (*id, mark))).collect();
+    for (id, mark) in marks {
+        let cmd = price_command(&book.h, id, &mark.to_string(), due - 1);
+        book.apply(cmd);
+    }
+    let seq = book.h.engine.last_seq().map_or(0, |seq| seq + 1);
+    book.h.engine.apply(&Sequenced { seq, ts: due, cmd: Command::Tick }).expect("in sequence");
+    let rows = book.h.engine.take_derived();
+    let dir = crate::test_support::scratch_dir("replica-rows");
+    let store = RowsStore::new(&dir, 400 * DAY_MS);
+    let pass = || {
+        time(|| {
+            for day in 0..ROLLOVERS {
+                let (at, ts) = (seq + day, due + i64::try_from(day).unwrap() * DAY_MS);
+                if !store.holds(at, ts, &rows) {
+                    store.record_unsynced(at, ts, &rows).expect("stored");
+                }
+            }
+        })
+        .0
+    };
+    let (empty_us, held_us) = (pass(), pass());
+    println!(
+        "REPLICA rows rollovers={ROLLOVERS} positions={} none_present_us={empty_us} all_present_us={held_us}",
+        rows.len()
+    );
 }

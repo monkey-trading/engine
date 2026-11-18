@@ -76,7 +76,9 @@ impl LiveReplay {
 
     /// Has the replica write the derived rows of each command it applies to `store`, the history's, so an
     /// index that resumes where a turn left it finds them there once the replica's memory has dropped them
-    /// (`Deriver`), not only the newest `RETAINED` commands'. A failed write is paged and leaves the
+    /// (`Deriver`), not only the newest `RETAINED` commands'. A file already holding a command's rows is
+    /// left as it is, so a build over a copy whose files are in place writes none. A write is not synced:
+    /// the replica's replay derives the rows again. A failed write is paged and leaves the
     /// replica as it was: the index replays the log for those rows instead.
     pub(crate) fn store_rows_in(&mut self, store: Arc<RowsStore>) {
         self.rows = Some(store);
@@ -129,7 +131,8 @@ impl LiveReplay {
             LogEntry::Command(command) => {
                 if let Some(store) = &self.rows
                     && let Some(rows) = self.replay.derived_at(command.sequenced.seq)
-                    && let Err(e) = store.record(command.sequenced.seq, command.sequenced.ts, &rows)
+                    && !store.holds(command.sequenced.seq, command.sequenced.ts, &rows)
+                    && let Err(e) = store.record_unsynced(command.sequenced.seq, command.sequenced.ts, &rows)
                 {
                     warn!(
                         alert = "financing_rows_unstored",

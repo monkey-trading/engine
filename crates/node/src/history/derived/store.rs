@@ -58,6 +58,17 @@ impl RowsStore {
     /// Error cases:
     /// - the directory or the file cannot be written, or an old file cannot be removed
     pub(crate) fn record(&self, seq: u64, ts: Millis, rows: &[FinancingRow]) -> anyhow::Result<()> {
+        self.write(seq, ts, rows, true)
+    }
+
+    /// `record`, without syncing the file or its directory: for rows a crash may lose, because the replay
+    /// that derived them runs again and `holds` finds the file missing or short. A file the crash tore is
+    /// rejected on read, as the host's changes are.
+    pub(crate) fn record_unsynced(&self, seq: u64, ts: Millis, rows: &[FinancingRow]) -> anyhow::Result<()> {
+        self.write(seq, ts, rows, false)
+    }
+
+    fn write(&self, seq: u64, ts: Millis, rows: &[FinancingRow], sync: bool) -> anyhow::Result<()> {
         fs::create_dir_all(&self.dir).with_context(|| format!("creating {}", self.dir.display()))?;
         let mut bytes = Vec::with_capacity(HEADER + ROW * rows.len());
         bytes.extend_from_slice(MAGIC);
@@ -77,14 +88,20 @@ impl RowsStore {
             .open(&partial)
             .with_context(|| format!("creating {}", partial.display()))?;
         file.write_all(&bytes)
-            .and_then(|()| file.sync_all())
+            .and_then(|()| if sync { file.sync_all() } else { Ok(()) })
             .with_context(|| format!("writing {}", partial.display()))?;
         fs::rename(&partial, &path).with_context(|| format!("replacing {}", path.display()))?;
         // The rename, and the directory's own entry, survive a crash once the history moves past them.
-        for dir in [Some(self.dir.as_path()), self.dir.parent()].into_iter().flatten() {
+        for dir in [Some(self.dir.as_path()), self.dir.parent()].into_iter().flatten().filter(|_| sync) {
             File::open(dir).and_then(|dir| dir.sync_all()).with_context(|| format!("syncing {}", dir.display()))?;
         }
         self.prune(ts.saturating_sub(self.retention_ms))
+    }
+
+    /// Whether the store holds `rows` for the command at `seq` stamped `ts`, as `record` would write them:
+    /// a file of those rows exactly. A missing, damaged or other file is not held.
+    pub(crate) fn holds(&self, seq: u64, ts: Millis, rows: &[FinancingRow]) -> bool {
+        self.rows(seq, ts, rows.len()).is_ok_and(|found| found.is_some_and(|found| found == rows))
     }
 
     /// `command`'s rows, which the log holds, from this store when its file gives the aggregates
