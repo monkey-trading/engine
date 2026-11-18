@@ -38,7 +38,8 @@ use crate::event::Event;
 use crate::governance::Governance;
 use crate::house_loss::HouseLoss;
 pub(crate) use crate::markouts::Markout;
-use crate::merkle::state::{Changed, StateTree, is_zero};
+use crate::merkle::state::{Changed, Detached, is_zero};
+use crate::merkle::tree::StateTree;
 use crate::notice::Notice;
 use crate::operator_bounds::OperatorBounds;
 use crate::operator_faults::OperatorFaults;
@@ -233,9 +234,12 @@ pub struct Engine {
     /// The accounts a close-out check must close out; built at recovery, at an activation, or first used.
     #[serde(skip)]
     pub(crate) closeout_index: crate::closeout_index::CloseoutIndex,
-    /// The state tree as of the last root under `V9`; absent until then.
+    /// The state tree as of the last root under `V9`; absent until then, and once detached.
     #[serde(skip)]
     pub(crate) tree: Option<StateTree>,
+    /// Present once a node has taken the tree to compute roots elsewhere (`Engine::detach_tree`).
+    #[serde(skip)]
+    pub(crate) detached: Option<Detached>,
     /// The stamp of the command being applied. `now` rewinds to a boundary during corporate
     /// catch-up; this does not.
     #[serde(skip)]

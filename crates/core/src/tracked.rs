@@ -115,6 +115,11 @@ impl<K: Ord + Clone, V> TrackedMap<K, V> {
         std::mem::take(&mut self.touched)
     }
 
+    /// The record of keys handed out for change, for a root that takes part of it or puts keys back.
+    pub(crate) fn touched_mut(&mut self) -> &mut BTreeSet<K> {
+        &mut self.touched
+    }
+
     /// How many keys the record holds.
     pub(crate) fn touched_len(&self) -> usize {
         self.touched.len()
@@ -150,6 +155,11 @@ impl<T: Ord + Clone> TrackedSet<T> {
     /// The values recorded since the last call, clearing the record.
     pub(crate) fn take_touched(&mut self) -> BTreeSet<T> {
         std::mem::take(&mut self.touched)
+    }
+
+    /// The record of keys handed out for change, for a root that takes part of it or puts keys back.
+    pub(crate) fn touched_mut(&mut self) -> &mut BTreeSet<T> {
+        &mut self.touched
     }
 
     /// How many values the record holds.

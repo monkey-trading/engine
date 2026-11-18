@@ -363,19 +363,19 @@ impl Engine {
                     );
                 }
                 if self.protocol_version < ProtocolVersion::V27 && *version >= ProtocolVersion::V27 {
-                    self.tree = None;
+                    self.discard_tree();
                 }
                 if self.protocol_version < ProtocolVersion::V35 && *version >= ProtocolVersion::V35 {
                     self.record_launch_rates();
                 }
                 // Queue and pending leaves take their exit encodings, and the exit terms leaf joins.
                 if self.protocol_version < ProtocolVersion::V38 && *version >= ProtocolVersion::V38 {
-                    self.tree = None;
+                    self.discard_tree();
                 }
                 // Open period results rehash under the V43 gross-loss encoding, so the cached
                 // tree's leaves cannot be trusted across the activation.
                 if self.protocol_version < ProtocolVersion::V43 && *version >= ProtocolVersion::V43 {
-                    self.tree = None;
+                    self.discard_tree();
                 }
                 if let Some(cash) = distribution_cash {
                     self.withdrawal_cash = Some(cash);
@@ -401,6 +401,7 @@ impl Engine {
                 self.start_rule_sets(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
                 self.protocol_version = *version;
+                self.tree_version_changed();
                 // Rules before `V47` record no candidate, so one an election already seated is seated before
                 // any time counts.
                 if counts_office {

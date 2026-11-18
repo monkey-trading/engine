@@ -69,8 +69,10 @@ pub use toxicity::{markout_spread_key, toxicity_score_key};
 mod volume;
 pub use volume::volume_key;
 pub(crate) mod state;
-pub use state::RootWork;
+pub use state::{CommitInputs, RootDelta, RootWork, TreeEvent};
+pub mod tree;
 
+#[cfg(test)]
 use std::collections::BTreeMap;
 
 use alloy_primitives::B256;
@@ -84,6 +86,7 @@ const LEAF_PREFIX: u8 = 0x00;
 const NODE_PREFIX: u8 = 0x01;
 
 /// What a subtree holds.
+#[cfg(test)]
 enum Subtree {
     Empty,
     /// One leaf, by its hash.
@@ -95,7 +98,9 @@ enum Subtree {
 /// A leaf of another key, as its key and value hash.
 pub type Witness = (B256, B256);
 
-/// A sparse Merkle tree over 256-bit keys, laid out as the module docs describe.
+/// A sparse Merkle tree over 256-bit keys, laid out as the module docs describe, kept as the oracle
+/// the state tree's tests check it against.
+#[cfg(test)]
 #[derive(Debug, Default)]
 pub(crate) struct SparseMerkleTree {
     /// Each leaf's hash, by key.
@@ -107,6 +112,7 @@ pub(crate) struct SparseMerkleTree {
     nodes: BTreeMap<(usize, B256), B256>,
 }
 
+#[cfg(test)]
 impl SparseMerkleTree {
     /// The root hash.
     pub(crate) fn root(&self) -> B256 {
@@ -276,10 +282,11 @@ pub(crate) fn keccak(parts: &[&[u8]]) -> B256 {
 }
 
 /// Bit `depth` of `key`, counting from the most significant: whether its path turns right there.
-fn bit(key: &B256, depth: usize) -> bool {
+pub(crate) fn bit(key: &B256, depth: usize) -> bool {
     key[depth / 8] & (0x80 >> (depth % 8)) != 0
 }
 
+#[cfg(test)]
 /// `key` with every bit from `depth` on cleared: the prefix of its subtree at `depth`.
 fn prefix(key: &B256, depth: usize) -> B256 {
     let mut out = *key;
@@ -289,6 +296,7 @@ fn prefix(key: &B256, depth: usize) -> B256 {
     out
 }
 
+#[cfg(test)]
 /// `prefix` with every bit from `depth` on set: the last key under it at `depth`.
 fn last_under(prefix: B256, depth: usize) -> B256 {
     let mut out = prefix;
@@ -298,6 +306,7 @@ fn last_under(prefix: B256, depth: usize) -> B256 {
     out
 }
 
+#[cfg(test)]
 /// `prefix` with bit `depth` set: its right child's prefix.
 fn with_bit(prefix: B256, depth: usize) -> B256 {
     let mut out = prefix;
@@ -305,6 +314,7 @@ fn with_bit(prefix: B256, depth: usize) -> B256 {
     out
 }
 
+#[cfg(test)]
 /// The bits of byte `i` at or past bit `depth` of a key.
 fn low_bits(depth: usize, i: usize) -> u8 {
     let kept = depth.saturating_sub(i * 8).min(8);

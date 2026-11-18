@@ -1,55 +1,108 @@
-//! The engine's state tree: which leaves each root rehashes, the leaf of the engine's remaining
-//! state, and distribution proofs.
-
-use std::collections::BTreeMap;
+//! The engine's state tree: the leaf writes each root takes from what changed since the last one, the
+//! leaf of the engine's remaining state, and the tree a node computes roots with on another thread.
+//!
+//! An engine computes its own roots inline (`Engine::state_root`): it keeps the tree, writes every
+//! leaf changed since the last root into it, and commits it, keeping one version, which its proofs
+//! read. A node can instead take the tree away (`Engine::detach_tree`) and feed it the same leaf
+//! writes: in parts as commands run (`Engine::take_root_delta`) and the rest at a root
+//! (`Engine::commit_inputs`). Each part is read from the state as it is when taken, and a key changed
+//! after that is recorded again, so the root a commit gives is the inline root of the same state,
+//! whatever parts went before it. A protocol version change between parts resets the working version
+//! and puts the keys sent since the last root back in the record, or, where an activation changes
+//! leaves no command touched, discards the tree (`Engine::take_tree_event`).
 
 use alloy_primitives::B256;
 use sha3::{Digest, Keccak256};
 
 mod globals;
+mod leaves;
 mod touched;
-use crate::account::Position;
-use crate::emissions::TokenUnits;
 use crate::engine::{Engine, Markout};
-use crate::levels::PositionLevels;
-use crate::merkle::exit::ExitLeaves;
-use crate::merkle::leaf::{
-    deposit_key, deposit_transaction_key, emission_ledger_hash, emission_ledger_key, legacy_deposit_key,
-};
-use crate::merkle::{
-    AccountLeaf, DistributionProof, MarketLeaf, SparseMerkleTree, account_key, corporate_action_key,
-    corporate_reference_key, credited_ref_hash, credited_ref_key, distribution_hash, distribution_key, eligibility_key,
-    entitlement_hash, entitlement_key, exit_terms_key, globals_key, held_deposit_key, json_hash, levels_hash,
-    levels_key, market_key, markout_hash, markout_key, order_hash, order_key, pending_deposit_key, period_result_hash,
-    period_result_key, position_hash, position_key, request_nonce_hash, request_nonce_key, session_key_hash,
-    session_key_key, staked_hash, staked_key, withdrawal_approval_hash, withdrawal_queue_hash, withdrawal_queue_key,
-};
+use crate::merkle::tree::{LeafUpdate, StateTree, TermsInput};
+use crate::merkle::{globals_key, json_hash};
 use crate::protocol::ProtocolVersion;
-use crate::staking::UsdcUnits;
 use crate::types::{AccountId, MarketId, OrderId};
 pub(crate) use touched::Changed;
 pub use touched::RootWork;
 use touched::Touched;
 
-/// The state tree as of the last root, with the account, position, market, and entitlement leaves
-/// proofs need.
+/// What a detached tree's owner must do before the next leaf writes, after a protocol version change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeEvent {
+    /// Discard the working version's writes since the last commit: the keys sent since then are in
+    /// the record again, to be read under the new version.
+    Reset,
+    /// Discard every version: the activation changed leaves no command touched, and every key is in
+    /// the record again for a tree built afresh.
+    Discard,
+}
+
+/// The engine's side of a detached tree.
 #[derive(Debug, Default)]
-pub(crate) struct StateTree {
-    pub(super) tree: SparseMerkleTree,
-    pub(super) root: B256,
-    pub(super) seq: u64,
-    /// The protocol version the root was computed under, which sets each leaf's encoding.
-    pub(super) version: ProtocolVersion,
-    pub(super) accounts: BTreeMap<AccountId, AccountLeaf>,
-    pub(super) positions: BTreeMap<(AccountId, MarketId), Position>,
-    /// From `V79`, each position's levels.
-    pub(super) levels: BTreeMap<(AccountId, MarketId), PositionLevels>,
-    pub(super) markets: BTreeMap<MarketId, MarketLeaf>,
-    pub(super) entitlements: BTreeMap<AccountId, TokenUnits>,
-    distributions: BTreeMap<AccountId, UsdcUnits>,
-    /// The queue and the pending and held deposits as the root holds them, for the exit.
-    pub(super) exit: ExitLeaves,
-    work: RootWork,
+pub(crate) struct Detached {
+    /// The keys sent in parts since the last root.
+    drained: Touched,
+    /// Whether an activation applying now discards the tree.
+    discard: bool,
+    event: Option<TreeEvent>,
+}
+
+/// Leaf writes taken from the engine between roots.
+#[derive(Debug)]
+pub struct RootDelta {
+    updates: Vec<LeafUpdate>,
+}
+
+/// The leaf writes a root takes at once: every key still in the record, the markets, the leaf of the
+/// remaining state, and the exit terms.
+#[derive(Debug)]
+pub struct CommitInputs {
+    updates: Vec<LeafUpdate>,
+    seq: u64,
+    protocol: ProtocolVersion,
+    terms: Option<TermsInput>,
+}
+
+impl RootDelta {
+    /// How many leaf writes the part holds.
+    pub fn len(&self) -> usize {
+        self.updates.len()
+    }
+
+    /// Whether the part writes nothing.
+    pub fn is_empty(&self) -> bool {
+        self.updates.is_empty()
+    }
+
+    /// Writes the part into `tree`'s working version.
+    pub fn apply(self, tree: &mut StateTree) {
+        tree.advance(self.updates);
+    }
+}
+
+impl CommitInputs {
+    /// The seq of the command the root follows.
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    /// How many leaf writes the root takes.
+    pub fn len(&self) -> usize {
+        self.updates.len()
+    }
+
+    /// Whether the root takes no leaf write.
+    pub fn is_empty(&self) -> bool {
+        self.updates.is_empty()
+    }
+
+    /// Writes the inputs into `tree`'s working version and commits it, returning the root and what
+    /// computing it hashed since the last commit.
+    pub fn apply(self, tree: &mut StateTree) -> (B256, RootWork) {
+        let CommitInputs { updates, seq, protocol, terms } = self;
+        tree.advance(updates);
+        tree.commit(seq, protocol, terms)
+    }
 }
 
 impl Engine {
@@ -68,212 +121,98 @@ impl Engine {
     }
 
     /// The root of the state tree, rehashing the leaves changed since the last root. With no tree
-    /// yet, as on `V9`'s first root, every leaf is hashed.
+    /// yet, as on `V9`'s first root, every leaf is hashed. The tree keeps this root's version alone.
     pub(crate) fn merkle_root(&mut self) -> B256 {
+        // The node computes a detached tree's roots, and a root here would rebuild every leaf.
+        assert!(self.detached.is_none(), "an engine whose tree is detached computes no root");
         let touched = self.take_touched();
-        let Touched {
-            accounts,
-            markets,
-            nonces,
-            refs,
-            staking_refs,
-            period_results,
-            entitlements,
-            emission_ledgers,
-            staked,
-            distributions,
-            session_keys,
-            toxicity_scores,
-            markout_spreads,
-            volumes,
-            deposits,
-            deposit_transactions,
-            legacy_deposits,
-            withdrawal_queue,
-            withdrawal_approvals,
-            corporate_actions,
-            corporate_refs,
-            eligibility,
-            holds,
-            pending,
-            changed: Changed { markouts, positions, orders },
-        } = match &self.tree {
-            Some(_) => touched,
-            None => self.every_key(),
-        };
-        let version = self.protocol_version;
-        let deposit_frontier = (version >= ProtocolVersion::V38).then(|| self.exit_deposit_frontier(version));
-        let mut changes = BTreeMap::from([(globals_key(), Some(json_hash(&self.globals())))]);
-        let exit = &mut self.tree.get_or_insert_with(StateTree::default).exit;
-        exit.update_queue(&self.withdrawal_queue, &withdrawal_queue);
-        exit.update_pending(&self.pending_deposits, &self.deposits, &pending);
-        exit.update_held(&self.held_deposits, &self.deposits, &holds);
-        let credit_leaves =
-            if version >= ProtocolVersion::V77 { exit.credits.update(&self.deposits, &deposits) } else { Vec::new() };
-        if let Some(frontier) = deposit_frontier {
-            changes.insert(
-                exit_terms_key(),
-                Some(exit.commit_terms(frontier, self.custody_checkpoint.map_or(0, |c| c.deposit_count))),
-            );
-        }
-        let exit = &self.tree.as_ref().expect("inserted above").exit;
-        changes.extend(
-            corporate_actions
-                .iter()
-                .map(|id| (corporate_action_key(id), self.corporate_actions.get(id).map(json_hash))),
-        );
-        changes.extend(
-            corporate_refs
-                .iter()
-                .map(|id| (corporate_reference_key(id), self.corporate_refs.contains(id).then(|| json_hash(id)))),
-        );
-        let account_leaves: Vec<(AccountId, Option<AccountLeaf>)> =
-            accounts.into_iter().map(|id| (id, self.accounts.get(&id).map(AccountLeaf::of))).collect();
-        let market_leaves: Vec<(MarketId, Option<MarketLeaf>)> =
-            markets.into_iter().map(|id| (id, self.markets.get(&id).map(MarketLeaf::of))).collect();
-        changes.extend(
-            account_leaves.iter().map(|(id, leaf)| (account_key(*id), leaf.as_ref().map(AccountLeaf::value_hash))),
-        );
-        changes.extend(
-            market_leaves.iter().map(|(id, leaf)| (market_key(*id), leaf.as_ref().map(MarketLeaf::value_hash))),
-        );
-        changes.extend(
-            nonces.into_iter().map(|id| {
-                (request_nonce_key(id), self.request_nonces.get(&id).map(|nonce| request_nonce_hash(*nonce)))
-            }),
-        );
-        changes.extend(
-            refs.iter().map(|r| (credited_ref_key(r), self.credited_refs.contains(r).then(|| credited_ref_hash(r)))),
-        );
-        changes.extend(
-            deposits.iter().map(|reference| (deposit_key(reference), self.deposits.get(reference).map(json_hash))),
-        );
-        changes.extend(credit_leaves);
-        changes.extend(deposit_transactions.iter().map(|reference| {
-            (deposit_transaction_key(reference), self.deposit_transactions.get(reference).map(json_hash))
-        }));
-        changes.extend(
-            legacy_deposits
-                .iter()
-                .map(|reference| (legacy_deposit_key(reference), self.legacy_deposits.get(reference).map(json_hash))),
-        );
-        changes
-            .extend(eligibility.into_iter().map(|id| (eligibility_key(id), self.eligibility.get(&id).map(json_hash))));
-        changes.extend(holds.into_iter().map(|reference| {
-            let leaf = self.held_deposits.get(&reference).map(|hold| exit.held_hash(&reference, hold, version));
-            (held_deposit_key(&reference), leaf)
-        }));
-        changes.extend(pending.into_iter().map(|reference| {
-            let leaf =
-                self.pending_deposits.get(&reference).map(|deposit| exit.pending_hash(&reference, deposit, version));
-            (pending_deposit_key(&reference), leaf)
-        }));
-        changes.extend(markouts.into_iter().map(|index| (markout_key(index), self.markout(index).map(markout_hash))));
-        changes.extend(self.open_time_leaves(&positions));
-        let levels_leaves = self.levels_leaves(&positions);
-        changes.extend(
-            levels_leaves
-                .iter()
-                .map(|((id, market), levels)| (levels_key(*id, *market), levels.as_ref().map(levels_hash))),
-        );
-        let position_leaves: Vec<((AccountId, MarketId), Option<Position>)> = positions
-            .into_iter()
-            .map(|(id, market)| {
-                ((id, market), self.accounts.get(&id).and_then(|acct| acct.positions.get(&market)).copied())
-            })
-            .collect();
-        changes.extend(
-            position_leaves
-                .iter()
-                .map(|((id, market), pos)| (position_key(*id, *market), pos.as_ref().map(position_hash))),
-        );
-        changes.extend(orders.into_iter().map(|(id, order_id)| {
-            let order = self.accounts.get(&id).and_then(|acct| acct.orders.get(&order_id));
-            (order_key(order_id), order.map(|order| order_hash(id, order)))
-        }));
-        let version = self.protocol_version;
-        changes.extend(period_results.into_iter().map(|id| {
-            (period_result_key(id), self.period_results.get(&id).map(|result| period_result_hash(result, version)))
-        }));
-        let entitlement_leaves: Vec<(AccountId, Option<TokenUnits>)> =
-            entitlements.into_iter().map(|id| (id, self.entitlements.get(&id).copied())).collect();
-        changes.extend(
-            entitlement_leaves.iter().map(|(id, entitled)| (entitlement_key(*id), entitled.map(entitlement_hash))),
-        );
-        changes.extend(
-            emission_ledgers
-                .into_iter()
-                .map(|id| (emission_ledger_key(id), self.emission_ledgers.get(&id).map(emission_ledger_hash))),
-        );
-        let distribution_leaves: Vec<(AccountId, Option<UsdcUnits>)> =
-            distributions.into_iter().map(|id| (id, self.distributions.get(&id).copied())).collect();
-        changes.extend(
-            distribution_leaves.iter().map(|(id, entitled)| (distribution_key(*id), entitled.map(distribution_hash))),
-        );
-        changes.extend(withdrawal_queue.into_iter().map(|seq| {
-            (withdrawal_queue_key(seq), self.withdrawal_queue.get(&seq).map(|q| withdrawal_queue_hash(q, version)))
-        }));
-        changes.extend(
-            withdrawal_approvals
-                .into_iter()
-                .map(|key| (key, self.withdrawal_approvals.get(&key).map(withdrawal_approval_hash))),
-        );
-        changes.extend(self.staking_reference_leaves(staking_refs));
-        changes.extend(staked.into_iter().map(|id| (staked_key(id), self.staked.get(&id).map(|s| staked_hash(*s)))));
-        changes.extend(
-            session_keys
-                .into_iter()
-                .map(|account| (session_key_key(account), self.session_keys.get(&account).map(session_key_hash))),
-        );
-        changes.extend(self.toxicity_leaves(toxicity_scores, markout_spreads));
-        changes.extend(self.volume_leaves(volumes));
+        let touched = if self.tree.is_some() { touched } else { self.every_key() };
+        let inputs = self.inputs(&touched);
+        let seq = inputs.seq;
+        let tree = self.tree.get_or_insert_with(StateTree::default);
+        let (root, _) = inputs.apply(tree);
+        tree.release(seq, root);
+        tree.collect(usize::MAX);
+        root
+    }
 
+    /// The leaf writes a root takes from `touched`, with the leaf of the remaining state and, from
+    /// `V38`, the exit terms.
+    fn inputs(&mut self, touched: &Touched) -> CommitInputs {
+        let protocol = self.protocol_version;
+        let terms = (protocol >= ProtocolVersion::V38).then(|| TermsInput {
+            frontier: self.exit_deposit_frontier(protocol),
+            deposit_base: self.custody_checkpoint.map_or(0, |c| c.deposit_count),
+        });
+        let mut updates = self.leaf_updates(touched);
+        updates.push(LeafUpdate::hashed(globals_key(), Some(json_hash(&self.globals()))));
         // A seq has been applied: `V9` takes effect through a sequenced `ActivateProtocol`.
         let seq = self.last_seq.expect("a state root under V9 follows a command");
-        let state = self.tree.get_or_insert_with(StateTree::default);
-        let leaves = changes.len();
-        let nodes = state.tree.update(changes);
-        for (id, leaf) in account_leaves {
-            match leaf {
-                Some(leaf) => state.accounts.insert(id, leaf),
-                None => state.accounts.remove(&id),
-            };
+        CommitInputs { updates, seq, protocol, terms }
+    }
+
+    /// Hands the state tree to the caller, which computes this engine's roots from here on from
+    /// `take_root_delta` and `commit_inputs`; `state_root` refuses after it. `None` with no tree to
+    /// hand over: before the first root under `V9`, or after a decode.
+    pub fn detach_tree(&mut self) -> Option<StateTree> {
+        let tree = self.tree.take()?;
+        self.detached = Some(Detached::default());
+        Some(tree)
+    }
+
+    /// Up to `entries` keys from the record of what changed since the last root, as leaf writes read
+    /// from the state now, for a detached tree's working version. The markets, which every price
+    /// changes, wait for the root.
+    pub fn take_root_delta(&mut self, entries: usize) -> RootDelta {
+        let part = self.take_touched_part(entries);
+        let updates = self.leaf_updates(&part);
+        self.detached.as_mut().expect("parts feed a detached tree").drained.absorb(part);
+        RootDelta { updates }
+    }
+
+    /// The leaf writes of a detached tree's root after the last command: every key still in the
+    /// record, the markets, the remaining state's leaf and the exit terms.
+    pub fn commit_inputs(&mut self) -> CommitInputs {
+        let touched = self.take_touched();
+        self.detached.as_mut().expect("commits feed a detached tree").drained = Touched::default();
+        self.inputs(&touched)
+    }
+
+    /// How many keys the record of what changed since the last root holds: the root work left before
+    /// a detached tree's next commit, beside what its owner has yet to write.
+    pub fn root_backlog(&self) -> usize {
+        self.changed_key_count()
+    }
+
+    /// What a protocol version change asks of a detached tree's owner before any later leaf write,
+    /// clearing it.
+    pub fn take_tree_event(&mut self) -> Option<TreeEvent> {
+        self.detached.as_mut().and_then(|detached| detached.event.take())
+    }
+
+    /// Discards the tree, for an activation that changes leaves no command touched: the next root
+    /// hashes every leaf. With the tree detached, its owner is told when the version changes.
+    pub(crate) fn discard_tree(&mut self) {
+        match &mut self.detached {
+            Some(detached) => detached.discard = true,
+            None => self.tree = None,
         }
-        for (id, leaf) in market_leaves {
-            match leaf {
-                Some(leaf) => state.markets.insert(id, leaf),
-                None => state.markets.remove(&id),
-            };
+    }
+
+    /// Readies a detached tree's next leaf writes for the protocol version just set: every key, after
+    /// a discarding activation, or the keys sent since the last root, is in the record again.
+    pub(crate) fn tree_version_changed(&mut self) {
+        let Some(detached) = &mut self.detached else { return };
+        let drained = std::mem::take(&mut detached.drained);
+        if std::mem::take(&mut detached.discard) {
+            detached.event = Some(TreeEvent::Discard);
+            let every = self.every_key();
+            self.record_touched(every);
+        } else {
+            // A discard waiting to be taken stands: it covers a reset.
+            detached.event = Some(detached.event.unwrap_or(TreeEvent::Reset));
+            self.record_touched(drained);
         }
-        for (id, pos) in position_leaves {
-            match pos {
-                Some(pos) => state.positions.insert(id, pos),
-                None => state.positions.remove(&id),
-            };
-        }
-        for (id, levels) in levels_leaves {
-            match levels {
-                Some(levels) => state.levels.insert(id, levels),
-                None => state.levels.remove(&id),
-            };
-        }
-        for (id, entitled) in entitlement_leaves {
-            match entitled {
-                Some(entitled) => state.entitlements.insert(id, entitled),
-                None => state.entitlements.remove(&id),
-            };
-        }
-        for (id, entitled) in distribution_leaves {
-            match entitled {
-                Some(entitled) => state.distributions.insert(id, entitled),
-                None => state.distributions.remove(&id),
-            };
-        }
-        state.root = state.tree.root();
-        state.seq = seq;
-        state.version = version;
-        state.work = RootWork { leaves, nodes };
-        state.root
     }
 
     /// Clears the record of what changed since the last root, for a root that does not use it.
@@ -281,20 +220,9 @@ impl Engine {
         self.take_touched();
     }
 
-    /// The proof of `account`'s cumulative USDC distribution against the last state root computed,
-    /// as the vault's `claimDistribution` takes it. `None` before the first root under `V9`, or for
-    /// an account that root holds no distribution for.
-    pub fn distribution_proof(&self, account: AccountId) -> Option<DistributionProof> {
-        let state = self.tree.as_ref()?;
-        let entitled = *state.distributions.get(&account)?;
-        let siblings =
-            state.tree.proof(distribution_key(account)).expect("every distribution kept for proofs is in the tree");
-        Some(DistributionProof { seq: state.seq, root: state.root, account, entitled, siblings })
-    }
-
     /// What the last state root hashed, or `None` before the first root under `V9`.
     pub fn last_root_work(&self) -> Option<RootWork> {
-        self.tree.as_ref().map(|state| state.work)
+        self.tree.as_ref().and_then(StateTree::newest).map(|version| version.work())
     }
 
     /// Records that `account`'s position in `market` changed, for the state root.
