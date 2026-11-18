@@ -2,8 +2,7 @@
 
 This document sets out the rules that apply to every account, with the values the engine launches
 with. The values come from [`config/production-genesis.toml`](../config/production-genesis.toml),
-and the engine that enforces them is documented in [`crates/core`](../crates/core/README.md). Values
-marked as proposed have not yet been confirmed.
+and the engine that enforces them is documented in [`crates/core`](../crates/core/README.md).
 
 Amounts are in US dollars. Rates are given in basis points, abbreviated to bps in the tables. One
 basis point is one hundredth of one percent.
@@ -66,7 +65,7 @@ Levels are checked on every price update in their market, and never while the ma
 
 A new or moved level must lie at least the market's minimum distance beyond the price at which the
 position would close. For a level set on a working order, the distance is measured from the order's
-price instead. The proposed minimum distance for each market equals its closing spread cap, listed
+price instead. The minimum distance for each market equals its closing spread cap, listed
 under [Spreads](#spreads). The take profit and stop loss on a position count together as one working
 order towards your limit. Closing or reversing the whole position removes both levels, but adding to
 it or reducing it does not.
@@ -86,11 +85,11 @@ tier has a different first band, as [Volume tiers](#volume-tiers) describes.
 | BTC-USD | 2.0 bps to $2M | 4.0 bps to $10M | 8.0 bps |
 | ETH-USD | 3.0 bps to $1M | 6.0 bps to $5M | 12.0 bps |
 | SOL-USD | 2.0 bps to $1M | 4.0 bps to $5M | 8.0 bps |
-| EUR-USD, GBP-USD (proposed) | 0.4 bps to $10M | 0.8 bps to $50M | 1.6 bps |
-| USD-JPY, AUD-USD (proposed) | 0.5 bps to $10M | 1.0 bps to $50M | 2.0 bps |
-| US500, US30 (proposed) | 0.7 bps to $5M | 1.4 bps to $25M | 2.8 bps |
-| US100 (proposed) | 0.9 bps to $5M | 1.8 bps to $25M | 3.6 bps |
-| JP225 (proposed) | 1.0 bps to $5M | 2.0 bps to $25M | 4.0 bps |
+| EUR-USD, GBP-USD | 0.4 bps to $10M | 0.8 bps to $50M | 1.6 bps |
+| USD-JPY, AUD-USD | 0.5 bps to $10M | 1.0 bps to $50M | 2.0 bps |
+| US500, US30 | 0.7 bps to $5M | 1.4 bps to $25M | 2.8 bps |
+| US100 | 0.9 bps to $5M | 1.8 bps to $25M | 3.6 bps |
+| JP225 | 1.0 bps to $5M | 2.0 bps to $25M | 4.0 bps |
 | XAU-USD, XAG-USD, WTI | 2.0 bps to $2M | 4.0 bps to $10M | 8.0 bps |
 | AMD, AVGO, LLY, NVDA, ORCL, TSLA | 3.0 bps to $500k | 6.0 bps to $2M | 12.0 bps |
 | The other 14 shares | 2.0 bps to $500k | 4.0 bps to $2M | 8.0 bps |

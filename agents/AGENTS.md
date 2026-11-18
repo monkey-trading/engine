@@ -549,7 +549,7 @@ an index: load only the rule whose hint matches the current action.
   their venue calendars, each calendar's sources and unpublished gaps, their quote currencies, the
   futures contracts the index and commodity markets roll through with the roll rules, the
   launch margins and fees, every market's exposure-cap floor and the total floor with level 1 of the stress levels at 80% utilisation (#696, from #500's `research/launch-caps`), from `V52` each market's spread bands in tenths of a bp (#623's tiers,
-  with FX and index first bands pending the owner's confirmation), from `V40` each market's
+  with FX and index first bands confirmed by the owner on 2026-11-18), from `V40` each market's
   close-spread ceiling (#147's calibrated values, recomputed for `V52`'s floor and `V54`'s score
   tiers), from `V54` the toxicity score's tiers and each market's markout floor, its year's
   markout spread (#699), from `V59` the volume tier table (#614, D1), from `V60` the weekend margins of
@@ -560,7 +560,7 @@ an index: load only the rule whose hint matches the current action.
   and `api.per_account` until a notice names them), and from `V68` their fee and financing discounts and emissions
   boosts (#614, D1; `dev.toml` and `anvil.toml` name none, so a log started from them has none, as no notice can
   raise a benefit above launch's), and from `V79` each market's minimum level distance at its close-spread ceiling
-  (#633, D6, proposed for the owner to confirm; `dev.toml` and `anvil.toml` the same); a deployment's node sections complete it
+  (#633, D6, confirmed by the owner on 2026-11-18; `dev.toml` and `anvil.toml` the same); a deployment's node sections complete it
   into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
