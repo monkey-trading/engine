@@ -1,12 +1,13 @@
 ---
 name: readme-writing
 description: >
-  Use before writing, rewriting, or editing any README.md: a repository's root README, a crate's,
-  a package's, or a directory's. Covers who a README is for, the order of its sections, what
-  belongs in one and what never does (version history, file inventories, issue numbers, agent
-  workflow), the root and crate templates, where text moved out of a README goes, how a long page
-  under docs/ opens, how to state status and warnings, the prose and command rules, and the check
-  before a README lands. Modelled on go-ethereum's README. Overrides any older README template in
+  Use before writing, rewriting, or editing any README.md or any other document a person outside
+  the project reads: SECURITY.md, pages under docs/, operator runbooks under ops/runbooks/, and
+  research write-ups. Covers who each is for, the order of a README's sections, what belongs in one
+  and what never does (version history, file inventories, issue numbers, agent workflow), the root
+  and crate templates, the security policy and runbook patterns, where moved text goes, how a long
+  page opens, how to state status, limits and warnings, the prose and command rules, and the check
+  before a document lands. Modelled on go-ethereum's README. Overrides any older README template in
   another skill.
 ---
 
@@ -166,6 +167,56 @@ sentences the code needs, not pasted whole.
 A page under `docs/` is written to this skill's prose standard. A page longer than about 300 lines
 opens, after its first paragraph, with a list of links to its `##` sections, so that a reader can
 go straight to their case. A shorter page has no such list, as a short README has none.
+
+## Other public documents
+
+Every document a person outside the project reads is held to this skill's prose, sentence and
+command rules, not only READMEs. That covers `SECURITY.md`, every page under `docs/`, the runbooks
+under `ops/runbooks/`, and the research write-ups. A document that has grown by appending a
+paragraph per change is rewritten as a whole, as a README is, with every true fact kept.
+
+### A security policy (`SECURITY.md`)
+
+Its readers are a researcher deciding whether to report something, and an auditor or user deciding
+what the system can be trusted for. In this order:
+
+1. **Reporting a vulnerability:** where and how to report privately, what to include, and what not
+   to do. Short, at the top.
+2. **What happens next:** response times, how a report is handled, and how fixes are disclosed and
+   credited.
+3. **Safe harbour.**
+4. **Scope:** what is covered, as a short list or table of the components, one line each.
+5. **What each component is trusted for, and its known limits:** one `###` heading per component
+   (the engine, the trading server, custody, the enclave, price feeds, operator rotation, and so
+   on). Under each, first what the component guarantees, then its known limits as a list. Each
+   limit is one item of one to three sentences: what an attacker or failure can do, what bounds
+   it, and, where it applies, what a report about it alone needs to add to count as new. Group
+   limits under the component a reader would look in, never in one long running section.
+6. **Supported versions** and **bug bounty**, short.
+
+A limit is a commitment, so the rewrite keeps every one, with its exact bound, and never softens or
+drops one to shorten the page. A limit is stated as the system as it is today, never as "until",
+"from version", or an issue number. A page this long opens with links to its component sections.
+
+### An operator runbook (`ops/runbooks/`)
+
+Its reader is an operator under pressure, often during an incident. Each runbook, or each
+procedure within one, follows the same order:
+
+1. **When to use it:** the alert, symptom or decision that brings the operator here, in one or two
+   sentences.
+2. **What is happening:** the cause in plain words, and what it affects for clients.
+3. **What to do:** numbered steps, one action each, with the exact command in a fenced block and
+   the output that shows it worked.
+4. **How to tell it is resolved,** and **when to escalate,** and to whom.
+
+Background the operator does not need in order to act goes after the procedure, or in the module
+docs. Warnings sit at the step they apply to, in bold.
+
+### Research write-ups (`research/*/README.md`)
+
+The question the study answers and its answer come first, as the result with its numbers. Then the
+method, the data and its sources, the limits of the result, and how to re-run it, in that order.
 
 ## Prose
 
