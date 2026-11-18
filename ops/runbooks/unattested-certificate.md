@@ -122,8 +122,8 @@ but a client that trusts only the browser's padlock is.
    the path to port 443, or the CA account can answer a validation. Check, in this order:
 
    - the DNS provider's change history, and the registrar account's recent logins;
-   - whether the CAA record still names only the intended CA and method, and the trading server's
-     ACME account by `accounturi`;
+   - whether the CAA record still names only the intended CA and method, and, by `accounturi`,
+     only the enclaves' ACME accounts;
    - who can change the forward of port 443 on the host or the proxy, and its log;
    - the ACME account that obtained the certificate, from the CA's logs or the entry's issuer.
 
@@ -153,8 +153,11 @@ out to be.
   trading server, and with every log that the CA submits to, as
   [Before the first certificate](certificate-renewal-failure.md#before-the-first-certificate)
   describes.
-- Publish the CAA record with `validationmethods=tls-alpn-01`. Once the trading server has
-  registered its ACME account, add `accounturi`.
+- Publish the CAA record with `validationmethods=tls-alpn-01`. Once the enclaves have registered
+  their ACME accounts, replace it with one record for each account, each naming that account by
+  `accounturi`, as
+  [Before the first certificate](certificate-renewal-failure.md#before-the-first-certificate)
+  describes.
 - Point the watcher at a new release's manifest in the same change as the trading server's upgrade.
 
 ## How the watcher works

@@ -2,9 +2,9 @@
 //! `[api.tls.acme]`, the member serves its standby TLS key on the API's listener, with no API behind
 //! it, so the CA's TLS-ALPN-01 validation of the member's hostname reaches it, and keeps a CA
 //! certificate for that key in the standby certificate store, renewed as the API's is
-//! (`tls::acme`). A promotion copies it into the member's certificate store before the promoted
-//! member serves, so browsers and following members, which verify the operator's certificate
-//! against public roots, reach it from its first answer.
+//! (`tls::acme`), under the ACME account sealed with the standby keys. A promotion copies it into the
+//! member's certificate store before the promoted member serves, so browsers and following members,
+//! which verify the operator's certificate against public roots, reach it from its first answer.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,9 +17,11 @@ use tracing::{info, warn};
 use crate::config::{ApiSection, NodeConfig};
 use crate::limits::{ApiLimits, run_retain};
 use crate::node::KeyStart;
+use crate::standby_key::StandbyKeys;
 use crate::tee::certificates::CertificateStore;
-use crate::tls::acme::CertificateTask;
+use crate::tls::acme::{CertificateTask, Sealed};
 use crate::tls::{Acceptors, serve};
+use crate::trusted_time::TrustedClock;
 
 /// How long a member waits before binding the API's listener again after it failed.
 const BIND_RETRY: Duration = Duration::from_secs(5);
@@ -40,6 +42,16 @@ pub(crate) fn store(cfg: &NodeConfig, start: &KeyStart) -> Option<Arc<Certificat
         })
         .ok()
         .map(Arc::new)
+}
+
+/// Where the standby key's certificate task keeps its ACME account, the standby `keys`, and its
+/// certificate, the standby store `certificates`, with the member's `trusted` time.
+pub(crate) fn sealed(
+    keys: &Arc<StandbyKeys>,
+    certificates: &Arc<CertificateStore>,
+    trusted: TrustedClock,
+) -> Sealed<StandbyKeys> {
+    Sealed { store: Some(keys.clone()), certificates: certificates.clone(), trusted }
 }
 
 /// Serves the standby TLS key, through `acceptors`, on `listen` with no API, under `api`'s limits, and

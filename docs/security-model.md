@@ -688,9 +688,10 @@ Known limits:
 - A browser that does not check the attestation also trusts any other certificate a CA issues for
   the domain. The host can obtain one for a key outside the enclave by answering the CA's
   TLS-ALPN-01 validation on the port it forwards, and so can whoever controls the domain's DNS.
-- The domain's CAA record narrows issuance to one CA and to TLS-ALPN-01. With sealed keys, an
-  `accounturi` naming the enclave's ACME account narrows it to that account. A host that deletes the
-  sealed keys forces new ones, which the vault must register.
+- The domain's CAA record narrows issuance to one CA and to TLS-ALPN-01. With sealed keys,
+  `accounturi` records narrow it further to the ACME accounts the enclaves hold. These are the
+  account sealed with the turn's keys and, with rotation on, the account sealed with each member's
+  standby key. A host that deletes the sealed keys forces new ones, which the vault must register.
 - `engine ct-watch` raises its alert only once a Certificate Transparency log that it follows shows
   the certificate, and only after a grace period, ten minutes by default, in which no verified
   attestation has named the key. It must be running before the first such certificate is issued,

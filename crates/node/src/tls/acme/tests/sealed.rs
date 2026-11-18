@@ -227,11 +227,16 @@ pub(super) fn sealed_store(name: &str) -> Member {
 
 /// The member's next turn: `keys`, as the handover delivers them, sealed in a later generation, and
 /// its certificate store opened again.
-pub(super) fn next_turn(member: &Member, keys: KeySet) -> Member {
+fn next_turn(member: &Member, keys: KeySet) -> Member {
     let sealer = MockSealer { launch_digest: [0x33; 48] };
     let generation = member.keys.generation() + 7;
-    let keys = Arc::new(KeyStore::create(&member.dir, &sealer, [0xc1; 32], generation, keys).unwrap());
-    Member { keys, certificates: open_certificates(&member.dir), dir: member.dir.clone() }
+    started_under(member, KeyStore::create(&member.dir, &sealer, [0xc1; 32], generation, keys).unwrap())
+}
+
+/// The member started again under `keys`, as a handover or a promotion's reseal leaves them, with its
+/// certificate store opened again.
+pub(super) fn started_under(member: &Member, keys: KeyStore) -> Member {
+    Member { keys: Arc::new(keys), certificates: open_certificates(&member.dir), dir: member.dir.clone() }
 }
 
 /// The certificate store sealed in `dir` with the mock stand-in.

@@ -341,8 +341,8 @@ an index: load only the rule whose hint matches the current action.
   from the same account (`liveness/fallback.rs`), keeps a standby key sealed for its release (`standby_key/`), has it vouched
   by the operator's `POST /v1/standby/vouch` or a member and writes the registration for its candidate
   to send (`node/member/standby.rs`), with `[api.tls.acme]` keeps a public certificate for the standby
-  TLS key, answering the CA's TLS-ALPN-01 validation on the API's listener while it follows
-  (`node/member/standby/certificate.rs`), sets aside a copy whose tail an ended signer epoch's key
+  TLS key, answering the CA's TLS-ALPN-01 validation on the API's listener while it follows, under an
+  ACME account sealed with the standby keys (`node/member/standby/certificate.rs`), sets aside a copy whose tail an ended signer epoch's key
   sealed past that epoch's last posted head and rebuilds it from the operator in effect
   (`node/member/standby/orphans.rs`), and once a promotion names it starts in process from its copy,
   fetching any gap of the promotion's prefixes from members, its checkpoints after the promotion's

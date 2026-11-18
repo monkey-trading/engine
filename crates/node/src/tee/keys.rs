@@ -1,10 +1,12 @@
 //! The enclave's keys and what belongs with them: what a restart keeps and an upgrade hands to the
 //! next release. The signing key is the vault's signer and the attested address; the TLS key is the
 //! attested key the API serves, with the ACME account it orders certificates under, which moves with
-//! it so a CAA `accounturi` can name the enclave's own account across every handover. Delivered
-//! secrets do not belong with them (`tee::secrets`): the keys move to an elected operator, while its
-//! vendor accounts and provider keys are its own. Nor do certificates (`tee::certificates`): each
-//! daily turn's member serves its own hostname, so a certificate stays with the member it names.
+//! it so a CAA `accounturi` can name the enclave's own account across every handover. A member's
+//! standby keys hold the account of the standby TLS key, which a promotion reseals as the turn's.
+//! Delivered secrets do not belong with them (`tee::secrets`): the keys move to an elected operator,
+//! while its vendor accounts and provider keys are its own. Nor do certificates
+//! (`tee::certificates`): each daily turn's member serves its own hostname, so a certificate stays
+//! with the member it names.
 
 use std::fmt;
 
@@ -15,6 +17,18 @@ use rcgen::KeyPair;
 use serde::{Deserialize, Serialize};
 
 use crate::tee::EnclaveKey;
+
+/// Sealed keys a certificate task keeps its ACME account in: the turn's keys (`KeyStore`), or a
+/// member's standby keys (`StandbyKeys`).
+pub(crate) trait AccountSeal: Send + Sync {
+    /// The sealed account, if any.
+    fn account(&self) -> Option<AcmeAccount>;
+
+    /// Seals `account` in place of the sealed one; on failure the seal keeps what it held.
+    /// Error cases:
+    /// - the seal cannot be written and synced
+    fn seal_account(&self, account: Option<AcmeAccount>) -> anyhow::Result<()>;
+}
 
 /// The enclave's keys. Secrets are hex; `Debug` prints none of them.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

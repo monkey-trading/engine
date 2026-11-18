@@ -76,7 +76,7 @@ minutes, and `EngineTlsCertificateExpiring` fires within 7 days of expiry.
    | --- | --- | --- |
    | The name does not reach the host. | `dig +short $DOMAIN` returns the address of the host, or of the proxy in front of it. | Fix the DNS records. If both an A and an AAAA record exist, both must reach the trading server, so remove a record that does not. |
    | Port 443 does not reach `node.listen` unmodified. | From outside, `openssl s_client -connect $DOMAIN:443 -servername $DOMAIN </dev/null` completes a handshake. A proxy must forward at layer 4 and never decrypt. If `[api.proxy_protocol]` is set, the proxy must send a PROXY protocol v2 header. | Fix the forward or the firewall. TLS must end in the enclave. |
-   | A CAA record refuses the CA or the validation method. | `dig +short CAA $DOMAIN` lists an `issue` entry for the CA in `directory_url`. If the entry names validation methods, it includes `validationmethods=tls-alpn-01`. | Publish `<domain>. CAA 0 issue "letsencrypt.org; validationmethods=tls-alpn-01"`, or the same record with the chosen CA's name. This is a DNS change, not a change to the trading server. |
+   | A CAA record refuses the CA, the validation method or the account. | `dig +short CAA $DOMAIN` lists an `issue` entry for the CA in `directory_url`. If the entry names validation methods, it includes `validationmethods=tls-alpn-01`. If the entries name accounts by `accounturi`, one of them names the account in the log's latest `ACME account registered` or `using the sealed ACME account` line. | Publish `<domain>. CAA 0 issue "letsencrypt.org; validationmethods=tls-alpn-01"`, or the same record with the chosen CA's name. If the records name accounts, add a record for the missing account, as step 3 of [Before the first certificate](#before-the-first-certificate) describes. This is a DNS change, not a change to the trading server. |
    | The CA is rate-limiting this account or name. | The error says `rateLimited`. Let's Encrypt allows 5 certificates for the same set of names every 7 days, 10 new accounts for each IP address every 3 hours, and 5 failed authorisations for each name every hour. | Wait. Do not restart the trading server repeatedly, because without sealing every start registers a new account and places a new order. |
    | The CA is down or slow. | The CA's status page shows a problem, and the error is a timeout or a 5xx status. | Wait. The trading server retries by itself. |
    | The host clock is wrong. | The connection to the CA fails certificate verification, or an issued certificate is refused as expired or not yet valid. The trading server checks both against the host's clock, which the host controls. | Fix the host clock, and see `clock_drift` in [Alerts](alerts.md). |
@@ -155,9 +155,32 @@ Use this procedure once, before the first deployment that
    for another key is the Certificate Transparency watcher that
    [`unattested_certificate`](unattested-certificate.md) describes.
 
-3. After the trading server first registers its ACME account, add `accounturi` to the CAA record,
-   naming that account. The record then also binds issuance to the account. With sealing, the
-   account's URL is in the trading server's log when it registers.
+3. Once the enclaves have registered their ACME accounts, replace the record from step 2 with one
+   record for each account, each naming that account by `accounturi`:
+
+   ```
+   <domain>. CAA 0 issue "letsencrypt.org; validationmethods=tls-alpn-01; accounturi=<account URL>"
+   ```
+
+   `<account URL>` is the `account` field of the trading server's `ACME account registered` and
+   `using the sealed ACME account` log lines. The records then also bind issuance to those accounts.
+
+   **A CA issues for the domain when any one of its `issue` records allows it. The record from
+   step 2 names no account, so it allows every account until you remove it. An account that no
+   record names cannot obtain a certificate.**
+
+   Each member's hostname needs a record for each of these accounts:
+
+   - The account sealed with the turn's keys. It moves with the keys at every handover and upgrade.
+     Each member therefore orders under it for its own hostname during its turns.
+   - With rotation on, the account sealed with each member's standby key. A promotion makes the
+     promoted member's standby account the account of the turn's keys, which then moves to every
+     member. Every member's hostname therefore needs a record for every member's standby account.
+
+   A new standby key registers a new account. A new release seals new standby keys, and so does a
+   member whose standby key was promoted or replaced. Add a record for each new account when the
+   member's log reports it. Until then, the CA refuses the member's standby certificate, and the
+   member retries by itself, at most an hour apart.
 
 4. Start the Certificate Transparency watcher, `engine ct-watch`, on a host independent of the
    trading server's host.
@@ -184,6 +207,10 @@ The certificate is validated over TLS-ALPN-01 on the API's own port, and renewed
   and no handover moves that file. A restart, or the member's next daily turn under the same TLS
   key, serves the certificate it holds, and orders nothing until renewal is due. A new release, such
   as an upgrade or a configuration change, orders its own certificate under the same account.
+- **A member's standby key.** A rotation-set member that follows the operator also orders a
+  certificate for its standby TLS key, which it would serve if promoted. It orders under an ACME
+  account sealed with the standby keys. A restart orders under the same account, and a promotion
+  makes it the account of the turn's keys.
 - **Renewal.** The trading server renews once `renew_before` of the certificate's life remains. The
   configuration refuses a `renew_before` shorter than 14 days. When `renew_before` is unset, or is
   not shorter than the certificate's life, renewal starts with one third of the life remaining. A
