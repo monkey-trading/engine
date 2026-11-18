@@ -1,245 +1,404 @@
 # Incident response
 
-For a page you do not recognise, a page you cannot fix with its own runbook, or anything that looks
-like an attack. The aim in the first minutes is to find what class of problem it is, keep the
-books and the funds safe with the least drastic step that works, and keep the evidence. Read
-[reference.md](reference.md) first, and find the alert in [alerts.md](alerts.md).
+Use this runbook for an alert you do not recognise, for an alert that its own runbook does not
+resolve, and for anything that looks like an attack. In the first minutes, your aims are to find
+which class of problem it is, to keep the books and the funds safe with the least drastic step that
+works, and to keep the evidence.
+
+- [Contacts](#contacts)
+- [First five minutes](#first-five-minutes)
+- [The ladder of containment](#the-ladder-of-containment)
+- [Tell users](#tell-users)
+- [Keep the evidence](#keep-the-evidence)
+- [By class](#by-class): [The books look wrong](#the-books-look-wrong),
+  [Funds may be at risk](#funds-may-be-at-risk), [Prices look wrong](#prices-look-wrong),
+  [The host misbehaves](#the-host-misbehaves),
+  [Checkpoints cannot resume](#checkpoints-cannot-resume),
+  [Pages stop arriving](#pages-stop-arriving)
+- [After the incident](#after-the-incident)
+
+Find each alert in [Alerts](alerts.md) first. The steps use the shell variables that
+[Variables](reference.md#variables) sets up. Commands and their output call a running trading server
+a node.
 
 ## Contacts
 
-Fill this in before launch and keep a copy outside the systems it describes. Nothing in the node
-decides who is called.
+Fill in this table before launch, and keep a copy outside the systems it describes. Nothing in the
+trading server decides who is called.
 
-| Role | Name and number | Approves |
+| Role | Name and number | Approves or does |
 | --- | --- | --- |
-| Deployment owner (OWNER) | | Node, config and admin-command changes; every step marked as changing the live system |
-| Multisig signers (OWNER) | | Timelock proposals; the guardian's pause and signer retirement |
-| Operator on call (OWNER) | | Runs the commands in these runbooks |
-| Host and network provider (OWNER) | | The data disk, the VM, port 443 and the metrics network |
-| DNS and registrar account holder (OWNER) | | The API domain's records |
+| Deployment owner (OWNER) | | Approves changes to the trading server, its configuration and its administrative instructions, and every step marked as changing the live system. |
+| Multisig signers (OWNER) | | Approve timelock proposals, and the guardian's pause and signer retirement. |
+| Operator on call (OWNER) | | Runs the commands in these runbooks. |
+| Host and network provider (OWNER) | | Controls the data disk, the virtual machine, port 443 and the metrics network. |
+| DNS and registrar account holder (OWNER) | | Controls the API domain's records. |
 
-The node posts Critical alerts to the `[alerts.critical]` webhook and Warnings to the optional
-`[alerts.warning]` one. Prometheus rules (`ops/prometheus/engine-node-rules.yml`) page through a
-different receiver for the node going silent and for pages that cannot be delivered.
+The trading server posts Critical alerts to the `[alerts.critical]` webhook, and Warnings to the
+optional `[alerts.warning]` webhook. The Prometheus rules in `ops/prometheus/engine-node-rules.yml`
+page through a different receiver when the trading server goes silent, and when its pages cannot be
+delivered.
 
 ## First five minutes
 
-1. **Is the node answering?**
+Use this procedure when a page arrives that its own runbook does not cover, or when something looks
+like an attack.
 
-   ```sh
-   curl -sf --max-time 10 $API/v1/health            # ok
+1. Check whether the trading server answers:
+
+   ```shell
+   curl -sf --max-time 10 $API/v1/health
    curl -s --max-time 10 http://<metrics host>:9464/metrics | grep -E '^engine_(withdrawals_paused|last_checkpoint_timestamp_seconds|alert_pages_pending) '
    ```
 
-   No answer: [restart-and-recovery.md](restart-and-recovery.md). Answering: go on.
-2. **What is open?** The pages received, and the console log if you have it. Find each alert in
-   [alerts.md](alerts.md) and follow its runbook for the first step. A Critical page with no runbook
-   for its situation is an incident; continue here.
-3. **How bad is it?** Ask:
-   - Can an account lose money it should not, or can the house? (Wrong prices, a wrong book, an
-     admin command nobody sent.)
-   - Can an account not get its money out? (Withdrawals paused, checkpoints stopped.)
-   - Is a key or secret exposed? ([key-recovery.md](key-recovery.md).)
-   - Is the public log or the vault inconsistent with what the node says? (`checkpoint_conflict`,
-     `collateral_mismatch`, `log_tail_lost`, a failed replay.)
-4. **Call the owner** for anything in the second to fourth class, and for any step below marked as
-   changing the live system. Have the exact command ready, and the notice users will see
-   ("Tell users" below) if the step affects them.
-5. **Keep the evidence** (below) before you restart or change anything.
+   `<metrics host>` is the address of the trading server's metrics listener. The first command
+   prints `ok`. If it prints nothing, follow [Restart and recovery](restart-and-recovery.md).
+
+2. List the open alerts from the pages you received, and from the console log if you have it. Find
+   each alert in [Alerts](alerts.md), and take the first step of its runbook. A Critical page with
+   no runbook for its situation is an incident, so continue here.
+
+3. Decide how serious it is, by asking these questions:
+
+   - Can an account, or the house, lose money that it should not? Wrong prices, a wrong book, or an
+     administrative instruction that nobody sent are signs of this.
+   - Is an account unable to get its money out? Paused withdrawals and stopped checkpoints are signs
+     of this.
+   - Is a key or a secret exposed? If so, follow [Key recovery](key-recovery.md).
+   - Do the public log or the vault disagree with what the trading server reports?
+     `checkpoint_conflict`, `collateral_mismatch`, `log_tail_lost` and a failed replay are signs of
+     this.
+
+4. Call the owner if the answer to any of the last three questions is yes, and before any step that
+   is marked as changing the live system. Have the exact command ready, and the notice that clients
+   will see if the step affects them, as [Tell users](#tell-users) describes.
+
+5. Keep the evidence before you restart or change anything, as
+   [Keep the evidence](#keep-the-evidence) describes.
 
 ## The ladder of containment
 
-Take the least drastic step that stops the harm. Every step but the first two changes the live
-system and needs the owner's approval for that action; the guardian steps need the multisig as well.
+Take the least drastic step that stops the harm. Every step except the first two changes the live
+system and needs the owner's approval for that action. The guardian's steps also need the multisig.
 
 | Step | Effect | Reversible | How |
 | --- | --- | --- | --- |
-| Observe | Nothing changes. | n/a | The checks above. |
-| Reduce-only for a market or all | Refuses orders that grow a position. Closes still fill. | Yes, at once | [reduce-only.md](reduce-only.md) |
-| Status notice | Shows one short message on every console page. Nothing else changes. | Yes, at once | `$ENGINE admin … set-notice "<text>"`, `clear-notice` (owner's approval). See "Tell users" below. |
-| Raise the stress floor | Widens spreads. From `V46` at most level 1, and it lapses after 72 hours unless set again. | Yes | `$ENGINE admin … set-stress-floor <level> [--market <id>]` (owner's approval) |
-| Guardian: `pauseWithdrawals()` | No withdrawal or distribution claim pays for 7 days. Trading, checkpoints and deposits continue. | The timelock lifts it with `setPauses`; it also ends after 7 days | `cast send $VAULT 'pauseWithdrawals()' --rpc-url $RPC --account <guardian>` |
-| Timelock: `setPauses(depositsPaused, withdrawalsPaused)` | Pauses deposits and/or withdrawals until the timelock lifts it. | Yes, through the timelock | Pattern in reference.md; 3-day delay |
-| Guardian: `retireSigner()` | The vault accepts no checkpoint and no withdrawal signed in the current epoch, until the timelock installs a signer. | Only by a new signer through the timelock | [key-recovery.md](key-recovery.md), "New keys" |
-| Stop the node (VM off) | Everything stops: trading, checkpoints, the API. The vault's deadlines begin to run. | Restart | [restart-and-recovery.md](restart-and-recovery.md) |
+| Observe | Nothing changes. | Not applicable | The checks in [First five minutes](#first-five-minutes). |
+| Make one market, or every market, reduce-only | Orders that would open or increase a position are refused. Orders that reduce or close a position are still executed. | Yes, at once | [Make markets reduce-only](reduce-only.md) |
+| Post a status notice | One short message is shown to every client. Nothing else changes. | Yes, at once | `$ENGINE admin … set-notice "<text>"` and `clear-notice`, with the owner's approval, as [Tell users](#tell-users) describes. |
+| Raise the stress floor | Spreads widen. The floor is at most level 1, and it lapses 72 hours after it is set, unless it is set again. | Yes | `$ENGINE admin … set-stress-floor <level> --market <id>`, with the owner's approval. Without `--market`, the floor applies to every market. |
+| The guardian calls `pauseWithdrawals()` | No withdrawal and no distribution claim is paid for seven days. Trading, checkpoints and deposits continue. | The timelock lifts it with `setPauses`, and it also ends after seven days. | `cast send $VAULT 'pauseWithdrawals()' --rpc-url $RPC --account <guardian>` |
+| The timelock calls `setPauses(depositsPaused, withdrawalsPaused)` | Deposits, withdrawals or both are paused until the timelock lifts the pause. | Yes, through the timelock | [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock), with a delay of three days. |
+| The guardian calls `retireSigner()` | Until the timelock installs a signer, the vault accepts no checkpoint, and no withdrawal signed in the current epoch. | Only when the timelock installs a new signer | [New keys](key-recovery.md#new-keys) |
+| Stop the trading server by powering off its virtual machine | Everything stops, including trading, checkpoints and the API. The vault's deadlines begin to run. | Restart it | [Restart and recovery](restart-and-recovery.md) |
+
+A guardian step takes effect immediately, and it is the quickest lever on chain. A timelock step
+takes at least three days. The guardian cannot extend its own pause. Use the guardian's pause when
+funds are leaving wrongly, or may be, and not for a price feed outage.
 
 ## Tell users
 
-When a step affects users, a withdrawal pause or markets made reduce-only, tell them at once, in
-neutral wording, on the announcement channel and in the console. Post the console's part as the
-operator's status notice:
+Use this procedure whenever a containment step affects clients, such as a withdrawal pause or
+markets made reduce-only. Tell clients at once, in neutral wording, on the announcement channel and
+in the console. The console shows the operator's status notice, which you post as follows.
 
-```sh
-# As reference.md's admin call: OPERATOR_KEY_FILE names the operator's key.
-$ENGINE admin --config $CONFIG --node $API --pin $PIN set-notice "Security maintenance: withdrawals are paused."
-curl -sf $API/v1/notice | jq .
-```
+1. Write the notice. The text is 1 to 280 characters of plain text, with no markup, link or line
+   break, and no space at its start or end. The command refuses anything else before it signs.
 
-- The text is 1 to 280 characters of plain text: no markup, link or line break, and no leading or
-  trailing space. The command refuses anything else before it signs. A new text replaces the
-  one in force.
-- It is a sequenced admin command (protocol `V78`), so every node serves it signed at `/v1/notice` and
-  on the signed stream (`notice=1`), a handover or restart carries it with the log, and the public log
-  shows who set it and when. It moves no value, so the operator in office may set it while votes govern.
-- State what users need and nothing about the cause: what is paused or restricted, and what is
-  unaffected. Say when the next update comes if you know it. Do not name an attacker, a suspected
-  cause or an amount.
-- Post it with the containment step, not after it, and replace it when the situation changes.
-- Remove it as soon as the step is lifted: `$ENGINE admin --config $CONFIG --node $API --pin $PIN clear-notice`
-  (a clear with no notice in force is refused, which is harmless). Check `/v1/notice` shows `"notice": null`.
-- It is a sequenced command, so it needs a node that is sequencing: while sequencing is frozen or halted
-  (`log_rollback`, a trusted-time halt, a held log sync) or the node is down, the command is refused or
-  cannot reach it, and the announcement channel is the only way to tell users.
-- Setting or clearing it changes the live system, so it needs the owner's approval like the steps above.
+   - State what clients need to know, and nothing about the cause. Say what is paused or restricted,
+     and what is unaffected. Say when the next update will come, if you know.
+   - Do not name an attacker, a suspected cause or an amount.
 
-A guardian step is **immediate** and the quickest lever on chain; the timelock's is 3 days. The
-guardian's pause cannot be extended by the guardian. Use it when funds are leaving wrongly or may be,
-not for a feed outage.
+2. Post the notice together with the containment step, not after it.
+
+   **Changes the live system.** The owner must approve this administrative instruction.
+
+   ```shell
+   $ENGINE admin --config $CONFIG --node $API --pin $PIN set-notice "Security maintenance: withdrawals are paused."
+   ```
+
+   The command reads the operator's key as in [Variables](reference.md#variables). A new text
+   replaces the notice in force. The last line of the output is `[{"type":"admin_applied"}]`.
+
+3. Confirm that the trading server serves the notice:
+
+   ```shell
+   curl -sf $API/v1/notice | jq .
+   ```
+
+   The answer shows the notice's `text` and the time at which it was set, `set_at_ms`.
+
+4. Replace the notice whenever the situation changes, by posting a new text as in step 2.
+
+5. Remove the notice as soon as the containment step is lifted.
+
+   **Changes the live system.** The owner must approve this administrative instruction.
+
+   ```shell
+   $ENGINE admin --config $CONFIG --node $API --pin $PIN clear-notice
+   ```
+
+   The engine refuses to clear a notice when none is in force, which is harmless. Afterwards,
+   `curl -sf $API/v1/notice` prints `{"notice":null}`.
+
+The notice is an administrative instruction that the trading server sequences. Every trading server
+therefore serves it signed, at `/v1/notice` and on the signed stream when the client asks for
+`notice=1`. A handover or a restart carries the notice with the log, and the public log shows who
+set it and when. The notice moves no value, so the operator in office may set it while votes govern.
+
+**The notice needs a trading server that is sequencing. While sequencing is frozen or halted, for
+example by `log_rollback`, a trusted-time halt or a held log sync, or while the trading server is
+down, the command is refused or cannot reach it. The announcement channel is then the only way to
+tell clients.**
 
 ## Keep the evidence
 
-Do these first when the books, a key or a certificate may be involved, and note the time of each:
+Use this procedure before you restart or change anything, whenever the books, a key or a certificate
+may be involved. Note the time at which you take each step.
 
-1. The pages received, with their timestamps, and the console log (serial output), kept as files.
-2. The public log, downloaded and replayed ([reference.md](reference.md), "Download the public log and verify it"). Keep both the
-   download and the `replay` output.
-3. The node's identity: `curl -sf $API/v1/attestation > attestation-$(date -u +%Y%m%dT%H%M%SZ).json`.
-4. The vault and registry state: run every command under "Read the vault and the registry" in
-   reference.md and keep the output with its block number
-   (`cast block-number --rpc-url $RPC`).
-5. The metrics: `curl -s http://<metrics host>:9464/metrics > metrics-$(date -u +%Y%m%dT%H%M%SZ).txt`.
-6. Do not delete, truncate or "repair" anything on the data disk, and do not restart a node that
-   has stopped itself with `checkpoint_conflict`, `log_recovery_failed` or `log_tail_lost` until the
-   owner has seen the evidence.
+1. Save the pages you received, with their timestamps, and the console log, which is the virtual
+   machine's serial output, as files.
+
+2. Download the public log and replay it, as
+   [Download the public log and verify it](reference.md#download-the-public-log-and-verify-it)
+   describes. Keep both the download and the output of `replay`.
+
+3. Save the trading server's identity:
+
+   ```shell
+   curl -sf $API/v1/attestation > attestation-$(date -u +%Y%m%dT%H%M%SZ).json
+   ```
+
+4. Save the state of the vault and the registry. Run every command in
+   [Read the vault and the registry](reference.md#read-the-vault-and-the-registry), and keep the
+   output together with the block number at which you read it:
+
+   ```shell
+   cast block-number --rpc-url $RPC
+   ```
+
+5. Save the metrics:
+
+   ```shell
+   curl -s http://<metrics host>:9464/metrics > metrics-$(date -u +%Y%m%dT%H%M%SZ).txt
+   ```
+
+**Do not delete, truncate or repair anything on the data disk. Do not restart a trading server that
+has stopped itself with `checkpoint_conflict`, `log_recovery_failed` or `log_tail_lost` until the
+owner has seen the evidence.**
 
 ## By class
 
 ### The books look wrong
 
-A failed `replay` of the public log, a root that does not match the vault's, `log_tail_lost`,
-`checkpoint_conflict`, `checkpoint_accounting_overflow`, or an account whose balance does not follow
-from its events.
+Use this procedure when a replay of the public log fails, when a root does not match the vault's, or
+when `log_tail_lost`, `checkpoint_conflict` or `checkpoint_accounting_overflow` fires. Use it also
+when an account's balance does not follow from its events.
 
-- The log is the record. `engine replay --log archive --signer $SIGNER` checks every command and
-  checkpoint against the rules and the signer; any other result than `verified:` is an integrity
-  incident. Make all markets reduce-only. Keep the evidence. Call the owner.
-- `log_tail_lost` (Critical) means a recovery found the log ends before commands that signed heads
-  cover: acknowledged commands are lost from this disk. Do not start another node from this disk.
-  Look for a copy that reaches further (a standby's, a mirror's).
-- Two copies of the node running from one disk make `checkpoint_conflict`: all but one stops. Find
-  and stop the extra copy; the host must show which VMs run.
+The log is the record. Replay checks every instruction and checkpoint in it against the rules and
+the signer.
+
+1. Replay the downloaded log against the signer:
+
+   ```shell
+   $ENGINE replay --log archive --signer $SIGNER
+   ```
+
+   The last line begins `verified:`. **Any other result is an integrity incident.**
+
+2. If the replay fails, make every market reduce-only, as [Make markets reduce-only](reduce-only.md)
+   describes.
+
+3. Keep the evidence, and call the owner.
+
+Two of these alerts need more:
+
+- **`log_tail_lost`.** Recovery found that the log ends before instructions that signed log heads
+  cover, so instructions that clients saw acknowledged are missing from this disk. **Do not start
+  another trading server from this disk.** Look for a copy that reaches further, such as a standby's
+  copy or a mirror's.
+- **`checkpoint_conflict`.** Two copies of the trading server running from one disk cause this
+  alert, and every copy but one stops. Find and stop the extra copy. The host must show which
+  virtual machines are running.
 
 ### Funds may be at risk
 
-Wrong withdrawal authorizations, a vault balance below the ledger (`collateral_mismatch`), an
-exposed enclave key.
+Use this procedure when withdrawal authorisations look wrong, when the vault's balance is below the
+ledger and `collateral_mismatch` fires, or when an enclave key is exposed.
 
-- Guardian `pauseWithdrawals()` first (immediate). Then reduce-only. Then
-  [withdrawal-stalls.md](withdrawal-stalls.md) for the mismatch, or [key-recovery.md](key-recovery.md)
-  for the key.
-- Pausing does not hurt accounts' balances: it delays their exits. Weigh that against the harm.
+1. Have the guardian pause withdrawals. The pause takes effect immediately.
+
+   **Changes the live system.** The owner and the multisig must approve this call.
+
+   ```shell
+   cast send $VAULT 'pauseWithdrawals()' --rpc-url $RPC --account <guardian>
+   ```
+
+2. Make the markets reduce-only, as [Make markets reduce-only](reduce-only.md) describes.
+
+3. For a collateral mismatch, follow
+   [Collateral does not reconcile](withdrawal-stalls.md#collateral-does-not-reconcile). For an
+   exposed key, follow [Key recovery](key-recovery.md).
+
+A pause does not reduce any account's balance. It delays withdrawals and exits. Weigh that delay
+against the harm that the pause prevents.
 
 ### Prices look wrong
 
-A market priced far from the venues, a page that the venues disagree, fills that look off.
+Use this procedure when a market's price is far from the venues' prices, when a page says that the
+venues disagree, or when executions look wrong.
 
-- A crypto venue that is down or quiet leaves BTC-USD and ETH-USD unpriced, which is its own case:
-  [feed-and-custody-failures.md](feed-and-custody-failures.md), "A crypto venue is down or quiet".
-- Make the market reduce-only. If the price itself is wrong and fills continue, raise the stress
-  floor, and consider the guardian's pause. See [feed-and-custody-failures.md](feed-and-custody-failures.md).
-- Do not widen `max_divergence_bps` or change a market's price rules in the heat of an incident:
-  they are protocol parameters and a change is an owner decision with a notice period. From `V76` the
-  engine enforces it: looser price rules apply only seven days after a listing notice
-  (`announce-listing --price-rules-from`), or by a vote, and never past the market's launch rules.
-- From `V52` a market's spread and margin bands change only seven days after a listing notice
-  (`announce-listing`), within its launch bands, so an incident widens spreads through the stress
-  floor and stops new risk through reduce-only, never through a relisting. While votes govern
-  ([operator-candidate.md](operator-candidate.md) §7), the engine refuses the operator's listing
-  notice too: the members' fast-path vote is the lever for a higher margin or close-out level, a stress
-  floor above level 1, or reduce-only, and applies at once; the operator keeps its own level-1 floor
-  and reduce-only.
-- From `V60` the same holds for a market's weekend margin (`announce-listing --weekend-margin-bps`),
-  a relisting may not shorten or remove a weekend closure starting within seven days, and while the
-  market holds positions may not add or bring one forward within seven days, so a venue's unplanned
-  early close stays off the calendar until the planned close, whose close-out still runs at the last
-  price. When a
-  market with one starts its weekend gap, every account below it is closed out on that market at its
-  last price before the close, so a burst of close-outs at Friday's close in WTI, Japan 225, silver
-  or US Tech 100 is the rule working, not an incident; so are withdrawals refused over the weekend for
-  accounts holding them, which keep the weekend margin until the market reopens.
+1. If a crypto venue is down or quiet, BTC-USD, ETH-USD and SOL-USD can lose their price. That case
+   has its own procedure in
+   [A crypto venue is down or quiet](feed-and-custody-failures.md#a-crypto-venue-is-down-or-quiet).
+
+2. Make the market reduce-only, as [Make markets reduce-only](reduce-only.md) describes.
+
+3. If the price itself is wrong and executions continue, raise the market's stress floor, and
+   consider the guardian's pause. [Price feeds](feed-and-custody-failures.md#price-feeds) covers the
+   feeds.
+
+   **Do not widen `max_divergence_bps`, or change a market's price rules, during an incident.** They
+   are protocol parameters, and changing them is the owner's decision, with a notice period that the
+   engine enforces. Looser price rules apply only seven days after a listing notice, given with
+   `announce-listing --price-rules-from`, or after a vote, and never beyond the market's launch
+   rules.
+
+A market's spread bands and margin bands change only seven days after a listing notice given with
+`announce-listing`, and only within the market's launch bands. During an incident, you therefore
+widen spreads with the stress floor and stop new risk with reduce-only, never by listing the market
+again.
+
+While votes govern, as [Parameter votes](operator-candidate.md#parameter-votes) describes, the
+engine also refuses the operator's listing notices. The members' fast-path vote is then the way to
+raise a margin or a close-out level, to set a stress floor above level 1, or to make a market
+reduce-only, and it applies at once. The operator keeps its own level-1 stress floor and its own
+reduce-only switch.
+
+The same rules apply to a market's weekend margin, which a notice given with
+`announce-listing --weekend-margin-bps` changes. A new listing of a market may not shorten or remove
+a weekend closure that starts within seven days. While the market holds positions, a new listing may
+not add a closure, or bring one forward, within seven days. An unplanned early close at a venue
+therefore stays off the calendar until the planned close, and the close-out at the weekend gap still
+runs at the last price.
+
+**Close-outs at a weekend gap are the rule working, not an incident.** When a market with a weekend
+margin starts its weekend gap, every account below that margin is closed out in that market, at its
+last price before the close. A burst of close-outs at Friday's close in WTI, Japan 225, silver or US
+Tech 100 is therefore expected. So are withdrawals refused over the weekend for accounts holding
+those markets, which must keep the weekend margin until the market reopens.
 
 ### The host misbehaves
 
-The host controls the clock, the disk, the network and when the VM runs. It cannot read or forge the
-enclave's keys or the signed log. It can delay, drop, replay and stop things. What you may see:
-`clock_drift`, `trusted_time_unavailable`, missing feeds, a disk that rolled back
-(`checkpoint_startup_failed`: log shorter than the vault), a second copy of the node, a forwarded
-port that answers for the CA (`unattested_certificate`).
+Use this procedure when `clock_drift`, `trusted_time_unavailable` or `unattested_certificate` fires,
+when feeds go missing, when a start fails with `checkpoint_startup_failed` because the log is
+shorter than the vault, or when a second copy of the trading server appears.
 
-- Do not trust what the host says about the node; trust the attestation, the signed answers
-  ([reference.md](reference.md): `verify-response`) and the replay.
-- `clock_drift` and `trusted_time_unavailable` halt sequencing by themselves and resume when time
-  checks out. Fix the host's clock and its UDP path to the Roughtime servers.
+The host controls the clock, the disk, the network, and when the virtual machine runs. It cannot
+read or forge the enclave's keys or the signed log. It can delay, drop, replay and stop things. A
+disk that was rolled back, a second copy of the trading server, and a forwarded port that answers
+the certificate authority are all signs of a misbehaving host.
+
+1. Do not trust what the host says about the trading server. Trust the attestation, the signed
+   answers, which `engine verify-response` checks, and the replay.
+2. For `clock_drift` and `trusted_time_unavailable`, fix the host's clock, and its UDP path to the
+   Roughtime servers. Both alerts halt sequencing by themselves, and sequencing resumes once the
+   time checks out again. [Trusted time](feed-and-custody-failures.md#trusted-time) has the details.
 
 ### Checkpoints cannot resume
 
-The node is down and cannot be restored, the key is lost beyond the timelock's reach, or the
-operator cannot be replaced in time. The vault's own safety net is the **exit against the last
-posted root**, which the owner must decide to let run, because it is permanent: it ends signed
-withdrawals, checkpoints and distribution claims for good.
+Use this procedure when the trading server is down and cannot be restored, when the key is lost
+beyond the timelock's reach, or when the operator cannot be replaced in time. Use it also when
+`vault_exit_started` fires.
 
-1. Do the arithmetic. `lastCheckpointAt()` plus `exitPeriod()` (14 days at launch) is when anyone may
-   start it. A governance recovery (new keys, a new operator) needs the timelock's delay (3 days) after
-   the replacement is ready ([key-recovery.md](key-recovery.md), [standby.md](standby.md)). The owner
-   decides whether a recovery can land first.
-2. Meanwhile, make the public log available: mirrors must serve every completed segment, and users
-   need the log to build their proofs.
-3. When the exit is open (`vault_exit_started` fires on a live node; on chain, `ExitActive` replaces the
-   normal calls), anyone starts it and anyone registers claims for the claim window (`claimWindow`).
-   After the window, accounts are paid pro rata from what the vault holds; the house remainder goes out
-   through the timelock. The vault values each account's equity at the root's marks.
-4. Build the calls from the log alone, for an account, the house, or a vault deposit id:
+The vault's own safety net is the exit against the last posted root. The owner must decide to let it
+run, because the exit is permanent. It ends signed withdrawals, checkpoints and distribution claims
+for good.
 
-   ```sh
+1. Work out the deadline. Anyone may start the exit at `lastCheckpointAt()` plus `exitPeriod()`,
+   which is 14 days at launch. A governance recovery, such as new keys or a new operator, needs the
+   timelock's three-day delay after the replacement is ready, as [Key recovery](key-recovery.md) and
+   [Running as a standby](standby.md) describe. The owner decides whether a recovery can finish
+   first.
+
+2. Meanwhile, keep the public log available. The mirrors must serve every completed segment, because
+   clients need the log to build their proofs.
+
+3. Once the exit is open, anyone can start it, and anyone can register claims during the claim
+   window, `claimWindow()`. A running trading server raises `vault_exit_started`, and on chain the
+   normal calls revert with `ExitActive`. After the window, accounts are paid pro rata from what the
+   vault holds, and the house's remainder goes out through the timelock. The vault values each
+   account's equity at the root's marks.
+
+4. Build the vault calls from the log alone, for an account, for the house, or for a vault deposit
+   id:
+
+   ```shell
    SEQ=$(cast call $VAULT 'latestSeq()(uint64)' --rpc-url $RPC)
-   $ENGINE exit-proof --log archive --seq $SEQ --account 0x<address> > exit-$SEQ.json
+   $ENGINE exit-proof --log archive --seq $SEQ --account <address> > exit-$SEQ.json
    $ENGINE exit-proof --log archive --seq $SEQ --house > exit-house-$SEQ.json
    $ENGINE exit-proof --log archive --seq $SEQ --deposit <id> > exit-deposit-$SEQ.json
    jq -r '.calls[] | .what, .calldata' exit-$SEQ.json
    ```
 
-   An account's unfinalised principal joins its claim through the `registerExitCredits` calls that
-   follow its `registerExit`, only where the vault's own deposit records match the credits the root
-   holds for it. A deposit made after a reorganisation, at an id where the root holds another
-   receipt, is refunded to its payer through `--deposit <id>`'s `refundReceipt` call, sent while
-   claims register.
+   `<address>` is the account's address, and `<id>` is a vault deposit id. The last command lists
+   each call's description and its encoded data. `exit-proof` fails unless the log's instructions
+   reproduce the checkpoint's root, and the vault checks every proof against the root it accepted.
 
-   The log's commands must reproduce the checkpoint's root; the vault checks every proof against the
-   root it accepted. Send each call in the order listed, skipping a call whose description says the
-   vault refuses it: `cast send $VAULT <calldata> --rpc-url $RPC --account <the sender>`. A payer other than the
-   account may send it; the pay-out goes to the account.
-5. Say plainly to the people affected what the owner decided, and when.
+   An account's principal that is not yet final joins its claim through the `registerExitCredits`
+   calls that follow its `registerExit`. It does so only where the vault's own deposit records match
+   the credits that the root holds for the account. A deposit made after a reorganisation of the
+   chain, at an id where the root holds another receipt, is refunded to its payer through the
+   `refundReceipt` call that `--deposit <id>` builds. Send that call while claims are being
+   registered.
+
+5. Send each call in the order listed. Skip a call whose description says that the vault refuses it.
+
+   **Changes the live system.** The owner must approve each call that you send.
+
+   ```shell
+   cast send $VAULT <calldata> --rpc-url $RPC --account <sender>
+   ```
+
+   `<calldata>` is one call's data from step 4, and `<sender>` is the Foundry keystore account that
+   sends it. Someone other than the account may send the call, and the payment still goes to the
+   account.
+
+6. Tell the people affected, plainly, what the owner decided, and when.
 
 ### Pages stop arriving
 
-`EngineNodeDown` (no metrics scrape for a minute), `EngineAlertPagesFailing` (pages failed or
-dropped in 15 minutes), `EngineAlertDeliveryFailing` (three failed posts in 5 minutes),
-`EngineAlertLinesDropped` and `EngineAlertOutboxOverflow` (the node dropped or refused pages), and
-`EngineAlertRouteOff` (no delivered bundle holds the webhook's URL; deliver it,
-[key-recovery.md](key-recovery.md), "Secrets").
+Use this procedure when one of these Prometheus rules fires:
 
-- The node posts through a durable outbox and retries each page with backoff for up to an hour per
-  run, bounded by `alerts.outbox.max_age`. A page is removed after acceptance, a permanent refusal
-  (a redirect or a 4xx but 408 and 429), or the budget running out. The Prometheus receiver is
-  separate on purpose, so a dead webhook is not silent.
-- Check the receiver first: the URL is a credential, so a rotated URL fails every post. Then the
-  node's egress. `engine_alert_pages_pending` shows what is queued.
-- Pages queued while the receiver was down are delivered when it returns, oldest first.
+- `EngineNodeDown`: no metrics scrape has succeeded for a minute.
+- `EngineAlertPagesFailing`: pages failed or were dropped in the last 15 minutes.
+- `EngineAlertDeliveryFailing`: three posts failed in 5 minutes.
+- `EngineAlertLinesDropped` or `EngineAlertOutboxOverflow`: the trading server dropped or refused
+  pages.
+- `EngineAlertRouteOff`: no delivered bundle holds a webhook's URL. Deliver it, as
+  [Secrets](key-recovery.md#secrets) describes.
+
+The trading server posts its pages through a durable outbox. It retries each page with a backoff for
+up to an hour per run, bounded by `alerts.outbox.max_age`. A page is removed once the receiver
+accepts it, once the receiver refuses it permanently, or once its retry budget runs out. A permanent
+refusal is a redirect, or a 4xx status other than 408 and 429. The Prometheus receiver is separate
+on purpose, so that a dead webhook is not silent.
+
+1. Check the receiver first. The webhook's URL is a credential, so a rotated URL fails every post.
+2. Check the trading server's outbound network.
+3. Read what is queued:
+
+   ```shell
+   curl -s http://<metrics host>:9464/metrics | grep '^engine_alert_pages_pending'
+   ```
+
+**How to tell it is resolved.** Pages queued while the receiver was down are delivered once it
+returns, oldest first, and `engine_alert_pages_pending` falls back to 0.
 
 ## After the incident
 
-1. Write down what happened, in order, with the times, the commands run (with their approvals) and the
-   evidence kept.
-2. State the cause as far as it is known, and what is not.
-3. For any alert that had no runbook for its situation, or any step here that was wrong or missing,
-   change the runbook in the same week.
+1. Write down what happened, in order, with the times, the commands you ran, the approvals for them,
+   and the evidence you kept.
+2. State the cause as far as it is known, and state what is not known.
+3. For every alert that had no runbook for its situation, and every step in these runbooks that was
+   wrong or missing, change the runbook within the same week.

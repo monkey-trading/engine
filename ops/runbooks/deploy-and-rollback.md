@@ -1,337 +1,611 @@
 # Deploy and rollback
 
-A release is a launch measurement (the image) plus a config file, and the vault's timelock names it
-as the one release that may hold the enclave's keys. So three changes are the same procedure: a
-first deployment, a new image, and a changed config. Even a one-line config change is a new release,
-because the config's SHA-256 is part of the release's identity.
+Use this runbook to prepare a release, to deploy the contracts and the first release, to upgrade to
+a new release, and to return to the previous one. A release is a launch measurement, which
+identifies the image, together with a configuration file. The vault's timelock names one release as
+the only release that may hold the enclave's keys. A first deployment, a new image and a changed
+configuration therefore follow the same procedure. Even a one-line change to the configuration makes
+a new release, because the configuration's SHA-256 is part of the release's identity.
 
-Read [reference.md](reference.md) first. Every step marked **Changes the live system** needs its own
-approval; an approval for one step is not one for the next.
+The steps use the shell variables that [Variables](reference.md#variables) sets up. Commands and
+their output call a running trading server a node. Every step marked **Changes the live system**
+needs its own approval, and an approval for one step does not cover the next.
+
+- [Know before you start](#know-before-you-start)
+- [Prepare a release](#prepare-a-release)
+- [Deploy the contracts](#deploy-the-contracts)
+- [First deployment](#first-deployment)
+- [Upgrade to a new release](#upgrade-to-a-new-release)
+- [If the handover does not finish](#if-the-handover-does-not-finish)
+- [Roll back](#roll-back)
+- [Companion processes](#companion-processes)
+- [Staging](#staging)
 
 ## Know before you start
 
-- **The running release keeps sequencing until its successor has taken the keys.** Nothing stops
-  trading while governance names the new release. Do not stop the running release to speed things up:
-  once the vault names another release, its own sealed keys no longer open, and a stop loses them
-  ([key-recovery.md](key-recovery.md)).
-- **A new release may not be able to go back.** The node activates the newest protocol version when
-  it starts. A log that has activated a version cannot be replayed by a build that predates it.
-  Compare `ProtocolVersion::LATEST` between the running tag and the new one
-  (`git grep -h "const LATEST" <tag> -- crates/core/src/protocol.rs crates/core/src/protocol/` for each
-  tag). If it changed, the upgrade cannot be rolled back to the old image: fix forward.
-- **While operator rotation is on, `setCurrentRelease` reverts** (`RotationActive`): the release the
-  vault names is then the operator in effect's. Naming a release is instead the timelock's approval
-  of it for the operator's candidacy and the candidacy's move to it
-  ([operator-candidate.md](operator-candidate.md), section 5); the handover in section 3 is the same.
-- **While the boundary's log check applies, the keys carry its verified head**, and each release that
-  handed them on past it, and a release built before either refuses keys that carry one: its handover
-  stops the running release and then fails. The check applies only while rotation is on and the
-  turn's set names two or more members, and the node drops the head and those releases from its
-  sealed keys once it no longer applies, and refuses a handover until it has, so with rotation off an
-  upgrade or a rollback across this change hands over as before. While rotation is on, upgrade and
-  roll back only between releases that have the log check and name those releases
-  ([operator-candidate.md](operator-candidate.md), "Daily turns").
-- **No staging environment exists yet.** Run this on a testnet vault first; the steps are the same.
+- **The running release keeps sequencing until its successor has taken the keys.** Trading does
+  not stop while governance names the new release. Do not stop the running release to speed things
+  up. Once the vault names another release, the running release's own sealed keys no longer open,
+  and stopping it loses them, as [Key recovery](key-recovery.md) describes.
+- **A new release may not be able to go back.** The trading server activates the newest protocol
+  version when it starts. A build older than a protocol version cannot replay a log that has
+  activated that version. Compare `ProtocolVersion::LATEST` between the running tag and the new tag
+  by running the following command once for each tag:
 
-## 1. Prepare a release
+  ```shell
+  git grep -h "const LATEST" <tag> -- crates/core/src/protocol.rs crates/core/src/protocol/
+  ```
 
-Nothing here touches a live system.
+  If the two values differ, the upgrade cannot be rolled back to the old image, and a problem must
+  be fixed with a further release.
+- **While operator rotation is on, `setCurrentRelease` reverts with `RotationActive`.** The release
+  that the vault names is then the release of the operator in effect. To name a release, the
+  timelock approves it for the operator's candidacy, and the candidacy moves to it, as
+  [Upgrade while you are the operator](operator-candidate.md#upgrade-while-you-are-the-operator)
+  describes. The handover that follows is the one in
+  [Upgrade to a new release](#upgrade-to-a-new-release).
+- **While the boundary's log check applies, the keys carry the head that the check verified.** The
+  keys also carry each release that handed them on past that head. A release whose build does not
+  carry the log check, or does not record those releases, refuses keys that carry them. Its
+  handover stops the running release, and then fails. The check applies only while rotation is on.
+  It also needs the set of the turn in effect to name two or more members. Once the check no longer
+  applies, the trading server drops the head and those releases from its sealed keys, and it
+  refuses a handover until it has done so. With rotation off, an upgrade or a rollback to such a
+  build therefore hands over as usual. While rotation is on, upgrade and roll back only between
+  releases that carry the log check and record the releases that handed the keys on, as
+  [Daily turns](operator-candidate.md#daily-turns) describes.
+- **No staging environment exists.** Run each procedure against a testnet vault first. The steps
+  are the same.
 
-1. Tag `v<version>` on a `main` commit whose CI run passed. Take `vmlinuz`, `initramfs.cpio.gz`,
-   `OVMF.fd`, `measurement.json` and `SHA256SUMS` from that run's `image-first` artifact, or, once
-   the artifact has expired, from `gh workflow run ci.yaml --ref v<version>`. Before tagging, run
-   `scripts/dev-venue-load.sh --soak` on that commit. Check: it ends `test result: ok`, no market
-   unpriced for longer than 10 s through the dropped connections. Stop if it fails.
-2. On a second machine, rebuild: `scripts/build-image.sh --ref v<version> --no-cache <dir>`. Check:
-   `diff <dir>/SHA256SUMS <ci>/SHA256SUMS` prints nothing. Stop if it differs.
-3. Assemble the config from the template, the benchmark publishers and the production genesis, and
-   fill in every value of [production-node.toml](production-node.toml) that carries an `OWNER` or
-   `REPLACE` marker, deleting the marker comment as you set it:
+## Prepare a release
 
-   ```sh
-   cat ops/runbooks/production-node.toml config/benchmark-publishers.toml config/production-genesis.toml > node.toml
-   grep -nE 'OWNER|REPLACE' node.toml        # must print nothing
+Use this procedure before any deployment or upgrade. None of its steps touches a live system.
+
+1. On the `main` commit you intend to release, whose CI run passed, run the soak test against the
+   live venues:
+
+   ```shell
+   scripts/dev-venue-load.sh --soak
    ```
 
-   Check that it loads. `engine admin` reads the config before it asks for a key, so this fails with
-   the config's error, or reaches the key check when the config is good:
+   The soak passes when it ends with `test result: ok`, with no market left without a price for
+   longer than 10 seconds while connections are dropped. **If the soak fails, stop. The commit is
+   not fit to release.**
 
-   ```sh
-   env -u OPERATOR_KEY -u OPERATOR_KEY_FILE $ENGINE admin --config node.toml --pin $(printf '0%.0s' $(seq 64)) set-reduce-only false
+2. Tag the commit `v<version>`, where `<version>` is the release's version number.
+
+3. Take `vmlinuz`, `initramfs.cpio.gz`, `OVMF.fd`, `measurement.json` and `SHA256SUMS` from the
+   `image-first` artifact of the commit's CI run. If the artifact has expired, produce it again:
+
+   ```shell
+   gh workflow run ci.yaml --ref v<version>
    ```
 
-   Check: the last line is `Error: no operator key: pass --key-file, or set OPERATOR_KEY_FILE or OPERATOR_KEY`.
-   A first line `Error: parsing <file>` or `Error: validating <file>`, followed by `Caused by:`,
-   names the key to fix.
-4. Hash it: `sha256sum node.toml`. This is `$CONFIG_HASH`, the second argument of `setCurrentRelease`.
-   Do not edit the file again: one changed byte is another release.
-5. Write `release.toml` with the release name, `measurement.json`'s `launch_digest`, `policy` and
-   `guest_features`, the minimum reported TCB, and `[config_hashes]` holding `"node.toml" = "0x<hash>"`
-   (format in `image/README.md`, "Release"). The minimum TCB is `OWNER`: take it from the host's
-   firmware. Check: `guest_features` is `0x201`; a verifier refuses a release without Secure TSC.
-6. Publish the GitHub release with the image files, `node.toml`, `release.toml` and the browser
-   verifier package. The config holds no credential, only the names of the secrets the operator
-   delivers.
-7. Ship a console build that pins `release.toml`, next to the previous release's, before the node
-   release goes live. The attestation binds the config, so a console that does not pin the new
-   manifest refuses the new node.
-8. If the previous release is running: copy the log off it now (reference.md, "Download the public
-   log"). The successor needs the log to start from.
+4. On a second machine, rebuild the image from the tag, where `<dir>` is a new output directory:
 
-## 2. First deployment
+   ```shell
+   scripts/build-image.sh --ref v<version> --no-cache <dir>
+   ```
 
-Prerequisites, each done and checked before step 1 of this list: the contracts deployed and wired
-("Deploy the contracts", at the end of this section) with the constructor values in
-[production-deployment.toml](production-deployment.toml) (the timelock's `min_delay`; the vault's
-`period_budget`, `exit_period`, `claim_window` and `stale_after`; the registry's staking `cooldown` and
-`epoch`, which deploy `Staking`), with the vault's signer a placeholder and its
-`registry` and the registry's `vault` set. Check each against the chain: `cast call $VAULT
-'exitPeriod()(uint64)'`, `'claimWindow()(uint64)'` and `'staleAfter()(uint64)'`, `cast call $TIMELOCK
-'getMinDelay()(uint256)'`, and `cast call $STAKING 'epoch()(uint256)'` and `'cooldown()(uint256)'`, where
-`$STAKING` is `custody.evm.staking.contract`; the host (bare-metal AMD SEV-SNP); DNS for the API
-domain and a CAA record ([certificate-renewal-failure.md](certificate-renewal-failure.md), "Before
-the first certificate"); a Critical alert receiver; and the companion processes in section 5 planned.
+   Then compare the two builds, where `<ci>` is the directory holding the CI artifact:
+
+   ```shell
+   diff <dir>/SHA256SUMS <ci>/SHA256SUMS
+   ```
+
+   The builds match when `diff` prints nothing. **If they differ, stop. The image is not
+   reproducible from the tag.**
+
+5. Assemble the configuration from the template, the benchmark publishers and the production
+   genesis:
+
+   ```shell
+   cat ops/runbooks/production-node.toml config/benchmark-publishers.toml \
+     config/production-genesis.toml > node.toml
+   ```
+
+6. Fill in every value in `node.toml` that carries an `OWNER` or `REPLACE` marker in
+   [production-node.toml](production-node.toml), and delete each marker comment as you set its
+   value. Then confirm that no marker is left:
+
+   ```shell
+   grep -nE 'OWNER|REPLACE' node.toml
+   ```
+
+   The command prints nothing when every value is set.
+
+7. Confirm that the configuration loads. `engine admin` reads the configuration before it asks for
+   a key, so the following command fails with the configuration's error, or reaches the key check
+   when the configuration is valid:
+
+   ```shell
+   env -u OPERATOR_KEY -u OPERATOR_KEY_FILE $ENGINE admin --config node.toml \
+     --pin $(printf '0%.0s' $(seq 64)) set-reduce-only false
+   ```
+
+   The configuration is valid when the last line is
+   `Error: no operator key: pass --key-file, or set OPERATOR_KEY_FILE or OPERATOR_KEY`. If the first
+   line is `Error: parsing <file>` or `Error: validating <file>`, the lines after `Caused by:` name
+   the key to fix. `$ENGINE` must be built with the production feature, so that its configuration
+   checks match the trading server's.
+
+8. Hash the configuration:
+
+   ```shell
+   sha256sum node.toml
+   ```
+
+   The hash is `$CONFIG_HASH`, the second argument of `setCurrentRelease`. **Do not edit the file
+   again. A single changed byte makes another release.**
+
+9. Write `release.toml`, in the format that [Release](../../image/README.md#release) in the image's
+   README shows. It holds the release name; `measurement.json`'s `launch_digest`, `policy` and
+   `guest_features`; the minimum reported TCB; and `[config_hashes]` holding
+   `"node.toml" = "0x<hash>"`. The minimum TCB is marked `OWNER`. Take it from the host's
+   firmware. Confirm that `guest_features` is `0x201`, because a verifier refuses a release without
+   Secure TSC.
+
+10. Publish the GitHub release with the image files, `node.toml`, `release.toml` and the browser
+    verifier package. The configuration holds no credential, only the names of the secrets that the
+    operator delivers.
+
+11. Before the new release goes live, ship a console build that pins the new `release.toml` beside
+    the previous release's. The attestation binds the configuration, so a console that does not pin
+    the new manifest refuses the new trading server.
+
+12. If a previous release is running, copy its log off it now, as
+    [Download the public log and verify it](reference.md#download-the-public-log-and-verify-it)
+    describes. The successor starts from that log.
+
+## Deploy the contracts
+
+Use this procedure once, before the first deployment. **Changes the live system.** The owner must
+approve each deployment. The constructor values are in
+[production-deployment.toml](production-deployment.toml).
+
+1. Deploy an OpenZeppelin `TimelockController`, with `[timelock] min_delay` as its delay and the
+   deployment's multisig as its proposer. The delay must not be zero. Grant the executor and
+   administrator roles deliberately, and once the timelock is set up, leave it administering
+   itself. **The vault checks only that the timelock has code and a delay above zero. That check
+   cannot show that the contract is the intended OpenZeppelin implementation, or that its roles
+   belong to the intended multisig, so verify both yourself.** Later changes to the delay or the
+   roles go through the timelock's own governance. Keep the intended delay and proposer policy.
+
+2. Deploy `Vault`, with these constructor arguments in this order: the USDC token; the signer, which
+   is a placeholder until [First deployment](#first-deployment) registers the enclave's address; the
+   timelock; the multisig as guardian; and the `[vault]` values `period_budget`, `exit_period`,
+   `claim_window` and `stale_after`. The vault deploys the MONKEY token and its exit verifier
+   itself. The constructor reverts with `InvalidGovernance` when the timelock has no code or no
+   delay. It reverts with `InvalidExitSchedule` when the exit period is no longer than the delay,
+   when the claim window or the staleness limit is zero, or when the staleness limit is longer than
+   the exit period. A new vault starts empty. No balance, accepted root or used nonce carries over
+   from another vault, and the trading server reads the new vault's signer epoch and reconciles
+   against it before it releases any withdrawal authorisation.
+
+3. Deploy `OperatorRegistry`, with these constructor arguments in this order:
+
+   - the MONKEY token that the vault deployed in step 2, whose address
+     `cast call $VAULT 'monkey()(address)' --rpc-url $RPC` prints;
+   - the `[staking]` values `cooldown` and `epoch`, in seconds, as `cooldownSeconds_` and
+     `epochSeconds_`, with which the registry deploys the `Staking` contract;
+   - the timelock;
+   - the initial operator, which is the operator's admin key that `operator.public_key` names, with
+     the launch digest and the configuration hash of the first release;
+   - the parameters in force, which are the launch values that
+     [How the operator is chosen](operator-candidate.md#how-the-operator-is-chosen) lists;
+   - the lowest and the highest value that the timelock may later set for each parameter, which
+     the owner chooses.
+
+   The constructor reverts with `InvalidGovernance` when the timelock has no code or no delay, and
+   with `ZeroAddress` when the initial admin key is zero. It reverts with `InvalidBounds` when the
+   bounds are not valid, and with `ParameterOutOfBounds` when a parameter lies outside them.
+
+4. Through the timelock, set the vault's registry with `setRegistry(address)` and the registry's
+   vault with `setVault(address)`, as
+   [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
+   describes. Each can be set only once.
+
+## First deployment
+
+Use this procedure to bring up the first release on a new vault.
+
+Before step 1, complete and check each of the following:
+
+- The contracts are deployed and wired as [Deploy the contracts](#deploy-the-contracts) describes,
+  with the vault's signer still a placeholder. Check the values against the chain, where `$STAKING`
+  is `custody.evm.staking.contract`:
+
+  ```shell
+  cast call $VAULT 'exitPeriod()(uint64)' --rpc-url $RPC
+  cast call $VAULT 'claimWindow()(uint64)' --rpc-url $RPC
+  cast call $VAULT 'staleAfter()(uint64)' --rpc-url $RPC
+  cast call $TIMELOCK 'getMinDelay()(uint256)' --rpc-url $RPC
+  cast call $STAKING 'epoch()(uint256)' --rpc-url $RPC
+  cast call $STAKING 'cooldown()(uint256)' --rpc-url $RPC
+  ```
+
+  Each value equals the one in [production-deployment.toml](production-deployment.toml).
+- The host is a bare-metal AMD SEV-SNP machine.
+- DNS for the API domain and a CAA record are in place, as
+  [Before the first certificate](certificate-renewal-failure.md#before-the-first-certificate)
+  describes.
+- A receiver for Critical alerts is running.
+- The [companion processes](#companion-processes) are planned.
 
 1. **Name the release.** The timelock calls `setCurrentRelease(launch_digest, config_hash)` on the
-   vault. Use the pattern in reference.md, with:
+   vault, following
+   [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
+   with these values:
 
-   ```sh
+   ```shell
    DIGEST=0x...                                   # measurement.json: launch_digest (48 bytes)
    CONFIG_HASH=0x$(sha256sum node.toml | cut -d' ' -f1)
    TARGET=$VAULT
    DATA=$(cast calldata 'setCurrentRelease(bytes,bytes32)' $DIGEST $CONFIG_HASH)
    ```
 
-   **Changes the live system.** Needs the owner's approval of this contract call, then the multisig's
-   signatures on the schedule and the execute.
-   Check: `cast call $VAULT 'currentRelease()(bytes32)' --rpc-url $RPC` equals
-   `cast keccak $(cast concat-hex $DIGEST $CONFIG_HASH)`, and `releaseGeneration()` rose by one.
-   Wait until the block holding the execute is `finalized` (about 15 minutes after its batch posts;
-   see reference.md): the node reads the release there.
-2. **Boot with new keys and deliver the secrets.** Make the data disk with `config.toml` (the file you
-   hashed, renamed) and an empty file `new-key`. Start the VM on the host with the launch flags in
-   `measurement.json` (`image/README.md`, "Boot on an SEV-SNP host"), forwarding
-   `tee.sealing.secrets.listen` from the operator's addresses.
-   **Changes the live system.** Needs the owner's approval to deploy this image and config.
-   The node holds, with `secret_missing` for each secret and only its delivery listener up: chain
-   access is what lets it go on. Deliver the bundle ([key-recovery.md](key-recovery.md), "Secrets").
-   **Changes the live system.** Needs the owner's approval of the delivery.
-   Check: the tool prints `sealed: version 1`, `curl -sk $API/v1/attestation` answers and `/v1/markets`
-   does not. The serial console shows `signer_unregistered`. That is expected: the vault does not name
-   this key yet. If it shows `secrets_start_failed` instead, a provider refused a delivered key: see
-   [alerts.md](alerts.md).
-3. **Verify the attestation**, as in reference.md ("The node's attested key and its pin"):
-   `verify-attestation` against `release.toml`. Check that it exits 0 and that the config hash it
-   names is `$CONFIG_HASH`.
-4. **Register the signer.** The timelock calls `setSigner($SIGNER)`:
+   **Changes the live system.** The owner must approve this contract call, and then the multisig
+   signs the schedule and the execute.
 
-   ```sh
+   Confirm the release that the vault names:
+
+   ```shell
+   cast call $VAULT 'currentRelease()(bytes32)' --rpc-url $RPC
+   cast keccak $(cast concat-hex $DIGEST $CONFIG_HASH)
+   cast call $VAULT 'releaseGeneration()(uint64)' --rpc-url $RPC
+   ```
+
+   The first two commands print the same hash, and the generation has risen by one. Wait until the
+   block holding the execute is `finalized`, about 15 minutes after its batch is posted, as
+   [Chain finality](reference.md#chain-finality) describes. The trading server reads the release at
+   that block.
+
+2. **Boot with new keys.** Make the data disk with `config.toml`, which is the file you hashed,
+   renamed, and an empty file named `new-key`. Start the VM on the host with the launch flags in
+   `measurement.json`, as [Boot on an SEV-SNP host](../../image/README.md#boot-on-an-sev-snp-host)
+   describes, and forward `tee.sealing.secrets.listen` from the operator's addresses.
+
+   **Changes the live system.** The owner must approve the deployment of this image and
+   configuration.
+
+   The trading server then holds, raising `secret_missing` for each secret, with only its delivery
+   listener up. It continues once it has the chain access that the secrets give it.
+
+3. **Deliver the secrets,** as [Secrets](key-recovery.md#secrets) describes.
+
+   **Changes the live system.** The owner must approve the delivery.
+
+   The delivery tool prints `sealed: version 1`. Then `curl -sk $API/v1/attestation` answers, while
+   `/v1/markets` does not. The serial console shows `signer_unregistered`, which is expected because
+   the vault does not yet name this key. If the console shows `secrets_start_failed` instead, a
+   provider refused a delivered key: see [Alerts](alerts.md).
+
+4. **Verify the attestation** against `release.toml`, and take `$SIGNER` and `$PIN` from it, as
+   [The trading server's attested key and its pin](reference.md#the-trading-servers-attested-key-and-its-pin)
+   describes. `verify-attestation` exits 0 and prints
+   `verified: release <name>, enclave 0x…, config node.toml`. The configuration it names is the
+   `[config_hashes]` entry whose hash is `$CONFIG_HASH`.
+
+5. **Register the signer.** The timelock calls `setSigner($SIGNER)`, with these values:
+
+   ```shell
    TARGET=$VAULT
    DATA=$(cast calldata 'setSigner(address)' $SIGNER)
    ```
 
-   **Changes the live system.** Needs the owner's approval of this contract call and the
-   multisig's signatures. `setSigner` raises `signerEpoch`.
-   Check: `cast call $VAULT 'checkpointSigner()(address)' --rpc-url $RPC` equals `$SIGNER`. Once
-   the block is `finalized` the node starts on its own: it reads the vault every
-   `checkpoints.retry_interval`, so `signer_unregistered` resolves within seconds of that, and
-   `/v1/markets` answers once the node has recovered its log.
-5. **First boot work happens by itself.** On its first trusted time sample (Roughtime) the node
-   activates the newest protocol version and sequences `config/production-genesis.toml` as admin
-   commands. Check: `curl -sf $API/v1/markets | jq length` prints the number of launch markets, and
-   `curl -sf $API/v1/house/state | jq .seq` rises. A `genesis_refused` or
-   `protocol_activation_failed` page means the config's genesis does not apply to a log: do not
-   edit the log; fix the config and make a new release.
-6. **Check the certificate.** `curl -sf $API/v1/health` succeeds without `-k`, and
-   `curl -s http://<metrics host>:9464/metrics | grep engine_tls_certificate_pending` prints `0`.
-   If not, go to [certificate-renewal-failure.md](certificate-renewal-failure.md).
-7. **Check checkpoints and withdrawals.** After a few minutes of trading or a test deposit:
-   `cast call $VAULT 'latestSeq()(uint64)'` rises, and `engine_withdrawals_paused` is `0`.
-   `engine_withdrawals_paused 1` before the first reconciliation is normal; see
-   [withdrawal-stalls.md](withdrawal-stalls.md) if it stays.
-8. **One-time initialisation**, each only once per log, with the values the owner decided (#436),
-   which [production-deployment.toml](production-deployment.toml) holds. `$START` is its `start`: 00:00:00
-   UTC on the day restricted mainnet trading opens, the origin of both emission period 0 and staking
-   epoch 0. Sign both before it, and never again: the schedule is never reset. The same file's
-   `[vault]` and `[staking]` values are what the contracts were deployed with.
+   **Changes the live system.** The owner must approve this contract call, and the multisig signs
+   it. `setSigner` raises `signerEpoch`.
 
-   ```sh
-   START=2027-01-01T00:00:00Z   # production-deployment.toml: start
-   $ENGINE admin --config node.toml --node $API --pin $PIN init-emissions --start $START --period-budget 100000000000000000000000
-   $ENGINE admin --config node.toml --node $API --pin $PIN init-staking --start $START --liquidity-floor 30500000 --epoch-ms 86400000 --cooldown-ms 2419200000 --secrets-file secrets.toml
+   Confirm the signer:
+
+   ```shell
+   cast call $VAULT 'checkpointSigner()(address)' --rpc-url $RPC
    ```
 
-   **Changes the live system.** Each needs the owner's approval of the exact command, its values
-   included, and a `$START` that is the opening day's midnight UTC. No agent runs these.
-   - `init-emissions`: the budget is 100,000 MONKEY a period (10^23 base units, maximum supply
-     5,256,000,000 MONKEY) and must equal the vault's: the node refuses another
-     (`emission_budget_mismatch`).
-   - `init-staking`: the epoch is one day and the cooldown 28 days, the staking contract's own
-     `epoch()` and `cooldown()` in milliseconds, and the floor is $30.5M. The tool reads the contract
-     through the config's custody providers and refuses a different value before it signs; the node
-     reads it again and refuses it before it sequences the command. `--secrets-file` is the bundle
-     delivered at step 2 ([key-recovery.md](key-recovery.md), "Secrets"), whose keys fill the providers'
-     URLs for that read. A refusal names both values: fix the command, never the contract.
-   Check: `curl -sf $API/v1/monkey | jq '{e: .emissions, s: .staking, d: .distribution}'` shows
-   `start_ms` at `$START`, `period_budget` `100000000000000000000000`, `cooldown_ms` `2419200000`,
-   `epoch_ms` `86400000` and `liquidity_floor` `30500000`. A second run of either command is
-   rejected by the engine.
-9. **House capital** enters only by a vault deposit to the house (`depositToHouse`). **Changes the
-   live system.** Needs the owner's approval of the amount; the launch decision is none (#614).
-   The production genesis sets every launch market's house cap floor and a $61M total floor (#696),
-   so trading opens from a zero house.
+   The command prints `$SIGNER`. Once the block is `finalized`, the trading server starts by itself.
+   It reads the vault every `checkpoints.retry_interval`, so `signer_unregistered` resolves within
+   seconds of finality, and `/v1/markets` answers once the trading server has recovered its log.
 
-### Deploy the contracts
+6. **Let the first start finish.** On its first trusted time sample from the Roughtime servers, the
+   trading server activates the newest protocol version and sequences
+   `config/production-genesis.toml` as administrative instructions. Confirm both:
 
-Once, before the prerequisites above are checked. **Changes the live system.** Needs the owner's
-approval of each deployment.
+   ```shell
+   curl -sf $API/v1/markets | jq length
+   curl -sf $API/v1/house/state | jq .seq
+   ```
 
-1. **The timelock.** Deploy an OpenZeppelin `TimelockController` with `[timelock] min_delay` from
-   [production-deployment.toml](production-deployment.toml), which must not be zero, and the
-   deployment's multisig as proposer. Grant the executor and administrator roles deliberately, and
-   leave the timelock administering itself once set up. The vault checks only that the timelock has
-   code and a nonzero delay, which cannot show it is the intended OpenZeppelin implementation or that
-   its roles belong to the intended multisig: verify both. Later changes to the delay or the roles go
-   through the timelock's own governance; keep the intended delay and proposer policy.
-2. **The vault.** Deploy `Vault` with, in order: USDC, the signer (a placeholder until step 4 above),
-   the timelock, the multisig as guardian, and the `[vault]` values `period_budget`, `exit_period`,
-   `claim_window` and `stale_after`. The vault deploys the MONKEY token and its exit verifier itself.
-   The constructor refuses a timelock with no code or no delay (`InvalidGovernance`), and an exit
-   period no longer than the delay, a zero claim window or staleness, or a staleness past the exit
-   period (`InvalidExitSchedule`). A new vault starts empty: no balance, accepted root or used nonce
-   carries over from another, and the node reads its signer epoch and reconciles against it before
-   it releases any authorization.
+   The first command prints the number of launch markets, and the second prints a number that rises
+   between runs. **A `genesis_refused` or `protocol_activation_failed` page means that the
+   configuration's genesis does not apply to the log. Do not edit the log. Fix the configuration and
+   make a new release.**
 
-## 3. Upgrade to a new release
+7. **Check the certificate.** `curl -sf $API/v1/health` succeeds without `-k`, and the following
+   command prints `0`:
 
-Use this for a new image, a new config, or both. The running release is `A`, the new one `B`.
+   ```shell
+   curl -s http://<metrics host>:9464/metrics | grep engine_tls_certificate_pending
+   ```
 
-A release whose keys requests name the protocol version its build reads cannot take the keys from a
-release whose requests do not: the older one cannot parse the request. That one upgrade, rotation on
-or off, goes through the timelock's new-key path ([key-recovery.md](key-recovery.md), "Boot with new
-keys") instead of the `predecessor` file below.
+   `<metrics host>` is the address of the trading server's metrics listener. If either check fails,
+   follow [Certificate renewal failure](certificate-renewal-failure.md).
 
-1. Prepare `B` (section 1). Check that the protocol-version note in "Know before you start" is
-   settled, so you know whether this can be undone.
-2. **Name `B`.** Section 2, step 1, with `B`'s digest and config hash. With rotation on, follow
-   [operator-candidate.md](operator-candidate.md), section 5, steps 2 to 4, instead. With rotation
-   off, `setCurrentRelease` moves only the vault's release: also move the registry's operator
-   release (the candidacy's move to an approved `B`, or `installOperator` again), or the next
-   `setRotation(true)` makes the vault name `A` again. Before every `setRotation(true)`, check that
-   `operatorInEffect()`'s release (third field) equals `cast call $VAULT 'currentRelease()(bytes32)'`.
-   **Changes the live system.** Needs the owner's approval of this contract call.
-   Check: `A` raises `release_superseded` (Critical) within a minute of the block being `finalized`,
-   and keeps sequencing. This page is expected; it says a restart of `A` would now find no keys.
-3. **Prepare `B`'s disk.** On the new host or disk: `config.toml` (`B`'s config), a file
-   `predecessor` holding `A`'s handover address, `host:port` (`tee.sealing.handover.listen`), and
-   the log you copied at step 8 of section 1, in `/data/log`. Check: `A`'s handover port is
-   reachable from `B`'s network, and `B`'s `[tee.sealing.handover]` and `[tee.sealing.secrets]` are
-   configured the same way.
+8. **Check checkpoints and withdrawals.** After a few minutes of trading or a test deposit,
+   `cast call $VAULT 'latestSeq()(uint64)' --rpc-url $RPC` rises, and the metric
+   `engine_withdrawals_paused` reads `0`. The metric reads `1` until the first reconciliation, which
+   is normal. If it stays at `1`, follow [Withdrawal stalls](withdrawal-stalls.md).
+
+9. **Record the emission schedule.** The values are the owner's, held in
+   [production-deployment.toml](production-deployment.toml). `$START` is that file's `start`,
+   00:00:00 UTC on the day that restricted mainnet trading opens. It is the origin of both emission
+   period 0 and staking epoch 0. The same file's `[vault]` and `[staking]` values are the ones the
+   contracts were deployed with.
+
+   **Changes the live system.** The owner must approve the exact command, including its values, and
+   a `$START` that is midnight UTC on the opening day. **Sign this instruction before `$START`, and
+   only once for each log. The schedule can never be reset.**
+
+   ```shell
+   START=2027-01-01T00:00:00Z   # production-deployment.toml: start
+   $ENGINE admin --config node.toml --node $API --pin $PIN init-emissions --start $START --period-budget 100000000000000000000000
+   ```
+
+   The budget is 100,000 MONKEY a period, which is 10^23 base units, and it caps the maximum supply
+   at 5,256,000,000 MONKEY. It must equal the vault's budget, and the trading server refuses any
+   other value with `emission_budget_mismatch`.
+
+10. **Record the staking configuration,** with the same `$START`.
+
+    **Changes the live system.** The owner must approve the exact command, including its values.
+    **Sign this instruction before `$START`, and only once for each log.**
+
+    ```shell
+    $ENGINE admin --config node.toml --node $API --pin $PIN init-staking --start $START --liquidity-floor 30500000 --epoch-ms 86400000 --cooldown-ms 2419200000 --secrets-file secrets.toml
+    ```
+
+    The epoch is one day and the cooldown is 28 days. They are the staking contract's own `epoch()`
+    and `cooldown()`, in milliseconds. The liquidity floor is $30.5 million. The tool reads the
+    contract through the configuration's custody providers, and refuses a different value before it
+    signs. The trading server reads the contract again, and refuses a different value before it
+    sequences the instruction. `--secrets-file` is the bundle delivered at step 3, whose keys fill
+    in the providers' URLs for that read. A refusal names both values. **Fix the command, never the
+    contract.**
+
+    Confirm both instructions:
+
+    ```shell
+    curl -sf $API/v1/monkey | jq '{e: .emissions, s: .staking, d: .distribution}'
+    ```
+
+    The output shows `start_ms` equal to `$START` in milliseconds, `period_budget`
+    `100000000000000000000000`, `cooldown_ms` `2419200000`, `epoch_ms` `86400000` and
+    `liquidity_floor` `30500000`. The engine rejects a second run of either instruction.
+
+11. **Deposit house capital, if any.** House capital enters only through a vault deposit to the
+    house, `depositToHouse`.
+
+    **Changes the live system.** The owner must approve the amount.
+
+    The launch amount is zero. The production genesis sets a house exposure cap floor for every
+    launch market and a total floor of $61 million, so trading opens with no house capital.
+
+## Upgrade to a new release
+
+Use this procedure to move to a new image, a new configuration, or both. The running release is
+`A`, and the new release is `B`.
+
+A release whose requests for the keys name the protocol version that its build reads cannot take
+the keys from a running release whose requests do not, because the running release cannot parse the
+request. That upgrade, with rotation on or off, goes through the timelock's new-key path, from the
+step that boots with new keys in [New keys](key-recovery.md#new-keys), instead of the `predecessor`
+file below.
+
+1. **Prepare `B`,** as [Prepare a release](#prepare-a-release) describes. Settle the protocol
+   version check in [Know before you start](#know-before-you-start), so that you know whether the
+   upgrade can be undone.
+
+2. **Name `B`.** Follow step 1 of [First deployment](#first-deployment) with `B`'s digest and
+   configuration hash. With rotation on, follow steps 2 to 4 of
+   [Upgrade while you are the operator](operator-candidate.md#upgrade-while-you-are-the-operator)
+   instead.
+
+   **Changes the live system.** The owner must approve this contract call.
+
+   With rotation off, `setCurrentRelease` moves only the vault's release. Also move the registry's
+   operator release, either by the candidacy's move to an approved `B` or by `installOperator`
+   again. **Otherwise, the next `setRotation(true)` makes the vault name `A` again.** Before every
+   `setRotation(true)`, confirm that the third field of `operatorInEffect()`, the operator's
+   release, equals the output of `cast call $VAULT 'currentRelease()(bytes32)' --rpc-url $RPC`.
+
+   Within a minute of the block becoming `finalized`, `A` raises `release_superseded`, a Critical
+   alert, and keeps sequencing. The page is expected. It means that a restart of `A` would now find
+   no keys.
+
+3. **Prepare `B`'s disk.** On the new host or disk, place `B`'s configuration as `config.toml`, a
+   file named `predecessor` that holds `A`'s handover address as `host:port`, which is
+   `tee.sealing.handover.listen`, and the log you copied at step 12 of
+   [Prepare a release](#prepare-a-release), in `/data/log`. Confirm that `A`'s handover port is
+   reachable from `B`'s network, and that `B`'s `[tee.sealing.handover]` and `[tee.sealing.secrets]`
+   are configured in the same way as `A`'s.
+
 4. **Start `B`.**
-   **Changes the live system.** Needs the owner's approval to deploy this image and config and to
-   hand the enclave's keys to it.
-   What happens: `B` first asks `A` for the delivered secrets, with no stop: `A` checks `B`'s quote
-   against the vendor's chain and the vault's named release, and sends the bundle encrypted to `B`,
-   which takes it only under the signature of the operator `B`'s config names. If the move fails, `B`
-   raises `secret_missing`: deliver to `B` yourself ([key-recovery.md](key-recovery.md), "Secrets"): `A` refuses
+
+   **Changes the live system.** The owner must approve the deployment of this image and
+   configuration, and the handing of the enclave's keys to it.
+
+   `B` first asks `A` for the delivered secrets, without stopping `A`. `A` checks `B`'s quote
+   against the vendor's certificate chain and the release that the vault names, and sends the bundle
+   encrypted to `B`. `B` accepts it only under the signature of the operator that `B`'s
+   configuration names. If the move fails, `B` raises `secret_missing`, and you deliver the secrets
+   to `B` yourself, as [Secrets](key-recovery.md#secrets) describes. `A` refuses to move the secrets
    while rotation is on, and a bundle signed before an operator rotation does not move.
-   `B` then connects to `A` for the keys. `A` checks `B`'s quote in the same way, stops sequencing, signs a final checkpoint, and sends the keys and the
-   log tail encrypted to `B`. `B` writes the log, checks it reaches that checkpoint, seals the keys
-   and confirms; `A` acknowledges and powers off. With rotation on, `A` is a rotation-set member, so
-   it follows `B` instead of powering off and opens none of its keys again; power its VM off once `B`
-   serves if `A` is not standing for a later turn.
-   Check: `B` serves `/v1/markets`; `secrets-status` on `B` shows the version `A` held;
-   `curl -sf $API/v1/attestation | jq -r .enclave_address` still
-   equals `$SIGNER`; `A`'s VM has powered off; `release_superseded` resolves; and the chain of
-   posted checkpoints continues: `cast call $VAULT 'latestSeq()(uint64)' --rpc-url $RPC` rises.
-   The TLS key carries over, so `$PIN` is unchanged. The certificate does not: `B` orders its own
-   for the same key, under the same ACME account, and serves it once the CA issues it.
-5. **If a page says the handover did not finish**, do not stop anything.
-   - `handover_unconfirmed` on `A`: sequencing has stopped and no successor holds the keys yet. `A`
-     keeps serving successors; start `B` again. Stopping `A` loses its keys.
-   - `handover_unconfirmed` on `B`: the keys are sealed, but `A` did not acknowledge, so it may
-     still run. Wait until `A` has powered off, then start `B` again.
-   - `handover_failed` on `A`: it stopped without a successor, and its keys no longer open. This is
-     [key-recovery.md](key-recovery.md), "The running release stopped".
-   - A refused `B` start naming a log that does not reach the checkpoint: copy the log again
-     (section 1, step 8) and start `B` again.
-6. **Update the companions** (section 5): point ct-watch at `B`'s `release.toml` straight away,
-   or it raises `attestation_unverified`. Re-pin the benchmark worker only if the pin changed.
-7. **Keep `A`'s disk until `B` has run one full day**, then wipe it. `A`'s sealed copy can never
-   open again, and holds nothing `B` needs.
 
-## 4. Roll back
+   `B` then connects to `A` for the keys. `A` checks `B`'s quote in the same way, stops sequencing,
+   signs a final checkpoint, and sends the keys and the log's tail encrypted to `B`. `B` writes the
+   log, checks that it reaches that checkpoint, seals the keys and confirms. `A` acknowledges and
+   powers off. With rotation on, `A` is a member of the rotation set, so it follows `B` instead of
+   powering off, and it opens none of its keys again. Once `B` serves, power `A`'s VM off if `A` is
+   not standing for a later turn.
 
-Choose by where you are.
+   Confirm the upgrade:
 
-**`A` still running; `B` has not taken the keys.** Call the upgrade off.
-1. The timelock calls `setCurrentRelease(A's digest, A's config hash)` again (section 2, step 1).
-   With rotation on, follow the rollback in [operator-candidate.md](operator-candidate.md),
-   section 5, instead.
-   **Changes the live system.** Needs the owner's approval of this contract call.
-   This starts another generation, so `A` keeps raising `release_superseded`: its sealed keys are
-   from the earlier generation.
-2. To make `A` restart-safe again, start a fresh copy of `A`'s image and config with the
-   `predecessor` file pointing at the running `A`, as in section 3, step 4.
-   **Changes the live system.** Needs the owner's approval.
-   Check: the fresh copy serves and `release_superseded` resolves. The old VM powers off, or with
-   rotation on follows the fresh copy: power it off.
+   - `B` serves `/v1/markets`.
+   - `secrets-status` on `B` shows the version that `A` held.
+   - `curl -sf $API/v1/attestation | jq -r .enclave_address` still prints `$SIGNER`.
+   - `A`'s VM has powered off, and `release_superseded` has resolved.
+   - The chain of posted checkpoints continues:
+     `cast call $VAULT 'latestSeq()(uint64)' --rpc-url $RPC` rises.
 
-**`B` has the keys and is running.** This is another upgrade, to `A`'s release.
-1. Check the protocol version rule in "Know before you start". If the new release activated a newer
-   version, there is no rollback; ship a fix as `C`.
-2. Run section 3 with `A`'s image and config as the new release. The vault names it in a new
-   generation, so `A` takes the keys afresh from `B`.
+   The TLS key carries over, so `$PIN` is unchanged. The certificate does not carry over. `B` orders
+   its own certificate for the same key, under the same ACME account, and serves it once the CA
+   issues it.
 
-**`B` is the problem because of a config value** (a feed, a limit, a provider): that is also a new
-release. There is no way to change a running node's config. A secret's value is not a config value:
-a rotation needs a delivery and a restart, and no release ([key-recovery.md](key-recovery.md), "Secrets").
+5. **Watch for a page that says the handover did not finish.** If `handover_unconfirmed`,
+   `handover_failed` or a refused start of `B` appears, follow
+   [If the handover does not finish](#if-the-handover-does-not-finish). **Do not stop anything.**
 
-## 5. Companion processes
+6. **Update the companion processes.** Point the Certificate Transparency watcher at `B`'s
+   `release.toml` at once, or it raises `attestation_unverified`. Pin the benchmark worker again
+   only if the pin changed. See [Companion processes](#companion-processes).
 
-These run outside the enclave. None holds the enclave's keys.
+7. **Keep `A`'s disk until `B` has run for one full day,** and then wipe it. `A`'s sealed copy can
+   never open again, and it holds nothing that `B` needs.
 
-- **Benchmark worker.** With `[benchmarks]` in the config, a node waits for a signed publisher
-  snapshot at every start before it sequences ordinary commands. Run, on a host of its own, with
-  `OPERATOR_KEY_FILE` set for this process alone:
+## If the handover does not finish
 
-  ```sh
-  $ENGINE admin --config node.toml --node $API --pin $PIN sync-benchmarks --watch
-  ```
+Use this section when `handover_unconfirmed` or `handover_failed` fires during an upgrade, or when
+`B` refuses to start. The handover moves the enclave's keys from `A` to `B`. While it is incomplete,
+sequencing may have stopped, and clients cannot trade. **Do not stop either release. Stopping `A`
+before a successor holds the keys loses the keys.**
 
-  Start it before the node does, or as soon as the node serves its attestation: it retries until
-  the node answers. Restart it after every node restart that changes the pin. Alerts:
-  `benchmark_sync_failed`, `benchmark_fetch_failed`, `benchmark_sync_pending`,
-  `benchmark_rate_refused`. The worker reads a webhook URL only from an environment variable the
-  config names (`url_env`), never from a delivered secret. The production template's `[alerts]`
-  routes are delivered secrets (`url_secret`), and a production build refuses `url_env` in the
-  node's config, so under a production config the worker posts no alert: its alerts appear only in
-  its own log. It keeps its own outbox beside the node's, in the outbox directory's name with
-  `-benchmark-worker` added (`/data/alerts-benchmark-worker` for the production template's
-  `/data/alerts`). The worker opens it before it signs anything, so that path must be creatable,
-  writable by the worker's user and persistent on the worker's own host. If it is not, the worker
-  exits with an error naming the path, signs nothing, and a restarted node sequences no ordinary
-  commands until a snapshot arrives.
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `handover_unconfirmed` on `A` | Sequencing has stopped, and no successor holds the keys yet. `A` keeps serving successors. | Start `B` again. |
+| `handover_unconfirmed` on `B` | `B` has sealed the keys, but `A` did not acknowledge, so `A` may still be running. | Wait until `A` has powered off, and then start `B` again. |
+| `handover_failed` on `A` | `A` stopped without a successor, and its keys no longer open. | Follow [The running release stopped](key-recovery.md#the-running-release-stopped). |
+| `B` refuses to start, naming a log that does not reach the checkpoint | The log on `B`'s disk ends before `A`'s final checkpoint. | Copy the log again, as step 12 of [Prepare a release](#prepare-a-release) describes, and start `B` again. |
 
-  With `--watch` it fetches and signs every `benchmarks.interval` (hourly in the template, so a failed
-  fetch retries and a late publication lands before the rollover), again before each rollover, and at
-  once when the node's rollover schedule changes; a failed or refused submission retries within 10
-  seconds. Without `--watch` it signs one snapshot and exits. An admin command signed while it fetches
-  takes its nonce, so that attempt is refused and the next one goes through. After a long outage a
-  snapshot carries every missed day, up to 16,384 observations: if the node refuses it as too large
-  (413), a node waiting for one stays held until `api.max_body_bytes` is raised, which is a new
-  release.
-- **Certificate Transparency watcher**, on a host independent of the node's:
-  `$ENGINE ct-watch --config ct-watch.toml` (template: `config/ct-watch.toml`). Start it before the
-  first certificate is issued. See [unattested-certificate.md](unattested-certificate.md).
-- **Prometheus** scraping the node's metrics listener and the watcher's, with
-  `ops/prometheus/engine-node-rules.yml`, routed to a receiver other than the node's own webhook, and
-  the Grafana dashboard `ops/grafana/engine-node.json`.
-- **Archive mirrors.** Two stores that do not share a failure, each fed by the download loop in
-  reference.md. A standby and a successor operator read the log from them when the node is down.
+**How to tell it is resolved.** `B` serves `/v1/markets`, `release_superseded` has resolved, and
+`latestSeq()` rises, as step 4 of [Upgrade to a new release](#upgrade-to-a-new-release) describes.
+
+**When to escalate.** If `handover_failed` fires, tell the owner at once. New keys need the
+timelock, and its delay runs against the vault's exit period.
+
+## Roll back
+
+Use this section when a new release must be undone. Choose the case that matches where the upgrade
+stands.
+
+### `A` is still running and `B` has not taken the keys
+
+To call the upgrade off:
+
+1. The timelock calls `setCurrentRelease` again, with `A`'s digest and configuration hash, as step 1
+   of [First deployment](#first-deployment) describes. With rotation on, follow the rollback in
+   [Upgrade while you are the operator](operator-candidate.md#upgrade-while-you-are-the-operator)
+   instead.
+
+   **Changes the live system.** The owner must approve this contract call.
+
+   The call starts another generation. `A`'s sealed keys belong to an earlier generation, so `A`
+   keeps raising `release_superseded`.
+
+2. To make `A` safe to restart again, start a fresh copy of `A`'s image and configuration with a
+   `predecessor` file that points at the running `A`, as step 4 of
+   [Upgrade to a new release](#upgrade-to-a-new-release) describes.
+
+   **Changes the live system.** The owner must approve this deployment.
+
+   The fresh copy serves, and `release_superseded` resolves. The old VM powers off. With rotation
+   on, the old VM follows the fresh copy instead, so power it off yourself.
+
+### `B` has the keys and is running
+
+Rolling back is then another upgrade, to `A`'s release.
+
+1. Check the protocol version rule in [Know before you start](#know-before-you-start). If `B`
+   activated a newer protocol version, no rollback is possible. Ship a fix as a further release,
+   `C`.
+2. Follow [Upgrade to a new release](#upgrade-to-a-new-release) with `A`'s image and configuration
+   as the new release. The vault names it in a new generation, so `A` takes the keys afresh from
+   `B`.
+
+### A configuration value in `B` is the problem
+
+A wrong feed, limit or provider in `B`'s configuration also needs a new release, because a running
+trading server's configuration cannot be changed. A secret's value is not a configuration value.
+Rotating a secret needs a delivery and a restart, but no new release, as
+[Secrets](key-recovery.md#secrets) describes.
+
+## Companion processes
+
+These processes run outside the enclave, and none of them holds the enclave's keys.
+
+### The benchmark worker
+
+With `[benchmarks]` in the configuration, the trading server waits at every start for a signed
+snapshot of the publishers' rates before it sequences ordinary instructions. The benchmark worker
+fetches and signs those snapshots.
+
+1. On a host of its own, with `OPERATOR_KEY_FILE` set for this process alone, start the worker:
+
+   ```shell
+   $ENGINE admin --config node.toml --node $API --pin $PIN sync-benchmarks --watch
+   ```
+
+   Start it before the trading server, or as soon as the trading server serves its attestation. The
+   worker retries until the trading server answers.
+
+2. Restart the worker after every restart of the trading server that changes the pin.
+
+With `--watch`, the worker fetches and signs every `benchmarks.interval`, which is hourly in the
+template, so that a failed fetch is retried and a late publication arrives before the rollover. It
+also signs before each rollover, and at once when the trading server's rollover schedule changes. A
+failed or refused submission is retried within 10 seconds. Without `--watch`, the worker signs one
+snapshot and exits. An administrative instruction signed while the worker fetches takes the
+worker's nonce, so that attempt is refused and the next one goes through.
+
+After a long outage, a snapshot carries every missed day, up to 16,384 observations. **If the
+trading server refuses the snapshot as too large, with status 413, a trading server waiting for a
+snapshot stays held until `api.max_body_bytes` is raised, which needs a new release.**
+
+The worker raises `benchmark_sync_failed`, `benchmark_fetch_failed`, `benchmark_sync_pending` and
+`benchmark_rate_refused`. It reads a webhook's URL only from an environment variable that the
+configuration names with `url_env`, never from a delivered secret. The production template's
+`[alerts]` routes name delivered secrets with `url_secret`, and a production build refuses `url_env`
+in the trading server's configuration. **Under a production configuration, the worker therefore
+posts no alert, and its alerts appear only in its own log, so watch that log.**
+
+The worker keeps its own alert outbox beside the trading server's, in a directory named after the
+outbox directory with `-benchmark-worker` added. For the production template's `/data/alerts`, the
+directory is `/data/alerts-benchmark-worker`. The worker opens the outbox before it signs anything,
+so the path must be creatable, writable by the worker's user, and persistent on the worker's own
+host. **If it is not, the worker exits with an error naming the path and signs nothing, and a
+restarted trading server sequences no ordinary instruction until a snapshot arrives.**
+
+### The Certificate Transparency watcher
+
+Run the watcher on a host independent of the trading server's, and start it before the first
+certificate is issued. Its configuration template is `config/ct-watch.toml`.
+
+```shell
+$ENGINE ct-watch --config ct-watch.toml
+```
+
+[`unattested_certificate`](unattested-certificate.md) covers its alerts.
+
+### Monitoring and archive mirrors
+
+- **Prometheus** scrapes the trading server's metrics listener and the watcher's, with the rules in
+  `ops/prometheus/engine-node-rules.yml`. Route its alerts to a receiver other than the trading
+  server's own webhook. The Grafana dashboard is `ops/grafana/engine-node.json`.
+- **Two archive mirrors** that do not share a failure each run the download loop in
+  [Download the public log and verify it](reference.md#download-the-public-log-and-verify-it). A
+  standby and a successor operator read the log from them when the trading server is down.
 
 ## Staging
 
-Run sections 2 to 4 against a testnet vault and a second host, with the same image and a config that
-differs only in its chain, vault and providers. Both procedures are done when they complete without
-a step that is not written here.
+Run [First deployment](#first-deployment), [Upgrade to a new release](#upgrade-to-a-new-release)
+and [Roll back](#roll-back) against a testnet vault and a second host. Use the same image, and a
+configuration that differs only in its chain, vault and providers. The procedures are proven when
+each completes without a step that this runbook does not describe.

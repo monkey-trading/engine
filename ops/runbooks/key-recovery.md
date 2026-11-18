@@ -1,206 +1,361 @@
 # Key recovery
 
-Which key is lost, replaced or exposed decides the procedure. Find it in the table, then follow its
-section. Read [reference.md](reference.md) first.
+Use this runbook when a key is lost, must be replaced, or may be exposed, and to deliver or rotate
+the secrets that the trading server reads. Which key is affected decides the procedure. Find the
+key in the table below, and follow its section. The steps use the shell variables that
+[Variables](reference.md#variables) sets up. Commands and their output call a running trading server
+a node.
+
+- [How the enclave key is kept](#how-the-enclave-key-is-kept)
+- [New keys](#new-keys)
+- [Operator key](#operator-key)
+- [Relayer](#relayer)
+- [Secrets](#secrets)
 
 | Key | Held by | Used for | If it is lost or exposed |
 | --- | --- | --- | --- |
-| Enclave signing key | The enclave only; sealed to the release on the data disk | Signs checkpoints and withdrawal authorizations; it is the vault's signer | "New keys" |
-| API TLS key, ACME account | The enclave, sealed in the same file | The API's identity, and the account its certificates are ordered under | "New keys" |
-| API certificate | The enclave, sealed apart from the keys in the member's own file, which no handover moves | Names the member's API hostname and the TLS key; public | The node orders another ([certificate-renewal-failure.md](certificate-renewal-failure.md)) |
-| Operator admin key | The operator, offline. The node holds only the public key. | Signs `engine admin` commands | "Operator key" |
-| Checkpoint relayer | The checkpoint RPC endpoint (`checkpoints.relayer`) | Pays gas for checkpoint posts; no authority over funds | "Relayer" |
-| Governance multisig and guardian | The owner | Timelock proposals; the guardian's pause and signer retirement | Outside these runbooks |
-| Webhook URLs, vendor API keys, RPC credentials | The operator | Alerts, prices, chain reads | "Secrets" |
-| Access source authority | The screening service | Signs eligibility decisions; recorded in the log | "Secrets" |
+| Enclave signing key | The enclave only, sealed to the release on the data disk | Signs checkpoints and withdrawal authorisations. It is the vault's signer. | [New keys](#new-keys) |
+| API TLS key and ACME account | The enclave, sealed in the same file as the signing key | The API's identity, and the account under which its certificates are ordered | [New keys](#new-keys) |
+| API certificate | The enclave, sealed apart from the keys in the member's own file, which no handover moves | Names the member's API hostname and the TLS key. It is public. | The trading server orders another, as [Certificate renewal failure](certificate-renewal-failure.md) describes. |
+| Operator admin key | The operator, offline. The trading server holds only the public key. | Signs `engine admin` instructions | [Operator key](#operator-key) |
+| Checkpoint relayer | The checkpoint RPC endpoint, as `checkpoints.relayer` | Pays the gas for checkpoint posts. It has no authority over funds. | [Relayer](#relayer) |
+| Governance multisig and guardian | The owner | Timelock proposals, and the guardian's pause and signer retirement | Outside these runbooks |
+| Webhook URLs, vendor API keys and RPC credentials | The operator | Alerts, prices and chain reads | [Secrets](#secrets) |
+| Access source authority | The screening service | Signs eligibility decisions. The log records it. | [Secrets](#secrets) |
 
 ## How the enclave key is kept
 
-The keys are made inside the enclave and sealed to the release (launch measurement and config) with a
-key the SEV-SNP firmware derives from the chip. No one can read them or export them, and there is no
-backup. Two things move them: a restart (the same release on the same chip opens the file) and a
-handover to the release the vault names next ([deploy-and-rollback.md](deploy-and-rollback.md)). If
-neither is possible, the keys are gone and new ones must be made and registered by the timelock.
+Use this section when `enclave_key_failed` fires, or before you decide to make new keys, to find out
+whether the keys are lost.
 
-A restart needs no action. These need new keys:
+The enclave makes its keys itself, and seals them to the release, which is the launch measurement
+and the configuration, with a key that the SEV-SNP firmware derives from the chip. No one can read
+or export the keys, and there is no backup. Only two things carry the keys forward:
 
-- the sealed file is deleted, or the disk is lost;
-- the VM moved to another chip, or the firmware was rolled back below the sealed level;
-- the running release stopped after the vault named its successor, so its own copy no longer opens;
-- the keys, or the host with the sealed file and the chip, are suspected compromised.
+- a restart, in which the same release on the same chip opens the sealed file;
+- a handover to the release that the vault names next, as
+  [Deploy and rollback](deploy-and-rollback.md) describes.
 
-An edited config also stops the keys opening, but that is a new release, not a loss: hand the keys
-to it ([deploy-and-rollback.md](deploy-and-rollback.md)). Check which case you are in before you
-make new keys:
+If neither is possible, the keys are gone. New keys must then be made, and the timelock must
+register them. A restart needs no action. These cases need new keys:
 
-```sh
-cast call $VAULT 'currentRelease()(bytes32)' --rpc-url $RPC       # what the vault names
-cast call $VAULT 'releaseGeneration()(uint64)' --rpc-url $RPC
-cast keccak $(cast concat-hex $DIGEST 0x$(sha256sum node.toml | cut -d' ' -f1))   # this disk's release
-```
+- the sealed file is deleted, or the data disk is lost;
+- the VM moved to another chip, or the firmware was rolled back below the level the keys were
+  sealed at;
+- the running release stopped after the vault named its successor, so the release's own copy no
+  longer opens;
+- the keys, or the host holding both the sealed file and the chip, may be compromised.
 
-If the two hashes differ, the vault names another release: start that one, not new keys.
+An edited configuration also stops the keys from opening. That case is a new release, not a loss:
+hand the keys to it, as [Deploy and rollback](deploy-and-rollback.md) describes.
+
+1. Before you make new keys, read the release that the vault names, and its generation:
+
+   ```shell
+   cast call $VAULT 'currentRelease()(bytes32)' --rpc-url $RPC
+   cast call $VAULT 'releaseGeneration()(uint64)' --rpc-url $RPC
+   ```
+
+2. Compute the release on this data disk, where `$DIGEST` is the release's launch digest from its
+   `measurement.json`:
+
+   ```shell
+   cast keccak $(cast concat-hex $DIGEST 0x$(sha256sum node.toml | cut -d' ' -f1))
+   ```
+
+   If this hash differs from `currentRelease()`, the vault names another release. Start that
+   release, and do not make new keys.
 
 ## New keys
 
-New keys end signed withdrawals and checkpoints until the timelock installs them, and the timelock
-has a delay (3 days, #360; `getMinDelay()`). Meanwhile no checkpoint is accepted and no withdrawal
-authorization is valid. **Start the clock**: the vault's `exitPeriod` (14 days) counts from the last
-accepted checkpoint, and after it anyone may start the permanent exit. If fewer than about five days
-remain, the owner decides whether to start the install anyway or let the exit run.
+Use this procedure when the enclave's keys are lost or may be exposed, as
+[How the enclave key is kept](#how-the-enclave-key-is-kept) describes, or when `handover_failed`
+fires.
 
-1. **If the key may be exposed, stop it signing at once.** The guardian calls `retireSigner()`, which
-   clears the vault's signer: no checkpoint and no withdrawal signed in the current epoch is accepted
-   again, and it never expires. Add `pauseWithdrawals()` to stop claims of authorizations already
-   issued (it lasts seven days and cannot be extended by the guardian; the timelock renews it with
-   `setPauses`).
-   **Changes the live system.** Needs the owner's approval, then the guardian multisig's signatures,
+New keys stop signed withdrawals and checkpoints until the timelock installs them. The timelock has
+a delay, three days at launch, which `cast call $TIMELOCK 'getMinDelay()(uint256)' --rpc-url $RPC`
+reads. Meanwhile, the vault accepts no checkpoint, and no withdrawal authorisation is valid.
+
+**Start the clock now.** The vault's `exitPeriod`, 14 days, counts from the last accepted
+checkpoint, and once it has passed, anyone may start the permanent exit. If fewer than about five
+days remain, the owner decides whether to start the installation anyway or to let the exit run.
+
+1. **If the key may be exposed, retire the signer at once.** The guardian calls `retireSigner()`,
+   which clears the vault's signer. No checkpoint, and no withdrawal signed in the current epoch, is
+   then accepted again, and the retirement never expires.
+
+   **Changes the live system.** The owner must approve the call, and the guardian multisig signs it,
    without a delay.
 
-   ```sh
+   ```shell
    cast send $VAULT 'retireSigner()' --rpc-url $RPC --account <guardian>
+   ```
+
+   `<guardian>` is the guardian's account. The guardian is the multisig, so submit the call as a
+   multisig transaction. Afterwards, `cast call $VAULT 'checkpointSigner()(address)' --rpc-url $RPC`
+   prints `0x0000000000000000000000000000000000000000`.
+
+2. **If the key may be exposed, pause withdrawals.** `pauseWithdrawals()` stops the claims of
+   authorisations already issued. The pause lasts seven days, and the guardian cannot extend it. The
+   timelock renews it with `setPauses`.
+
+   **Changes the live system.** The owner must approve the call, and the guardian multisig signs it,
+   without a delay.
+
+   ```shell
    cast send $VAULT 'pauseWithdrawals()' --rpc-url $RPC --account <guardian>
    ```
 
-   Check: `checkpointSigner()` prints `0x0000…0000`; `withdrawalsPaused()` prints `true`. The node
-   raises `vault_withdrawals_halted` (cause `signer_retired` or `paused`) and `checkpoint_withheld`
-   (cause `signer_retired`), and keeps sequencing. Make the markets reduce-only if they should take
-   no new risk meanwhile ([reduce-only.md](reduce-only.md)).
-2. **Get a place for the new keys.** There are two ways; both need the owner's approval to write keys.
-   - *Same release, new generation (preferred).* The timelock calls `setCurrentRelease` with the
-     release's own digest and config hash, which raises `releaseGeneration`. Nothing sealed in the old
-     generation opens in the new one, so no old file stands in the way. Use the pattern in reference.md
-     with `DATA=$(cast calldata 'setCurrentRelease(bytes,bytes32)' $DIGEST $CONFIG_HASH)`.
-     **Changes the live system.** Needs the owner's approval of this contract call. This is not
-     available while operator rotation is on; the operator's move to another approved release raises
-     the generation instead ([operator-candidate.md](operator-candidate.md), section 5).
-   - *Delete the old file.* With the VM stopped, remove `/data/keys/<release id>-<generation>.sealed.json`
-     from the data disk. **Changes the live system.** Needs the owner's approval to delete keys. A
-     host that deletes the file gets the same result as one that cannot read it, so only do this when
-     the old keys are already unusable or retired.
-3. **Boot with new keys.** Put an empty file `new-key` on the data disk, beside `config.toml`, and
-   start the VM with the same image and the same config, except after the rotation-on move to another
-   approved release: then the vault names that release, so boot its image and its config (the
-   candidacy's release `B`) with the preserved log, since the old release's start opens none of its
-   keys: with rotation on, it only follows the operator in effect. The image removes the marker before it
-   starts the engine, so it applies once. `--new-key` refuses to run beside an existing file for the
-   same release and generation.
-   **Changes the live system.** Needs the owner's approval to deploy.
-   Check: `curl -sk $API/v1/attestation` answers; the console shows `signer_unregistered`; no other
-   route answers. The new enclave address differs from the old `$SIGNER`.
-4. **Verify the new attestation** and take the new address and pin
-   ([reference.md](reference.md), "The node's attested key and its pin"). Do not skip this: the
-   timelock registers whatever address you give it.
-5. **Install it.** The timelock calls `setSigner(<new address>)`; pattern in reference.md.
-   **Changes the live system.** Needs the owner's approval of this contract call. The vault accepts
-   it from a retired state, and raises `signerEpoch`.
+   Afterwards, `cast call $VAULT 'withdrawalsPaused()(bool)' --rpc-url $RPC` prints `true`. The
+   trading server raises `vault_withdrawals_halted`, with the cause `signer_retired` or `paused`,
+   and `checkpoint_withheld`, with the cause `signer_retired`, and it keeps sequencing. If the
+   markets should take no new risk meanwhile, make them reduce-only, as
+   [Make markets reduce-only](reduce-only.md) describes.
 
-   ```sh
+3. **Make room for the new keys,** in one of two ways. Both need the owner's approval to write keys.
+
+   - **Same release, new generation.** This is the preferred way. The timelock calls
+     `setCurrentRelease` with the release's own digest and configuration hash, which raises
+     `releaseGeneration`. Nothing sealed in the old generation opens in the new one, so no old file
+     stands in the way. Follow
+     [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
+     with:
+
+     ```shell
+     DATA=$(cast calldata 'setCurrentRelease(bytes,bytes32)' $DIGEST $CONFIG_HASH)
+     ```
+
+     **Changes the live system.** The owner must approve this contract call. This way is not
+     available while operator rotation is on. The operator's move to another approved release raises
+     the generation instead, as
+     [Upgrade while you are the operator](operator-candidate.md#upgrade-while-you-are-the-operator)
+     describes.
+   - **Delete the old file.** With the VM stopped, remove
+     `/data/keys/<release id>-<generation>.sealed.json` from the data disk.
+
+     **Changes the live system.** The owner must approve deleting keys. **A host that deletes the
+     file gets the same result as one that cannot read it, so do this only when the old keys are
+     already unusable or retired.**
+
+4. **Boot with new keys.** Put an empty file named `new-key` on the data disk, beside `config.toml`,
+   and start the VM with the same image and the same configuration. The image removes the marker
+   before it starts the engine, so the marker applies once. `--new-key` refuses to run beside an
+   existing sealed file for the same release and generation.
+
+   After a rotation-on move to another approved release, the vault names that release instead.
+   Boot that release's image and configuration, the candidacy's release `B`, with the preserved log.
+   The old release's start opens none of its keys, because with rotation on it only follows the
+   operator in effect.
+
+   **Changes the live system.** The owner must approve the deployment.
+
+   `curl -sk $API/v1/attestation` answers, the console shows `signer_unregistered`, and no other
+   route answers. The new enclave address differs from the old `$SIGNER`.
+
+5. **Verify the new attestation,** and take the new address and pin from it, as
+   [The trading server's attested key and its pin](reference.md#the-trading-servers-attested-key-and-its-pin)
+   describes. **Do not skip this step. The timelock registers whatever address you give it.**
+
+6. **Install the new signer.** The timelock calls `setSigner` with the new address, following
+   [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
+   with:
+
+   ```shell
    DATA=$(cast calldata 'setSigner(address)' $NEW_SIGNER)
    ```
 
-   While operator rotation is on, `setSigner` accepts only the enclave address the operator in effect
-   registered: the candidate must first call `setEnclave($NEW_SIGNER)` on the registry
-   ([operator-candidate.md](operator-candidate.md)). A different address reverts with
-   `NotTheRegisteredEnclave`.
-   Check: `checkpointSigner()` equals the new address and `signerEpoch()` rose by one; once the block
-   is `finalized` the node starts serving by itself, and `signer_unregistered` and
-   `vault_withdrawals_halted` resolve. `$PIN` is now the new TLS key's.
-6. **Check the books carried over.** `latestSeq()` rises again. Authorizations that were still usable
-   are reissued under the new epoch without a request; an expired one is reissued when its account
-   asks for it. A pre-expiry authorization signed by the old key no longer pays. Replay across the
-   change of signer needs an attestation for each signer:
+   **Changes the live system.** The owner must approve this contract call. The vault accepts it from
+   a retired state, and raises `signerEpoch`.
 
-   ```sh
-   $ENGINE replay --log archive --attestation old.json --release old-release.toml --attestation new.json --release release.toml --processor <name>
+   **While operator rotation is on, `setSigner` accepts only the enclave address that the operator
+   in effect registered. Any other address reverts with `NotTheRegisteredEnclave`.** The candidate
+   must first register the new address on the registry:
+
+   ```shell
+   cast send $REGISTRY 'setEnclave(address)' $NEW_SIGNER --rpc-url $RPC --account <candidate>
    ```
 
-   Keep the old attestation file: it is the only proof of what the old key was.
-7. Update the companions that pin the key: ct-watch accepts the new TLS key from the next verified
-   attestation; restart the benchmark worker with the new `$PIN`.
-8. If the old key was exposed, say so to the owner, who decides what to publish. Every withdrawal the
-   old key signed before the retirement is on the public log.
+   `<candidate>` is the candidate's account, as
+   [Standing as an operator candidate](operator-candidate.md) describes.
+
+   `cast call $VAULT 'checkpointSigner()(address)' --rpc-url $RPC` prints the new address, and
+   `signerEpoch()` has risen by one. Once the block is `finalized`, the trading server starts
+   serving by itself, and `signer_unregistered` and `vault_withdrawals_halted` resolve. `$PIN` is
+   now the new TLS key's hash.
+
+7. **Check that the books carried over.** `latestSeq()` rises again. Authorisations that were still
+   usable are reissued under the new epoch without a request. An expired authorisation is reissued
+   when its account asks for it. An authorisation that the old key signed before it expired no
+   longer pays. A replay across the change of signer needs an attestation for each signer:
+
+   ```shell
+   $ENGINE replay --log archive --attestation old.json --release old-release.toml \
+     --attestation new.json --release release.toml --processor <name>
+   ```
+
+   `<name>` is the codename of the host's CPU generation, such as `Genoa` or `Milan`. The replay
+   prints a line that begins `verified:`. **Keep the old attestation file. It is the only proof of
+   what the old key was.**
+
+8. **Update the companion processes that pin the key.** The Certificate Transparency watcher accepts
+   the new TLS key from the next verified attestation. Restart the benchmark worker with the new
+   `$PIN`, as [Companion processes](deploy-and-rollback.md#companion-processes) describes.
+
+9. **If the old key was exposed, tell the owner,** who decides what to publish. Every withdrawal
+   that the old key signed before the retirement is on the public log.
+
+**How to tell it is resolved.** `signer_unregistered` and `vault_withdrawals_halted` have resolved,
+`latestSeq()` rises, and a replay across the change of signer ends with `verified:`.
+
+**When to escalate.** Tell the owner as soon as new keys are needed, with the time of the last
+accepted checkpoint, because the exit period is running.
 
 ### The running release stopped
 
-If the running release stopped after the vault named its successor and no successor confirmed, you
-are here, with the alert `handover_failed`. The old release's sealed copy no longer opens. Follow
-"New keys" from step 3: the vault already names a release, so the new keys seal for it.
+Use this procedure when `handover_failed` fires. The running release stopped after the vault named
+its successor, and no successor confirmed. The old release's sealed copy no longer opens. Follow
+[New keys](#new-keys) from step 4, which boots with new keys. The vault already names a release, so
+the new keys are sealed for it.
 
 ## Operator key
 
-The operator key signs admin commands. The node knows only its public key (`operator.public_key`);
-it is recorded in the log, and changing it in the config for a log that has begun is refused.
+The operator key signs administrative instructions. The trading server knows only its public key,
+`operator.public_key`. The log records that key, and the trading server refuses a configuration that
+changes it for a log that has already begun.
 
-- **Rotate with the key in hand** (rotation off). While rotation is on, `rotate-operator` is refused
-  and the registry's own path for an operator to change its key is not built yet, so the key
-  changes only by an election ([operator-candidate.md](operator-candidate.md)). With rotation off,
-  and no election waiting to take effect, the old key signs `rotate-operator <new address>`.
-  **Changes the live system.** Needs the owner's approval, and the new address must come from a key
-  made on the owner's hardware.
+### Rotate the operator key
 
-  ```sh
-  $ENGINE admin --config $CONFIG --node $API --pin $PIN rotate-operator 0x<new address>
-  ```
+Use this procedure to replace the operator key while you still hold it, with operator rotation off.
 
-  Check: `curl -sf $API/v1/operator | jq .pending_rotation` shows the address and an `effective_at`
-  seven days on. The old key keeps working until then. From `effective_at`, sign with the new key and
-  add `--rotated`:
+While rotation is on, the engine refuses `rotate-operator`, and the registry has no function that
+changes an operator's admin key. The key then changes only through an election, as
+[Standing as an operator candidate](operator-candidate.md) describes. With rotation off, and with no
+election waiting to take effect, the old key signs the rotation.
 
-  ```sh
-  $ENGINE admin --config $CONFIG --node $API --pin $PIN --rotated --key-file new.key set-reduce-only false
-  ```
+1. Sign the rotation with the old key, where `<new address>` is the new key's address.
 
-  `operator.public_key` in the config can stay as it is: the node accepts the key a logged rotation
-  names. A new release is not needed.
-- **The key is exposed.** With rotation off, the same command is the only fix, and the exposed key
-  keeps signing for seven days. With rotation on, only an election replaces it. Rotate at once, check the log for admin commands you did not send
-  (`jq -c 'select(.entry=="command" and .cmd.type=="signed_admin") | {seq, ts, command: .cmd.command, events: [.events[].type]}' archive/0*.jsonl`
-  lists every signed admin command in a downloaded archive), and consider making the markets
-  reduce-only while the exposed key is still valid ([reduce-only.md](reduce-only.md)). Every admin command is public, and the
-  protocol bounds the operator's limits (a profit fee or close-out level moves within 50% after a
-  seven-day notice, and from protocol V55 the profit fee and its hold curve only up from launch).
+   **Changes the live system.** The owner must approve it, and the new address must come from a key
+   made on the owner's hardware.
 
-  Rotating is not enough: until a release whose config names the new key runs, the exposed key can
-  also seal a secrets bundle into the enclave. At every restart, before the log's rotation has been
-  read, the delivery listener takes only the key the config names, and with rotation on it takes
-  that key the whole time. A bundle the exposed key seals sets the webhook URLs the pages go to
-  from the next restart on, and nothing bounds its version, so one sealed at the version's maximum
-  refuses every later delivery on this release until a new release's own sealed file replaces it or
-  the host deletes the file. **Ship a new release naming the new key**
-  ([deploy-and-rollback.md](deploy-and-rollback.md), section 3): a config naming a key the log has
-  not rotated to is refused at recovery, so the rotation must be logged before the new release can
-  take the log; the new release takes the moved bundle only under the new key's signature, so
-  deliver the bundle again under the new key. Until the new release runs, run `secrets-status`
-  after every restart (the command is under "Secrets" below): the sealed version must be the newest
-  you delivered, and any other version means the host is lying to you or the exposed key
-  delivered — treat both as compromise.
-- **The key is lost.** No other key can sign an admin command or a rotation while rotation is off.
-  Keep two copies of the key in separate places. With rotation on, only an election replaces the
-  operator ([operator-candidate.md](operator-candidate.md)), and a node holding for a benchmark
-  snapshot the lost key would sign stays held: run the whole fallback in [standby.md](standby.md),
-  which turns rotation off and names a release of its own. With rotation off, the governance
-  fallback in [standby.md](standby.md) restores the node, and its `installOperator` step seats a
-  new admin key the timelock alone can name.
+   ```shell
+   $ENGINE admin --config $CONFIG --node $API --pin $PIN rotate-operator 0x<new address>
+   ```
+
+2. Confirm the pending rotation:
+
+   ```shell
+   curl -sf $API/v1/operator | jq .pending_rotation
+   ```
+
+   The output shows the new address and an `effective_at` seven days later. The old key keeps
+   working until then.
+
+3. From `effective_at`, sign with the new key and add `--rotated`, for example:
+
+   ```shell
+   $ENGINE admin --config $CONFIG --node $API --pin $PIN --rotated --key-file new.key \
+     set-reduce-only false
+   ```
+
+`operator.public_key` in the configuration can stay as it is, because the trading server accepts the
+key that a logged rotation names. No new release is needed.
+
+### The operator key is exposed
+
+Use this procedure when the operator key may be known to someone else.
+
+With rotation off, the rotation above is the only fix, and the exposed key keeps signing for seven
+days. With rotation on, only an election replaces the key. Every administrative instruction is
+public, and the protocol bounds what the operator can do. A profit fee or close-out level can move
+only within 50% of its launch value, after a seven-day notice, and the profit fee and its holding
+curve can only rise from their launch values.
+
+Rotating the key is not enough. Until a release whose configuration names the new key is running,
+the exposed key can also seal a secrets bundle into the enclave. At every restart, before the log's
+rotation has been read, the delivery listener accepts only the key that the configuration names.
+With rotation on, the listener accepts that key the whole time. A bundle that the exposed key seals
+sets the webhook URLs that pages go to from the next restart. Nothing bounds its version, so a
+bundle sealed at the highest version refuses every later delivery on this release. The refusal lasts
+until a new release's own sealed file replaces it, or the host deletes the file.
+
+1. With rotation off, rotate the key at once, as [Rotate the operator key](#rotate-the-operator-key)
+   describes.
+
+2. Download the archive, as
+   [Download the public log and verify it](reference.md#download-the-public-log-and-verify-it)
+   describes, and list every signed administrative instruction in it:
+
+   ```shell
+   jq -c 'select(.entry=="command" and .cmd.type=="signed_admin") | {seq, ts, command: .cmd.command, events: [.events[].type]}' archive/0*.jsonl
+   ```
+
+   Look for any instruction that you did not send.
+
+3. Consider making the markets reduce-only while the exposed key is still valid, as
+   [Make markets reduce-only](reduce-only.md) describes.
+
+4. Ship a new release whose configuration names the new key, as
+   [Upgrade to a new release](deploy-and-rollback.md#upgrade-to-a-new-release) describes. **The
+   trading server refuses, at recovery, a configuration that names a key the log has not rotated
+   to, so the rotation must be logged before the new release can take the log.**
+
+5. Deliver the secrets bundle again, signed with the new key, as [Deliver secrets](#deliver-secrets)
+   describes. The new release accepts a moved bundle only under the new key's signature.
+
+6. Until the new release runs, run `secrets-status` after every restart, as
+   [See what an enclave holds](#see-what-an-enclave-holds) describes. The sealed version must be the
+   newest one you delivered. **Any other version means that the host is lying to you, or that the
+   exposed key delivered a bundle. Treat both as a compromise.**
+
+**When to escalate.** Tell the owner at once, with any administrative instruction from step 2 that
+you did not send.
+
+### The operator key is lost
+
+Use this section when no copy of the operator key remains. Keep two copies of the key, in separate
+places, so that this does not happen.
+
+While rotation is off, no other key can sign an administrative instruction or a rotation. The
+governance fallback in [When no standby qualifies](standby.md#when-no-standby-qualifies) restores
+the trading server, and its `installOperator` step seats a new admin key, which only the timelock
+can name.
+
+While rotation is on, only an election replaces the operator, as
+[Standing as an operator candidate](operator-candidate.md) describes. A trading server waiting for a
+benchmark snapshot that the lost key would sign stays held. Run the whole fallback in
+[When no standby qualifies](standby.md#when-no-standby-qualifies), which turns rotation off and
+names a release of its own.
 
 ## Relayer
 
-`checkpoints.relayer` is an account on the checkpoint RPC endpoint, which signs and pays for the
-transactions that post checkpoints. It has no authority over funds: only the enclave's signature
-authorizes a checkpoint. If its balance runs out or the endpoint's key is lost, posts fail and
-`checkpoint_post_failed` pages. There is no alert for a low balance: watch it from outside.
+Use this procedure when `checkpoint_post_failed` or `checkpoint_relayer_low` fires because the
+checkpoint relayer cannot pay for gas, or when the checkpoint endpoint's key is lost.
 
-1. Fund the account, or stand up a new endpoint with a new funded relayer.
-2. The relayer and endpoint are in the config: changing them is a new release
-   ([deploy-and-rollback.md](deploy-and-rollback.md)). Funding the existing account is not.
-3. Check: `checkpoint_post_failed` resolves and `latestSeq()` rises.
+`checkpoints.relayer` is an account on the checkpoint RPC endpoint, which signs and pays for the
+transactions that post checkpoints. It has no authority over funds, because only the enclave's
+signature authorises a checkpoint. If its balance runs out, or the endpoint's key is lost, posts
+fail and `checkpoint_post_failed` pages. With `[checkpoints.relayer_gas]`, which the production
+template sets, `checkpoint_relayer_low` warns first, once the balance falls below
+`checkpoints.relayer_gas.min_balance`. Withdrawals wait while no checkpoint posts.
+
+1. Fund the relayer's account, or stand up a new endpoint with a new, funded relayer.
+
+   Funding the existing account needs no release. **The relayer and the endpoint are part of the
+   configuration, so changing either is a new release**, as
+   [Deploy and rollback](deploy-and-rollback.md) describes.
+
+**How to tell it is resolved.** `checkpoint_post_failed` and `checkpoint_relayer_low` resolve, and
+`cast call $VAULT 'latestSeq()(uint64)' --rpc-url $RPC` rises.
 
 ## Secrets
 
-Webhook URLs, vendor API keys and RPC credentials. The config names them and the operator delivers
-their values into the enclave; the module documentation of `crates/node/src/secrets/mod.rs` has the
-design and what a host can do at each step. Keep the values in a bundle file on the admin workstation, never on the node's
-host, with one entry for every name the config uses:
+The trading server reads webhook URLs, vendor API keys and RPC credentials as secrets. The
+configuration names each secret, and the operator delivers its value into the enclave. The module
+documentation of `crates/node/src/secrets/mod.rs` describes the design, and what a host can do at
+each step.
+
+Keep the values in a bundle file on the administrative workstation, never on the trading server's
+host, with one entry for every name that the configuration uses:
 
 ```toml
 version = 1
@@ -209,63 +364,111 @@ provider_a_key = "..."
 alerts_critical_url = "https://..."
 ```
 
-`$SECRETS` is the listener's address as the host forwards it (`tee.sealing.secrets.listen`). The tool
-checks the enclave's quote against `release.toml` and encrypts only after that. A real enclave takes
-only the operator key in effect: the one the attested config names while it holds, and the one the log
-records once it runs, or its own config's alone while an election that governs the key is in force —
-one handing over, or whose key the log records — under the registry's rotation on, since an elected key
-has no business in another operator's enclave. A rotated operator therefore keeps its old key until a release's config names the
-new one, and an upgrade's new release takes a moved bundle only under the signature of the operator
-its own config names; a bundle signed before a rotation is refused there, and the operator delivers
-again. A fallback node whose config names the key the registry installed takes that key alone too,
-from before the log mirrors the installation.
+`$SECRETS` is the delivery listener's address as the host forwards it, `tee.sealing.secrets.listen`.
+The delivery tool checks the enclave's quote against `release.toml`, and encrypts the bundle only
+after that check passes.
 
-**See what an enclave holds.** This changes nothing. Check: the sealed version is the newest you
-delivered. A lower one means the host restored an older sealed file: treat the host as suspect, and
-deliver a higher version, which repairs it.
+A real enclave accepts a bundle only under the signature of the operator key in effect:
 
-```sh
-$ENGINE admin --config node.toml --key-file operator.key secrets-status --to $SECRETS --release release.toml
+- before the log is recovered, the key that the attested configuration names;
+- once the trading server runs, the key that the log records;
+- while rotation is on and an election that governs the key is in force, either handing over or
+  with its key recorded in the log, only the key that its own configuration names. An elected key
+  has no business in another operator's enclave.
+
+A rotated operator's old key therefore stays the one that the enclave accepts at a restart, until a
+release's configuration names the new key. An upgrade's new release accepts a moved bundle only
+under the signature of the operator that its own configuration names. A bundle signed before a
+rotation is refused there, and the operator delivers again. A fallback trading server whose
+configuration names the key that the registry installed also accepts only that key, even before the
+log mirrors the installation.
+
+### See what an enclave holds
+
+Use this command to read the versions that an enclave holds. It changes nothing.
+
+```shell
+$ENGINE admin --config node.toml --key-file operator.key \
+  secrets-status --to $SECRETS --release release.toml
 ```
 
-**Deliver.** **Changes the live system.** Needs the owner's approval of the delivery. A retry is safe:
-the same version with the same secrets is accepted as already sealed, a lower version or the same
-version with other secrets is refused, and no receipt means nothing is proven sealed.
+The command prints the sealed and running bundle versions, and the secrets the enclave lacks. The
+sealed version is the newest one you delivered. **A lower version means that the host restored an
+older sealed file. Treat the host as suspect, and deliver a higher version, which repairs it.**
 
-```sh
-$ENGINE admin --config node.toml --key-file operator.key deliver-secrets --to $SECRETS --release release.toml --secrets-file secrets.toml
-```
+### Deliver secrets
 
-Check: it prints `sealed: version <n>`. It refuses a bundle lacking a chain or screening key unless given
-`--partial`, and names any integration that stays off. After an operator rotation the config still
-names the old key, so signing under the new one takes `--rotated`, as for admin commands:
-`$ENGINE admin --config node.toml --key-file operator.key --rotated deliver-secrets ...`.
+Use this procedure to deliver a bundle, for example when `secret_missing` fires.
 
-**Rotate a secret.** Raise `version` and hold every secret, since a bundle replaces the whole sealed
-one. List the new key at its provider first, and leave the old one valid: what runs keeps the clients
-it started with.
+1. Deliver the bundle.
 
-1. Deliver. Check: it prints `restart required`, `secrets_restart_required` (Warning) fires, and the
-   status shows the new sealed version and the old running one.
-2. Restart the node ([restart-and-recovery.md](restart-and-recovery.md)); the enclave's keys stay.
-   **Changes the live system.** Check: the alert resolves, and sealed and running versions match.
+   **Changes the live system.** The owner must approve the delivery.
+
+   ```shell
+   $ENGINE admin --config node.toml --key-file operator.key \
+     deliver-secrets --to $SECRETS --release release.toml --secrets-file secrets.toml
+   ```
+
+   The command prints `sealed: version <n>`. It refuses a bundle that lacks a chain or screening key
+   unless you add `--partial`, and it names any integration that stays off. A retry is safe. The
+   same version with the same secrets is accepted as already sealed. A lower version, or the same
+   version with other secrets, is refused. No receipt means that nothing is proven sealed.
+
+   After an operator rotation, the configuration still names the old key, so signing with the new
+   key takes `--rotated`, as for administrative instructions:
+
+   ```shell
+   $ENGINE admin --config node.toml --key-file operator.key --rotated \
+     deliver-secrets --to $SECRETS --release release.toml --secrets-file secrets.toml
+   ```
+
+### Rotate a secret
+
+Use this procedure to replace a secret's value. Raise `version`, and include every secret, because
+a bundle replaces the whole sealed bundle. Add the new key at its provider first, and leave the old
+one valid, because what runs keeps the clients it started with.
+
+1. Deliver the bundle, as [Deliver secrets](#deliver-secrets) describes. The command prints
+   `restart required`, `secrets_restart_required` fires as a Warning, and `secrets-status` shows the
+   new sealed version beside the old running one.
+2. Restart the trading server, as [Restart and recovery](restart-and-recovery.md) describes. The
+   enclave's keys stay.
+
+   **Changes the live system.** The owner must approve the restart.
+
+   The alert resolves, and the sealed and running versions match.
 3. Revoke the old key at its issuer.
 
-**If a secret is exposed**, treat it as lost now: revoke it at its issuer first (the vendor's console,
-the RPC provider, the webhook receiver), then rotate as above.
+### A secret is exposed
 
-- Revoking a vendor key stops that vendor's feed (`venue_feed_down`); a market with one vendor left
-  keeps pricing only if its `min_sources` allows it. Make the markets that fall below it reduce-only.
-- Revoking a custody provider's key takes that provider out of the quorum until the restart; with too
-  few left, crediting pauses (`custody_rpc_quorum_lost`) until then.
+Use this procedure when a secret's value may be known to someone else. Treat it as lost now.
 
-**When a sealed file is lost or does not open**, the node raises `secrets_unreadable` and `secret_missing`
-and, for a chain or screening key, holds at its next start, serving only the delivery listener. Deliver
-again; it goes on starting with no restart.
+1. Revoke the secret at its issuer first: the vendor's console, the RPC provider, or the webhook
+   receiver.
+2. Rotate it, as [Rotate a secret](#rotate-a-secret) describes.
 
-**A new release** asks the running one for the bundle first, with no stop
-([deploy-and-rollback.md](deploy-and-rollback.md), section 3). **An election moves nothing**: an elected
-operator delivers its own to its own enclave ([operator-candidate.md](operator-candidate.md)).
+Revoking a secret has effects until the restart:
 
-- The access source's signing key is recorded in the log with its freshness bound. Replacing the
-  key needs a fresh log; replacing its endpoint does not.
+- Revoking a vendor key stops that vendor's feed, and `venue_feed_down` fires. A market with one
+  vendor left keeps a price only if its `min_sources` allows it. Make the markets that fall below
+  their `min_sources` reduce-only, as [Make markets reduce-only](reduce-only.md) describes.
+- Revoking a custody provider's key takes that provider out of the quorum until the restart. With
+  too few providers left, deposit crediting pauses, and `custody_rpc_quorum_lost` fires until then.
+
+### A sealed secrets file is lost or does not open
+
+Use this procedure when `secrets_unreadable` and `secret_missing` fire. For a chain or screening
+key, the trading server holds at its next start and serves only the delivery listener.
+
+1. Deliver the bundle again, as [Deliver secrets](#deliver-secrets) describes. The trading server
+   continues starting with no restart.
+
+### Secrets across releases and elections
+
+A new release asks the running release for the bundle first, without stopping it, as
+[Upgrade to a new release](deploy-and-rollback.md#upgrade-to-a-new-release) describes. An election
+moves nothing. An elected operator delivers its own bundle to its own enclave, as
+[Standing as an operator candidate](operator-candidate.md) describes.
+
+The log records the access source's signing key with its freshness bound. Replacing that key needs a
+fresh log, but replacing the source's endpoint does not.
