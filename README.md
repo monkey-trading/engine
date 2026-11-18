@@ -98,12 +98,14 @@ base applies. An add moves the open time to the size-weighted average of when th
 counting units already held as no more than 15 minutes old, so an add neither restarts the clock nor
 borrows a small old position's age. A reversal closes the whole position at its hold.
 
-### Financing
+### Financing and dividends
 
 Each day at 22:00 London time, weekends included, every open position pays or receives a day's
 financing on its notional: a long pays the benchmark rate plus the markup, and a short receives the
 benchmark less the markup, paying when the markup is the larger. A market whose benchmark has no
-published rate for the day accrues nothing.
+published rate for the day accrues nothing. At the open on an ex-dividend date, a long in a share or
+index receives the dividend less withholding and a short pays it in full; a split scales a share's
+positions, resting orders and prices, settling any fraction of a unit in cash.
 
 | Markets | Benchmark | Markup | Day count |
 | --- | --- | --- | --- |
@@ -199,10 +201,9 @@ stress settings, tier table and weekend margins change only after a seven-day pu
 stays between its launch value and 1.5 times it, spreads between their launch rates and twice them,
 margins at or above launch, and tier benefits at or below it. Once rotation is on, the operator is
 drawn each day from a set MONKEY stakers elect, takes a fifth of each distribution, and changes
-those values only by a vote of more than two thirds of the set's stake.
-
-A log records the protocol version each rule set took effect at, so an old log replays to the roots
-it published; the [version list](crates/core/src/protocol/versions.rs) says what each one changed.
+those values only by a vote of more than two thirds of the set's stake. A log records the protocol
+version each rule set took effect at, so an old log replays to the roots it published; the
+[version list](crates/core/src/protocol/versions.rs) says what each one changed.
 
 ## Getting it
 
