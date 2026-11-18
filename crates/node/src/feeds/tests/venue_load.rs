@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use engine_core::price::compute_index;
 use engine_core::types::MarketId;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::AbortHandle;
 use tokio::time::{Instant, sleep, timeout};
 
@@ -157,7 +157,13 @@ async fn dev_scenario_venue_load() {
     let mut time = keep_time(&tx);
     let sources: BTreeMap<MarketId, BTreeSet<String>> =
         MARKETS.into_iter().map(|market| (market, ["coinbase", "kraken"].map(String::from).into())).collect();
-    tokio::spawn(monitor::run(tx.clone(), Arc::new(Metrics::new()), NO_PRICE_AFTER, sources));
+    tokio::spawn(monitor::run(
+        tx.clone(),
+        Arc::new(Metrics::new()),
+        NO_PRICE_AFTER,
+        sources,
+        watch::channel(Some(trusted_now())).1,
+    ));
 
     // Coinbase's books at the depth Coinbase sends, and Kraken's, each behind a link of its own.
     let coinbase = CoinbaseVenue::start(&[Product { depth: 18_000, ..BTC }, Product { depth: 9_000, ..ETH }]).await;

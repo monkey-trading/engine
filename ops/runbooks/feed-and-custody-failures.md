@@ -140,7 +140,7 @@ shows only a market that never priced. Match the alerts to the cause:
 | `venue_clock_ahead` | Warning | A venue's timestamps are well ahead of the host clock. | Check `clock_drift` and the host clock; quotes ahead of sequenced time are rejected (`prices_rejected`, reason `quote_ahead`). |
 | `venue_delayed` | Warning | A connection's pings show its stream may be further behind than `feeds.venues.max_delay`, so what it reads counts as no quote, and a market needing that venue has no price. It resolves when a frame next counts. Fields: `venue`, `feed`. | Check the network path to the venue, and the host's load. If the path is healthy, the host may be holding the stream back: read [incident-response.md](incident-response.md). |
 | `prices_rejected` | Warning | The engine refused a price update. The `reason` is one of `unknown_market`, `malformed_quote`, `quote_ahead`, `market_closed`, `contract_not_taken`, `other`. | `contract_not_taken` on a futures market means a quote for a contract the market is not on: see below. |
-| `market_no_price` | Critical | An open market a feed prices has had no usable price for `alerts.no_price_after`. | Below. |
+| `market_no_price` | Critical | An open market a feed prices has had no usable price for `alerts.no_price_after`, counted from trusted time's first sample of the run. | Below. |
 | `market_unfed` | Warning | No configured feed prices this market, so it cannot trade. It never pages `market_no_price`. | Expected only for markets you have not wired; otherwise a config gap. |
 | `sequencer_stalled` | Critical | The sequencer answered no sample for `alerts.no_price_after`. | [restart-and-recovery.md](restart-and-recovery.md). |
 
@@ -295,8 +295,10 @@ section 5). It does not affect prices.
 ### Trusted time
 
 Every stamp is checked against signed Roughtime readings from independent servers. Nothing is
-sequenced before the first sample, and sequencing halts when the host clock is outside
-`time.max_drift` of them or no sample has arrived for 60 seconds.
+sequenced before the first sample, so no market pages `market_no_price` before it, and sequencing
+halts when the host clock is outside `time.max_drift` of them or no sample has arrived for 60
+seconds. A halt does not hold `market_no_price` back: each market pages while its feeds have not
+priced it again.
 
 | Alert | Meaning | Do |
 | --- | --- | --- |

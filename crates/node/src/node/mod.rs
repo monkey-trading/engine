@@ -408,9 +408,8 @@ async fn serve_node(
     let history_finished = false;
     let handing_over = None;
 
-    let monitor_tx = tx.clone();
-    let (monitor_metrics, no_price_after) = (metrics.clone(), cfg.alerts.no_price_after);
-    tasks.spawn(async move { ("monitor", monitor::run(monitor_tx, monitor_metrics, no_price_after, sources).await) });
+    let monitoring = monitor::run(tx.clone(), metrics.clone(), cfg.alerts.no_price_after, sources, samples_rx.clone());
+    tasks.spawn(async move { ("monitor", monitoring.await) });
 
     let certificates = CertificateTask::configured(&cfg.api, tls.key, &metrics, sealed)?;
     let listener = TcpListener::bind(cfg.node.listen).await.with_context(|| format!("binding {}", cfg.node.listen))?;
