@@ -1,6 +1,8 @@
 //! Each command's derived rows on disk, for the history's retention, so the financing read proves a row
 //! the history lists once the rows have left memory (`DerivedRows`). The history writes a command's rows
-//! as it takes them, one file a command, `<seq>.rows`: its stamp, its row count and its rows. The host
+//! as it takes them, and a rotation member's replica writes them as it follows, leaving a file that already
+//! holds a command's rows, so the index finds them at its turn. One file a command, `<seq>.rows`: its stamp, its
+//! row count and its rows. The host
 //! holds the files, so a reader takes a file's rows only once they give the aggregates the log holds
 //! for the command (`Derived::checked`). The files sit in `<history.dir>/financing/`, about 18 MB a
 //! rollover at 440k positions. A rebuild of an authenticated history generation takes its rows from its

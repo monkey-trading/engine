@@ -9,6 +9,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -21,6 +22,7 @@ use crate::checkpoints::setup::EpochUnfinal;
 use crate::checkpoints::{CheckpointChain, ScheduledTurn, View};
 use crate::handover::tail::{Taken, take_tail};
 use crate::history::HistoryPlan;
+use crate::history::derived::RowsStore;
 use crate::history::marks::Retentions;
 use crate::history::marks::fold::MarkFold;
 use crate::history::marks::follow::Following;

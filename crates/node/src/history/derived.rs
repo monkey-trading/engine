@@ -5,7 +5,8 @@
 //! read proves an account's charges against the logged root from them. They are kept for a week of
 //! rollovers, so an index that falls behind by up to that, as a rotation member's does between its
 //! turns, or one that restarts, finds them in memory. The history writes each command's rows to disk as
-//! it takes them (`RowsStore`), for its retention, so the financing read proves an older row from there.
+//! it takes them (`RowsStore`), for its retention, as does a member's replica as it follows, so the financing
+//! read proves an older row from there and an index resuming from an older turn finds its rows there.
 //! A command the index reads back from the log once its rows are gone takes them from that store, or
 //! else from a replay of the log of its own (`Deriver`), which a stop ends and which pages a Warning.
 

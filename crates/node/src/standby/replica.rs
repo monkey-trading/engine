@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeSet, VecDeque};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
@@ -18,6 +19,7 @@ use super::follow::{ReplicaRefused, follow, follow_until};
 use super::open_copy_replayed;
 use super::operator::Followed;
 use crate::config::NodeConfig;
+use crate::history::derived::RowsStore;
 use crate::history::marks::fold::MarkFold;
 use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, LogWriter, Manifest, Offset, offset_of};
 use crate::log_check::answer::CheckedHeads;
@@ -48,6 +50,10 @@ pub(crate) struct Follower {
     signers: BTreeSet<AccountId>,
 }
 
+/// What a replica records as it applies entries: the dashboard record, the folded marks, the checkpoints it
+/// verified and the store of each command's derived rows.
+pub(crate) type Records = (Option<Stats>, Option<Rc<RefCell<MarkFold>>>, Option<CheckedHeads>, Option<Arc<RowsStore>>);
+
 impl Follower {
     /// Opens the copy in `dir` and builds its replica by replaying it as it is read: commands sealed,
     /// checkpoints and typed withdrawals signed, by one of `signers`, the vault's recorded signers,
@@ -69,14 +75,24 @@ impl Follower {
             observe(entry);
             Ok(())
         };
-        Self::open_pinned(dir, segment_commands, domain, enclave, signers, (stats, None, None), (None, &[]), observe)
+        Self::open_pinned(
+            dir,
+            segment_commands,
+            domain,
+            enclave,
+            signers,
+            (stats, None, None, None),
+            (None, &[]),
+            observe,
+        )
     }
 
     /// `open`, pinning the posted log head `posted` as the replay passes it (see `LiveReplay::pin`),
     /// so a replica built long after that head still holds it, keeping the links and checkpoints at
     /// the seqs `keep` names (see `LiveReplay::keep`), with `marks`, folding each mark the replica
     /// applies, from the build on, into it, and with `checked`, recording each checkpoint it verifies
-    /// there (`LiveReplay::record_checked_with`); an `observe` that fails ends the build.
+    /// there (`LiveReplay::record_checked_with`), and with `rows`, the store each command's derived rows
+    /// are written to as the replica applies them (`LiveReplay::store_rows_in`); an `observe` that fails ends the build.
     /// Error cases:
     /// - see `open`, or `observe` fails
     #[allow(clippy::too_many_arguments)]
@@ -86,7 +102,7 @@ impl Follower {
         domain: CheckpointDomain,
         enclave: AccountId,
         signers: BTreeSet<AccountId>,
-        (stats, marks, checked): (Option<Stats>, Option<Rc<RefCell<MarkFold>>>, Option<CheckedHeads>),
+        (stats, marks, checked, rows): Records,
         (posted, keep): (Option<(u64, B256)>, &[u64]),
         mut observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
@@ -99,6 +115,9 @@ impl Follower {
             }
             if let Some(checked) = &checked {
                 replica.record_checked_with(checked.clone());
+            }
+            if let Some(rows) = &rows {
+                replica.store_rows_in(rows.clone());
             }
             if let Some(marks) = &marks {
                 // A retried build folds the same marks again, which leaves every bucket as it was.

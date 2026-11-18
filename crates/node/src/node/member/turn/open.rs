@@ -48,7 +48,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let marks = Rc::new(RefCell::new(MarkFold::new(Retentions::of(self.cfg.history.marks.as_ref())?)));
         let started = Instant::now();
         let segment_commands = self.cfg.node.segment_commands;
-        let kept = (Some(stats.clone()), Some(marks.clone()), Some(self.checked.clone()));
+        let rows = Arc::new(RowsStore::new(&self.cfg.history.dir, self.cfg.history.retention_ms()?));
+        let kept = (Some(stats.clone()), Some(marks.clone()), Some(self.checked.clone()), Some(rows));
         let stopping = &self.stopping;
         let pins = (posted, keep);
         let follower = Follower::open_pinned(dir, segment_commands, domain, enclave, signers, kept, pins, |entry| {

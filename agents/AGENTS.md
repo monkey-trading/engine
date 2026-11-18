@@ -170,7 +170,7 @@ an index: load only the rule whose hint matches the current action.
   and their offline checks, `engine
   verify-response` and `engine verify-frames` (`verify/answers.rs`), the account history index (SQLite, derived from the log, with each command's derived rows after its logged
   events: `history/derived.rs`, a `V80` rollover's per-position financing, the newest eight commands' kept in memory
-  by the sequencer, recovery's replay and a member's replica, each command's stored by the index as it takes them for its
+  by the sequencer, recovery's replay and a member's replica, each command's stored by the index as it takes them, and by a member's replica as it follows, for its
   retention (`history/derived/store.rs`, checked against the logged root when read), and the rest re-derived by a
   replay of the log, Warning `history_rows_replayed`), the
   `/v1/accounts/{address}/financing/{seq}` read of an account's charges and their path to the logged root

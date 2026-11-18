@@ -24,6 +24,7 @@ use crate::log::{CheckpointDomain, CommandEntry, Manifest};
 use crate::sequencer::history_rebuild::rebuild_history_prefix;
 use crate::sequencer::margin_tests::{market_order, prices, sequenced};
 use crate::sequencer::pipeline::{BATCH_CHARGE, MAX_IN_FLIGHT_BYTES};
+use crate::sequencer::replay::LiveReplay;
 use crate::test_support::{
     RETENTION, access, dev_config, log_entries, open_history, published_manifest, sample_around, scratch_dir,
     sequencer_config,
@@ -225,6 +226,41 @@ async fn the_history_index_lists_a_rollovers_rows_kept_replayed_or_rebuilt() {
     let (domain, signer) = (CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) }, rig.signer());
     rebuild_history_prefix(&rig.dir, domain, Some(signer), tip, &mut index, &AtomicBool::new(false)).unwrap();
     assert_eq!(listed(index.page(query()).unwrap()), expected, "rebuilt");
+}
+
+/// A rotation member's replica writes each rollover's rows to the history's store as it applies them, so its
+/// index finds a rollover older than the replica's kept rows on disk when its turn comes.
+#[test]
+fn a_replica_stores_every_rollovers_rows_for_the_index_that_resumes_from_it() {
+    const ROLLOVERS: usize = crate::history::derived::RETAINED + 2;
+    let mut rig = Rig::new("rollover-replica");
+    rig.open(2);
+    let mut rollovers = Vec::new();
+    for _ in 0..ROLLOVERS {
+        let due = rig.seq.engine.next_rollover().expect("a rollover is due");
+        rig.move_to(due + 100);
+        sequenced(&mut rig.seq, Command::Tick);
+        rollovers.push(rig.seq.engine.last_seq().expect("a command"));
+    }
+    rig.seq.flush().unwrap();
+    let entries = log_entries(&rig.dir);
+    let kept = rig.seq.derived.borrow().clone();
+    assert!(kept.get(rollovers[0]).is_none(), "the first rollover's rows have left memory");
+
+    let history = scratch_dir("rollover-replica-history");
+    let store = Arc::new(RowsStore::new(&history, RETENTION.as_millis() as i64));
+    let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) };
+    let mut replica = LiveReplay::new(domain, [rig.signer()].into());
+    replica.store_rows_in(store.clone());
+    for entry in &entries {
+        replica.apply(entry).unwrap();
+    }
+    // Every rollover's rows, the oldest included, are stored, and give the logged root.
+    for seq in rollovers {
+        let derived = store.derived(&command_at(&entries, seq)).unwrap().unwrap_or_else(|| panic!("no rows at {seq}"));
+        let [aggregate] = &derived.aggregates[..] else { panic!("one rollover at {seq}") };
+        assert_eq!(ChargesTree::new(derived.rows_of(aggregate)).root(), aggregate.root, "seq {seq}");
+    }
 }
 
 // ── Helpers ──
