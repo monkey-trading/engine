@@ -400,8 +400,7 @@ impl Engine {
                 }
                 self.start_rule_sets(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
-                self.protocol_version = *version;
-                self.tree_version_changed();
+                self.set_protocol_version(*version);
                 // Rules before `V47` record no candidate, so one an election already seated is seated before
                 // any time counts.
                 if counts_office {

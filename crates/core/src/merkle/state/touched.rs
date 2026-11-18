@@ -141,7 +141,7 @@ impl crate::engine::Engine {
     /// root, such as a read-only copy: with no root to drain it, the record would grow with every
     /// applied command. The next root then hashes every leaf, as for an engine rebuilt from its encoding.
     pub fn discard_changed_keys(&mut self) {
-        self.tree = None;
+        self.tree = crate::merkle::state::Tree::None;
         self.clear_touched();
     }
 

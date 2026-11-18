@@ -37,6 +37,16 @@ pub enum TreeEvent {
     Discard,
 }
 
+/// The engine's state tree: none before the first root under `V9` or after a decode, its own, or, once
+/// a node has taken it (`Engine::detach_tree`), the engine's side of it.
+#[derive(Debug, Default)]
+pub(crate) enum Tree {
+    #[default]
+    None,
+    Inline(Box<StateTree>),
+    Detached(Box<Detached>),
+}
+
 /// The engine's side of a detached tree.
 #[derive(Debug, Default)]
 pub(crate) struct Detached {
@@ -124,12 +134,15 @@ impl Engine {
     /// yet, as on `V9`'s first root, every leaf is hashed. The tree keeps this root's version alone.
     pub(crate) fn merkle_root(&mut self) -> B256 {
         // The node computes a detached tree's roots, and a root here would rebuild every leaf.
-        assert!(self.detached.is_none(), "an engine whose tree is detached computes no root");
+        assert!(!matches!(self.tree, Tree::Detached(_)), "an engine whose tree is detached computes no root");
         let touched = self.take_touched();
-        let touched = if self.tree.is_some() { touched } else { self.every_key() };
+        let touched = if matches!(self.tree, Tree::Inline(_)) { touched } else { self.every_key() };
         let inputs = self.inputs(&touched);
         let seq = inputs.seq;
-        let tree = self.tree.get_or_insert_with(StateTree::default);
+        if !matches!(self.tree, Tree::Inline(_)) {
+            self.tree = Tree::Inline(Box::default());
+        }
+        let Tree::Inline(tree) = &mut self.tree else { unreachable!("set above") };
         let (root, _) = inputs.apply(tree);
         tree.release(seq, root);
         tree.collect(usize::MAX);
@@ -156,10 +169,16 @@ impl Engine {
     /// unreleased: the caller releases it only once it knows a checkpoint holds its root. `None` with
     /// no tree to hand over: before the first root under `V9`, or after a decode.
     pub fn detach_tree(&mut self) -> Option<StateTree> {
-        let mut tree = self.tree.take()?;
+        let Tree::Inline(mut tree) = std::mem::take(&mut self.tree) else { return None };
         tree.withhold();
-        self.detached = Some(Detached::default());
-        Some(tree)
+        self.tree = Tree::Detached(Box::default());
+        Some(*tree)
+    }
+
+    /// The engine's side of its detached tree.
+    fn detached(&mut self) -> &mut Detached {
+        let Tree::Detached(detached) = &mut self.tree else { panic!("parts and commits feed a detached tree") };
+        detached
     }
 
     /// Up to `entries` keys from the record of what changed since the last root, as leaf writes read
@@ -168,7 +187,7 @@ impl Engine {
     pub fn take_root_delta(&mut self, entries: usize) -> RootDelta {
         let part = self.take_touched_part(entries);
         let updates = self.leaf_updates(&part);
-        self.detached.as_mut().expect("parts feed a detached tree").drained.absorb(part);
+        self.detached().drained.absorb(part);
         RootDelta { updates }
     }
 
@@ -176,7 +195,7 @@ impl Engine {
     /// record, the markets, the remaining state's leaf and the exit terms.
     pub fn commit_inputs(&mut self) -> CommitInputs {
         let touched = self.take_touched();
-        self.detached.as_mut().expect("commits feed a detached tree").drained = Touched::default();
+        self.detached().drained = Touched::default();
         self.inputs(&touched)
     }
 
@@ -189,22 +208,30 @@ impl Engine {
     /// What a protocol version change asks of a detached tree's owner before any later leaf write,
     /// clearing it.
     pub fn take_tree_event(&mut self) -> Option<TreeEvent> {
-        self.detached.as_mut().and_then(|detached| detached.event.take())
+        let Tree::Detached(detached) = &mut self.tree else { return None };
+        detached.event.take()
     }
 
     /// Discards the tree, for an activation that changes leaves no command touched: the next root
     /// hashes every leaf. With the tree detached, its owner is told when the version changes.
     pub(crate) fn discard_tree(&mut self) {
-        match &mut self.detached {
-            Some(detached) => detached.discard = true,
-            None => self.tree = None,
+        match &mut self.tree {
+            Tree::Detached(detached) => detached.discard = true,
+            _ => self.tree = Tree::None,
         }
+    }
+
+    /// Sets the protocol version an activation takes effect at, and readies a detached tree's next
+    /// leaf writes for it.
+    pub(crate) fn set_protocol_version(&mut self, version: ProtocolVersion) {
+        self.protocol_version = version;
+        self.tree_version_changed();
     }
 
     /// Readies a detached tree's next leaf writes for the protocol version just set: every key, after
     /// a discarding activation, or the keys sent since the last root, is in the record again.
-    pub(crate) fn tree_version_changed(&mut self) {
-        let Some(detached) = &mut self.detached else { return };
+    fn tree_version_changed(&mut self) {
+        let Tree::Detached(detached) = &mut self.tree else { return };
         let drained = std::mem::take(&mut detached.drained);
         if std::mem::take(&mut detached.discard) {
             detached.event = Some(TreeEvent::Discard);
@@ -224,7 +251,8 @@ impl Engine {
 
     /// What the last state root hashed, or `None` before the first root under `V9`.
     pub fn last_root_work(&self) -> Option<RootWork> {
-        self.tree.as_ref().and_then(StateTree::newest).map(|version| version.work())
+        let Tree::Inline(tree) = &self.tree else { return None };
+        tree.newest().map(|version| version.work())
     }
 
     /// Records that `account`'s position in `market` changed, for the state root.

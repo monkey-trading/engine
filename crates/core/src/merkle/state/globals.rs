@@ -147,7 +147,6 @@ impl Engine {
             pending_deposits: _,
             changed: _,
             tree: _,
-            detached: _,
             command_ms: _,
             hot_indexes: _,
             closeout_index: _,

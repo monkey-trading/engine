@@ -2,6 +2,7 @@
 //! engine computed inline.
 
 use crate::engine::Engine;
+use crate::merkle::state::Tree;
 use crate::merkle::tree::{StateTree, Version};
 use crate::merkle::{AccountProof, DistributionProof, EntitlementProof, WithdrawalApprovalProof};
 use crate::types::AccountId;
@@ -10,8 +11,8 @@ impl Engine {
     /// The engine's tree and the version of its last root, or `None` before the first root under
     /// `V9`, or with the tree detached.
     pub(crate) fn committed(&self) -> Option<(&StateTree, &Version)> {
-        let tree = self.tree.as_ref()?;
-        Some((tree, tree.newest()?))
+        let Tree::Inline(tree) = &self.tree else { return None };
+        Some((tree.as_ref(), tree.newest()?))
     }
 
     /// The proof of `account`'s leaf, of each of its position leaves, and of the leaf of each

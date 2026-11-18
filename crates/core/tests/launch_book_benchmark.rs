@@ -33,6 +33,8 @@ mod cases;
 mod common;
 #[path = "launch_book_benchmark/report.rs"]
 mod report;
+#[path = "launch_book_benchmark/root_parts.rs"]
+mod root_parts;
 
 use cases::Bar;
 use common::launch_book::{Mix, NamedCounts, build};
@@ -82,7 +84,7 @@ fn launch_book_latency() {
     cases::rollover(&mut book, ROLLOVER, ROOT);
     cases::encoding_and_recovery(&mut book);
     // Last: it detaches the book's tree, after which the engine computes no root of its own.
-    cases::root_parts(&mut book, ROOT.bar_us, ROOT.guard_us);
+    root_parts::root_parts(&mut book, ROOT.bar_us, ROOT.guard_us);
     println!("LAUNCH resident_mib={}", rss_mib());
     let over = exceeded();
     assert!(over.is_empty(), "over budget: {over:?}");
