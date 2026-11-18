@@ -339,8 +339,10 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     error NotTheRegisteredEnclave(address signer, address enclave);
     error UnauthorizedSchedule();
 
-    /// @param governance_ The deployment's timelock, which alone rotates the signer, sets the
-    /// release that holds its key, and unpauses.
+    /// @param governance_ The deployment's timelock. It installs the signer (`setSigner`), which while
+    /// rotation is on can only be the enclave the operator in effect registered; sets the release that
+    /// holds the signer's key while rotation is off; and alone unpauses. The registry's schedule also
+    /// installs a signer, with no timelock, when it promotes a member's standby key (`promoteSigner`).
     /// @param guardian_ The deployment's multisig, which may also pause withdrawals and retire the
     /// signer at once.
     /// @param periodBudget_ The engine's initial emission period budget in MONKEY base units, which
