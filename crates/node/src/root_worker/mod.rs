@@ -58,6 +58,9 @@ pub(crate) enum Work {
     Prove(u64, Vec<(AccountId, u64)>),
     /// The vault's latest checkpoint, which claims are answered at.
     Accept(LatestCheckpoint),
+    /// Panics on the worker's thread, for a test of the sequencer stopping with it.
+    #[cfg(test)]
+    Panic,
 }
 
 /// A proof read against the newest released version, which the sequencer forwards from the API.
@@ -228,6 +231,13 @@ impl RootWorker {
     /// - the worker has stopped
     pub(crate) fn accept(&self, latest: LatestCheckpoint) -> anyhow::Result<()> {
         self.send(Work::Accept(latest))
+    }
+
+    /// What panics the worker's thread once called, for a test that has handed the sequencer to `run`.
+    #[cfg(test)]
+    pub(crate) fn panic_switch(&self) -> impl FnOnce() + Send + 'static {
+        let tx = self.tx.clone();
+        move || _ = tx.send(Message::Work(Work::Panic))
     }
 
     /// Units of leaf writes sent that the worker has yet to finish.

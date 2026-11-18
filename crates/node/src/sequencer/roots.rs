@@ -353,3 +353,6 @@ impl Sequencer {
         self.roots.worker.read(read).context("forwarding a proof read")
     }
 }
+
+#[cfg(test)]
+mod tests;

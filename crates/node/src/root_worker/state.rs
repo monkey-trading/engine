@@ -158,6 +158,8 @@ impl WorkerState {
                 self.background.push_back(Background::Prove { version, seq, approvals, proofs: Vec::new() });
             }
             Work::Accept(latest) => self.claims.accept(latest),
+            #[cfg(test)]
+            Work::Panic => panic!("a test panicked the state root worker"),
         }
         0
     }
