@@ -173,14 +173,14 @@ coordinator proposes each step; the owner decides and acts.
    1. Build and test the fix privately: the advisory's fork and the mirror, with every correctness
       job green. Do not push it to `origin` or merge it.
    2. Build the reproducible image from that exact private commit and write the release manifest, as
-      in [deploy-and-rollback](../../../ops/runbooks/deploy-and-rollback.md) section 1 and
+      in [deploy-and-rollback](../../../ops/runbooks/deploy-and-rollback.md#prepare-a-release) and
       [image/README.md](../../../image/README.md#release).
    3. The owner proposes the release to the timelock (`setCurrentRelease`). At the proposal, the
       owner adds each rotation-set member's maintainer as a collaborator on the draft advisory.
       That gives them its private fork to build the image and verify the release's measurement
       themselves, under embargo until activation.
    4. Containment holds through the timelock's delay. The release activates and the node upgrades
-      by handover ([deploy-and-rollback](../../../ops/runbooks/deploy-and-rollback.md) section 3).
+      by handover ([deploy-and-rollback](../../../ops/runbooks/deploy-and-rollback.md#upgrade-to-a-new-release)).
    5. At activation, push the release's exact commit as a public tag, so anyone can reproduce the
       release's measurement and verify its attestation. That moment, not the timelock proposal, is
       when the source becomes public.

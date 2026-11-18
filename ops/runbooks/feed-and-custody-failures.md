@@ -1,405 +1,717 @@
 # Feed and custody failures
 
-The node depends on four kinds of outside service: price feeds, custody RPC providers, the checkpoint
-endpoint, and trusted time. Each fails closed: a market with no price fills nothing, a custody
-quorum that disagrees credits nothing, a clock that cannot be trusted stamps nothing. None of them
-loses a recorded command. Read [reference.md](reference.md) first.
+Use this runbook when a service outside the enclave that the trading server depends on fails: a
+price feed, a source of benchmark rates, the trusted time servers, a custody RPC provider, the
+checkpoint endpoint, or the access source. Each of these fails closed. A market with no price
+executes nothing, a custody quorum that disagrees credits nothing, and a clock that cannot be
+trusted stamps nothing. None of these failures loses an instruction that the log has recorded.
+Commands, configuration keys and their output call a running trading server a node.
 
-**Every config change below is a new release.** The venues, symbols, providers, endpoints and relayer
-are in the config file, whose hash is part of the release's identity. There is no way to change them
-on a running node: [deploy-and-rollback.md](deploy-and-rollback.md). Plan a replacement as an
-upgrade, not as a hot fix.
+- [Price feeds](#price-feeds)
+- [Benchmark rates](#benchmark-rates)
+- [Trusted time](#trusted-time)
+- [Custody RPC providers](#custody-rpc-providers)
+- [Checkpoint endpoint](#checkpoint-endpoint)
+- [The access source](#the-access-source)
+- [How a price exists](#how-a-price-exists)
+
+The steps use the shell variables that [Variables](reference.md#variables) sets up.
+
+**Every configuration change in this runbook is a new release.** The venues, symbols, providers,
+endpoints and relayers are in the configuration file, whose hash is part of the release's identity,
+and a running trading server cannot change them. Plan a replacement as an upgrade, as
+[Deploy and rollback](deploy-and-rollback.md) describes, not as a quick fix.
 
 ## Price feeds
 
-### How a price exists
-
-Each market needs at least `min_sources` quotes (2 for every launch market) no older than its
-`max_age_ms` (1 second), agreeing within `max_divergence_bps`. Otherwise the market has no price:
-no order fills, **closes included**, and positions in it that fall below the close-out level wait
-until it prices again. The one exception, from `V60`, is the close-out when a market with a weekend
-margin starts its weekend gap: it fills at the market's last mark, the last price before the close,
-however old that price is. A market priced from two sources has no price when either fails or goes quiet
-for longer than `max_age_ms`. That holds for the crypto markets and for the vendor-priced ones.
-
-### A crypto venue is down or quiet
-
-BTC-USD and ETH-USD are priced from Coinbase and Kraken only, with `min_sources = 2` and
-`max_age_ms = 1000`. Each venue is read on two connections, quoted as its one source: Coinbase on
-Advanced Trade and Exchange (`coinbase_exchange`), and Kraken on two connections to its v2 feed. One
-connection failing costs nothing, and the engine holds the later-stamped of a source's quotes. If a
-venue goes down on every connection, both markets have no price: no fills and no close-outs until it
-is back. This halts those markets. A book that stands is kept quoting by the connection's pings for
-about five seconds past its last change, and for about a second once the venue stops answering them,
-so a symbol whose book shows no change for more than about six seconds halts its own market. A venue
-can also stream one product minutes behind while the others on the same connection are current, as
-Coinbase did on 16 November 2026: `venue_stale` names the product and the age of its quotes, and the
-node resubscribes the product alone, then on a new connection if it stays stale, repeating with
-backoff until it is current.
-
-**Why it is the case to watch.** At the owner's decided terms (1% margin, 100x, up to $1M, close-out
-at 50% of margin) a full 100x position closes out about 0.5% from its entry and loses more than its
-balance past about 1%. The loss beyond a balance falls on the house (`bad_debt`). During an unpriced spell
-in a fast move nothing can close out, and when the price returns the gap is taken at once. Read the
-live terms from `margin_tiers` in `curl -sf $API/v1/markets`.
-
-**See it.** `venue_feed_down` or `venue_symbol_silent` (Warning) names the venue; `market_no_price`
-(Critical) follows after `alerts.no_price_after`; `engine_market_priced{market="1"}` and
-`{market="2"}` read `0`; fills stop. `/v1/markets` may still show a `mark`: it is the last stored
-value and survives the loss of live pricing, so a missing `mark` shows only a market that never priced.
-
-**You can:**
-1. Make BTC-USD and ETH-USD reduce-only at once ([reduce-only.md](reduce-only.md)). It stops new
-   risk from the first fill after the price returns. It does not close anything and cannot while
-   there is no price.
-2. Find out which venue and why: its status page, your account or IP limits, DNS and egress from the
-   host. The node reconnects by itself, backing off from `reconnect_min` to `reconnect_max` (30
-   seconds in the template).
-3. Tell the owner, with the time the market lost its price, the venue, and `house` NAV from
-   `/v1/house`.
-
-**You cannot:**
-- Set or override a price. No command does.
-- Lower `min_sources`, or `max_age_ms`, or add a third source during the outage. The venues are in
-  the config (a new release, [deploy-and-rollback.md](deploy-and-rollback.md)) and the price rules are
-  market parameters the owner changes by an admin command; neither is a hot fix.
-- Close positions or force a close-out without a price. Raising the stress floor does not help
-  either: it widens spreads on prices that do not exist.
-
-The books are safe throughout; what is at stake is the house's exposure at the gap. Keep the time the
-price returned, and `bad_debt` pages after it, for the owner.
-
-### Tightening `max_age_ms`
-
-A change to a market's `max_age_ms` is checked, when it is sequenced, against the quotes the market
-holds. While the market, or a market quoted in the currency it converts, has open positions, it
-applies only if those quotes, at their age then, still price it under the shorter limit; otherwise
-it is refused with "price rules it cannot price under" (or, for a held market that converts at the
-one being changed, "which the price rules cannot price under"). A venue's quote keeps the venue's
-own timestamp, and the feed's repeat rule only delays a repeat of an unchanged price, so a quiet mid
-leaves quotes older than a tighter limit even though the venues are healthy.
-
-From `V76` a tightening still applies at once, but undoing it is a loosening, which applies only seven
-days after a listing notice, or by a vote, and never past the market's launch rules: tighten only what
-the owner accepts for at least seven days.
-
-While votes govern ([operator-candidate.md](operator-candidate.md) §7: rotation on and a rotation set
-with members in effect), the engine refuses the operator's `upsert-market`: each change below is
-instead proposed as a normal vote, which applies seven days after the engine logs it, and is checked
-against the quotes the market holds then. A voted change the engine refuses then is spent
-(`proposal_rejected`): there is no signing it again, only a new proposal with its own seven days. Each
-step of a stepwise cut is its own vote, and the reduce-only commands of step 4, which stay the
-operator's, must be in force before the change's `applies_at` in `GET /v1/house/state`.
-
-1. Check that the market is open and priced: `engine_market_priced` reads 1 for it, as under
-   [Find what is down](#find-what-is-down). A closed market holds old quotes and refuses every
-   tightening until it opens. `market_no_price` only fires after `alerts.no_price_after`, so its
-   silence proves nothing.
-2. Sign the change with `upsert-market` as under [Futures markets](#futures-markets). **Changes the
-   live system.** Needs the owner's approval of the exact spec. If it is refused, wait for the venues
-   to quote again, which moves the mid or fires the repeat, and sign the same change once more.
-3. For a large cut, tighten in steps, each signed after the venues have quoted again, so each step
-   still prices the market from quotes that have arrived since the last. **Changes the live system.**
-   Each step is its own `upsert-market`, so each needs the owner's approval of its exact spec.
-4. Failing that, make every held market the refusal names reduce-only first, the edited market and
-   any market that converts at it ([reduce-only.md](reduce-only.md)), then sign the change again: the
-   check then does not apply. **Changes the live system.** Needs the owner's approval of the
-   reduce-only commands, the change, and the commands below. Then wait for a monitor sample taken
-   after the change: the gauge samples once a second and keeps its last value when a sample times
-   out, so a 1 read at once can describe the previous limit. Check that `engine_market_priced` reads
-   1 for the edited market and for each market that converts at it **and is open**; a market closed
-   on its schedule reads 0 whatever the limit, so check it at its next session. The `mark` in
-   `/v1/markets` is the last stored value and stays after pricing is lost, so it proves nothing. If
-   one reads 0, restore the previous limit, wait for a sample taken after that and for the venues to
-   quote again: loosening discards quotes stale under the tighter limit. Before `V76` the restore is
-   always accepted. From `V76` a looser limit applies only seven days after a listing notice
-   (`announce-listing <market> --price-rules-from <spec.toml>`), or by a vote, so before tightening,
-   ask the owner to accept the market staying reduce-only, or unpriced, for those seven days, and log
-   the notice of the restore at once, in the same window as the change.
-   Resume normal trading as in [reduce-only.md](reduce-only.md#resume-normal-trading) only once
-   `engine_market_priced` reads 1 for the market.
+A market has a price only while enough of its venues quote it, recently and in agreement, as
+[How a price exists](#how-a-price-exists) describes. Start with
+[Find what is down](#find-what-is-down), which matches each feed alert to its cause.
 
 ### Find what is down
 
-```sh
-curl -s http://<metrics host>:9464/metrics | grep -E '^engine_market_priced'     # 0 = no usable index
-curl -sf $API/v1/markets | jq -r '.[] | select(.open) | "\(.id) \(.symbol)"'    # the open markets
-```
+Use this procedure when a feed alert fires, or when a market that should be open has no price.
 
-An open market whose `engine_market_priced` reads 0 is the `market_no_price` case. The `mark` in
-`/v1/markets` is the last stored value and survives the loss of live pricing, so a missing `mark`
-shows only a market that never priced. Match the alerts to the cause:
+1. List each market's pricing state from the metrics:
 
-| Alert | Level | Meaning | Do |
-| --- | --- | --- | --- |
-| `venue_feed_down` | Warning | A connection to a venue or vendor is down; the node reconnects with backoff (`reconnect_min` to `reconnect_max`). For CME it is also a reconnect with no bearer token to connect with. Fields: `venue`, `feed`. | Check the vendor's status and the account (plan, key, entitlement, connection limit); for CME, see [CME Group's feed](#cme-groups-feed), and for Alpaca, [Alpaca's feed](#alpacas-feed). Nothing to do on the node. |
-| `venue_symbol_silent` | Warning | A symbol has had no fresh quote for `feeds.venues.timeout` while its market is open. It is resubscribed, and again each `feeds.venues.timeout` it stays silent, with backoff from `reconnect_min` to `reconnect_max`, until it quotes: on Coinbase alone on its connection each time, so the other symbols quote on; on other venues by replacing the connection, which costs its other symbols a reconnect each time. | Check the symbol is still the vendor's (a ticker or contract change); a wrong symbol is a config fix. |
-| `venue_stale` | Warning | A venue has kept sending a symbol's books, for 2 s (or `feeds.venues.timeout` if shorter), already older than its quotes count for: it is streaming that symbol from behind. The age is in the message. The symbol is resubscribed at once, on Coinbase alone on its connection first and then on a new connection, and again after each 2 s more of such books, with backoff from `reconnect_min` to `reconnect_max`; the alert resolves at the next book young enough to count. | Check the venue's status page. Nothing to do on the node while the other source quotes; the market has no price until this one is current. |
-| `venue_token_failed` | Warning | CME's token endpoint failed or refused a bearer token request. While the connection's token has life left, the feed still prices. It resolves at the next request the endpoint grants. Fields: `venue`, `feed`. | See [CME Group's feed](#cme-groups-feed). |
-| `venue_message_refused` | Warning | The node refused a vendor message (malformed, unknown), or CME or Alpaca refused a login or subscription. At most one a minute, with a count. A venue that holds no credential has the message excerpted; one that does (Alpaca, CME, Massive, TraderMade) has it named by its length and a SHA-256 prefix, since it could echo a credential. | Read the reason and the excerpt, or tell messages apart by their hashes. A vendor format change needs a node release; for CME's refusals, see [CME Group's feed](#cme-groups-feed), and for Alpaca's, [Alpaca's feed](#alpacas-feed). |
-| `venue_clock_ahead` | Warning | A venue's timestamps are well ahead of the host clock. | Check `clock_drift` and the host clock; quotes ahead of sequenced time are rejected (`prices_rejected`, reason `quote_ahead`). |
-| `venue_delayed` | Warning | A connection's pings show its stream may be further behind than `feeds.venues.max_delay`, so what it reads counts as no quote, and a market needing that venue has no price. It resolves when a frame next counts. Fields: `venue`, `feed`. | Check the network path to the venue, and the host's load. If the path is healthy, the host may be holding the stream back: read [incident-response.md](incident-response.md). |
-| `prices_rejected` | Warning | The engine refused a price update. The `reason` is one of `unknown_market`, `malformed_quote`, `quote_ahead`, `market_closed`, `contract_not_taken`, `other`. | `contract_not_taken` on a futures market means a quote for a contract the market is not on: see below. |
-| `market_no_price` | Critical | An open market a feed prices has had no usable price for `alerts.no_price_after`, counted from trusted time's first sample of the run. | Below. |
-| `market_unfed` | Warning | No configured feed prices this market, so it cannot trade. It never pages `market_no_price`. | Expected only for markets you have not wired; otherwise a config gap. |
-| `sequencer_stalled` | Critical | The sequencer answered no sample for `alerts.no_price_after`. | [restart-and-recovery.md](restart-and-recovery.md). |
+   ```shell
+   curl -s http://<metrics host>:9464/metrics | grep -E '^engine_market_priced'
+   ```
+
+   `<metrics host>` is the address of the trading server's metrics listener. Each line reads `1` for
+   a market with a usable price and `0` for a market without one.
+
+2. List the markets that are open:
+
+   ```shell
+   curl -sf $API/v1/markets | jq -r '.[] | select(.open) | "\(.id) \(.symbol)"'
+   ```
+
+   An open market whose `engine_market_priced` reads `0` is the `market_no_price` case, which
+   [A market has no price](#a-market-has-no-price-market_no_price) covers. A market's `mark` in
+   `/v1/markets` is the last stored price, and it remains after live pricing is lost. A missing
+   `mark` therefore shows only that a market has never had a price.
+
+3. Match the firing alerts to their cause:
+
+   | Alert | Level | Meaning | What to do |
+   | --- | --- | --- | --- |
+   | `venue_feed_down` | Warning | A connection to a venue or a data vendor is down, and the trading server reconnects with a backoff from `reconnect_min` to `reconnect_max`. For CME Group, the alert also fires on a reconnect that has no bearer token to connect with. Its fields are `venue` and `feed`. | Check the vendor's status page and the account's plan, key, entitlement and connection limit. For CME Group, see [CME Group's feed](#cme-groups-feed). For Alpaca, see [Alpaca's feed](#alpacas-feed). Nothing needs to be done on the trading server. |
+   | `venue_symbol_silent` | Warning | A symbol has had no fresh quote for `feeds.venues.timeout` while its market is open. The trading server subscribes to the symbol again, and again after each further `feeds.venues.timeout` of silence, with a backoff from `reconnect_min` to `reconnect_max`, until the symbol quotes. On Coinbase, the symbol is subscribed again alone on its connection each time, so the other symbols keep quoting. On other venues, the connection is replaced, which costs each of its other symbols a reconnect. | Check that the symbol is still the vendor's, since a ticker or contract may have changed. A wrong symbol is a configuration fix. |
+   | `venue_stale` | Warning | A venue has kept sending a symbol's books that were already too old to count when it sent them, for 2 seconds, or for `feeds.venues.timeout` if that is shorter. The venue is streaming that symbol from behind, and the message gives the age. The symbol is subscribed again at once, on Coinbase first alone on its connection and then on a new connection. It is subscribed again after each further 2 seconds of such books, with a backoff from `reconnect_min` to `reconnect_max`. The alert resolves at the next book young enough to count. Its fields are `venue`, `feed`, `symbol` and `market`. | Check the venue's status page. While the other source quotes, nothing needs to be done on the trading server, but the market has no price until this source is current. |
+   | `venue_token_failed` | Warning | CME Group's token endpoint failed or refused a request for a bearer token. While the connection's current token has life left, the feed still prices. The alert resolves at the next request the endpoint grants. Its fields are `venue` and `feed`. | See [CME Group's feed](#cme-groups-feed). |
+   | `venue_message_refused` | Warning | The trading server refused a vendor's message because it was malformed or unknown, or CME Group or Alpaca refused a login or a subscription. The alert fires at most once a minute, with a count. For a venue that holds no credential, the message is quoted in part. For a venue that holds one, such as Alpaca, CME Group, Massive or TraderMade, the message is identified by its length and a prefix of its SHA-256, because it could echo the credential. | Read the reason and the excerpt, or tell messages apart by their hashes. A change in a vendor's format needs a new release of the trading server. For refusals by CME Group, see [CME Group's feed](#cme-groups-feed). For refusals by Alpaca, see [Alpaca's feed](#alpacas-feed). |
+   | `venue_clock_ahead` | Warning | A venue's timestamps are well ahead of the host's clock. | Check `clock_drift` and the host's clock. Quotes ahead of sequenced time are refused, and `prices_rejected` fires with the reason `quote_ahead`. |
+   | `venue_delayed` | Warning | A connection's pings show that its stream may be further behind than `feeds.venues.max_delay`. What it reads then counts as no quote, and a market that needs that venue has no price. The alert resolves when a frame next counts. Its fields are `venue` and `feed`. | Check the network path to the venue, and the host's load. If the path is healthy, the host may be holding the stream back, as [Incident response](incident-response.md) describes. |
+   | `prices_rejected` | Warning | The engine refused a price update. The `reason` is one of `unknown_market`, `malformed_quote`, `quote_ahead`, `market_closed`, `contract_not_taken` or `other`. | For `contract_not_taken` on a futures market, see [Futures markets](#futures-markets). |
+   | `market_no_price` | Critical | An open market that a feed prices has had no usable price for `alerts.no_price_after`, which is 5 seconds in the template. The time counts from trusted time's first sample of the run. | Follow [A market has no price](#a-market-has-no-price-market_no_price). |
+   | `market_unfed` | Warning | No configured feed prices the market, so it cannot be traded. It never raises `market_no_price`. | This is expected only for a market that has not been given a feed. Otherwise it is a gap in the configuration. |
+   | `sequencer_stalled` | Critical | The sequencer answered no monitor sample for `alerts.no_price_after`. | Follow [Restart and recovery](restart-and-recovery.md). |
 
 ### A market has no price (`market_no_price`)
 
-1. Find which sources are missing from the alert text ("only N fresh sources, need 2"), and match to
-   `venue_feed_down` or `venue_symbol_silent` for that market.
-2. If the market is closed on its calendar, it is not a fault: the alert covers open markets only.
-3. If one vendor is down: wait for its reconnect, check its status page, and check your account. If
-   the vendor will be down for long, the owner can decide to ship a release that prices the market
-   from another source (a config change) or to leave the market without a price. The books are safe
-   either way: a position in a market with no price waits.
-4. If the sources disagree (both quote, divergence over the bound): the engine refuses the price on
-   purpose. Look at the two quotes; do not widen `max_divergence_bps` to make it go away.
-5. While a market is unpriced, consider [reduce-only.md](reduce-only.md) for it, so that nothing new
-   is opened the moment it prices again. That is the owner's call, not a requirement.
+Use this procedure when `market_no_price` fires. An open market has had no usable price for
+`alerts.no_price_after`. No order in the market can be executed, including an order that closes a
+position, and positions in it that fall below the close-out level wait until the market has a price
+again.
+
+1. Read which sources are missing from the alert's text, which says, for example,
+   `only 1 fresh sources, need 2`. Match the missing sources to `venue_feed_down` or
+   `venue_symbol_silent` for that market.
+
+2. Check the market's calendar. A market that is closed on its calendar is not a fault, because the
+   alert covers open markets only.
+
+3. If one vendor is down, wait for its reconnect, check its status page, and check your account with
+   the vendor. If the vendor will be down for a long time, the owner decides whether to ship a
+   release that prices the market from another source, which is a configuration change, or to leave
+   the market without a price. The books are safe either way, because a position in a market with no
+   price waits.
+
+4. If both sources quote but disagree by more than the market's divergence limit, the engine refuses
+   the price on purpose. Compare the two quotes.
+
+   **Do not widen `max_divergence_bps` to make the alert go away.**
+
+5. Consider making the market reduce-only while it has no price, so that no new position is opened
+   the moment it has a price again, as [Make markets reduce-only](reduce-only.md) describes. That
+   decision is the owner's, and it is not required.
+
+**How to tell it is resolved.** The alert resolves, and `engine_market_priced` reads `1` for the
+market.
+
+**When to escalate.** Tell the owner when a vendor will be down for long enough that a release, or a
+market left without a price, has to be decided.
+
+### A crypto venue is down or quiet
+
+Use this procedure when `venue_feed_down`, `venue_symbol_silent` or `venue_stale` names Coinbase or
+Kraken, or when `market_no_price` fires for BTC-USD, ETH-USD or SOL-USD.
+
+BTC-USD, ETH-USD and SOL-USD, markets 1, 2 and 3, are priced from Coinbase and Kraken only, with
+`min_sources = 2` and `max_age_ms = 1000`. If either venue goes down on all of its connections, all
+three markets have no price. No order can be executed and no position can be closed out until the
+venue is back, so trading in those markets stops.
+
+Each venue is read on two connections, and each venue's two connections count as one source.
+Coinbase is read on Advanced Trade and on Exchange, whose venue is `coinbase_exchange`. Kraken is
+read on two connections to its v2 feed. One connection failing costs nothing, because the engine
+holds the later-stamped of a source's quotes.
+
+A book that does not change is kept quoting by the connection's pings for about five seconds after
+its last change, and for about a second once the venue stops answering the pings. A symbol whose
+book shows no change for more than about six seconds therefore stops its own market. A venue can
+also stream one product minutes behind while the others on the same connection are current. In that
+case `venue_stale` names the product and the age of its quotes, and the trading server subscribes to
+the product again alone, then on a new connection if it stays stale, repeating with a backoff until
+the product is current.
+
+**This is the failure to watch most closely.** BTC-USD and ETH-USD charge 1% margin on the first $2
+million of a position, which allows leverage of up to 100 times from volume tier 2. At that leverage
+a position reaches its close-out level, half of its margin, about 0.5% from its entry, and it loses
+more than its balance after a move of about 1%. Any loss beyond an account's balance falls on the
+house, and `bad_debt` fires. While a market has no price in a fast move, nothing in it can be closed
+out, and when the price returns the whole gap is taken at once. Read the margin terms in force from
+`margin_tiers` in `/v1/markets`.
+
+You can see the outage in these signs:
+
+- `venue_feed_down` or `venue_symbol_silent` fires as a Warning, naming the venue;
+- `market_no_price` fires as a Critical after `alerts.no_price_after`;
+- `engine_market_priced{market="1"}`, `{market="2"}` and `{market="3"}` read `0`;
+- executions in the three markets stop. A market's `mark` in `/v1/markets` remains after live
+  pricing is lost, so it does not show that the market has a price.
+
+1. Make BTC-USD, ETH-USD and SOL-USD reduce-only at once, as
+   [Make markets reduce-only](reduce-only.md) describes.
+
+   **Changes the live system.** The owner must approve the administrative instruction and its scope.
+
+   Reduce-only stops new risk from the first execution after the price returns. It closes nothing,
+   and nothing can be closed while there is no price.
+
+2. Find out which venue is down, and why. Check the venue's status page, your account or IP limits
+   with the venue, and DNS and outbound traffic from the host. The trading server reconnects by
+   itself, with a backoff from `reconnect_min` to `reconnect_max`, which is 30 seconds in the
+   template.
+
+3. Tell the owner the time the market lost its price, the venue, and the house's net asset value,
+   which is `nav` in `/v1/house`:
+
+   ```shell
+   curl -sf $API/v1/house | jq .nav
+   ```
+
+There are three things that you cannot do during the outage:
+
+- You cannot set or override a price. No instruction does.
+- You cannot lower `min_sources` or `max_age_ms`, or add a third source, as a quick fix. The venues
+  are in the configuration, so a change to them is a new release, as
+  [Deploy and rollback](deploy-and-rollback.md) describes. The price rules are market settings that
+  the owner changes by an administrative instruction.
+- You cannot close positions, or force a close-out, without a price. Raising the stress floor does
+  not help either, because it widens the spreads on prices that do not exist.
+
+**How to tell it is resolved.** `engine_market_priced` reads `1` for all three markets, and the
+alerts resolve. Then lift reduce-only, as
+[Resume normal trading](reduce-only.md#resume-normal-trading) describes.
+
+**When to escalate.** The books are safe throughout. What is at stake is the house's exposure to the
+price gap. Keep the time the price returned, and any `bad_debt` pages after it, for the owner.
 
 ### Futures markets
 
-An index or commodity market is priced from its front futures contract and rolls onto the next at the
+Use this procedure when `futures_roll_overdue` or `futures_last_contract` fires, or when
+`prices_rejected` fires with the reason `contract_not_taken` on a futures market. An index or
+commodity market is priced from its front futures contract, and rolls onto the next contract at the
 time its listing names.
 
-- `futures_roll_overdue` (Warning): the roll time passed with no gap recorded between the contracts.
-  Check the feeds quoting the **next** contract: the roll records the gap between the two contracts' prices, so it needs quotes for the next one.
-- `futures_last_contract` (Warning): the market prices from the last contract its listing names.
-  The owner lists the next contract before it expires, by an `upsert-market` admin command carrying
-  the market's whole spec with the new `contracts`. **Changes the live system.** Needs the owner's
-  approval of the exact spec. A file holds the keys of a `[[genesis.markets]]` entry without the
-  table header:
+- **`futures_roll_overdue` (Warning).** The roll time has passed, and no price gap between the two
+  contracts has been recorded. The roll records the gap between the two contracts' prices, so it
+  needs quotes for the next contract. Check the feeds that quote the **next** contract.
 
-  ```sh
-  $ENGINE admin --config $CONFIG --node $API --pin $PIN upsert-market market.toml
-  ```
+- **`futures_last_contract` (Warning).** The market is priced from the last contract that its
+  listing names. Before that contract expires, the owner lists the next contract.
 
-  The vendors' symbols for the new contract must be in the config first; that is a new release.
-  While votes govern ([operator-candidate.md](operator-candidate.md) §7), the engine refuses that
-  command: the members propose the relisting as a normal vote instead, which applies seven days after
-  the engine logs it, so propose it at least seven days, plus the window it takes to pass, before the
-  current contract's roll time, or the market goes unpriced when that contract expires.
-- `contract_not_taken` in `prices_rejected`: a quote for a contract the market is not taking now.
-  Expected around a roll; persistent means the feed's symbols and the listing's contracts disagree.
+  1. Check that the vendors' symbols for the new contract are in the configuration. If they are not,
+     adding them is a new release.
+
+  2. Write a file holding the keys of a `[[genesis.markets]]` entry, without the table header, with
+     the market's whole specification and the new `contracts`.
+
+  3. Send the listing:
+
+     ```shell
+     $ENGINE admin --config $CONFIG --node $API --pin $PIN upsert-market <market.toml>
+     ```
+
+     `<market.toml>` is the file from step 2. The last line of the output is
+     `[{"type":"admin_applied"}]`.
+
+     **Changes the live system.** The owner must approve the exact specification.
+
+  While parameter votes govern, as [Parameter votes](operator-candidate.md#parameter-votes)
+  describes, the engine refuses this instruction from the operator. The members of the rotation set
+  propose the new listing as a normal vote instead, which applies seven days after the engine logs
+  it.
+
+  **Propose the new listing at least seven days before the current contract's roll time, plus the
+  time the vote takes to pass. Otherwise the market has no price once the current contract
+  expires.**
+
+- **`prices_rejected` with `contract_not_taken`.** A quote arrived for a contract that the market is
+  not taking. This is expected around a roll. If it persists, the feed's symbols and the listing's
+  contracts disagree.
 
 ### CME Group's feed
 
-Markets 20 to 22, 25 and 30 to 32 price from Massive and from CME Group's own WebSocket API. A CME
-connection's handshake carries a bearer token the node fetches from CME's token endpoint with the
-API ID and its password, the delivered secrets the connection's `oauth` names. Without both, the
-connection stays off under `secret_missing`, and those markets have Massive alone, which is no price
-at `min_sources = 2`. Three quarters of the way through a token's life the node fetches the next
-while the connection streams, opens a second connection on it, and switches to that once it is
-subscribed, so CME's quotes run on; a rollover raises nothing. If the second connection fails, the
-first streams on and the node tries again on a new token after a backoff, until the first's token
-expires.
+Use this procedure when `venue_token_failed` fires, or when `venue_message_refused` or
+`venue_feed_down` names CME Group, whose venue is `cme`.
 
-- **A failed or refused token request.** The first raises `venue_token_failed` with `venue = "cme"`
-  and the endpoint's answer by its HTTP status and OAuth error code, such as
-  `token request refused (401 Unauthorized): invalid_client` (the endpoint's own text is not logged);
-  the next request the endpoint grants resolves it. While the connection's token still has life, the
-  feed keeps pricing and retries the refresh with backoff, so the alert gives warning before the
-  token expires: with CME's 30-minute tokens, refreshed at three quarters of their life, about seven
-  minutes. Once the token expires the connection ends, and the reconnect, with no token, raises
-  `venue_feed_down` too. Check that the API ID is entitled and that the delivered values are for CME's
-  production environment: CME issues them per environment. New values are a new delivery, which the
-  node takes at its next restart ([key-recovery.md](key-recovery.md), "Secrets").
-- **A refused login.** CME answers `LOGINERR`: `venue_message_refused` with "login refused", then
-  `venue_feed_down` as above. Each new try at a rollover fetches its own token, and so does each
-  reconnect but one that opens on a token a rollover fetched ahead.
-- **A refused subscription.** CME answers `SUBSCRIPTION_ERROR`: `venue_message_refused` names each
-  error's code, such as "subscription refused: ERROR_400" (CME's message text is not logged), and
-  the connection is replaced once it has gone `feeds.venues.timeout` without a fresh quote. The node
-  subscribes to each product whole and passes over the contracts no symbol names, so a contract CME
-  no longer lists cannot refuse the rest. A symbol names a contract by product code and period
-  (`ES:202612`); a wrong one is a config fix, a new
-  release. CME's documentation lists the codes `ERROR_400`, `ERROR_401` and `ERROR_403` and does not
-  define the last two: take those to CME with the API ID. The node subscribes a connection's
-  products in one request, so a refusal for one exchange's entitlement can cost every product on it.
-- **A refused top of book.** A `TOB` naming a configured contract under an instrument that is not
-  its outright, such as a calendar spread sharing its period (`ESZ6-ESH7`), or naming it twice, is
-  refused whole: `venue_message_refused` names the contract and the message's length and hash. The
-  node takes no price from it; take the time and the contract to CME. A future of a subscribed
-  product whose `periodCode` is not `YYYYMM` is refused the same way, naming the product: CME's own
-  message examples send none, so CME sent a shape its field table does not promise.
+Markets 20 to 22, 25 and 30 to 32 are priced from Massive and from CME Group's own WebSocket API. A
+CME Group connection's handshake carries a bearer token. The trading server fetches the token from
+CME Group's token endpoint with the API ID and its password, which are the delivered secrets that
+the connection's `oauth` names. Without both secrets, the connection stays off under
+`secret_missing`, and those markets have Massive as their only source, which is no price at
+`min_sources = 2`.
+
+Three quarters of the way through a token's life, the trading server fetches the next token while
+the connection streams, opens a second connection with it, and switches to the second connection
+once it is subscribed. CME Group's quotes therefore continue, and the switch raises nothing. If the
+second connection fails, the first streams on, and the trading server tries again with a new token
+after a backoff, until the first connection's token expires.
+
+Match the alert to its case:
+
+- **A failed or refused request for a token.** The first failure raises `venue_token_failed` with
+  `venue = "cme"`, giving the endpoint's answer by its HTTP status and OAuth error code, such as
+  `token request refused (401 Unauthorized): invalid_client`. The endpoint's own text is not logged.
+  While the connection's token still has life, the feed keeps pricing and retries the request with a
+  backoff, so the alert gives warning before the token expires. With CME Group's 30-minute tokens,
+  refreshed at three quarters of their life, the warning comes about seven minutes ahead. Once the
+  token expires, the connection ends, and the reconnect, having no token, also raises
+  `venue_feed_down`. The next request the endpoint grants resolves the alert.
+
+  1. Check that the API ID is entitled to the data.
+  2. Check that the delivered values are for CME Group's production environment, because CME Group
+     issues them for each environment separately.
+  3. If the values are wrong, deliver new ones, as [Secrets](key-recovery.md#secrets) describes. The
+     trading server takes them at its next restart.
+
+- **A refused login.** CME Group answers `LOGINERR`. `venue_message_refused` fires with
+  `login refused`, followed by `venue_feed_down`, as above. Each new attempt at a token switch
+  fetches its own token. So does each reconnect, except one that opens with a token that a switch
+  fetched ahead.
+
+- **A refused subscription.** CME Group answers `SUBSCRIPTION_ERROR`, and `venue_message_refused`
+  names each error's code, such as `subscription refused: ERROR_400`. CME Group's message text is
+  not logged. The connection is replaced once it has gone `feeds.venues.timeout` without a fresh
+  quote.
+
+  The trading server subscribes to each product whole and ignores the contracts that no symbol
+  names, so a contract that CME Group has delisted cannot cause the rest to be refused. A symbol
+  names a contract by its product code and period, such as `ES:202612`, and a wrong symbol is a
+  configuration fix, which is a new release. CME Group's documentation lists the codes `ERROR_400`,
+  `ERROR_401` and `ERROR_403`, and does not define the last two. Take those to CME Group with the
+  API ID. The trading server subscribes to a connection's products in one request, so a refusal over
+  one exchange's entitlement can cost every product on the connection.
+
+- **A refused top of book.** A `TOB` message is refused whole when it names a configured contract
+  under an instrument that is not the contract's outright, such as a calendar spread sharing its
+  period (`ESZ6-ESH7`), or when it names a contract twice. `venue_message_refused` names the
+  contract and the message's length and hash, and the trading server takes no price from the
+  message. Take the time and the contract to CME Group. A future of a subscribed product whose
+  `periodCode` is not of the form `YYYYMM` is refused in the same way, naming the product. CME
+  Group's own message examples send no such future, so such a message is a shape that CME Group's
+  field table does not promise.
+
+**How to tell it is resolved.** The alerts resolve, and `engine_market_priced` reads `1` for markets
+20 to 22, 25 and 30 to 32 while they are open.
+
+**When to escalate.** Take refusals with undefined codes, and refused top-of-book messages, to CME
+Group with the API ID.
 
 ### Alpaca's feed
 
-Markets 40 to 59, the US shares, price from Massive's stocks feed and from Alpaca's consolidated feed
-(`/v2/sip`, the quotes of every US exchange, on the Algo Trader Plus plan). An Alpaca connection
-logs in with the API key ID and secret key, the delivered secrets its `key_pair` names. Without both,
-the connection stays off under `secret_missing`, and the shares have Massive alone, which is no price
-at `min_sources = 2`. Alpaca's errors are named by code and Alpaca's meaning of it, such as
-`error 402: auth failed`; Alpaca's own text is not logged.
+Use this procedure when `venue_message_refused`, `venue_feed_down` or `venue_symbol_silent` names
+Alpaca.
 
-- **A refused login.** `venue_message_refused` with `error 402: auth failed`, `error 404: auth
-  timeout` or `error 409: insufficient subscription`, then `venue_feed_down` as the node reconnects
-  with backoff. Check that the delivered values are the account's live keys and that its plan
-  includes the SIP feed (Algo Trader Plus); a plan without it is refused at login. New values are a
-  new delivery, which the node takes at its next restart ([key-recovery.md](key-recovery.md),
-  "Secrets").
-- **`error 406: connection limit exceeded`.** An Alpaca account streams on one connection at a time.
-  Another process holds one on the same keys: a second node or a test client given the production
-  keys, or the node's own earlier connection that Alpaca has not yet seen close, which a reconnect
-  outlasts. Find and stop the other user; never give the node's keys to anything else.
-- **A refused subscription.** `error 405: symbol limit exceeded`, `error 410: invalid subscribe action
-  for this feed`, or a confirmation that leaves symbols out ("the subscription confirms quotes for N of
-  20 symbols"): the connection stays up, and while the market is open each symbol it does not quote
-  raises `venue_symbol_silent` after `feeds.venues.timeout`, and the connection is replaced to
-  subscribe again. Check the plan and the symbols; a wrong symbol is a config fix, a new release.
-- **A refused quote.** A quote whose prices, sizes or time do not parse, or for a symbol the
-  connection did not subscribe to, is refused alone, and the other quotes Alpaca sent in its message
-  are read: `venue_message_refused` names the reason and, for a configured symbol, the symbol. A side
-  with a zero price and zero size quotes nothing, and that quote gives no book, without an alert.
-- **A closure.** Alpaca documents no heartbeat, so what it sends overnight and at weekends is still
-  unmeasured (#543). Once its subscription is confirmed, a connection whose every market is closed
-  stays up with no read deadline, and pings still end a dead connection; at each open it has a whole
-  `feeds.venues.timeout` from the open, and one still silent then raises `venue_symbol_silent` and
-  is replaced with `venue_feed_down`. A login or subscription that stalls through a closure is
-  replaced as at any hour. Massive's stocks connection is kept the same way.
+Markets 40 to 59, the US shares, are priced from Massive's stocks feed and from Alpaca's
+consolidated feed, `/v2/sip`, which carries the quotes of every US exchange on Alpaca's Algo Trader
+Plus plan. An Alpaca connection logs in with the API key ID and the secret key, which are the
+delivered secrets that its `key_pair` names. Without both secrets, the connection stays off under
+`secret_missing`, and the shares have Massive as their only source, which is no price at
+`min_sources = 2`. Alpaca's errors are logged by their code and Alpaca's meaning for the code, such
+as `error 402: auth failed`. Alpaca's own text is not logged.
 
-### Benchmark rates
+Match the alert to its case:
 
-Financing uses dated rates from a separate worker ([deploy-and-rollback.md](deploy-and-rollback.md),
-section 5). It does not affect prices. Each rollover takes the latest observation dated on or before
-its local date, and the weekdays below are Monday to Friday. A failed publisher fetch keeps every
-rate already sequenced, and still counts as attempted, so it holds back neither the other benchmarks
-nor a start.
+- **A refused login.** `venue_message_refused` fires with `error 402: auth failed`,
+  `error 404: auth timeout` or `error 409: insufficient subscription`, followed by `venue_feed_down`
+  as the trading server reconnects with a backoff.
 
-- `benchmark_fetch_failed`, `benchmark_sync_failed`, `benchmark_schedule_watch_failed` (Warnings): a
-  publisher fetch or a call to the node failed; the worker retries by itself. Check the
-  publisher's endpoint and the worker host.
-- `benchmark_rate_refused` (Warning): from `V46`, a published rate is more than 300 bps a day from the
-  applied rates next to its date, or differs from a date already applied. The worker leaves it out and
-  signs the rest, so nothing else waits on it, and the last applied rate keeps financing. The limit
-  grows with each day, so a real move lands once it fits; a revision of an applied date never does.
-  Check the rate against the publisher. Signing it by hand is refused for the same reason.
-- `benchmark_rate_stale` (Critical): the newest observation is older than five weekdays at a
-  rollover; financing still applies. `benchmark_rate_missing` (Critical): no observation, no
-  financing is charged on that benchmark's markets. `benchmark_rate_undated` (Critical): a legacy
-  rate with no date still applies. Fix the worker and its publisher fetch first. As a last resort
-  the owner may set a rate by hand, which is an admin command and a financing decision for every
-  holder: `$ENGINE admin … set-benchmark-rate <NAME> <bps a year>`.
-- `benchmark_sync_pending` (Warning): the node is waiting for the worker's signed history before it
-  catches up. Start the worker. If the operator key is gone, no worker can sign: once the registry's
-  installation of another key is final, restart the node, which then ends the hold at its first
-  stamp. The registry installs only while rotation is off, so with rotation on, run the whole
-  fallback ([standby.md](standby.md), "When no standby qualifies"): turning rotation off also
-  un-names the release the registry named.
-- `benchmark_sync_skipped` (Warning): the registry installed an operator in place of the key the log
-  records, which the fallback presumes gone, and the installed key signs nothing until seven days
-  after its mirror is logged. Waiting for a snapshot would also hold back that mirror, so the node
-  sequences without one, and financing uses the last applied rates. It resolves when a snapshot
-  applies. Start the worker under the installed key once the effective time of the pending rotation
-  `curl -sf $API/v1/operator | jq .pending_rotation` shows has passed: from then a hold waits for
-  its snapshot.
+  1. Check that the delivered values are the account's live keys.
+  2. Check that the account's plan includes the consolidated feed, which is Algo Trader Plus. Alpaca
+     refuses the login for a plan without it.
+  3. If the values are wrong, deliver new ones, as [Secrets](key-recovery.md#secrets) describes. The
+     trading server takes them at its next restart.
 
-### Trusted time
+- **`error 406: connection limit exceeded`.** An Alpaca account streams on one connection at a time,
+  and another process holds a connection with the same keys. The other process may be a second
+  trading server, a test client given the production keys, or the trading server's own earlier
+  connection that Alpaca has not yet seen close, which a reconnect outlasts. Find and stop the other
+  process.
+
+  **Never give the trading server's keys to anything else.**
+
+- **A refused subscription.** Alpaca answers `error 405: symbol limit exceeded` or
+  `error 410: invalid subscribe action for this feed`, or confirms a subscription that leaves
+  symbols out, as in `the subscription confirms quotes for 18 of 20 symbols`. The connection stays
+  up. While the market is open, each symbol that the connection does not quote raises
+  `venue_symbol_silent` after `feeds.venues.timeout`, and the connection is replaced in order to
+  subscribe again. Check the plan and the symbols. A wrong symbol is a configuration fix, which is a
+  new release.
+
+- **A refused quote.** A quote whose prices, sizes or time do not parse, or a quote for a symbol
+  that the connection did not subscribe to, is refused alone, and the other quotes in Alpaca's
+  message are read. `venue_message_refused` names the reason and, for a configured symbol, the
+  symbol. A side of a quote with a zero price and a zero size quotes nothing, and that quote gives
+  no book, without an alert.
+
+- **A market closure.** Alpaca documents no heartbeat, and what it sends overnight and at weekends
+  has not been measured. Once its subscription is confirmed, a connection whose markets are all
+  closed stays up with no read deadline, and pings still end a dead connection. At each market open,
+  the connection has a whole `feeds.venues.timeout` from the open. A connection that is still silent
+  then raises `venue_symbol_silent`, and is replaced with `venue_feed_down`. A login or subscription
+  that stalls through a closure is replaced, as it would be at any hour. Massive's stocks connection
+  is kept in the same way.
+
+**How to tell it is resolved.** The alerts resolve, and `engine_market_priced` reads `1` for markets
+40 to 59 while their exchange is open.
+
+### Tightening `max_age_ms`
+
+Use this procedure when the owner has decided to shorten a market's `max_age_ms`, the age beyond
+which a quote stops counting towards the market's price.
+
+The engine checks the change, when it is sequenced, against the quotes that the market holds. While
+the market has open positions, or a market quoted in the currency it converts has open positions,
+the change applies only if those quotes, at their age at that moment, still price the market under
+the shorter limit. Otherwise the engine refuses the change with `price rules it cannot price under`.
+For a held market that converts at the market being changed, the reason is
+`which the price rules cannot price under`.
+
+A venue's quote keeps the venue's own timestamp, and the feed's repeat rule only delays a repeat of
+an unchanged price. A quiet mid price therefore leaves quotes older than a tighter limit, even while
+the venues are healthy.
+
+A tightening applies at once. Undoing it is a loosening, which applies only seven days after a
+listing notice, or by a vote, and never beyond the market's launch rules. Tighten only what the
+owner accepts for at least seven days.
+
+While parameter votes govern, which is while rotation is on and a rotation set with members is in
+effect, as [Parameter votes](operator-candidate.md#parameter-votes) describes, the engine refuses
+the operator's `upsert-market`. Each change in the steps below is then proposed as a normal vote,
+which applies seven days after the engine logs it, and is checked against the quotes the market
+holds at that time. A voted change that the engine refuses at that time is spent, and
+`proposal_rejected` fires. It cannot be signed again, and only a new proposal, with its own seven
+days, can make the change. Each step of a stepwise cut is a vote of its own. The reduce-only
+instructions in step 5 remain the operator's, and they must be in force before the change's
+`applies_at` in `GET /v1/house/state`.
+
+1. Check that the market is open and has a price, which is when `engine_market_priced` reads `1` for
+   it, as [Find what is down](#find-what-is-down) shows. A closed market holds old quotes, and every
+   tightening is refused until it opens. `market_no_price` fires only after `alerts.no_price_after`,
+   so its silence proves nothing.
+
+2. Sign the change with `upsert-market`, as [Futures markets](#futures-markets) shows.
+
+   **Changes the live system.** The owner must approve the exact specification.
+
+   If the engine refuses the change, wait for the venues to quote again, which moves the mid price
+   or triggers the repeat, and sign the same change again.
+
+3. For a large cut, tighten in steps, signing each step after the venues have quoted again, so that
+   each step still prices the market from quotes that arrived after the previous step.
+
+   **Changes the live system.** Each step is its own `upsert-market`, and the owner must approve the
+   exact specification of each.
+
+If the change is still refused, follow steps 4 to 10. In these steps the check against the market's
+quotes does not apply, so the market may be left without a price.
+
+4. Ask the owner to accept that the market may stay reduce-only, or without a price, for seven days.
+   If the tighter limit does not price the market, restoring the previous limit is a loosening,
+   which takes that long.
+
+5. Make every held market that the refusal names reduce-only, as
+   [Make markets reduce-only](reduce-only.md) describes. Those are the market being changed and any
+   market that converts at it.
+
+   **Changes the live system.** The owner must approve the reduce-only instructions, the change, and
+   the steps that follow.
+
+6. Sign the change again. The check does not apply to a market that is reduce-only.
+
+7. In the same window as the change, give notice of the restore, so that the previous limit can
+   apply seven days later if it is needed:
+
+   ```shell
+   $ENGINE admin --config $CONFIG --node $API --pin $PIN announce-listing <market> \
+     --price-rules-from <spec.toml> --effective-at <time>
+   ```
+
+   `<market>` is the market's id, and `<spec.toml>` is a market specification carrying the previous
+   price rules. `<time>` is in RFC 3339 form, such as `2027-01-01T00:00:00Z`, at least seven days
+   after the notice is logged. The last line of the output is `[{"type":"admin_applied"}]`.
+
+   **A listing notice replaces the market's pending notice, whatever that notice names.**
+
+8. Wait for a monitor sample taken after the change. The gauge samples once a second, and keeps its
+   last value when a sample times out, so a `1` read at once can describe the previous limit. Then
+   check that `engine_market_priced` reads `1` for the market you changed, and for each market that
+   converts at it **and is open**. A market closed on its schedule reads `0` whatever the limit, so
+   check such a market at its next session. The `mark` in `/v1/markets` remains after pricing is
+   lost, so it proves nothing.
+
+9. If a market reads `0`, restore the previous limit once the notice from step 7 allows it, with an
+   `upsert-market` carrying the previous price rules. Then wait for a monitor sample taken after the
+   restore, and for the venues to quote again, because loosening discards the quotes that were stale
+   under the tighter limit.
+
+   **Changes the live system.** The owner must approve the restore.
+
+10. Resume normal trading only once `engine_market_priced` reads `1` for the market, as
+    [Resume normal trading](reduce-only.md#resume-normal-trading) describes.
+
+**How to tell it is resolved.** The change has applied, and `engine_market_priced` reads `1` for the
+market and for each open market that converts at it.
+
+## Benchmark rates
+
+Use this procedure when one of the benchmark alerts below fires. Financing uses dated benchmark
+rates, which a separate worker signs and sends, as
+[The benchmark worker](deploy-and-rollback.md#the-benchmark-worker) describes. Benchmark rates do
+not affect prices.
+
+Each daily rollover takes the latest rate observed on or before its local date, and weekdays here
+are Monday to Friday. A failed fetch from a publisher keeps every rate already sequenced. It still
+counts as attempted, so it holds back neither the other benchmarks nor a start.
+
+| Alert | Level | Meaning | What to do |
+| --- | --- | --- | --- |
+| `benchmark_fetch_failed`, `benchmark_sync_failed`, `benchmark_schedule_watch_failed` | Warning | A fetch from a publisher, or a call to the trading server, failed. The worker retries by itself. | Check the publisher's endpoint and the worker's host. |
+| `benchmark_rate_refused` | Warning | A published rate is more than 300 bps a day away from the applied rates next to its date, or it differs from a date already applied. The worker leaves the rate out and signs the rest, so nothing else waits on it, and the last applied rate keeps financing. The limit grows with each day, so a real move lands once it fits, but a revision of an applied date never does. | Check the rate against the publisher. Signing the rate by hand is refused for the same reason. |
+| `benchmark_rate_stale` | Critical | At a rollover, the newest observed rate is older than five weekdays. Financing still applies. | Fix the worker and its fetch from the publisher. |
+| `benchmark_rate_missing` | Critical | A benchmark has no observed rate, so no financing is charged on its markets. | Fix the worker and its fetch from the publisher. |
+| `benchmark_rate_undated` | Critical | A legacy rate with no date still applies. | Fix the worker and its fetch from the publisher. |
+| `benchmark_sync_pending` | Warning | The trading server is waiting for the worker's signed history before it catches up. | Start the worker, and see the steps below if the operator key is gone. |
+| `benchmark_sync_skipped` | Warning | The registry installed an operator in place of the key that the log records. | See the steps below. |
+
+For `benchmark_rate_stale`, `benchmark_rate_missing` and `benchmark_rate_undated`, the owner may set
+a rate by hand as a last resort:
+
+```shell
+$ENGINE admin --config $CONFIG --node $API --pin $PIN set-benchmark-rate <benchmark> <annual bps>
+```
+
+`<benchmark>` is the benchmark's name, and `<annual bps>` is the rate in basis points a year. The
+last line of the output is `[{"type":"admin_applied"}]`.
+
+**Changes the live system.** This is an administrative instruction and a financing decision for
+every holder of the benchmark's markets, and the owner must approve it.
+
+When `benchmark_sync_pending` fires and the operator key is gone, no worker can sign:
+
+1. If rotation is on, run the whole fallback that
+   [When no standby qualifies](standby.md#when-no-standby-qualifies) describes. The registry
+   installs an operator only while rotation is off, and turning rotation off also withdraws the
+   release that the registry named.
+2. Once the registry's installation of another key is final, restart the trading server, as
+   [Restart and recovery](restart-and-recovery.md) describes. The trading server then ends the hold
+   at its first stamp.
+
+   **Changes the live system.** A restart needs the owner's approval.
+
+When `benchmark_sync_skipped` fires, the registry has installed an operator in place of the key that
+the log records, which the fallback presumes is gone. The installed key signs nothing until seven
+days after the engine logs its mirror. Waiting for a snapshot of the rates would also hold back that
+mirror, so the trading server sequences without one, and financing uses the last applied rates. The
+alert resolves when a snapshot applies.
+
+1. Read the effective time of the pending rotation:
+
+   ```shell
+   curl -sf $API/v1/operator | jq .pending_rotation
+   ```
+
+2. Once that time has passed, start the worker under the installed key. From then on, a hold waits
+   for its snapshot.
+
+## Trusted time
+
+Use this procedure when a Roughtime alert, `clock_drift` or `host_clock_behind` fires.
 
 Every stamp is checked against signed Roughtime readings from independent servers. Nothing is
-sequenced before the first sample, so no market pages `market_no_price` before it, and sequencing
-halts when the host clock is outside `time.max_drift` of them or no sample has arrived for 60
-seconds. A halt does not hold `market_no_price` back: each market pages while its feeds have not
-priced it again.
+sequenced before the first sample of the run, so no market raises `market_no_price` before it.
+Sequencing halts when the host's clock is outside `time.max_drift` of the readings, which is 15
+seconds in the template, or when no sample has arrived for 60 seconds. A halt does not hold
+`market_no_price` back, so each market raises it while its feeds have not priced it again.
 
-| Alert | Meaning | Do |
-| --- | --- | --- |
-| `roughtime_server_failing` (Warning) | One server's queries keep failing. | Check the network path (UDP) to it. A majority of the servers must agree, so one failing is slack used up. |
-| `roughtime_server_disagrees` (Warning) | One server signed a time outside the agreed sample. | Do not act on one server; if it persists, the owner may drop it (a new release). |
-| `trusted_time_no_sample` (Warning) | No sample could be taken. | UDP egress to the servers; the host's resolver. |
-| `trusted_time_unavailable` (Critical) | No sample within the grace: sequencing has halted. | As above. Sequencing resumes by itself when a sample arrives. |
-| `host_clock_behind` (Warning) | The host clock has fallen a second behind monotonic time. Stamps keep monotonic time's pace, so quotes still age out. A clock that ran ahead and came back leaves stamps ahead of it, and markets may have no price until that gap drains, at 1% of elapsed time. | Fix the host's clock. The host controls the clock, so also read [incident-response.md](incident-response.md). |
-| `clock_drift` (Critical) | The host clock or a stamp is outside the drift bound of trusted time: sequencing halted. | Fix the host's clock. The host controls the clock, so also read [incident-response.md](incident-response.md) if it was a large jump. |
+| Alert | Level | Meaning | What to do |
+| --- | --- | --- | --- |
+| `roughtime_server_failing` | Warning | One server's queries keep failing. | Check the UDP network path to the server. A majority of the servers must agree, so one failing server uses up the slack. |
+| `roughtime_server_disagrees` | Warning | One server signed a time outside the agreed sample. | Do not act on one server. If it persists, the owner may remove the server, which is a new release. |
+| `trusted_time_no_sample` | Warning | No sample could be taken. | Check outbound UDP traffic to the servers, and the host's resolver. |
+| `trusted_time_unavailable` | Critical | No sample arrived within the 60-second grace, and sequencing has halted. | As for `trusted_time_no_sample`. Sequencing resumes by itself when a sample arrives. |
+| `host_clock_behind` | Warning | The host's clock has fallen a second behind monotonic time. Stamps keep monotonic time's pace, so quotes still age out. A clock that ran ahead and came back leaves stamps ahead of it, and markets may have no price until that gap drains, at 1% of the elapsed time. | Fix the host's clock. The host controls the clock, so also read [Incident response](incident-response.md). |
+| `clock_drift` | Critical | The host's clock, or a stamp, is outside the drift limit of trusted time, and sequencing has halted. | Fix the host's clock. If the clock jumped a long way, also read [Incident response](incident-response.md), because the host controls the clock. |
+
+**How to tell it is resolved.** The alert resolves, and sequencing resumes by itself once a sample
+arrives and the host's clock is within the drift limit.
 
 ## Custody RPC providers
 
-The custody watcher reads the vault through at least three independently operated providers
-(`custody.evm.providers`) and accepts an answer only when a strict majority give the identical
-answer: two of three, three of four. It credits deposits and unlocks principal from those answers,
-so a quorum loss stops crediting. Trading continues.
+Use this procedure when one of the custody alerts below fires.
 
-| Alert | Level | Meaning | Do |
+The custody watcher reads the vault through at least three independently operated providers, listed
+in `custody.evm.providers`. It accepts an answer only when a strict majority of the providers give
+the identical answer, such as two of three or three of four. The watcher credits deposits and
+releases principal for withdrawal from those answers, so a loss of the quorum stops crediting.
+Trading continues.
+
+| Alert | Level | Meaning | What to do |
 | --- | --- | --- | --- |
-| `custody_rpc_provider_failed` | Warning | One provider failed an operation (field `provider`, `operation`). | The quorum holds. Check that provider; with three providers this is your last slack. |
-| `custody_rpc_provider_disagreed` | Warning | One provider's answer differs from the quorum's. | A lagging or forked provider, or a wrong one. Compare it by hand (below). Do not ignore it for long: it is also what an attacker's provider looks like. |
-| `custody_rpc_quorum_lost` | Critical | No answer has a majority: crediting is paused. With `quorum=operators` it is a Warning and pauses only the operator list; with `quorum=log_heads`, only the log-head read; with `quorum=relayer_balance`, only the checkpoint relayer's balance read. | Below; for the operator list, see `operators_read_failed`; for the log-head read, `log_head_read_failed` or `log_heads_startup_failed`. |
-| `operators_read_failed` | Warning | The operator list (`GET /v1/operators`) cannot be read at a final block: no majority for a lens call (field `operation` names which: `lens_registry`, `lens_overview`, `lens_candidates_<page>`), the wrong chain or token, or an inconsistent lens. The route serves the last list until `finality_stalled_after`, then answers 503. Nothing else is paused. | Check the providers as above, and that `custody.evm.staking.registry.lens` is the `RegistryLens` beside the configured registry; a provider that caps the gas of an `eth_call` fails the larger pages. |
-| `custody_rpc_failed`, `custody_chain_unsettled` | Warning | A poll failed on a read, or the chain's answers are lagging. The watcher retries every poll interval. | Look at the providers. If it lasts `stall_critical_after`, `custody_deposits_stalled` follows. |
-| `custody_chain_inconsistent` | Critical | The chain's answers contradict the config or the cursor (a different chain, vault or token, or a final block that moved back). | Do not change anything. This is not an outage; call the owner. |
-| `custody_deposits_stalled` | Critical | No vault deposit was read for `custody.evm.stall_critical_after`. | The rows above; deposits are unscanned. A checkpoint deposit left uncredited this long also pauses withdrawals ([withdrawal-stalls.md](withdrawal-stalls.md)). |
-| `custody_deposits_lagging` | Critical | Deposit reads trail the final block for that long. | Slow or rate-limited providers; the range per request (`max_block_range`) or the poll interval is wrong for them. |
-| `custody_head_stale` | Critical | An endpoint's head is not advancing: its newest block is old. | The provider, or the chain itself, has stopped. |
-| `custody_finality_stalled` | Critical | The `finalized` block has stopped advancing while the head moves. | The chain's finality, or every provider's view of it. Withdrawals are slow; nothing is lost. |
-| `custody_connect_failed` | Critical | At start, the adapter could not connect. | [restart-and-recovery.md](restart-and-recovery.md). |
-| `deposit_rejected`, `custody_deposit_rejected`, `house_deposit_rejected`, `deposit_unrepresentable`, `deposit_reversed` | Critical | A deposit was not credited, or a credited one was proved reversed by the quorum. | Read the `reason`; none can be fixed on the node. Call the owner. `deposit_reversed` debits the account once. |
+| `custody_rpc_provider_failed` | Warning | One provider failed an operation. Its fields are `provider` and `operation`. | The quorum holds. Check the provider. With three providers, this uses up your last slack. |
+| `custody_rpc_provider_disagreed` | Warning | One provider's answer differs from the quorum's. The provider is lagging, forked or wrong. | Compare the provider by hand, as [Quorum lost](#quorum-lost) shows. Do not ignore the alert for long, because it is also what a provider run by an attacker looks like. |
+| `custody_rpc_quorum_lost` | Critical | No answer has a majority. When the alert's `quorum` field is `custody`, the deposit watcher's quorum, the alert is Critical and crediting is paused. When it names any other reader, the alert is a Warning, and only that reader is paused, as described below the table. | Follow [Quorum lost](#quorum-lost). For the operator list, see `operators_read_failed`. For the log-head read, see `log_head_read_failed` or `log_heads_startup_failed`. |
+| `operators_read_failed` | Warning | The operator list, `GET /v1/operators`, cannot be read at a final block. No call to the registry's lens has a majority, or the chain or token is wrong, or the lens is inconsistent. The `operation` field names the call, which is `lens_registry`, `lens_overview` or `lens_candidates_<page>`. The route serves the last list until `custody.evm.finality_stalled_after`, and then answers 503. Nothing else is paused. | Check the providers as above, and check that `custody.evm.staking.registry.lens` is the `RegistryLens` beside the configured registry. A provider that caps the gas of an `eth_call` fails on the larger pages. |
+| `custody_rpc_failed`, `custody_chain_unsettled` | Warning | A poll failed on a read, or the chain's answers are lagging. The watcher retries at every poll interval. | Look at the providers. If the alert lasts for `custody.evm.stall_critical_after`, `custody_deposits_stalled` follows. |
+| `custody_chain_inconsistent` | Critical | The chain's answers contradict the configuration or the cursor: a different chain, vault or token, or a final block that moved back. | **Do not change anything.** This is not an outage. Call the owner. |
+| `custody_deposits_stalled` | Critical | No vault deposit has been read for `custody.evm.stall_critical_after`. | Work through the rows above, because deposits are not being scanned. A deposit that a checkpoint covers and that stays uncredited this long also pauses withdrawals, as [Withdrawal stalls](withdrawal-stalls.md) describes. |
+| `custody_deposits_lagging` | Critical | Deposit reads have trailed the final block for `custody.evm.stall_critical_after`. | The providers are slow or rate-limited, or the range of blocks per request, `custody.evm.max_block_range`, or the poll interval does not suit them. |
+| `custody_head_stale` | Critical | An endpoint's newest block is old, so its head is not advancing. | The provider, or the chain itself, has stopped. |
+| `custody_finality_stalled` | Critical | The `finalized` block has stopped advancing while the head moves. | The chain's finality has stalled, or every provider's view of it has. Withdrawals are slow, but nothing is lost. |
+| `custody_connect_failed` | Critical | At start, the custody adapter could not connect. | Follow [Restart and recovery](restart-and-recovery.md). |
+| `deposit_rejected`, `custody_deposit_rejected`, `house_deposit_rejected`, `deposit_unrepresentable`, `deposit_reversed` | Critical | A deposit was not credited, or the quorum proved that a credited deposit was reversed. | Read the `reason`. None of these can be fixed on the trading server. Call the owner. `deposit_reversed` debits the account once. |
+
+The `quorum` field of a custody quorum alert names the reader whose quorum was lost. The deposit
+watcher's quorum, `quorum=custody`, feeds credits and checkpoints, so its loss is Critical and
+pauses crediting. Every other reader feeds neither, so it raises its quorum alerts as Warnings, and
+a lost quorum pauses only that reader. These are the readers that an operator meets most often:
+
+- `quorum=operators` pauses only the operator list;
+- `quorum=log_heads` pauses only the log-head read;
+- `quorum=relayer_balance` pauses only the read of the checkpoint relayer's balance;
+- `quorum=staking_terms` pauses only the check of `InitStaking` against the staking contract;
+- `quorum=standby_keys`, `quorum=liveness` and `quorum=seed_relay` pause only the reads of standby
+  keys, of the liveness rule and of the seed receiver.
+
+A rotation-set member's other readers, such as `promotion`, `vouching`, `member_link` and
+`liveness_caller`, behave in the same way.
 
 ### Quorum lost
 
-1. Test each provider yourself, outside the node, from a machine other than the node's host:
+Use this procedure when `custody_rpc_quorum_lost` fires, or when a provider disagrees with the
+quorum.
 
-   ```sh
+1. Test each provider yourself, outside the trading server, from a machine other than its host:
+
+   ```shell
    for url in <provider urls>; do
      echo "$url: chain $(cast chain-id --rpc-url $url)  head $(cast block-number --rpc-url $url)  finalized $(cast block finalized --rpc-url $url -f number)"
    done
    ```
 
-   Chain ids must all be `42161`. Heads within a few blocks. Finalized within a batch or so. A
-   provider that is far behind, on another chain, or erroring is the fault.
-2. Compare one answer they should agree on, for a block all of them have:
-   `cast call $VAULT 'totalDeposited()(uint256)' --block <finalized block> --rpc-url <each>`.
-   All must print the same number.
-3. If the providers themselves are healthy but the node cannot reach them, the cause is the node's
-   network or its egress rules: the host's side.
-4. The quorum restores by itself when enough providers answer identically; the alert resolves.
-5. Replacing a provider is a new release. Pick one run by a different operator from the others: the
-   quorum protects against one provider lying only if the others are independent of it. Providers
-   must serve state back to `custody.evm.start_block` (archive access).
+   `<provider urls>` are the URLs in `custody.evm.providers`, separated by spaces. Every chain id is
+   `42161`. The heads lie within a few blocks of each other, and the finalized blocks within about a
+   batch. A provider that is far behind, on another chain, or returning errors is the fault.
 
-A provider's key is a delivered secret, not part of the config: rotating one needs a delivery and a
-restart, and no release. See [key-recovery.md](key-recovery.md), "Secrets".
+2. Compare an answer that every provider should give alike, at a block that every provider has:
+
+   ```shell
+   cast call $VAULT 'totalDeposited()(uint256)' --block <finalized block> --rpc-url <provider url>
+   ```
+
+   `<finalized block>` is a finalized block number from step 1. Run the command once for each
+   provider. Every provider prints the same number.
+
+3. If the providers are healthy but the trading server cannot reach them, the cause is on the host's
+   side, in its network or its outbound traffic rules.
+
+4. Wait for the quorum to return. It returns by itself once enough providers answer identically, and
+   the alert resolves.
+
+5. If a provider must be replaced, plan a new release. Choose a provider run by a different operator
+   from the others, because the quorum protects against one provider giving false answers only if
+   the others are independent of it. Every provider must serve state back to
+   `custody.evm.start_block`, which needs archive access.
+
+A provider's key is a delivered secret, not part of the configuration. Rotating a key therefore
+needs a delivery and a restart, but no release, as [Secrets](key-recovery.md#secrets) describes.
+
+**How to tell it is resolved.** `custody_rpc_quorum_lost` resolves, and crediting resumes.
+
+**When to escalate.** Call the owner if `custody_chain_inconsistent` fires, or if a provider keeps
+disagreeing with the others.
 
 ## Checkpoint endpoint
 
-`[checkpoints].rpc_url` is a separate endpoint from the custody providers. It carries the
-relayer's transactions: it must support `eth_sendTransaction`, `eth_getTransactionByHash` and `eth_getTransactionCount`, hold the funded
-relayer account, and serve historical nonce reads. It has no authority over funds.
+Use this procedure when `checkpoint_post_failed`, `checkpoint_relayer_low`, `log_head_post_failed`,
+`log_head_stalled` or `log_head_read_failed` fires.
 
-If it is down or the relayer cannot pay, posts fail with `checkpoint_post_failed` and the checkpoints
-queue (the queue is bounded; a full queue raises `checkpoint_backlog`). Trading continues, and no
-withdrawal is authorised until posting resumes.
+`[checkpoints].rpc_url` is an endpoint separate from the custody providers, and it carries the
+relayer's transactions. It must support `eth_sendTransaction`, `eth_getTransactionByHash` and
+`eth_getTransactionCount`, hold the funded relayer account, and serve historical nonce reads. It has
+no authority over funds.
 
-With `[log_heads]`, the same endpoint also funds a second relayer, `log_heads.relayer`, dedicated to
-the log-head posts; it must differ from the checkpoint relayer, whose nonce tracking assumes it
-alone uses its account. Its failures raise `log_head_read_failed` or `log_head_post_failed`
-(Warning) and retry; checkpoints and trading are unaffected, but while posts fail the truncation
-window stays the unposted tail. A rotating node (`operator.rotation_enabled`) must have `[log_heads]`
-and raises `log_head_stalled` after two posting intervals without an advance, not three: its
-successor checks the tail's head against the posted one at each handover, so a stalled anchor
-widens the tail it cannot check. Find why posts fail (`log_head_post_failed`, the relayer's balance)
-before the next boundary.
+If the endpoint is down, or the relayer cannot pay for gas, posts fail with `checkpoint_post_failed`
+and the checkpoints queue. The queue is bounded, and a full queue raises `checkpoint_backlog`.
+Trading continues, but no withdrawal is authorised until posting resumes.
 
-1. Check the endpoint: `cast block-number --rpc-url <checkpoint endpoint>` and
-   `cast balance <relayer> --rpc-url <checkpoint endpoint>`. The relayer needs gas on Arbitrum One;
-   with `[checkpoints.relayer_gas]` set, `checkpoint_relayer_low` warns below its `min_balance`, read
-   at a block the custody providers agree is final, and `engine_checkpoint_relayer_balance_eth`
-   exports the balance. With `[log_heads]`, check the second relayer the same way; no alert
-   watches its balance.
-2. Fund the account or restore the endpoint. The queued checkpoints post in order when it works.
-3. If the endpoint is gone for good, a new one with a funded relayer is a config change and a new
-   release. Mind the clock: while checkpoints are not accepted, `staleAfter` (deposits refused) and
-   `exitPeriod` (the permanent exit) run (reference.md, "Deadlines that run while the node is down").
-4. A stuck fee or foreign pending work: [withdrawal-stalls.md](withdrawal-stalls.md),
-   "`checkpoint_backlog`".
+With `[log_heads]`, the same endpoint also funds a second relayer, `log_heads.relayer`, which posts
+only the log heads. It must differ from the checkpoint relayer, whose nonce tracking assumes that it
+alone uses its account. The second relayer's failures raise `log_head_read_failed` or
+`log_head_post_failed` as Warnings, and the poster retries. Checkpoints and trading are unaffected,
+but while posts fail, the part of the log that could be cut back undetected is the whole unposted
+tail. A rotating trading server, one with `operator.rotation_enabled`, must have `[log_heads]`. It
+raises `log_head_stalled` after two posting intervals without an advance, not three, because its
+successor checks the tail's head against the posted head at each handover, and a stalled anchor
+widens the tail that the successor cannot check.
+
+1. Check that the endpoint answers:
+
+   ```shell
+   cast block-number --rpc-url <checkpoint endpoint>
+   ```
+
+   `<checkpoint endpoint>` is `[checkpoints].rpc_url`. The command prints a recent block number.
+
+2. Check the relayer's balance:
+
+   ```shell
+   cast balance <relayer> --rpc-url <checkpoint endpoint> --ether
+   ```
+
+   `<relayer>` is `checkpoints.relayer`, and the command prints its balance in ether. The relayer
+   needs gas on Arbitrum One. With `[checkpoints.relayer_gas]` set, `checkpoint_relayer_low` warns
+   below its `min_balance`, read at a block that the custody providers agree is final, and
+   `engine_checkpoint_relayer_balance_eth` exports the balance. With `[log_heads]`, check
+   `log_heads.relayer` in the same way, because no alert watches its balance.
+
+3. Fund the relayer, or restore the endpoint. The queued checkpoints post in order once posting
+   works.
+
+   **Changes the live system.** Funding the relayer is a transfer, and the owner must approve it.
+
+4. If the endpoint is gone for good, a new endpoint with a funded relayer is a configuration change
+   and a new release.
+
+   **While no checkpoint is accepted, two deadlines run: `staleAfter`, after which the vault refuses
+   deposits, and `exitPeriod`, after which anyone can start the permanent exit. See
+   [Deadlines that run while the trading server is down](reference.md#deadlines-that-run-while-the-trading-server-is-down).**
+
+5. For a stuck fee, or foreign pending work at the relayer's nonce, follow
+   [`checkpoint_backlog`](withdrawal-stalls.md#checkpoint_backlog). Before the next turn boundary,
+   find why log-head posts fail, from `log_head_post_failed` and the second relayer's balance.
+
+**How to tell it is resolved.** The alerts resolve, and the queued checkpoints post in order.
+
+**When to escalate.** Tell the owner when the endpoint is gone for good, because the replacement is
+a release and the deadlines above are running.
 
 ## The access source
 
-Eligibility declarations, orders, withdrawals and custody credits depend on a signed screening
-answer from the access source (`[access]`). When it cannot be reached or its answer is stale, the
-affected action is refused and nothing else changes: `access_source_failed` (Warning) is raised and
-the request stays unexecuted; `access_deposit_retry_failed` (Warning) means pending deposits stay
-uncredited because the retry cannot screen; `access_deposit_held` (Critical) is a deposit held by a
-screening decision, which only the source's later decision can release.
+Use this procedure when `access_source_failed`, `access_deposit_retry_failed` or
+`access_deposit_held` fires.
 
-Restore the source or its credentials. The endpoint URL is in the config (a new release); its signing
-authority is recorded in the log and cannot be replaced without a fresh log.
+Eligibility declarations, orders, withdrawals and custody credits depend on a signed screening
+answer from the access source, which `[access]` configures. When the source cannot be reached, or
+its answer is stale, the affected action is refused and nothing else changes:
+
+- `access_source_failed` (Warning): the source refused or failed, and the request stays unexecuted.
+- `access_deposit_retry_failed` (Warning): pending deposits stay uncredited, because the retry
+  cannot screen them.
+- `access_deposit_held` (Critical): a screening decision holds a deposit, and only the source's
+  later decision can release it.
+
+1. Restore the source, or its credentials. The source's URL is in the configuration, so changing it
+   is a new release. The source's signing authority is recorded in the log, and replacing it needs a
+   fresh log.
+
+**How to tell it is resolved.** The alerts resolve, and pending deposits are credited.
+
+## How a price exists
+
+Each market needs at least `min_sources` quotes, which is 2 for every launch market, that are no
+older than its `max_age_ms`, which is 1 second, and that agree to within its `max_divergence_bps`.
+Otherwise the market has no price. No order in it can be executed, including an order that closes a
+position, and positions in it that fall below the close-out level wait until the market has a price
+again.
+
+There is one exception. When a market with a weekend margin starts its weekend gap, the close-out
+executes at the market's last mark, which is the last price before the market closed, however old
+that price is.
+
+A market priced from two sources has no price when either source fails, or goes quiet for longer
+than `max_age_ms`. That holds for the crypto markets and for the markets that data vendors price.
