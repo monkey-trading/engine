@@ -51,6 +51,10 @@ const LOGIN_DELAY: Duration = Duration::from_millis(1_500);
 const LOADED_GAP: Duration = Duration::from_millis(1_500);
 /// How late those tests' stand-in answers a replacement: past `LOADED_GAP` and `max_delay` both.
 const SLOW: Duration = Duration::from_millis(2_500);
+/// The most a rollover test waits for its first session to end, which the token's life sets (sixteen
+/// seconds, refreshed at twelve) and a loaded runner stretches: a ceiling that only a feed that
+/// never replaces its connection reaches.
+const HANG: Duration = Duration::from_secs(120);
 
 #[tokio::test]
 async fn a_connection_is_replaced_on_a_fresh_token_with_no_gap_though_the_new_login_is_slow() {
@@ -318,7 +322,9 @@ async fn dev_scenario_cme_feeds() {
 // ── Helpers ──
 
 /// Runs a CME feed for one symbol against `stand_in` until a second past the end of its first
-/// session, failing if two of its quotes are ever more than `LOADED_GAP` apart.
+/// session, failing if two of its quotes are ever more than `LOADED_GAP` apart or if the session has
+/// not ended within `HANG`. The wait for the rollover is for the stand-in to see the session end, not
+/// a time the machine has to meet.
 async fn assert_no_gap_across_a_rollover(stand_in: &CmeStandIn, tls: &TlsFront, timing: Timing) {
     let (tx, mut rx) = fake_sequencer();
     let _feed = spawn_cme(stand_in, tls, &[(1, "ES:202612", None)], timing, tx);
@@ -330,7 +336,7 @@ async fn assert_no_gap_across_a_rollover(stand_in: &CmeStandIn, tls: &TlsFront, 
         if switched.is_none() && stand_in.seen(|seen| !seen.ended.is_empty()) {
             switched = Some(Instant::now());
         }
-        assert!(started.elapsed() < WAIT * 5, "no rollover in time");
+        assert!(started.elapsed() < HANG, "no rollover within {HANG:?}");
     }
 }
 
