@@ -1186,11 +1186,12 @@ Known limits:
 
 ### Parameter votes
 
-While votes govern, the governed parameters, listings, closing spread cap adoptions, corporate
-actions and protocol activation change only by a proposal that the rotation set passes on the
-`ParameterVote` contract, with more than two thirds of its snapshotted weight. So does the access
-policy, which a vote can record only in a log that holds none. The engine mirrors passed proposals
-from finalised events, and refuses the operator's own instructions for them, including its notices.
+While votes govern, the governed parameters, listings, the toxicity score's weighting, closing
+spread cap adoptions, corporate actions and protocol activation change only by a proposal that the
+rotation set passes on the `ParameterVote` contract, with more than two thirds of its snapshotted
+weight. So does the access policy, which a vote can record only in a log that holds none. The engine
+mirrors passed proposals from finalised events, and refuses the operator's own instructions for
+them, including its notices.
 
 Votes govern only while a rotation set with members is in effect, since only its members can
 propose. From rotation's start until the first set takes effect, and while an empty set is in
