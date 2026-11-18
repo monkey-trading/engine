@@ -91,7 +91,8 @@ that passes 400 lines is carrying something that belongs in a linked document.
 When the rules a user meets need more than about 100 lines (a trading product's fees, tiers,
 margins and close-outs, say), "How it works" keeps the model in a few paragraphs with the one or
 two tables a newcomer needs, and the full rules go in a linked page under `docs/`, written to this
-skill's standard. The README stays the front door.
+skill's standard. The README stays the front door. Formal sentences run longer than compressed
+ones; a README a little over 300 lines in that register is better than a shorter one in shorthand.
 
 ## What goes in a crate, package or directory README
 
@@ -152,15 +153,17 @@ Follow [writing-style](../../rules/writing-style.md), plus:
   project knows. Prefer the industry's term to the code's when they differ, and give the code's
   name once in backticks if the reader will meet it in output. A README read by traders and
   developers defines each side's terms for the other: basis point, mark, notional and margin for
-  developers; enclave, attestation and replay for traders.
+  developers; enclave, attestation and replay for traders. A term the reader will meet in commands
+  or their output (enclave, attestation, checkpoint, node) is defined once and then used, not
+  replaced with a friendlier word.
 - **Values not yet confirmed** are stated with "proposed" inline, next to the value, never left
   out and never stated as settled.
 - **Concrete over general:** versions, sizes, ports, defaults, times, limits, with units.
 - **One warning per hazard,** in bold, where the reader would act on it, saying what goes wrong.
   Not a stack of notes at the top.
 - **Wrap prose at 100 columns,** one space after a full stop, British or American spelling as the
-  repository already uses. Tables and URLs are exempt; break a long command with `\` at an
-  argument boundary.
+  repository already uses. Tables, URLs, code spans and link text are never broken across lines;
+  let those lines run long. Break a long command with `\` at an argument boundary.
 
 ## Sentences
 
