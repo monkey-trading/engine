@@ -24,7 +24,7 @@ not upgradeable. None of the contracts has been deployed to a public network yet
 | `OperatorSchedule` | Arbitrum | Records the rotation sets, draws daily turns from them by stake, and runs the liveness rule, skips, promotions and standby keys |
 | `SeedSchedule` | The base of `SeedRelay`, `SeedReceiver` and `OperatorSchedule` | The shared timetable of turn boundaries, draw deadlines and seed epochs |
 | `SeedRelay` | Ethereum | Proves an epoch's RANDAO value from a beacon block root and sends it to Arbitrum |
-| `SeedReceiver` | Arbitrum | Records the relayed seeds and answers each turn's seed, with a fallback when none arrived |
+| `SeedReceiver` | Arbitrum | Records the relayed seeds and answers each turn's seed. When no seed arrived, the fallback folds in the hash of an Arbitrum block recorded from the turn's draw deadline. |
 | `LogHeads` | Arbitrum | Records the newest log head the enclave has signed, so that the host cannot roll back or fork the log unnoticed. While turns run, the same posts are the operator's heartbeats. |
 | `ParameterVote` | Arbitrum | Stake-weighted votes of the rotation set on changes to the trading parameters. A proposal passes with more than two thirds of the votes. |
 | `FaultProof` | Arbitrum | Proves that an operator's enclave signed two different histories at the same position in the log, and names the member responsible |
@@ -38,7 +38,10 @@ eligible candidates that hold a promotable standby key. With a quorum, the set h
 candidates weighted by their votes. A member of the previous set that is between standby keys, as
 it is while it moves to a new release, is carried into the new set for about one epoch, at no more
 than its current votes. Without a quorum, the close keeps the previous set, less the members that
-are no longer eligible. The schedule draws each daily turn from the set in effect.
+are no longer eligible. The schedule draws each daily turn from the set in effect, using the seed
+relayed from Ethereum for that turn. When no seed was relayed, the draw takes two calls a block
+apart: the first records the block whose hash the fallback seed folds in, and the second draws.
+[SECURITY.md](../SECURITY.md#scope) states what Arbitrum's sequencer can do to a fallback draw.
 
 A timelock with a nonzero delay governs the vault and the registry, with the deployment's multisig
 as its proposer. The timelock rotates the signing key, approves releases, pauses deposits or

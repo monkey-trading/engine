@@ -58,7 +58,7 @@ requests are signed and how a client verifies the server's signed answers.
 | Reads | `history/`, `stats/`, `status` | The account history index, the price history cache, the dashboard statistics and the operating status |
 | Enclave and time | `tee/`, `secrets/`, `handover/`, `clock`, `trusted_time/`, `roughtime/`, `verify/` | Attestation, sealed keys, delivered secrets, handing the keys to the next release, trusted time and attestation checks |
 | Custody and the chain | `custody/`, `checkpoints/`, `log_heads/`, `log_check/`, `exit/`, `seed_relay/` | Deposits and the RPC quorum, checkpoint posting and reconciliation, on-chain log heads, the log check at each turn, exit proofs and the turn-seed relayer |
-| Operator rotation | `standby/`, `standby_key/`, `liveness/` | Following the operator in effect, standby keys, and the liveness rule that promotes a standby |
+| Operator rotation | `standby/`, `standby_key/`, `liveness/` | Following the operator in effect, standby keys, the liveness rule that promotes a standby, and fixing the fallback seed of a turn that no relay seeded |
 | Prices | `feeds/`, `benchmarks/` | Venue and market-data feeds, and the fetches behind dated benchmark rates |
 | Operations | `metrics/`, `monitor/`, `alerts/`, `episodes`, `throttle`, `admin/`, `ct_watch/` | Prometheus metrics, self-monitoring, alert routing, `engine admin` and `engine ct-watch` |
 

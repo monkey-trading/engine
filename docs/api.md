@@ -835,9 +835,10 @@ charges again.
 
 `GET /v1/accounts/{address}/proof` returns a proof of the account's balance and positions against
 the state root of the latest checkpoint. The answer names that checkpoint's `seq` and `root`, and
-holds the account's leaf with its sibling hashes, each position with its proof, the leaf and proof
-of each market in which the account holds a position, and the proof of any take profit and stop loss
-levels.
+holds the account's leaf with its sibling hashes, each position with its proof, and the leaf and
+proof of each market in which the account holds a position. For each position, it also holds either
+the proof of its take profit and stop loss levels, in `levels`, or a proof that it holds none, in
+`no_levels`. A proof that leaves out a position's levels therefore fails to verify.
 
 To check a proof, a client first checks `root` against the signed checkpoint at `seq` in the log,
 then checks the proof with `AccountProof::verify` in `engine-core`. An account credited since the
