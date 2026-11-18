@@ -313,8 +313,8 @@ impl Sequencer {
     }
 
     /// Waits for every payout proof asked of the worker, for a release of payouts, which signs only a
-    /// payout with its proof. The worker takes a proof between any two of its other steps, so the wait
-    /// is a few of them at most.
+    /// payout with its proof. A proof goes ahead of the worker's other background jobs, and its lane
+    /// takes every third step, so the wait is the work and reads queued ahead of it and a step of each.
     /// Error cases:
     /// - the worker has stopped
     pub(super) fn settle_payout_proofs(&mut self) -> anyhow::Result<()> {

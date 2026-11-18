@@ -272,11 +272,11 @@ impl Sequencer {
                 self.refresh_log_check();
             }
             self.release_waiting_checkpoint()?;
-            self.root_batch_end()?;
             handover_stop = handover_stop.or_else(|| self.admitted_handover());
             batch.timing = sequenced.then_some(started);
             let release = self.stage(std::mem::take(&mut batch))?;
             self.submit(release)?;
+            self.root_batch_end()?;
             queries.drain(..).for_each(|q| q(&self.engine));
             if handover_stop.is_some() {
                 self.settle_async().await?;

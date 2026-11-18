@@ -38,6 +38,7 @@ mod deferral;
 mod lifecycle;
 mod payouts;
 mod reads;
+mod work;
 
 /// How long a test waits for what takes well under a second on an idle machine: only a hang reaches it.
 const WAIT: Duration = Duration::from_secs(60);

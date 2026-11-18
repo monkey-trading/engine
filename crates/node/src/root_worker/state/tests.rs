@@ -19,7 +19,7 @@ use proptest::test_runner::{Config, RngSeed, TestRunner};
 use tokio::sync::oneshot;
 
 use super::*;
-use crate::common::{BTC, Harness, acct, f};
+use crate::common::{BTC, Client, Harness, acct, f};
 use crate::root_worker::{Message, Read, Work};
 
 #[test]
@@ -62,7 +62,7 @@ fn a_drawn_schedule_commits_the_inline_roots_and_reads_only_released_versions() 
 fn after_a_commit_a_queued_read_and_payout_proof_run_with_nothing_more_sent() {
     let mut run = Run::new();
     run.take(Op::Release, &mut Coverage::default()).unwrap();
-    run.command(1, acct(2));
+    run.command(1, trader(2));
     let seq = run.h.engine.last_seq().expect("commands applied");
     let (proved_at, approvals) = {
         let (&at, proven) = run.proven.iter().next_back().expect("the first root is proven");
@@ -72,19 +72,69 @@ fn after_a_commit_a_queued_read_and_payout_proof_run_with_nothing_more_sent() {
     // A payout proof and a read wait behind the commit the sequencer is waiting on.
     run.state.take(Message::Work(Work::Prove(proved_at, approvals)));
     let (reply, mut answer) = oneshot::channel();
-    run.state.take(Message::Read(Read::Account(acct(1), reply)));
+    run.state.take(Message::Read(Read::Account(trader(1), reply)));
     let (commit_reply, committed) = sync_channel(1);
     run.progress.set_commit_waiting(true);
     run.state.take(Message::Work(Work::Commit(run.h.engine.commit_inputs(), commit_reply)));
     while committed.try_recv().is_err() {
         run.state.step(&run.progress).expect("the commit is answered");
     }
+    assert!(answer.try_recv().is_err(), "the read waited for the commit");
     // The sequencer has not cleared the flag yet, and sends nothing more: the worker goes on alone.
     while run.state.step(&run.progress).is_some() {}
     assert!(matches!(answer.try_recv(), Ok(Some(_))), "the read ran after the commit, against the released root");
     let proved = run.state.take_outbox();
     assert!(matches!(proved.as_slice(), [Outcome::Proved { seq: at, .. }] if *at == proved_at), "{proved:?}");
     assert!(seq > proved_at);
+}
+
+#[test]
+fn writes_with_no_release_leave_no_garbage_once_the_worker_is_idle() {
+    let mut run = Run::new();
+    run.take(Op::Release, &mut Coverage::default()).unwrap();
+    // Trades rewrite the same accounts' leaves part after part, each replacing a leaf only the working
+    // version holds.
+    for round in 0..40u8 {
+        run.command(1 + round % 2, trader(2 + round % 2));
+        run.take(Op::Part(64), &mut Coverage::default()).unwrap();
+        run.until_idle_work();
+    }
+    let written = run.state.tree.nodes();
+    while run.state.step(&run.progress).is_some() {}
+    assert_eq!(run.state.tree.garbage(), 0, "every dead node is freed with no release");
+    assert!(run.state.tree.nodes() < written, "the parts left nodes to free: {written:?}");
+}
+
+#[test]
+fn a_discard_answers_a_pinned_exit_read_with_none_and_returns_a_payout_proofs_rest_unproved() {
+    let mut run = Run::new();
+    run.take(Op::Release, &mut Coverage::default()).unwrap();
+    let (&seq, proven) = run.proven.iter().next_back().expect("the first root is proven");
+    let approvals: Vec<(AccountId, u64)> = proven.approvals.keys().copied().collect();
+    assert!(approvals.len() > PROOF_STEP, "the proof job takes more than one step");
+    // A payout proof one step in, and an exit read past its first step, both pinned.
+    run.state.take(Message::Work(Work::Prove(seq, approvals.clone())));
+    let (reply, mut exit) = oneshot::channel();
+    run.state.take(Message::Read(Read::Exit(trader(1), reply)));
+    while !(matches!(run.state.reads.front(), Some(Reading::Exit(_)))
+        && run.state.background.iter().any(|job| matches!(job, Background::Prove { proofs, .. } if !proofs.is_empty())))
+    {
+        run.state.step(&run.progress).expect("the read and the proof are under way");
+    }
+    run.state.take(Message::Work(Work::Discard));
+    while run.state.step(&run.progress).is_some() {}
+    assert!(matches!(exit.try_recv(), Ok(None)), "a discard answers a read under way with none");
+    let outbox = run.state.take_outbox();
+    let [Outcome::Proved { seq: proved, proofs }] = outbox.as_slice() else { panic!("{outbox:?}") };
+    assert_eq!(*proved, seq);
+    assert_eq!(proofs.iter().map(|(key, _)| *key).collect::<Vec<_>>(), approvals, "every approval is answered");
+    let unproved = proofs.iter().filter(|(_, proof)| proof.is_none()).count();
+    assert!(unproved > 0 && unproved < approvals.len(), "the step taken is kept, the rest unproved: {unproved}");
+    // The worker goes on from an empty tree.
+    let (reply, mut account) = oneshot::channel();
+    run.state.take(Message::Read(Read::Account(trader(1), reply)));
+    while run.state.step(&run.progress).is_some() {}
+    assert!(matches!(account.try_recv(), Ok(None)), "no version is left to read");
 }
 
 // ── Helpers ──
@@ -104,6 +154,12 @@ enum Op {
     Read(u8),
     /// Payout proofs of every approval at the newest committed version.
     Prove,
+}
+
+/// The schedules' accounts: the first withdraws, unsigned as `V22` takes withdrawals, and the others
+/// trade, as clients whose orders the harness signs.
+fn trader(n: u8) -> AccountId {
+    if n == 1 { acct(1) } else { Client::new(n).account }
 }
 
 /// What the schedules reached.
@@ -144,12 +200,14 @@ impl Run {
         // Deposits with no payer are credited under `V22`, and held from the version that needs one,
         // which the schedules' deposits are, so held deposits' leaves change too.
         let mut h = Harness::zero_house_operated(ProtocolVersion::V22);
+        // Accounts whose orders and withdrawals the harness signs.
+        (2..4).for_each(|seed| _ = h.signer(seed));
         h.price(BTC, "100");
         for account in 1..4 {
-            h.deposit(acct(account), "100000");
+            h.deposit(trader(account), "100000");
         }
         for _ in 0..40 {
-            h.cmd(Command::Withdraw { account: acct(1), amount: f("1"), auth: None });
+            h.cmd(Command::Withdraw { account: trader(1), amount: f("1"), auth: None });
         }
         h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V38 });
         let mut run = Self {
@@ -174,7 +232,7 @@ impl Run {
 
     fn take(&mut self, op: Op, covered: &mut Coverage) -> Result<(), String> {
         match op {
-            Op::Command(kind, account) => self.command(kind, acct(account)),
+            Op::Command(kind, account) => self.command(kind, trader(account)),
             Op::Part(entries) => {
                 let delta = self.h.engine.take_root_delta(entries);
                 let units = delta.len() as u64;
@@ -188,7 +246,7 @@ impl Run {
                 self.until_idle_work();
                 self.released = Some(seq);
             }
-            Op::Read(account) => self.read(acct(account), covered)?,
+            Op::Read(account) => self.read(trader(account), covered)?,
             Op::Prove => self.prove(covered)?,
         }
         Ok(())
@@ -223,21 +281,34 @@ impl Run {
         let seq = self.h.engine.last_seq().expect("commands applied");
         let (reply, answer) = sync_channel(1);
         self.progress.set_commit_waiting(true);
+        // A read forwarded once the commit is waited on goes behind it.
+        let (read_reply, mut read) = oneshot::channel();
+        self.state.take(Message::Read(Read::Account(trader(1), read_reply)));
         self.state.take(Message::Work(Work::Commit(self.h.engine.commit_inputs(), reply)));
-        let reads = self.state.reads.len();
         let (root, _) = loop {
             if let Ok(answer) = answer.try_recv() {
                 break answer;
             }
             self.state.step(&self.progress).ok_or("the worker stalled before answering a commit")?;
-            if self.state.reads.len() != reads {
-                return Err("a read ran while a commit was waited on".into());
-            }
         };
+        if read.try_recv().is_ok() {
+            return Err("a read ran while a commit was waited on".into());
+        }
         self.progress.set_commit_waiting(false);
         let inline = self.prove_inline(seq, root);
         if inline != root {
             return Err(format!("seq {seq}: the worker committed {root}, the inline engine {inline}"));
+        }
+        // The read then answers from the newest released version, not the commit's.
+        let proof = loop {
+            if let Ok(proof) = read.try_recv() {
+                break proof;
+            }
+            self.state.step(&self.progress).ok_or("the worker stalled before answering a read")?;
+        };
+        let want = self.released.and_then(|at| self.proven[&at].accounts.get(&trader(1)).cloned().flatten());
+        if proof != want {
+            return Err(format!("seq {seq}: a read behind a commit answered other than the released version"));
         }
         self.unreleased.push_back((seq, root));
         covered.commits += 1;

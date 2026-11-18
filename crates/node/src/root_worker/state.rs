@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-use engine_core::merkle::tree::StateTree;
+use engine_core::merkle::tree::{ExitItems, StateTree};
 use engine_core::merkle::{AccountProof, ExitProof};
 use engine_core::types::AccountId;
 use tracing::debug;
@@ -33,14 +33,22 @@ pub(super) struct WorkerState {
 /// A read in progress.
 enum Reading {
     Read(Read),
-    /// An exit proof whose approvals are read a step at a time, against the version it pinned.
-    Exit {
-        version: u64,
-        account: AccountId,
-        proof: Box<ExitProof>,
-        next: u64,
-        reply: tokio::sync::oneshot::Sender<Option<ExitProof>>,
-    },
+    /// An exit proof whose items, then approvals, are read a step at a time, against the version it
+    /// pinned.
+    Exit(Box<Exiting>),
+}
+
+/// An exit proof under way: its head, and the items and approvals still to prove.
+struct Exiting {
+    version: u64,
+    account: AccountId,
+    proof: ExitProof,
+    queued: VecDeque<u64>,
+    pending: VecDeque<String>,
+    credits: VecDeque<String>,
+    /// The next approval nonce to prove, up to the account leaf's `withdrawal_nonce`.
+    next: u64,
+    reply: tokio::sync::oneshot::Sender<Option<ExitProof>>,
 }
 
 /// What no root waits for.
@@ -123,9 +131,13 @@ impl WorkerState {
             }
             Work::Advance(delta, units) => {
                 delta.apply(&mut self.tree);
+                self.queue_free();
                 return units;
             }
-            Work::Reset => self.tree.reset(),
+            Work::Reset => {
+                self.tree.reset();
+                self.queue_free();
+            }
             Work::Discard => {
                 self.cancel();
                 self.tree = StateTree::default();
@@ -143,6 +155,7 @@ impl WorkerState {
                     self.tree.pin(version);
                     self.background.push_back(Background::Capture { version, accounts });
                 }
+                self.queue_free();
             }
             Work::Release(seq, root) => {
                 if !self.tree.release(seq, root) {
@@ -158,7 +171,10 @@ impl WorkerState {
                 };
                 self.tree.pin(version);
                 let approvals = approvals.into_iter().collect();
-                self.background.push_back(Background::Prove { version, seq, approvals, proofs: Vec::new() });
+                // Ahead of every freeing and claim capture, behind the proofs asked for before it: the
+                // sequencer may wait on it before it signs a payout.
+                let at = self.background.iter().take_while(|job| matches!(job, Background::Prove { .. })).count();
+                self.background.insert(at, Background::Prove { version, seq, approvals, proofs: Vec::new() });
             }
             Work::Accept(_) => unreachable!("`take` applies the vault's checkpoint as it arrives"),
             #[cfg(test)]
@@ -186,32 +202,54 @@ impl WorkerState {
                 let _ = reply.send(answer);
             }
             Reading::Read(Read::Exit(account, reply)) => {
-                let proof = self.tree.released().and_then(|version| {
-                    let proof = self.tree.exit_proof_without_approvals(version, account)?;
+                let head = self.tree.released().and_then(|version| {
+                    let proof = self.tree.exit_head(version, account)?;
                     Some((version.id(), proof))
                 });
-                let Some((version, proof)) = proof else {
+                let Some((version, proof)) = head else {
                     let _ = reply.send(None);
                     return;
                 };
                 self.tree.pin(version);
-                self.reads.push_front(Reading::Exit { version, account, proof: Box::new(proof), next: 1, reply });
+                let ExitItems { queued, pending, credits } = self.tree.exit_items(account);
+                let (queued, pending, credits) = (queued.into(), pending.into(), credits.into());
+                let exiting = Exiting { version, account, proof, queued, pending, credits, next: 1, reply };
+                self.reads.push_front(Reading::Exit(Box::new(exiting)));
             }
-            Reading::Exit { version, account, mut proof, next, reply } => {
-                let tree_version = self.tree.version(version).expect("a pinned version is kept");
-                let nonces = proof.account.as_ref().map_or(0, |held| held.leaf.withdrawal_nonce);
-                let last = nonces.min(next.saturating_add(PROOF_STEP as u64 - 1));
-                let approvals =
-                    (next..=last).filter_map(|nonce| self.tree.approval_proof(tree_version, account, nonce));
-                proof.approvals.extend(approvals);
-                if last < nonces {
-                    return self.reads.push_front(Reading::Exit { version, account, proof, next: last + 1, reply });
+            Reading::Exit(mut exiting) => {
+                if self.exit_step(&mut exiting) {
+                    return self.reads.push_front(Reading::Exit(exiting));
                 }
+                let Exiting { version, mut proof, reply, .. } = *exiting;
+                proof.unfinalised_credits.sort_by_key(|credit| credit.deposit.deposit_id);
                 self.tree.unpin(version);
                 self.queue_free();
-                let _ = reply.send(Some(*proof));
+                let _ = reply.send(Some(proof));
             }
         }
+    }
+
+    /// Proves up to `PROOF_STEP` of an exit's items, its queued requests, pending deposits and credits
+    /// in turn, then its approvals, and returns whether any are left.
+    fn exit_step(&self, exiting: &mut Exiting) -> bool {
+        let version = self.tree.version(exiting.version).expect("a pinned version is kept");
+        let (account, proof) = (exiting.account, &mut exiting.proof);
+        let nonces = proof.account.as_ref().map_or(0, |held| held.leaf.withdrawal_nonce);
+        for _ in 0..PROOF_STEP {
+            if let Some(seq) = exiting.queued.pop_front() {
+                proof.queued.extend(self.tree.queued_proof(version, account, seq));
+            } else if let Some(reference) = exiting.pending.pop_front() {
+                proof.pending_deposits.extend(self.tree.pending_deposit_proof(version, Some(account), &reference));
+            } else if let Some(reference) = exiting.credits.pop_front() {
+                proof.unfinalised_credits.extend(self.tree.credit_proof(version, account, &reference));
+            } else if exiting.next <= nonces {
+                proof.approvals.extend(self.tree.approval_proof(version, account, exiting.next));
+                exiting.next += 1;
+            } else {
+                return false;
+            }
+        }
+        true
     }
 
     /// The oldest background job's next step.
@@ -265,7 +303,7 @@ impl WorkerState {
     fn cancel(&mut self) {
         for reading in std::mem::take(&mut self.reads) {
             match reading {
-                Reading::Exit { reply, .. } => _ = reply.send(None),
+                Reading::Exit(exiting) => _ = exiting.reply.send(None),
                 Reading::Read(read) => self.reads.push_back(Reading::Read(read)),
             }
         }
