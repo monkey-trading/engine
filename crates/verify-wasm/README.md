@@ -67,12 +67,12 @@ scripts/build-wasm-verifier.sh out/verifier
 ./scripts/dev-wasm-verifier.sh out/verifier
 ```
 
-The first command runs the exports natively. The second builds the package into `out/verifier`; it
-needs rustup with Rust 1.99.1 and its `wasm32-unknown-unknown` target, and wasm-bindgen-cli
-0.2.129. It fails if the package is larger than 1.5 MB gzipped. The third runs the package under
-Node 18 or later against every attestation fixture and signed-answer vector, and compares its
-verdicts with those of the `engine` command-line tools. The check has passed when it prints
-`PASS: wasm and native verdicts match on <n> fixtures`.
+The first command runs the exports natively. The second builds the package into `out/verifier`,
+and needs rustup with Rust 1.99.1 and its `wasm32-unknown-unknown` target, and wasm-bindgen-cli
+0.2.129. It fails if the module and its JavaScript together exceed 1.5 MB gzipped. The third runs
+the package under Node 18 or later against every attestation fixture and signed-answer vector, and
+compares its verdicts with those of the `engine` command-line tools. The check has passed when it
+prints `PASS: wasm and native verdicts match on <n> fixtures`.
 
 ## License
 
