@@ -86,6 +86,26 @@ fn a_rollover_logs_one_aggregate_whose_rows_are_kept_and_derived_again_from_the_
     assert_eq!(replayed.derived.get(at).map(|derived| derived.rows.clone()), Some(kept.rows));
 }
 
+#[test]
+fn a_client_order_past_a_due_rollover_replies_with_its_own_events_after_a_tick_that_carries_it() {
+    let mut rig = Rig::new("rollover-before-order");
+    rig.open(2);
+    let due = rig.seq.engine.next_rollover().expect("a rollover is due");
+    rig.move_to(due + 100);
+    let events = market_order(&mut rig.seq, 1, BTC, Side::Buy, "0.01", "100000");
+    let at = rig.seq.engine.last_seq().expect("a command");
+    assert!(!events.is_empty() && aggregates(&events).is_empty(), "the reply holds only the order's: {events:?}");
+    rig.seq.flush().unwrap();
+    let entries = log_entries(&rig.dir);
+    let (tick, order) = (command_at(&entries, at - 1), command_at(&entries, at));
+    assert!(matches!(tick.sequenced.cmd, Command::Tick) && tick.sequenced.ts == order.sequenced.ts);
+    assert_eq!(aggregates(tick.events.as_deref().unwrap()).len(), 1, "the tick carries the rollover");
+    assert_eq!(order.events.as_deref(), Some(&events[..]));
+    // The log replays to the sequencer's root.
+    let mut replayed = crate::sequencer::replay(&entries).unwrap();
+    assert_eq!(replayed.engine.state_root(), rig.seq.engine.state_root());
+}
+
 #[tokio::test]
 async fn rows_gone_from_memory_come_from_the_store_while_they_give_the_logged_root() {
     let mut rig = Rig::new("rollover-stored");

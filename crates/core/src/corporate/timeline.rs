@@ -35,6 +35,13 @@ impl Engine {
         boundaries.len() > MAX_CATCH_UP_BOUNDARIES
     }
 
+    /// Whether a command stamped `ts` would carry a mass event in its own events: the daily rollover,
+    /// a MONKEY period close or a distribution epoch close. The sequencer sequences a `Tick` first, so
+    /// a client's reply holds only its own events.
+    pub fn mass_event_due(&self, ts: Millis) -> bool {
+        self.next_rollover.is_some_and(|at| at <= ts) || self.emission_close_due(ts) || self.staking_close_due(ts)
+    }
+
     /// Advances past boundaries at recorded prices; target-time execution waits for the incoming
     /// quote. From `V60` the start of a market's weekend gap, where its weekend close-outs run first,
     /// and its reopening are boundaries too, though ones the `V33` bound does not count. Returns

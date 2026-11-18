@@ -4,6 +4,10 @@
 //! deferred. An applied benchmark snapshot goes first instead, because the rollovers need its rates;
 //! the engine reports its outcome with the deferral and the `Tick`s follow. A rejected snapshot and a
 //! protocol activation run no catch-up, so they drain nothing.
+//!
+//! A client command whose stamp passes a due rollover, MONKEY period close or epoch close takes a
+//! `Tick` at its own stamp first, so the mass event's events sit in the `Tick`'s entry and the
+//! client's reply holds only its own.
 
 use anyhow::{Result, bail};
 use engine_core::command::Command;
@@ -35,6 +39,12 @@ impl Sequencer {
             // The latch tripped, or the fence closed, while the catch-up drained (a blocked log
             // write, say): refuse the command itself, like an unadmitted stamp.
             return Ok(None);
+        }
+        if !snapshot && !activation && carries_reply(&cmd) && self.engine.mass_event_due(ts) {
+            self.stamp_once(ts, Command::Tick)?;
+            if self.stopped() {
+                return Ok(None);
+            }
         }
         let events = self.stamp_once(ts, cmd)?;
         if self.stopped() {
@@ -72,6 +82,26 @@ impl Sequencer {
         }
         Ok(())
     }
+}
+
+/// Whether `cmd` is a client's signed request, whose reply is its events: a mass event stays out of
+/// them. Admin, custody and feed commands answer no client, and tests and tools read the rollover in
+/// the events of the command that carried it.
+fn carries_reply(cmd: &Command) -> bool {
+    matches!(
+        cmd,
+        Command::AttestEligibility { .. }
+            | Command::AccessOrder { .. }
+            | Command::AccessWithdraw { .. }
+            | Command::AccessCloseAll { .. }
+            | Command::AccessSetPositionLevels { .. }
+            | Command::PlaceOrder(_)
+            | Command::CancelOrder { .. }
+            | Command::CancelAll { .. }
+            | Command::Withdraw { .. }
+            | Command::RegisterSessionKey { .. }
+            | Command::RevokeSessionKey { .. }
+    )
 }
 
 /// Whether `events` carry the engine's deferral of a catch-up.
