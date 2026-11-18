@@ -571,7 +571,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log/truncate.rs` — takeover truncation of a standby's copy at the checkpoint a promotion
   resumes from, dropping the unsigned tail
 - `src/log/writer/mod.rs` — appends, flushes, segment rotation, catalog folds, and catalog collection
-- `src/log/writer/output.rs` — the open segment's file and the entries appended but not yet written, which a sync job or an inline flush writes
+- `src/log/writer/output.rs` — the open segment's file and the entries appended but not yet written, which a sync job or an inline flush writes, and the inline write that refuses to run ahead of a sync job's entries
 - `src/log/writer/seal.rs` — sealing a completed segment: its fsync, durable manifest listing, and
   the staged next segment's exclusive link, inline or deferred as a `SealWork` riding the pipeline
 - `src/log/view.rs` — manifest accessors over full listings and the lazy catalog

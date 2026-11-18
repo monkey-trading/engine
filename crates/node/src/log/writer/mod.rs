@@ -348,24 +348,6 @@ impl LogWriter {
         });
     }
 
-    /// Writes on this thread the entries no job has taken, for an inline flush, sync or seal: first
-    /// the tails of segments rotation completed whose seals wait for the next job, then the open
-    /// segment's, so each file holds its entries in order.
-    /// Error cases:
-    /// - a sync job still holds entries or a seal: its writes would land after these, so the
-    ///   pipeline must be settled first
-    /// - a write fails
-    pub(super) fn write_pending(&mut self) -> anyhow::Result<()> {
-        ensure!(self.handed == 0, "an inline log write while {} sync jobs hold unwritten entries", self.handed);
-        for seal in &self.pending_seals {
-            seal.write_tail()?;
-        }
-        if let Some((_, out)) = self.open.as_mut() {
-            out.write_pending().context("writing log")?;
-        }
-        Ok(())
-    }
-
     /// The offset of the last entry appended, or `None` before the first: a follower resumes the
     /// stream right after it.
     pub fn last_offset(&self) -> Option<Offset> {
@@ -475,16 +457,6 @@ impl LogWriter {
             info!(alert_resolved = "log_rotation_failed", "log segments rotate again");
         }
         Ok(())
-    }
-}
-
-impl Drop for LogWriter {
-    /// Writes the pending entries, unsynced, as a buffered file does on drop, unless a sync job
-    /// still holds earlier ones: written now, these would land ahead of them.
-    fn drop(&mut self) {
-        if self.handed == 0 {
-            let _ = self.write_pending();
-        }
     }
 }
 

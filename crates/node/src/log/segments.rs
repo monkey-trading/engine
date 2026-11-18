@@ -110,8 +110,7 @@ pub struct LogWriter {
     /// `pending_seals`, they keep a direct flush or a checkpoint capture from treating the
     /// manifest as settled before the old segment's completion is out.
     pub(super) taken_seals: u64,
-    /// Sync jobs taken that carried entries or a seal and have not finished: an inline write must
-    /// wait for them, or its bytes would land before theirs.
+    /// Sync jobs taken with entries or a seal and not finished: an inline write must wait for them.
     pub(super) handed: u64,
     /// A listing failed and the manifest could not be cut back to its durable length, so the
     /// listing may be on disk: nothing more is appended to the segment it lists.
