@@ -323,6 +323,13 @@ async fn run() -> anyhow::Result<()> {
         auth.signer_epoch,
         auth.signer
     );
+    // The vault pays an authorization only in a block no earlier than its issue time, and the chain,
+    // set to true time in whole seconds, may run a second behind the nodes' clock. A block a second
+    // reaches a true issue time within a few; a reissue stamped further ahead fails here.
+    until("a block as late as the reissue", Duration::from_secs(10), &mut seats, async || {
+        (chain.latest_timestamp().await >= auth.issued_at).then_some(())
+    })
+    .await?;
     let claim = claim(vault, &reissued, signer)?.abi_encode();
     chain.send(chain.accounts[0], vault, claim.clone()).await;
     chain.reverted(chain.accounts[0], vault, claim).await;
