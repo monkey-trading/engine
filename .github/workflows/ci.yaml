@@ -495,6 +495,9 @@ jobs:
           cache: false
       - name: Install dependencies
         run: ../image/retry forge soldeer install
+      # One small contract, so its compile fetches the pinned solc under `retry` before any build.
+      - name: Fetch the Solidity compiler
+        run: ../image/retry forge build src/ArbSys.sol
       - name: Check formatting
         run: forge fmt --check
       - name: Build
@@ -524,6 +527,10 @@ jobs:
       - name: Install contract dependencies
         working-directory: contracts
         run: ../image/retry forge soldeer install
+      # One small contract, so its compile fetches the pinned solc under `retry` before any build.
+      - name: Fetch the Solidity compiler
+        working-directory: contracts
+        run: ../image/retry forge build src/ArbSys.sol
       - name: Run the vault deposit and RPC quorum dev scenario
         env:
           RPC_QUORUM_SCENARIO: "1"
@@ -584,6 +591,10 @@ jobs:
       - name: Install contract dependencies
         working-directory: contracts
         run: ../image/retry forge soldeer install
+      # One small contract, so its compile fetches the pinned solc under `retry` before any build.
+      - name: Fetch the Solidity compiler
+        working-directory: contracts
+        run: ../image/retry forge build src/ArbSys.sol
       - name: Run the daily rotation dev scenario
         run: ./scripts/dev-daily-rotation.sh
       - name: Run the parameter votes dev scenario
@@ -621,6 +632,10 @@ jobs:
       - name: Install contract dependencies
         working-directory: contracts
         run: ../image/retry forge soldeer install
+      # One small contract, so its compile fetches the pinned solc under `retry` before any build.
+      - name: Fetch the Solidity compiler
+        working-directory: contracts
+        run: ../image/retry forge build src/ArbSys.sol
       - name: Refuse short turns in a production build
         run: |
           for features in production,short-turns production,engine-core/short-turns; do
@@ -1063,6 +1078,10 @@ jobs:
       - name: Install contract dependencies
         working-directory: contracts
         run: ../image/retry forge soldeer install
+      # One small contract, so its compile fetches the pinned solc under `retry` before any build.
+      - name: Fetch the Solidity compiler
+        working-directory: contracts
+        run: ../image/retry forge build src/ArbSys.sol
       - name: Run the production secrets dev scenario
         env:
           ENGINE_PREBUILT: "1"
@@ -1091,6 +1110,10 @@ jobs:
       - name: Install contract dependencies
         working-directory: contracts
         run: ../image/retry forge soldeer install
+      # One small contract, so its compile fetches the pinned solc under `retry` before any build.
+      - name: Fetch the Solidity compiler
+        working-directory: contracts
+        run: ../image/retry forge build src/ArbSys.sol
       - name: Run the on-chain log heads dev scenario
         env:
           ENGINE_PREBUILT: "1"
