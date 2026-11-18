@@ -209,15 +209,16 @@ refuse a log directory outside `/data`. The check boots QEMU's default firmware,
    upgrade off, have the timelock make the running release current again. That starts a new
    generation, so the running release then hands its keys to a fresh boot of itself through step 8.
 8. Boot the new release's VM with the running release's `tee.sealing.handover.listen` address in
-   `/data/predecessor`. When an election names the new release, leave that file out: the new release
-   finds the incumbent's endpoint in the registry and fetches the published log itself. The running
-   release checks the new release's report, stops processing commands, and hands over the keys and
-   every log segment past the new release's last entry. The new release writes them to disk and
-   confirms, and the running release then powers off. A failed transfer is refused before the
-   confirmation. In that case the running release stays stopped and serves the next attempt, and
-   the new release retries its start. **Never restart the running release at that point, because its
-   own copy of the keys no longer opens.** If the new release reports `handover_unconfirmed`, start
-   it again only once the running release has powered off.
+   `/data/predecessor`. When an election names the new release, leave that file out, because the
+   new release finds the incumbent's endpoint in the registry and fetches the published log itself.
+   The running release checks the new release's report, stops processing commands, and hands over
+   the keys and every log segment past the new release's last entry. The new release writes them to
+   disk and confirms, and the running release then powers off. A failed transfer is refused before
+   the confirmation. In that case the running release stays stopped and serves the next attempt,
+   and the new release retries its start. **Do not shut the running release down at that point. Its
+   own copy of the keys no longer opens, so after a shutdown it could not serve the next attempt.**
+   If the new release reports `handover_unconfirmed`, start it again only once the running release
+   has powered off.
 9. The old release's sealed copy of the keys stays on its disk but never opens again, because a
    server checks the vault's current release and its generation before it unseals its keys. An
    upgrade that fixes a flaw in the old release still rotates the signing key, because the old

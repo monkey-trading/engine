@@ -35,10 +35,10 @@ use.
   says so, and names the approval it needs. A step without that line only reads.
 - **One approval covers one action.** An approval to deploy is not an approval to change the
   configuration, and an approval for a test network is not one for mainnet. If you are unsure
-  whether you have approval, you do not have it: write down the exact command and ask.
+  whether you have approval, you do not have it. Write down the exact command and ask.
 - **Who approves.** The deployment's owner approves changes to the server, its configuration and
-  administrative instructions. The contracts' timelock approves its own calls: the deployment's
-  multisig schedules them, and anyone can execute them once the delay has passed. The guardian is
+  administrative instructions. The contracts' timelock approves its own calls. The deployment's
+  multisig schedules each call, and anyone can execute it once the delay has passed. The guardian is
   the same multisig acting without the delay, and it can only pause withdrawals for seven days or
   retire the signing key.
 - **Commands run on an administrative workstation**, not on the server's host, unless a step says

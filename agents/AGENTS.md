@@ -124,7 +124,6 @@ an index: load only the rule whose hint matches the current action.
   (`engine.frame.v1`), `verify_response`, `verify_received` (a response from its header values as
   received), `FrameVerifier` (`verify_text` for a frame's JSON), the `SignedFrame` envelope, and
   known-answer vectors (`tests/vectors.json`) the browser verifier replays. No IO and no runtime.
- 
 - **crates/verify/** — `engine-verify`: SEV-SNP attestation verification against a list of release
   manifests, each of which must launch with Secure TSC (`guest_features`), with the attestation,
   collateral, extra root, and time passed in (no IO, no clock, no

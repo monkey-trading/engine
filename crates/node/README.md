@@ -1,7 +1,7 @@
 # engine-node
 
-The trading server: the `engine` binary, which runs the engine inside the enclave, publishes its
-log and serves the API.
+The `engine` binary, which runs the trading engine inside the enclave, publishes its log and serves
+the API.
 
 `engine-node` builds the `engine` binary. Run as a server, it puts every incoming command in order,
 writes the command to a public, append-only log, and then applies it to `engine-core`. A command's

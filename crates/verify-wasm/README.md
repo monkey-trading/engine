@@ -1,7 +1,7 @@
 # engine-verify-wasm
 
-The engine's verifier for web browsers: the attestation and signed-answer checks of the `engine`
-command-line tools, compiled to WebAssembly.
+The attestation and signed-answer checks of the `engine` command-line tools, compiled to
+WebAssembly for web browsers.
 
 A web page that talks only to the trading server can use this package to check the server for
 itself. The page first verifies the server's attestation against the release manifests it pins.
