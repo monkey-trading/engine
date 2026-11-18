@@ -122,8 +122,13 @@ def gap_comparison(rows):
                   / D(pair["at_ceiling"]["house_cash_shortfall_usd_zero_capital"]) for pair in by_band.values()]
     ratios = [pair["no_cap_operator_attack"]["close_cost_bps"] / pair["at_ceiling"]["close_cost_bps"]
               for pair in by_band.values()]
+    # The report states this charge, so it reads the rows that become `ceiling_effects.csv`.
+    uncapped = {pair["no_cap_operator_attack"]["close_cost_bps"] for pair in by_band.values()}
+    if len(uncapped) != 1:
+        raise ValueError(f"{market} has no single uncapped close charge: {sorted(uncapped)}")
     return {"market": market, "shortfall_reduction_min": float(min(reductions)),
-            "shortfall_reduction_max": float(max(reductions)), "trader_cost_ratio": ratios[0]}
+            "shortfall_reduction_max": float(max(reductions)), "trader_cost_ratio": ratios[0],
+            "uncapped_close_charge_bps": uncapped.pop()}
 
 
 def reversal_summary(rows):

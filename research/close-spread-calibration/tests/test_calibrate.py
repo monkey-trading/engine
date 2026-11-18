@@ -98,8 +98,9 @@ class BlockedFxReportTests(unittest.TestCase):
 
     def test_report_handles_a_blocked_fx_class(self):
         # No FX market is live, so `effects` would carry no EUR-USD rows and the comparison names another market.
-        rows = [effects_row("AAPL", 0, "at_ceiling"), effects_row("AAPL", 0, "no_cap_operator_attack")]
-        self.check_report(CALIBRATE.gap_comparison(rows), "in a 5% gap on AAPL, ")
+        rows = [effects_row("AAPL", 0, "at_ceiling"),
+                effects_row("AAPL", 0, "no_cap_operator_attack", cost_bps=77)]
+        self.check_report(CALIBRATE.gap_comparison(rows), "in a 5% gap on AAPL, an uncapped 77-bp close charge")
 
     def test_report_states_the_reason_when_the_gap_comparison_skips(self):
         self.check_report({"market": None, "skipped": "no market has effects rows"},

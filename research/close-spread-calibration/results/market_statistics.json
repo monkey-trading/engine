@@ -1,8 +1,8 @@
 {
   "engine_revision": "41a9ef4a52cb26ac592c5a0e372f610d8d1ba067",
   "input_sha256": {
-    "genesis_inventory": "70ff54056676127be84a4288c5e6e1205c32ad74f482303d5c466aae34705d7a",
-    "genesis_file_informational": "c6bc4a7f8f5ad00985b210a9dc50c6069ec2ad03104c326d8c1676e1d6cc1483",
+    "genesis_inventory": "3b3634f45e0fdad784199f300dc362dd5d89f5f14cc45252f78173af9c1e7127",
+    "genesis_file_informational": "dc3f6d60ce6618908df2e4c18d5b585ab73fadf2e5b8707bb201d667016ae12f",
     "bars": "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522",
     "catalogue.py": "90bda1cc31a5b885318a7d475a4095c464ee589f79fec7b78028fa9294ae1f9c",
     "derive/markets.py": "32629c08a2adcb27109f4dddd529828ccc81421fd583245e673d9108d1edd428",
@@ -18,6 +18,7 @@
     "profit_fee_bps": 1000,
     "closeout_level_bps": 5000,
     "house_total_cap_bps": 20000,
+    "house_total_cap_floor": "61000000",
     "stress_move_window_ms": 60000,
     "stress_cooldown_ms": 300000,
     "max_resting_orders": 100,
@@ -72,29 +73,49 @@
         "threshold": "0",
         "day_divisor": 1,
         "best_price_share_bps": 2500,
-        "margin_floor_bps": 500
+        "margin_floor_bps": 500,
+        "max_resting_orders": 25,
+        "requests_per_second": 2
       },
       {
         "threshold": "1000000",
         "day_divisor": 2,
         "best_price_share_bps": 5000,
-        "margin_floor_bps": 200
+        "margin_floor_bps": 200,
+        "max_resting_orders": 50,
+        "requests_per_second": 5,
+        "emissions_boost_bps": 1000
       },
       {
         "threshold": "25000000",
         "day_divisor": 5,
-        "best_price_share_bps": 10000
+        "best_price_share_bps": 10000,
+        "max_resting_orders": 100,
+        "requests_per_second": 10,
+        "fee_discount_bps": 1000,
+        "financing_discount_bps": 1000,
+        "emissions_boost_bps": 2500
       },
       {
         "threshold": "250000000",
         "day_divisor": 10,
-        "best_price_share_bps": 25000
+        "best_price_share_bps": 25000,
+        "max_resting_orders": 250,
+        "requests_per_second": 20,
+        "fee_discount_bps": 2000,
+        "financing_discount_bps": 2000,
+        "emissions_boost_bps": 5000
       }
     ],
     "rollover": {
       "tz": "Europe/London",
       "hour": 22,
       "minute": 0
+    },
+    "corporate_bounds": {
+      "max_dividend_bps": 1000,
+      "max_split_ratio": 20,
+      "min_trading_days": 2
     },
     "toxicity": {
       "horizon_ms": 5000,
@@ -125,7 +146,7 @@
         "trigger": {
           "divergence_share_bps": 6001,
           "move_bps": 75,
-          "utilisation_bps": 7000
+          "utilisation_bps": 8000
         }
       },
       {
@@ -148,6 +169,7 @@
         "asset_class": "crypto",
         "max_slippage_bps": 25,
         "house_cap_bps": 3000,
+        "house_cap_floor": "31600000",
         "margin_tiers": [
           {
             "up_to": "2000000",
@@ -183,6 +205,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.68",
+        "min_level_distance_bps": 30,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 500,
@@ -233,6 +256,7 @@
         "asset_class": "crypto",
         "max_slippage_bps": 25,
         "house_cap_bps": 2000,
+        "house_cap_floor": "17800000",
         "margin_tiers": [
           {
             "up_to": "2000000",
@@ -268,6 +292,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "2.53",
+        "min_level_distance_bps": 35,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 500,
@@ -318,6 +343,7 @@
         "asset_class": "crypto",
         "max_slippage_bps": 25,
         "house_cap_bps": 1000,
+        "house_cap_floor": "5620000",
         "margin_tiers": [
           {
             "up_to": "1000000",
@@ -349,6 +375,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "2.53",
+        "min_level_distance_bps": 35,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 500,
@@ -399,6 +426,7 @@
         "asset_class": "fx",
         "max_slippage_bps": 5,
         "house_cap_bps": 5000,
+        "house_cap_floor": "10000000",
         "margin_tiers": [
           {
             "up_to": "5000000",
@@ -431,6 +459,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "0.28",
+        "min_level_distance_bps": 17,
         "financing": {
           "benchmark": "ESTR",
           "markup_bps": 100,
@@ -505,6 +534,7 @@
         "asset_class": "fx",
         "max_slippage_bps": 5,
         "house_cap_bps": 5000,
+        "house_cap_floor": "10000000",
         "margin_tiers": [
           {
             "up_to": "5000000",
@@ -537,6 +567,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "0.27",
+        "min_level_distance_bps": 17,
         "financing": {
           "benchmark": "SONIA",
           "markup_bps": 100,
@@ -615,6 +646,7 @@
         },
         "max_slippage_bps": 5,
         "house_cap_bps": 5000,
+        "house_cap_floor": "10000000",
         "margin_tiers": [
           {
             "up_to": "5000000",
@@ -647,6 +679,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "0.38",
+        "min_level_distance_bps": 17,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 100,
@@ -721,6 +754,7 @@
         "asset_class": "fx",
         "max_slippage_bps": 5,
         "house_cap_bps": 5000,
+        "house_cap_floor": "10000000",
         "margin_tiers": [
           {
             "up_to": "5000000",
@@ -753,6 +787,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "0.36",
+        "min_level_distance_bps": 17,
         "financing": {
           "benchmark": "AONIA",
           "markup_bps": 100,
@@ -827,6 +862,7 @@
         "asset_class": "index",
         "max_slippage_bps": 10,
         "house_cap_bps": 5000,
+        "house_cap_floor": "17800000",
         "margin_tiers": [
           {
             "up_to": "5000000",
@@ -859,6 +895,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "0.70",
+        "min_level_distance_bps": 18,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -1019,6 +1056,7 @@
         "asset_class": "index",
         "max_slippage_bps": 10,
         "house_cap_bps": 5000,
+        "house_cap_floor": "17800000",
         "margin_tiers": [
           {
             "up_to": "5000000",
@@ -1051,6 +1089,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "0.91",
+        "min_level_distance_bps": 19,
         "weekend_margin_bps": 100,
         "financing": {
           "benchmark": "SOFR",
@@ -1212,6 +1251,7 @@
         "asset_class": "index",
         "max_slippage_bps": 10,
         "house_cap_bps": 5000,
+        "house_cap_floor": "10000000",
         "margin_tiers": [
           {
             "up_to": "5000000",
@@ -1244,6 +1284,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "0.65",
+        "min_level_distance_bps": 18,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -1408,6 +1449,7 @@
         },
         "max_slippage_bps": 10,
         "house_cap_bps": 5000,
+        "house_cap_floor": "10000000",
         "margin_tiers": [
           {
             "up_to": "5000000",
@@ -1440,6 +1482,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.05",
+        "min_level_distance_bps": 19,
         "weekend_margin_bps": 150,
         "financing": {
           "benchmark": "TONA",
@@ -1581,6 +1624,7 @@
         "asset_class": "commodity",
         "max_slippage_bps": 10,
         "house_cap_bps": 3000,
+        "house_cap_floor": "10000000",
         "margin_tiers": [
           {
             "up_to": "2000000",
@@ -1609,6 +1653,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.22",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -1781,6 +1826,7 @@
         "asset_class": "commodity",
         "max_slippage_bps": 10,
         "house_cap_bps": 3000,
+        "house_cap_floor": "10000000",
         "margin_tiers": [
           {
             "up_to": "2000000",
@@ -1809,6 +1855,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "2.24",
+        "min_level_distance_bps": 23,
         "weekend_margin_bps": 150,
         "financing": {
           "benchmark": "SOFR",
@@ -1978,6 +2025,7 @@
         "asset_class": "commodity",
         "max_slippage_bps": 10,
         "house_cap_bps": 3000,
+        "house_cap_floor": "10000000",
         "margin_tiers": [
           {
             "up_to": "2000000",
@@ -2006,6 +2054,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "2.04",
+        "min_level_distance_bps": 23,
         "weekend_margin_bps": 750,
         "financing": {
           "benchmark": "SOFR",
@@ -2207,6 +2256,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -2240,6 +2290,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.83",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2344,6 +2395,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -2377,6 +2429,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.65",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2481,6 +2534,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -2514,6 +2568,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "2.71",
+        "min_level_distance_bps": 27,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2618,6 +2673,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -2651,6 +2707,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "2.03",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2755,6 +2812,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -2788,6 +2846,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "2.03",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -2892,6 +2951,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -2925,6 +2985,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "2.28",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3029,6 +3090,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -3062,6 +3124,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "3.47",
+        "min_level_distance_bps": 27,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3166,6 +3229,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -3199,6 +3263,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "3.03",
+        "min_level_distance_bps": 27,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3303,6 +3368,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -3336,6 +3402,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.24",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3440,6 +3507,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -3473,6 +3541,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.69",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3577,6 +3646,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -3610,6 +3680,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.51",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3714,6 +3785,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -3747,6 +3819,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.55",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3851,6 +3924,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -3884,6 +3958,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "2.33",
+        "min_level_distance_bps": 27,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -3988,6 +4063,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -4021,6 +4097,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.38",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4125,6 +4202,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -4158,6 +4236,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.65",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4262,6 +4341,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -4295,6 +4375,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.59",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4399,6 +4480,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -4432,6 +4514,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "1.48",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4536,6 +4619,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -4569,6 +4653,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "2.14",
+        "min_level_distance_bps": 23,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4673,6 +4758,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -4706,6 +4792,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "3.44",
+        "min_level_distance_bps": 27,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,
@@ -4810,6 +4897,7 @@
         "asset_class": "equity",
         "max_slippage_bps": 15,
         "house_cap_bps": 1000,
+        "house_cap_floor": "3160000",
         "min_order_notional": "10",
         "margin_tiers": [
           {
@@ -4843,6 +4931,7 @@
           "min_sources": 2
         },
         "markout_floor_bps": "3.10",
+        "min_level_distance_bps": 27,
         "financing": {
           "benchmark": "SOFR",
           "markup_bps": 250,

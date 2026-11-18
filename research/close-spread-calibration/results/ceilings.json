@@ -1,7 +1,7 @@
 {
   "inputs": {
-    "genesis_inventory": "70ff54056676127be84a4288c5e6e1205c32ad74f482303d5c466aae34705d7a",
-    "genesis_file_informational": "c6bc4a7f8f5ad00985b210a9dc50c6069ec2ad03104c326d8c1676e1d6cc1483",
+    "genesis_inventory": "3b3634f45e0fdad784199f300dc362dd5d89f5f14cc45252f78173af9c1e7127",
+    "genesis_file_informational": "dc3f6d60ce6618908df2e4c18d5b585ab73fadf2e5b8707bb201d667016ae12f",
     "bars": "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522",
     "catalogue.py": "90bda1cc31a5b885318a7d475a4095c464ee589f79fec7b78028fa9294ae1f9c",
     "derive/markets.py": "32629c08a2adcb27109f4dddd529828ccc81421fd583245e673d9108d1edd428",
@@ -1528,7 +1528,8 @@
     "market": "EUR-USD",
     "shortfall_reduction_min": 0.2165991639209762,
     "shortfall_reduction_max": 0.34804444723460354,
-    "trader_cost_ratio": 6.176470588235294
+    "trader_cost_ratio": 6.176470588235294,
+    "uncapped_close_charge_bps": 105
   },
   "rounding": [
     {

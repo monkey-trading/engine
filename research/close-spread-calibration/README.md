@@ -272,7 +272,7 @@ cargo test -p engine-core --test close_spread_calibration --locked
 ```
 
 The simulation seed is fixed at 147, the outputs are deterministic, and a second run changes no
-committed file. The inventory was pinned before the latest changes to the launch genesis's
-parameters, so `run.py` refuses to run on the current genesis, and the three tests in
-`tests/test_inputs.py` that read the inventory fail. `calibrate.py` and `report.py` read the
+committed file. `run.py` pins the parameters and each market's margins, spreads and price rules in
+`config/production-genesis.toml` (`INVENTORY_SHA256`) and refuses to run when they differ. A later
+genesis change to those fields needs a re-run and a new pin; `calibrate.py` and `report.py` read the
 committed statistics and reproduce the committed results.

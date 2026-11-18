@@ -12,7 +12,7 @@ client closes. The engine bounds that risk per market in its price rules, so the
 
 The ceiling is the smallest multiple of 5 bps at or above the need, never below the market's launch close charge: the 15-bp widest stress minimum and top toxicity add-on, plus the market's first spread band at the widest size multiplier, in tenths of a bp rounded up to a whole bp (17 to 27 bps). From V52 the engine refuses a ceiling below it, and on a first-band close at the launch parameters the clamp removes at most what the engine's upward rounding adds. The tail move is the upper end of the weekly block-bootstrap interval of the calibration sample's hourly p99 of the in-bar move (the open against the previous close is left out). Hourly bars are scaled to the one-second quote age by square-root-of-time, an assumption no hourly data can test.
 
-Gaps, closures and contract rolls are not in the need: a price jump is not a spread. They move margin and close-out risk, which `ceiling_effects.csv` shows a close spread cannot repair: in a 5% gap on EUR-USD, an uncapped 103-bp close charge cuts the zero-capital house shortfall by 22% to 35% while costing the trader 6 times as much.
+Gaps, closures and contract rolls are not in the need: a price jump is not a spread. They move margin and close-out risk, which `ceiling_effects.csv` shows a close spread cannot repair: in a 5% gap on EUR-USD, an uncapped 105-bp close charge cuts the zero-capital house shortfall by 22% to 35% while costing the trader 6 times as much.
 
 ![Ceilings against the reference-risk need](ceilings_vs_need.png)
 
