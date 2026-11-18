@@ -13,12 +13,13 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use engine_core::Fixed;
 use engine_core::command::{Command, OrderKind, OrderRequest};
-use engine_core::event::{Event, Fill};
+use engine_core::event::{Event, Fill, Reject};
 use engine_core::fixed::Rounding;
+use engine_core::price::PriceError;
 use engine_core::toxicity::{MIN_FILLS, ToxicityStanding};
 use engine_core::types::{MarketId, Side};
 use tokio::net::TcpListener;
@@ -313,7 +314,11 @@ pub(super) async fn fund(tx: &mpsc::Sender<Request>, seed: u8) {
     assert!(funded.iter().any(|event| matches!(event, Event::Deposited { .. })), "{funded:?}");
 }
 
-/// The client's market order of `qty` quoted at `index`, which must fill.
+/// The client's market order of `qty` quoted at `index`, which must fill. The engine refuses an order
+/// while fewer than two venues' quotes are fresh (`max_age_ms`, 1 s of sequenced time), which a
+/// runner that starves the stand-ins or the feeds for a second brings about; the order then waits
+/// for the feeds to price the market again, resubmitted until `WAIT` has passed. Any other refusal,
+/// or no price by then, fails the test naming the events.
 pub(super) async fn fill(tx: &mpsc::Sender<Request>, seed: u8, side: Side, qty: &str, index: Fixed) -> Fill {
     let request = OrderRequest {
         account: account(seed),
@@ -325,8 +330,21 @@ pub(super) async fn fill(tx: &mpsc::Sender<Request>, seed: u8, side: Side, qty: 
         reduce_only: false,
         auth: None,
     };
-    let events = signed(tx, move |engine| order(engine, seed, request)).await;
-    events.into_iter().find_map(|event| if let Event::Fill(fill) = event { Some(fill) } else { None }).expect("a fill")
+    let started = Instant::now();
+    loop {
+        let request = request.clone();
+        let events = signed(tx, move |engine| order(engine, seed, request)).await;
+        let unpriced = events.iter().any(|event| {
+            matches!(event, Event::OrderRejected { reason: Reject::NoPrice { error: PriceError::Stale { .. } }, .. })
+        });
+        if unpriced && started.elapsed() < WAIT {
+            sleep(Duration::from_millis(50)).await;
+            continue;
+        }
+        let fill =
+            events.iter().find_map(|event| if let Event::Fill(fill) = event { Some(fill.clone()) } else { None });
+        return fill.unwrap_or_else(|| panic!("{side:?} {qty} quoted at {index} did not fill: {events:?}"));
+    }
 }
 
 /// Builds a command from the engine's state, sequences it and returns its events.
@@ -374,4 +392,56 @@ async fn wait_for_fills(tx: &mpsc::Sender<Request>, seed: u8, fills: Fixed, k: i
     };
     let waited = timeout(SCORED_WITHIN, scored).await;
     assert!(waited.is_ok(), "buy {k}'s markout did not score within {SCORED_WITHIN:?}");
+}
+
+/// An order that arrives before the feeds have priced the market is refused as stale, and `fill`
+/// resubmits it until they have: it fills at the index they then quote.
+#[tokio::test]
+async fn a_fill_waits_for_the_feeds_to_price_the_market() {
+    let dir = scratch_dir("feeds-toxicity-unpriced");
+    let (tx, task) = boot(&dir, &Arc::new(EnclaveKey::generate()), true);
+    let mid: Mid = Arc::new(Mutex::new(Fixed::from_int(80_000)));
+    fund(&tx, TOXIC).await;
+    let unpriced = signed(&tx, |engine| {
+        let request = OrderRequest {
+            account: account(TOXIC),
+            client_id: 1,
+            market: BTC,
+            side: Side::Buy,
+            qty: "0.01".parse().unwrap(),
+            kind: OrderKind::Market { quoted: Fixed::from_int(80_000), max_slippage_bps: None },
+            reduce_only: false,
+            auth: None,
+        };
+        order(engine, TOXIC, request)
+    })
+    .await;
+    let refused = |event: &Event| {
+        matches!(event, Event::OrderRejected { reason: Reject::NoPrice { error: PriceError::Stale { .. } }, .. })
+    };
+    assert!(unpriced.iter().any(refused), "{unpriced:?}");
+    let waiting = tokio::spawn({
+        let tx = tx.clone();
+        async move { fill(&tx, TOXIC, Side::Buy, "0.01", Fixed::from_int(80_000)).await }
+    });
+    sleep(Duration::from_millis(300)).await;
+    assert!(!waiting.is_finished(), "the order fills before any venue quotes");
+    let venues = start_venues(&tx, &mid).await;
+    let filled = waiting.await.expect("the fill");
+    assert_eq!(filled.index, Fixed::from_int(80_000));
+    venues.iter().for_each(AbortHandle::abort);
+    task.abort();
+}
+
+/// A refusal that is not a missing price fails the test, naming it.
+#[tokio::test]
+#[should_panic(expected = "InsufficientMargin")]
+async fn a_fill_names_the_refusal_that_is_not_a_missing_price() {
+    let dir = scratch_dir("feeds-toxicity-refused");
+    let (tx, _task) = boot(&dir, &Arc::new(EnclaveKey::generate()), true);
+    let mid: Mid = Arc::new(Mutex::new(Fixed::from_int(80_000)));
+    let _venues = start_venues(&tx, &mid).await;
+    wait_for_index(&tx, now(&mid)).await;
+    fund(&tx, EDGELESS).await;
+    fill(&tx, EDGELESS, Side::Buy, "1000", now(&mid)).await;
 }
