@@ -107,7 +107,7 @@ async fn run_member(
         domain,
         signer,
         [signer].into(),
-        (Some(stats.clone()), None, None),
+        (Some(stats.clone()), None, None, None),
         (Some((head.seq, head.link)), &[]),
         |entry| {
             history.observe(entry);

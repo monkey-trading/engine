@@ -5,12 +5,15 @@
 //! the evidence that the replica holds a posted log head or a predecessor's tip.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 
 use anyhow::{Context, ensure};
 use engine_core::eip712::B256;
 use engine_core::types::{AccountId, Millis};
+use tracing::warn;
 
 use crate::checkpoints::Work;
+use crate::history::derived::RowsStore;
 use crate::log::{Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, LogWriter};
 use crate::sequencer::replay::{Replay, ReplayedLog};
 use crate::stats::Stats;
@@ -48,6 +51,8 @@ pub(crate) struct LiveReplay {
     keeping: BTreeSet<u64>,
     kept: BTreeMap<u64, Link>,
     kept_checkpoints: BTreeMap<u64, Checkpoint>,
+    /// Where each command's derived rows are written as the replica applies it (`store_rows_in`).
+    rows: Option<Arc<RowsStore>>,
 }
 
 impl LiveReplay {
@@ -65,7 +70,18 @@ impl LiveReplay {
             keeping: BTreeSet::new(),
             kept: BTreeMap::new(),
             kept_checkpoints: BTreeMap::new(),
+            rows: None,
         }
+    }
+
+    /// Has the replica write the derived rows of each command it applies to `store`, the history's, so an
+    /// index that resumes where a turn left it finds them there once the replica's memory has dropped them
+    /// (`Deriver`), not only the newest `RETAINED` commands'. A file already holding a command's rows is
+    /// left as it is, so a build over a copy whose files are in place writes none. A write is not synced:
+    /// the replica's replay derives the rows again. A failed write is paged and leaves the
+    /// replica as it was: the index replays the log for those rows instead.
+    pub(crate) fn store_rows_in(&mut self, store: Arc<RowsStore>) {
+        self.rows = Some(store);
     }
 
     /// Has the replica record each checkpoint it verifies, with the turn assignment taken there, into
@@ -113,6 +129,17 @@ impl LiveReplay {
         self.replay.apply(entry)?;
         match entry {
             LogEntry::Command(command) => {
+                if let Some(store) = &self.rows
+                    && let Some(rows) = self.replay.derived_at(command.sequenced.seq)
+                    && !store.holds(command.sequenced.seq, command.sequenced.ts, &rows)
+                    && let Err(e) = store.record_unsynced(command.sequenced.seq, command.sequenced.ts, &rows)
+                {
+                    warn!(
+                        alert = "financing_rows_unstored",
+                        seq = command.sequenced.seq,
+                        "the financing read cannot prove these rows: {e:#}"
+                    );
+                }
                 let link = Link {
                     seq: command.sequenced.seq,
                     link: B256::from(self.replay.command_prefix),
