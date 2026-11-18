@@ -32,6 +32,7 @@ use engine_core::market::MarketSpec;
 use engine_core::types::{MarketId, Millis};
 use tokio::sync::{broadcast, mpsc, watch};
 
+mod proof_burst;
 mod rollover_root;
 
 use crate::clock::test_clock::TestClock;
@@ -133,6 +134,13 @@ fn mass_crash() {
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_rollover_root() {
     rollover_root::run();
+}
+
+/// Bursts of proof reads beside the price stream, with checkpoints running (#925).
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn mass_proof_burst() {
+    proof_burst::run();
 }
 
 /// The launch book with `SHARE` per cent of `market`'s holders set as `kind` says.
