@@ -29,7 +29,7 @@ use serde_json::json;
 use super::chain::{Chain, Parameters, delegateCall, setParametersCall, setRotationCall};
 use super::node::{Node, POSTED_CHECKPOINT_EVERY};
 use super::operator_share::{FLOOR_UNITS, next_epoch};
-use super::{CONFIG_HASH, DIGEST_A, DIGEST_B, FINALITY_MARGIN_SECS, T0_SECS, address, monkey};
+use super::{CONFIG_HASH, DIGEST_A, DIGEST_B, FINALITY_MARGIN_SECS, T0_SECS, address, completed_through, monkey};
 use crate::checkpoints::scenario::deploy;
 use crate::clock::Clock;
 use crate::config::NodeConfig;
@@ -307,7 +307,10 @@ async fn draw_for(
     chain.send(chain.accounts[1], schedule, drawCall { turn }.abi_encode()).await;
     node.wait("the drawn turn to mirror", move |e| e.daily_turns().assigned.contains_key(&turn)).await;
     node.advance_to(((begins + 60) * 1000) as Millis).await;
-    chain.mine_at(begins + 60).await;
+    let block = chain.mine_at(begins + 60).await;
+    // From `V75` an epoch ended on the way closes only once the mirror has passed its end, so a mirror
+    // still behind would close it on a later frontier command, taking a restock the scenario made first.
+    node.wait("the mirror to pass the boundary", move |e| completed_through(e) >= Some(block)).await;
     node.submit(Command::Tick).await;
     node.wait("the turn to apply", move |e| e.daily_turns().in_effect.is_some_and(|t| t.turn == turn)).await;
     begins
