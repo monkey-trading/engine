@@ -383,7 +383,7 @@ process. Within the bounds the image enforces, the operator controls the followi
 None of these actions writes anything false to the public log. No successor, standby or vault check
 can therefore prove that they happened, and what they gain arrives as ordinary trades.
 
-The study takes the following bounds, at production values, with Secure TSC on:
+The engine, as built, bounds each lever as follows, at production values, with Secure TSC on:
 
 | Lever | Bound | Where |
 |---|---|---|
@@ -391,8 +391,8 @@ The study takes the following bounds, at production values, with Secure TSC on:
 | Quiet venue | A stalled book's leg holds at most 5 s more while its pings answer. The host cannot fake a stall, since a pong arrives only behind every frame sent before it | `crates/node/src/feeds/venue/standing.rs` |
 | Held sync | A Critical alert, and stamping stops, once the oldest unsynced batch is held past 5 s | `crates/node/src/sequencer/pipeline.rs` |
 | Request delay | A client request's own expiry, at most 5 minutes ahead (`MAX_EXPIRY_AHEAD_MS`) | `crates/core/src/auth.rs` |
-| Unpriced spell | None. A market whose venue is held back past `max_delay` simply has no price | |
-| Quotes without TLS | Alterable in flight within `max_divergence_bps` of the TLS source | |
+| Unpriced spell | None. A market whose venue is held back past `max_delay` has no price | |
+| Altered quotes, as in the [Databento attack](#choosing-the-venue-and-altering-quotes) | Closed. Only a venue reached over TLS that ends in the enclave sets a price, so the host can delay or drop its quotes but not alter them | `crates/node/src/feeds/venue/` |
 | Rolling back the log | Detected and provable, through the on-chain log heads and the standby's signed copy | `contracts/src/LogHeads.sol`, `crates/node/src/standby/` |
 
 The engine's own defences, as the study read them from `config/production-genesis.toml`, were:
