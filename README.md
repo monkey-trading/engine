@@ -240,7 +240,7 @@ the address that `node.listen` sets. Requests that act for an account, such as o
 withdrawals, must carry the account's EIP-712 signature, its next nonce, and an expiry no more than
 five minutes ahead. When a request carries an `X-Engine-Challenge` header of 32 random bytes in
 hexadecimal, the enclave signs the answer together with the request and the challenge.
-[`crates/node/README.md`](crates/node/README.md#usage) lists every endpoint and request body.
+The [API reference](docs/api.md) lists every endpoint and request body.
 
 ## Verifying it
 

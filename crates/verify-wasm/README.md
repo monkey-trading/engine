@@ -1,49 +1,23 @@
 # engine-verify-wasm
 
-## Overview
+The engine's verifier for web browsers: the attestation and signed-answer checks of the `engine`
+command-line tools, compiled to WebAssembly.
 
-The engine's verifier for browsers. A page that may talk only to the node's origin verifies the
-node's attestation against the release manifests it pins, then every signed response and stream
-frame it relies on, with the Rust code `engine verify-attestation`, `engine verify-response`, and
-`engine verify-frames` run: `engine-verify` and `engine-wire`, built for WebAssembly with
-wasm-bindgen. The page passes bodies and header values exactly as it received them and never
-recomputes a digest itself.
-
-## Features
-
-- `verifyAttestation(attestation, manifests, collateral, nowMs, extraRootPem?)`: the
-  `/v1/attestation` JSON, the pinned `release.toml` texts (the current release and the previous one
-  across an upgrade), the `/v1/attestation/collateral` JSON, and the browser's clock; returns the
-  release, configuration, enclave address, TLS key hash, and the validity window
-  (`validFromMs`, `validUntilMs`) a second clock, such as the node's signed time, must fall inside
-- A mock quote never verifies; `verifyMockAttestation(attestation)` is the development entry point,
-  and its result says `mock: true`
-- `ExpectedSigner(signer, chainId, vault, challenge)`: the verified enclave address, the deployment,
-  and the challenge a request or connection sent
-- `verifyResponse(expected, method, pathAndQuery, requestBody, status, signature, time, seq,
-  echoedChallenge, body)`: the request as sent, the status, the four `X-Engine-*` header values
-  (`null` when absent), and the body as received
-- `FrameVerifier(expected, pathAndQuery).verifyFrame(text)`: each frame's text in the order
-  received; returns the message, and once one fails every later one does
-- A failed check throws its message as a string, the same message the CLI prints
-
-## Repository Structure
-
-- `src/lib.rs` — the exported functions and classes
-- `src/tests.rs` — the exports run natively against the fixtures and `engine-wire`'s vectors
+A web page that talks only to the trading server can use this package to check the server for
+itself. The page first verifies the server's attestation against the release manifests it pins.
+It then verifies every signed response and stream frame it relies on. The checks are the same Rust
+code that `engine verify-attestation`, `engine verify-response` and `engine verify-frames` run:
+[`engine-verify`](../verify/README.md) and [`engine-wire`](../wire/README.md), built with
+wasm-bindgen. The page passes bodies and header values exactly as it received them, and never
+computes a digest itself.
 
 ## Usage
 
-`scripts/build-wasm-verifier.sh <out-dir>` builds the package: `engine_verify_bg.wasm`, its glue
-`engine_verify.js` (an ES module), the TypeScript types, `package.json`, and `SHA256SUMS`. The
-release build uses the pinned Rust toolchain and wasm-bindgen CLI and maps build paths to fixed
-names, so a commit builds to the same bytes on any x86_64 Linux machine; CI builds it twice, from
-two checkout paths, and compares. Each release publishes the package with its
-`SHA256SUMS` and `release.toml` (`image/README.md`). A console installs the package from the
-release and checks the `.wasm` against the SHA-256 it pins before using it.
+`scripts/build-wasm-verifier.sh` builds the npm package, which a web page imports as
+`engine-verify`:
 
 ```js
-import init, { ExpectedSigner, FrameVerifier, verifyAttestation, verifyResponse } from 'engine-verify';
+import init, { ExpectedSigner, verifyAttestation, verifyResponse } from 'engine-verify';
 
 await init();
 const attested = verifyAttestation(attestationText, [currentRelease, previousRelease], collateralText, Date.now());
@@ -56,21 +30,51 @@ verifyResponse(expected, 'GET', '/v1/markets', new Uint8Array(), response.status
   h('x-engine-signature'), h('x-engine-time'), h('x-engine-seq'), h('x-engine-challenge'), body);
 ```
 
+`randomHex` stands for any source of 32 random bytes in hexadecimal, such as
+`crypto.getRandomValues`. The package exports the following:
+
+| Export | Purpose |
+| --- | --- |
+| `verifyAttestation(attestation, manifests, collateral, nowMs, extraRootPem?)` | Checks the `/v1/attestation` JSON against the pinned `release.toml` texts, using the `/v1/attestation/collateral` JSON and the browser's clock. It returns the release, the configuration, the enclave address, the TLS key's hash and the validity window (`validFromMs`, `validUntilMs`). A second clock, such as the server's signed time, must fall inside that window. |
+| `verifyMockAttestation(attestation)` | Reads a development server's simulated attestation, which never passes `verifyAttestation`. Its result says `mock: true`. |
+| `ExpectedSigner(signer, chainId, vault, challenge)` | The verified enclave address, the deployment, and the challenge that a request or connection sent |
+| `verifyResponse(expected, method, pathAndQuery, requestBody, status, signature, time, seq, echoedChallenge, body)` | Checks a response from the request as sent, the status, the four `X-Engine-*` header values (`null` when absent) and the body as received |
+| `FrameVerifier(expected, pathAndQuery).verifyFrame(text)` | Checks each frame's text in the order received and returns the message. Once one frame fails, every later frame fails too. |
+
+A failed check throws its message as a string, which is the same message the command-line tools
+print.
+
+The package holds `engine_verify_bg.wasm`, its JavaScript module `engine_verify.js`, the TypeScript
+types, `package.json` and `SHA256SUMS`. The build uses a pinned Rust toolchain and wasm-bindgen,
+and it maps build paths to fixed names, so a commit builds to the same bytes on any x86_64 Linux
+machine.
+Each release publishes the package with its `SHA256SUMS` and the release's `release.toml`, as the
+[image's release steps](../../image/README.md#release) describe. A web page should check the
+`.wasm` file against the SHA-256 hash it pins before using it.
+
+## Layout
+
+| Path | Contents |
+| --- | --- |
+| `src/lib.rs` | The exported functions and classes |
+| `src/tests.rs` | The exports run natively against the attestation fixtures and the signed-answer vectors |
+
 ## Testing
 
-```bash
+```shell
 cargo test -p engine-verify-wasm
-./scripts/dev-wasm-verifier.sh
+scripts/build-wasm-verifier.sh out/verifier
+./scripts/dev-wasm-verifier.sh out/verifier
 ```
 
-The dev scenario builds the package and checks it under Node against the CLI on every attestation
-fixture and signed-answer vector; it needs the wasm32-unknown-unknown target, wasm-bindgen-cli at the
-pinned version, and Node 18 or later.
-
-## Authors
-
-The monkeytrading contributors
+The first command runs the exports natively. The second builds the package into `out/verifier`; it
+needs rustup with Rust 1.99.1 and its `wasm32-unknown-unknown` target, and wasm-bindgen-cli
+0.2.129. It fails if the package is larger than 1.5 MB gzipped. The third runs the package under
+Node 18 or later against every attestation fixture and signed-answer vector, and compares its
+verdicts with those of the `engine` command-line tools. The check has passed when it prints
+`PASS: wasm and native verdicts match on <n> fixtures`.
 
 ## License
 
-Licensed under the Apache License, Version 2.0; see `LICENSE`.
+Licensed under the Apache License, Version 2.0. The licence text is in
+[`LICENSE`](../../LICENSE).

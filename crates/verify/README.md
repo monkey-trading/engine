@@ -1,97 +1,87 @@
 # engine-verify
 
-## Overview
+Verification of an enclave's AMD SEV-SNP attestation against published release manifests.
 
-Verifies an enclave's SEV-SNP attestation against published release manifests. It takes everything
-as arguments: the attestation `/v1/attestation` served, the release manifests the caller trusts, the
-vendor collateral (the VCEK, intermediate, root, and revocation list, from
-`/v1/attestation/collateral` or the vendor's key-distribution service), an optional extra root for a
-test or private chain, and the time to check dates at. It does no IO, reads no clock, and builds no
-C code, so `engine verify-attestation`, `engine replay --attestation`, the node's collateral relay,
-and the browser build (`crates/verify-wasm`) all run this one implementation.
-
-Its errors are `anyhow` chains rather than a typed error: each is a message for a person, which the
-CLI prints and the browser build throws word for word. No caller acts on one kind of refusal
-differently from another.
-
-## Features
-
-- `verify_attestation`: the quote's certificate chain up to a vendor root pinned in the binary, the
-  VCEK bound to the quote's chip id and reported TCB, the root's revocation list current and not
-  revoking the intermediate, the report's signature by the VCEK, the report data binding the served
-  bundle, and the first release in the list whose launch digest, guest policy, minimum TCB, and
-  configuration hashes admit the quote
-- A release whose `guest_features` lack SNPActive or SecureTSC admits no quote — the verifier
-  checks the features the manifest states; the report carries no
-  SEV features, but the launch digest covers every vCPU's, so a quote that matches a release's
-  digest launched with that release's features
-- The result names the release, the enclave address, the configuration, and the TLS key hash, and
-  carries the validity window: the span of times at which every date check passes
-- With one release, a refusal says which check failed; with several, it names each release's
-  refusal
-- A mock quote never verifies; `verify_mock_attestation` reads one for development and returns only
-  the bundle it binds
-- `verify_quote`: the same chain, revocation, and signature checks for a quote matched to no
-  release, returning the measurement, policy, reported TCB, and report data for the caller to judge,
-  as an enclave does with the release it hands its keys to
-- Signatures on RustCrypto (`p384`, `rsa`): RSASSA-PSS with SHA-384, which the vendor's chains use,
-  and ECDSA on P-384 with SHA-384, which the report and the test chain use; any other algorithm is
-  refused
-- `RelayedCollateral`: the four items as the node serves them, each bounded, and the check the node
-  runs on what it fetches before serving it
-- `ReleaseManifest`: the release's published TOML, every unknown key refused
-- `Attestation` and `AttestationBundle`: the attestation's JSON and the bundle its report data
-  hashes, shared with the node that builds them
-- `test-fixtures` feature: a stand-in vendor chain, forged reports, and a release manifest, for this
-  crate's tests, the node's, and the dev scenarios
-
-## Repository Structure
-
-- `src/lib.rs` — `verify_attestation`, `verify_quote`, `verify_mock_attestation`, the served-bundle
-  check, and release matching
-- `src/attestation.rs` — the attestation JSON, the bundle, and the mock quote's marker
-- `src/chain.rs` — the pinned roots, the chain's links and dates, the VCEK's binding, and the
-  revocation list
-- `src/signature.rs` — certificate and revocation-list signatures on RustCrypto
-- `src/report.rs` — the SEV-SNP attestation report layout, parsing, and signature
-- `src/release.rs` — the release manifest
-- `src/collateral.rs` — the relayed collateral document and its checks
-- `src/roots/` — the vendor root certificates compiled in
-- `src/fixtures.rs` — the `test-fixtures` stand-in chain, reports, and manifest
-- `src/tests/mod.rs` — verification, the validity window, the time argument, the mock path, a
-  corrupted report signature, and revocation through collateral
-- `src/tests/chain.rs` — the vendor's own intermediates, altered signatures, unsupported
-  algorithms, and the revocation list's freshness, issuer, and serial scope
-- `src/tests/ask-*.pem` — the vendor's intermediates, which those tests verify against the roots
-- `src/tests/releases.rs` — release lists: which release is named and how each refuses, and a
-  launch without Secure TSC admitted by none
-- `src/tests/signature.rs` — each branch of the certificate signature check, and the 2048-bit RSA
-  minimum at its boundary
-- `examples/verifier_fixtures.rs` — writes the attestation fixtures `scripts/dev-wasm-verifier.sh`
-  checks with the CLI and the browser build
+An attestation is a report, signed by the processor, that identifies the exact code an enclave is
+running. `engine-verify` checks one against the release manifests that the caller trusts, and names
+the release that admits it. The caller passes in everything the check needs: the attestation that
+the server's `/v1/attestation` serves, the release manifests, the vendor's certificates and
+revocation list, an optional extra root for a test or private chain, and the time at which to check
+dates. The crate performs no input or output, reads no clock and builds no C code. As a result,
+`engine verify-attestation`, `engine replay --attestation`, the server's collateral relay and the
+[browser verifier](../verify-wasm/README.md) all run this one implementation.
 
 ## Usage
+
+`verify_attestation` passes only if all of the following hold:
+
+- the report's certificate chain leads to a vendor root that is compiled into the binary;
+- the chip's certificate (the VCEK) matches the report's chip id and reported security version;
+- the root's revocation list is current and does not revoke the intermediate certificate;
+- the chip's certificate signed the report, and the report data binds the bundle the server serves;
+- a release in the list admits the report by its launch measurement, guest policy, minimum security
+  version and configuration hashes.
+
+A release whose `guest_features` lack SNPActive or SecureTSC admits no report. The report does not
+carry the guest features, but the launch measurement covers every vCPU's features, so a report that
+matches a release's measurement was launched with that release's features.
+
+The result names the release, the enclave address, the configuration and the hash of the TLS key.
+It also carries the validity window, the span of time in which every date check passes. When the
+list holds one release, a refusal says which check failed. When it holds several, the refusal gives
+each release's reason. Errors are messages for a person, which the command-line tools print and the
+browser build throws word for word.
 
 ```rust
 use engine_verify::{ReleaseManifest, RelayedCollateral, verify_attestation};
 
 let attestation = serde_json::from_str(&attestation_json)?; // GET /v1/attestation
 let releases = [ReleaseManifest::from_toml(&current)?, ReleaseManifest::from_toml(&previous)?];
-let collateral = RelayedCollateral::from_json(&collateral_json)?; // GET /v1/attestation/collateral
+let collateral = RelayedCollateral::from_json(collateral_json.as_bytes())?; // GET /v1/attestation/collateral
 let verified = verify_attestation(&attestation, &releases, &collateral, None, now_unix_secs)?;
 println!("{} runs {} with {}", hex::encode(verified.enclave_address), verified.release_name, verified.config_name);
 ```
 
+The crate also provides:
+
+- `verify_quote`, which runs the same chain, revocation and signature checks on a report matched to
+  no release, and returns its measurement, policy, security version and report data for the caller
+  to judge, as an enclave does before it hands its keys to the next release;
+- `verify_mock_attestation`, which reads a development server's simulated report and returns only
+  the bundle it binds, because a simulated report never verifies;
+- `ReleaseManifest`, the release's published TOML, which refuses unknown keys;
+- `RelayedCollateral`, the vendor's certificates and revocation list as the server relays them,
+  with the bounds and checks the server applies before it serves them;
+- `Attestation` and `AttestationBundle`, the attestation's JSON and the bundle its report data
+  hashes, which the server builds.
+
+Signatures use the RustCrypto `p384` and `rsa` crates. The vendor's chains use RSASSA-PSS with
+SHA-384, and the report and the test chain use ECDSA on P-384 with SHA-384. Any other algorithm is
+refused.
+
+## Layout
+
+| Path | Contents |
+| --- | --- |
+| `src/lib.rs` | `verify_attestation`, `verify_quote`, `verify_mock_attestation` and the matching of releases |
+| `src/attestation.rs`, `src/report.rs`, `src/release.rs`, `src/collateral.rs` | The attestation and its bundle, the SEV-SNP report, the release manifest and the relayed collateral |
+| `src/chain.rs`, `src/signature.rs`, `src/roots/` | The certificate chain, its signatures and revocation list, and the vendor roots compiled in |
+| `src/fixtures.rs` | A stand-in vendor chain, forged reports and a release manifest, behind the `test-fixtures` feature |
+| `src/tests/` | Unit tests, with the vendor's real intermediate certificates |
+
+## Configuration
+
+The `test-fixtures` feature exposes the stand-in vendor chain for this crate's tests, the server's
+tests and the development scenarios. `examples/verifier_fixtures.rs` writes the attestation fixtures
+that the browser verifier's scenario checks.
+
 ## Testing
 
-```bash
+```shell
 cargo test -p engine-verify
 ```
 
-## Authors
-
-The monkeytrading contributors
-
 ## License
 
-Licensed under the Apache License, Version 2.0; see `LICENSE`.
+Licensed under the Apache License, Version 2.0. The licence text is in
+[`LICENSE`](../../LICENSE).

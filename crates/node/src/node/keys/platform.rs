@@ -12,7 +12,7 @@ use crate::tee::sealing::{MockSealer, Sealer};
 use crate::tee::{Attestor, ConfigfsTsm, MockAttestor};
 
 /// The source of `provider`'s quotes. With real attestation nothing is attested before the guest
-/// clock proves protected (`image/README.md`, "The guest's clock").
+/// clock proves protected (`docs/enclave.md`, "The guest's clock").
 /// Error cases:
 /// - with `ConfigfsTsm`, `clock` is not the TSC in the frequency the hardware reports
 pub(in crate::node) fn attestor_for(provider: TeeProvider, clock: &GuestClock) -> anyhow::Result<Box<dyn Attestor>> {

@@ -719,7 +719,7 @@ The kernel times on that TSC: kvm-clock, whose scale the host writes, is off; no
 supplies after boot can mark the TSC unstable, since the kernel has no frequency scaling and no
 ACPI processor driver; and a node with real attestation refuses to start when the host has had the
 kernel mark it unstable at boot, which moves the kernel to a clock the host emulates
-(`image/README.md`, "The guest's clock").
+([docs/enclave.md](docs/enclave.md#the-guests-clock)).
 The
 Certificate Transparency watcher (`engine ct-watch`) checks tree head signatures but not consistency
 or inclusion proofs, so a log that shows different views to different clients can hide a certificate

@@ -1,62 +1,59 @@
 # Runbooks
 
-Procedures for running the engine node in production. Each one is written to be followed in order
-by an operator who has not read the code: numbered steps, and under each step what to check before
-going on. Start with [reference.md](reference.md), which sets up the variables and the checks the
-other runbooks call.
+The operator's procedures for running the trading server in production.
+
+Each runbook is written to be followed in order by an operator who has not read the code. It gives
+numbered steps, and under each step what to check before going on. Start with
+[reference.md](reference.md), which sets up the variables and the checks that the other runbooks
+use.
 
 | To do this | Read |
 | --- | --- |
-| Install a release, upgrade to one, or go back to the last | [deploy-and-rollback.md](deploy-and-rollback.md) |
-| Stop new risk in one market or all of them | [reduce-only.md](reduce-only.md) |
-| Bring a stopped or crashed node back | [restart-and-recovery.md](restart-and-recovery.md) |
-| Lose, replace or rotate a key | [key-recovery.md](key-recovery.md) |
+| Set up the shared variables and checks | [reference.md](reference.md) |
+| Install a release, upgrade to one, or return to the previous one | [deploy-and-rollback.md](deploy-and-rollback.md) |
+| Deploy the contracts, and initialise emissions and staking | [deploy-and-rollback.md](deploy-and-rollback.md#deploy-the-contracts), with the values in [production-deployment.toml](production-deployment.toml) |
+| Write the server's configuration | [production-node.toml](production-node.toml) |
+| Stop new positions in one market or in all of them | [reduce-only.md](reduce-only.md) |
+| Bring a stopped or crashed server back | [restart-and-recovery.md](restart-and-recovery.md) |
+| Replace, rotate or recover a key, or deliver the server's secrets | [key-recovery.md](key-recovery.md) |
 | Schedule a dividend or a split | [corporate-actions.md](corporate-actions.md) |
-| Respond to a page you do not recognise, or to anything that looks like an attack | [incident-response.md](incident-response.md) |
-| Withdrawals stop being authorised, or `checkpoint_backlog` fires | [withdrawal-stalls.md](withdrawal-stalls.md) |
-| A price feed fails (a crypto venue outage halts BTC-USD and ETH-USD), a custody RPC provider fails, or the checkpoint endpoint fails | [feed-and-custody-failures.md](feed-and-custody-failures.md) |
+| Respond to an unfamiliar alert, or to anything that looks like an attack | [incident-response.md](incident-response.md) |
+| Act when withdrawals stop being authorised, or when `checkpoint_backlog` fires | [withdrawal-stalls.md](withdrawal-stalls.md) |
+| Act when a price feed, a custody RPC provider or the checkpoint endpoint fails | [feed-and-custody-failures.md](feed-and-custody-failures.md) |
 | Tighten a market's `max_age_ms` | [feed-and-custody-failures.md](feed-and-custody-failures.md#tightening-max_age_ms) |
-| The API certificate is missing or will not renew | [certificate-renewal-failure.md](certificate-renewal-failure.md) |
-| `unattested_certificate` fires | [unattested-certificate.md](unattested-certificate.md) |
-| Stand for election as the operator, or hand the node to or from the operator in effect | [operator-candidate.md](operator-candidate.md) |
-| Run a standby, take over after a promotion, or recover when none qualifies | [standby.md](standby.md) |
-| Run the seed relayer, or `seed_missing`, `seed_relay_failed`, `seed_relayer_unfunded` or `seed_relayer_balance_unreadable` fires | [seed-relay.md](seed-relay.md) |
+| Act when the API certificate is missing or does not renew | [certificate-renewal-failure.md](certificate-renewal-failure.md) |
+| Act when `unattested_certificate` fires | [unattested-certificate.md](unattested-certificate.md) |
+| Stand for election as the operator, take daily turns, or hand the server to or from the operator in effect | [operator-candidate.md](operator-candidate.md) |
+| Run a standby, take over after a promotion, or recover when no standby qualifies | [standby.md](standby.md) |
+| Run the seed relayer, or act when one of its alerts fires | [seed-relay.md](seed-relay.md) |
 | Find what an alert means and which runbook answers it | [alerts.md](alerts.md) |
-| Write the node's config | [production-node.toml](production-node.toml) |
-| Deploy the contracts, and initialise emissions and staking | [production-deployment.toml](production-deployment.toml), [deploy-and-rollback.md](deploy-and-rollback.md) |
 
 ## How the steps are marked
 
-- **Changes the live system.** A step that restarts or reconfigures a node, sends an admin command,
-  calls a contract, moves house capital, or writes or hands over a key says so and names the approval
-  it needs. A step without that line only reads.
-- **One approval covers one action.** The repository's [no-deploy rule](../../agents/rules/no-deploy.md)
-  applies to every such step: an approval to deploy is not one to change the config, and one for
-  a testnet is not one for mainnet. If you are unsure whether you have approval, you do not: write
-  the exact command and ask.
-- **Who approves.** The deployment owner approves node, config and admin-command changes. The
-  contracts' timelock approves its calls: the deployment's multisig schedules them, and anyone
-  executes them once the delay has passed. The guardian is the same multisig acting without the
-  delay, and can only pause withdrawals for seven days or retire the signer.
-- **Commands run on an admin workstation**, not on the node's host, unless a step says otherwise.
-  Nothing in these runbooks asks you to log in to the enclave: it has no shell.
+- **Changes the live system.** A step that restarts or reconfigures a server, sends an
+  administrative instruction, calls a contract, moves house capital, or writes or hands over a key
+  says so, and names the approval it needs. A step without that line only reads.
+- **One approval covers one action.** An approval to deploy is not an approval to change the
+  configuration, and an approval for a test network is not one for mainnet. If you are unsure
+  whether you have approval, you do not have it: write down the exact command and ask.
+- **Who approves.** The deployment's owner approves changes to the server, its configuration and
+  administrative instructions. The contracts' timelock approves its own calls: the deployment's
+  multisig schedules them, and anyone can execute them once the delay has passed. The guardian is
+  the same multisig acting without the delay, and it can only pause withdrawals for seven days or
+  retire the signing key.
+- **Commands run on an administrative workstation**, not on the server's host, unless a step says
+  otherwise. No step asks you to log in to the enclave, which has no shell.
 
-## What is not in place yet
+## What is not yet in place
 
-These runbooks describe the system as the code builds it today. These parts are not done, and a
-runbook that depends on one says so where it does:
+The runbooks describe the system as the code builds it today. A runbook that depends on one of the
+following parts says so where it does:
 
-- **The image has not run on SEV-SNP hardware** (#108).
-  The quote, the launch measurement, sealing and a delivery of secrets on a real host are unverified.
-- **No staging environment exists.** The deploy and rollback procedures have been checked against
-  the pieces that run locally, not end to end.
-- **The values marked `OWNER` in [production-node.toml](production-node.toml)** wait on decisions:
-  the vendor accounts and the access source. The vault's and staking contract's launch values are
-  decided: [production-deployment.toml](production-deployment.toml) holds them, and only the opening
-  day waits on the owner.
-
-## Keeping these in step
-
-An alert the node raises, a command it takes, or a config key it reads that is missing from these
-pages is a gap in them. [alerts.md](alerts.md) lists every alert the code raises; add a row there
-in the same change that adds an alert.
+- **The image has not yet run on SEV-SNP hardware.** The attestation report, the launch measurement,
+  key sealing and the delivery of secrets on a real host are not yet verified.
+- **No staging environment exists.** The deployment and rollback procedures have been checked
+  against the parts that run locally, but not end to end.
+- **The values marked `OWNER` in [production-node.toml](production-node.toml)** wait on the vendor
+  accounts and the screening source. The contracts' launch values are set in
+  [production-deployment.toml](production-deployment.toml), and only the opening day is still to be
+  confirmed.

@@ -567,8 +567,8 @@ an index: load only the rule whose hint matches the current action.
   input pinned),
   `init`, `kernel.config`, the `sev-snp-measure` pins, `apt.conf` (the Debian snapshot's apt
   settings), and `retry`, which repeats each download after a failure. Its `README.md` covers the
-  build, what the guest exposes, the guest's clock, the attestation layout, booting on a host, and
-  the release steps.
+  build, the variants, the attestation layout, booting on a host, and the release steps;
+  `docs/enclave.md` covers what the guest takes from the host and the guest's clock.
 - **research/** — studies that set protocol parameters from data, outside the build and CI except the close-spread study's `fixtures/`, the benchmark-cap study's `fixtures/` and `results/refused.csv`, and the cap study's `data/derived/market_mix.csv`, which the launch book reads.
   `cap-calibration/` calibrates the house exposure-cap floors by Monte Carlo (#111): scripts that
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
@@ -926,7 +926,10 @@ an index: load only the rule whose hint matches the current action.
   and run it, and how to contribute. Keep its status and quick start in step with the code.
 - **docs/** — `trading-rules.md`, the rules a trader meets with their launch values, which the README
   links for depth. Keep its values in step with `config/production-genesis.toml` and its rules with
-  `engine-core`.
+  `engine-core`. `api.md`, the API reference: every route with its request and answer, request
+  signing, signed answers, limits and the stream; keep it in step with `crates/node/src/api/`.
+  `enclave.md`, what the enclave guest takes from the host and how its clock is protected; keep it
+  in step with `image/` and `crates/node/src/tee/clock.rs`.
 - **SECURITY.md** — the security policy: the private reporting address, response times,
   coordinated disclosure, safe harbour, scope, and supported versions; the README's Security
   section points to it. Keep its scope, the parts it marks as still being built, and its known gaps
