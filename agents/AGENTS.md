@@ -882,10 +882,11 @@ an index: load only the rule whose hint matches the current action.
   run the scenarios on Anvil, and a scenario's scripts run it alone. `agents/` (but for the review-delta helper in
   `agents/skills/agent-code-review/scripts/`), `research/` (but for the close-spread study's
   `fixtures/`, the benchmark-cap study's `fixtures/` and `results/refused.csv`, and the cap study's
-  `data/derived/market_mix.csv`, which `engine-core` tests read), the root `README.md`, `SECURITY.md`,
-  `AGENTS.md`, and `CLAUDE.md`, and the `README.md` of `image/` and of each crate change none. A
-  push to `main`, the nightly run, a manual run, a workflow change, a failed diff, or any path the
-  list does not name runs every job, so whatever a PR or a group skipped runs once it lands. When a
+  `data/derived/market_mix.csv`, which `engine-core` tests read), `docs/`, the root `README.md`,
+  `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, and the `README.md` of `image/` and of each crate
+  change none. A push to `main`, the nightly run, a manual run, a workflow change, a failed diff, or
+  any path the list does not name runs every job, so whatever a PR or a group skipped runs once it
+  lands. When a
   push to `main` or the nightly run fails, `main-failure-issue` opens a `bug` issue titled "CI
   failing on main", or comments on the open one, naming the run, its commit and the failed jobs; a
   job that fails there after its change's PR and merge group skipped it reads a path its area misses.
