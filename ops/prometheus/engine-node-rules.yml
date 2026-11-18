@@ -61,7 +61,6 @@ groups:
         annotations:
           summary: "Engine node {{ $labels.instance }} refused pages at its durable alert outbox size bound"
 
-      # Escalates the node's Warnings certificate_pending and certificate_expiring. A node with
       # A log sync held past the 5 s bound: the node's own page commits to the alert outbox on the
       # same disk, so a hold of the whole disk can stall it; this gauge is served from memory.
       - alert: EngineLogSyncHeld
@@ -71,6 +70,7 @@ groups:
         annotations:
           summary: "Engine node {{ $labels.instance }} has a log sync held past 5 s and takes no request"
 
+      # Escalates the node's Warnings certificate_pending and certificate_expiring. A node with
       # [api.tls.acme] has a CA certificate within a minute of boot, so half an hour pending is a
       # failed issuance; a node without the section, and a Certificate Transparency watcher, export
       # 0 for pending and never fire.
