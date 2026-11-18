@@ -11,6 +11,7 @@ use tracing::warn;
 use crate::authenticated::Store;
 use crate::config::{HistorySection, SnapshotSection};
 use crate::history::authenticated::{Head, Index};
+use crate::history::derived::RowsStore;
 use crate::history::rebuild::ReplayFingerprint;
 use crate::history::runtime::{self, Replacement};
 use crate::log::CheckpointDomain;
@@ -121,13 +122,14 @@ impl Plan {
                     generation.id.history_namespace(),
                     self.history.retention_ms()?,
                 )?;
+                let rows = RowsStore::new(&self.history.dir, self.history.retention_ms()?);
                 crate::sequencer::history_rebuild::rebuild_history_view(
                     &self.log_dir,
                     log.manifest_view(),
                     &prefix,
                     self.domain,
                     self.signer,
-                    &mut index,
+                    (&mut index, &rows),
                 )?;
                 log.verify_history_tip(&index.head())?;
                 Replacement { id: generation.id, store: generation.store, index }
@@ -189,8 +191,9 @@ impl Plan {
         let domain = self.domain;
         let signer = self.signer;
         let repair_lifecycle = lifecycle.clone();
+        let rows = RowsStore::new(&self.history.dir, self.history.retention_ms()?);
         let rebuild: runtime::Rebuild = Box::new(move |expected, stopped| {
-            rebuild_generation(&repair_lifecycle, &log_dir, domain, signer, expected, stopped)
+            rebuild_generation(&repair_lifecycle, (&log_dir, &rows), domain, signer, expected, stopped)
         });
         let config = runtime::Config { snapshots: producer, domain, key, lifecycle, catalog_store: catalog_id };
         let runtime = runtime::Runtime::new(current, pins, config, rebuild)?;
@@ -203,7 +206,7 @@ impl Plan {
 /// - allocation, strict log-derived rebuilding, cancellation or exact rebuilt-state validation fails
 fn rebuild_generation(
     lifecycle: &Lifecycle,
-    log_dir: &std::path::Path,
+    (log_dir, rows): (&std::path::Path, &RowsStore),
     domain: CheckpointDomain,
     signer: Option<engine_core::types::AccountId>,
     expected: &Head,
@@ -224,7 +227,7 @@ fn rebuild_generation(
             domain,
             signer,
             (seq, expected.last_ts().context("complete repair head lacks time")?, expected.command_prefix),
-            &mut index,
+            (&mut index, rows),
             stopped,
         )?;
     }

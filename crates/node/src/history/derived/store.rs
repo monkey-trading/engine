@@ -4,7 +4,7 @@
 //! holds the files, so a reader takes a file's rows only once they give the aggregates the log holds
 //! for the command (`Derived::checked`). The files sit in `<history.dir>/financing/`, about 18 MB a
 //! rollover at 440k positions. A rebuild of an authenticated history generation takes its rows from its
-//! own replay and leaves the files as they are.
+//! own replay and writes each command's file as the history does.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
@@ -114,11 +114,13 @@ impl RowsStore {
             return Ok(Some(derived.clone()));
         }
         // A command with no file, as most are, costs no read of the log.
-        if !self.path(seq).try_exists()? {
+        let path = self.path(seq);
+        if !path.try_exists().with_context(|| format!("checking for {}", path.display()))? {
             return Ok(None);
         }
-        let mut reader = LogReader::open(dir, Offset::start_of(seq), manifest)?;
-        while let Some((_, entry)) = reader.next_entry()? {
+        let mut reader = LogReader::open(dir, Offset::start_of(seq), manifest)
+            .with_context(|| format!("opening the log at seq {seq}"))?;
+        while let Some((_, entry)) = reader.next_entry().with_context(|| format!("reading the log at seq {seq}"))? {
             let LogEntry::Command(command) = entry else { continue };
             ensure!(command.sequenced.seq == seq, "the log reads seq {} at {seq}", command.sequenced.seq);
             let derived = self.derived(&command)?;
@@ -143,7 +145,8 @@ impl RowsStore {
         };
         let len = HEADER + ROW * expected;
         // Bounded by the logged count before a byte is read, so a host's file cannot size the read.
-        ensure!(file.metadata()?.len() == len as u64, "{} is not {expected} rows long", path.display());
+        let size = file.metadata().with_context(|| format!("reading the size of {}", path.display()))?.len();
+        ensure!(size == len as u64, "{} is not {expected} rows long", path.display());
         let mut bytes = vec![0; len];
         file.read_exact(&mut bytes).with_context(|| format!("reading {}", path.display()))?;
         ensure!(&bytes[..8] == MAGIC, "{} is not a rows file", path.display());

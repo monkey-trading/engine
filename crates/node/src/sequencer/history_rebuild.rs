@@ -4,11 +4,12 @@ use anyhow::{Result, ensure};
 use engine_core::types::{AccountId, Millis};
 
 use crate::history::authenticated::Index;
-use crate::history::derived::Taken;
+use crate::history::derived::{RowsStore, Taken};
 use crate::log::{CheckpointDomain, LogEntry, SegmentedLog};
 use crate::sequencer::ReplayedLog;
 use crate::sequencer::replay::Replay;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tracing::warn;
 
 /// Commands a rebuild indexes per update, matching the history owner's per-turn bound.
 const REBUILD_BATCH: usize = 1024;
@@ -49,6 +50,17 @@ impl ReplayedLog {
     }
 }
 
+/// Writes the derived rows of `taken`, a command the rebuild indexes, to `rows`, as the history does as it
+/// takes a command, so a rebuild restores the files the financing read proves from. A failed write is
+/// paged and leaves the rebuild as it was.
+fn store_rows(rows: &RowsStore, taken: &Taken) {
+    let Some(derived) = &taken.derived else { return };
+    let (seq, ts) = (taken.command.sequenced.seq, taken.command.sequenced.ts);
+    if let Err(e) = rows.record(seq, ts, derived) {
+        warn!(alert = "financing_rows_unstored", seq, "the financing read cannot prove these rows: {e:#}");
+    }
+}
+
 /// Uses the first pass's actual byte commitments, never a newly loaded unsigned manifest.
 /// Error cases:
 /// - checked rereading, strict replay, exact history updates or full-prefix comparison fails
@@ -58,7 +70,7 @@ pub(crate) fn rebuild_history_view(
     expected: &crate::history::rebuild::ReplayFingerprint,
     domain: CheckpointDomain,
     signer: Option<AccountId>,
-    index: &mut Index,
+    (index, rows): (&mut Index, &RowsStore),
 ) -> Result<()> {
     let mut reader =
         crate::log::LogReader::open(dir, crate::log::Offset::start_of(0), tokio::sync::watch::channel(view).1)?;
@@ -70,7 +82,9 @@ pub(crate) fn rebuild_history_view(
         fingerprint.observe(&entry)?;
         if let LogEntry::Command(command) = entry {
             let derived = replay.derived_at(command.sequenced.seq);
-            batch.push(Taken { command, derived });
+            let taken = Taken { command, derived };
+            store_rows(rows, &taken);
+            batch.push(taken);
             if batch.len() == REBUILD_BATCH {
                 index.ingest_taken(&batch)?;
                 batch.clear();
@@ -89,7 +103,7 @@ pub(crate) fn rebuild_history_prefix(
     domain: CheckpointDomain,
     signer: Option<AccountId>,
     expected: (u64, Millis, [u8; 32]),
-    index: &mut Index,
+    (index, rows): (&mut Index, &RowsStore),
     stopped: &AtomicBool,
 ) -> Result<()> {
     let mut replay = Replay::with_trust(Some(domain), signer);
@@ -102,7 +116,9 @@ pub(crate) fn rebuild_history_prefix(
         if let LogEntry::Command(command) = entry {
             let seq = command.sequenced.seq;
             ensure!(seq <= expected.0, "repair source skipped its required command");
-            batch.push(Taken { derived: replay.derived_at(seq), command });
+            let taken = Taken { derived: replay.derived_at(seq), command };
+            store_rows(rows, &taken);
+            batch.push(taken);
             if seq == expected.0 {
                 index.ingest_taken(&batch)?;
                 reached = true;

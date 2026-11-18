@@ -21,7 +21,7 @@ use crate::history::authenticated::Index;
 use crate::history::derived::{DerivedRows, Deriver, RowsStore};
 use crate::history::{Page, PageQuery};
 use crate::log::{CheckpointDomain, CommandEntry, Manifest};
-use crate::sequencer::history_rebuild::rebuild_history_prefix;
+use crate::sequencer::history_rebuild::{rebuild_history_prefix, rebuild_history_view};
 use crate::sequencer::margin_tests::{market_order, prices, sequenced};
 use crate::sequencer::pipeline::{BATCH_CHARGE, MAX_IN_FLIGHT_BYTES};
 use crate::test_support::{
@@ -223,8 +223,44 @@ async fn the_history_index_lists_a_rollovers_rows_kept_replayed_or_rebuilt() {
     let replayed = crate::sequencer::replay(&log_entries(&rig.dir)).unwrap();
     let tip = (at, replayed.engine.now(), replayed.command_prefix);
     let (domain, signer) = (CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) }, rig.signer());
-    rebuild_history_prefix(&rig.dir, domain, Some(signer), tip, &mut index, &AtomicBool::new(false)).unwrap();
+    let rows = RowsStore::new(&scratch_dir("rollover-history-rebuilt-rows"), RETENTION.as_millis() as i64);
+    let rows_kept = replayed.derived.get(at).map(|derived| derived.rows.clone()).expect("replayed");
+    rebuild_history_prefix(&rig.dir, domain, Some(signer), tip, (&mut index, &rows), &AtomicBool::new(false)).unwrap();
     assert_eq!(listed(index.page(query()).unwrap()), expected, "rebuilt");
+    // The rebuild also stores the rows, as the history does, for the financing read.
+    let command = command_at(&log_entries(&rig.dir), at);
+    assert_eq!(rows.derived(&command).unwrap().map(|derived| derived.rows), Some(rows_kept), "stored by the rebuild");
+}
+
+/// A rebuild through the strict replay of the whole log stores each rollover's rows, as the history does.
+#[test]
+fn a_rebuild_through_the_strict_replay_stores_the_rows_of_every_rollover() {
+    let mut rig = Rig::new("rollover-rebuild-view");
+    rig.open(2);
+    let mut rollovers = Vec::new();
+    for _ in 0..2 {
+        let due = rig.seq.engine.next_rollover().expect("a rollover is due");
+        rig.move_to(due + 100);
+        sequenced(&mut rig.seq, Command::Tick);
+        rollovers.push(rig.seq.engine.last_seq().expect("a command"));
+    }
+    rig.seq.flush().unwrap();
+    let entries = log_entries(&rig.dir);
+    let mut fingerprint = crate::history::rebuild::Fingerprinter::new();
+    entries.iter().for_each(|entry| fingerprint.observe(entry).unwrap());
+    let history = scratch_dir("rollover-rebuild-view-index");
+    std::fs::create_dir_all(&history).unwrap();
+    let store = Store::create(history.join("history.sqlite")).unwrap();
+    let mut index = Index::empty(store, [0x34; 32], RETENTION.as_millis() as i64).unwrap();
+    let rows = RowsStore::new(&history, RETENTION.as_millis() as i64);
+    let (domain, view) =
+        (CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) }, rig.manifest.borrow().clone());
+    rebuild_history_view(&rig.dir, view, &fingerprint.finish(), domain, Some(rig.signer()), (&mut index, &rows))
+        .unwrap();
+    for seq in rollovers {
+        let stored = rows.derived(&command_at(&entries, seq)).unwrap();
+        assert!(stored.is_some(), "no rows stored at {seq}");
+    }
 }
 
 // ── Helpers ──
