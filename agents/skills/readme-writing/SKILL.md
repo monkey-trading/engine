@@ -4,9 +4,10 @@ description: >
   Use before writing, rewriting, or editing any README.md: a repository's root README, a crate's,
   a package's, or a directory's. Covers who a README is for, the order of its sections, what
   belongs in one and what never does (version history, file inventories, issue numbers, agent
-  workflow), the root and crate templates, how to state status and warnings, the prose and command
-  rules, and the check before a README lands. Modelled on go-ethereum's README. Overrides any older
-  README template in another skill.
+  workflow), the root and crate templates, where text moved out of a README goes, how a long page
+  under docs/ opens, how to state status and warnings, the prose and command rules, and the check
+  before a README lands. Modelled on go-ethereum's README. Overrides any older README template in
+  another skill.
 ---
 
 # Writing a README
@@ -83,7 +84,7 @@ In this order, leaving out a section that has nothing true to say:
    PR title format with an example, what CI checks, that a maintainer approves each PR before it
    merges, and where to ask first for a large change.
 10. **Security.** One line pointing at `SECURITY.md` and how to report privately.
-11. **License.** Which code is under which licence, and the file that holds it.
+11. **License.** Which code is under which licence, and the file that holds each licence's text.
 
 Target length for a root README: what the sections above need, usually 150 to 300 lines. A README
 that passes 400 lines is carrying something that belongs in a linked document.
@@ -102,17 +103,27 @@ it. In this order:
 1. **Title and one line:** the crate's name and what it does.
 2. **What it is for:** a short paragraph: its job, what depends on it, and the one or two
    properties it guarantees (for example, deterministic, no IO, no floats).
-3. **Using it:** the entry points a caller uses (types, functions, binaries, endpoints), with a
+3. **`## Usage`:** the entry points a caller uses (types, functions, binaries, endpoints), with a
    short example.
-4. **Layout:** at most a table of its top-level modules or directories, one line each, saying what
-   each one is responsible for. Never one row per file.
-5. **Configuration:** environment variables or config sections it reads, with defaults. Leave the
-   section out if there are none.
-6. **Testing:** the commands that test it, and any that need extra tools or a quiet machine.
-7. **License:** one line.
+4. **`## Layout`:** at most a table of its top-level modules or directories, one line each, saying
+   what each one is responsible for. Never one row per file.
+5. **`## Configuration`:** environment variables or config sections it reads, with defaults. Leave
+   the section out if there are none.
+6. **`## Testing`:** the commands that test it, and any that need extra tools or a quiet machine.
+7. **`## License`:** one sentence that names the licence and links the file holding its text, such
+   as `Licensed under the Apache License, Version 2.0, whose text is in [LICENSE](../../LICENSE).`
+   Which code is under which licence is for the root README to say.
+
+Every crate README uses these headings, spelled as written and in this order, so that a link or a
+later change finds the same section in each crate. The title line and the paragraph on what the
+crate is for sit under the title, with no heading of their own. A section only maintainers need,
+such as how to add a protocol version, goes after `## Testing` and before `## License`.
 
 Target length: 40 to 150 lines. A crate whose README needs more is documenting its internals,
-which belong in module docs (`//!`) next to the code they describe.
+which belong next to the code ([Where moved text goes](#where-moved-text-goes)). The README of an
+operational directory, such as an image or release directory, or a runbooks index, may run past
+150 lines when its procedure is the content. The steps an operator follows in order stay together
+on one page.
 
 ## What never goes in a README
 
@@ -139,12 +150,29 @@ which belong in module docs (`//!`) next to the code they describe.
 - **Decoration.** No emoji, no badge that is not true and useful (CI status, docs and chat are
   fine), no table of contents for a short README, no heading over a single sentence.
 
+## Where moved text goes
+
+A rewrite that takes text out of a README moves each true fact to where its reader looks for it:
+
+- **Rust internals** go to the `//!` documentation of the module that implements them.
+- **Contract internals** go to the contract's Solidity NatSpec.
+- **Operator procedure** goes to the runbook under `ops/runbooks/` that covers it.
+- **Client-facing reference,** such as the API's routes or the rules a trader meets, goes to a
+  page under `docs/`.
+
+Text that becomes a comment follows [code-comments](../../rules/code-comments.md): it is cut to the
+sentences the code needs, not pasted whole.
+
+A page under `docs/` is written to this skill's prose standard. A page longer than about 300 lines
+opens, after its first paragraph, with a list of links to its `##` sections, so that a reader can
+go straight to their case. A shorter page has no such list, as a short README has none.
+
 ## Prose
 
 Follow [writing-style](../../rules/writing-style.md), plus:
 
-- **Second person and present tense:** "You can run a node against a local chain", "The engine
-  refuses an order when…".
+- **Second person and present tense:** "You can run the trading server against a local chain",
+  "The engine refuses an order when…".
 - **Short paragraphs,** three to five lines. A paragraph that lists more than three things is a
   list.
 - **Lists** for flags, options, steps and requirements. **Tables** for anything the reader compares
@@ -154,8 +182,12 @@ Follow [writing-style](../../rules/writing-style.md), plus:
   name once in backticks if the reader will meet it in output. A README read by traders and
   developers defines each side's terms for the other: basis point, mark, notional and margin for
   developers; enclave, attestation and replay for traders. A term the reader will meet in commands
-  or their output (enclave, attestation, checkpoint, node) is defined once and then used, not
-  replaced with a friendlier word.
+  or their output (enclave, attestation, checkpoint) is defined once and then used, not replaced
+  with a friendlier word.
+- **One name for the running service.** The prose of every public page, READMEs and `docs/` alike,
+  calls it "the trading server". Commands, config keys and output call it a node, as in
+  `engine-node` and `node.listen`. A page that shows them says once, where they first appear, that
+  a node is a running trading server, and keeps "node" out of the rest of its prose.
 - **Values not yet confirmed** are stated with "proposed" inline, next to the value, never left
   out and never stated as settled.
 - **Concrete over general:** versions, sizes, ports, defaults, times, limits, with units.
@@ -201,7 +233,7 @@ Before and after, from the first rewrite of this repository's README:
 | Each closes the whole position once the price you would close it at, spread included, reaches it: a stop loss at that price, gap included, and a take profit at its level or better. | When the price at which the position would close, including the spread, reaches a take profit or stop loss level, the whole position is closed. A take profit executes at its level or better. A stop loss executes at the prevailing price, which may be worse than its level if the market gaps. |
 | A losing close pays nothing. A winning close pays a share of the gain it realises, after both fills' spreads, that falls with how long the position was held: | No fee is charged on a losing trade. On a winning trade, a share of the realised profit is charged as a fee, after the spreads paid on opening and closing. The share falls the longer the position has been held: |
 | An add moves the open time to the size-weighted average of when the units were added, counting units already held as no more than 15 minutes old, so an add neither restarts the clock nor borrows a small old position's age. | When you add to a position, its opening time becomes the size-weighted average of the times at which each part was added. Any part held for longer than 15 minutes counts as 15 minutes old, so adding to a position neither restarts its holding time nor lets a large new trade benefit from the age of a small old one. |
-| The node publishes each command it sequences with the events it produced, and the enclave signs a Merkle root over the whole state at each checkpoint, so anyone can replay the log and check the state they are shown. | The server publishes every instruction it processes, together with its effects. At each checkpoint the enclave signs a fingerprint of the entire state, a Merkle root. Anyone can replay the published record and confirm that the state they are shown is the one the rules produce. |
+| The node publishes each command it sequences with the events it produced, and the enclave signs a Merkle root over the whole state at each checkpoint, so anyone can replay the log and check the state they are shown. | The trading server publishes every instruction it processes, together with its effects. At each checkpoint the enclave signs a fingerprint of the entire state, a Merkle root. Anyone can replay the published record and confirm that the state they are shown is the one the rules produce. |
 
 ## Commands
 
@@ -209,14 +241,18 @@ Before and after, from the first rewrite of this repository's README:
   elided output. Use `<angle-brackets>` only for values the reader must supply, and say what they
   are right under the block.
 - Every command in a README has been run from a fresh clone at the commit that adds it, and its
-  stated result observed. A fresh worktree at that commit counts as a fresh clone. If it needs a
-  tool, the prerequisites list it with a version.
+  stated result observed, unless it needs hardware the writer's machine lacks or hours to run. A
+  fresh worktree at that commit counts as a fresh clone. If it needs a tool, the prerequisites list
+  it with a version.
+- A command that needs such hardware or time still goes in the README, with what it needs and what
+  it produces, as building the enclave image and booting it on an SEV-SNP host do.
 - Show a command with its real defaults (ports, paths) and name the setting or variable that
   overrides each. Verify it with overrides where a default is in use on your machine; never stop
   or disturb whatever holds the default.
-- A README PR's body ends with one line per command it ran and the result, and names any command
-  it could not run and why. That list is the evidence this skill's check asks for, and it is the
-  one exception to `agent-create-pr`'s rule against a test plan in the body.
+- A README PR's body ends with one line per command it ran and the result. It then names each
+  command it did not run, why, and what ran in its place, such as the CI job that builds the image
+  on the PR. That list is the evidence this skill's check asks for, and it is the one exception to
+  `agent-create-pr`'s rule against a test plan in the body.
 - Put the expected result after the command: what prints, which port listens, which file appears.
 - Prefer the repository's own scripts and `cargo`, `npm` or `forge` commands to long hand-written
   pipelines.
@@ -248,12 +284,15 @@ must know (prices can be unavailable, withdrawals queue) in "How it works", not 
 
 - [ ] The first line says what this is, in words a stranger understands.
 - [ ] A reader can find their case from the headings alone.
-- [ ] Every command was run from a fresh clone, and its result is stated.
+- [ ] Every command was run from a fresh clone and its result is stated, or the PR names why it
+      was not run and what ran in its place.
 - [ ] No sentence narrates history, a version transition, or how the project is run.
 - [ ] No issue, PR, decision or finding number appears.
 - [ ] No list of every file, alert, key or test.
 - [ ] Every number has a unit, and every claim is a mechanism or a measurement.
 - [ ] Each warning is stated once, where it applies.
+- [ ] Prose calls the running service the trading server. "Node", for that service, appears only
+      where commands, config keys or output use it, and is defined once.
 - [ ] Length is within the target, or the excess has moved to a linked document.
 - [ ] No sentence stacks conditions, chains facts with "and … so …", or compresses a condition into
       an aside; no engine shorthand used as a noun; no contractions.
