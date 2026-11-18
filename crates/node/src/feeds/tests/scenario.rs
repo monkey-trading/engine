@@ -41,6 +41,12 @@ const ETH: (&str, &str, &str) = ("2377", "2377.1", "2377.05");
 /// within the test, long enough that a busy runner does not age out the live ones.
 const MAX_AGE_MS: Millis = 1_000;
 
+/// The silence timeout of the feed in the test that asserts no alert fires while BTC quotes live: the
+/// venue stand-in quotes every 20 ms, so silence is the test's own thread, shared with the
+/// sequencer, going unscheduled, which a loaded runner has stretched past 300 ms. A held-back
+/// symbol's count restarts at every check, so a long timeout costs the test only a longer wait.
+const QUOTING: Duration = Duration::from_secs(2);
+
 /// A sequencer under the dev genesis, and a feed of its stream.
 pub(super) struct Node {
     pub(super) tx: mpsc::Sender<Request>,
@@ -91,7 +97,7 @@ async fn a_market_the_engine_does_not_list_is_alerted_once_and_held_back_until_i
     let cfg = dev_config();
     let mut node = Node::boot_at("unlisted", &cfg.genesis, ProtocolVersion::V38).await;
     // ETH/USD is mapped to a market the engine does not list.
-    start_kraken(&node, &[(1, "BTC/USD"), (99, "ETH/USD")], now_ms).await;
+    start_kraken(&node, &[(1, "BTC/USD"), (99, "ETH/USD")], QUOTING, now_ms).await;
     let unlisted = loop {
         let alert = next_alert(&mut alerts).await;
         if alert["alert"] == "venue_market_unlisted" {
@@ -102,7 +108,7 @@ async fn a_market_the_engine_does_not_list_is_alerted_once_and_held_back_until_i
 
     // From then on, over several silence windows, no ETH quote reaches the engine to be refused,
     // and ETH is alerted neither again nor as silent.
-    assert_eq!(node.prices_within(99, Duration::from_secs(1)).await, 0);
+    assert_eq!(node.prices_within(99, QUOTING * 2).await, 0);
     while let Ok(alert) = alerts.try_recv() {
         assert!(!["venue_market_unlisted", "venue_symbol_silent"].contains(&alert["alert"].as_str()), "{alert:?}");
     }
@@ -123,7 +129,8 @@ async fn quotes_older_than_the_engines_market_bound_do_not_count_as_quoting() {
     let node = Node::start("max-age").await;
     // Within the feed's own bound, but older than the engine's `max_age_ms` for the market, as
     // after its price rules are tightened, so the engine ignores them.
-    start_kraken(&node, &[(1, "BTC/USD"), (2, "ETH/USD")], || now_ms() - MAX_AGE_MS - 500).await;
+    start_kraken(&node, &[(1, "BTC/USD"), (2, "ETH/USD")], Duration::from_millis(300), || now_ms() - MAX_AGE_MS - 500)
+        .await;
     assert_first_silent(&mut alerts, "BTC/USD").await;
 }
 
@@ -326,7 +333,12 @@ impl Node {
 /// quotes normally. The loopback venue serves every connection the feed makes: a feed starved past
 /// its read timeout on a loaded runner reconnects, and a venue that served only the first would leave
 /// it silent for good.
-async fn start_kraken(node: &Node, symbols: &[(MarketId, &str)], btc_at: impl Fn() -> Millis + Clone + Send + 'static) {
+async fn start_kraken(
+    node: &Node,
+    symbols: &[(MarketId, &str)],
+    silence: Duration,
+    btc_at: impl Fn() -> Millis + Clone + Send + 'static,
+) {
     let (listener, url) = listen().await;
     tokio::spawn(async move {
         loop {
@@ -338,7 +350,7 @@ async fn start_kraken(node: &Node, symbols: &[(MarketId, &str)], btc_at: impl Fn
             let _ = stream(ws, books).await;
         }
     });
-    let timing = Timing { stale_after: Duration::from_secs(60), ..fast(Duration::from_millis(300)) };
+    let timing = Timing { stale_after: Duration::from_secs(60), ..fast(silence) };
     spawn_feed_into(node.tx.clone(), Venue::Kraken, &url, symbols, timing);
 }
 
