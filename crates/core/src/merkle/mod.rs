@@ -92,11 +92,16 @@ enum Subtree {
     Node,
 }
 
+/// A leaf of another key, as its key and value hash.
+pub type Witness = (B256, B256);
+
 /// A sparse Merkle tree over 256-bit keys, laid out as the module docs describe.
 #[derive(Debug, Default)]
 pub(crate) struct SparseMerkleTree {
     /// Each leaf's hash, by key.
     leaves: BTreeMap<B256, B256>,
+    /// Each leaf's value hash, by key, for the leaf an absence proof names beside a key with none.
+    values: BTreeMap<B256, B256>,
     /// The hash of each subtree holding two or more leaves, by its depth and the key prefix that
     /// leads to it, with the bits from that depth on cleared.
     nodes: BTreeMap<(usize, B256), B256>,
@@ -115,6 +120,10 @@ impl SparseMerkleTree {
             .into_iter()
             .filter_map(|(key, value_hash)| {
                 let leaf = value_hash.map(|value_hash| leaf_hash(key, value_hash));
+                match value_hash {
+                    Some(value_hash) => self.values.insert(key, value_hash),
+                    None => self.values.remove(&key),
+                };
                 let old = match leaf {
                     Some(leaf) => self.leaves.insert(key, leaf),
                     None => self.leaves.remove(&key),
@@ -141,6 +150,28 @@ impl SparseMerkleTree {
             siblings.push(self.hash_of(depth + 1, sibling));
         }
         Some(siblings)
+    }
+
+    /// The siblings proving there is no leaf at `key`, from the root down, with the one leaf that
+    /// holds the place where it would be, if any, or `None` when there is a leaf at `key`.
+    pub(crate) fn absence(&self, key: B256) -> Option<(Vec<B256>, Option<Witness>)> {
+        let mut siblings = Vec::new();
+        loop {
+            let depth = siblings.len();
+            let base = prefix(&key, depth);
+            match self.subtree(depth, base) {
+                Subtree::Node => {
+                    let sibling = if bit(&key, depth) { base } else { with_bit(base, depth) };
+                    siblings.push(self.hash_of(depth + 1, sibling));
+                }
+                Subtree::Empty => return Some((siblings, None)),
+                Subtree::Leaf(_) => {
+                    let (other, _) = self.leaves.range(base..=last_under(base, depth)).next()?;
+                    let value = *self.values.get(other).expect("every leaf has its value hash");
+                    return (*other != key).then_some((siblings, Some((*other, value))));
+                }
+            }
+        }
     }
 
     /// Rehashes the subtree at `depth` under `prefix`, given the sorted keys under it whose leaves
@@ -211,6 +242,27 @@ pub fn verify(root: B256, key: B256, value_hash: B256, siblings: &[B256]) -> boo
         return false;
     }
     let top = siblings.iter().enumerate().rev().fold(leaf_hash(key, value_hash), |hash, (depth, sibling)| {
+        if bit(&key, depth) { node_hash(*sibling, hash) } else { node_hash(hash, *sibling) }
+    });
+    top == root
+}
+
+/// Whether `siblings`, from the root down, show `root` holding no leaf at `key`: the place `key`
+/// would take is empty, or holds `other`, a leaf of another key that shares the path to it.
+pub fn verify_absent(root: B256, key: B256, other: Option<Witness>, siblings: &[B256]) -> bool {
+    if siblings.len() > 256 {
+        return false;
+    }
+    let start = match other {
+        None => EMPTY,
+        Some((other_key, value_hash)) => {
+            if other_key == key || (0..siblings.len()).any(|depth| bit(&other_key, depth) != bit(&key, depth)) {
+                return false;
+            }
+            leaf_hash(other_key, value_hash)
+        }
+    };
+    let top = siblings.iter().enumerate().rev().fold(start, |hash, (depth, sibling)| {
         if bit(&key, depth) { node_hash(*sibling, hash) } else { node_hash(hash, *sibling) }
     });
     top == root

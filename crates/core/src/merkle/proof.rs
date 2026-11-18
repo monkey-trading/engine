@@ -10,8 +10,8 @@ use crate::account::Position;
 use crate::emissions::TokenUnits;
 use crate::levels::PositionLevels;
 use crate::merkle::{
-    AccountLeaf, MarketLeaf, account_key, distribution_hash, distribution_key, entitlement_hash, entitlement_key,
-    levels_hash, levels_key, market_key, position_hash, position_key, verify,
+    AccountLeaf, MarketLeaf, Witness, account_key, distribution_hash, distribution_key, entitlement_hash,
+    entitlement_key, levels_hash, levels_key, market_key, position_hash, position_key, verify, verify_absent,
 };
 use crate::staking::UsdcUnits;
 use crate::types::{AccountId, MarketId};
@@ -33,10 +33,27 @@ pub struct AccountProof {
     pub positions: Vec<PositionProof>,
     /// The market of each position, in the same order.
     pub markets: Vec<MarketProof>,
-    /// From `V79`, the levels of each position holding any, in market order. Left out of the encoding
-    /// while none does.
+    /// The levels of each position holding any, in market order. Left out of the encoding while none
+    /// does.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub levels: Vec<LevelsProof>,
+    /// Each position holding none, in market order, with the proof that its levels' key has no leaf.
+    /// Every position is in `levels` or here, so a proof cannot leave a position's levels out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub no_levels: Vec<NoLevelsProof>,
+}
+
+/// The proof that one of an account's positions holds no take profit or stop loss: its levels' key
+/// has no leaf, the place it would take being empty or held by `other`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NoLevelsProof {
+    pub market: MarketId,
+    /// The one leaf of another key in the place the levels' key would take, as its key and value hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other: Option<Witness>,
+    /// Sibling hashes from the root down to that place.
+    pub siblings: Vec<B256>,
 }
 
 /// The take profit and stop loss of one of an account's positions with their proof.
@@ -102,11 +119,10 @@ pub struct MarketProof {
 
 impl AccountProof {
     /// Whether the account's leaf, all `open_positions` of its positions in distinct markets, the
-    /// market of each, and the levels it carries, each of a position it proves, prove against `root`.
+    /// market of each, and for each position either its levels or the absence of any, prove against `root`.
     /// Checks `root`, which the caller takes from a signed checkpoint, not the root the proof names.
     pub fn verify(&self, root: B256) -> bool {
         let markets = || self.positions.iter().map(|position| position.market);
-        let held = |market: MarketId| markets().any(|held| held == market);
         // Strictly increasing markets are distinct, so the count covers every position leaf.
         usize::try_from(self.leaf.open_positions).is_ok_and(|count| count == self.positions.len())
             && markets().zip(markets().skip(1)).all(|(a, b)| a < b)
@@ -114,7 +130,20 @@ impl AccountProof {
             && verify(root, account_key(self.account), self.leaf.value_hash(), &self.siblings)
             && self.positions.iter().all(|position| position.verify(root, self.account))
             && self.markets.iter().all(|market| market.verify(root))
-            && self.levels.iter().all(|levels| held(levels.market) && levels.verify(root, self.account))
+            && self.levels.len() + self.no_levels.len() == self.positions.len()
+            && markets().all(|market| {
+                let levels = self.levels.iter().filter(|levels| levels.market == market).count();
+                levels + self.no_levels.iter().filter(|none| none.market == market).count() == 1
+            })
+            && self.levels.iter().all(|levels| levels.verify(root, self.account))
+            && self.no_levels.iter().all(|none| none.verify(root, self.account))
+    }
+}
+
+impl NoLevelsProof {
+    /// Whether `account`'s levels' key in the proof's market has no leaf under `root`.
+    pub fn verify(&self, root: B256, account: AccountId) -> bool {
+        verify_absent(root, levels_key(account, self.market), self.other, &self.siblings)
     }
 }
 
