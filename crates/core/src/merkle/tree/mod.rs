@@ -19,7 +19,7 @@ use alloy_primitives::B256;
 use crate::merkle::tree::arena::{Arena, NodeRef};
 use crate::merkle::tree::trie::NewLeaf;
 use crate::merkle::tree::value::{Association, ExitIndex, ExitTotals, LeafValue};
-use crate::merkle::{ExitTerms, RootWork, exit_terms_hash, exit_terms_key, leaf_hash};
+use crate::merkle::{ExitTerms, RootWork, exit_terms_hash, exit_terms_key};
 use crate::protocol::ProtocolVersion;
 
 pub use proofs::ExitItems;
@@ -127,7 +127,7 @@ impl StateTree {
             return self.build(updates);
         }
         for LeafUpdate { key, value_hash, value } in updates {
-            let new = value_hash.map(|value_hash| NewLeaf { hash: leaf_hash(key, value_hash), value });
+            let new = value_hash.map(|value_hash| NewLeaf::new(key, value_hash, value));
             let old = self.arena.lookup(self.working, &key);
             let old_value = old.and_then(|leaf| leaf.value.as_deref());
             let new_value = new.as_ref().and_then(|leaf| leaf.value.as_deref());
@@ -146,7 +146,7 @@ impl StateTree {
         let leaves: Vec<(B256, NewLeaf)> = updates
             .into_iter()
             .filter_map(|LeafUpdate { key, value_hash, value }| {
-                value_hash.map(|value_hash| (key, NewLeaf { hash: leaf_hash(key, value_hash), value }))
+                value_hash.map(|value_hash| (key, NewLeaf::new(key, value_hash, value)))
             })
             .collect();
         for (_, leaf) in &leaves {

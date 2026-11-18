@@ -13,7 +13,7 @@ use crate::types::AccountId;
 use crate::withdrawal::QueuedWithdrawal;
 
 #[test]
-fn every_root_and_proof_matches_the_oracle_through_random_batches() {
+fn every_root_proof_and_absence_matches_the_oracle_through_random_batches() {
     let batch = vec((0..POOL, proptest::option::of(0..4u64)), 0..24);
     let result = runner(256, 0x925_0001).run(&vec(batch, 1..16), |batches| {
         let pool = key_pool();
@@ -28,9 +28,11 @@ fn every_root_and_proof_matches_the_oracle_through_random_batches() {
             tree.collect(usize::MAX);
             prop_assert_eq!(root, oracle.root());
             let version = tree.released().expect("released above");
-            for key in &pool {
-                let proof = tree.arena.proven(version.root, key).map(|(_, siblings)| siblings);
-                prop_assert_eq!(proof, oracle.proof(*key), "{}", key);
+            // The pool's keys, present or not, and keys it never holds.
+            for key in pool.iter().copied().chain((1_000..1_016).map(key)) {
+                let proof = tree.arena.proven(version.root, &key).map(|(_, siblings)| siblings);
+                prop_assert_eq!(proof, oracle.proof(key), "{}", key);
+                prop_assert_eq!(tree.arena.absence(version.root, &key), oracle.absence(key), "{}", key);
             }
             prop_assert_eq!(live(&tree), reachable(&tree));
             // Committing and releasing each root at once keeps one version, as an inline engine does.
@@ -120,6 +122,7 @@ fn kept_versions_prove_their_own_leaves_and_free_exactly_what_they_alone_held() 
                 for key in &pool {
                     let proof = tree.arena.proven(version.root, key).map(|(_, siblings)| siblings);
                     prop_assert_eq!(proof, oracle.proof(*key));
+                    prop_assert_eq!(tree.arena.absence(version.root, key), oracle.absence(*key));
                 }
             }
             tree.collect(usize::MAX);

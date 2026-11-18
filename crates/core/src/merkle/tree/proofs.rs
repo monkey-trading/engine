@@ -9,10 +9,10 @@ use crate::merkle::tree::value::LeafValue;
 use crate::merkle::tree::{StateTree, Version};
 use crate::merkle::{
     AccountProof, DistributionProof, EntitlementProof, ExitProof, ExitTermsProof, LevelsProof, MarketProof,
-    PendingDepositProof, PendingReceipt, PositionProof, QueuedWithdrawalProof, ReceiptKind, ReceiptProof,
-    UnfinalisedCreditProof, WithdrawalApprovalProof, account_key, distribution_key, entitlement_key, exit_terms_key,
-    held_deposit_key, levels_key, market_key, pending_deposit_key, position_key, withdrawal_approval_key,
-    withdrawal_queue_key,
+    NoLevelsProof, PendingDepositProof, PendingReceipt, PositionProof, QueuedWithdrawalProof, ReceiptKind,
+    ReceiptProof, UnfinalisedCreditProof, WithdrawalApprovalProof, account_key, distribution_key, entitlement_key,
+    exit_terms_key, held_deposit_key, levels_key, market_key, pending_deposit_key, position_key,
+    withdrawal_approval_key, withdrawal_queue_key,
 };
 use crate::protocol::ProtocolVersion;
 use crate::types::AccountId;
@@ -35,14 +35,15 @@ impl StateTree {
         Some((leaf.value.as_deref().expect("a proven leaf carries its value"), siblings))
     }
 
-    /// The proof of `account`'s leaf, of each of its position leaves, and of the leaf of each market
-    /// it holds a position in, against `version`. `None` for an account the version does not hold.
+    /// The proof of `account`'s leaf, of each of its position leaves, of the leaf of each market it
+    /// holds a position in, and of each position's levels or that it holds none, against `version`.
+    /// `None` for an account the version does not hold.
     pub fn account_proof(&self, version: &Version, account: AccountId) -> Option<AccountProof> {
         let (value, siblings) = self.valued(version, &account_key(account))?;
         let LeafValue::Account { leaf, markets, levels } = value else {
             unreachable!("an account leaf holds an account")
         };
-        let (positions, markets) = markets
+        let (positions, markets): (Vec<PositionProof>, Vec<MarketProof>) = markets
             .iter()
             .map(|&market| {
                 // The account's markets are those its position leaves are in, at each version.
@@ -59,18 +60,22 @@ impl StateTree {
                 )
             })
             .unzip();
-        let levels = levels
-            .iter()
-            .map(|&market| {
-                // The markets with levels are those the account's levels leaves are in, at each version.
-                let (levels, siblings) =
-                    self.valued(version, &levels_key(account, market)).expect("a position's levels have a leaf");
+        let (mut held, mut no_levels) = (Vec::new(), Vec::new());
+        for &PositionProof { market, .. } in &positions {
+            let key = levels_key(account, market);
+            // The markets with levels are those the account's levels leaves are in, at each version.
+            if levels.contains(&market) {
+                let (levels, siblings) = self.valued(version, &key).expect("a position's levels have a leaf");
                 let LeafValue::Levels(levels) = levels else { unreachable!("a levels leaf holds levels") };
-                LevelsProof { market, levels: *levels, siblings }
-            })
-            .collect();
-        let (seq, root) = (version.seq, version.hash);
-        Some(AccountProof { seq, root, account, leaf: leaf.clone(), siblings, positions, markets, levels })
+                held.push(LevelsProof { market, levels: *levels, siblings });
+            } else {
+                let (siblings, other) =
+                    self.arena.absence(version.root, &key).expect("a position without levels has no leaf");
+                no_levels.push(NoLevelsProof { market, other, siblings });
+            }
+        }
+        let (seq, root, leaf) = (version.seq, version.hash, leaf.clone());
+        Some(AccountProof { seq, root, account, leaf, siblings, positions, markets, levels: held, no_levels })
     }
 
     /// The proof of `account`'s cumulative MONKEY entitlement against `version`, or `None` when the

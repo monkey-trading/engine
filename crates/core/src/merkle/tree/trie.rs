@@ -6,13 +6,21 @@ use alloy_primitives::B256;
 
 use crate::merkle::tree::arena::{Arena, Leaf, Node, NodeRef};
 use crate::merkle::tree::value::LeafValue;
-use crate::merkle::{EMPTY, bit, node_hash};
+use crate::merkle::{EMPTY, Witness, bit, leaf_hash, node_hash};
 
-/// A leaf to write: its hash, and what proofs read from it.
+/// A leaf to write: its hash, the value hash it is over, and what proofs read from it.
 #[derive(Debug)]
 pub(crate) struct NewLeaf {
     pub(crate) hash: B256,
+    pub(crate) value_hash: B256,
     pub(crate) value: Option<Box<LeafValue>>,
+}
+
+impl NewLeaf {
+    /// The leaf at `key` over `value_hash`, carrying `value` for proofs.
+    pub(crate) fn new(key: B256, value_hash: B256, value: Option<Box<LeafValue>>) -> Self {
+        Self { hash: leaf_hash(key, value_hash), value_hash, value }
+    }
 }
 
 impl Arena {
@@ -52,6 +60,28 @@ impl Arena {
         }
     }
 
+    /// The siblings proving that the tree under `root` holds no leaf at `key`, from the root down, with
+    /// the one leaf of another key in the place `key` would take, if any, or `None` when there is a
+    /// leaf at `key`.
+    pub(crate) fn absence(&self, root: NodeRef, key: &B256) -> Option<(Vec<B256>, Option<Witness>)> {
+        let (mut node, mut siblings) = (root, Vec::new());
+        loop {
+            match node.node() {
+                Node::Empty => return Some((siblings, None)),
+                Node::Leaf(index) => {
+                    let leaf = self.leaf(index);
+                    return (leaf.key != *key).then_some((siblings, Some((leaf.key, leaf.value_hash))));
+                }
+                Node::Branch(index) => {
+                    let side = usize::from(bit(key, siblings.len()));
+                    let children = self.branch(index).children;
+                    siblings.push(self.hash_of(children[1 - side]));
+                    node = children[side];
+                }
+            }
+        }
+    }
+
     /// Writes `leaf` at `key` in the tree under `root`, or removes the leaf there for `None`, and
     /// returns the tree's new root. The caller gives up its hold on `root` for the one returned.
     /// Every branch on the path is copied if another version holds it, and marked stale when the
@@ -63,15 +93,15 @@ impl Arena {
     /// `set` on the subtree at `depth` that `node` heads.
     fn set_at(&mut self, node: NodeRef, depth: usize, key: &B256, leaf: Option<NewLeaf>, rehash: bool) -> NodeRef {
         match node.node() {
-            Node::Empty => leaf.map_or(NodeRef::EMPTY, |leaf| self.new_leaf(*key, leaf.hash, leaf.value)),
+            Node::Empty => leaf.map_or(NodeRef::EMPTY, |leaf| self.new_leaf(*key, leaf)),
             Node::Leaf(index) if self.leaf(index).key == *key => {
                 self.release(node);
-                leaf.map_or(NodeRef::EMPTY, |leaf| self.new_leaf(*key, leaf.hash, leaf.value))
+                leaf.map_or(NodeRef::EMPTY, |leaf| self.new_leaf(*key, leaf))
             }
             Node::Leaf(_) => match leaf {
                 None => node,
                 Some(leaf) => {
-                    let fresh = self.new_leaf(*key, leaf.hash, leaf.value);
+                    let fresh = self.new_leaf(*key, leaf);
                     self.split(node, fresh, key, depth)
                 }
             },
@@ -148,7 +178,7 @@ impl Arena {
             [] => NodeRef::EMPTY,
             [(key, leaf)] => {
                 let leaf = leaf.take().expect("each leaf is built once");
-                self.new_leaf(*key, leaf.hash, leaf.value)
+                self.new_leaf(*key, leaf)
             }
             _ => {
                 let split = leaves.partition_point(|(key, _)| !bit(key, depth));

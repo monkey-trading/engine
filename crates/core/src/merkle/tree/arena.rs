@@ -6,6 +6,7 @@
 use alloy_primitives::B256;
 
 use crate::merkle::EMPTY;
+use crate::merkle::tree::trie::NewLeaf;
 use crate::merkle::tree::value::LeafValue;
 
 /// Slots per chunk.
@@ -41,8 +42,10 @@ pub(crate) struct Branch {
 #[derive(Debug)]
 pub(crate) struct Leaf {
     pub(crate) key: B256,
-    /// `leaf_hash(key, value hash)`.
+    /// `leaf_hash(key, value_hash)`.
     pub(crate) hash: B256,
+    /// The hash of the leaf's value, which an absence proof names for the leaf in a key's place.
+    pub(crate) value_hash: B256,
     /// What proofs read from the leaf, for the kinds they read.
     pub(crate) value: Option<Box<LeafValue>>,
     held: u32,
@@ -132,8 +135,9 @@ impl Arena {
     }
 
     /// A new leaf, held once.
-    pub(crate) fn new_leaf(&mut self, key: B256, hash: B256, value: Option<Box<LeafValue>>) -> NodeRef {
-        NodeRef(self.leaves.alloc(Leaf { key, hash, value, held: 1 }) | LEAF)
+    pub(crate) fn new_leaf(&mut self, key: B256, leaf: NewLeaf) -> NodeRef {
+        let NewLeaf { hash, value_hash, value } = leaf;
+        NodeRef(self.leaves.alloc(Leaf { key, hash, value_hash, value, held: 1 }) | LEAF)
     }
 
     /// The branch at `index`.
