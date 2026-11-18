@@ -90,8 +90,12 @@ The independent wallet vectors are in `crates/core/tests/fixtures/access-eip712.
 
 The source contract is a gateway interface, not a selected commercial provider or legal country
 list. Selecting the data sources, jurisdiction classifications, freshness policy, signing authority
-and credentials, and obtaining counsel's launch sign-off, remain promotion requirements. Bind the
-node configuration into verified attestation before relying on host-supplied configuration.
+and credentials, and obtaining counsel's launch sign-off, remain promotion requirements.
+
+The attestation binds the configuration file: its report data commits to the file's SHA-256, and
+`engine verify-attestation` accepts only a hash that the release manifest lists. Before relying on
+the screening settings, read them from the published configuration file whose hash the verified
+attestation names.
 
 ## Signed declarations and refusals
 
