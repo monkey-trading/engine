@@ -57,12 +57,17 @@ pub async fn financing(
     }
     let kept = s.history.derived().borrow().get(seq).cloned();
     let (stored, dir, manifest) = (s.history.stored().cloned(), s.log_dir.clone(), s.manifest.clone());
+    // Stored reads go one at a time, and wait for their turn holding no shared permit.
+    let turn = match (&kept, &stored) {
+        (None, Some(store)) => Some(store.turn().await),
+        _ => None,
+    };
     // The first read of a rollover builds its tree over every row, and a stored one reads the log and
     // the rows' file, so it runs on a blocking thread, admitted by a permit the log's other reads share.
     let permit = s.backfills.clone().acquire_owned().await.map_err(|_| ApiError::Internal)?;
     let span = Span::current();
     let answer = spawn_blocking(move || {
-        let (_held, _span) = (permit, span.enter());
+        let (_held, _turn, _span) = (permit, turn, span.enter());
         let found = kept.or_else(|| {
             stored?.derived_at(&dir, manifest, seq).unwrap_or_else(|e| {
                 warn!(alert = "financing_rows_rejected", seq, "the financing read cannot prove the stored rows: {e:#}");

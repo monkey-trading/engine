@@ -5,8 +5,9 @@ use tokio::sync::watch;
 
 use super::*;
 use crate::api::tests::api_state;
-use crate::history::derived::{Derived, DerivedRows};
+use crate::history::derived::{Derived, DerivedRows, RowsStore};
 use crate::log::Manifest;
+use crate::test_support::scratch_dir;
 
 #[tokio::test]
 async fn an_accounts_charges_at_each_rollover_of_a_durable_command_prove_against_the_logged_roots() {
@@ -56,6 +57,30 @@ async fn a_read_waits_for_a_permit_the_logs_other_reads_share() {
     state.backfills.add_permits(1);
     assert!(read(&state, account(1), 9).await.is_ok());
     assert_eq!(state.backfills.available_permits(), 1, "the permit is back once the read is done");
+}
+
+#[tokio::test]
+async fn reads_waiting_for_the_rows_store_hold_none_of_the_permits_the_logs_other_reads_share() {
+    let (mut state, _kept, flushed) = state();
+    let store = std::sync::Arc::new(RowsStore::new(&scratch_dir("financing-turns"), 1_000));
+    state.history = state.history.with_derived(watch::channel(DerivedRows::default()).1, Some(store.clone()));
+    flushed.send_modify(|manifest| manifest.flushed = Some(Offset::start_of(9)));
+    state.backfills = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
+    // One stored read is under way; four more wait their turn behind it.
+    let turn = store.turn().await;
+    let reads: Vec<_> = (0..4)
+        .map(|_| {
+            let state = state.clone();
+            tokio::spawn(async move { read(&state, account(1), 9).await })
+        })
+        .collect();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(state.backfills.available_permits(), 2, "the waiting reads hold no shared permit");
+    drop(turn);
+    for read in reads {
+        assert!(matches!(read.await.unwrap(), Err(ApiError::NotFound)), "no rows stored at 9");
+    }
+    assert_eq!(state.backfills.available_permits(), 2, "the permits are back once the reads are done");
 }
 
 // ── Helpers ──
