@@ -128,7 +128,7 @@ exceeds what it expects to lose.
 | Held sync | A Critical alert, and stamping stops, once the oldest unsynced batch is held past 5 s | #541 |
 | Request delay | A client request's own expiry, at most 5 minutes ahead (`MAX_EXPIRY_AHEAD_MS`) | `crates/core/src/auth.rs` |
 | Unpriced spell | None: a market whose venue is held back past `max_delay` simply has no price | |
-| Databento quotes | Unauthenticated: alterable in flight within `max_divergence_bps` of the TLS source | SECURITY.md |
+| Altered quotes, as in the Databento attack below | Closed: only a venue reached over TLS that ends in the enclave sets a price, so the host can delay or drop its quotes but not alter them | `crates/node/src/feeds/venue/` |
 | Rolling back the log | Detected and provable: on-chain log heads and the standby's signed copy | #541, #547 |
 
 **Defences inside the engine** (`config/production-genesis.toml`): a spread made of the stress
