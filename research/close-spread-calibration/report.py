@@ -58,7 +58,8 @@ def write_report(data):
                   "initial margin, so the launch parameters themselves already cost them that share of margin to "
                   "close a first-band position at the top stress level: an owner decision for the launch stress "
                   "minimum and spread bands, not for the ceiling.") if widest is not None else ""
-    gap_note = (f"in a 5% gap on {gap['market']}, an uncapped 103-bp close charge cuts the zero-capital house "
+    gap_note = (f"in a 5% gap on {gap['market']}, an uncapped {gap['uncapped_close_charge_bps']}-bp close charge "
+                f"cuts the zero-capital house "
                 f"shortfall by {gap['shortfall_reduction_min'] * 100:.0f}% to {gap['shortfall_reduction_max'] * 100:.0f}% "
                 f"while costing the trader {gap['trader_cost_ratio']:.0f} times as much."
                 if gap["market"] is not None else f"the gap comparison is skipped ({gap['skipped']}).")

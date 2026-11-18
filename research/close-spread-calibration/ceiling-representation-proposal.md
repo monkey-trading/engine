@@ -68,7 +68,7 @@ records the charge actually paid. If the owner wants the refusal, it is sound, a
 with the registry.
 
 The cap protects what the house forgoes only weakly: in a 5% gap on EUR-USD with no house capital, an uncapped
-103-bp close charge would cut the shortfall by a fifth to a third. That is the price of the protection, and
+105-bp close charge would cut the shortfall by a fifth to a third. That is the price of the protection, and
 the ceiling is not a gap-risk instrument (`ceiling_effects.csv`).
 
 ## 3. Reversals: refuse, keep the pure close

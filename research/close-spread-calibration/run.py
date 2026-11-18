@@ -16,7 +16,7 @@ REPO = ROOT.parents[1]
 PIN = "41a9ef4a52cb26ac592c5a0e372f610d8d1ba067"
 # The genesis file also carries calendars and contract rolls this study does not read, so the pin
 # is the canonical JSON of what it does read: the protocol parameters and the market inventory.
-INVENTORY_SHA256 = "70ff54056676127be84a4288c5e6e1205c32ad74f482303d5c466aae34705d7a"
+INVENTORY_SHA256 = "3b3634f45e0fdad784199f300dc362dd5d89f5f14cc45252f78173af9c1e7127"
 BARS_SHA256 = "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522"
 SOURCE_HASHES = {
     "catalogue.py": "90bda1cc31a5b885318a7d475a4095c464ee589f79fec7b78028fa9294ae1f9c",
