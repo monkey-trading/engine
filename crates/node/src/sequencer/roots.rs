@@ -56,8 +56,8 @@ pub(super) struct Roots {
     proving: usize,
     /// Since when a paced checkpoint has waited for root work.
     deferred: Option<TokioInstant>,
-    /// Attempts that reached the root, so a retry that went no further ends the wait.
-    reached: u64,
+    /// Attempts that deferred for root work, so a retry that does not defer again ends the wait.
+    deferrals: u64,
     /// Whether `root_backlog_held` is open.
     held: bool,
     /// The versions of checkpoints written in the batch being taken, released once it is durable.
@@ -78,7 +78,7 @@ impl Roots {
             detached: false,
             proving: 0,
             deferred: None,
-            reached: 0,
+            deferrals: 0,
             held: false,
             releases: Vec::new(),
             bound: ROOT_BOUND,
@@ -145,7 +145,6 @@ impl Sequencer {
     /// commit now would wait past `ROOT_BOUND`, until `ROOT_DEFER_MAX` has passed since it first
     /// waited, after which it is taken in full under `root_backlog_held`. An unpaced one never waits.
     pub(super) fn defers_for_root_work(&mut self, seq: u64, paced: bool) -> bool {
-        self.roots.reached += 1;
         let wait = self.root_wait();
         if !paced || !self.roots.detached || wait <= self.roots.bound {
             return false;
@@ -153,6 +152,7 @@ impl Sequencer {
         let now = TokioInstant::now();
         let since = *self.roots.deferred.get_or_insert(now);
         if now.duration_since(since) < self.roots.defer_max {
+            self.roots.deferrals += 1;
             debug!(seq, wait, "a paced checkpoint waits for root work");
             return true;
         }
@@ -183,7 +183,8 @@ impl Sequencer {
         let (root, work) = self.roots.worker.commit(inputs)?;
         self.metrics.state_root.commit_seconds.observe(started.elapsed().as_secs_f64());
         debug!(seq, wait, leaves = work.leaves, nodes = work.nodes, "state root committed");
-        if self.roots.deferred.take().is_some() && std::mem::take(&mut self.roots.held) {
+        self.roots.deferred = None;
+        if std::mem::take(&mut self.roots.held) {
             info!(alert_resolved = "root_backlog_held", "a paced checkpoint's root work is done");
         }
         Ok(root)
@@ -280,11 +281,11 @@ impl Sequencer {
         let Some(since) = self.roots.deferred else { return Ok(()) };
         let deadline = TokioInstant::now().duration_since(since) >= self.roots.defer_max;
         if self.root_wait() <= self.roots.bound || deadline {
-            let reached = self.roots.reached;
+            let deferrals = self.roots.deferrals;
             self.paced_checkpoint()?;
-            if self.roots.reached == reached {
-                // The gate held it back or something else covered it: the gate's own schedule
-                // takes the next one.
+            if self.roots.deferrals == deferrals {
+                // Written, or held back by the gate, the liveness rule or a full posting queue, or
+                // covered by another checkpoint: their own schedules take the next one.
                 self.roots.deferred = None;
             }
         }
