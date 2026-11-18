@@ -249,7 +249,9 @@ When: hot paths, loops over external data, queries, caches, queues.
 ## 15. Docs and indexes
 
 - Are the nearest `AGENTS.md`, README, and runbooks updated for changed commands, paths, env vars,
-  or behavior ([keep-agents-index-in-sync](keep-agents-index-in-sync.md))?
+  or behavior ([keep-agents-index-in-sync](keep-agents-index-in-sync.md))? A README passage is
+  rewritten as the rule in force, never extended with a "from V<n>" paragraph, by
+  [readme-writing](../skills/readme-writing/SKILL.md).
 
 ## 16. Workspace rules
 

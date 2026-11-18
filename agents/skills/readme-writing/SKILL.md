@@ -66,7 +66,9 @@ In this order, leaving out a section that has nothing true to say:
 4. **Getting it.** Prerequisites with exact versions, then the build command. If there are
    releases or images, where they are.
 5. **What you get.** A table of the binaries, packages or services, one line each with an example
-   invocation, like go-ethereum's Executables table.
+   invocation, like go-ethereum's Executables table. A project with one binary and many
+   subcommands tables the subcommands, then lists the other artefacts (contracts, a browser
+   package, an image) in a second short table.
 6. **Running it.** The common cases, most common first, each under its own heading:
    - the reader's goal, in a sentence;
    - the exact command, in a fenced `shell` block that copies and runs from a fresh checkout;
@@ -78,12 +80,18 @@ In this order, leaving out a section that has nothing true to say:
 8. **Verifying it**, where the project makes trust claims: the exact commands a reader runs to check
    them, and what each check proves.
 9. **Contributing.** How to send a change, the coding conventions in a few bullets, the commit and
-   PR title format with an example, and where to ask first for a large change.
+   PR title format with an example, what CI checks, that a maintainer approves each PR before it
+   merges, and where to ask first for a large change.
 10. **Security.** One line pointing at `SECURITY.md` and how to report privately.
 11. **License.** Which code is under which licence, and the file that holds it.
 
 Target length for a root README: what the sections above need, usually 150 to 300 lines. A README
 that passes 400 lines is carrying something that belongs in a linked document.
+
+When the rules a user meets need more than about 100 lines (a trading product's fees, tiers,
+margins and close-outs, say), "How it works" keeps the model in a few paragraphs with the one or
+two tables a newcomer needs, and the full rules go in a linked page under `docs/`, written to this
+skill's standard. The README stays the front door.
 
 ## What goes in a crate, package or directory README
 
@@ -118,8 +126,9 @@ which belong in module docs (`//!`) next to the code they describe.
   key. Name the few the reader needs and link the directory or the reference that has the rest.
 - **Internal references.** No issue numbers, decision ids (D5, #614), PR numbers, branch names,
   review rounds, finding ids or audit labels. If a fact matters, state the fact.
-- **How the project is run.** No waves, milestones, agent workflow, review loops, merge rules or
-  session notes. Contributors get the contribution section; maintainers get `agents/`.
+- **How the project is run.** No waves, milestones, agent workflow, review loops or session notes.
+  The few rules a contributor meets (CI must pass, a maintainer approves the merge) go in the
+  contribution section in one sentence each; everything else stays in `agents/`.
 - **Unbacked claims.** No "fast", "secure", "robust", "seamless", "battle-tested",
   "production-grade", "comprehensive", "powerful" or "simply". State the number or the mechanism,
   or leave it out.
@@ -141,12 +150,17 @@ Follow [writing-style](../../rules/writing-style.md), plus:
   across rows. **Prose** for how things work and why.
 - **Define a term once,** the first time it appears, in words a trader or developer outside the
   project knows. Prefer the industry's term to the code's when they differ, and give the code's
-  name once in backticks if the reader will meet it in output.
+  name once in backticks if the reader will meet it in output. A README read by traders and
+  developers defines each side's terms for the other: basis point, mark, notional and margin for
+  developers; enclave, attestation and replay for traders.
+- **Values not yet confirmed** are stated with "proposed" inline, next to the value, never left
+  out and never stated as settled.
 - **Concrete over general:** versions, sizes, ports, defaults, times, limits, with units.
 - **One warning per hazard,** in bold, where the reader would act on it, saying what goes wrong.
   Not a stack of notes at the top.
-- **Wrap at 100 columns,** one space after a full stop, British or American spelling as the
-  repository already uses.
+- **Wrap prose at 100 columns,** one space after a full stop, British or American spelling as the
+  repository already uses. Tables and URLs are exempt; break a long command with `\` at an
+  argument boundary.
 
 ## Commands
 
@@ -154,7 +168,14 @@ Follow [writing-style](../../rules/writing-style.md), plus:
   elided output. Use `<angle-brackets>` only for values the reader must supply, and say what they
   are right under the block.
 - Every command in a README has been run from a fresh clone at the commit that adds it, and its
-  stated result observed. If it needs a tool, the prerequisites list it with a version.
+  stated result observed. A fresh worktree at that commit counts as a fresh clone. If it needs a
+  tool, the prerequisites list it with a version.
+- Show a command with its real defaults (ports, paths) and name the setting or variable that
+  overrides each. Verify it with overrides where a default is in use on your machine; never stop
+  or disturb whatever holds the default.
+- A README PR's body ends with one line per command it ran and the result, and names any command
+  it could not run and why. That list is the evidence this skill's check asks for, and it is the
+  one exception to `agent-create-pr`'s rule against a test plan in the body.
 - Put the expected result after the command: what prints, which port listens, which file appears.
 - Prefer the repository's own scripts and `cargo`, `npm` or `forge` commands to long hand-written
   pipelines.
@@ -178,6 +199,8 @@ must know (prices can be unavailable, withdrawals queue) in "How it works", not 
   updates the README passage that states it, in the same PR.
 - A change that adds a feature updates "How it works" only if a user's prediction of the system's
   behaviour changes, and then rewrites that passage rather than adding a paragraph.
+- A protocol version that changes a rule users meet rewrites the passage stating that rule as the
+  rule in force. It never adds a "from V<n>" paragraph.
 - A change to internals updates module docs, not the README.
 
 ## Check before it lands
