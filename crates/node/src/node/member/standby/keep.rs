@@ -44,7 +44,8 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
                     return Ok(Kept::Wait);
                 }
             }
-            match Standby::open(self.cfg, &self.start, self.answering.clone(), self.metrics.clone()).await {
+            let (answering, metrics, sends) = (self.answering.clone(), self.metrics.clone(), self.sends.clone());
+            match Standby::open(self.cfg, &self.start, answering, metrics, sends).await {
                 Ok((opened, promotion)) => {
                     // Until the follower links the copy, an operator that handed its keys over answers
                     // from its log's last command: the successor may have no other member to ask.

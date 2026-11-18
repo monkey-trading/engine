@@ -14,7 +14,8 @@
 //! Every member's node, between its turns, follows the operator, confirms what its copy durably holds
 //! and answers on its registered handover endpoint (`link`), witnesses each slot and promotes once the
 //! operator misses its heartbeats (`caller`), and relays the operator's signed heads when its posts
-//! fail. A member the schedule promotes starts in process from its copy (`promoted`).
+//! fail; for its whole life, following or holding a turn, it fixes the fallback of a turn no relay
+//! seeded (`fallback`). A member the schedule promotes starts in process from its copy (`promoted`).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -27,6 +28,7 @@ pub(crate) mod caller;
 pub(crate) mod chain;
 #[cfg(test)]
 pub(crate) mod fake;
+pub(crate) mod fallback;
 pub(crate) mod fence;
 pub(crate) mod link;
 pub(crate) mod operator;

@@ -10,6 +10,7 @@ import {SeedReceiver} from "../src/SeedReceiver.sol";
 import {Staking} from "../src/Staking.sol";
 import {Vault} from "../src/Vault.sol";
 import {ScheduleTest} from "./helpers/ScheduleTest.sol";
+import {MockArbSys} from "./mocks/MockArbSys.sol";
 
 /// @notice Random stake, undelegations, standby keys, closes, draws, relays, receiver swaps, release
 /// moves, approvals, eligibility and margin changes, rotation switches, installations, syncs, timelock
@@ -256,13 +257,24 @@ contract ScheduleHandler is Test {
         try vault.setCurrentRelease(_digest(600 + seed % 4), CONFIG) {} catch {}
     }
 
-    /// @dev Draws `turn`, checking that it continues the named operator's holding in the vault's
-    /// generation, and otherwise takes a new one, and that its source is the operator named.
+    /// @dev Draws `turn`; a turn with no relayed seed is drawn from the block after the one its first
+    /// call fixed.
     function _draw(uint64 turn) internal {
+        if (_tryDraw(turn)) return;
+        MockArbSys arbitrum = MockArbSys(address(0x64));
+        arbitrum.setBlockNumber(arbitrum.arbBlockNumber() + 1);
+        _tryDraw(turn);
+    }
+
+    /// @dev Calls `draw(turn)`, checking that a draw continues the named operator's holding in the
+    /// vault's generation, and otherwise takes a new one, and that its source is the operator named.
+    /// False only when the call fixed the turn's fallback block and drew no one.
+    function _tryDraw(uint64 turn) internal returns (bool settled) {
         OperatorRegistry.Operator memory named = registry.namedOperator();
         uint64 generation = vault.releaseGeneration();
         bytes32 folded = vault.syncedRelease();
         try schedule.draw(turn) returns (address candidate) {
+            if (candidate == address(0)) return false;
             OperatorSchedule.Turn memory drawn = schedule.turnOf(turn);
             drawnMember[turn] = candidate;
             drawnTurns.push(turn);
@@ -274,6 +286,7 @@ contract ScheduleHandler is Test {
                 _handOut(drawn.generation);
             }
         } catch {}
+        return true;
     }
 
     /// @dev Checks each generation a fold or a release move in the call handed out.

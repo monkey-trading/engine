@@ -253,6 +253,7 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
                 min_balance: U256::from(1),
                 poll: crate::liveness::caller::POLL,
                 clock: clock.clone(),
+                sends: Arc::default(),
             };
             tokio::spawn(caller.run())
         })

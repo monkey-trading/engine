@@ -18,11 +18,13 @@
 //! 4. at the next boundary A refuses every successor: the callers skip past B to C, A beats on and
 //!    stops by its own clock before a promotion past it becomes legal, the promotion moves the vault's
 //!    signer to D's standby key within `heartbeatMisses + 1` slots of the boundary plus a poll, and a
-//!    checkpoint signed by A's key is refused.
+//!    checkpoint signed by A's key is refused;
+//! 5. no seed was relayed for the turn after: the members' fallback fixers fix it through the receiver,
+//!    which records the hash of the block the first fix landed in, made from the turn's draw deadline.
 
 use std::time::Duration;
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, B256};
 use alloy::sol;
 use alloy::sol_types::SolError;
 use engine_core::types::AccountId;
@@ -46,6 +48,8 @@ sol! {
     function postCheckpoint(uint64 seq, bytes32 root, bool hasParent, uint64 parentSeq, bytes32 parentRoot, bytes signature) external;
     error InvalidCheckpointSigner();
     function seedReceiver() external view returns (address);
+    function fallbackBlock(uint64 turn) external view returns (uint256);
+    function fallbackHash(uint64 turn) external view returns (bytes32);
     function signerSince() external view returns (uint64);
     struct AssignmentArg {
         address candidate;
@@ -209,6 +213,31 @@ async fn dev_scenario_a_down_successor_falls_back_to_the_next_member() {
          past it landed at {promoted_at}, {} s after the boundary, and A's checkpoint was refused",
         turns[4],
         promoted_at - boundary(turns[4])
+    );
+
+    // 5. No seed was relayed for the turn after turn 4: from its draw deadline, turn 4's boundary, the
+    //    members' fallback fixers fix it.
+    let unrelayed = turns[4] + 1;
+    let receiver = world.chain.view(schedule, seedReceiverCall {}).await;
+    let recorded = crate::test_support::wait_for("the fixers to fix the unrelayed turn's fallback", async {
+        loop {
+            let recorded = world.chain.view(receiver, fallbackHashCall { turn: unrelayed }).await;
+            if !recorded.is_zero() {
+                return recorded;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    })
+    .await;
+    let fixed_in = world.chain.view(receiver, fallbackBlockCall { turn: unrelayed }).await;
+    let block = world.chain.rpc_result("eth_getBlockByNumber", json!([format!("{fixed_in:#x}"), false])).await;
+    assert_eq!(block["hash"].as_str().unwrap().parse::<B256>().unwrap(), recorded, "the fixed block's hash");
+    let made_at = u64::from_str_radix(block["timestamp"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+    assert!(made_at >= boundary(turns[4]), "the block was made at {made_at}, before the turn's draw deadline");
+    println!(
+        "PASS: the members' fallback fixers fixed turn {unrelayed}'s fallback, which no relay seeded, to the hash of block \
+         {fixed_in}, made {} s after its draw deadline",
+        made_at - boundary(turns[4])
     );
     world.stop();
 }

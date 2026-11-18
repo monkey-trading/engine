@@ -9,6 +9,7 @@ import {SeedReceiver} from "../src/SeedReceiver.sol";
 import {SeedSchedule} from "../src/SeedSchedule.sol";
 import {Vault} from "../src/Vault.sol";
 import {ScheduleTest} from "./helpers/ScheduleTest.sol";
+import {MockArbSys} from "./mocks/MockArbSys.sol";
 import {MockSeedReceiver} from "./mocks/MockSeedReceiver.sol";
 
 /// Rotation sets adopted at closes, turns drawn from them, and how the registry and the vault
@@ -304,13 +305,18 @@ contract OperatorScheduleTest is ScheduleTest {
         vm.prank(address(governance));
         schedule.setSeedReceiver(forked);
         _draw(turn + 1);
-        assertEq(schedule.turnOf(turn + 1).seed, keccak256(abi.encode(keccak256("seed"), turn + 1)));
+        bytes32 blockHash = forked.fallbackHash(turn + 1);
+        assertEq(blockHash, MockArbSys(address(0x64)).hashOf(forked.fallbackBlock(turn + 1)));
+        assertEq(schedule.turnOf(turn + 1).seed, keccak256(abi.encode(keccak256("seed"), turn + 1, blockHash)));
         // The mock's refusal falls back the same way.
         MockSeedReceiver mock = new MockSeedReceiver();
         vm.prank(address(governance));
         schedule.setSeedReceiver(SeedReceiver(address(mock)));
         _draw(turn + 2);
-        assertEq(schedule.turnOf(turn + 2).seed, keccak256(abi.encode(schedule.turnOf(turn + 1).seed, turn + 2)));
+        assertEq(
+            schedule.turnOf(turn + 2).seed,
+            keccak256(abi.encode(schedule.turnOf(turn + 1).seed, turn + 2, mock.fallbackHash(turn + 2)))
+        );
     }
 
     function test_TheFallbackSeedDoesNotDependOnLaterDraws() public {
@@ -323,14 +329,18 @@ contract OperatorScheduleTest is ScheduleTest {
         vm.prank(address(governance));
         schedule.setSeedReceiver(forked);
         assertEq(schedule.seedAnchor(), seed);
+        MockArbSys arbitrum = MockArbSys(address(0x64));
+        uint256 fixedIn = arbitrum.arbBlockNumber() + 10;
         uint256 before = vm.snapshotState();
         _draw(turn + 1);
+        arbitrum.setBlockNumber(fixedIn);
         _draw(turn + 2);
         bytes32 afterADraw = schedule.turnOf(turn + 2).seed;
         vm.revertToState(before);
+        arbitrum.setBlockNumber(fixedIn);
         _draw(turn + 2);
         assertEq(schedule.turnOf(turn + 2).seed, afterADraw, "drawing turn + 1 or not leaves turn + 2's seed");
-        assertEq(afterADraw, keccak256(abi.encode(seed, turn + 2)));
+        assertEq(afterADraw, keccak256(abi.encode(seed, turn + 2, arbitrum.hashOf(fixedIn))));
     }
 
     function test_AReceiverReplacedBeforeAnyDrawLeavesNoFallback() public {
@@ -341,6 +351,8 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(schedule.seedAnchor(), bytes32(0));
         uint64 turn = _nextTurn() + 1;
         vm.warp(schedule.drawDeadline(turn));
+        assertEq(schedule.draw(turn), address(0), "the first call fixes the fallback's block");
+        _nextArbitrumBlock();
         vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.NoSeed.selector, turn));
         schedule.draw(turn);
     }
@@ -349,6 +361,8 @@ contract OperatorScheduleTest is ScheduleTest {
         _rotateOne(alice);
         uint64 turn = _nextTurn() + 1;
         vm.warp(schedule.drawDeadline(turn));
+        assertEq(schedule.draw(turn), address(0));
+        _nextArbitrumBlock();
         vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.NoSeed.selector, turn));
         schedule.draw(turn);
     }
@@ -416,6 +430,8 @@ contract OperatorScheduleTest is ScheduleTest {
         vm.prank(address(governance));
         registry.setReleaseApproval(alice, _digest(1), CONFIG, false);
         vm.warp(schedule.drawDeadline(turn + 1));
+        assertEq(schedule.draw(turn + 1), address(0));
+        _nextArbitrumBlock();
         vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.NoAvailableMember.selector, turn + 1));
         schedule.draw(turn + 1);
     }
@@ -549,8 +565,7 @@ contract OperatorScheduleTest is ScheduleTest {
         vm.prank(address(governance));
         registry.setRotation(true);
         uint64 later = _nextTurn();
-        vm.warp(schedule.drawDeadline(later));
-        assertEq(schedule.draw(later), alice);
+        assertEq(_draw(later), alice);
         assertEq(schedule.turnOf(later).generation, 2, "the installed operator held the keys in between");
         assertEq(schedule.sourceOf(later), carol);
     }
@@ -577,11 +592,11 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(schedule.setAt(schedule.drawDeadline(turn)), 1);
         vm.warp(effectiveAt - 1);
         uint256 before = vm.snapshotState();
-        assertEq(schedule.draw(turn), alice);
+        assertEq(_draw(turn), alice);
         vm.revertToState(before);
         vm.warp(effectiveAt);
         assertEq(schedule.currentSetId(), 2);
-        assertEq(schedule.draw(turn), alice);
+        assertEq(_draw(turn), alice);
         assertEq(schedule.turnOf(turn).setId, 1);
         assertEq(_draw(turn + 1), bob);
         assertEq(schedule.turnOf(turn + 1).setId, 2);

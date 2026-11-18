@@ -70,6 +70,8 @@ pub(crate) struct Standby {
     /// A serving operator's own vouching with the vault's signer key (`renewal`): a set of no other
     /// member has no one else to ask.
     vouching: Option<Arc<Service<StandbyReader>>>,
+    /// Held for each send from the liveness caller's account, shared with the process's fallback fixer.
+    sends: Arc<crate::liveness::fallback::Sends>,
 }
 
 /// Whether a member runs the rule's standby side: rotation on, `[log_heads]`, EVM custody, sealing.
@@ -135,6 +137,7 @@ impl Standby {
         start: &KeyStart,
         answering: Option<Arc<Answering>>,
         metrics: Arc<Metrics>,
+        sends: Arc<crate::liveness::fallback::Sends>,
     ) -> anyhow::Result<(Self, Option<Promotion>)> {
         let log_heads = cfg.log_heads.as_ref().context("[log_heads]")?.contract;
         let sealing = cfg.tee.sealing.as_ref().context("a member seals its keys")?;
@@ -174,6 +177,7 @@ impl Standby {
             answering,
             certificates: certificate::store(cfg, start).map(|store| (store, metrics)),
             vouching: None,
+            sends,
         };
         let samples = standby.samples.subscribe();
         standby.spawn(cfg, samples)?;
@@ -231,6 +235,7 @@ impl Standby {
                     samples,
                     cfg.time.max_drift,
                 ))),
+                sends: self.sends.clone(),
             };
             self.tasks.spawn(async move {
                 if let Err(e) = caller.run().await {

@@ -38,7 +38,9 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
             }
             {
                 if standby.is_none() {
-                    match Standby::open(self.cfg, &self.start, self.answering.clone(), self.metrics.clone()).await {
+                    let (answering, metrics, sends) =
+                        (self.answering.clone(), self.metrics.clone(), self.sends.clone());
+                    match Standby::open(self.cfg, &self.start, answering, metrics, sends).await {
                         Ok((opened, _)) => standby = Some(opened),
                         Err(e) => warn!("opening the member's standby keys failed, trying again: {e:#}"),
                     }

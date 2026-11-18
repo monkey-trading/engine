@@ -90,9 +90,16 @@ turn's draw deadline, from which its answer for the turn is final. What it still
   last slots, each of whom can withhold a block and so choose between two mixes.
 - Arbitrum's inbox, for delivery. Arbitrum One's sequencer can hold a relay's message for 24 hours
   before anyone may force-include it, and a relay that misses the draw deadline is refused, so the
-  turn draws from the last relayed seed hashed with its number. The schedule leaves a relay two days
+  turn draws from the last relayed seed hashed with its number and with the hash of the Arbitrum
+  block its first fix landed in, from the deadline (`SeedReceiver.fixFallback`), so no fallback is
+  known while the set that draws it can still be chosen. The schedule leaves a relay two days
   for that reason; whoever can withhold every relay until a deadline chooses between the mix and
-  that fallback. No turn draws before the first seed arrives.
+  that fallback. Arbitrum's sequencer, which makes the block and orders every call, can steer a
+  fallback turn's draw by grinding the recorded block's hash, or leave the turn undrawn, with the
+  member before it named, by withholding the record past the 256 blocks after that block; a relayed
+  seed is unaffected. Once the block is made its hash is public, and the members' nodes record it
+  within seconds, following or holding a turn, so withholding the record otherwise takes a time when
+  no member's node runs. No turn draws before the first seed arrives.
 - Its relayers, for liveness: nothing relays by itself, and a turn that reaches its deadline without a
   seed raises `seed_missing`.
 - The beacon state's layout. The relay's indices are those of the `BeaconState` from Electra on, whose

@@ -9,6 +9,9 @@
 //!   thirds of an interval, so a head the operator's own relayer fails to post still counts for the
 //!   enclave that signed it.
 //!
+//! The same account fixes turn fallbacks for the node's whole life (`liveness::fallback`), one call at a
+//! time with these (`Sends`).
+//!
 //! It judges time by the later of the latest block's and its own clock's: a chain with no
 //! transactions makes no blocks, so its latest block time can stand still while slots pass, and the
 //! caller's own witness is what moves it. The chain checks every call at its own block time either way.
@@ -18,7 +21,8 @@
 //!
 //! Each call is estimated first, so one the chain would refuse (a promotion not yet due, a head no
 //! longer fresh) costs nothing. A balance below `[liveness] min_balance` raises
-//! `liveness_caller_unfunded`, as does a send the endpoint refuses for funds.
+//! `liveness_caller_unfunded`, as does a send the endpoint refuses for funds; the fallback fixer reads
+//! the balance too, for the node's whole life, in one episode with the caller's (`check_balance`).
 
 use std::future::IntoFuture;
 use std::time::Duration;
@@ -38,6 +42,7 @@ use tracing::{debug, info, warn};
 
 use crate::config::{CheckpointSection, LivenessSection, redact};
 use crate::liveness::chain::{LivenessDomain, View, promoteCall, skipCall, view, witnessCall};
+use crate::liveness::fallback::{Account, Sends};
 use crate::liveness::link::Copy;
 use crate::log_heads::{Head, SignedHead};
 use crate::standby_key::chain::StandbyChain;
@@ -94,6 +99,8 @@ pub(crate) struct Caller<C, S> {
     /// The caller's own clock, which it judges slots by when it is ahead of the latest block: `Reached`
     /// over the member's trusted time.
     pub clock: std::sync::Arc<dyn crate::clock::Clock>,
+    /// Held for each send, shared with the member's fallback fixer, which sends from the same account.
+    pub sends: std::sync::Arc<Sends>,
 }
 
 impl Endpoint {
@@ -170,7 +177,7 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
     pub(crate) async fn run(self) -> anyhow::Result<()> {
         let mut poll = interval(self.poll);
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let (mut read_failed, mut unfunded, mut failing) = (false, false, false);
+        let (mut read_failed, mut failing) = (false, false);
         loop {
             poll.tick().await;
             let read: BoxFuture<'_, anyhow::Result<View>> =
@@ -220,9 +227,15 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
                 "the liveness caller read the chain"
             );
             for call in decided {
-                self.send(&call, (&mut unfunded, &mut failing)).await;
+                let mut account = self.sends.lock().await;
+                self.send(&call, (&mut account.unfunded, &mut failing)).await;
             }
-            self.check_balance(&mut unfunded, &mut failing).await;
+            // An unreadable balance is part of the `liveness_caller_send_failed` episode.
+            if let Err(e) = check_balance(&self.sending, self.min_balance, &mut *self.sends.lock().await).await
+                && !std::mem::replace(&mut failing, true)
+            {
+                warn!(alert = "liveness_caller_send_failed", "the liveness caller's balance is unreadable: {e:#}");
+            }
         }
     }
 
@@ -267,38 +280,32 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
             }
         }
     }
+}
 
-    /// Warns while the caller's balance is below the minimum, once per episode; an unreadable balance is
-    /// part of the `liveness_caller_send_failed` episode.
-    async fn check_balance(&self, unfunded: &mut bool, failing: &mut bool) {
-        match self.sending.balance().await {
-            Ok(balance) if balance < self.min_balance => {
-                if !std::mem::replace(unfunded, true) {
-                    warn!(
-                        alert = "liveness_caller_unfunded",
-                        "the liveness caller holds {} ETH, below {}: witnesses, promotions and relays stop when it \
-                         cannot pay for gas",
-                        format_ether(balance),
-                        format_ether(self.min_balance)
-                    );
-                }
-            }
-            Ok(balance) => {
-                if std::mem::take(unfunded) {
-                    info!(
-                        alert_resolved = "liveness_caller_unfunded",
-                        "the liveness caller holds {} ETH",
-                        format_ether(balance)
-                    );
-                }
-            }
-            Err(e) => {
-                if !std::mem::replace(failing, true) {
-                    warn!(alert = "liveness_caller_send_failed", "the liveness caller's balance is unreadable: {e:#}");
-                }
-            }
+/// Reads the liveness caller's balance through `sending` and warns while it is below `min_balance`, once
+/// per episode `account` holds, which the member's caller and fallback fixer share.
+/// Error cases:
+/// - the read fails or outruns its bound
+pub(crate) async fn check_balance<S: Sending>(
+    sending: &S,
+    min_balance: U256,
+    account: &mut Account,
+) -> anyhow::Result<()> {
+    let balance = sending.balance().await?;
+    if balance < min_balance {
+        if !std::mem::replace(&mut account.unfunded, true) {
+            warn!(
+                alert = "liveness_caller_unfunded",
+                "the liveness caller holds {} ETH, below {}: witnesses, promotions, relays and fallback fixes \
+                 stop when it cannot pay for gas",
+                format_ether(balance),
+                format_ether(min_balance)
+            );
         }
+    } else if std::mem::take(&mut account.unfunded) {
+        info!(alert_resolved = "liveness_caller_unfunded", "the liveness caller holds {} ETH", format_ether(balance));
     }
+    Ok(())
 }
 
 /// Trusted time's lower bound, a time true time has certainly reached, as a clock's wall time: zero

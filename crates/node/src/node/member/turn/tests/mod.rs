@@ -122,6 +122,7 @@ impl Fixture {
             checked: Default::default(),
             answering: None,
             fallback: Default::default(),
+            sends: Default::default(),
         }
     }
 

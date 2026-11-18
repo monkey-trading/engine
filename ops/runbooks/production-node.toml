@@ -184,7 +184,8 @@ interval = "1h" # OWNER: the truncation window is the interval plus chain inclus
 
 [liveness]
 # This member's liveness caller: it witnesses missed heartbeat slots, promotes the next member once
-# the rule allows, and relays signed heads when the operator's own posts fail. Its account, funded
+# the rule allows, relays signed heads when the operator's own posts fail, and, for the node's whole
+# life, fixes the fallback seed of a turn with no relayed seed. Its account, funded
 # by the checkpoint endpoint, must differ from the checkpoint, log-head and seed relayers.
 caller = "0xcccccccccccccccccccccccccccccccccccccccc" # REPLACE: funded by the checkpoint endpoint
 min_balance = "0.01" # OWNER: liveness_caller_unfunded fires below it

@@ -1,6 +1,8 @@
 //! Running the node for the process: its delivered secrets, its alert routing, and, for a
 //! rotation-set member, the wait for each holding between runs (`member`).
 
+use std::sync::Arc;
+
 use anyhow::anyhow;
 use tokio::task::JoinSet;
 use tracing::{error, warn};
@@ -39,10 +41,14 @@ pub(crate) async fn run_with_cpu(
     // Bound once, it answers while a member follows as well as across each of its runs.
     let metrics_listener = crate::metrics::bind(cfg.metrics.listen).await?;
     // The process's own tasks, one each for its life, while it follows as well as while it holds a
-    // turn: the seed relayer, which every rotation-set member's node runs.
+    // turn: the seed relayer and the fallback fixer, which every rotation-set member's node runs.
     let mut process = ProcessTasks::new();
     if let Some(seed_relay) = crate::seed_relay::task(&cfg, &metrics)? {
         process.spawn(async move { ("seed relayer", seed_relay.await) });
+    }
+    let sends = Arc::new(crate::liveness::fallback::Sends::default());
+    if let Some(fixer) = crate::liveness::fallback::Fixer::for_config(&cfg, sends.clone())? {
+        process.spawn(async move { ("fallback fixer", fixer.run().await) });
     }
     let mut chain_read = false;
     // A rotation-set member follows between its holdings, and goes back to following once it hands over.
@@ -55,13 +61,13 @@ pub(crate) async fn run_with_cpu(
         let mut waiting = None;
         if member {
             if crate::node::member::standby::prepares(&cfg).await {
-                let prepared = waiting.insert(Member::new(&cfg, &start, metrics.clone())?);
+                let prepared = waiting.insert(Member::new(&cfg, &start, metrics.clone(), sends.clone())?);
                 // On the heap, as the member's turns below: a test awaits `run` on its own stack.
                 Box::pin(prepared.prepare_standby(&mut chain_read)).await;
             }
             crate::node::handover::check_rotation_switch(&cfg, &mut chain_read).await?;
             if waiting.is_none() {
-                waiting = Some(Member::new(&cfg, &start, metrics.clone())?);
+                waiting = Some(Member::new(&cfg, &start, metrics.clone(), sends.clone())?);
             }
         }
         let operator = cfg.operator()?.address;

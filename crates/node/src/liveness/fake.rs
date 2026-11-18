@@ -9,9 +9,10 @@ use anyhow::{bail, ensure};
 use engine_core::types::AccountId;
 
 use crate::liveness::chain::{
-    LivenessDomain, currentSetIdCall, headsCall, headsReturn, keyHolderCall, latestMarkCall, latestMarkReturn,
-    livenessCall, livenessReturn, pendingSetIdCall, promotionDueAtCall, rotationStateCall, rotationStateReturn,
-    setOfCall, setOfReturn, skipDueAtCall,
+    LivenessDomain, currentSetIdCall, fallbackBlockCall, fallbackHashCall, headsCall, headsReturn, keyHolderCall,
+    latestMarkCall, latestMarkReturn, livenessCall, livenessReturn, pendingSetIdCall, promotionDueAtCall,
+    relayedSeedCall, rotationStateCall, rotationStateReturn, rotationSwitchCall, seedReceiverCall, setOfCall,
+    setOfReturn, skipDueAtCall,
 };
 use crate::standby_key::chain::{
     AgreedBlock, CandidateReturn, StandbyChain, StandbyDomain, TurnReturn, candidateOfCall, checkpointSignerCall,
@@ -23,6 +24,7 @@ pub(crate) const VAULT: Address = Address::repeat_byte(0x7a);
 pub(crate) const REGISTRY: Address = Address::repeat_byte(0x6b);
 pub(crate) const SCHEDULE: Address = Address::repeat_byte(0x5c);
 pub(crate) const LOG_HEADS: Address = Address::repeat_byte(0x4d);
+pub(crate) const RECEIVER: Address = Address::repeat_byte(0x3e);
 pub(crate) const DOMAIN: LivenessDomain = LivenessDomain {
     standby: StandbyDomain { chain_id: 42161, vault: VAULT, registry: REGISTRY, schedule: SCHEDULE },
     log_heads: LOG_HEADS,
@@ -72,6 +74,11 @@ pub(crate) struct ChainState {
     pub approved: bool,
     /// The calls that fail, by operation, each after answering the given number more times.
     pub failing: Vec<(&'static str, usize)>,
+    /// The registry's rotation switch.
+    pub switch: bool,
+    /// A turn, and what the seed receiver holds for it: its relayed seed, its fallback's block hash and
+    /// the block its first fix landed in; every other turn has a relayed seed.
+    pub seed: (u64, B256, B256, u64),
 }
 
 /// A chain whose latest block's answers a test sets.
@@ -111,6 +118,8 @@ impl Default for ChainState {
             holders: Vec::new(),
             approved: true,
             failing: Vec::new(),
+            switch: true,
+            seed: (0, B256::ZERO, B256::ZERO, 0),
         }
     }
 }
@@ -253,6 +262,20 @@ fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8
         let key = standbyHolderCall::abi_decode(data)?.key;
         let holder = chain.holders.iter().find(|(held, _)| *held == key).map(|(_, holder)| *holder);
         standbyHolderCall::abi_encode_returns(&holder.unwrap_or_default())
+    } else if to == SCHEDULE && is::<seedReceiverCall>(data) {
+        seedReceiverCall::abi_encode_returns(&RECEIVER)
+    } else if to == REGISTRY && is::<rotationSwitchCall>(data) {
+        rotationSwitchCall::abi_encode_returns(&chain.switch)
+    } else if to == RECEIVER && is::<relayedSeedCall>(data) {
+        let turn = relayedSeedCall::abi_decode(data)?.turn;
+        let relayed = if turn == chain.seed.0 { chain.seed.1 } else { B256::repeat_byte(0x5d) };
+        relayedSeedCall::abi_encode_returns(&relayed)
+    } else if to == RECEIVER && is::<fallbackHashCall>(data) {
+        let turn = fallbackHashCall::abi_decode(data)?.turn;
+        fallbackHashCall::abi_encode_returns(&if turn == chain.seed.0 { chain.seed.2 } else { B256::ZERO })
+    } else if to == RECEIVER && is::<fallbackBlockCall>(data) {
+        let turn = fallbackBlockCall::abi_decode(data)?.turn;
+        fallbackBlockCall::abi_encode_returns(&U256::from(if turn == chain.seed.0 { chain.seed.3 } else { 0 }))
     } else if to == REGISTRY && is::<keyHolderCall>(data) {
         keyHolderCall::abi_encode_returns(&chain.named.0)
     } else if to == LOG_HEADS && is::<headsCall>(data) {

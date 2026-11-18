@@ -7,7 +7,7 @@
 # another epoch's mix reverts on Ethereum, and a seed from another sender or for another epoch
 # reverts on Arbitrum; with the beacon node stopped, relaying fails with `seed_relay_failed`, and
 # once the next turn's draw deadline passes `seed_missing` fires and the turn draws from the
-# fallback seed.
+# fallback seed, which folds in the hash of the Arbitrum block its first fix landed in.
 # Needs Anvil, Forge, Python 3, Cargo, and installed Soldeer dependencies. No external RPC or keys are used.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

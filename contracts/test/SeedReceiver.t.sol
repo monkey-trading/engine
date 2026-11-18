@@ -4,6 +4,7 @@ pragma solidity 0.8.36;
 import {Test} from "forge-std/Test.sol";
 import {SeedReceiver} from "../src/SeedReceiver.sol";
 import {SeedSchedule} from "../src/SeedSchedule.sol";
+import {MockArbSys} from "./mocks/MockArbSys.sol";
 
 contract SeedReceiverTest is Test {
     /// Mainnet's beacon genesis time.
@@ -11,11 +12,15 @@ contract SeedReceiverTest is Test {
     /// Turn 20763 starts at 22:30 UTC on 2026-11-06.
     uint64 internal constant TURN = 20763;
 
+    MockArbSys internal constant ARB = MockArbSys(address(0x64));
+
     address internal relay = makeAddr("relay");
     SeedReceiver internal receiver;
 
     function setUp() public {
         receiver = new SeedReceiver(relay, GENESIS, 1 days);
+        vm.etch(address(ARB), address(new MockArbSys()).code);
+        ARB.setBlockNumber(100_000_000);
     }
 
     function test_TheScheduleFixesMainnetTurnsToEpochsADayApart() public view {
@@ -120,8 +125,13 @@ contract SeedReceiverTest is Test {
         uint64 deadline = receiver.drawDeadline(TURN + 1);
         vm.expectRevert(abi.encodeWithSelector(SeedReceiver.SeedNotFinal.selector, TURN + 1, deadline));
         receiver.seedOf(TURN + 1);
+        vm.expectRevert(abi.encodeWithSelector(SeedReceiver.SeedNotFinal.selector, TURN + 1, deadline));
+        receiver.fixFallback(TURN + 1);
         vm.warp(deadline);
-        assertEq(receiver.seedOf(TURN + 1), keccak256(abi.encode(bytes32(uint256(7)), TURN + 1)));
+        vm.expectRevert(abi.encodeWithSelector(SeedReceiver.FallbackNotFixed.selector, TURN + 1));
+        receiver.seedOf(TURN + 1);
+        bytes32 blockHash = fix(TURN + 1);
+        assertEq(receiver.seedOf(TURN + 1), keccak256(abi.encode(bytes32(uint256(7)), TURN + 1, blockHash)));
     }
 
     function test_RevertWhen_NoEarlierTurnHasASeed() public {
@@ -134,7 +144,8 @@ contract SeedReceiverTest is Test {
         vm.warp(receiver.drawDeadline(TURN + 2));
         vm.expectRevert(abi.encodeWithSelector(SeedReceiver.NoRelayedSeed.selector, TURN));
         receiver.seedOf(TURN);
-        assertEq(receiver.seedOf(TURN + 2), keccak256(abi.encode(bytes32(uint256(9)), TURN + 2)));
+        bytes32 blockHash = fix(TURN + 2);
+        assertEq(receiver.seedOf(TURN + 2), keccak256(abi.encode(bytes32(uint256(9)), TURN + 2, blockHash)));
     }
 
     function test_SeedsArrivingOutOfOrderKeepTheEarliestTurnFirst() public {
@@ -145,13 +156,14 @@ contract SeedReceiverTest is Test {
         deliver(TURN, bytes32(uint256(7)));
         assertEq(receiver.firstRelayedTurn(), TURN);
         vm.warp(receiver.drawDeadline(TURN + 3));
-        assertEq(receiver.seedOf(TURN + 2), keccak256(abi.encode(bytes32(uint256(9)), TURN + 2)));
-        assertEq(receiver.seedOf(TURN + 3), keccak256(abi.encode(bytes32(uint256(9)), TURN + 3)));
+        (bytes32 second, bytes32 third) = (fix(TURN + 2), fix(TURN + 3));
+        assertEq(receiver.seedOf(TURN + 2), keccak256(abi.encode(bytes32(uint256(9)), TURN + 2, second)));
+        assertEq(receiver.seedOf(TURN + 3), keccak256(abi.encode(bytes32(uint256(9)), TURN + 3, third)));
     }
 
     /// Bit `i` of `relayed` relays turn `TURN + i`; every turn's answer from the deadline on is the
     /// reference model's.
-    function testFuzz_TheFallbackIsTheLatestEarlierSeedHashedWithTheTurn(uint32 relayed) public {
+    function testFuzz_TheFallbackIsTheLatestEarlierSeedHashedWithTheTurnAndItsBlock(uint32 relayed) public {
         uint64 span = 32;
         for (uint64 i = 0; i < span; ++i) {
             if ((relayed >> i) & 1 == 1) {
@@ -170,7 +182,8 @@ contract SeedReceiverTest is Test {
                 vm.expectRevert(abi.encodeWithSelector(SeedReceiver.NoRelayedSeed.selector, turn));
                 receiver.seedOf(turn);
             } else {
-                assertEq(receiver.seedOf(turn), keccak256(abi.encode(last, turn)));
+                bytes32 blockHash = fix(turn);
+                assertEq(receiver.seedOf(turn), keccak256(abi.encode(last, turn, blockHash)));
             }
         }
     }
@@ -227,6 +240,57 @@ contract SeedReceiverTest is Test {
         new SeedReceiver(address(0), GENESIS, 1 days);
         vm.expectRevert(SeedSchedule.ZeroGenesisTime.selector);
         new SeedReceiver(relay, 0, 1 days);
+    }
+
+    /// A fallback's block is the one its first `fixFallback` call lands in, and a call from a later
+    /// block within `arbBlockHash`'s reach records that block's hash; a relayed turn needs neither.
+    function test_AFallbackFoldsInTheHashOfTheBlockItsFirstFixCallLandedIn() public {
+        vm.warp(receiver.drawDeadline(TURN) - 1);
+        deliver(TURN, bytes32(uint256(7)));
+        assertTrue(receiver.fixFallback(TURN), "a relayed seed is final");
+        assertEq(receiver.fallbackBlock(TURN), 0);
+        vm.warp(receiver.drawDeadline(TURN + 1));
+        uint256 committed = ARB.arbBlockNumber();
+        vm.expectEmit(address(receiver));
+        emit SeedReceiver.FallbackBlockFixed(TURN + 1, committed);
+        assertFalse(receiver.fixFallback(TURN + 1));
+        assertFalse(receiver.fixFallback(TURN + 1), "not from the same block");
+        assertEq(receiver.fallbackHash(TURN + 1), 0);
+        ARB.setBlockNumber(committed + 256);
+        vm.expectEmit(address(receiver));
+        emit SeedReceiver.FallbackHashFixed(TURN + 1, ARB.hashOf(committed));
+        assertTrue(receiver.fixFallback(TURN + 1));
+        // Later calls change nothing.
+        ARB.setBlockNumber(committed + 1000);
+        assertTrue(receiver.fixFallback(TURN + 1));
+        assertEq(receiver.fallbackBlock(TURN + 1), committed);
+        assertEq(receiver.fallbackHash(TURN + 1), ARB.hashOf(committed));
+        assertEq(receiver.seedOf(TURN + 1), keccak256(abi.encode(bytes32(uint256(7)), TURN + 1, ARB.hashOf(committed))));
+    }
+
+    /// Past `arbBlockHash`'s reach the block's hash is never recorded and no later block replaces it,
+    /// so the turn has no final seed.
+    function test_RevertWhen_TheFallbacksBlockIsOutOfReach() public {
+        vm.warp(receiver.drawDeadline(TURN) - 1);
+        deliver(TURN, bytes32(uint256(7)));
+        vm.warp(receiver.drawDeadline(TURN + 1));
+        uint256 committed = ARB.arbBlockNumber();
+        assertFalse(receiver.fixFallback(TURN + 1));
+        ARB.setBlockNumber(committed + 257);
+        vm.expectRevert(abi.encodeWithSelector(SeedReceiver.FallbackExpired.selector, TURN + 1, committed));
+        receiver.fixFallback(TURN + 1);
+        vm.expectRevert(abi.encodeWithSelector(SeedReceiver.FallbackNotFixed.selector, TURN + 1));
+        receiver.seedOf(TURN + 1);
+        assertEq(receiver.fallbackBlock(TURN + 1), committed);
+    }
+
+    /// Fixes `turn`'s fallback over two blocks, as two calls a block apart do, and returns its hash.
+    function fix(uint64 turn) internal returns (bytes32) {
+        uint256 committed = ARB.arbBlockNumber();
+        assertFalse(receiver.fixFallback(turn));
+        ARB.setBlockNumber(committed + 1);
+        assertTrue(receiver.fixFallback(turn));
+        return ARB.hashOf(committed);
     }
 
     function deliver(uint64 turn, bytes32 seed) internal {

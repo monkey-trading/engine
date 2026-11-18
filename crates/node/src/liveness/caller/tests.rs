@@ -173,6 +173,7 @@ async fn the_caller_witnesses_promotes_and_relays_from_its_own_account() {
         min_balance: U256::from(10u64.pow(16)),
         poll: TEST_POLL,
         clock: Arc::new(crate::clock::test_clock::TestClock::at(0)),
+        sends: Arc::default(),
     };
     let task = tokio::spawn(caller.run());
     tokio::time::sleep(TEST_POLL).await;
@@ -198,6 +199,7 @@ async fn a_caller_below_its_minimum_balance_pages_once_until_funded() {
         min_balance: U256::from(10),
         poll: TEST_POLL,
         clock: Arc::new(crate::clock::test_clock::TestClock::at(0)),
+        sends: Arc::default(),
     };
     let task = tokio::spawn(caller.run());
     tokio::time::sleep(TEST_POLL * 3).await;
@@ -225,6 +227,7 @@ async fn a_caller_whose_endpoint_fails_pages_once_until_a_call_goes_through() {
         min_balance: U256::ZERO,
         poll: TEST_POLL,
         clock: Arc::new(crate::clock::test_clock::TestClock::at(0)),
+        sends: Arc::default(),
     };
     let task = tokio::spawn(caller.run());
     tokio::time::sleep(TEST_POLL * 3).await;
@@ -251,6 +254,7 @@ async fn a_call_the_chain_would_refuse_is_not_sent() {
         min_balance: U256::ZERO,
         poll: TEST_POLL,
         clock: Arc::new(crate::clock::test_clock::TestClock::at(0)),
+        sends: Arc::default(),
     };
     let task = tokio::spawn(caller.run());
     tokio::time::sleep(TEST_POLL * 2).await;
@@ -276,6 +280,7 @@ async fn a_head_on_chain_at_another_link_than_the_copy_holds_stops_its_confirmat
         min_balance: U256::ZERO,
         poll: TEST_POLL,
         clock: Arc::new(crate::clock::test_clock::TestClock::at(0)),
+        sends: Arc::default(),
     };
     let task = tokio::spawn(caller.run());
     tokio::time::sleep(TEST_POLL * 2).await;

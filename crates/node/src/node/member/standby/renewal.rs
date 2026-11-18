@@ -104,6 +104,8 @@ impl Renewal {
             answering: None,
             certificates: None,
             vouching,
+            // It starts no caller: it only registers the replacement key.
+            sends: Arc::default(),
         };
         let quoting = Quoting { provider: tee.0, processor: tee.1.as_deref(), kds_base: &tee.2 };
         loop {
