@@ -10,8 +10,8 @@ share of its cap a market's stress level 1 should start to widen spreads.
 
 The launch values are the study's proposal, rounded to three figures. The floors are $31.6M on
 BTC-USD, $17.8M on ETH-USD, US500 and US100, $10M on the other FX, index and commodity markets,
-$5.62M on SOL-USD and $3.16M on each share, $244M in all. The total floor is $61M. Stress level 1
-fires when the house's net position in a market reaches 80% of the market's cap. On the
+$5.62M on SOL-USD and $3.16M on each share, $244M in all. The total floor is $61M. Stress level
+1 fires when the house's net position in a market reaches 80% of the market's cap. On the
 [cap calibration](../cap-calibration/README.md)'s client flow, no set of floors from $100k to $30M a
 market puts house NAV or house cash below zero in any of 2,000 paths, because every trade that opens
 a position pays its spread to the house as it is executed. The floors therefore trade refused orders
@@ -79,8 +79,8 @@ on every market from $100k to $30M. Each candidate runs on both ends' paths
 **No set of floors puts the house below zero on the cap calibration's flow.** At both ends, from
 $100k on every market ($3.4M in total) to $30M on every market ($1.02B), no path has house NAV or
 house cash below zero at any hour. The one-sided 95% bound on that rate is under 0.15%. At its 1st
-percentile, the lowest NAV of a path is positive: $25k to $119k at tier 0, and $46k to $384k at
-tier 3.
+percentile, the lowest NAV of a path is positive: $25k to $119k at tier 0, and $46k to $384k at tier
+3.
 
 Without spreads or the holding-time fee, the same model puts NAV below zero in 0.85% of paths at $1M
 a market, and in 5.85% at $10M a market. Every trade that opens a position pays its spread to the
@@ -119,9 +119,9 @@ floor is the one at which its own refusals end at tier 3, $243.8M in total.
 At the launch market floors, a total floor of 25% of their sum ($61M) up to 100% ($244M) leaves
 every measure unchanged at tier 0. At tier 3, a total floor of 25% raises launch-week refusals from
 2.40% to 2.57%, and every market still refuses under 0.5% over the 90 days
-(`results/tier*/total.csv`). The median of the house's largest gross net exposure is $32M at tier 0
-and $64M to $66M at tier 3, so a total floor much below 25% would start to bind. The launch value is
-the smallest share tested that meets the target and serves every market at both ends, a
+(`results/tier*/total.csv`). The median of the house's largest gross net exposure is $32M at tier
+0 and $64M to $66M at tier 3, so a total floor much below 25% would start to bind. The launch value
+is the smallest share tested that meets the target and serves every market at both ends, a
 `house_total_cap_floor` of $61M.
 
 ### Floors on target flow
@@ -155,8 +155,8 @@ That flow brings a third of the spread income, and an early dip in NAV returns:
 
 ### Floors under the main sensitivities
 
-The launch floors, and 0.3 times them, run under the cap calibration's main sensitivities on 1,000
-paths (`results/tier*/sensitivity.csv`):
+The launch floors, and 0.3 times them, run under the cap calibration's main sensitivities on
+1,000 paths (`results/tier*/sensitivity.csv`):
 
 | Scenario, at the launch floors | NAV below zero at some hour, tier 0 / tier 3 | Cash below zero | Mean bad debt over 90 days |
 |---|---|---|---|
@@ -197,10 +197,10 @@ ends.
 
 - **Level 1 at 8000.** At the launch floors, tier 0's lower leverage leaves every cap nearly empty,
   and tier 3 passes from 8000. A level of 7000 fires in 2.65% of tier 3's open hours. BTC-USD, which
-  carries most of the flow, is the market that fills its cap. Without spreads, no level below 9500
-  passes at 100x. Larger floors, not pricing, make the difference.
+  carries most of the flow, is the market that fills its cap. Without spreads, no level below
+  9500 passes at 100x. Larger floors, not pricing, make the difference.
 - **Smaller floors fire constantly.** At $1M a market, level 1 at 8000 fires in 6.1% of tier 0's
-  open hours and 4.1% of tier 3's. At $10M it fires in 3.1% of each, and the rule's choice at $10M
+  open hours and 4.0% of tier 3's. At $10M it fires in 3.1% of each, and the rule's choice at $10M
   is 9000.
 - **The other triggers do not depend on the floors.** The fast-move thresholds, 75 and 200 bps over
   60 seconds, come from each market's volatility. The divergence shares, 6001 and 9500, come from
@@ -355,10 +355,10 @@ A selective attacker holds pairs only across the closures that pay. Across weeke
   year. At their own first bands, every other market's weekend pairs already lose
   (`results/session_gaps.json`, `weekend_breakeven`). These weekend margins are the launch values,
   and tier 0's limit of 20x already stops the pairs.
-- **WTI's weekend gaps are oil-wide.** The public front-month series switches contracts on its own
-  calendar, which the engine's roll-adjusted index does not. Even so, WTI's 102 weekend gaps
-  correlate 0.94 with Brent's over the same weekends, whose contract rolls on another calendar, and
-  have the same mean size, 1.36% and 1.35% of log move. The largest is +21%, on 6 March 2026.
+- **WTI's weekend gaps come from a series that rolls on its own calendar.** The public front-month
+  series switches contracts on its own calendar, which the engine's roll-adjusted index does not, so
+  a gap in the series may include a change of contract. The largest of WTI's 102 weekend gaps is
+  +21%, on 6 March 2026 (`results/session_gaps.json`, `largest`).
 
 ## Method
 
@@ -479,10 +479,11 @@ The study adds no market data. It reads:
   spread. Target flow and a quarter of the flow are the sensitivities that bound this.
 - **The fee at tier 3** is the least that any tier pays past the curve. Churn's fee takes the least
   that its recorded hold moments allow, as the spread calibration's lower bound does.
-- **Unpriced pairs** keep the rogue-operator study's trigger rule and its year estimates from 156
-  sampled hours, and the interval on the year spans zero. Pairs opened ahead need one standing pair
-  per spell, and pay financing while they stand, which the figures leave out. Neither closing-level
-  convention models the divergence trigger at the repricing, which can only raise the level.
+- **Unpriced pairs** keep the rogue-operator study's trigger rule and its year estimates from
+  156 sampled hours, and the interval on the year spans zero. Pairs opened ahead need one standing
+  pair per spell, and pay financing while they stand, which the figures leave out. Neither
+  closing-level convention models the divergence trigger at the repricing, which can only raise the
+  level.
 - **Session gaps** are the hourly bars' reopening gaps, read from Yahoo's public series. Each gap is
   the first trade of the reopening hour, and the stress level at the reopening is taken as 0.
   Rollovers are counted at 22:00 UTC throughout, as the cap model counts them.

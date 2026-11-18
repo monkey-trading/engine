@@ -127,8 +127,8 @@ is in its 5% tail on the same side, given that the other is, or its 10% tail acr
 - **Over weekend gaps,** members agree more than they do hour by hour: 0.95 for indices and 0.85 for
   FX.
 - **No member leads another.** Correlations one to three hours apart are within 0.03 of zero, and
-  one day apart within 0.08. Among the indices, the correlation one day apart is 0.12 to
-  0.16 negative, whichever market comes first, so it is not a lead. Below one hour the study cannot
+  one day apart within 0.08. Among the indices, the correlation one day apart is 0.11 to
+  0.17 negative, whichever market comes first, so it is not a lead. Below one hour the study cannot
   say, because the grids' sampled hours differ by market.
 
 The loadings are slopes on the group's equal-weighted average return, which the study uses only to
@@ -288,7 +288,7 @@ root of time.
 - A shorter horizon of 10 seconds raises every floor share to 0.8.
 - A tighter quantile of 99.9% lowers the metals' floor share to 0.7, and drops the indices, whose
   saving falls to 15%.
-- A longer horizon of 5 minutes keeps the groups at 0.7 to 0.8, with the indices' saving at 15%.
+- A longer horizon of 5 minutes keeps the groups at 0.7, with the indices' saving at 15%.
 - Over an hour the indices drop out, with a saving of 12%. FX's own floor share is 0, because the
   grid itself binds.
 - Crypto and the shares stay out at every standard.
@@ -396,9 +396,9 @@ roll shows among the metals' crisis days.
   weekend gap until its members reopen. The engine also gives a group no credit while a member the
   account holds cannot trade. The simulator models neither, so its weekend and outage comparisons
   show the rule looser than the engine applies it.
-- **Not built or not run:** - no test compares the engine's requirement with the simulator's on
-  shared vectors; - the cap calibration's joint stage has not been re-run with hedged flow, to see
-  whether the
+- **Not built or not run:**
+  - no test compares the engine's requirement with the simulator's on shared vectors;
+  - the cap calibration's joint stage has not been re-run with hedged flow, to see whether the
     exposure-cap floors change, since that takes hours on the cap model's flow, and the backtest
     here does not touch the house's caps;
   - every account holds one group's pair, and the close-out closes the group whole, so the

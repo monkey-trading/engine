@@ -70,10 +70,10 @@ on positions closed within 1 second, and reaches 10% at 15 minutes.
 
 The classes are the rogue-operator study's:
 
-- **Latency arbitrage:** the operator trades its own accounts against an index that it holds up to 3
-  seconds behind the venues.
-- **Skimming client fills:** the operator fills each client order at the worst index of the last 3
-  seconds. Clients pay for it, and the house receives what they pay.
+- **Latency arbitrage:** the operator trades its own accounts against an index that it holds up to
+  3 seconds behind the venues.
+- **Skimming client fills:** the operator fills each client order at the worst index of the last
+  3 seconds. Clients pay for it, and the house receives what they pay.
 - **The held sync's kill option:** the operator trades, holds the batch's write to storage for up to
   5 seconds, and restarts the trading server if the trade lost.
 - **Censoring:** the operator delays other clients' orders that would close their positions.
@@ -84,14 +84,14 @@ The classes are the rogue-operator study's:
 The fastest honest client sees venue prices 0.25 seconds before the engine prices them, and moves to
 a new wallet whenever its toxicity score would add to its spread.
 
-**At the launch fee curve.** The launch curve takes the whole gain on positions closed within 10
-seconds, and still reaches 10% at 15 minutes. It cuts the operator's crypto take from $265k to $160k
-a day, and its FX and index take from $197k to $63k, so that every class together takes about $289k
-a day on target flow. Clients who hold for 15 minutes or more pay no more under it, while positions
-closed within 15 minutes pay 44% of their gains instead of 33%. A curve that takes the whole gain up
-to 60 seconds gives the same takes, and charges those positions 61% of their gains. Because a
-steeper curve charges every hold at least as much, the honest share at the launch curve is at least
-the share in the table.
+**At the launch fee curve.** The launch curve takes the whole gain on positions closed within
+10 seconds, and still reaches 10% at 15 minutes. It cuts the operator's crypto take from $265k to
+$160k a day, and its FX and index take from $197k to $63k, so that every class together takes about
+$289k a day on target flow. Clients who hold for 15 minutes or more pay no more under it, while
+positions closed within 15 minutes pay 44% of their gains instead of 33%. A curve that takes the
+whole gain up to 60 seconds gives the same takes, and charges those positions 61% of their gains.
+Because a steeper curve charges every hold at least as much, the honest share at the launch curve is
+at least the share in the table.
 
 **What the loss-rate trigger must bound.** The house pays for latency arbitrage, unpriced pairs and
 the held sync's kill option, so the loss-rate trigger can see those three classes. Clients pay for
@@ -127,10 +127,10 @@ zero for those two markets comes from an interpolation that reads anything past 
 spread as zero.
 
 **The fee base and tier discounts.** The operator's bounds admit a profit fee base from launch's 10%
-up to 15%, and tier discounts no larger than launch's, ordered by tier. The study checks all 60
-admitted combinations, at every hundredth of a second up to an hour. On each one, every tier's fee
-falls with the hold, a higher tier never pays more than a lower tier, and every tier pays at least
-its launch fee at every hold.
+up to 15%, and tier discounts no larger than launch's, ordered by tier. The study checks all
+60 admitted combinations, at every hundredth of a second up to an hour. On each one, every tier's
+fee falls with the hold, a higher tier never pays more than a lower tier, and every tier pays at
+least its launch fee at every hold.
 
 - A higher base raises the honest share, to $1.16M and $405k at 12.5%, and to $1.18M and $425k at
   15%. At 15%, the fastest client's take falls to $82k, and the pairs' year turns negative.
@@ -200,8 +200,8 @@ that flow is what a zero fee pays for. On the first income model, a selection of
 
 The launch curve takes the whole gain on a hold of up to 10 seconds, and falls to 10% at 15 minutes
 along eleven holds spaced evenly in the logarithm of the hold. It interpolates linearly between them
-and rounds the fee up to the whole basis point. The study's first proposal held the whole gain to 5
-minutes and reached 10% at 30 minutes. That proposal cost target flow 2.9% of its gross profit and
+and rounds the fee up to the whole basis point. The study's first proposal held the whole gain to
+5 minutes and reached 10% at 30 minutes. That proposal cost target flow 2.9% of its gross profit and
 took 89% of the gross profit on holds under 15 minutes. A flat 10% leaves the operator's own
 accounts $3.17M a day at the calibrated spreads.
 
@@ -240,9 +240,9 @@ at half the year's markout spread, on the sampled hours:
 | ETH-USD | 2.52 | 17 | 1.96 | 0.05% | 8.6 times |
 | SOL-USD | 2.52 | 9 | 1.56 | 0.35% | 10.8 times |
 
-- Between 0.05% and 0.35% of accounts with no edge reach the first tier at some point in 1,000
-  fills, and none reach the second. These rates come from the markouts themselves, whose tails are
-  fat, not from a normal distribution.
+- Between 0.05% and 0.35% of accounts with no edge reach the first tier at some point in
+  1,000 fills, and none reach the second. These rates come from the markouts themselves, whose tails
+  are fat, not from a normal distribution.
 - An account that trades the price lag carries 1.6 to 2.0 standard errors of edge a fill, and
   reaches the first tier at the 20-fill minimum.
 - Holding such an account's score under a tier with fills that have no edge costs 8 to 11 times the
@@ -250,7 +250,7 @@ at half the year's markout spread, on the sampled hours:
 
 The sample holds separate hours, so each hour's own markout spread stands in for its trailing hour.
 Measured against the year's single markout spread instead, accounts with no edge reach the first
-tier at 0.40% to 0.55% in 1,000 fills, and a latency trader's fill carries 2.1 to 3.2 standard
+tier at 0.40% to 0.55% in 1,000 fills, and a latency trader's fill carries 2.1 to 3.3 standard
 errors (`results/toxicity.json`, the `fixed` entries).
 
 ### Markout-spread floors
@@ -309,13 +309,13 @@ tier 3 is at most the second band's bound. The study proposed leverage of a fift
 market's maximum at those tiers; the launch values use these floors instead.
 
 **Counting.** Volume counts the notional of fills that change a position. It does not count a round
-trip at the same index within the score's horizon, or any part of a position closed within 60
-seconds of its opening time, so churn and wash trading held for seconds earn nothing. A single day
-counts at most half of tier 1's threshold, a fifth of tier 2's and a tenth of tier 3's, so each tier
-takes trading on that many days. A wallet that the toxicity score catches within a day stays at tier
-0, whatever its size. Above tier 1, reaching a threshold with round trips that have no edge costs
-more than a month of the tier's best-price benefit, because each fill pays a spread and the winning
-side pays the fee.
+trip at the same index within the score's horizon, or any part of a position closed within
+60 seconds of its opening time, so churn and wash trading held for seconds earn nothing. A single
+day counts at most half of tier 1's threshold, a fifth of tier 2's and a tenth of tier 3's, so each
+tier takes trading on that many days. A wallet that the toxicity score catches within a day stays at
+tier 0, whatever its size. Above tier 1, reaching a threshold with round trips that have no edge
+costs more than a month of the tier's best-price benefit, because each fill pays a spread and the
+winning side pays the fee.
 
 **What recycling wallets gains and forfeits.** For the latency strategy at its best under the
 study's proposals, moving to fresh wallets avoids the score's add-on, and forfeits the kept tier's
@@ -368,8 +368,8 @@ the corrected income model and the 34 launch markets, it is $107M on both flows.
 current flow pays $456M of spread income and $55M of profit fees, of which $30M comes from churn.
 Target flow pays $135M of spread income and $36M of profit fees.
 
-The first stage ran the cap calibration's retained-NAV model on 1,000 paths of 90 days and 37
-markets, at the genesis margins with 100x on BTC-USD and ETH-USD:
+The first stage ran the cap calibration's retained-NAV model on 1,000 paths of 90 days and
+37 markets, at the genesis margins with 100x on BTC-USD and ETH-USD:
 
 | Flow and pricing | Retained NAV | Distributed, 90 days | Spread income | Profit fees | Operator's share a day |
 |---|---|---|---|---|---|

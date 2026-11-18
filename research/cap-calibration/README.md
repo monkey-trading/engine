@@ -52,8 +52,8 @@ The cost of a floor is the share of opening notional that the caps refuse. Notio
 value at the market price. The refused share counts directional positions, which are not legs of a
 hedge, and churn, which is positions held for under an hour. It is given for the first week, when
 the floors carry the house, and for the 90 days. The floor where a market's refusals end is the
-smallest floor at which that market, run alone, refuses under 1% of its directional notional over 90
-days.
+smallest floor at which that market, run alone, refuses under 1% of its directional notional over
+90 days.
 
 Each probability comes with the count of paths in which the event happens and the exact one-sided
 95% upper bound on the rate. On 2,000 paths, a target of 1% allows 20 failing paths, 0.1% allows 2,
@@ -174,7 +174,8 @@ baseline puts NAV and house cash below zero in 0.80% each.
 Farming means opening pairs of opposite positions, the hedged flow, to collect the token that a
 venue mints on losses.
 
-- **Farming is what keeps the house solvent early.** Hedged flow pays about two thirds of the fees.
+- **Farming is what keeps the house solvent early.** Hedged flow brings in most of the fees. On
+  these paths, the mean fee income over 90 days is $58.4M with hedged flow and $16.1M without it.
   Without it, NAV falls below zero in 12.6% of paths and house cash in 13.2%, at floors that
   otherwise measure 0.8%. Every scaling of the floors from 0.1 to 1 times leaves both above 1%
   (`results/sensitivity.csv`).
@@ -203,7 +204,8 @@ prices gap.
 
 The table compares the committed results at 100:1 with the same stages at 10:1, at the same seed and
 path counts. Every stage ran on the committed `data/derived/` with only the bands changed. The 10:1
-figures are not kept in `results/`.
+figures are not kept in `results/`. They are the study's results at commit `87f5d08ecd`, which
+`git show 87f5d08ecd:research/cap-calibration/results/report.md` prints.
 
 | Value | 10:1 | 100:1 |
 |---|---|---|
@@ -238,7 +240,8 @@ held in two accounts at the maximum leverage are the case that net exposure caps
 whose price jumps past its margin, with no close-out in between, leaves bad debt with the house. At
 1% margin that takes a jump of about 1.1%, against about 11% at 10:1. The
 [spread-calibration study](../spread-calibration/README.md) measures this risk at 1% margin, on
-50-millisecond grids of Coinbase and Kraken trades:
+50-millisecond grids of Coinbase and Kraken trades
+(`research/spread-calibration/results/report.md`):
 
 - The index can pass the half of the margin that is left at the close-out trigger before the
   engine's next price, which can take up to 3 seconds. That happens for about 3 seconds a day over
@@ -306,11 +309,11 @@ in the hours when level 1 fires. `choose_move` reports the same figure.
 
 The window stays at 60 seconds. Windows of 30 and 120 seconds give parallel curves of fire rate,
 because a longer window raises every reading alike. A 60-second window keeps its 12 buckets at one
-every 6 seconds, against feeds that publish at least one mid a second. The chosen thresholds of 75
-and 200 bps fire on the volatile crypto, oil and share markets. They fire 0.1% to 1.2% of the time
-on the markets that carry at least 1% of the flow, and up to 3.8% of the time on the smallest share
-listings, which keeps the worst market within the 5% bound. They are almost silent on FX and
-indices, firing 0.06% to 0.4% of the time on the index markets and never on FX. Those markets rely
+every 6 seconds, against feeds that publish at least one mid a second. The chosen thresholds of
+75 and 200 bps fire on the volatile crypto, oil and share markets. They fire 0.1% to 1.2% of the
+time on the markets that carry at least 1% of the flow, and up to 3.8% of the time on the smallest
+share listings, which keeps the worst market within the 5% bound. They are almost silent on FX and
+indices, firing 0% to 0.38% of the time on the index markets and never on FX. Those markets rely
 mainly on the divergence trigger and on the rule that leaves a market without a price when its
 venues disagree. Thresholds of 150 and 300 bps, the development configuration's values, fire on none
 of these markets outside crashes.
@@ -326,21 +329,21 @@ share.
 
 Level 1 takes the lowest share at which the worst stale-fill loss at the firing reading covers the
 level's minimum spread on the market with the tightest limit, so that d/2 is at least the minimum
-spread. That needs a reading of 4 bps. On the tightest limits, which are 5 bps, a share of 6000
-still fires at 3 bps, and 6001 is the lowest share that fires at 4 bps. The study therefore chooses
-6001, which fires at 16 bps on crypto's 25-bp limit.
+spread. That needs a reading of 4 bps. On the tightest limits, which are 5 bps, a share of
+6000 still fires at 3 bps, and 6001 is the lowest share that fires at 4 bps. The study therefore
+chooses 6001, which fires at 16 bps on crypto's 25-bp limit.
 
 Level 2 would need a reading of 20 bps, which cannot occur where the limit is 5 bps, so the study
 falls back to 9500. On limits below about 21 bps, a share of 9500 first fires at the limit itself.
 The market still has a price at that reading, because a market loses its price only when the reading
-is above the limit, so level 2 is the last widening before trading stops. On crypto's limit, 9500
-fires at 24 bps. The development configuration's shares of 6000 and 8000 fire on the tightest
+is above the limit, so level 2 is the last widening before trading stops. On crypto's limit,
+9500 fires at 24 bps. The development configuration's shares of 6000 and 8000 fire on the tightest
 markets below the stale-fill cost of the level-1 spread. `stress_divergence.csv` also reports the
 expected-cost rule, under which d/4 must be at least the minimum spread. No share under 10000 meets
 that rule on the 5-bp markets.
 
-**Utilisation.** The model records each market's hourly utilisation and exposure on the same 2,000
-paths as the floor study, at three families of floors:
+**Utilisation.** The model records each market's hourly utilisation and exposure on the same
+2,000 paths as the floor study, at three families of floors:
 
 - the floors where each market's refusals end, $274M in total, which measure 3.50% on the house-cash
   measure at 100:1 (named `house_cash_1pct` in the files);
@@ -368,11 +371,11 @@ BTC-USD's in brackets, are:
 At 10:1 and 7000 bps, the three families fire in 1.5%, 1.4% and 35.4% of open hours flow-weighted,
 and BTC-USD fires in 2.9%, 2.9% and 55.9%.
 
-On the floors where refusals end, 9000 bps would pass, at 1.3% and 2.6% for BTC-USD, which is 500
-bps under level 2. Those floors fail the 1% target, however, and a uniform $10M fires at 12.7% at
-that level. Under $1M floors, a market's cap is so small that every level fires constantly. That is
-a property of those floors, which the study reports rather than calibrates to. Because those are the
-floors the study recommends, the utilisation trigger is not a rare event at them.
+On the floors where refusals end, 9000 bps would pass, at 1.3% and 2.6% for BTC-USD, which is
+500 bps under level 2. Those floors fail the 1% target, however, and a uniform $10M fires at 12.7%
+at that level. Under $1M floors, a market's cap is so small that every level fires constantly. That
+is a property of those floors, which the study reports rather than calibrates to. Because those are
+the floors the study recommends, the utilisation trigger is not a rare event at them.
 
 At 7000 bps on BTC-USD, at the floors where refusals end, the mean exposure when the trigger fires
 is $25.6M, 81% of the $31.6M cap. Against a 99th-percentile gap of 180 bps to the next price, that
@@ -411,18 +414,16 @@ calibrates that score. The launch genesis keeps this study's prior and memory fo
 notional-weighted score, which applies when a log written under an earlier protocol version is
 replayed. The tiers above are in no launch configuration.
 
-The committed values are from the 37-market list at a 10% margin on BTC-USD and ETH-USD. The same
-stage run on the launch genesis gives a larger memory, because 1% margin raises the two markets'
-median fill from $100k to $1M and their 99th-percentile fill from $3.2M to $14.8M:
+The committed values are from the 37-market list at a 10% margin on BTC-USD and ETH-USD. Running the
+same stage, `python -I run.py toxicity`, on the launch genesis gives a larger memory, because 1%
+margin raises the two markets' median fill from $100k to $1M and their 99th-percentile fill from
+$3.2M to $14.8M:
 
 - ETH-USD instead of Brent sets the memory, which rises from $11,259,036 to $17,626,099, and the
   prior from $5,629,518 to $8,813,050;
 - a toxic account reaches tier 1 within 100 fills of the median size, rather than 75;
 - a burst of 25 fills half a second apart crosses tier 1 1.0% of the time, rather than 3.9%;
 - the tier thresholds of 1 and 2 bps, and their spreads of 2 and 3 bps, do not change.
-
-The change comes from the margin, not from the market list: the same run on the 37-market list gives
-the same values.
 
 ### Retained NAV
 
@@ -455,13 +456,13 @@ sweep interval, and no farming. What moves it:
 - **The flow on each cloned market is the scaling assumption.** The answer does not change with the
   number of markets, because crypto carries about 76% of the flow and the cloned markets are light
   equity markets. When every clone is instead as busy as BTC-USD or ETH-USD, the retained NAV
-  reaches $440M at 100 markets and $2.88B at 500. Mixed clones sit between, at $172M for 200
-  markets.
+  reaches $440M at 100 markets and $2.88B at 500. Mixed clones sit between, at $172M for
+  200 markets.
 - **Fixed dollar caps on each market are far weaker than caps that are a share of NAV.** With dollar
-  caps of $10M a market in place of the shares of NAV, retained NAV falls to $2M at 37 and 100
-  markets. At that floor on 37 markets, cash falls below zero in 0.60% of paths (12 of 2,000, upper
-  bound 0.97%). A fixed cap does not grow with the house, so a small floor meets the same flow. Caps
-  of $1M a market retain $1M, and already measure 0.67% at 500 markets.
+  caps of $10M a market in place of the shares of NAV, retained NAV falls to $2M at 37 and
+  100 markets. At that floor on 37 markets, cash falls below zero in 0.60% of paths (12 of 2,000,
+  upper bound 0.97%). A fixed cap does not grow with the house, so a small floor meets the same
+  flow. Caps of $1M a market retain $1M, and already measure 0.67% at 500 markets.
 
 Under the launch bands the house must therefore hold $107M as NAV and sweep only the excess. With
 BTC-USD and ETH-USD at a 10% margin, $26.2M would serve, so the margin bands are what moves the
@@ -535,9 +536,9 @@ gives them the profile of the oil schedule, which has the same first-band rate.
 
 The flow comes in three kinds:
 
-- **Directional** positions open at the hour's close and settle after their class's hold of 1, 4, 16
-  or 48 hours. A planned exit that falls inside a closure waits for the market to reopen. The long
-  share follows an hourly autoregressive process around each class's measured share, fitted to
+- **Directional** positions open at the hour's close and settle after their class's hold of 1, 4,
+  16 or 48 hours. A planned exit that falls inside a closure waits for the market to reopen. The
+  long share follows an hourly autoregressive process around each class's measured share, fitted to
   papertrade.xyz's BTC flow on the full days, with a coefficient of 0.69, a residual of 0.12, and
   +0.05 for each unit of the previous hour's log return.
 - **Hedged** positions open as offsetting pairs in two accounts, since an engine account nets to one
@@ -640,8 +641,8 @@ In the closure variant, farmers open pairs at the last open hour before each clo
 more. The pairs are at the maximum leverage, in orders that fit, and worth 10% of the margin the
 market accepted over about the past week in hedged pairs held for an hour or more. Hedged churn is
 left out, because its margin turns over within the hour. The pairs close at the reopening, where a
-gap past a leg's balance is bad debt. Each variant runs with every floor scaled together by 0.1, 0.3
-and 1.
+gap past a leg's balance is bad debt. Each variant runs with every floor scaled together by 0.1,
+0.3 and 1.
 
 ### Spreads and the holding-time fee
 
@@ -702,7 +703,7 @@ take about 5 seconds.
   median and a $10M 99th percentile on FX, and a $1M median and a $10M 99th percentile on oil.
 - **Markout scales** (`sigma_markout_bps`). The scale is the median open hour's Parkinson
   volatility, which is the model's hourly scale, scaled to the 2-second horizon, in bps. A typical
-  hour prices a typical fill: 0.13 to 0.50 bps on FX and indices, 0.70 to 1.33 bps on crypto, and up
+  hour prices a typical fill: 0.13 to 0.47 bps on FX and indices, 0.70 to 1.33 bps on crypto, and up
   to 1.58 bps on the noisiest shares. `results/toxicity_markets.csv` has every market.
 - **Memory.** The score is a weighted average of the last `memory` dollars of fills. For fills of
   size n, its sampling drift is therefore about `sigma_markout * sqrt(n / memory)` bps. At the
@@ -748,8 +749,8 @@ every hour, so fees never build a cushion. The exposure caps are the genesis sha
 dollar floors, so the floor is also what the caps are a share of. Markets beyond the launch set are
 clones of equity markets, each correlated 0.7 with the market it copies and as busy as that market
 (`model/expansion.py`). For each market count and variant, the floor rises along a geometric grid,
-with a ratio of 1.6 from $4M to $4.6B, on the same paths. The dollar-cap variants use a grid from $0
-to $64M.
+with a ratio of 1.6 from $4M to $4.6B, on the same paths. The dollar-cap variants use a grid from
+$0 to $64M.
 
 ## Data and sources
 
@@ -769,17 +770,17 @@ venue lists BTC and ETH at up to 1000:1, with isolated margin and a $10M positio
 [mint curve](https://docs.papertrade.xyz/how/mint-curve/)).
 
 `fetch/papertrade.py` pulls every event log of the Exchange proxy
-`0x6cd5661646289fb6e65ea5c032310fded797d0a2`, from its creation block 47,854,719 to block 49,109,718
-(2026-10-21 05:42 UTC). It reads them from six public HyperEVM RPC endpoints in 1,255 chunks of
-1,000 blocks, with block timestamps every 10,000 blocks. 25 chunks chosen at random, fetched again
-from an endpoint chosen at random, matched their stored log counts. The raw pull is 212 MB and is
-not committed.
+`0x6cd5661646289fb6e65ea5c032310fded797d0a2`, from its creation block 47,854,719 to block
+49,109,718 (2026-10-21 05:42 UTC). It reads them from six public HyperEVM RPC endpoints in
+1,255 chunks of 1,000 blocks, with block timestamps every 10,000 blocks. 25 chunks chosen at random,
+fetched again from an endpoint chosen at random, matched their stored log counts. The raw pull is
+212 MB and is not committed.
 
 The Exchange's source is not verified on the block explorer, so `derive/papertrade.py` infers the
 event layouts from the logs and checks them:
 
-- every one of the 1,580,269 close events and 132,923 liquidations matches one of the 1,715,360 open
-  events;
+- every one of the 1,713,192 closing events, of which 7.76% are liquidations, matches one of the
+  1,715,360 open events;
 - over the 1,374,753 close events with a non-zero profit after the haircut, the median ratio of the
   fee to that profit is 0.0200, the documented 2% fee on wins and on the pool's side of losses;
 - BTC entry prices sit within 0.1% (median) of Binance's BTCUSDT close for the same hour;
@@ -929,20 +930,21 @@ hourly window is volatile for metals and several shares, with gold at 26% a year
   - The joint, sensitivity and retained stages have not been run on 34 markets. Their totals scale
     with the market count: at $1M a market, the total is $34M rather than $37M. On a re-run, the
     retained stage makes up its 37-market count from the 34 launch markets and three clones.
-  - The stress stage keeps every chosen value: the 60-second window, moves of 75 and 200 bps, a
-    divergence share of 6001, and utilisation level 2 at 9500. The flow-weighted utilisation fire
-    rates rise by up to 1.5 points. On a uniform $10M they go from 29.4% to 30.5% at 7000 bps and
-    from 12.7% to 13.2% at 9000 bps, and still no level below 9500 passes.
-  - The toxicity stage gives the values listed under [toxicity parameters](#toxicity-parameters).
+  - Run on the launch genesis, `python -I run.py stress` keeps every chosen value: the 60-second
+    window, moves of 75 and 200 bps, a divergence share of 6001, and utilisation level 2 at 9500.
+    The flow-weighted utilisation fire rates rise by up to 1.5 points. On a uniform $10M they go
+    from 29.4% to 30.5% at 7000 bps and from 12.7% to 13.2% at 9000 bps, and still no level below
+    9500 passes.
+  - Run on the launch genesis, `python -I run.py toxicity` gives the values listed under
+    [toxicity parameters](#toxicity-parameters).
 - **The toxicity trials.** The trials price markouts at the volatility of the median hour, while
   live fills cluster in livelier hours, which raises crossings. The bound for each market combines
   across markets only through a union bound, so an account trading many markets at once is bounded
   market by market, not jointly. Both assumptions need checking against live fill data.
 - **Zero capital at launch.** The genesis starts the house with no capital. A liquidity floor below
   the opening NAV is swept by the first staker, so the floor must be at or above the opening NAV.
-  From zero capital nothing is swept until fees build up to the floor, which takes about 130 days at
-  launch flow for $107M. Until then the house carries the early-dip risk that the floor study shows
-  at zero capital.
+  From zero capital nothing is swept until fees have built NAV up to the floor. Until then the house
+  carries the early-dip risk that the floor study shows at zero capital.
 
 ## Re-running
 
@@ -971,8 +973,8 @@ of the move tables, and the floor families. The move tables sample 400 hours of 
 at the same seed.
 
 To rebuild the data, run `fetch-papertrade` (which resumes, and whose `--to-block` pins the end),
-`fetch-markets`, `derive-papertrade` and `derive-markets`. Yahoo serves hourly bars for the last 730
-days only, so a later rebuild needs a later window in `fetch/markets.py`.
+`fetch-markets`, `derive-papertrade` and `derive-markets`. Yahoo serves hourly bars for the last
+730 days only, so a later rebuild needs a later window in `fetch/markets.py`.
 
 To recalibrate with live data:
 

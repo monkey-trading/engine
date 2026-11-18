@@ -54,10 +54,10 @@ limit.
 
 A price jump over a gap, a market closure or a futures roll is not a spread. Such a jump moves
 margin and close-out risk, and `results/ceiling_effects.csv` shows that a spread on closing cannot
-repair it. In a 5% gap on EUR-USD with no house capital, an uncapped close charge of 103 bps cuts
-the house's shortfall by a fifth to a third, and costs the trader seven times as much. The engine's
-stress levels already widen spreads during fast moves. A ceiling that moved with volatility would be
-one the operator could adjust, so the study does not propose one.
+repair it. In a 5% gap on EUR-USD with no house capital, an uncapped close charge of 105 bps cuts
+the house's shortfall by a fifth to a third, and costs the trader about six times as much. The
+engine's stress levels already widen spreads during fast moves. A ceiling that moved with volatility
+would be one the operator could adjust, so the study does not propose one.
 
 ### How the engine applies a ceiling
 

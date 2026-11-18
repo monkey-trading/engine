@@ -69,8 +69,8 @@ lag of a quarter of a second takes $80.4M a day, and the full 3 s lag takes $81.
 The toxicity add-on would price the operator's lead, but a laundered score never pays it. Only the
 exposure cap then bounds the attack, through the utilisation trigger. At the launch caps the study
 assumed, the operator holds $6.9M a market. At the cap calibration's retained NAV, the caps are
-larger and the same attack takes $162M a day. The attack is not stealthy. It opens about 150,000
-positions a day, and 84% of those on BTC-USD are winners.
+larger and the same attack takes $162M a day. The attack is not stealthy. It opens about
+150,000 positions a day, and 84% of those on BTC-USD are winners.
 
 At the launch positions of $6.9M a market, the operator's own accounts take from the house each day:
 
@@ -145,8 +145,8 @@ flow, orders crowd the index's path and each yields less, 0.34 bps, but the tota
 sevenfold. The operator's 20% of skimming roughly doubles its honest income.
 
 A monitor that rebuilds the index from venue data and compares each fill with it would catch
-skimming nine times in ten within a few hundred fills on average, which is minutes of launch flow.
-That estimate allows for an honest trading server's fills scattering half a basis point around the
+skimming nine times in ten, with false alarms on 0.1% of fills, within about 760 fills. That
+estimate allows for an honest trading server's fills scattering half a basis point around the
 reference. Without such a monitor, nothing shows the attack.
 
 Delaying an order for longer than the lag shows no gain. An operator that holds each order for 10 or
@@ -197,8 +197,8 @@ Per year, from $50M a side of pairs on BTC-USD and ETH-USD:
 |---|---|---|---|---|
 | Causal, 40 bps in 5 s | 60 s | $26.7M (-$26.1M to $116.2M) | -$40.8M | -$45.1M |
 | Causal, 40 bps in 5 s | 300 s | $57.0M (-$1.3M to $157.4M) | -$25.5M | -$30.9M |
-| Best spell an hour, with hindsight | 60 s | $68.8M ($37.4M to $110.9M) | $13.2M | $0 |
-| Best spell an hour, with hindsight | 300 s | $220.2M ($160.7M to $286.0M) | $61.8M | $0 |
+| Best spell an hour, with hindsight | 60 s | $68.8M ($37.4M to $110.9M) | $11.7M | $0 |
+| Best spell an hour, with hindsight | 300 s | $220.2M ($160.7M to $286.0M) | $61.4M | $0 |
 
 ![Unpricing against the spell length](results/unprice_vs_spell.png)
 
@@ -231,8 +231,8 @@ flight. Databento's gateway is such a source. On a market priced from such a sou
 source, the index is the midpoint of the two. Keeping the two within 6 bps of each other, below the
 level-1 divergence trigger of 7 bps on a 10 bps limit, moves the index up to 3 bps either way at
 will. That is up to 3 bps on every index, commodity and share fill, or $1.80M a day at launch flow
-if every one of those markets takes such a quote. The operator's own round trips would also gain 6
-bps each with no lag at all, limited only by the caps, as latency arbitrage is. The launch
+if every one of those markets takes such a quote. The operator's own round trips would also gain
+6 bps each with no lag at all, limited only by the caps, as latency arbitrage is. The launch
 configuration reads every market-data vendor over TLS that ends inside the enclave, so it has no
 such source.
 
@@ -253,8 +253,8 @@ what this study measures.
 
 **Venue-specific moves.** Coinbase alone sometimes moves far from Kraken. On 2026-01-31 at 17:12
 UTC, a sweep printed 4,286 Coinbase trades between $77,000 and $78,451 in four seconds, while
-Kraken's lowest trade in those seconds was $78,082. Coinbase went 1.4% below Kraken, far past the 25
-bps divergence limit, where the engine's index has no price.
+Kraken's lowest trade in those seconds was $78,082. Coinbase went 1.4% below Kraken, far past the
+25 bps divergence limit, where the engine's index has no price.
 
 Holding the proxy at its last value wherever Coinbase's last trade sits past the divergence limit
 from Kraken's changes the results as follows:
@@ -511,9 +511,9 @@ The self-bond is never slashed, so it enters only through what MONKEY's price lo
 
 **A year of venue trades, sampled by volatility.** The three markets measured are BTC-USD, ETH-USD
 and SOL-USD, which carry 77% of launch flow and are priced from Coinbase and Kraken.
-`fetch/history.py candles` pulls Coinbase Exchange's hourly candles for each market from 2025-11-01
-to 2026-11-01. They cover 8,755 of the year's 8,760 hours, and Coinbase has no candles for the other
-five. `derive/sample.py` ranks each market's hours by their Parkinson volatility,
+`fetch/history.py candles` pulls Coinbase Exchange's hourly candles for each market from
+2025-11-01 to 2026-11-01. They cover 8,755 of the year's 8,760 hours, and Coinbase has no candles
+for the other five. `derive/sample.py` ranks each market's hours by their Parkinson volatility,
 `ln(high / low) / sqrt(4 ln 2)`. It splits them into five strata, the quietest 50% and then 50% to
 80%, 80% to 95%, 95% to 99% and the top 1%, and draws 10, 10, 10, 10 and 12 hours from them at seed
 549. That gives 52 hours a market, with the busiest hours sampled 40 times as densely as the

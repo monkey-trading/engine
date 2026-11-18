@@ -130,9 +130,12 @@ of bad debt across the house within 60 minutes occurs in 0.16% of hours.
   NAV from each market's client quantity and cost (`engine/house.rs`), so the reading is the fall in
   house NAV over the window. It leaves out house capital credits and distributions, and needs no
   state beyond the window's buckets.
-- **House-wide, not per market.** The markets' losses partly offset each other. At a given fire
-  rate, one house-wide threshold therefore leaves an attacker less room than per-market thresholds
-  together, which on the stress day is $10.4M against $12.0M on target flow. Each market's honest
+- **House-wide, not per market.** The markets' losses partly offset each other, so one house-wide
+  threshold usually leaves an attacker less room than per-market thresholds that fire as often. Of
+  the eight daily fire rates tried, from 0.1% to 50% of honest hours, the house-wide threshold
+  leaves the stress day's pairs less at six (`results/stress_target.json`). On target flow, the
+  launch trigger, house-wide over a day at a threshold of zero, leaves them $10.4M. Per-market
+  thresholds over a day, set to fire in 1% of honest hours, leave them $12.0M. Each market's honest
   time at level 2 stays about the same. A per-market reading would catch an attack on one small
   market sooner, but no measured class needs it.
 - **Against zero.** Honest flow's income and the spread of its losses both grow with its volume.
@@ -152,8 +155,8 @@ of bad debt across the house within 60 minutes occurs in 0.16% of hours.
 
 The room that a threshold firing in 1% of hours leaves an attacker each day falls as the window
 lengthens. Honest flow's loss over a window grows more slowly than the number of windows in a day
-shrinks. On target flow the room is $191M a day at one minute, $35M at 15 minutes, $13.8M at 60
-minutes, $4.7M at six hours and $2.1M at a day. A day's window at zero is the tightest bound that
+shrinks. On target flow the room is $191M a day at one minute, $35M at 15 minutes, $13.8M at
+60 minutes, $4.7M at six hours and $2.1M at a day. A day's window at zero is the tightest bound that
 fires in at most 1% of hours on both flows.
 
 | Trigger | Flow | Threshold | Hours fired | Level 2 | Periods a year, mean length | Room a day, mean / p95 | 2025-10-10, pairs opened ahead |
@@ -351,8 +354,8 @@ The study adds no data. It reads:
   holding-time classes, sizes, leverage, and the long share's hourly AR(1);
 - the [spread calibration](../spread-calibration/README.md)'s target flow, which keeps the flow held
   15 minutes or more and a tenth of the rest;
-- the [rogue operator study](../rogue-operator/README.md)'s 50 ms grids of Coinbase trades over 52
-  hours a market, sampled by volatility stratum from a year of BTC-USD, ETH-USD and SOL-USD, and
+- the [rogue operator study](../rogue-operator/README.md)'s 50 ms grids of Coinbase trades over
+  52 hours a market, sampled by volatility stratum from a year of BTC-USD, ETH-USD and SOL-USD, and
   2025-10-10's four most volatile hours;
 - the spread calibration's profit-fee function on the engine's table (`calib/fee.py`), and its
   measured takes at the launch values (`results/owner_latency.json`, `owner_fx.json`,
