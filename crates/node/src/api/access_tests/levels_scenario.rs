@@ -42,6 +42,7 @@ use super::*;
 use crate::api::Feed;
 use crate::clock::Clock;
 use crate::config::HistorySection;
+use crate::history::derived::Deriver;
 use crate::test_support::{LOADED_WAIT, RETENTION, open_history};
 
 const BTC: MarketId = 1;
@@ -303,8 +304,10 @@ async fn serve_history(node: &mut Node) {
     let backfills = Arc::new(Semaphore::new(MAX_BACKFILLS));
     let live = node.state.stream.subscribe();
     let feed = Feed::new(live, node.dir.clone(), node.state.manifest.clone(), backfills, Some(index.resume_at()));
-    node.state.history = index.reader();
-    node.tasks.push(tokio::spawn(async move { index.run(feed).await.expect("the index follows the log") }));
+    let derived = node.state.history.derived().clone();
+    let deriver = Deriver::new(derived.clone(), Some((node.dir.clone(), node.state.manifest.clone())));
+    node.state.history = index.reader().with_derived(derived, None);
+    node.tasks.push(tokio::spawn(async move { index.run(feed, deriver).await.expect("the index follows the log") }));
     node.app = router(node.state.clone()).layer(Extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9)))));
 }
 
