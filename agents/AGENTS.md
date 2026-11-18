@@ -820,7 +820,7 @@ an index: load only the rule whose hint matches the current action.
   production-build tests), the reference-log examples' tests, the reference-log replay and
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
-  test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
+  test, each job installing the contract dependencies through `image/retry` (five attempts, a persistent failure still failing the job), the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
   deposit finality scenarios, the MONKEY staking, launch values, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation, parameter votes and operator faults dev scenarios (`dev-daily-rotation`), the short-turns build's clippy, turn tests and dev scenario (`dev-short-turns`), the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the

@@ -494,7 +494,7 @@ jobs:
           version: v1.8.3
           cache: false
       - name: Install dependencies
-        run: forge soldeer install
+        run: ../image/retry forge soldeer install
       - name: Check formatting
         run: forge fmt --check
       - name: Build
@@ -523,7 +523,7 @@ jobs:
           cache: false
       - name: Install contract dependencies
         working-directory: contracts
-        run: forge soldeer install
+        run: ../image/retry forge soldeer install
       - name: Run the vault deposit and RPC quorum dev scenario
         env:
           RPC_QUORUM_SCENARIO: "1"
@@ -583,7 +583,7 @@ jobs:
           cache: false
       - name: Install contract dependencies
         working-directory: contracts
-        run: forge soldeer install
+        run: ../image/retry forge soldeer install
       - name: Run the daily rotation dev scenario
         run: ./scripts/dev-daily-rotation.sh
       - name: Run the parameter votes dev scenario
@@ -620,7 +620,7 @@ jobs:
           cache: false
       - name: Install contract dependencies
         working-directory: contracts
-        run: forge soldeer install
+        run: ../image/retry forge soldeer install
       - name: Refuse short turns in a production build
         run: |
           for features in production,short-turns production,engine-core/short-turns; do
@@ -1062,7 +1062,7 @@ jobs:
           cache: false
       - name: Install contract dependencies
         working-directory: contracts
-        run: forge soldeer install
+        run: ../image/retry forge soldeer install
       - name: Run the production secrets dev scenario
         env:
           ENGINE_PREBUILT: "1"
@@ -1090,7 +1090,7 @@ jobs:
           cache: false
       - name: Install contract dependencies
         working-directory: contracts
-        run: forge soldeer install
+        run: ../image/retry forge soldeer install
       - name: Run the on-chain log heads dev scenario
         env:
           ENGINE_PREBUILT: "1"
