@@ -240,7 +240,7 @@ impl Sequencer {
         }
         self.load_backlog()?;
         self.prove_loaded()?;
-        self.settle_payout_proofs()?;
+        self.settle_payout_proofs(evidence.checkpoint_seq)?;
         let gate = self.gate.as_ref().expect("checkpoint gate exists");
         if !gate.admits_withdrawals() || evidence.halts_withdrawals() {
             return Ok(());

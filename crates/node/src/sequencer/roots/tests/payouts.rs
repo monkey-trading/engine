@@ -122,3 +122,33 @@ async fn approvals_a_recovery_window_loads_are_proved_at_the_checkpoint_that_cov
     ended.expect("the sequencer drains");
     assert_eq!(checkpoints(&entries).last().map(|checkpoint| checkpoint.seq), Some(covering.seq), "no new checkpoint");
 }
+
+#[test]
+fn a_payout_release_waits_only_for_proofs_at_checkpoints_the_vault_has_posted() {
+    let mut node = Node::new("roots-payout-settle", None);
+    node.seq.sequence(deposit(100, "roots-settle-deposit")).expect("applies").expect("admitted");
+    let events = node.seq.sequence(withdraw(40)).expect("applies").expect("admitted");
+    assert!(events.iter().any(|event| matches!(event, Event::WithdrawalApproved { nonce: 1, .. })), "{events:?}");
+    node.seq.checkpoint().expect("the approval is checkpointed");
+    node.seq.flush().expect("the log flushes");
+    node.seq.start_root_worker().expect("the worker takes the tree");
+    let posted = node.seq.last_seq().expect("the approval is checkpointed");
+    // A proof asked at the posted checkpoint is waited for, and one at a later checkpoint the worker
+    // has yet to answer, as behind a rollover's writes, is not.
+    node.seq.prove_payouts(posted, vec![(TRADER, 1)]).expect("the worker takes the ask");
+    node.seq.roots.proving.insert(posted + 1, 1);
+    let (settled, done) = std::sync::mpsc::channel();
+    let settling = std::thread::spawn(move || {
+        let outcome = node.seq.settle_payout_proofs(Some(posted));
+        _ = settled.send(());
+        (node, outcome)
+    });
+    done.recv_timeout(WAIT).expect("the release waits for no proof at a checkpoint the vault has not posted");
+    let (node, outcome) = settling.join().expect("the settle returns");
+    outcome.expect("the worker answers");
+    assert_eq!(
+        node.seq.roots.proving,
+        BTreeMap::from([(posted + 1, 1)]),
+        "only the posted checkpoint's proof is taken"
+    );
+}

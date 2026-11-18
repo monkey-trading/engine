@@ -3,7 +3,7 @@
 use engine_core::command::Command;
 use engine_core::event::Event;
 
-use crate::cases::{reprice_open_markets, touch};
+use crate::cases::{Bar, reprice_open_markets, touch};
 use crate::common::launch_book::{Book, benchmark_batch};
 use crate::report::{noted, rss_mib, timed, within};
 
@@ -17,9 +17,10 @@ const PIECE_US: u128 = 1_000;
 /// One more daily rollover on the book, then its state root the way the node takes it with the tree
 /// detached (#925): the sequencer copies the rollover's leaf writes out in pieces of a millisecond while
 /// the record is above the floor, the worker writes each part, and the commit writes the rest. Prints
-/// what each side spends, and the commit's wait from the backlog it started at. Runs after every case
-/// that reads the engine's own root, since detaching the tree ends those.
-pub fn root_parts(book: &mut Book, commit_bar_us: u128, commit_guard_us: u128) {
+/// what each side spends, and the commit's wait from the backlog it started at, holding the commit to
+/// `commit` and the longest piece to `piece`. Runs after every case that reads the engine's own root,
+/// since detaching the tree ends those.
+pub fn root_parts(book: &mut Book, commit: Bar, piece: Bar) {
     let due = book.h.engine.next_rollover().expect("a rollover is due");
     book.h.advance_to(due - 1);
     let batch = benchmark_batch(&book.h);
@@ -70,6 +71,8 @@ pub fn root_parts(book: &mut Book, commit_bar_us: u128, commit_guard_us: u128) {
         apply_total as f64 / writes.max(1) as f64,
         copy_total as f64 / entries.max(1) as f64
     );
+    noted("root_copy_piece_bar", copy_longest, piece.bar_us);
+    within("root_copy_piece_guard", copy_longest, piece.guard_us);
 
     // The commit at the bound: what the checkpoint waits for.
     let left = book.h.engine.root_backlog();
@@ -90,8 +93,8 @@ pub fn root_parts(book: &mut Book, commit_bar_us: u128, commit_guard_us: u128) {
         work.nodes,
         rss_mib()
     );
-    noted("root_commit_bar", commit_us, commit_bar_us);
-    within("root_commit_guard", commit_us, commit_guard_us);
+    noted("root_commit_bar", commit_us, commit.bar_us);
+    within("root_commit_guard", commit_us, commit.guard_us);
     commit_sweep(book, &mut tree);
 }
 

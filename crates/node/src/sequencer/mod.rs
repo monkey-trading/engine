@@ -271,7 +271,7 @@ impl Sequencer {
             if sequenced {
                 self.refresh_log_check();
             }
-            self.release_waiting_checkpoint()?;
+            self.retry_waiting_checkpoints()?;
             handover_stop = handover_stop.or_else(|| self.admitted_handover());
             batch.timing = sequenced.then_some(started);
             let release = self.stage(std::mem::take(&mut batch))?;

@@ -4,8 +4,9 @@
 //! (`Engine::take_root_delta`) and sends them here in order; at a checkpoint it sends the rest
 //! (`Engine::commit_inputs`) and waits for the root, which it bounds by deferring a paced checkpoint
 //! until little is left to write. It releases each checkpoint's version once the log holds the
-//! checkpoint durably, and every proof the node serves is read here from the newest released version,
-//! in steps a waiting commit goes ahead of. The tree's results are a function of the messages alone,
+//! checkpoint durably, and every proof and claim the API serves is read here from the newest released
+//! version, in steps a waiting commit goes ahead of; a payout's first proof is read from its
+//! checkpoint's version, whose signature waits for the vault to accept that checkpoint. The tree's results are a function of the messages alone,
 //! in the order the sequencer sent them, so the roots are those an inline engine computes.
 
 mod claims;
@@ -14,6 +15,7 @@ pub(crate) mod protocol;
 mod state;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, channel, sync_channel};
 
 use anyhow::{Context, anyhow};
@@ -25,13 +27,18 @@ use engine_core::merkle::{
 };
 use engine_core::types::AccountId;
 use tokio::sync::{Notify, oneshot};
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::checkpoints::LatestCheckpoint;
 use crate::root_worker::protocol::Progress;
 use crate::root_worker::state::WorkerState;
 
-/// A payout's first proof, `None` where the version did not hold the approval.
+/// Reads forwarded and not yet answered past which the sequencer turns more away, answering them
+/// unavailable, so a burst of reads holds a bounded queue on the worker, however long the worker's
+/// tree work keeps it from them.
+pub(crate) const MAX_READS: usize = 1024;
+
+/// A payout's first proof, `None` where the worker no longer held the checkpoint's version.
 pub(crate) type Proved = ((AccountId, u64), Option<WithdrawalApprovalProof>);
 
 /// A message to the worker.
@@ -71,6 +78,18 @@ pub(crate) enum Read {
     Distribution(AccountId, oneshot::Sender<Option<ClaimAnswer<DistributionProof>>>),
 }
 
+impl Read {
+    /// Whether the API has stopped waiting for the answer.
+    pub(crate) fn is_closed(&self) -> bool {
+        match self {
+            Self::Account(_, reply) => reply.is_closed(),
+            Self::Exit(_, reply) => reply.is_closed(),
+            Self::Entitlement(_, reply) => reply.is_closed(),
+            Self::Distribution(_, reply) => reply.is_closed(),
+        }
+    }
+}
+
 /// What the worker reports to the sequencer.
 #[derive(Debug)]
 pub(crate) enum Outcome {
@@ -84,6 +103,8 @@ pub(crate) enum Outcome {
 #[derive(Default)]
 pub(crate) struct Shared {
     pub(crate) progress: Progress,
+    /// Reads forwarded and not yet answered, or dropped once the API stopped waiting.
+    pub(crate) reads: AtomicUsize,
     /// Notified when the worker reaches an armed wake-up, reports an outcome, or stops.
     pub(crate) woken: Notify,
 }
@@ -188,10 +209,20 @@ impl RootWorker {
         self.send(Work::Prove(seq, approvals))
     }
 
-    /// Forwards a proof read, which the worker answers on the read's own channel.
+    /// Forwards a proof read, which the worker answers on the read's own channel, or, with
+    /// `MAX_READS` outstanding, drops it, which answers the API unavailable.
     /// Error cases:
     /// - the worker has stopped
     pub(crate) fn read(&self, read: Read) -> anyhow::Result<()> {
+        if read.is_closed() {
+            return Ok(());
+        }
+        // Only the sequencer adds, so no other read can pass the bound between the check and the add.
+        if self.shared.reads.load(Ordering::Acquire) >= MAX_READS {
+            debug!("a proof read turned away: {MAX_READS} reads wait on the state root worker");
+            return Ok(());
+        }
+        self.shared.reads.fetch_add(1, Ordering::AcqRel);
         self.tx.send(Message::Read(read)).map_err(|_| anyhow!("the state root worker has stopped"))
     }
 
@@ -304,6 +335,10 @@ fn run(mut state: WorkerState, rx: &Receiver<Message>, shared: &Arc<Shared>, out
             continue;
         };
         let woken = finished > 0 && shared.progress.finish(finished);
+        let answered = state.take_answered();
+        if answered > 0 {
+            shared.reads.fetch_sub(answered, Ordering::AcqRel);
+        }
         let reports = state.take_outbox();
         let reported = !reports.is_empty();
         for report in reports {
@@ -317,3 +352,6 @@ fn run(mut state: WorkerState, rx: &Receiver<Message>, shared: &Arc<Shared>, out
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,6 +1,7 @@
 //! When a checkpoint's root waits for root work: a paced one defers while the work is over the bound
-//! and is taken once it is not, or in full once the limit passes, with no request needed; an unpaced
-//! one never defers; and a retried one still answers to the gate, ending the deferral when it holds.
+//! and is taken once it is not, or in full once the limit passes, with no request needed and with
+//! requests arriving throughout; an unpaced one never defers; and a retried one still answers to the
+//! gate, ending the deferral when it holds.
 
 use super::*;
 use crate::sequencer::fixture_tests::replay_trusted;
@@ -43,6 +44,44 @@ async fn a_paced_checkpoint_defers_for_root_work_and_is_written_once_the_worker_
     let replayed = replay_trusted(&entries).expect("every checkpoint's root is the replay's");
     assert_eq!(checkpoints(&entries).last().map(|checkpoint| checkpoint.seq), Some(paced));
     assert_eq!(replayed.engine.last_seq(), Some(paced), "nothing after the paced command");
+}
+
+/// A query that sends the next as it runs, at its batch's end, so the sequencer finds a request
+/// waiting whenever it looks for one, and takes no wake-up, until `stop` is set. Counts those run.
+fn chained_query(tx: mpsc::Sender<Request>, stop: Arc<AtomicBool>, run: Arc<AtomicUsize>) -> Request {
+    Request::Query(Box::new(move |_| {
+        run.fetch_add(1, Ordering::SeqCst);
+        if !stop.load(Ordering::SeqCst) {
+            _ = tx.clone().try_send(chained_query(tx, stop, run));
+        }
+    }))
+}
+
+#[tokio::test]
+async fn a_deferred_checkpoint_is_written_while_requests_keep_arriving() {
+    let mut node = Node::new("roots-deferred-busy", None);
+    node.touch(12_000);
+    node.seq.roots.set_bounds(BOUND, NEVER);
+    let paced = node.pace_next();
+    let (trigger, replied) = tick();
+    let mut running = node.run(vec![trigger]);
+    let (stop, run) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)));
+    running.send(chained_query(running.tx.clone(), stop.clone(), run.clone())).await;
+
+    let checkpoint = running.checkpoint().await;
+    assert_eq!(checkpoint.seq, paced, "the paced checkpoint is written at its own seq");
+    assert!(run.load(Ordering::SeqCst) > 0, "the requests kept arriving meanwhile");
+    stop.store(true, Ordering::SeqCst);
+    let deferred =
+        running.logged("the deferral", |logged| says(logged, "a paced checkpoint waits for root work")).await;
+    assert_eq!(number(&deferred, "seq"), paced);
+    let committed = running.logged("the commit", |logged| says(logged, "state root committed")).await;
+    assert!(number(&committed, "wait") <= BOUND, "its commit waited only within the bound: {committed:?}");
+    assert!(timeout(WAIT, replied).await.is_ok_and(|events| events.is_ok()), "the tick was answered");
+
+    let Stopped { ended, entries, .. } = running.stop().await;
+    ended.expect("the sequencer drains");
+    replay_trusted(&entries).expect("every checkpoint's root is the replay's");
 }
 
 #[tokio::test]

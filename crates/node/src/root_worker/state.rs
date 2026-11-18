@@ -28,6 +28,8 @@ pub(super) struct WorkerState {
     last: Lane,
     /// What the steps taken since the thread last looked have to report to the sequencer.
     outbox: Vec<Outcome>,
+    /// Reads answered, or dropped unanswered, since the thread last looked.
+    answered: usize,
 }
 
 /// A read in progress.
@@ -36,6 +38,15 @@ enum Reading {
     /// An exit proof whose items, then approvals, are read a step at a time, against the version it
     /// pinned.
     Exit(Box<Exiting>),
+}
+
+impl Reading {
+    fn is_closed(&self) -> bool {
+        match self {
+            Self::Read(read) => read.is_closed(),
+            Self::Exit(exiting) => exiting.reply.is_closed(),
+        }
+    }
 }
 
 /// An exit proof under way: its head, and the items and approvals still to prove.
@@ -62,6 +73,7 @@ enum Background {
 }
 
 impl WorkerState {
+    /// A worker holding `tree`, with every lane empty.
     pub(super) fn new(tree: StateTree) -> Self {
         Self {
             tree,
@@ -71,6 +83,7 @@ impl WorkerState {
             claims: Claims::default(),
             last: Lane::Background,
             outbox: Vec::new(),
+            answered: 0,
         }
     }
 
@@ -120,6 +133,11 @@ impl WorkerState {
     /// What the steps taken so far have to report, clearing it.
     pub(super) fn take_outbox(&mut self) -> Vec<Outcome> {
         std::mem::take(&mut self.outbox)
+    }
+
+    /// Reads answered, or dropped, since the last call.
+    pub(super) fn take_answered(&mut self) -> usize {
+        std::mem::take(&mut self.answered)
     }
 
     /// The sequencer's next message, in the order it sent them, returning the leaf writes it finished.
@@ -183,49 +201,72 @@ impl WorkerState {
         0
     }
 
-    /// The oldest read's next step, against the newest released version.
+    /// The oldest read's next step, against the newest released version, after dropping the reads at
+    /// the front whose API has stopped waiting, with any version an exit read under way pinned.
     fn read_step(&mut self) {
-        match self.reads.pop_front().expect("next_lane picks a lane that holds a step") {
+        while let Some(reading) = self.reads.pop_front_if(|reading| reading.is_closed()) {
+            if let Reading::Exit(exiting) = reading {
+                self.tree.unpin(exiting.version);
+                self.queue_free();
+            }
+            self.answered += 1;
+        }
+        let Some(reading) = self.reads.pop_front() else { return };
+        // An exit read goes back to the front until its last step answers it.
+        let under_way = match reading {
             Reading::Read(Read::Account(account, reply)) => {
                 let proof: Option<AccountProof> =
                     self.tree.released().and_then(|version| self.tree.account_proof(version, account));
                 let _ = reply.send(proof);
+                None
             }
             Reading::Read(Read::Entitlement(account, reply)) => {
                 let answer =
                     self.tree.released().and_then(|version| self.claims.entitlement(&self.tree, version, account));
                 let _ = reply.send(answer);
+                None
             }
             Reading::Read(Read::Distribution(account, reply)) => {
                 let answer =
                     self.tree.released().and_then(|version| self.claims.distribution(&self.tree, version, account));
                 let _ = reply.send(answer);
+                None
             }
             Reading::Read(Read::Exit(account, reply)) => {
                 let head = self.tree.released().and_then(|version| {
                     let proof = self.tree.exit_head(version, account)?;
                     Some((version.id(), proof))
                 });
-                let Some((version, proof)) = head else {
-                    let _ = reply.send(None);
-                    return;
-                };
-                self.tree.pin(version);
-                let ExitItems { queued, pending, credits } = self.tree.exit_items(account);
-                let (queued, pending, credits) = (queued.into(), pending.into(), credits.into());
-                let exiting = Exiting { version, account, proof, queued, pending, credits, next: 1, reply };
-                self.reads.push_front(Reading::Exit(Box::new(exiting)));
+                match head {
+                    Some((version, proof)) => {
+                        self.tree.pin(version);
+                        let ExitItems { queued, pending, credits } = self.tree.exit_items(account);
+                        let (queued, pending, credits) = (queued.into(), pending.into(), credits.into());
+                        let exiting = Exiting { version, account, proof, queued, pending, credits, next: 1, reply };
+                        Some(Reading::Exit(Box::new(exiting)))
+                    }
+                    None => {
+                        let _ = reply.send(None);
+                        None
+                    }
+                }
             }
             Reading::Exit(mut exiting) => {
                 if self.exit_step(&mut exiting) {
-                    return self.reads.push_front(Reading::Exit(exiting));
+                    Some(Reading::Exit(exiting))
+                } else {
+                    let Exiting { version, mut proof, reply, .. } = *exiting;
+                    proof.unfinalised_credits.sort_by_key(|credit| credit.deposit.deposit_id);
+                    self.tree.unpin(version);
+                    self.queue_free();
+                    let _ = reply.send(Some(proof));
+                    None
                 }
-                let Exiting { version, mut proof, reply, .. } = *exiting;
-                proof.unfinalised_credits.sort_by_key(|credit| credit.deposit.deposit_id);
-                self.tree.unpin(version);
-                self.queue_free();
-                let _ = reply.send(Some(proof));
             }
+        };
+        match under_way {
+            Some(reading) => self.reads.push_front(reading),
+            None => self.answered += 1,
         }
     }
 
@@ -278,7 +319,10 @@ impl WorkerState {
                 let tree_version = self.tree.version(version).expect("a pinned version is kept");
                 for _ in 0..PROOF_STEP {
                     let Some((account, nonce)) = approvals.pop_front() else { break };
-                    proofs.push(((account, nonce), self.tree.approval_proof(tree_version, account, nonce)));
+                    // As the inline path asserts: only a version gone, not one held, leaves a payout unproved.
+                    let proof = self.tree.approval_proof(tree_version, account, nonce);
+                    proofs
+                        .push(((account, nonce), Some(proof.expect("a checkpoint includes every preceding approval"))));
                 }
                 if approvals.is_empty() {
                     self.tree.unpin(version);
@@ -303,7 +347,10 @@ impl WorkerState {
     fn cancel(&mut self) {
         for reading in std::mem::take(&mut self.reads) {
             match reading {
-                Reading::Exit(exiting) => _ = exiting.reply.send(None),
+                Reading::Exit(exiting) => {
+                    let _ = exiting.reply.send(None);
+                    self.answered += 1;
+                }
                 Reading::Read(read) => self.reads.push_back(Reading::Read(read)),
             }
         }

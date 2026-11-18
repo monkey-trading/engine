@@ -150,6 +150,7 @@ impl Association {
 }
 
 impl ExitIndex {
+    /// Adds `entry` under its account.
     pub(crate) fn insert(&mut self, entry: Association) {
         match entry {
             Association::Queued(account, seq) => _ = self.queued.entry(account).or_default().insert(seq),
@@ -159,6 +160,7 @@ impl ExitIndex {
         }
     }
 
+    /// Removes `entry`, and its account's set once empty.
     pub(crate) fn remove(&mut self, entry: &Association) {
         match entry {
             Association::Queued(account, seq) => unindex(&mut self.queued, *account, seq),

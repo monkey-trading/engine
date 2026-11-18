@@ -137,6 +137,36 @@ fn a_discard_answers_a_pinned_exit_read_with_none_and_returns_a_payout_proofs_re
     assert!(matches!(account.try_recv(), Ok(None)), "no version is left to read");
 }
 
+#[test]
+fn reads_the_api_stopped_waiting_for_are_dropped_and_an_exit_under_way_unpins_its_version() {
+    let mut run = Run::new();
+    run.take(Op::Release, &mut Coverage::default()).unwrap();
+    run.command(0, trader(2));
+    run.take(Op::Commit, &mut Coverage::default()).unwrap();
+    let old = run.state.tree.released().expect("the first root is released").id();
+    _ = run.state.take_answered();
+    // An exit read past its first step, pinned to the released version, and an account read behind it.
+    let (reply, exit) = oneshot::channel();
+    run.state.take(Message::Read(Read::Exit(trader(1), reply)));
+    while !matches!(run.state.reads.front(), Some(Reading::Exit(_))) {
+        run.state.step(&run.progress).expect("the exit read starts");
+    }
+    let (reply, account) = oneshot::channel();
+    run.state.take(Message::Read(Read::Account(trader(2), reply)));
+    // The newer root is released, so only the exit read keeps the old version, and then the API stops
+    // waiting for both reads.
+    run.take(Op::Release, &mut Coverage::default()).unwrap();
+    assert!(run.state.tree.version(old).is_some(), "the exit read's pin keeps its version");
+    drop((exit, account));
+    // One step of the read lane drops both, proving nothing more.
+    run.state.read_step();
+    assert!(run.state.reads.is_empty(), "both reads are dropped in one step");
+    assert_eq!(run.state.take_answered(), 2, "both reads end, for the sequencer's count");
+    assert!(run.state.tree.version(old).is_none(), "the dropped exit read unpins its version");
+    while run.state.step(&run.progress).is_some() {}
+    assert_eq!(run.state.tree.garbage(), 0, "and its nodes are freed");
+}
+
 // ── Helpers ──
 
 #[derive(Clone, Debug)]

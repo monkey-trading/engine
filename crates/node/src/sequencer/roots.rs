@@ -5,9 +5,12 @@
 //! in order. A checkpoint's root is the worker's commit of the rest, which the sequencer waits for.
 //! A paced checkpoint goes ahead only once that wait is within `ROOT_BOUND`, and is taken anyway, in
 //! full, under the Warning `root_backlog_held` after `ROOT_DEFER_MAX`; an unpaced one never waits.
-//! Each checkpoint's version is released once the batch that holds the checkpoint is durable, and
-//! proofs, claims and payout proofs are read on the worker from released versions.
+//! Each checkpoint's version is released once the batch that holds the checkpoint is durable, and the
+//! API's proofs and claims are read on the worker from the newest released version. A payout's first
+//! proof is read from the version of the checkpoint that covers it, released or not, since its
+//! signature waits for the vault to accept that checkpoint.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -52,8 +55,8 @@ pub(super) struct Roots {
     running: bool,
     /// Whether the worker holds the tree: the engine computes no root of its own.
     detached: bool,
-    /// Payout proofs asked of the worker and not yet answered.
-    proving: usize,
+    /// Payout proofs asked of the worker and not yet answered, by the checkpoint they are asked at.
+    proving: BTreeMap<u64, usize>,
     /// Since when a paced checkpoint has waited for root work.
     deferred: Option<TokioInstant>,
     /// Attempts that deferred for root work, so a retry that does not defer again ends the wait.
@@ -76,7 +79,7 @@ impl Roots {
             worker: RootWorker::start()?,
             running: false,
             detached: false,
-            proving: 0,
+            proving: BTreeMap::new(),
             deferred: None,
             deferrals: 0,
             held: false,
@@ -272,13 +275,29 @@ impl Sequencer {
     }
 
     /// Handles a wake-up from the worker, the deferral's deadline, or idle time: takes the worker's
-    /// reports, copies leaf writes out, and takes a deferred checkpoint whose wait is now within the
-    /// bound or whose time is up.
+    /// reports, copies leaf writes out, and retries a deferred checkpoint.
     /// Error cases:
     /// - the worker has stopped, or the checkpoint cannot be written
     pub(super) fn root_wake(&mut self) -> anyhow::Result<()> {
         self.take_root_outcomes()?;
         self.copy_root_work()?;
+        self.retry_deferred_checkpoint()
+    }
+
+    /// At a batch's end, before it is staged, writes a checkpoint that waited: for a member to confirm
+    /// holding its seq, or deferred for root work, so requests that arrive faster than the sequencer
+    /// waits for one, which leave it no wake-up to take, keep neither waiting.
+    /// Error cases:
+    /// - a checkpoint cannot be written
+    pub(super) fn retry_waiting_checkpoints(&mut self) -> anyhow::Result<()> {
+        self.release_waiting_checkpoint()?;
+        self.retry_deferred_checkpoint()
+    }
+
+    /// Takes a deferred checkpoint whose wait is now within the bound or whose time is up.
+    /// Error cases:
+    /// - the checkpoint cannot be written
+    fn retry_deferred_checkpoint(&mut self) -> anyhow::Result<()> {
         let Some(since) = self.roots.deferred else { return Ok(()) };
         let deadline = TokioInstant::now().duration_since(since) >= self.roots.defer_max;
         if self.root_wait() <= self.roots.bound || deadline {
@@ -308,18 +327,22 @@ impl Sequencer {
     /// - the worker has stopped
     pub(super) fn prove_payouts(&mut self, seq: u64, approvals: Vec<(AccountId, u64)>) -> anyhow::Result<()> {
         self.roots.worker.prove(seq, approvals)?;
-        self.roots.proving += 1;
+        *self.roots.proving.entry(seq).or_default() += 1;
         Ok(())
     }
 
-    /// Waits for every payout proof asked of the worker, for a release of payouts, which signs only a
-    /// payout with its proof. A proof goes ahead of the worker's other background jobs, and its lane
-    /// takes every third step, so the wait is the work and reads queued ahead of it and a step of each.
+    /// Waits for the payout proofs asked at checkpoints the vault has posted, up to `posted`, which a
+    /// release of payouts may sign with now; proofs at a later checkpoint arrive as outcomes, long before
+    /// that checkpoint is final. The worker asked for them when their checkpoint was written, or, for
+    /// approvals a recovery window has just loaded, at a checkpoint already covering them, so the wait
+    /// is that window's proofs at most.
     /// Error cases:
     /// - the worker has stopped
-    pub(super) fn settle_payout_proofs(&mut self) -> anyhow::Result<()> {
+    pub(super) fn settle_payout_proofs(&mut self, posted: Option<u64>) -> anyhow::Result<()> {
         self.take_root_outcomes()?;
-        while self.roots.proving > 0 {
+        let due =
+            |proving: &BTreeMap<u64, usize>| posted.is_some_and(|posted| proving.range(..=posted).next().is_some());
+        while due(&self.roots.proving) {
             let outcome = self.roots.worker.next_outcome()?;
             self.take_root_outcome(outcome)?;
         }
@@ -332,7 +355,12 @@ impl Sequencer {
     fn take_root_outcome(&mut self, outcome: Outcome) -> anyhow::Result<()> {
         match outcome {
             Outcome::Proved { seq, proofs } => {
-                self.roots.proving = self.roots.proving.saturating_sub(1);
+                if let Some(asked) = self.roots.proving.get_mut(&seq) {
+                    *asked -= 1;
+                    if *asked == 0 {
+                        self.roots.proving.remove(&seq);
+                    }
+                }
                 self.take_payout_proofs(seq, proofs);
                 Ok(())
             }

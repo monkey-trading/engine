@@ -172,7 +172,7 @@ pub(super) fn run() {
     let held = stamped_at[event_at + 1].duration_since(stamped_at[event_at]).as_micros();
     let done = stamped_at[event_at + 1];
     let after_done: Vec<u128> = (event_at + 1..sent.len()).filter(|i| sent[*i] >= done).map(|i| waits[i]).collect();
-    let longest_after_done = after_done.iter().copied().max().unwrap_or(0);
+    let longest_after_done = after_done.iter().copied().max().expect("prices sent once the rollover was done");
     let before_longest = *waits[..event_at].iter().max().expect("prices before");
     let first = checkpoints.iter().find(|(when, _)| *when >= event_sent);
     let written = checkpoints.iter().filter(|(when, _)| *when >= event_sent && *when <= window_end).count();
@@ -194,8 +194,17 @@ pub(super) fn run() {
     report("mass_rollover_root_prices_after_rollover_done", after_done);
     println!("WAIT mass_rollover_root_account_proofs empty_answers={empty}");
     report("mass_rollover_root_account_proof_reads", std::mem::take(&mut reads));
-    let verdict = if longest_window <= BAR_US { "within" } else { "OVER" };
-    println!("WAIT bar mass_rollover_root longest_wait_us={longest_window} bar_us={BAR_US} {verdict}");
+    let verdict = |us: u128| if us <= BAR_US { "within" } else { "OVER" };
+    println!(
+        "WAIT bar mass_rollover_root longest_wait_us={longest_window} bar_us={BAR_US} {}",
+        verdict(longest_window)
+    );
+    println!(
+        "WAIT bar mass_rollover_root_after_done longest_wait_us={longest_after_done} bar_us={BAR_US} {}",
+        verdict(longest_after_done)
+    );
     assert!(first.is_some(), "a checkpoint follows the rollover");
     assert!(longest_window < GUARD.as_micros(), "a price waited {longest_window}us after the rollover");
+    // The rollover command's own time is #912's and #933's; the root work after it is this case's.
+    assert!(longest_after_done <= BAR_US, "a price waited {longest_after_done}us behind the rollover's root work");
 }

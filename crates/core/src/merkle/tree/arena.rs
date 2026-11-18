@@ -77,6 +77,7 @@ impl NodeRef {
         }
     }
 
+    /// Whether it names the empty subtree.
     pub(crate) fn is_empty(self) -> bool {
         self == Self::EMPTY
     }
@@ -107,10 +108,12 @@ impl<T> Table<T> {
         index
     }
 
+    /// The item at `index`.
     fn get(&self, index: u32) -> &T {
         &self.chunks[index as usize / CHUNK][index as usize % CHUNK]
     }
 
+    /// The item at `index`, to change.
     fn get_mut(&mut self, index: u32) -> &mut T {
         &mut self.chunks[index as usize / CHUNK][index as usize % CHUNK]
     }
@@ -133,14 +136,17 @@ impl Arena {
         NodeRef(self.leaves.alloc(Leaf { key, hash, value, held: 1 }) | LEAF)
     }
 
+    /// The branch at `index`.
     pub(crate) fn branch(&self, index: u32) -> &Branch {
         self.branches.get(index)
     }
 
+    /// The branch at `index`, to change: only one held once, which no other version shares.
     pub(crate) fn branch_mut(&mut self, index: u32) -> &mut Branch {
         self.branches.get_mut(index)
     }
 
+    /// The leaf at `index`.
     pub(crate) fn leaf(&self, index: u32) -> &Leaf {
         self.leaves.get(index)
     }
