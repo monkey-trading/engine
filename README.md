@@ -1,442 +1,397 @@
 # monkeytrading
 
-monkeytrading is an open-source engine for trading contracts for difference on crypto-assets,
-currencies, stock indices, commodities, and shares. As with a conventional CFD broker, the house
-takes the other side of every trade. Unlike one, its rules are public code, it runs inside a
-confidential-computing enclave, and it publishes every command it processes, so anyone can replay
-the record and confirm that the state it reports is the state its rules produce. Ownership of the
-house, in turn, is issued to the people who trade with it.
+A trading engine for contracts for difference (CFDs) that runs inside a confidential-computing
+enclave and publishes every command it processes.
 
-> **Pre-launch.** The engine runs end to end on a single machine, with a mock enclave, mock
-> custody, and simulated prices, or live crypto prices from three venues; vault deposits also run
-> against a local chain. Signed checkpoint posting, rollback checks, and signed withdrawals with
-> their FIFO queue also run against Anvil, as do MONKEY emissions and claims; MONKEY's production
-> budget and start are still to be set. FX, index, commodity, and share prices from two market-data
-> vendors each run against local stand-ins for those vendors, as do the index and commodity futures'
-> second source, CME Group's own WebSocket API, and the US shares' second source, Alpaca's
-> consolidated quote feed; live vendor feeds wait on credentials and redistribution licences. MONKEY staking, USDC distribution claims and operator elections run against Anvil,
-> the API's public certificate is issued and renewed against a local ACME test CA, and
-> the enclave's keys survive restarts and pass to the release governance names against Anvil, with a stand-in
-> for the hardware sealing; hardware attestation and sealing remain under construction.
-> Nothing here holds real funds.
+You trade crypto-assets, currencies, stock indices, commodities and US shares against the house, and
+the house's rules are the code in this repository. The engine is a deterministic state machine, the
+node publishes each command it sequences with the events it produced, and the enclave signs a Merkle
+root over the whole state at each checkpoint, so anyone can replay the log and check the state they
+are shown. Collateral is USDC in a vault contract on Arbitrum One, which pays withdrawals against
+the enclave's signed approvals and lets every account exit if the engine stops.
+
+## Status
+
+monkeytrading has not launched and holds no real funds.
+
+| Part | State |
+| --- | --- |
+| Engine and node | Run end to end on one machine |
+| Crypto prices | Live from Coinbase and Kraken |
+| FX, index, commodity and share prices | Run against local stand-ins for Massive, TraderMade, CME Group and Alpaca; the vendor accounts are not in place |
+| Custody vault, MONKEY, staking and operator rotation | Run on local Anvil chains; no contract is deployed |
+| Account screening | Runs against a synthetic source; the production source is not chosen |
+| Enclave | The SEV-SNP image builds reproducibly and the verifier passes test-signed quotes; the image has not yet run on SEV-SNP hardware |
 
 ## How it works
 
-Every order trades against the house at a reference price: the median of recent quotes from
-several independent venues. A market order fills immediately at that price; a limit or stop order
-rests until the price reaches it. If too few venues have quoted recently, or their quotes disagree
-by more than a set margin, the market has no price and nothing fills, so there is never a stale
-price to pick off. A quote shown to a client is a guide rather than a promise: a market order fills
-at the live price, and is declined only if that price is worse than the quote by more than the
-client's slippage bound.
+The values below are the [launch configuration](config/production-genesis.toml).
+[`crates/core`](crates/core/README.md) states every rule in full, and [SECURITY.md](SECURITY.md)
+what each part of the system is trusted for.
 
-Every fill pays its market's size spread: a number of tenths of a basis point on each part of the
-position it opens or closes, by size band, tight at small and medium sizes and wider above, so a
-round trip pays it on the way in and again on the way out. No market quotes a zero spread: no band
-is below a tenth of a basis point on FX and indices, or 1 basis point elsewhere. Spreads widen at
-times of stress, when venues diverge, prices move fast, or the house's exposure runs high, and from
-protocol V62 in every market once the house has lost money to its clients over the trailing day: its
-loss counts open positions at current prices, net of the fees and spreads it has earned, and the
-wider spreads hold until the house is ahead again and a cooldown has passed. Accounts
-whose trades are consistently followed by a move in their favour, the mark of trading on prices
-that are about to change, pay a small additional spread on every trade. From V54 that measure is
-how many standard errors an account's recent edge sits above zero, in each market's own units of
-price movement, weighted over time and by size: every account starts on the best price, none pays
-more before 20 fills, and round trips at an unchanged price cannot dilute it.
+### Prices and orders
 
-From V59 an account earns a volume tier from the volume it trades over the last 30 days, and a
-higher tier trades more size at the best price: a fresh wallet's first spread band ends at a
-quarter of each market's first bound, $1M of volume over two days or more takes it to half, $25M
-over five to all of it, and $250M over ten to two and a half times it. No tier changes a rate. Only
-volume that has stood counts: an opening counts once it has been held a minute, a close counts only
-what has matured, and a round trip at an unchanged price counts nothing, so churn earns no tier.
+Every order trades against the house at the market's index: the median of the mids its venues quoted
+in the last second. A market has no price, and nothing in it fills, while fewer than two venues have
+quoted in that second, while their quotes spread wider than its divergence bound, in basis points
+(bps, hundredths of a percent) of the index, or while its exchange is closed.
 
-From V64 the tier also sets how much leverage an account opens at: a fresh wallet opens at most 20x
-and tier 1 at most 50x, while tiers 2 and 3 reach each market's own bands, 100x on BTC-USD and
-ETH-USD. The tier's margin floor raises the initial requirement that new risk and withdrawals must
-leave, never the level an account is closed out at, so a tier that falls closes nothing out; it only
-stops new risk and withdrawals until the account is back above the requirement.
+| Markets | Venues | Hours | Divergence bound |
+| --- | --- | --- | --- |
+| BTC-USD, ETH-USD, SOL-USD | Coinbase, Kraken | Always open | 25 bps |
+| EUR-USD, GBP-USD, USD-JPY, AUD-USD | Massive, TraderMade | Sunday 17:00 to Friday 17:00, New York | 5 bps |
+| US500, US100, US30, JP225, XAU-USD, XAG-USD, WTI | Massive, CME Group | CME Globex; JP225 Osaka Exchange | 10 bps |
+| 20 US shares, from AAPL to ORCL | Massive, Alpaca | 09:30 to 16:00 New York, NYSE holidays | 10 bps |
 
-From V66 the tier also sets how many orders an account rests and how many signed requests a second
-the node takes from it: 25 orders and 2 requests a second at tier 0, rising to 250 and 20 at tier 3,
-so a wallet recycled for a fresh start begins at the lowest. A tier that falls cancels nothing: the
-orders already resting stay, and only a new order past the limit is refused.
+Indices and commodities price from their front futures contract, adding each roll's gap so a roll
+does not move the price. Accounts are kept in US dollars; JP225 converts its yen at the engine's
+USD-JPY index, so it has no price while USD-JPY has none.
 
-From V68 the higher tiers also pay less. Tiers 2 and 3 take 10% and 20% off the base profit fee, so a
-gain held past the hold curve pays 9% and 8% where tier 0 pays 10%, and the same share off a position's
-financing markup at each rollover; tiers 1 to 3 weigh their MONKEY emission losses 1.1, 1.25 and 1.5
-times. A higher tier never pays more than a lower one.
+A market order is refused if it would fill worse than the price you were quoted by more than your
+slippage bound: at most 25 bps on crypto, 5 on FX, 10 on indices and commodities, and 15 on shares.
+A limit order fills once its price, spread included, is at or better than its limit, and a stop
+order fills at the live price once the index reaches its stop. An order resting while its market is
+closed fills at the first price after the open, gap included.
 
-From V79 a trader can attach a take profit and a stop loss to a position, on the order that opens it or
-adds to it, or afterwards; an order naming one level keeps the other. Each closes the whole position
-once the price the account would close it at reaches it: the trader's own closing price, spreads and
-tiers included, so a change of stress or of the account's tier can fire a level without the index
-moving. A stop loss fills at that price, including any gap; a take profit fills at its level or better.
-A level must lie at least its market's minimum distance beyond the closing price, both levels go when
-the position closes or reverses, and a market's levels use one of the account's resting-order slots.
+A position can carry a take profit and a stop loss, set on the order that opens or adds to it or
+later. Each closes the whole position once the price you would close it at, spread included, reaches
+it: a stop loss at that price, gap included, and a take profit at its level or better. A level must
+sit at least the market's minimum distance from that price, proposed as its close ceiling below, and
+a market's levels take one of your resting-order slots.
 
-Losing trades pay nothing. Winning trades pay a share of the profit they realise, which from protocol
-V55 falls with how long the position was held: the whole gain on a close within 10 seconds of the
-open, falling to the standard 10% at 15 minutes. Adding to a position moves its open time to the
-size-weighted average of the times its units were added, so an add does not restart the clock, with
-the units already held counted as no older than the curve's end (15 minutes at launch): a small
-position held for days cannot lend its age to a large one added to it. From V57 that end is the
-launch curve's, so a later curve that reaches further cannot widen the age an add borrows.
-Positions held over the daily rollover pay or receive financing at a
-benchmark interest rate plus or minus a markup. Under V18, a separate operator worker fetches dated rates from the official
-publishers. After downtime, each missed rollover uses the rate effective on its local date. The
-worker setup and stale-rate policy are in [engine-node](crates/node/README.md#dated-benchmark-worker).
+### Spreads
 
-From V23, signed operator instructions schedule stock dividends and splits, and index dividend
-points, before the previous venue close. The engine captures those holdings and applies the
-adjustment at the ex-date open, before opening fills. Long dividends receive the signed input's
-net amount, shorts pay gross, and splits adjust positions, resting orders and stored prices
-together, rounding each price once and settling any rounded-off fraction of a position in cash.
-The [operator runbook](crates/node/README.md#corporate-actions-operator-runbook) describes required
-inputs, recorded FX valuation and failure handling.
+A buy fills at the index plus a spread, and a sell at the index less it. The size spread is charged
+by band of position notional: each band's rate applies to the part of your position inside it, on
+the part a fill opens and on the part it closes, so a round trip pays it twice. In basis points:
 
-Accounts are kept in US dollars. A market quoted in another currency, such as Japan 225
-in yen, accrues profit and loss in that currency and converts it to dollars at the
-engine's own price for the currency pair, the same way for margin, exposure, and financing. While
-that currency pair has no price, neither does the market, and nothing trades in it.
+| Markets | First band | Second band | Above |
+| --- | --- | --- | --- |
+| BTC-USD | 2.0 to $2M | 4.0 to $10M | 8.0 |
+| ETH-USD | 3.0 to $1M | 6.0 to $5M | 12.0 |
+| SOL-USD | 2.0 to $1M | 4.0 to $5M | 8.0 |
+| EUR-USD, GBP-USD (proposed) | 0.4 to $10M | 0.8 to $50M | 1.6 |
+| USD-JPY, AUD-USD (proposed) | 0.5 to $10M | 1.0 to $50M | 2.0 |
+| US500, US30 (proposed) | 0.7 to $5M | 1.4 to $25M | 2.8 |
+| US100 (proposed) | 0.9 to $5M | 1.8 to $25M | 3.6 |
+| JP225 (proposed) | 1.0 to $5M | 2.0 to $25M | 4.0 |
+| XAU-USD, XAG-USD, WTI | 2.0 to $2M | 4.0 to $10M | 8.0 |
+| AMD, AVGO, LLY, NVDA, ORCL, TSLA | 3.0 to $500k | 6.0 to $2M | 12.0 |
+| The other 14 shares | 2.0 to $500k | 4.0 to $2M | 8.0 |
 
-Margin is shared across an account's positions. When equity falls below half of the margin
-requirement, the largest losing position that can trade is closed first, and so on until the
-account recovers; a position in a market that is closed or has no fresh price waits until that
-market prices again. Losses beyond an account's balance fall on the house, never on the trader. The
-check runs on each price update, whenever a price moves without one because a market opens or a
-quote grows too old, after each day's financing, and after a change to a margin table or the
-close-out level. A market with no fresh price allows no dealing at all, while accounts
-holding it trade other markets and withdraw against its last price. Markets in real-world assets
-keep their exchange's hours, holidays, and early closes, and orders resting while a market is
-closed fill at the first price after it opens, gap and all; no quote from outside a market's hours
-ever prices it. From protocol V60 a market whose prices can jump across its weekend closure carries
-a weekend margin, a higher rate each of its margin bands charges over any closure of at least 40
-hours: WTI 7.5%, Japan 225 and silver 1.5%, and US Tech 100 1% at launch. From two hours before
-the market's weekend closure until it reopens, new risk in any market and withdrawals must leave the
-account meeting it; when the closure starts, an account below it is closed out on that market at the
-last price before the close; and once the market reopens, its normal margin applies again. Indices
-and commodities price from their front futures contract, and when one
-contract rolls to the next the price takes the gap between them, so it does not jump. The house limits its own risk by
-capping its net exposure in each market, and the sum of those exposures across markets, at the
-larger of a fraction of its net asset value and a fixed dollar floor, so trading can start from a
-house with no capital and carries on while the house is in deficit.
+The first band's bound shown is the one at volume tier 2; your tier moves it (see [Volume
+tiers](#volume-tiers)). Stress and the toxicity add-on widen the spread, but the part of a fill that
+closes a position never pays more than its market's close ceiling, from 17 bps on FX to 35 bps on
+ETH-USD and SOL-USD.
 
-Collateral is USDC, held in a vault contract on Arbitrum One. The chain safeguards funds and never
-executes trades. A deposit is credited once the L2 batch holding it is posted to Ethereum
-([#22](https://github.com/0xjevons/monkeytrading/issues/22)). The vault pays a withdrawal against
-the enclave's signed approval ([#23](https://github.com/0xjevons/monkeytrading/issues/23)); one it
-cannot cover waits in a public first-in-first-out queue
-([#49](https://github.com/0xjevons/monkeytrading/issues/49)). If the enclave stops posting
-checkpoints, the vault stops taking deposits and, after a set period, anyone can start its exit
-against the last root it posted: for a fixed window, each account registers the balance that root
-proves, its open positions valued at the root's marks, and its unpaid withdrawals, and then every
-account is paid the same share of what the vault holds, in full when it is solvent. Deposits the
-root does not hold are refunded to whoever paid them, and the proofs need nothing but the public log
-([#48](https://github.com/0xjevons/monkeytrading/issues/48)). Ownership of the house is represented
-by the MONKEY token, earned on losing trades: every ten minutes a fixed budget is shared among the
-accounts in proportion to their realised losses — each losing fill's loss magnitude counts, whether or not wins in the same period offset it in cash — less any debt the house wrote off (carried forward, up to the weight the account earned, while the losses cannot cover it), and
-the budget halves every 182.5 days. An account claims what it earned from the vault, against any
-checkpoint the vault holds from the signer epoch in force, and no entitlement mints twice
-([#36](https://github.com/0xjevons/monkeytrading/issues/36)). Holders who stake it share, in USDC,
-the house's net asset value above a reserve floor
-([#50](https://github.com/0xjevons/monkeytrading/issues/50)).
+### Profit fee
 
-The operator lists markets and their trading calendars, sets benchmark rates and protocol
-parameters, raises stress levels, and can stop new risk in one market or in all of them at once;
-neither those modes nor any spread stops a trader reducing or closing a position in an open market
-with a price. Once the engine has credited any funds, each
-of these is a command the operator's key signs, published in the log with its signature, and replay
-checks every one. From protocol V35 the operator's powers are bounded: the profit fee and the
-close-out level move only within half of their launch values and only after a public notice of at
-least seven days, a change of price rules cannot leave a market with open positions unpriced unless
-the market is reduce-only first, and the operator key rotates only by a signed command that takes effect seven
-days after it is logged. From protocol V37 stakers can elect the operator key instead: each delegates
-chosen amounts of its staked MONKEY to registered candidates, an operator registry contract elects one when an election
-epoch closes, and the engine applies the elected key from the election's effective time, at least
-seven days after it is logged. Rotation starts off, with the deployer as the only operator, until the
-governance timelock turns it on.
-Because stakers own the house NAV these powers move value towards, from protocol V46 a signed benchmark
-rate moves at most 300 bps a day from the applied rates next to its date, a market holding positions
-stays on its benchmark, and the operator's stress floor is at most level 1 and lapses after 72 hours.
-From V49 a market's financing markup and the stress levels and triggers in the signed parameters
-change only seven days after a signed notice, as the profit fee and close-out level do. From V52 so do
-a listed market's spread and margin bands, and only within its launch bands: at every size a spread
-stays between its launch rate and twice it, and margin at or above launch's. A market's close-spread
-ceiling is set no lower than what a close in its first band could pay at the widest admitted stress
-when it was set or when the market launched, and a market whose ceiling was adopted after genesis
-can only be listed as that adoption named it. From V55 the profit fee moves only up from its launch
-value, to at most half again, and the fee that short holds pay only to a curve at or above the launch
-curve at every hold, each after the same notice, so no hold pays less than at launch. From V59 the
-volume tier table moves only after the same notice too, never more generously than at launch, and at
-every tier and size a spread stays between that tier's launch spread and twice it, and from V64 each
-tier's margin floor stays at or above launch's, and from V66 its order limit and request rate at or
-below launch's, and from V68 its fee discount, financing discount and emissions boost, each at or below launch's and never falling with the tier. From V60 a
-listed market's weekend margin also changes only after the same notice, or while rotation is on by a
-vote; the operator's calendar change may not shorten or remove a weekend closure starting within
-seven days, and while the market holds positions may not add or bring one forward within seven days
-either. From V62 the stress levels keep the trigger on the house's loss at its launch
-level or above, with a threshold no higher than launch's.
-While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
-distribution, which it claims from the vault as a staker claims its own; from V50 the fifth is split
-among the operators by their time in office during the epoch.
-From protocol V51 the operator rotates daily. At each election close a schedule contract adopts every
-eligible candidate as the rotation set, weighted by its delegated stake, seven days plus a finality
-margin before the set takes effect. Anyone draws each day's turn, from a day before its 22:30 UTC
-boundary until the boundary, from the set in effect at the start of that window, seeded by an Ethereum
-RANDAO mix relayed to Arbitrum, and a candidate may hold consecutive turns. From the boundary the vault names the turn's release, the incumbent hands the member the keys
-and the log, and the engine applies the member's admin key; the member earns the operator's share
-from the moment it takes its turn to the end of it. From V53 a member's seven days' notice carries
-across the unbroken run of sets that name it with the same key, and the operator in office before
-the first turn earns only until that turn applies: its boundary, or its mirror when that is later.
+A losing close pays nothing. A winning close pays a share of the gain it realises, after both fills'
+spreads, that falls with how long the position was held:
 
-From protocol V56, while rotation is on, the parameters, listings and protocol upgrades change only by
-a vote of the rotation set's members, weighted by the stake the set snapshotted: a proposal passes with
-more than two thirds of the weight. From V65 this holds only while a rotation set with members is in
-effect; until the first takes effect the operator keeps its bounded commands. A normal change takes effect seven days after the engine logs it,
-so anyone holding a position can act first. A fast-path change takes effect at once, but only as a
-restriction that reduces risk (a higher margin or close-out level, a stress floor, a lower house cap,
-or reduce-only), which lapses after a recorded lifetime unless another vote renews it. The operator of
-the day keeps benchmark rates, its own bounded stress floor, reduce-only and corporate actions.
+| Hold | ≤ 10 s | 16 s | 25 s | 39 s | 1 min | 1.6 min | 2.5 min | 3.9 min | 6.1 min | 9.6 min | ≥ 15 min |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Fee | 100% | 91% | 82% | 73% | 64% | 55% | 46% | 37% | 28% | 19% | 10% |
 
-From protocol V70, a member whose enclave signs two histories during its turn can be proven at fault
-on chain: anyone submits two of its signed log heads that name different histories at one seq, and
-the engine then cuts the member's share of the operator's earnings by a haircut that starts at the
-recorded penalty and falls linearly back to nothing, the withheld part going to stakers.
+Between points the fee falls linearly, rounded up to the basis point; from 15 minutes your tier's
+base applies. An add moves the open time to the size-weighted average of when the units were added,
+counting units already held as no more than 15 minutes old, so an add neither restarts the clock nor
+borrows a small old position's age. A reversal closes the whole position at its hold.
 
-The reasoning behind each of these choices is recorded in the decision issues
-[#1](https://github.com/0xjevons/monkeytrading/issues/1) to
-[#16](https://github.com/0xjevons/monkeytrading/issues/16).
+### Financing
 
-## Verifying the engine
+Each day at 22:00 London time, weekends included, every open position pays or receives a day's
+financing on its notional: a long pays the benchmark rate plus the markup, and a short receives the
+benchmark less the markup, paying when the markup is the larger. A market whose benchmark has no
+published rate for the day accrues nothing.
 
-The engine is deterministic: given the same sequence of commands, it reaches the same state on any
-machine, to the last unit. The node streams each command it sequences, with the events it produced,
-and the enclave periodically signs a root that commits to the whole state: a Merkle tree over
-accounts, markets, and the rest of the state, so each checkpoint rehashes only what changed. Any
-account can fetch a proof of its balance and positions against the last checkpoint's root and check
-it without the node. `engine replay` re-applies a log from the beginning and checks the root at
-every checkpoint against the state the published code computes, and fails a log it cannot find or
-that holds no checkpoint, has a missing or invalid signature, or names an inconsistent deployment.
-Early logs that predate domain recording require explicit `--chain-id` and `--vault`; logs with
-withdrawal releases require an independently trusted `--signer`. Replay reads
-a node's log directory or the archive the node serves: its completed log segments, with a manifest of their seq ranges and
-SHA-256 hashes. A stream subscriber can start or resume at any message offset, and gets the log from
-disk and then live, each message once.
+| Markets | Benchmark | Markup | Day count |
+| --- | --- | --- | --- |
+| Crypto | SOFR | 5% | 365 |
+| EUR-USD, GBP-USD, USD-JPY, AUD-USD | €STR, SONIA, SOFR, AONIA | 1% | 360, 365, 360, 365 |
+| US500, US100, US30, commodities, shares | SOFR | 2.5% | 360 |
+| JP225 | TONA | 2.5% | 365 |
 
-Optional `[snapshots]` configuration caches checkpoint state for restart. Recovery authenticates
-each cache against independently pinned attested enclave signers and checks its recomputed root
-against its logged checkpoint before replaying the suffix. Invalid caches warn and fall back to
-an earlier cache or full replay. See [node recovery configuration](crates/node/README.md).
+### Volume tiers
 
-Every command carries the time the sequencer stamped it with. The enclave's host supplies its
-clock, so the node checks that clock against signed time from several independent
-[Roughtime](https://www.rfc-editor.org/rfc/rfc10049) servers. It stamps nothing until signed time
-has arrived, and stops sequencing while the clock is further from the time the servers agree on
-than a set bound, or once a minute has passed without signed time. Prices are held to a tighter bound
-that does not rest on the host's wall clock: a venue's TLS stream is ordered, so a ping's reply bounds
-how far behind the stream can be, and a stream further behind than a set bound counts as no quote.
-It rests on the monotonic clock's rate instead. [SECURITY.md](SECURITY.md) states the bound and what
-it depends on.
+Your tier comes from the volume you traded over the last 30 UTC days, no day counting for more than
+the threshold divided by the days the tier needs. Opening notional counts once held for 60 seconds,
+and a close counts 5 seconds after it fills unless you reopen at the same index within those 5
+seconds, so churn and round trips count nothing. Every account starts at tier 0.
 
-The enclave also attests to the key it signs with, to the key its API serves TLS with, and to the
-SHA-256 of the config file it runs with. Both keys are generated inside the enclave, so client
-connections end where the host cannot read them. They are sealed on the host's disk to the
-release that runs them, its launch measurement and config file together, so a restart keeps them.
-The vault's governance timelock names one release at a time as current: a node opens its keys only
-while the vault names its release, and they pass to a new release, new code or a changed config,
-only once the timelock has made it current and the two releases attest each other. One hash in the
-attestation's report data commits to all three: the hash of a bundle the node serves beside the
-quote. A production node also has a
-public certificate authority certify that same TLS key for the API's domain, over ACME from inside
-the enclave, so a browser trusts the API while a client that checks the attestation can still pin
-the key. The local node uses a mock attestation, labelled as such. The confidential VM image for AMD SEV-SNP builds reproducibly from
-[`image`](image), so anyone can rebuild a release and compare its launch measurement; booting it on
-SEV-SNP hardware is being validated in [#108](https://github.com/0xjevons/monkeytrading/issues/108),
-and a verifier for its quotes is being built in
-[#27](https://github.com/0xjevons/monkeytrading/issues/27).
+| Tier | 30-day volume | Days needed | First spread band ends at | Leverage | Resting orders | Requests a second | Profit fee base | Markup off | MONKEY weight |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | None | | 25% of its bound | At most 20x | 25 | 2 | 10% | | 1x |
+| 1 | $1M | 2 | 50% | At most 50x | 50 | 5 | 10% | | 1.1x |
+| 2 | $25M | 5 | 100% | The market's own | 100 | 10 | 9% | 10% | 1.25x |
+| 3 | $250M | 10 | 250%, at most the second bound | The market's own | 250 | 20 | 8% | 20% | 1.5x |
 
-`engine ct-watch` runs outside the enclave and watches Certificate Transparency logs for a
-certificate for the API's domain whose key no verified attestation of the node names, and alerts
-when one appears. It checks the logs' signed tree heads but not their consistency, so it sees what
-the logs it follows show it.
+The leverage caps raise each margin band of the initial requirement to at least 5% and 2%. A falling
+tier cancels and closes nothing; it only refuses new orders past its limits and margin.
 
-## Running it locally
+### Margin and close-outs
 
-You need the latest stable Rust on Linux or macOS, and `jq` and `xxd` for the API examples. Start
-a local node with a mock enclave, mock custody, and simulated prices; its API is served over TLS on
-`127.0.0.1:8080`, which you can change with `node.listen` in `config/dev.toml`. The certificate is
-self-signed, so the examples below pass `curl -k`. Set `feeds.provider = "venues"` in a copy of the
-config to price BTC-USD and ETH-USD from Coinbase and Kraken instead; the other markets
-then have no price, so their orders get `no_price`. The node checks its clock against public
-Roughtime servers over UDP: it starts sequencing once they answer, and stops a minute after it
-loses them. A log is tied to the `[genesis]` it was started with: after editing that section, delete
-`data/dev/log` before starting the node again, or it refuses to resume.
+Margin is shared across your positions and charged by band of each position's notional:
 
-```bash
-cargo test --workspace
+| Markets | Margin |
+| --- | --- |
+| BTC-USD, ETH-USD | 1% to $2M, 2% to $10M, 5% above |
+| SOL-USD | 10% to $1M, 20% above |
+| FX | 0.5% to $5M, 1% to $25M, 3% above |
+| Indices | 0.5% to $5M, 1% to $25M, 5% above |
+| Commodities | 1% to $2M, 5% above |
+| Shares | 10% to $500k, 20% to $2M, 50% above |
+
+A fill that adds risk, and a withdrawal, must leave your equity at or above the initial requirement:
+these bands, raised to your tier's floor. A fill must also keep the house's net exposure within its
+cap, at least $3.16M to $31.6M per market and $61M in all. When equity falls below half the
+requirement at the market's own bands, the engine closes your largest losing position that can
+trade, then the next, until you are back above it. A position in a closed or unpriced market waits
+until it prices. A loss beyond your balance falls on the house, never on you.
+
+Over any closure of at least 40 hours, WTI's bands charge at least 7.5%, JP225's and XAG-USD's 1.5%,
+and US100's 1%. From two hours before such a closure until the market reopens, new risk in any
+market and withdrawals must meet this weekend margin, and when the closure starts, an account below
+it is closed out in that market at the last price.
+
+### Toxicity and stress
+
+The engine marks each fill by how far the index moved its way over the next 5 seconds, in units of
+the market's typical 5-second move over the last hour. Your toxicity score is how many standard
+errors your recent edge sits above zero, each fill weighted by size (at most four times your
+average) and the weights halving every 7 days. Once the score rests on 20 fills, a score of 4 adds 2
+bps to every fill and a score of 8 adds 5 bps. Round trips at an unchanged price and close-outs
+count for nothing.
+
+Each market also has a stress level, which rises as soon as one of its triggers fires and steps down
+5 minutes after the last one clears. The close ceiling holds at every level.
+
+| Level | Size spread | Added | Fires when |
+| --- | --- | --- | --- |
+| 0 | 1x | None | |
+| 1 | 2x | 2 bps | The venues diverge by more than 60% of the market's bound, the index moves 0.75% within a minute, or the house's net exposure in the market reaches 80% of its cap |
+| 2 | 4x | 10 bps | The venues diverge by 95% of the bound, the index moves 2% within a minute, the house's exposure reaches 95% of its cap, or, in every market at once, the house has lost money to its clients over the last 24 hours |
+
+### Deposits, withdrawals and MONKEY
+
+A deposit of 10 to 1,000,000,000 USDC becomes trading collateral once a majority of the node's RPC
+providers see it confirmed on Arbitrum, and withdrawable once its block is final on Ethereum. Before
+an account's first deposit credits or its first order, it signs an eligibility declaration and the
+node screens it and the client's address. A withdrawal of at least 10 USDC joins a public queue,
+first in first out, paid in part when the vault is short; once a checkpoint the vault accepted holds
+the approval, the enclave signs it, and anyone can submit it to the vault within 24 hours.
+
+If checkpoints stop, the vault refuses deposits after a day, and after 14 days anyone can start its
+exit against the last posted root: for 30 days each account registers what that root proves it is
+owed, and the vault pays the claims pro rata. `engine exit-proof` builds the proofs from the log.
+
+MONKEY is a token the vault mints. Every 10 minutes a budget of it, 100,000 at launch and halving
+every 182.5 days, is shared among the accounts that realised losses in that period, in proportion to
+those losses. Staked MONKEY receives, at each daily close, the house's net asset value above a
+$30.5M floor, as far as house cash covers it, in USDC; unstaking takes 28 days.
+
+### Who can change the rules
+
+The operator lists markets, signs benchmark rates, schedules dividends and splits, and can stop new
+risk in a market, but nothing stops you reducing or closing a position in an open, priced market.
+Each of these is a signed command in the public log. The profit fee, spreads, margins, markups,
+stress settings, tier table and weekend margins change only after a seven-day public notice. The fee
+stays between its launch value and 1.5 times it, spreads between their launch rates and twice them,
+margins at or above launch, and tier benefits at or below it. Once rotation is on, the operator is
+drawn each day from a set MONKEY stakers elect, takes a fifth of each distribution, and changes
+those values only by a vote of more than two thirds of the set's stake.
+
+A log records the protocol version each rule set took effect at, so an old log replays to the roots
+it published; the [version list](crates/core/src/protocol/versions.rs) says what each one changed.
+
+## Getting it
+
+You need Rust 1.96 or later on Linux or macOS. The local-chain scenario also needs Foundry 1.8.3
+(`anvil`, `forge`, `cast`), `curl`, `jq` and Python 3; the browser verifier needs rustup with Rust
+1.99.1 and its `wasm32-unknown-unknown` target, wasm-bindgen-cli 0.2.129, and Node 18 or later.
+
+```shell
+git clone https://github.com/monkey-trading/engine.git
+cd engine
+cargo build -p engine-node
+```
+
+This builds the `engine` binary into `target/debug/engine`. There are no releases yet.
+
+## What you get
+
+| Part | What it does |
+| --- | --- |
+| `engine run` | Runs a node: sequences commands, writes and serves the log, signs checkpoints, and serves the API. `engine run --config config/dev.toml` |
+| `engine replay` | Replays a published log and checks every checkpoint's root and signature. `engine replay --log data/dev/log` |
+| `engine verify-attestation` | Checks an enclave's attestation against a release manifest. `engine verify-attestation --attestation attestation.json --release release.toml --processor Genoa` |
+| `engine verify-response`, `engine verify-frames` | Check a signed API response, or a signed stream connection, against the attested key |
+| `engine exit-proof` | Builds the proofs an account exits the vault with, from a published log |
+| `engine admin`, `engine ct-watch` | The operator's tools: sign admin commands and deliver secrets into the enclave, and watch Certificate Transparency logs for a certificate for the API's domain whose key no attestation names |
+| [`contracts`](contracts/README.md) | The vault, the MONKEY token, staking and the operator registry, as a Foundry project |
+| [`crates/verify-wasm`](crates/verify-wasm/README.md) | The browser verifier, an npm package |
+| [`image`](image/README.md) | The reproducible SEV-SNP enclave image |
+
+## Running it
+
+### A local node with simulated prices
+
+To run the engine on your machine with nothing outside it but a time source:
+
+```shell
 cargo run -p engine-node -- run --config config/dev.toml
 ```
 
-In another terminal, read the node's health and markets:
+This command:
 
-```bash
-API=https://localhost:8080
-curl -sk $API/v1/health
-curl -sk $API/v1/markets
+- serves the API over TLS at `https://127.0.0.1:8080` with a self-signed certificate, and Prometheus
+  metrics at `http://127.0.0.1:9464/metrics`;
+- mocks the enclave, custody and feeds: three simulated venues quote eight markets (BTC-USD,
+  ETH-USD, EUR-USD, US500, DE40, XAU-USD, WTI and AAPL), each on its exchange's hours;
+- writes the log to `data/dev/log` and the account history index to `data/dev/history`;
+- sequences nothing until two of three public Roughtime servers agree on the time over UDP, and
+  stops when 60 seconds pass without such a sample.
+
+It has worked when the node logs `first trusted time sample: sequencing started` and, in another
+terminal, this prints each market, whether it has a price, and its last price (`mark`); AAPL is
+`false` outside NYSE hours:
+
+```shell
+curl -sk https://127.0.0.1:8080/v1/markets | jq -r '.[] | [.symbol, .pricing.priced, .mark] | @tsv'
 ```
 
-From V24, funding and trading require a configured access source and the account's signed
-eligibility declaration, including with mock custody. The default config leaves screening
-unconfigured and those actions closed. With Foundry's `anvil`, `forge` and `cast`, install the
-pinned contract dependencies and run the complete local funding and trading scenario:
+This node credits no deposit and fills no order, since both need a signed eligibility declaration
+screened by a source `config/dev.toml` does not name. ctrl-c stops it. A log is tied to the
+`[genesis]` it started with: after editing that section, remove `data/dev`.
 
-```bash
+### With live crypto prices
+
+To price BTC-USD and ETH-USD from Coinbase and Kraken:
+
+```shell
+mkdir -p data
+sed '/^\[feeds\]/,/^\[/ s/^provider = "mock"/provider = "venues"/' config/dev.toml >data/venues.toml
+cargo run -p engine-node -- run --config data/venues.toml
+```
+
+The node reads both venues' public WebSocket feeds over TLS, with no key. It has worked when the
+`curl` above prints `true` for BTC-USD and ETH-USD and `false` for the six other markets.
+
+### Against a local chain with the vault
+
+To deposit USDC into the vault, have it credited, and trade with signed orders:
+
+```shell
 (cd contracts && forge soldeer install)
 ./scripts/dev-access-enforcement.sh
 ```
 
-The scenario uses explicit public test keys and a signed synthetic source. See
-[access-source configuration](config/access-source.md) for declarations, provider integration,
-public refusal evidence and promotion requirements.
+After installing the contracts' pinned dependencies, the script starts Anvil on port 8545 with a
+mock USDC and the vault, three RPC proxies on 18545 to 18547, a synthetic screening source on 18846,
+and a node on [`config/anvil.toml`](config/anvil.toml) with its API on 8080 and metrics on 9464, in
+a temporary directory it removes. It deposits, declares and trades with signed requests, checks the
+refusals screening makes, restarts the node, reorganises a deposit away and replays the log.
+`ANVIL_PORT`, `API_PORT`, `METRICS_PORT` and `ACCESS_SOURCE_PORT` move it off ports you use. It has
+worked when it ends with `PASS: every deposit credited or held once after finality; public log
+replay verifies`.
 
-`-k` only skips the CA check that a self-signed certificate cannot pass. What makes a connection
-trustworthy is pinning the attested key. The attestation serves a `bundle` whose SHA-256 is the
-first 32 bytes of its `report_data`; the rest of the report data is zero. The bundle is the tag
-`engine.attestation.v1`, then the enclave's 20-byte address, the config file's SHA-256, and the
-SHA-256 of the certificate's public key (its DER SubjectPublicKeyInfo), the form
-`curl --pinnedpubkey` checks. Check that the bundle matches the report data before pinning its key,
-and against a real enclave, verify the quote first:
+### The verifier in a browser
 
-```bash
-ATT=$(curl -sk $API/v1/attestation)
-BUNDLE=$(jq -r '.bundle[2:]' <<< "$ATT")
-EXPECTED="$(xxd -r -p <<< "$BUNDLE" | sha256sum | cut -c1-64)$(printf %064d 0)"
-if [ "$EXPECTED" = "$(jq -r '.report_data[2:]' <<< "$ATT")" ]; then
-  PIN=${BUNDLE: -64}
-  curl -s --insecure --pinnedpubkey "sha256//$(xxd -r -p <<< "$PIN" | base64)" $API/v1/health
-else
-  unset PIN
-  echo "the bundle does not match the report data" >&2
-fi
+To build the WebAssembly package a web page uses to check the node's attestation and signed answers
+with the same Rust code as the `engine` commands:
+
+```shell
+scripts/build-wasm-verifier.sh out/verifier
+./scripts/dev-wasm-verifier.sh out/verifier
 ```
 
-A pinned connection still passes through machines the client does not control, so the enclave also
-signs what it says. Every API response a client relies on carries the attested key's signature over
-the request it answers and its body, a challenge the client chose, the node's time and log head, and
-the status and body; the attestation, the archive, whose segment catalog proves it, and health are
-left unsigned. Send a fresh random challenge with each request, and check the answer with the
-challenge and request you sent: a recorded answer then fits no other request. A stream connection
-opened with `signed=1` and a challenge gets each message in a numbered frame chained to the one
-before it, so no frame can be dropped, repeated, or taken from another connection unnoticed, and a
-signed heartbeat every five seconds by default, so a client can tell a quiet market from a
-held-back feed. The time an answer carries is the host's clock, which the node signs only while it
-is within the drift bound of trusted time; without trusted time, answers go out unsigned and a
-signed stream closes. A signature proves who answered; it cannot stop someone in between from
-delaying or dropping an answer, which is why a client treats a missing heartbeat as a stale feed and
-an unsigned answer as no answer. Nor does it tie an answer to one delivery of a request: someone in
-between can send the node a copy first and pass on the node's refusal of the second, so before
-showing that an order, cancel, or withdrawal was refused, a client confirms it with a signed read of
-the account under a fresh challenge:
+The first command writes the `.wasm` module, its JavaScript glue and TypeScript types,
+`package.json` and `SHA256SUMS` to `out/verifier`, failing past 1.5 MB gzipped; on x86_64 Linux it
+builds the same bytes from any checkout. The second checks the package under Node against the
+`engine` CLI on every attestation fixture and signed-answer vector, and has worked when it prints
+`PASS: wasm and native verdicts match on <n> fixtures`. The package's
+[README](crates/verify-wasm/README.md#usage) shows a page calling it.
 
-```bash
-CHALLENGE=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
-curl -sk -D headers -o body -H "X-Engine-Challenge: $CHALLENGE" $API/v1/markets
-cargo run -p engine-node -- verify-response --signer "$(jq -r .enclave_address <<< "$ATT")" \
-  --chain-id 31337 --vault 0x0000000000000000000000000000000000000000 --challenge $CHALLENGE \
-  --path /v1/markets --headers headers --body body
-```
+## Talking to it
 
-`./scripts/dev-signed-api.sh` runs the whole check against a local node, the stream included.
+The node serves a REST API under `/v1`, and at `/v1/stream` a WebSocket stream of the log from any
+`?from=<seq>` onwards, over TLS on `node.listen` within the limits `[api]` sets.
+[`crates/node/README.md`](crates/node/README.md#usage) lists every endpoint and its body.
 
-The House and MONKEY pages read the same signed answers. `GET /v1/house` adds open interest, open
-margin, open positions, each market's long, short and net, the house's unrealised result and the
-volume traded to the cash, NAV and gross exposure it already gives. `GET /v1/house/positions?market=`
-gives a market's positions as aggregates only: USD by the move from the mark that would close each
-account out (the account's other positions held at their marks) and by profit. `GET /v1/monkey`
-gives the emission schedule and totals, the stake, and the distribution state, and
-`GET /v1/monkey/activity` pages the newest allocations, stakes and unstakes, and `GET /v1/monkey/distributions` the closed distribution epochs. `GET /v1/stats/series`
-serves bucketed series (NAV, cash, each market's long and short, the withdrawal queue, volume,
-MONKEY per unit of emission weight (a dollar of tier 0 loss), stake, allocation and distributions) at 1m, 1h and 1d, each
-answer stating where its data begins. A node holds these in memory and rebuilds them from the log
-at start, so nothing is stored for a host to alter; `[stats]`, `api.stats_interval` and `api.stats_light_interval` in the
-config set retention, bucketing and how often the accounts are scanned.
-`./scripts/dev-dashboard-data.sh` runs them against a local node.
+- **Reads:** `/v1/markets`, `/v1/accounts/{address}`, `/v1/house`, `/v1/status`, and an account's
+  proof against the last checkpoint at `/v1/accounts/{address}/proof`.
+- **Writes:** `POST /v1/orders`, `/v1/orders/cancel`, `/v1/withdrawals` and the rest carry the
+  account's EIP-712 signature, its next nonce and an expiry at most 5 minutes ahead. An account can
+  register a session key at `/v1/session-keys` to place and cancel orders for up to 24 hours.
+- **Signed answers:** send `X-Engine-Challenge` with 32 random bytes in hex, and the answer carries
+  the enclave key's signature over your request, the challenge, the node's time and log head, and
+  the body. `/v1/stream?signed=1&challenge=<hex>` signs every frame, with a heartbeat every 5 s.
 
-A browser can run the same checks. [`crates/verify-wasm`](crates/verify-wasm) builds the
-attestation verifier and the signature checks into a WebAssembly package from the same Rust code
-the CLI runs; the page passes it the attestation, the release manifests it pins, the collateral the
-node serves at `/v1/attestation/collateral`, and each signed answer as received.
-`./scripts/dev-wasm-verifier.sh` checks that the package reaches the CLI's verdict, with the same
-message, on every attestation fixture and signed-answer vector.
+## Verifying it
 
-The node's metrics are at `localhost:9464/metrics` in Prometheus format, and
-[`ops/grafana/engine-node.json`](ops/grafana/engine-node.json) is a Grafana dashboard for them;
-[`ops/prometheus/engine-node-rules.yml`](ops/prometheus/engine-node-rules.yml) holds alerting rules
-for a node that goes silent or cannot deliver its pages. [`ops/runbooks`](ops/runbooks) holds the
-operator's procedures, an index of every alert, and a production config template. To have Critical alerts posted to a
-webhook, add an `[alerts.critical]` section naming the environment variable that holds its URL, as
-`config/dev.toml` shows.
+**The log.** Replay re-applies every command with this repository's code and checks each
+checkpoint's state root and signature, so a node cannot report a state its log does not produce:
 
-Stopping the node with ctrl-c lets it finish what is queued and write a final checkpoint. You can
-then verify the log it wrote:
-
-```bash
+```shell
 cargo run -p engine-node -- replay --log data/dev/log
 ```
 
-The local configuration accepts unsigned requests (`auth = "none"`). With `auth = "eip712"`, each
-order, cancel, cancel-all, close-all, levels request, and withdrawal must carry its account's EIP-712 signature, its
-next nonce, and an expiry at most five minutes ahead, and replay checks every one. The first start records this
-setting in the log, so changing it later needs a fresh log: with the node stopped, remove
-`data/dev/log`, and the node rebuilds the account history index in `data/dev/history` from the new
-one. The node's full API is described in [`crates/node/README.md`](crates/node/README.md).
+It prints `verified: <n> commands, <n> checkpoints, final root 0x…` and the checkpoint signers.
+`--log` also takes a copy of a node's `/v1/archive/`, and `--attestation` requires every signer to
+be attested.
 
-As the operator, `engine admin` signs a command and submits it over TLS pinned to the node's
-attested key, the `PIN` the bundle check above sets. The local configuration names the public key
-of a test key, so on a local node this stops new risk in every market:
+**The enclave.** An attestation proves which code holds the signing key:
 
-```bash
-OPERATOR_KEY=0x4242424242424242424242424242424242424242424242424242424242424242 \
-  cargo run -p engine-node -- admin --pin $PIN set-reduce-only true
+```shell
+curl -sk https://127.0.0.1:8080/v1/attestation > attestation.json
+cargo run -p engine-node -- verify-attestation --attestation attestation.json \
+  --release release.toml --processor Genoa
 ```
 
-## Repository layout
+`release.toml` is the manifest each release will publish, and `--processor` the host's AMD CPU
+generation. The check passes only if AMD's chain, to a root pinned in the binary, signed the quote;
+the launch measurement is the release's image, which [anyone can rebuild](image/README.md);
+debugging is off; the firmware meets the release's minimum; and the report binds the signing
+address, a config file the release lists, and the API's TLS key. Against the local node it prints
+`the quote is not an SEV-SNP attestation report; a mock quote never verifies`.
 
-The workspace has five crates. [`crates/core`](crates/core) (`engine-core`) is the deterministic
-state machine: it performs no input or output, and uses neither clocks, randomness, nor
-floating-point arithmetic. [`crates/node`](crates/node) (`engine-node`, binary `engine`) runs it,
-sequencing commands, writing and streaming the log, signing checkpoints, serving the API, and
-connecting to custody and price feeds. [`crates/wire`](crates/wire) (`engine-wire`) defines the
-signed answers the node gives and the checks a client runs on them.
-[`crates/verify`](crates/verify) (`engine-verify`) verifies an attestation against release
-manifests with no input, output, or clock of its own, and
-[`crates/verify-wasm`](crates/verify-wasm) (`engine-verify-wasm`) builds it and `engine-wire`'s
-checks for browsers. Node configuration lives in
-[`config`](config), operator assets such as the Grafana dashboard and the runbooks in [`ops`](ops), the confidential
-VM image is built from [`image`](image), and each crate's README describes its files.
-[`contracts`](contracts) is a Foundry project holding the custody vault, and
-[`scripts/dev-vault-deposits.sh`](scripts/dev-vault-deposits.sh) runs a node against it on a local
-Anvil chain through three local RPC proxies. `RPC_QUORUM_SCENARIO=1` adds fabricated-deposit,
-provider-outage and quorum-recovery checks; production requires independent provider operators.
+**A signed answer.** The local node's deployment is chain 31337 and the zero vault address:
+
+```shell
+API=https://127.0.0.1:8080
+CHALLENGE=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+curl -sk -D headers -o body -H "X-Engine-Challenge: $CHALLENGE" $API/v1/markets
+cargo run -p engine-node -- verify-response \
+  --signer "$(curl -sk $API/v1/attestation | jq -r .enclave_address)" \
+  --chain-id 31337 --vault 0x0000000000000000000000000000000000000000 \
+  --challenge $CHALLENGE --path /v1/markets --headers headers --body body
+```
+
+It prints `verified: status 200, signed by 0x…`, and refuses a changed byte with `the signature is
+not the attested key's over these bytes`. Against a real node, take `--signer` from the attestation
+you verified. **A signature cannot stop someone in between from delaying an answer or sending your
+request first, so confirm a refused order or withdrawal with a fresh signed read of the account.**
 
 ## Contributing
 
-Work is tracked in GitHub issues, and pull requests against `main` are welcome. CI checks
-formatting, file length, lints, tests, and dependency advisories and licences, replays the
-committed reference logs on x86_64 and aarch64 Linux, checks the contracts' formatting, build, and
-tests and the vault deposit scenario, and builds the enclave image and the browser verifier twice
-each to check that they reproduce. Run the same checks locally before opening a pull request; the image build is slow, and
-matters when the change touches the node or `image`. The code's conventions are documented in
-[`agents/AGENTS.md`](agents/AGENTS.md).
+Pull requests against `main` are welcome; for a large change, open an issue first.
+
+- Run `cargo fmt`, keep `cargo clippy --workspace --all-targets -- -D warnings` clean, test the
+  crates you touch, and keep Rust files within 500 lines (`./scripts/check-file-loc.sh`). For the
+  contracts, run `forge fmt --check`, `forge build` and `forge test` from `contracts/`.
+- `engine-core` stays deterministic: no clocks, randomness, floating point, `HashMap` iteration or
+  IO, and money is `Fixed`. A change to its rules, state or events ships as a new protocol version
+  ([Adding a protocol version](crates/core/README.md#adding-a-protocol-version)).
+- Title commits and pull requests `[<scopes>] Subject`, naming the areas touched, for example
+  `[core,node] Cap the spread a close can pay`.
 
 ## Security
 
-Please report vulnerabilities privately, through GitHub's private vulnerability reporting or to william.jevons@proton.me, rather than in a public issue.
-The [security policy](SECURITY.md) explains what a report should include, how quickly to expect a
-response, how disclosure is coordinated, and which components are in scope. A bug bounty will be
-announced before launch.
+Report a vulnerability privately, through GitHub's private vulnerability reporting or to
+william.jevons@proton.me, never in a public issue. [SECURITY.md](SECURITY.md) gives the scope, what
+to include and the response times.
 
 ## License
 
-monkeytrading is licensed under the Apache License, Version 2.0; see [`LICENSE`](LICENSE).
+All of monkeytrading, the contracts included, is licensed under the Apache License 2.0; see
+[`LICENSE`](LICENSE).
