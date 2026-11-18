@@ -7,7 +7,7 @@
 //! and hands on nothing of a completed segment before it matches its listing.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, BufWriter};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -80,7 +80,7 @@ pub struct LogWriter {
     /// Physical bytes; legacy whitespace can differ from the public canonical listing length.
     pub(super) manifest_len: u64,
     pub(super) dir_handle: File,
-    pub(super) open: Option<(Segment, BufWriter<File>)>,
+    pub(super) open: Option<(Segment, crate::log::writer::output::Output)>,
     /// The offset of the last entry appended.
     pub(super) last: Option<Offset>,
     /// A new segment could not be created; the current one keeps taking appends meanwhile.
@@ -110,6 +110,8 @@ pub struct LogWriter {
     /// `pending_seals`, they keep a direct flush or a checkpoint capture from treating the
     /// manifest as settled before the old segment's completion is out.
     pub(super) taken_seals: u64,
+    /// Sync jobs taken with entries or a seal and not finished: an inline write must wait for them.
+    pub(super) handed: u64,
     /// A listing failed and the manifest could not be cut back to its durable length, so the
     /// listing may be on disk: nothing more is appended to the segment it lists.
     pub(super) listing_unsettled: bool,
@@ -300,10 +302,10 @@ impl SegmentedLog {
                 // name; any other staging file is the next rotation's, which replaces it.
                 crate::log::writer::remove_if_present(&crate::log::writer::staging_path(&self.dir, segment.first_seq))
                     .context("removing a staged segment name")?;
-                let output = crate::log::append_integrity::open_active(&self.dir, &segment)?;
+                let file = crate::log::append_integrity::open_active(&self.dir, &segment)?;
                 let path = self.dir.join(segment_name(segment.first_seq));
-                output.get_ref().sync_data().with_context(|| format!("syncing {}", path.display()))?;
-                Some((segment, output))
+                file.sync_data().with_context(|| format!("syncing {}", path.display()))?;
+                Some((segment, crate::log::writer::output::Output::new(file)))
             }
             None => None,
         };
@@ -349,6 +351,7 @@ impl SegmentedLog {
             seals_deferred: false,
             pending_seals: Vec::new(),
             taken_seals: 0,
+            handed: 0,
             listing_unsettled: false,
             #[cfg(test)]
             syncs: 0,

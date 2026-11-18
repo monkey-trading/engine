@@ -14,7 +14,7 @@ fn a_flush_syncs_the_open_segment_only_after_an_append() {
     writer.flush().unwrap();
     let (segment, _) = writer.open.take().unwrap();
     let null = fs::OpenOptions::new().write(true).open("/dev/null").unwrap();
-    writer.open = Some((segment, std::io::BufWriter::new(null)));
+    writer.open = Some((segment, crate::log::writer::output::Output::new(null)));
     writer.append(&cmd(1)).unwrap();
     let err = writer.flush().unwrap_err();
     assert!(format!("{err:#}").contains("syncing log"), "{err:#}");
@@ -149,9 +149,9 @@ fn rotation_staging_a_crash_leaves_is_replaced_or_removed_without_listing_the_lo
     assert_eq!(log_entries(&dir), (0..5).map(cmd).collect::<Vec<_>>());
 }
 
-/// With seals deferred, rotation leaves the old segment flushed but unlisted and the new one at its
-/// staging name; the sync job carrying the seal lists the old segment durably, links the new one,
-/// and only then publishes both, in order.
+/// With seals deferred, rotation leaves the old segment's last entries with its seal, unwritten and
+/// unlisted, and the new one at its staging name; the sync job carrying the seal writes and lists
+/// the old segment durably, links the new one, and only then publishes both, in order.
 #[test]
 fn a_deferred_seal_publishes_only_with_its_sync() {
     let dir = scratch_dir("deferred-seal");
@@ -162,7 +162,7 @@ fn a_deferred_seal_publishes_only_with_its_sync() {
         writer.append(&cmd(seq)).unwrap();
     }
     assert_eq!(Manifest::load(&dir).unwrap().segments.len(), 0, "the seal has not listed the segment yet");
-    assert_eq!(file_entries(&dir.join(SEG_0)), [cmd(0), cmd(1)], "the old segment is flushed");
+    assert!(file_entries(&dir.join(SEG_0)).is_empty(), "the old segment's entries ride its seal");
     assert!(!dir.join(SEG_2).exists(), "the new segment has not taken its name");
     assert!(dir.join(format!("{SEG_2}.tmp")).exists());
 

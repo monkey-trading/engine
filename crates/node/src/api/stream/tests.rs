@@ -6,9 +6,7 @@ use std::pin::Pin;
 use std::sync::mpsc;
 use std::task::{Context as TaskContext, Poll};
 
-use engine_core::Fixed;
 use engine_core::command::{Command, Sequenced};
-use engine_core::event::Event;
 use engine_core::types::AccountId;
 use engine_wire::{FrameVerifier, SignedFrame};
 use futures_util::FutureExt;
@@ -106,8 +104,10 @@ async fn a_backfill_stops_at_the_last_flush_while_a_batch_is_written() {
     };
     writer.append(&command(0, Vec::new())).unwrap();
     writer.flush().unwrap();
-    let deposits = vec![Event::Deposited { account: AccountId([1; 20]), amount: Fixed::from_int(1) }; 200];
-    writer.append(&command(1, deposits)).unwrap();
+    writer.append(&command(1, Vec::new())).unwrap();
+    // The sync thread has written the batch and not yet synced it.
+    let job = writer.begin_sync(false).unwrap();
+    job.write().unwrap();
     assert_eq!(log_entries(&dir).len(), 2, "the batch's command is on disk before it is flushed");
 
     let (live, subscriber) = broadcast::channel(16);

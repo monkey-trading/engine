@@ -8,7 +8,7 @@
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::{Context, ensure};
 use tracing::{info, warn};
@@ -20,7 +20,9 @@ use crate::log::{LogWriter, SegmentInfo};
 /// One deferred segment seal: what the sync thread runs to make the seal durable, and what
 /// `finish_sync` publishes once it has.
 pub(crate) struct SealWork {
-    file: File,
+    file: Arc<File>,
+    /// The segment's entries no job took before rotation completed it, taken by the first write.
+    tail: Mutex<Vec<u8>>,
     dir: File,
     manifest: File,
     base_len: u64,
@@ -32,13 +34,26 @@ pub(crate) struct SealWork {
 }
 
 impl SealWork {
-    /// Seals the segment and links the staged next one, in the order and with the durability an
-    /// inline seal gives: the segment's bytes, then the directory, then the manifest listing; the
-    /// new segment's name only after its predecessor is listed, and the directory again at the end.
+    /// Writes the segment's last entries, once.
     /// Error cases:
-    /// - a sync, the manifest length check, the listing write, the exclusive link, or the staging
-    ///   removal fails
+    /// - the write fails
+    pub(crate) fn write_tail(&self) -> anyhow::Result<()> {
+        let tail = std::mem::take(&mut *self.tail.lock().unwrap_or_else(PoisonError::into_inner));
+        if !tail.is_empty() {
+            (&*self.file).write_all(&tail).context("writing log segment")?;
+        }
+        Ok(())
+    }
+
+    /// Seals the segment and links the staged next one, in the order and with the durability an
+    /// inline seal gives: the segment's last entries and its bytes, then the directory, then the
+    /// manifest listing; the new segment's name only after its predecessor is listed, and the
+    /// directory again at the end.
+    /// Error cases:
+    /// - the write, a sync, the manifest length check, the listing write, the exclusive link, or the
+    ///   staging removal fails
     pub(crate) fn run(&self) -> anyhow::Result<()> {
+        self.write_tail()?;
         self.file.sync_all().context("syncing log segment")?;
         self.dir.sync_all().context("syncing log directory")?;
         ensure!(self.manifest.metadata()?.len() == self.base_len, "manifest length changed before listing");
@@ -62,14 +77,13 @@ impl LogWriter {
         self.seals_deferred = true;
     }
 
-    /// Defers the seal the current rotation owes the open segment: its flush, listing, and the
-    /// staged file's link become a `SealWork` riding the next `SyncJob`, and the open segment swaps
-    /// immediately, so appends go on while the seal reaches storage. With no open segment — the
-    /// first segment of a boot, or one recovery found listed — there is nothing to seal, and the
-    /// link and its directory sync stay here, as they do without deferral.
+    /// Defers the seal the current rotation owes the open segment: its unwritten entries, listing,
+    /// and the staged file's link become a `SealWork` riding the next `SyncJob`, and the open
+    /// segment swaps immediately, so appends go on while the seal reaches storage. With no open
+    /// segment — the first segment of a boot, or one recovery found listed — there is nothing to
+    /// seal, and the link and its directory sync stay here, as they do without deferral.
     /// Error cases:
-    /// - the open segment cannot be flushed, a handle cannot be duplicated, or the inline link of a
-    ///   first segment fails
+    /// - a handle cannot be duplicated, or the inline link of a first segment fails
     pub(crate) fn defer_segment_seal(&mut self, staged: &Path, path: &Path) -> anyhow::Result<()> {
         if self.open.is_none() {
             let published = self.complete_and_link(staged, path);
@@ -80,7 +94,6 @@ impl LogWriter {
             return Ok(());
         }
         let (segment, out) = self.open.as_mut().expect("checked above");
-        out.flush().context("flushing log segment")?;
         let listed = segment.info();
         let line = listing_line(&listed)?;
         // Count the listing now, before the seal can leave the writer: an earlier seal may already
@@ -89,7 +102,8 @@ impl LogWriter {
         let base_len = self.manifest_len;
         self.manifest_len = self.manifest_len.checked_add(line.len() as u64).context("manifest length overflow")?;
         let seal = SealWork {
-            file: out.get_ref().try_clone().context("duplicating the log file handle")?,
+            file: out.file().clone(),
+            tail: Mutex::new(out.take()),
             dir: self.dir_handle.try_clone().context("duplicating the log directory handle")?,
             manifest: self.manifest_file.try_clone().context("duplicating the manifest handle")?,
             base_len,
@@ -99,8 +113,7 @@ impl LogWriter {
             checkpoints: std::mem::take(&mut segment.checkpoints),
             line,
         };
-        let (_, out) = self.open.take().expect("the open segment is flushed");
-        drop(out);
+        self.open = None;
         self.pending_seals.push(seal);
         Ok(())
     }
@@ -147,7 +160,8 @@ impl LogWriter {
     /// live catalog is folded first, as rotation does; a catalog that still cannot take the
     /// segment degrades to the plain manifest, which remains authoritative.
     /// Error cases:
-    /// - the segment cannot be flushed, synced, or listed, or the manifest update fails
+    /// - a sync job holds unwritten entries, or the segment cannot be written, synced, or listed, or
+    ///   the manifest update fails
     pub(crate) fn seal_open_segment(&mut self) -> anyhow::Result<Option<SegmentInfo>> {
         if self.catalog_owner.is_some()
             && self.manifest.borrow().catalog.as_ref().is_some_and(|catalog| catalog.live_full())
@@ -158,9 +172,12 @@ impl LogWriter {
                 warn!(alert = "log_catalog_unavailable", "folding the full catalog before the seal failed: {e:#}");
             }
         }
-        let Some((segment, out)) = self.open.as_mut() else { return Ok(None) };
-        out.flush().context("flushing log segment")?;
-        out.get_ref().sync_all().context("syncing log segment")?;
+        if self.open.is_none() {
+            return Ok(None);
+        }
+        self.write_pending()?;
+        let (segment, out) = self.open.as_mut().expect("checked above");
+        out.file().sync_all().context("syncing log segment")?;
         let listed = segment.info();
         // List before taking the open segment: a failure leaves the segment open, so sequencing
         // goes on with a log that still opens.

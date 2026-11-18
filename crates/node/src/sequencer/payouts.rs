@@ -380,7 +380,7 @@ impl Sequencer {
     pub(super) fn sign_mock_authorization(&mut self, approval: WithdrawalApproval) -> anyhow::Result<()> {
         let proof =
             self.engine.approval_proof(approval.account, approval.nonce).context("mock approval proof absent")?;
-        self.log.sync()?;
+        self.sync_log(true)?;
         let issued_at = u64::try_from(self.last_ts / 1_000)?;
         let authorization = Authorization {
             signer: AccountId(self.key.address()),
@@ -394,7 +394,7 @@ impl Sequencer {
         let mut withdrawal = self.unsigned_payout(approval, authorization);
         withdrawal.signature = self.key.sign_payout(&withdrawal)?;
         self.record(LogEntry::Withdrawal(withdrawal))?;
-        self.log.sync()
+        self.sync_log(true)
     }
 }
 
