@@ -51,6 +51,11 @@ impl MarkoutLegs {
         }
     }
 
+    /// The markets that hold an indexed leg.
+    fn markets(&self) -> std::collections::BTreeSet<MarketId> {
+        self.0.keys().map(|(_, market, _, _)| *market).collect()
+    }
+
     /// Forgets every markout of `market`, whose quantities a split zeroed.
     fn forget_market(&mut self, market: MarketId) {
         self.0.retain(|(_, held, _, _), _| *held != market);
@@ -82,6 +87,12 @@ impl Engine {
             Some(markout) => indexes.markout_legs.add(markout, base + self.markouts.len() as u64 - 1),
             None => indexes.markout_legs = MarkoutLegs::of_queue(&self.markouts, base),
         }
+    }
+
+    /// The markets that hold an indexed markout leg: a check for tests, which cannot reach the index.
+    #[doc(hidden)]
+    pub fn markout_leg_markets(&self) -> std::collections::BTreeSet<MarketId> {
+        self.hot_indexes.as_ref().map(|indexes| indexes.markout_legs.markets()).unwrap_or_default()
     }
 
     /// Forgets the markouts of `market`, whose quantities a split zeroed.
