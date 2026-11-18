@@ -92,6 +92,14 @@ fn keys_leaves_the_root_and_proofs_match_an_evm_toolchain() {
             .map(|m| MarketProof { market: m.market, leaf: m.leaf.clone(), siblings: m.siblings.clone() })
             .collect(),
         levels: vec![],
+        no_levels: fixture
+            .positions
+            .iter()
+            .map(|p| {
+                let (siblings, other) = tree.absence(levels_key(fixture.account, p.market)).expect("no levels leaf");
+                NoLevelsProof { market: p.market, other, siblings }
+            })
+            .collect(),
     };
     assert!(proof.verify(fixture.root));
 }
@@ -248,5 +256,59 @@ fn reference_root(leaves: &[(B256, B256)], depth: usize) -> B256 {
             let (left, right) = (reference_root(&l, depth + 1), reference_root(&r, depth + 1));
             keccak(&[&[0x01], left.as_slice(), right.as_slice()])
         }
+    }
+}
+
+#[test]
+fn an_absent_key_proves_absent_and_a_present_one_does_not() {
+    let leaves: Vec<(B256, B256)> = key_pool().into_iter().enumerate().map(|(i, k)| (k, value(i as u64))).collect();
+    for tree in [built(&[]), built(&leaves[..1]), built(&leaves[..5]), built(&leaves)] {
+        let root = tree.root();
+        for n in 100..400 {
+            let absent = key(n);
+            let (siblings, other) = tree.absence(absent).expect("an absent key has a proof");
+            assert!(verify_absent(root, absent, other, &siblings));
+            // Another root and a leaf that is not the one in the place fail.
+            assert!(!verify_absent(keccak(&[b"root"]), absent, other, &siblings));
+            if let Some((other_key, value_hash)) = other {
+                assert!(!verify_absent(
+                    root,
+                    absent,
+                    Some((other_key, value_hash ^ B256::with_last_byte(1))),
+                    &siblings
+                ));
+                assert!(!verify_absent(root, absent, Some((absent, value_hash)), &siblings));
+                assert!(!verify_absent(root, absent, None, &siblings));
+            }
+        }
+        for (present, value_hash) in &leaves {
+            if tree.leaves.contains_key(present) {
+                assert_eq!(tree.absence(*present), None);
+                // A present leaf cannot be shown absent by its own proof, with or without a witness.
+                let siblings = tree.proof(*present).unwrap();
+                assert!(!verify_absent(root, *present, None, &siblings));
+                assert!(!verify_absent(root, *present, Some((*present, *value_hash)), &siblings));
+            }
+        }
+    }
+}
+
+#[test]
+fn a_leaf_cannot_be_hidden_by_an_empty_place_or_a_neighbour() {
+    let leaves: Vec<(B256, B256)> = (0..40).map(|i| (key(i), value(i))).collect();
+    let tree = built(&leaves);
+    let root = tree.root();
+    for (present, _) in &leaves {
+        let proof = tree.proof(*present).unwrap();
+        // Any cut or extension of its own path, ending empty or on another leaf, proves nothing.
+        for cut in 0..=proof.len() {
+            assert!(!verify_absent(root, *present, None, &proof[..cut]));
+            for (other, other_value) in leaves.iter().filter(|(other, _)| other != present) {
+                assert!(!verify_absent(root, *present, Some((*other, *other_value)), &proof[..cut]));
+            }
+        }
+        let mut longer = proof.clone();
+        longer.push(EMPTY);
+        assert!(!verify_absent(root, *present, None, &longer));
     }
 }

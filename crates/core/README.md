@@ -388,7 +388,8 @@ this crate and reproduce the signed state roots exactly.
   markets converting at their own and at another's index, compared event for event and root for root;
   doubled bands and a lowered ceiling each firing a level at a mid the new inputs reach and the old do not;
   and the level path's cost at 100k levels
-- `src/merkle/levels.rs` — the levels leaves (kind 29)
+- `src/merkle/levels.rs` — the levels leaves (kind 29), which an account proof shows or proves absent for each position
+  (`NoLevelsProof`, `verify_absent`)
 - `src/execution/trigger.rs` — resting orders a price reaches, and a triggered reversal's closing slice
 - `src/marks.rs` — venue prices, and marking a market and the markets that convert at its index
 - `src/corporate/` — authenticated instruction types and scheduling (`mod.rs`), the `V76` corporate
@@ -529,6 +530,8 @@ this crate and reproduce the signed state roots exactly.
   ones, a client close, a close-all, a close-out, a weekend close-out and a split to zero each removing
   them saying why, a level set from the last mark over a weekend, a split scaling them, an entry order's
   levels waiting, attaching, dropping and firing at once
+- `tests/levels/proof.rs` — an account proof carrying each position's levels or the proof that it holds none, and
+  failing when either is left out or forged
 - `tests/levels/tiers.rs` — `V79`: a toxicity tier reached and a volume tier lost each firing a level with
   the index unchanged
 - `tests/levels/bounds.rs` — `V79`: a market's levels using one order slot, activation giving each market

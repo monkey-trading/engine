@@ -8,6 +8,8 @@ mod bounds;
 mod common;
 #[path = "levels/lifecycle.rs"]
 mod lifecycle;
+#[path = "levels/proof.rs"]
+mod proof;
 #[path = "levels/tiers.rs"]
 mod tiers;
 

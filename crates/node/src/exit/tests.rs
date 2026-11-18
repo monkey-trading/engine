@@ -55,6 +55,7 @@ fn an_accounts_unfinalised_credits_follow_its_register_call_in_bounded_batches()
         positions: vec![],
         markets: vec![],
         levels: vec![],
+        no_levels: vec![],
     };
     let credit = |deposit_id: u64| engine_core::merkle::UnfinalisedCreditProof {
         seq: 9,

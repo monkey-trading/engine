@@ -2,8 +2,8 @@
 
 use crate::engine::Engine;
 use crate::merkle::{
-    AccountProof, EntitlementProof, LevelsProof, MarketProof, PositionProof, WithdrawalApprovalProof, account_key,
-    entitlement_key, levels_key, market_key, position_key, withdrawal_approval_key,
+    AccountProof, EntitlementProof, LevelsProof, MarketProof, NoLevelsProof, PositionProof, WithdrawalApprovalProof,
+    account_key, entitlement_key, levels_key, market_key, position_key, withdrawal_approval_key,
 };
 use crate::types::{AccountId, MarketId};
 
@@ -16,7 +16,7 @@ impl Engine {
         let leaf = state.accounts.get(&account)?.clone();
         let proof = |key| state.tree.proof(key).expect("every leaf kept for proofs is in the tree");
         let held = state.positions.range((account, MarketId::MIN)..=(account, MarketId::MAX));
-        let (positions, markets) = held
+        let (positions, markets): (Vec<PositionProof>, Vec<MarketProof>) = held
             .map(|((_, market), position)| {
                 let siblings = proof(position_key(account, *market));
                 // Positions are only ever opened in listed markets, and listings are never removed.
@@ -28,16 +28,32 @@ impl Engine {
             })
             .unzip();
         let siblings = proof(account_key(account));
-        let levels = state
-            .levels
-            .range((account, MarketId::MIN)..=(account, MarketId::MAX))
-            .map(|((_, market), levels)| LevelsProof {
-                market: *market,
-                levels: *levels,
-                siblings: proof(levels_key(account, *market)),
-            })
-            .collect();
-        Some(AccountProof { seq: state.seq, root: state.root, account, leaf, siblings, positions, markets, levels })
+        let mut levels = Vec::new();
+        let mut no_levels = Vec::new();
+        for position in &positions {
+            let market = position.market;
+            match state.levels.get(&(account, market)) {
+                Some(held) => {
+                    levels.push(LevelsProof { market, levels: *held, siblings: proof(levels_key(account, market)) })
+                }
+                None => {
+                    let (siblings, other) =
+                        state.tree.absence(levels_key(account, market)).expect("a position without levels has no leaf");
+                    no_levels.push(NoLevelsProof { market, other, siblings });
+                }
+            }
+        }
+        Some(AccountProof {
+            seq: state.seq,
+            root: state.root,
+            account,
+            leaf,
+            siblings,
+            positions,
+            markets,
+            levels,
+            no_levels,
+        })
     }
 
     /// The proof of `account`'s cumulative MONKEY entitlement against the last state root computed.
