@@ -22,6 +22,8 @@ use super::*;
 use crate::common::{BTC, Client, Harness, acct, f};
 use crate::root_worker::{Message, Read, Work};
 
+mod exits;
+
 #[test]
 fn a_drawn_schedule_commits_the_inline_roots_and_reads_only_released_versions() {
     let op = prop_oneof![
