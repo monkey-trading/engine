@@ -66,12 +66,16 @@ impl WorkerState {
         }
     }
 
-    /// Queues a message in its lane. A release whose version is committed, and the vault's latest
-    /// checkpoint, apply at once, so every read the sequencer forwards after them sees them: the
-    /// sequencer sends a release only once the commit it names has answered, and a version handed over
-    /// with the tree is released in turn, after its `Install`.
+    /// Queues a message in its lane. A tree handed over with nothing queued ahead of it, a release whose
+    /// version is committed, and the vault's latest checkpoint apply at once, so every read the
+    /// sequencer forwards after them sees them: the sequencer sends a release only once the commit it
+    /// names has answered, or right after the tree that holds its version.
     pub(super) fn take(&mut self, message: super::Message) {
         match message {
+            super::Message::Work(Work::Install(tree)) if self.work.is_empty() && self.background.is_empty() => {
+                self.cancel();
+                self.tree = *tree;
+            }
             super::Message::Work(Work::Release(seq, root)) if self.tree.release(seq, root) => self.queue_free(),
             // Claims read nothing of the tree's, so the vault's checkpoint counts for every claim read
             // forwarded after it.
