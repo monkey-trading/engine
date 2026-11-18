@@ -7,13 +7,13 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use engine_core::financing::FinancingRow;
 use engine_core::types::{AccountId, Millis};
-use tokio::sync::watch;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 
 use crate::history::derived::{Derived, aggregates};
 use crate::log::{CommandEntry, LogEntry, LogReader, Manifest, Offset};
@@ -32,13 +32,21 @@ pub(crate) struct RowsStore {
     dir: PathBuf,
     retention_ms: Millis,
     checked: Mutex<Option<(u64, Derived)>>,
+    /// One permit, held by the read that owns `derived_at`'s turn (`turn`).
+    gate: Arc<Semaphore>,
 }
 
 impl RowsStore {
     /// The store under `history_dir`, keeping a command's rows `retention_ms` from its stamp, as the
     /// history keeps its rows.
     pub(crate) fn new(history_dir: &Path, retention_ms: Millis) -> Self {
-        Self { dir: history_dir.join(DIR), retention_ms, checked: Mutex::default() }
+        Self { dir: history_dir.join(DIR), retention_ms, checked: Mutex::default(), gate: Arc::new(Semaphore::new(1)) }
+    }
+
+    /// Waits for the turn to read from this store, which `derived_at` takes one at a time. A reader holds
+    /// it from before it takes any permit the log's other readers share, so those waiting hold none.
+    pub(crate) async fn turn(&self) -> OwnedSemaphorePermit {
+        self.gate.clone().acquire_owned().await.expect("the store's gate is never closed")
     }
 
     /// Writes `rows`, the derived rows of the command at `seq` stamped `ts`, over any file for `seq`,
