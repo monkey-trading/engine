@@ -162,6 +162,44 @@ Follow [writing-style](../../rules/writing-style.md), plus:
   repository already uses. Tables and URLs are exempt; break a long command with `\` at an
   argument boundary.
 
+## Sentences
+
+A README is technical documentation for people, read top to bottom by someone who wants to
+understand. It is not a dense summary for a machine to parse. Write it the way an experienced
+engineer or a broker's documentation team writes: complete, formal sentences that flow, one idea
+each, in the standard terms of the field. The console's interface-copy rule sets the same standard
+for its help text, and the owner's examples there apply here.
+
+- **Context first, then what happens, then its consequence for the reader.** Each in its own
+  clause, usually its own sentence.
+- **One condition per clause.** Never stack "while … while … or while …", or "once … then … unless
+  …", in one sentence. Two conditions take two sentences, or a short list.
+- **No compressed asides.** Write ", spread included,", ", gap included," and "(bps, hundredths of
+  a percent)" out as clauses or as their own sentence: "including the spread", "even if the price
+  gaps".
+- **No colon chains.** A colon introduces a list or a table, not the second half of a compressed
+  sentence.
+- **No engine shorthand as nouns.** Not "a close", "an add", "a fill opens", "a reversal pays".
+  Write "closing a position", "adding to a position", "the part of the trade that opens a
+  position", and use the standard term (execution price, realised profit, working orders, margin,
+  exposure, close-out level).
+- **No comma-chained facts joined by "and … so …".** Three facts are three sentences.
+- **Name every subject.** No "this", "it" or "that" for something the sentence has not named.
+- **Formal register.** "Does not", "cannot", "you would", never "won't", "can't" or "you'd". Never
+  "we" or "I".
+- **Read it aloud.** A sentence you would not say to a colleague, or would have to say twice, is
+  rewritten.
+
+Before and after, from the first rewrite of this repository's README:
+
+| Before | After |
+|---|---|
+| A market has no price, and nothing in it fills, while fewer than two venues have quoted in that second, while their quotes spread wider than its divergence bound, in basis points (bps, hundredths of a percent) of the index, or while its exchange is closed. | A market is priced only while at least two of its venues have quoted within the last second and their quotes agree to within the market's divergence limit. When either condition fails, or when the market's exchange is closed, the market has no price and no order in it can be executed. |
+| Each closes the whole position once the price you would close it at, spread included, reaches it: a stop loss at that price, gap included, and a take profit at its level or better. | When the price at which the position would close, including the spread, reaches a take profit or stop loss level, the whole position is closed. A take profit executes at its level or better. A stop loss executes at the prevailing price, which may be worse than its level if the market gaps. |
+| A losing close pays nothing. A winning close pays a share of the gain it realises, after both fills' spreads, that falls with how long the position was held: | No fee is charged on a losing trade. On a winning trade, a share of the realised profit is charged as a fee, after the spreads paid on opening and closing. The share falls the longer the position has been held: |
+| An add moves the open time to the size-weighted average of when the units were added, counting units already held as no more than 15 minutes old, so an add neither restarts the clock nor borrows a small old position's age. | When you add to a position, its opening time becomes the size-weighted average of the times at which each part was added. Any part held for longer than 15 minutes counts as 15 minutes old, so adding to a position neither restarts its holding time nor lets a large new trade benefit from the age of a small old one. |
+| The node publishes each command it sequences with the events it produced, and the enclave signs a Merkle root over the whole state at each checkpoint, so anyone can replay the log and check the state they are shown. | The server publishes every instruction it processes, together with its effects. At each checkpoint the enclave signs a fingerprint of the entire state, a Merkle root. Anyone can replay the published record and confirm that the state they are shown is the one the rules produce. |
+
 ## Commands
 
 - Every command block is copy-pasteable: no prompts, no placeholders the reader cannot fill, no
@@ -214,4 +252,6 @@ must know (prices can be unavailable, withdrawals queue) in "How it works", not 
 - [ ] Every number has a unit, and every claim is a mechanism or a measurement.
 - [ ] Each warning is stated once, where it applies.
 - [ ] Length is within the target, or the excess has moved to a linked document.
+- [ ] No sentence stacks conditions, chains facts with "and … so …", or compresses a condition into
+      an aside; no engine shorthand used as a noun; no contractions.
 - [ ] Read it top to bottom as a stranger. Cut every sentence that reader would skip.
