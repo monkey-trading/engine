@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use engine_core::types::Millis;
+use engine_core::types::{MarketId, Millis};
 use tokio::time::Instant;
 use tracing::info;
 
@@ -103,8 +103,7 @@ impl VenueFeed {
     /// age counts.
     pub(super) fn note_age(&mut self, symbol: &str, ts: Millis, now: Millis) {
         let Some(market) = self.instruments.get(symbol).map(|instrument| instrument.market) else { return };
-        let stale_after = Millis::try_from(self.timing.stale_after.as_millis()).unwrap_or(Millis::MAX);
-        let bound_ms = self.max_age.get(&market).map_or(stale_after, |max_age| stale_after.min(*max_age));
+        let bound_ms = self.count_bound_ms(market);
         let read_at = Instant::now();
         let behind =
             self.delay.behind(read_at).map_or(0, |behind| Millis::try_from(behind.as_millis()).unwrap_or(Millis::MAX));
@@ -113,6 +112,13 @@ impl VenueFeed {
             let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
             info!(alert_resolved = "venue_stale", venue, feed, symbol, market, "venue quotes current again");
         }
+    }
+
+    /// The oldest a quote for `market` counts at (see `quotes::counts`): `timing.stale_after`, or the
+    /// market's `max_age_ms` once the engine has confirmed a shorter one.
+    pub(super) fn count_bound_ms(&self, market: MarketId) -> Millis {
+        let stale_after = Millis::try_from(self.timing.stale_after.as_millis()).unwrap_or(Millis::MAX);
+        self.max_age.get(&market).map_or(stale_after, |max_age| stale_after.min(*max_age))
     }
 }
 

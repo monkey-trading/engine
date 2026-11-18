@@ -15,12 +15,16 @@
 //! read gains nothing on it; after that the venue's quote ages out as any other. A book the venue
 //! sends after a re-dated one is stamped no earlier than it: the venue sent it after answering that
 //! ping, so it showed this book by then, and the engine, which keeps the later-stamped of a venue's
-//! quotes, takes it in the re-dated one's place. When that stamp would lead the host clock by more
-//! than the engine allows, judged against the highest host time a quote for the symbol was read at
-//! (sequenced time does not step back with the host clock), the book goes at its own stamp in place
-//! of any quote waiting for its symbol, which it changes. A book keeps the stamp its venue gave it
-//! for the session checks, so one a leading venue clock stamped inside a closure is not re-dated
-//! into the session before it.
+//! quotes, takes it in the re-dated one's place. A book from behind is not raised: one whose own
+//! stamp would not count at the re-dated one's (see `quotes::counts`), or is before that of a book
+//! the connection already read for its symbol. A venue serving a symbol from a source behind its
+//! own, as Coinbase did on 16 November 2026, sends such books after its pongs, so sending one says
+//! nothing of when the venue showed it, and it goes at its own stamp. When a raised stamp would lead
+//! the host clock by more than the engine allows, judged against the highest host time a quote for
+//! the symbol was read at (sequenced time does not step back with the host clock), the book goes at
+//! its own stamp in place of any quote waiting for its symbol, which it changes. A book keeps the
+//! stamp its venue gave it for the session checks, so one a leading venue clock stamped inside a
+//! closure is not re-dated into the session before it.
 //!
 //! This rests on a venue writing its pong behind what it sent before reading the ping, which was
 //! measured on Coinbase, Kraken and Bitstamp, so only their connections re-date books.
@@ -59,6 +63,8 @@ pub(super) struct StandingBooks {
     books: BTreeMap<String, StandingBook>,
     /// A book read for a symbol after the stamp given it here is stamped no earlier.
     given: BTreeMap<String, Millis>,
+    /// The latest stamp the venue gave a book read for each symbol on the current connection.
+    newest: BTreeMap<String, Millis>,
 }
 
 /// A symbol's last book: its quote, when it was read, when the newest ping answered by then went
@@ -90,6 +96,13 @@ impl StandingBooks {
     pub(super) fn connected(&mut self, redating: bool) {
         self.redating = redating;
         self.books.clear();
+        self.newest.clear();
+    }
+
+    /// Notes a book read for `symbol` that its venue stamped `venue_ts`.
+    fn read(&mut self, symbol: &str, venue_ts: Millis) {
+        let newest = self.newest.entry(symbol.to_owned()).or_insert(venue_ts);
+        *newest = (*newest).max(venue_ts);
     }
 
     /// Holds `quote`, `symbol`'s book read now, at host time `now`, on a connection that re-dates
@@ -230,11 +243,11 @@ impl VenueFeed {
     }
 
     /// Buffers `quote`, a book just read for `symbol` at host time `now`, for `emit` to sequence,
-    /// stamped no earlier than the newest stamp a ping's answer gave the symbol (`after_given`),
-    /// and holds it to be re-dated. When that stamp leads the highest host time read for the symbol
-    /// (`now` or a higher one) by more than the engine allows, the quote waiting for the symbol,
-    /// which this book changes, is dropped and the book goes at its own stamp. Returns the stamp it
-    /// is buffered at.
+    /// stamped no earlier than the newest stamp a ping's answer gave the symbol unless it is from
+    /// behind (`after_given`), and holds it to be re-dated. When that stamp leads the highest host
+    /// time read for the symbol (`now` or a higher one) by more than the engine allows, the quote
+    /// waiting for the symbol, which this book changes, is dropped and the book goes at its own
+    /// stamp. Returns the stamp it is buffered at.
     /// Error cases:
     /// - the book's own stamp leads that time by more than `MAX_QUOTE_LEAD_MS`, which the engine
     ///   refuses, so it is dropped and the symbol's standing book forgotten; the error is its lead
@@ -245,6 +258,7 @@ impl VenueFeed {
         now: Millis,
         buffered: &mut BTreeMap<String, Pending>,
     ) -> Result<Millis, Millis> {
+        let venue_ts = quote.ts;
         let raised = self.after_given(symbol, quote.clone());
         let pending = buffered.entry(symbol.to_owned()).or_default();
         let taken = match pending.add(raised.clone(), now) {
@@ -256,6 +270,7 @@ impl VenueFeed {
         };
         match taken {
             Ok(quote) => {
+                self.standing.read(symbol, venue_ts);
                 self.standing.hold(symbol, &quote, now, &self.delay);
                 Ok(quote.ts)
             }
@@ -267,12 +282,18 @@ impl VenueFeed {
     }
 
     /// `quote`, a book just read for `symbol`, stamped no earlier than the newest stamp a ping's
-    /// answer gave the symbol (see the module), unless its market was not open throughout from its
-    /// own stamp to that one: a book from a closure is not carried past it.
+    /// answer gave the symbol (see the module), unless it is from behind: its own stamp would not
+    /// count at that one, or is before that of a book the connection already read for the symbol.
+    /// Nor is it raised when its market was not open throughout from its own stamp to that one: a
+    /// book from a closure is not carried past it.
     fn after_given(&self, symbol: &str, quote: SourceQuote) -> SourceQuote {
         let market = self.instruments[symbol].market;
+        let behind = |given: Millis| {
+            given.saturating_sub(quote.ts) > self.count_bound_ms(market)
+                || self.standing.newest.get(symbol).is_some_and(|newest| quote.ts < *newest)
+        };
         match self.standing.given_for(symbol) {
-            Some(given) if given > quote.ts && self.open_throughout(market, quote.ts, given) => {
+            Some(given) if given > quote.ts && !behind(given) && self.open_throughout(market, quote.ts, given) => {
                 SourceQuote { ts: given, ..quote }
             }
             _ => quote,

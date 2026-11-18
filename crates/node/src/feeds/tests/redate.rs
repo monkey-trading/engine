@@ -160,7 +160,7 @@ async fn a_venue_that_stops_answering_pings_is_redated_no_more() {
 }
 
 #[tokio::test]
-async fn a_book_read_after_a_redated_one_replaces_it_whatever_its_stamp() {
+async fn a_book_read_after_a_redated_one_replaces_it_though_stamped_before_it() {
     let mut engine = FakeEngine::new();
     let (listener, url) = listen().await;
     let (mut rx, _feed) = spawn_feed(Venue::Kraken, &url, &BTC, TIMING);
