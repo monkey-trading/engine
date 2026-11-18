@@ -7,8 +7,10 @@
 use std::sync::atomic::AtomicU64;
 
 mod listener;
+mod roots;
 pub use listener::router;
 pub(crate) use listener::{alongside, bind};
+pub use roots::RootMetrics;
 
 use engine_core::Fixed;
 use engine_core::deposits::DepositReject;
@@ -114,6 +116,7 @@ pub struct Metrics {
     pub commands: Counter,
     pub full_replays: Counter,
     pub batch_seconds: Histogram,
+    pub state_root: RootMetrics,
     pub queue_depth: Gauge,
     pub access_pending_deposits: Gauge,
     pub withdrawals_paused: Gauge,
@@ -154,6 +157,7 @@ impl Metrics {
             full_replays: Counter::default(),
             // 50µs to about 1.6s.
             batch_seconds: Histogram::new(exponential_buckets(0.000_05, 2.0, 16)),
+            state_root: RootMetrics::default(),
             queue_depth: Gauge::default(),
             access_pending_deposits: Gauge::default(),
             withdrawals_paused: Gauge::default(),
@@ -200,6 +204,7 @@ impl Metrics {
             metrics.batch_seconds.clone(),
         );
         r.register("sequencer_queue_depth", "Requests waiting for the sequencer", metrics.queue_depth.clone());
+        metrics.state_root.register(r);
         r.register(
             "access_pending_deposits",
             "Deposits awaiting automatic source screening retry",

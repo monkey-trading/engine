@@ -19,10 +19,9 @@ pub use replay::{
     replay_path_with_trust, replay_with_signer,
 };
 mod checkpoints;
+pub use crate::root_worker::ClaimAnswer;
 use checkpoints::publish::After;
 use checkpoints::{Gate, HandoverGate};
-mod claims;
-pub use claims::ClaimAnswer;
 mod messages;
 pub use messages::{
     AccountPayouts, CheckWait, HandoverRefused, PayoutView, Query, Reissue, ReissueScreening, Request,
@@ -39,6 +38,7 @@ mod payout_tests;
 mod payouts;
 mod pipeline;
 pub(crate) mod prefixes;
+mod roots;
 mod stamped;
 use pipeline::{Batch, Pipeline};
 pub use stamped::Stamped;
@@ -133,7 +133,7 @@ pub struct Sequencer {
     fault_proof: Option<engine_core::operator_faults::FaultProofConfig>,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
-    claims: claims::Claims,
+    roots: roots::Roots,
     accounting: Accounting,
     /// Startup and recovery wait for a signed, complete publisher attempt before catch-up.
     benchmark_sync: bool,
@@ -204,6 +204,7 @@ impl Sequencer {
         let mut batch = Batch::default();
         let mut queries: Vec<Query> = Vec::new();
         self.refresh_log_check();
+        self.start_root_worker()?;
         while let Some(first) = self.next_request(&mut rx).await? {
             let started = self.clock.instant();
             let mut sequenced = false;
@@ -237,20 +238,17 @@ impl Sequencer {
                         let answer = self.account_payouts(account, after, limit);
                         batch.later.push(Box::new(move || _ = reply.send(answer)));
                     }
-                    Request::EntitlementClaim { account, reply } => {
-                        let answer = self.claims.entitlement(&self.engine, account);
-                        batch.later.push(Box::new(move || _ = reply.send(answer)));
-                    }
-                    Request::DistributionClaim { account, reply } => {
-                        let answer = self.claims.distribution(&self.engine, account);
-                        batch.later.push(Box::new(move || _ = reply.send(answer)));
-                    }
+                    read @ (Request::AccountProof { .. }
+                    | Request::ExitProof { .. }
+                    | Request::EntitlementClaim { .. }
+                    | Request::DistributionClaim { .. }) => self.forward_read(read)?,
                     Request::CheckpointStatus { posted, latest, health, lifecycle } => {
                         if let Some(latest) = latest {
-                            self.claims.accept(latest);
+                            self.roots.worker.accept(latest)?;
                         }
                         self.custody_status(posted, health, lifecycle)?;
                     }
+                    Request::RootWake => self.root_wake()?,
                     Request::FinalCheckpoint(reply) => {
                         // Stopping for a handover is the checkpoint gate's call: refused, the node
                         // goes on sequencing; admitted, nothing after this request sequences and the
@@ -273,11 +271,12 @@ impl Sequencer {
             if sequenced {
                 self.refresh_log_check();
             }
-            self.release_waiting_checkpoint()?;
+            self.retry_waiting_checkpoints()?;
             handover_stop = handover_stop.or_else(|| self.admitted_handover());
             batch.timing = sequenced.then_some(started);
             let release = self.stage(std::mem::take(&mut batch))?;
             self.submit(release)?;
+            self.root_batch_end()?;
             queries.drain(..).for_each(|q| q(&self.engine));
             if handover_stop.is_some() {
                 self.settle_async().await?;
@@ -391,6 +390,7 @@ impl Sequencer {
         legacy::check_activation_ledger(&sequenced.cmd, &self.legacy_deposits)?;
         let version = self.engine.protocol_version();
         let events = self.engine.apply(&sequenced).context("sequencer produced an invalid sequence")?;
+        self.send_tree_event()?;
         let derived = Derived::of(sequenced.seq, &events, self.engine.take_derived())?;
         let derived = derived.map(|derived| (sequenced.seq, derived));
         #[cfg(test)]

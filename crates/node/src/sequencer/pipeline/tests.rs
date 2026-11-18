@@ -374,8 +374,9 @@ async fn a_batchs_later_answers_go_out_with_its_release() {
     let first = node.tick().await;
     node.applied().await;
     node.sync_started();
-    // Reads of the state the batch changed: payouts, claims, and a withdrawal reissue. None of them
-    // wrote anything, so they ride the held batch's release.
+    // Reads of the state the batch changed: payouts and a withdrawal reissue. Neither wrote anything,
+    // so they ride the held batch's release. Claims are read on the root worker from a checkpoint the
+    // log holds durably, so they need not wait.
     let account = AccountId([0xbb; 20]);
     let (payouts, mut payouts_rx) = oneshot::channel();
     node.tx.send(Request::AccountPayouts { account, after: None, limit: 10, reply: payouts }).await.unwrap();
@@ -389,16 +390,16 @@ async fn a_batchs_later_answers_go_out_with_its_release() {
     node.applied().await;
 
     assert!(silent(&mut payouts_rx).await, "payouts wait for the batch's sync");
-    assert!(silent(&mut entitlement_rx).await, "the entitlement claim waits");
-    assert!(silent(&mut distribution_rx).await, "the distribution claim waits");
     assert!(silent(&mut reissue_rx).await, "the reissue waits");
+    let entitlement = timeout(Duration::from_secs(10), &mut entitlement_rx).await.expect("answered");
+    assert!(matches!(entitlement, Ok(None)), "no checkpoint proves a claim yet");
+    let distribution = timeout(Duration::from_secs(10), &mut distribution_rx).await.expect("answered");
+    assert!(matches!(distribution, Ok(None)), "no checkpoint proves a claim yet");
 
     node.permits.send(Verdict::Pass).unwrap();
     released(first, "the first batch is released").await;
     let payouts = timeout(Duration::from_secs(10), payouts_rx).await.expect("payouts answered").unwrap();
     assert!(!payouts.loaded, "mock custody holds no payout gate");
-    let _ = timeout(Duration::from_secs(10), entitlement_rx).await.expect("the entitlement claim is answered");
-    let _ = timeout(Duration::from_secs(10), distribution_rx).await.expect("the distribution claim is answered");
     let reissue = timeout(Duration::from_secs(10), reissue_rx).await.expect("the reissue is answered").unwrap();
     assert!(
         matches!(reissue, Reissue::Refused { .. }),

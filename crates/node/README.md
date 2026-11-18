@@ -53,7 +53,7 @@ requests are signed and how a client verifies the server's signed answers.
 | Area | Modules | Responsibility |
 | --- | --- | --- |
 | Startup | `node/`, `config/`, `telemetry`, `sequencer_thread` | Loading and checking the configuration, starting each part of the server in order, and the sequencer's dedicated thread |
-| Sequencing and the log | `sequencer/`, `log/`, `snapshot/`, `authenticated/`, `replay_audit/` | Putting commands in order and applying them, the segmented public log, recovery, snapshots and replay |
+| Sequencing and the log | `sequencer/`, `root_worker/`, `log/`, `snapshot/`, `authenticated/`, `replay_audit/` | Putting commands in order and applying them, the state root's worker thread, the segmented public log, recovery, snapshots and replay |
 | API | `api/`, `tls/`, `limits/`, `access/`, `withdrawals/` | The REST API and stream, TLS with a certificate from an ACME authority, rate limits, account screening and withdrawal authorisations |
 | Reads | `history/`, `stats/`, `status` | The account history index, the price history cache, the dashboard statistics and the operating status |
 | Enclave and time | `tee/`, `secrets/`, `handover/`, `clock`, `trusted_time/`, `roughtime/`, `verify/` | Attestation, sealed keys, delivered secrets, handing the keys to the next release, trusted time and attestation checks |

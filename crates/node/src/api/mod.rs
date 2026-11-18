@@ -382,8 +382,9 @@ async fn nonce(State(s): State<ApiState>, Path(address): Path<String>) -> ApiRes
 async fn proof(State(s): State<ApiState>, Path(address): Path<String>) -> ApiResult<AccountProof> {
     let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     Span::current().record("id", display(id));
-    let proof = s.query_durable(move |e| e.account_proof(id)).await?;
-    proof.map(Json).ok_or(ApiError::NotFound)
+    let (reply, rx) = oneshot::channel();
+    s.tx.send(sequencer::Request::AccountProof { account: id, reply }).await.map_err(|_| ApiError::Unavailable)?;
+    rx.await.map_err(|_| ApiError::Unavailable)?.map(Json).ok_or(ApiError::NotFound)
 }
 
 /// The proof of the account's cumulative MONKEY entitlement, as the vault's `claimEmissions` takes

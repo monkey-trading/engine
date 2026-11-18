@@ -70,7 +70,7 @@ server against a root without trusting the server.
 | Funds and access | `funds`, `financing/`, `deposits/`, `withdrawal`, `access/`, `auth`, `eip712`, `session_keys` | Deposits, overnight financing and the root over each account's charges, withdrawals and their queue, eligibility and screening, signed requests and session keys |
 | Operator and governance | `admin/`, `operator_bounds/`, `listing_bounds/`, `notice/`, `governance/`, `election`, `turns/`, `operator_faults`, `protocol/` | Operator instructions and the bounds on them, notices, votes, the elected operator, daily turns, fault penalties and protocol versions |
 | MONKEY | `emissions`, `staking/` | MONKEY emissions and the USDC distributions to stakers |
-| State tree | `merkle/`, `tracked`, `fixed/` | The state tree, its proofs, change tracking for the root, and fixed-point arithmetic |
+| State tree | `merkle/`, `tracked`, `fixed/` | The state tree in versions that a node can feed in parts, its proofs, change tracking for the root, and fixed-point arithmetic |
 
 Each module's own documentation describes how it works. Protocol tests are in `tests/`, grouped
 by area, with the shared harness in `tests/common/`. `tests/reference/` holds one reference log per

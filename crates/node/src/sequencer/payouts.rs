@@ -128,21 +128,50 @@ impl Sequencer {
         }
         let held = self.dedup_checkpoint_seq == Some(gate.parent.seq);
         if gate.parent.has_checkpoint && held && Some(gate.parent.seq) == self.engine.last_seq() {
-            self.capture_payout_proofs();
-            Ok(())
+            let seq = gate.parent.seq;
+            self.capture_payout_proofs(seq)
         } else {
             self.paced_checkpoint()
         }
     }
 
-    /// Captures each pending approval's first proof, before another command changes the tree.
-    pub(super) fn capture_payout_proofs(&mut self) {
-        let Some(gate) = &mut self.gate else { return };
-        for key in std::mem::take(&mut gate.unproved) {
+    /// Captures each pending approval's first proof at the checkpoint at `seq`, which covers it: from
+    /// the engine's tree before it is detached, and otherwise from the root worker, whose answer
+    /// arrives as an outcome (`take_payout_proofs`). A payout is signed only once it has its proof.
+    /// Error cases:
+    /// - the root worker has stopped
+    pub(super) fn capture_payout_proofs(&mut self, seq: u64) -> anyhow::Result<()> {
+        let Some(gate) = &mut self.gate else { return Ok(()) };
+        let unproved = std::mem::take(&mut gate.unproved);
+        if unproved.is_empty() {
+            return Ok(());
+        }
+        if self.roots.detached() {
+            return self.prove_payouts(seq, unproved.into_iter().collect());
+        }
+        for key in unproved {
             let payout = gate.payouts.get_mut(&key).expect("an unproved payout is pending");
             let approval = payout.approval;
             payout.proof = self.engine.approval_proof(approval.account, approval.nonce);
             assert!(payout.proof.is_some(), "a checkpoint includes every preceding approval");
+        }
+        Ok(())
+    }
+
+    /// Takes the root worker's first proofs of payouts at the checkpoint at `seq`. One the worker had
+    /// no version for, as when an activation discarded the tree since, waits for the next checkpoint.
+    pub(super) fn take_payout_proofs(&mut self, seq: u64, proofs: Vec<crate::root_worker::Proved>) {
+        let Some(gate) = &mut self.gate else { return };
+        for (key, proof) in proofs {
+            // A payout claimed meanwhile needs no proof.
+            let Some(payout) = gate.payouts.get_mut(&key) else { continue };
+            match proof {
+                Some(proof) => payout.proof = Some(proof),
+                None => {
+                    debug!(account = %key.0, nonce = key.1, seq, "no version proves the approval; the next checkpoint will");
+                    gate.unproved.insert(key);
+                }
+            }
         }
     }
 
@@ -211,6 +240,7 @@ impl Sequencer {
         }
         self.load_backlog()?;
         self.prove_loaded()?;
+        self.settle_payout_proofs(evidence.checkpoint_seq)?;
         let gate = self.gate.as_ref().expect("checkpoint gate exists");
         if !gate.admits_withdrawals() || evidence.halts_withdrawals() {
             return Ok(());
@@ -388,8 +418,14 @@ impl Sequencer {
     /// Error cases:
     /// - the proof is absent or logging/signing fails
     pub(super) fn sign_mock_authorization(&mut self, approval: WithdrawalApproval) -> anyhow::Result<()> {
-        let proof =
-            self.engine.approval_proof(approval.account, approval.nonce).context("mock approval proof absent")?;
+        let proof = if self.roots.detached() {
+            let seq = self.dedup_checkpoint_seq.context("a mock payout follows its checkpoint")?;
+            let proofs = self.roots.worker.prove_now(seq, vec![(approval.account, approval.nonce)])?;
+            proofs.into_iter().next().and_then(|(_, proof)| proof)
+        } else {
+            self.engine.approval_proof(approval.account, approval.nonce)
+        };
+        let proof = proof.context("mock approval proof absent")?;
         self.sync_log(true)?;
         let issued_at = u64::try_from(self.last_ts / 1_000)?;
         let authorization = Authorization {

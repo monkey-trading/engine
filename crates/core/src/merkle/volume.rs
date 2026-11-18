@@ -20,7 +20,7 @@ pub fn volume_key(account: AccountId) -> B256 {
 impl Engine {
     /// The volume leaves of `accounts`, those changed since the last root, by key, `None` for one
     /// removed.
-    pub(super) fn volume_leaves(&self, accounts: BTreeSet<AccountId>) -> Vec<(B256, Option<B256>)> {
-        accounts.into_iter().map(|id| (volume_key(id), self.volumes.get(&id).map(json_hash))).collect()
+    pub(super) fn volume_leaves(&self, accounts: &BTreeSet<AccountId>) -> Vec<(B256, Option<B256>)> {
+        accounts.iter().map(|&id| (volume_key(id), self.volumes.get(&id).map(json_hash))).collect()
     }
 }

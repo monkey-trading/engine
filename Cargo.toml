@@ -46,6 +46,8 @@ instant-acme = { version = "0.8.5", default-features = false, features = ["ring"
 ipnet = { version = "2.12", features = ["serde"] }
 jmt = { version = "=0.12.0", default-features = false, features = ["std", "sha2"] }
 k256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
+# Model checking of the root worker's handshakes with the sequencer, in tests only.
+loom = "0.7.2"
 nix = { version = "0.31.3", default-features = false, features = ["sched"] }
 # ECDSA on P-384: the attestation report's signature and the test chain's certificates. Pure Rust,
 # so the native and browser verifiers run the same implementation. Without `std`, which would pull

@@ -99,19 +99,20 @@ async fn account_view_and_proof_expose_pending_principal_then_finality_releases_
 #[tokio::test]
 async fn dev_scenario_checkpoint_work_follows_changes_a_proof_verifies_and_old_logs_replay() {
     let node = Node::start("proof-dev-scenario").await;
-    let mut work: Vec<RootWork> = Vec::new();
+    let mut cuts = Vec::new();
     for n in 1..=ACCOUNTS[2] {
         node.deposit(account(n), "100").await;
         if ACCOUNTS.contains(&n) {
-            work.push(
-                node.state
-                    .query(|e| e.last_root_work())
-                    .await
-                    .expect("the sequencer is running")
-                    .expect("a root under V9"),
-            );
+            cuts.push(node.entries().len());
         }
     }
+    // The root work of the last checkpoint at each cut, as a replay of the log up to it computes it:
+    // the node's root worker computes the same roots from the same leaf writes.
+    let entries = node.entries();
+    let work: Vec<RootWork> = cuts
+        .iter()
+        .map(|&cut| replay(&entries[..cut]).unwrap().engine.last_root_work().expect("a root under V9"))
+        .collect();
     // Each checkpoint hashed 100 accounts, their 100 deposit references, and the remaining state.
     assert!(work.iter().all(|w| w.leaves == 201), "{work:?}");
     // Nodes grow with the tree's depth, the log of its leaves: a hundred times the accounts take

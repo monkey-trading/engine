@@ -4,10 +4,12 @@ use axum::Json;
 use axum::extract::{Path, State};
 use engine_core::merkle::ExitProof;
 use engine_core::types::AccountId;
+use tokio::sync::oneshot;
 use tracing::Span;
 use tracing::field::display;
 
 use crate::api::{ApiError, ApiResult, ApiState};
+use crate::sequencer::Request;
 
 /// The exit terms and the account's balance and positions, approvals, queued requests,
 /// distribution, and pending deposits, each with its proof against the state root of the last
@@ -20,6 +22,7 @@ use crate::api::{ApiError, ApiResult, ApiState};
 pub(super) async fn exit(State(s): State<ApiState>, Path(address): Path<String>) -> ApiResult<ExitProof> {
     let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     Span::current().record("id", display(id));
-    let proof = s.query_durable(move |e| e.exit_proof(id)).await?;
-    proof.map(Json).ok_or(ApiError::NotFound)
+    let (reply, rx) = oneshot::channel();
+    s.tx.send(Request::ExitProof { account: id, reply }).await.map_err(|_| ApiError::Unavailable)?;
+    rx.await.map_err(|_| ApiError::Unavailable)?.map(Json).ok_or(ApiError::NotFound)
 }

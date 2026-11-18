@@ -53,7 +53,7 @@ pub fn summary(book: &Book, accounts: usize, rss_before: u64, rss_after: u64) {
 }
 
 /// Credits `account` a dollar through the screened deposit, which changes its leaf.
-fn touch(book: &mut Book, account: AccountId, tag: usize) {
+pub fn touch(book: &mut Book, account: AccountId, tag: usize) {
     let deposit = AccessDeposit {
         account: Some(account),
         payer: Some(account),
@@ -340,7 +340,7 @@ pub fn rollover(book: &mut Book, bar: Bar, root: Bar) {
 /// launch node's feeds keep the open markets priced; a market outside its session, or whose price
 /// rules keep a quote for less than a millisecond, takes no price from it. Asserts the always-open
 /// markets, which the rollover's close-out sweep reads, have an index when the rollover runs.
-fn reprice_open_markets(book: &mut Book, due: i64) {
+pub fn reprice_open_markets(book: &mut Book, due: i64) {
     let marks: Vec<(MarketId, String)> =
         book.h.engine.markets().iter().filter_map(|(id, m)| m.mark.map(|mark| (*id, mark.to_string()))).collect();
     for (id, mark) in marks {

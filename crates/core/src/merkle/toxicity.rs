@@ -27,13 +27,11 @@ impl Engine {
     /// one removed.
     pub(super) fn toxicity_leaves(
         &self,
-        scores: BTreeSet<AccountId>,
-        spreads: BTreeSet<MarketId>,
+        scores: &BTreeSet<AccountId>,
+        spreads: &BTreeSet<MarketId>,
     ) -> Vec<(B256, Option<B256>)> {
-        let scores =
-            scores.into_iter().map(|id| (toxicity_score_key(id), self.toxicity_scores.get(&id).map(json_hash)));
-        let spreads =
-            spreads.into_iter().map(|id| (markout_spread_key(id), self.markout_spreads.get(&id).map(json_hash)));
+        let scores = scores.iter().map(|&id| (toxicity_score_key(id), self.toxicity_scores.get(&id).map(json_hash)));
+        let spreads = spreads.iter().map(|&id| (markout_spread_key(id), self.markout_spreads.get(&id).map(json_hash)));
         scores.chain(spreads).collect()
     }
 }

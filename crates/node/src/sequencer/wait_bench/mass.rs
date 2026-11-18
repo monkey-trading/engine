@@ -32,6 +32,9 @@ use engine_core::market::MarketSpec;
 use engine_core::types::{MarketId, Millis};
 use tokio::sync::{broadcast, mpsc, watch};
 
+mod proof_burst;
+mod rollover_root;
+
 use crate::clock::test_clock::TestClock;
 use crate::common::launch_book::{Book, Mix, NamedCounts, Weak, WeakKind, benchmark_batch, build, price_command};
 use crate::common::{BTC, f};
@@ -124,6 +127,20 @@ fn mass_crash() {
     let case = Case { name: "crash_closes_out_20pct", market: BTC, at, step: false, event, prices };
     let Outcome { weak, closed, .. } = sequence(book, case);
     assert_eq!(closed, weak, "the accounts below the close-out level, and no others, close");
+}
+
+/// A daily rollover with paced checkpoints running, and the root of the checkpoint after it (#925).
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn mass_rollover_root() {
+    rollover_root::run();
+}
+
+/// Bursts of proof reads beside the price stream, with checkpoints running (#925).
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn mass_proof_burst() {
+    proof_burst::run();
 }
 
 /// The launch book with `SHARE` per cent of `market`'s holders set as `kind` says.

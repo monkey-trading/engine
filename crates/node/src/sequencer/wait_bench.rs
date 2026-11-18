@@ -324,7 +324,7 @@ impl Clock for StampClock {
 }
 
 /// The time from a price entering the channel to its stamp, under the latest protocol, with the
-/// work that used to hold it back going on: proof reads on the sequencer, a checkpoint every
+/// work that used to hold it back going on: proof reads (forwarded to the root worker), a checkpoint every
 /// `EVERY` prices, a disk whose every sync stalls 10 ms, and `ACCOUNTS` resting limits every price
 /// passes but the spread keeps out of reach (`resting_bench`), which from `V74` no price visits.
 /// Prices come 2 ms apart and the real `run` loop sequences them, in `BATCHES` batches measured
@@ -392,10 +392,18 @@ fn price_wait_budget() {
         std::thread::spawn(move || {
             let started = Instant::now();
             while started.elapsed() < std::time::Duration::from_millis(2 * PRICES as u64 * BATCHES as u64 + 500) {
-                let read: crate::sequencer::Query = Box::new(move |engine: &Engine| {
-                    drop((engine.account_proof(id), engine.exit_proof(id), engine.distributable_excess()));
+                // The proofs are read on the root worker, the excess on the sequencer's engine.
+                let (proof, _) = tokio::sync::oneshot::channel();
+                let (exit, _) = tokio::sync::oneshot::channel();
+                let excess: crate::sequencer::Query = Box::new(|engine: &Engine| {
+                    _ = std::hint::black_box(engine.distributable_excess());
                 });
-                if tx.blocking_send(crate::sequencer::Request::Query(read)).is_err() {
+                let reads = [
+                    crate::sequencer::Request::AccountProof { account: id, reply: proof },
+                    crate::sequencer::Request::ExitProof { account: id, reply: exit },
+                    crate::sequencer::Request::Query(excess),
+                ];
+                if reads.into_iter().any(|read| tx.blocking_send(read).is_err()) {
                     return;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1));

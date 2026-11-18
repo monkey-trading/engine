@@ -95,7 +95,10 @@ an index: load only the rule whose hint matches the current action.
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks, and from `V77` `merkle/credits.rs`
   each credited receipt still awaiting finality, through which alone the exit adds that principal back where the vault's
-  own deposit records match, and receipt-backed held deposits in the same form, `tests/exit/credits.rs`). It does no IO and uses no clocks,
+  own deposit records match, and receipt-backed held deposits in the same form, `tests/exit/credits.rs`; the tree in
+  versions over a copy-on-write arena in `merkle/tree/`, which an engine keeps one version of inline, or hands to a node
+  (`Engine::detach_tree`) to feed in parts, `take_root_delta` and `commit_inputs`, with the same roots and proofs,
+  `tests/root_deltas.rs`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
   with house NAV and exposure caps in `engine/house.rs`, per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs` with, from any version, the derived close-out index in `closeout_index/` (a check site
@@ -150,7 +153,7 @@ an index: load only the rule whose hint matches the current action.
   API's screening slots: a share per account and per client, a reserve for closes and withdrawals, and one
   slot per signed request),
   sequencer (each command's log entry built around its events encoded once, its seal's link, digest and line
-  byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches), the public log with signed checkpoints (segmented, with a public archive), `engine
+  byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches; from #925 the state root's catch-up runs on the `state-root` thread, `root_worker/`, which owns the tree: the sequencer copies leaf writes out in pieces of about a millisecond and waits only for a checkpoint's commit, a paced checkpoint deferred while that wait would pass about 25 ms and taken in full after 30 s under Warning `root_backlog_held` (`sequencer/roots.rs`), each version released once its checkpoint is durable, and account, exit and claim proofs and payouts' first proofs read there; its wake-up handshake is checked under `loom`, a dev-dependency), the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published log, or with `--deposit` the
   refund of the vault's deposit at an id through the receipt the root holds there),
   `engine admin` (the operator's signing client), the REST API with the operator's admin

@@ -33,6 +33,8 @@ mod cases;
 mod common;
 #[path = "launch_book_benchmark/report.rs"]
 mod report;
+#[path = "launch_book_benchmark/root_parts.rs"]
+mod root_parts;
 
 use cases::Bar;
 use common::launch_book::{Mix, NamedCounts, build};
@@ -56,14 +58,21 @@ const WALK_PRICES: usize = 1_000;
 /// 2026) with little to spare, is noted, and the guard CI holds it to is enforced.
 const NEAR_LEVEL_WALK: Bar = Bar { bar_us: PRICE_TO_STAMP_P99_US, guard_us: 30_000 };
 const SIGNED_P99_US: u128 = 2_000;
-/// The root over 100k changed accounts: #904's bar, which the book misses (CI measured 0.8 s on
-/// 17 November 2026, over the accounts a rollover financed), and the guard CI holds it to until the
-/// owner accepts that figure or a change meets the bar.
+/// The root over 100k changed accounts, as an inline engine takes it in replay and recovery: #904's
+/// bar, which the book misses (CI measured 0.8 s on 17 November 2026, over the accounts a rollover
+/// financed), and the guard CI holds it to. The node takes it on its root worker, apart from prices
+/// (#925), to `ROOT_COMMIT` and `ROOT_PIECE`.
 const ROOT: Bar = Bar { bar_us: 500_000, guard_us: 3_000_000 };
 /// The rollover's slowest of four: #904's bar, which CI's slower runners miss (0.50 s and 0.56 s on
 /// 17 November 2026), and the guard CI holds it to as a regression check until the owner accepts the
 /// figure or a change meets the bar.
 const ROLLOVER: Bar = Bar { bar_us: 500_000, guard_us: 2_000_000 };
+/// A checkpoint's commit on the node's detached tree at its bound (#925): the 25 ms the bound is set
+/// for, noted, and the guard CI holds it to, with room for a slower runner.
+const ROOT_COMMIT: Bar = Bar { bar_us: 25_000, guard_us: 100_000 };
+/// The longest piece of a rollover's leaf writes the sequencer copies out (#925): the millisecond each
+/// piece is timed to, noted, and the guard CI holds it to, with room for a runner's preemption.
+const ROOT_PIECE: Bar = Bar { bar_us: 1_000, guard_us: 10_000 };
 /// No single command, rollover and close-out included, holds the thread over this.
 const SINGLE_COMMAND_US: u128 = 500_000;
 
@@ -81,6 +90,8 @@ fn launch_book_latency() {
     cases::close_outs(&mut book, SINGLE_COMMAND_US);
     cases::rollover(&mut book, ROLLOVER, ROOT);
     cases::encoding_and_recovery(&mut book);
+    // Last: it detaches the book's tree, after which the engine computes no root of its own.
+    root_parts::root_parts(&mut book, ROOT_COMMIT, ROOT_PIECE);
     println!("LAUNCH resident_mib={}", rss_mib());
     let over = exceeded();
     assert!(over.is_empty(), "over budget: {over:?}");
