@@ -180,7 +180,7 @@ async fn next_not_after(rx: &mut mpsc::Receiver<Request>, engine: &mut FakeEngin
     let quote = async {
         loop {
             match rx.recv().await.expect("feed running") {
-                Request::Quote { cmd, not_after } => {
+                Request::Quote { cmd, not_after, .. } => {
                     engine.apply(cmd);
                     return not_after;
                 }

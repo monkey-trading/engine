@@ -47,6 +47,8 @@ pub struct TimeGate {
     /// Stamps refused since sequencing halted.
     refused: u64,
     pace: StampPace,
+    /// The monotonic time of the last stamp admitted, or of the start before one is.
+    stamped_at: Instant,
 }
 
 /// The host clock, read only while the gate would admit a stamp of it: within `max_drift` of every
@@ -96,7 +98,8 @@ impl TimeGate {
     /// A gate with no sample yet, started at `now`.
     pub fn new(max_drift: Duration, now: Instant) -> Self {
         let pace = StampPace::new(Millis::MIN);
-        Self { max_drift_ms: floor_millis(max_drift), started: now, sample: None, halted: None, refused: 0, pace }
+        let (max_drift_ms, stamped_at) = (floor_millis(max_drift), now);
+        Self { max_drift_ms, started: now, sample: None, halted: None, refused: 0, pace, stamped_at }
     }
 
     /// This gate, for a run whose stamps are at least `start` and keep pace from `last_ts`, the last
@@ -145,8 +148,15 @@ impl TimeGate {
         let admitted = self.observe(host_ms, ts, now);
         if admitted {
             self.pace.stamped(host_ms, ts, now);
+            self.stamped_at = now;
         }
         admitted
+    }
+
+    /// The monotonic time the last admitted stamp was given at: what a command waited for is
+    /// measured to it.
+    pub fn stamped_at(&self) -> Instant {
+        self.stamped_at
     }
 
     /// `admit`, for a stamp something else refuses first, as the liveness rule's gate does: the halt

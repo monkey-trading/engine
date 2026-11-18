@@ -63,6 +63,7 @@ jobs:
       rwa_feeds: ${{ steps.classify.outputs.rwa_feeds }}
       toxicity: ${{ steps.classify.outputs.toxicity }}
       venue_load: ${{ steps.classify.outputs.venue_load }}
+      node_load: ${{ steps.classify.outputs.node_load }}
       loss_trigger: ${{ steps.classify.outputs.loss_trigger }}
       cme_feeds: ${{ steps.classify.outputs.cme_feeds }}
       share_feeds: ${{ steps.classify.outputs.share_feeds }}
@@ -86,11 +87,11 @@ jobs:
           # engine-node's lib tests, and those against loopback venues.
           prebuilt="metrics_alerts alert_outbox browser_origin dashboard_data proxy_protocol batch_orders ct_watch snapshot_restart signed_api production_secrets log_heads"
           anvil="vault_deposits daily_rotation short_turns"
-          feeds="toxicity loss_trigger rwa_feeds cme_feeds share_feeds venue_load"
+          feeds="toxicity loss_trigger rwa_feeds cme_feeds share_feeds venue_load node_load"
           # Every scenario that runs engine-node's lib tests, every one that runs the node, and every one.
           lib_tests="$anvil $feeds scenario_tests attestation_verifier"
           # The scenarios that drive the API.
-          api="signed_api browser_origin proxy_protocol batch_orders dashboard_data acme scenario_tests"
+          api="signed_api browser_origin proxy_protocol batch_orders dashboard_data acme scenario_tests node_load"
           node="$prebuilt $lib_tests acme"
           scenarios="$node wasm_verifier"
           all="rust contracts image agent_scripts merge_approval ci_changes $scenarios"
@@ -118,7 +119,7 @@ jobs:
                   | research/benchmark-cap/results/refused.csv)
                   areas+=" rust" ;;
                 # The cap study's market mix deals out the launch book's holdings.
-                research/cap-calibration/data/derived/market_mix.csv) areas+=" rust scenario_tests" ;;
+                research/cap-calibration/data/derived/market_mix.csv) areas+=" rust scenario_tests node_load" ;;
                 # Read by no build, test, scenario, or image.
                 agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | docs/* | research/* | image/README.md \
                   | crates/core/README.md | crates/node/README.md | crates/verify/README.md \
@@ -143,6 +144,8 @@ jobs:
                   | crates/node/src/stats/bench.rs \
                   | crates/node/src/stats/launch_bench.rs)
                   areas+=" rust scenario_tests" ;;
+                # The node load scenario drives the node it assembles from the sequencer, feeds and API.
+                crates/node/src/load_scenario/* | crates/node/src/sequencer/seeded.rs) areas+=" rust node_load" ;;
                 crates/node/src/api/admin_tests* | crates/node/src/sequencer/fixture_tests.rs)
                   areas+=" rust scenario_tests vault_deposits attestation_verifier" ;;
                 crates/node/src/checkpoints/scenario* | crates/node/src/checkpoints/tests*)
@@ -210,7 +213,7 @@ jobs:
                 # Stats, history and metrics, and the node watching itself.
                 crates/node/src/stats/* | crates/node/src/history/* | crates/node/src/metrics/* \
                   | crates/node/src/monitor/* | crates/node/src/node/marks.rs)
-                  areas+=" rust scenario_tests dashboard_data metrics_alerts snapshot_restart" ;;
+                  areas+=" rust scenario_tests dashboard_data metrics_alerts snapshot_restart node_load" ;;
                 # Alert routing.
                 crates/node/src/alerts/* | crates/node/src/throttle.rs | crates/node/src/episodes.rs)
                   areas+=" rust metrics_alerts alert_outbox ct_watch production_secrets" ;;
@@ -226,8 +229,10 @@ jobs:
                   areas+=" rust vault_deposits dashboard_data proxy_protocol batch_orders production_secrets" ;;
                 # The latency budget's engine-core benchmarks, and the harness they share.
                 crates/core/tests/hot_path_benchmark* | crates/core/tests/launch_book_benchmark* \
-                  | crates/core/tests/mass_events_benchmark* | crates/core/tests/common/*)
+                  | crates/core/tests/mass_events_benchmark*)
                   areas+=" rust scenario_tests" ;;
+                # The harness, whose launch book the node load scenario also runs on.
+                crates/core/tests/common/*) areas+=" rust scenario_tests node_load" ;;
                 crates/core/tests/short_turns.rs) areas+=" rust short_turns" ;;
                 # The replay fixture the checkpoint scenario's accounting test reaches.
                 crates/node/tests/fixtures/*) areas+=" rust vault_deposits" ;;
@@ -243,10 +248,12 @@ jobs:
                 config/dev.toml | config/test-keys.toml) areas+=" rust image $node" ;;
                 config/anvil.toml) areas+=" rust $lib_tests acme production_secrets log_heads" ;;
                 # Read by the node's tests; the launch book's benchmarks build on the production genesis.
-                config/production-genesis.toml) areas+=" rust scenario_tests" ;;
+                config/production-genesis.toml) areas+=" rust scenario_tests node_load" ;;
                 config/benchmark-publishers.toml | config/ct-watch.toml) areas+=" rust" ;;
                 # The launch values scenario deploys from it; the node's tests read the rest of ops/.
                 ops/runbooks/production-deployment.toml) areas+=" rust vault_deposits" ;;
+                # The node load scenario's connections, limits and screening slots are the template's.
+                ops/runbooks/production-node.toml) areas+=" rust node_load" ;;
                 ops/*) areas+=" rust" ;;
                 rustfmt.toml | deny.toml | scripts/check-file-loc.sh | scripts/check-reference-logs.sh) areas+=" rust" ;;
                 # The scenarios on Anvil deploy the contracts and their mocks; the contracts' own tests
@@ -290,6 +297,7 @@ jobs:
                   areas+=" scenario_tests" ;;
                 scripts/dev-toxicity.sh) areas+=" toxicity" ;;
                 scripts/dev-venue-load.sh) areas+=" venue_load" ;;
+                scripts/dev-load.sh) areas+=" node_load" ;;
                 scripts/dev-loss-trigger.sh) areas+=" loss_trigger" ;;
                 scripts/dev-rwa-feeds.sh) areas+=" rwa_feeds" ;;
                 scripts/dev-cme-feeds.sh) areas+=" cme_feeds" ;;
@@ -973,6 +981,31 @@ jobs:
           cache-on-failure: true
       - name: Run the venue load dev scenario
         run: ./scripts/dev-venue-load.sh
+
+  # The node load scenario at a tenth of the launch book, a tenth of its traders and an eighth of its
+  # stream subscribers, so the runner holds the node and the generator: the launch-flow and ten-times
+  # legs, two minutes each. The full-scale run and the ramp run by hand.
+  dev-load:
+    needs: changes
+    if: needs.changes.outputs.node_load == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: engine-lib
+          save-if: false
+          cache-on-failure: true
+      - name: Run the node load dev scenario at 10,000 accounts
+        env:
+          LOAD_ACCOUNTS: "10000"
+          LOAD_TRADERS: "200"
+          LOAD_SUBSCRIBERS: "32"
+        run: ./scripts/dev-load.sh
 
   dev-loss-trigger:
     needs: changes
@@ -1759,6 +1792,23 @@ jobs:
           gh run cancel ${{ github.run_id }} \
             || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
 
+  cancel-dev-load:
+    needs: dev-load
+    if: failure() && needs.dev-load.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
   cancel-dev-loss-trigger:
     needs: dev-loss-trigger
     if: failure() && needs.dev-loss-trigger.result == 'failure'
@@ -2019,7 +2069,7 @@ jobs:
   # `changes` set its area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-daily-rotation, dev-short-turns, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-scenario-tests, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-cme-feeds, dev-share-feeds, dev-toxicity, dev-venue-load, dev-loss-trigger, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval, ci-changes]
+    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-daily-rotation, dev-short-turns, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-scenario-tests, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-cme-feeds, dev-share-feeds, dev-toxicity, dev-venue-load, dev-load, dev-loss-trigger, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval, ci-changes]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -2037,7 +2087,7 @@ jobs:
                "engine-build": "engine_build", "dev-metrics-alerts": "metrics_alerts", "dev-alert-outbox": "alert_outbox",
                "dev-ct-watch": "ct_watch", "dev-browser-origin": "browser_origin", "dev-dashboard-data": "dashboard_data",
                "dev-proxy-protocol": "proxy_protocol", "dev-scenario-tests": "scenario_tests", "dev-batch-orders": "batch_orders",
-               "dev-snapshot-restart": "snapshot_restart", "dev-rwa-feeds": "rwa_feeds", "dev-toxicity": "toxicity", "dev-venue-load": "venue_load",
+               "dev-snapshot-restart": "snapshot_restart", "dev-rwa-feeds": "rwa_feeds", "dev-toxicity": "toxicity", "dev-venue-load": "venue_load", "dev-load": "node_load",
                "dev-loss-trigger": "loss_trigger", "dev-cme-feeds": "cme_feeds", "dev-share-feeds": "share_feeds",
                "dev-attestation-verifier": "attestation_verifier",
                "dev-signed-api": "signed_api", "dev-production-secrets": "production_secrets", "dev-log-heads": "log_heads",

@@ -2,6 +2,8 @@
 //! repeats the mid already sequenced and when it falls due, and the rule that judges whether the
 //! quote the engine holds counts as the venue quoting.
 
+use std::time::Instant;
+
 use engine_core::Fixed;
 use engine_core::price::{MAX_QUOTE_LEAD_MS, SourceQuote};
 use engine_core::types::Millis;
@@ -21,6 +23,10 @@ pub(super) struct Pending {
     quote: Option<(SourceQuote, Millis)>,
     /// The high-water mark of the host times quotes were read at, by which stamps are clamped.
     read_hwm: Millis,
+    /// When the venue message holding the newest book was read, which the quote's wait to its stamp
+    /// is measured from; none for a quote re-dated by a ping's answer or put back to wait for its
+    /// refresh, whose wait counts from when it is sent.
+    received: Option<Instant>,
 }
 
 impl Pending {
@@ -45,6 +51,17 @@ impl Pending {
     /// read.
     pub(super) fn take(&mut self) -> Option<(SourceQuote, Millis)> {
         self.quote.take()
+    }
+
+    /// Notes that the newest book was read from a venue message received at `at`.
+    pub(super) fn note_received(&mut self, at: Instant) {
+        self.received = Some(at);
+    }
+
+    /// Takes when the quote just taken was read, if it was read from a venue message since the last
+    /// take.
+    pub(super) fn take_received(&mut self) -> Option<Instant> {
+        self.received.take()
     }
 
     /// The highest host time a quote was read at: sequenced time, which does not step back with the

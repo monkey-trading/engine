@@ -12,10 +12,12 @@
 # Cargo: the venues are local stand-ins. About six minutes.
 #
 # With --soak [minutes] it runs the manual soak instead, before each release and never in CI: the
-# same markets from the live venues, over every connection the production template opens for them,
-# for 30 minutes unless given, dropping each connection alone in turn, then all of them, every two
-# minutes. No market is unpriced for longer than 10 s, through a drop or between them, and each
-# time one is the soak prints for how long. Needs Cargo and the venues' public feeds.
+# template's crypto markets, BTC-USD, ETH-USD and SOL-USD, from the live venues, over every connection
+# the production template opens for them, for 30 minutes unless given, dropping each connection alone
+# in turn, then all of them, every two minutes. No market is unpriced for longer than 10 s, through a
+# drop or between them, and each time one is the soak prints for how long. At the end it prints each
+# market's price commands a second, at the median second and in the busiest, the rate the node load
+# scenario's stand-ins replay (dev-load.sh). Needs Cargo and the venues' public feeds.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 test="feeds::tests::venue_load::dev_scenario_venue_load"

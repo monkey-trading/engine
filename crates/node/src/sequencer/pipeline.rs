@@ -363,6 +363,7 @@ impl Sequencer {
                 let _ = reply.send(state.clone());
             }
         }
+        let stamps: Vec<Instant> = outbox.iter().filter_map(|msg| msg.stamped()).collect();
         for msg in outbox {
             if let StreamBody::Withdrawal(w) = &msg.body
                 && self.withdrawals.send(w.clone()).is_err()
@@ -371,6 +372,10 @@ impl Sequencer {
                 error!(alert = "custody_unavailable", seq, %account, nonce, "signed withdrawal has no custody consumer");
             }
             let _ = self.stream.send(msg);
+        }
+        let published = self.clock.instant();
+        for stamped in stamps {
+            self.metrics.latency.stream_lag.observe(published.saturating_duration_since(stamped).as_secs_f64());
         }
         for reply in batch.syncs {
             let _ = reply.send(last_seq);
@@ -429,6 +434,16 @@ impl Sequencer {
         pipeline.charged -= release.charge;
         done.context("syncing the log")?;
         self.finish(release)
+    }
+
+    /// `complete` between batches, its time counted as the thread's busy time.
+    /// Error cases:
+    /// - as `complete`
+    fn complete_between(&mut self, done: anyhow::Result<()>) -> anyhow::Result<()> {
+        let began = self.clock.instant();
+        self.complete(done)?;
+        self.metrics.latency.busy(self.clock.instant().saturating_duration_since(began));
+        Ok(())
     }
 
     /// Makes everything written so far durable, then releases it: the batches in flight first, so

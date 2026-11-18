@@ -17,7 +17,7 @@ use serde_json::json;
 use crate::common::close_spread::{attest, fund, rest, source_key, trade};
 use crate::common::launch_book::counts::{Counts, check, weak_cash};
 use crate::common::launch_book::encode::{entry, key_of};
-use crate::common::launch_book::genesis::{BOOK_TIME, price_market, production_harness_at, publish_benchmarks};
+use crate::common::launch_book::genesis::{price_market, production_harness_at, publish_benchmarks};
 use crate::common::launch_book::mix::{Mix, NEAR_LEVEL_DRAWS, Rng, WeakKind, market_weights, near_level_cash};
 use crate::common::session_keys::{HOUR_MS, register};
 use crate::common::{CHAIN_ID, Client, Harness, VAULT, f};
@@ -49,6 +49,14 @@ pub struct Named {
     pub openers: Vec<Client>,
     /// In the order they fall below the close-out level, as `closeout_mark` steps `CLOSEOUT_MARKET` down.
     pub closeouts: Vec<Client>,
+}
+
+/// The signing key of the `number`th named account, from 1, counting the adders, then the openers,
+/// then the close-out accounts: a client of the book's accounts signs with it.
+pub fn named_key(number: u32) -> k256::ecdsa::SigningKey {
+    let mut scalar = [0x11; 32];
+    scalar[28..].copy_from_slice(&number.to_be_bytes());
+    k256::ecdsa::SigningKey::from_slice(&scalar).expect("a valid scalar")
 }
 
 /// The price of `CLOSEOUT_MARKET` after `steps` steps down from the mark, as a decimal.
@@ -118,7 +126,7 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
     let began = Instant::now();
     let named_total = counts.adders + counts.openers + counts.closeouts;
     assert!(mix.accounts >= named_total, "the named accounts are part of the book");
-    let mut h = production_harness_at(mix.version, mix.origin);
+    let mut h = production_harness_at(mix.version, mix.origin, mix.at, mix.always_open);
     publish_benchmarks(&mut h);
     h.admin(AdminCommand::SetAccessPolicy(AccessPolicy { source: source_key(), max_age_ms: 10 * HOUR_MS }));
     let ids: Vec<MarketId> = h.engine.markets().keys().copied().collect();
@@ -147,12 +155,10 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
         (0..count)
             .map(|_| {
                 next_key += 1;
-                let mut scalar = [0x11; 32];
-                scalar[28..].copy_from_slice(&next_key.to_be_bytes());
-                let key = k256::ecdsa::SigningKey::from_slice(&scalar).expect("a valid scalar");
+                let key = named_key(next_key);
                 let account = engine_core::eip712::address(key.verifying_key());
                 let domain = engine_core::eip712::domain(CHAIN_ID, VAULT);
-                Client { key, account, domain, expires_at: BOOK_TIME + 280_000 }
+                Client { key, account, domain, expires_at: mix.at + 280_000 }
             })
             .collect()
     };
@@ -182,7 +188,7 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
     assert!(events.iter().any(|e| matches!(e, Event::OrderAccepted { .. })), "{events:?}");
     for index in 0..mix.session_keys as u8 {
         let key = crate::common::session_keys::fresh_key(index);
-        let cmd = register(&h, template, &key, BOOK_TIME + 285_000 + i64::from(index));
+        let cmd = register(&h, template, &key, mix.at + 285_000 + i64::from(index));
         let events = h.cmd(cmd);
         assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
     }

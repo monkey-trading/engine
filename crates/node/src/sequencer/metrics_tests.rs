@@ -21,6 +21,19 @@ use crate::test_support::{
 use crate::throttle::REALERT_AFTER;
 
 #[tokio::test]
+async fn each_command_published_times_its_stream_lag_and_each_batch_counts_as_busy() {
+    let dir = scratch_dir("seq-latency");
+    let node = TestSequencer::start_legacy(&dir, 64);
+    let (lag, busy) = (node.metrics.latency.stream_lag.clone(), node.metrics.latency.sequencer_busy.clone());
+    let (published, spent) = (lag.count(), busy.get());
+    node.submit(Command::Tick).await;
+    // The first batch's busy time is counted before the second batch begins, so before its reply.
+    node.submit(Command::Tick).await;
+    assert_eq!(lag.count() - published, 2, "each command is timed once, as it is published");
+    assert!(busy.get() > spent, "the batches count as the thread's busy time");
+}
+
+#[tokio::test]
 async fn sequencing_counts_commands_fills_and_rejections_by_reason_and_times_checkpoints() {
     let dir = scratch_dir("seq-metrics");
     // A clock that stands still, so the quotes stay fresh however slowly the commands go through.

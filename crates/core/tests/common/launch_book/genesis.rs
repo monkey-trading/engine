@@ -12,6 +12,7 @@ use engine_core::market::MarketSpec;
 use engine_core::params::ProtocolParams;
 use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
+use engine_core::session::Schedule;
 use engine_core::staking::StakingConfig;
 use engine_core::types::{MarketId, Millis};
 use serde::Deserialize;
@@ -79,27 +80,38 @@ fn load() -> File {
 /// initialisations at the launch deployment's values, whose time origin is still ahead. The clock is
 /// at `BOOK_TIME`.
 pub fn production_harness() -> Harness {
-    production_harness_at(ProtocolVersion::LATEST, None)
+    production_harness_at(ProtocolVersion::LATEST, None, BOOK_TIME, false)
 }
 
 /// `production_harness` at `version`, with emissions' period 0 and staking's epoch 0 at `origin` (its
-/// start after `BOOK_TIME` and its epoch length) in place of the deployment's.
-pub fn production_harness_at(version: ProtocolVersion, origin: Option<Origin>) -> Harness {
+/// start after the book's clock and its epoch length) in place of the deployment's, the clock at `at`,
+/// and with `always_open` every market listed as trading around the clock, with no weekend margin.
+pub fn production_harness_at(
+    version: ProtocolVersion,
+    origin: Option<Origin>,
+    at: Millis,
+    always_open: bool,
+) -> Harness {
     let genesis = load().genesis;
     let mut h = Harness::empty();
-    h.ts = BOOK_TIME;
+    h.ts = at;
     h.admin(AdminCommand::SetClientAuth(ClientAuth::Eip712 { chain_id: CHAIN_ID, vault: VAULT }));
     h.admin(AdminCommand::SetOperator(operator()));
     h.admin(AdminCommand::ActivateProtocol { version });
     h.admin(AdminCommand::SetParams(genesis.params));
     for market in genesis.markets {
+        // A market open around the clock has no weekend gap to hold a margin over.
+        let market = match always_open {
+            true => MarketSpec { schedule: Schedule::AlwaysOpen, weekend_margin_bps: 0, ..market },
+            false => market,
+        };
         h.admin(AdminCommand::UpsertMarket(market));
     }
     h.admin(AdminCommand::SetCloseSpreadCeilings { ceilings: genesis.close_spread_ceilings });
     let events = h.cmd(Command::HouseCapital { amount: genesis.house_capital, chain_ref: "genesis".into() });
     let text = std::fs::read_to_string(DEPLOYMENT).expect("ops/runbooks/production-deployment.toml");
     let deployment: Deployment = toml::from_str(&text).expect("the deployment's inputs parse");
-    let start_ms = origin.map_or(deployment.start.timestamp_millis(), |origin| BOOK_TIME + origin.start_after);
+    let start_ms = origin.map_or(deployment.start.timestamp_millis(), |origin| at + origin.start_after);
     let period_budget = deployment.vault.period_budget.parse().expect("a budget in base units");
     h.operator_admin(AdminCommand::InitEmissions(EmissionSchedule {
         start_ms,

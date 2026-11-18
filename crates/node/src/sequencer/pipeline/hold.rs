@@ -26,7 +26,7 @@ impl Sequencer {
     /// - a finished sync failed, or its thread ended
     fn check_hold(&mut self) -> anyhow::Result<Option<(Instant, bool)>> {
         while let Some(done) = self.pipeline.as_ref().and_then(|pipeline| pipeline.shared.pop()) {
-            self.complete(done)?;
+            self.complete_between(done)?;
         }
         let oldest = self.pipeline.as_ref().and_then(|pipeline| pipeline.in_flight.front());
         let Some((deadline, through)) = oldest.map(|oldest| (oldest.staged + MAX_SYNC_HOLD, oldest.last_seq)) else {
@@ -68,7 +68,7 @@ impl Sequencer {
             self.pipeline.as_ref().map(|pipeline| pipeline.shared.clone()).expect("check_hold found a batch in flight");
         tokio::select! {
             biased;
-            done = shared.next() => self.complete(done)?,
+            done = shared.next() => self.complete_between(done)?,
             () = sleep_until(deadline), if !held => {}
         }
         Ok(())
@@ -111,7 +111,7 @@ impl Sequencer {
             let (root, root_deadline, root_due) = (self.roots.shared(), self.roots.deadline(), self.root_work_due());
             tokio::select! {
                 biased;
-                done = shared.next() => self.complete(done)?,
+                done = shared.next() => self.complete_between(done)?,
                 () = sleep_until(deadline) => {}
                 request = rx.recv() => match request {
                     Some(request) => {

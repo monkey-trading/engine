@@ -75,6 +75,31 @@ pub fn replay_path_with_trust(
     Ok(replayed)
 }
 
+/// Replays the log directory at `path`, written by a sequencer that took over `engine`, a state no log
+/// holds, from that state, as `replay_path_with_trust` replays a whole log under `signer`: every
+/// command's events, every checkpoint's root and signature, and the command seals.
+/// Error cases:
+/// - as `replay_path_with_trust`
+#[cfg(test)]
+pub(crate) fn replay_path_from(
+    engine: engine_core::Engine,
+    path: &Path,
+    signer: AccountId,
+) -> anyhow::Result<Replayed> {
+    let mut replay = Replay::with_trust(None, Some(signer));
+    replay.engine = engine;
+    SegmentedLog::open(path, |entry| replay.apply(&entry))?;
+    let replayed = replay.finish();
+    replayed.origin.require_audit(signer)?;
+    ensure!(
+        replayed.checkpoint_signers.iter().all(|named| *named == signer),
+        "checkpoint signer differs from trusted signer"
+    );
+    ensure!(replayed.commands > 0, "{} holds no command", path.display());
+    ensure!(replayed.checkpoints > 0, "{} holds no checkpoint, so nothing in it is verified", path.display());
+    Ok(replayed)
+}
+
 /// Replays a published log whose checkpoint signer changes at signer epochs the vault records,
 /// given an independently verified attestation for each signer: every checkpoint and every typed
 /// withdrawal must be one of `attested`, unlike `replay_path_with_trust`'s single pinned signer.

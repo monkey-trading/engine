@@ -70,6 +70,8 @@ impl VenueFeed {
             if free_at.is_none()
                 && let Some((quote, read_stamp)) = quotes.take()
             {
+                // A quote held back to refresh its mid counts its wait from when it is sent.
+                let received = quotes.take_received();
                 let market = self.instruments[symbol].market;
                 // Held and out-of-session quotes are dropped, not sequenced for the engine to
                 // refuse; an out-of-session one is logged. The engine needs the market open from
@@ -120,7 +122,9 @@ impl VenueFeed {
                         self.sent.insert(symbol.clone(), record(sent, &quote, engine_now));
                         let not_after = self.take_not_after(symbol, quote.ts);
                         let cmd = Command::Prices { market, quotes: vec![quote] };
-                        self.tx.send(Request::Quote { cmd, not_after }).await.map_err(|_| anyhow!("sequencer gone"))?;
+                        let received = received.unwrap_or_else(std::time::Instant::now);
+                        let request = Request::Quote { cmd, not_after, received };
+                        self.tx.send(request).await.map_err(|_| anyhow!("sequencer gone"))?;
                         self.sent_own = true;
                         let spent_to = spent.get(symbol).copied().unwrap_or_else(Instant::now).max(Instant::now());
                         spent.insert(symbol.clone(), spent_to + interval);

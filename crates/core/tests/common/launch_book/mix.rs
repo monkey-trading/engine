@@ -7,6 +7,8 @@ use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{MarketId, Millis};
 use engine_core::{Engine, Fixed};
 
+use crate::common::launch_book::genesis::BOOK_TIME;
+
 /// The stream that draws which accounts are near their level, apart from each account's own.
 pub const NEAR_LEVEL_DRAWS: u64 = 0x6e65_6172_6c65_7665;
 const MARKET_MIX: &str =
@@ -52,6 +54,10 @@ pub struct Mix {
     /// The share of accounts whose cash leaves them at their close-out level after a move of 1%
     /// against every position they hold, instead of `balance`.
     pub near_level: u64,
+    /// The book's clock: `BOOK_TIME`, or a running node's wall clock.
+    pub at: Millis,
+    /// Every market trades around the clock, so a node priced at any hour prices them all.
+    pub always_open: bool,
 }
 
 /// The time origin and epoch length a case that closes a period or an epoch sets: the deployment's
@@ -101,6 +107,8 @@ impl Mix {
             origin: None,
             period_losses: false,
             near_level: 0,
+            at: BOOK_TIME,
+            always_open: false,
         }
     }
 }

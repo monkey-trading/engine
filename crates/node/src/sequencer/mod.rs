@@ -220,7 +220,9 @@ impl Sequencer {
                             batch.replies.push((reply, events.to_vec()));
                         }
                     }
-                    Request::Quote { cmd, not_after } => sequenced |= self.sequence_quote(cmd, not_after)?.is_some(),
+                    Request::Quote { cmd, not_after, received } => {
+                        sequenced |= self.sequence_quote(cmd, not_after, received)?.is_some()
+                    }
                     Request::Query(q) => queries.push(q),
                     Request::PrefixAt { seq, reply } => _ = reply.send(self.prefixes.prefix_at(seq)),
                     Request::LogChecked { head, candidate, release, reply } => {
@@ -278,6 +280,7 @@ impl Sequencer {
             self.submit(release)?;
             self.root_batch_end()?;
             queries.drain(..).for_each(|q| q(&self.engine));
+            self.metrics.latency.busy(self.clock.instant().saturating_duration_since(started));
             if handover_stop.is_some() {
                 self.settle_async().await?;
             }
@@ -320,14 +323,6 @@ impl Sequencer {
         self.flush()?;
         info!(seq = ?self.engine.last_seq(), "sequencer drained");
         Ok(())
-    }
-
-    /// Stamps and sequences one command, after any queued required commands. Returns `None`, with
-    /// nothing logged, when trusted time refuses the stamp.
-    /// Error cases:
-    /// - as `sequence_stamped`
-    fn sequence(&mut self, cmd: Command) -> anyhow::Result<Option<Stamped>> {
-        self.sequence_stamped(cmd, None)
     }
 
     /// `sequence`, with the stamp also refused for a venue's quote that `quote` names (see
@@ -494,6 +489,8 @@ mod pace_tests;
 mod resting_bench;
 #[cfg(test)]
 mod rollover_tests;
+#[cfg(test)]
+mod seeded;
 #[cfg(test)]
 pub(crate) mod tests;
 #[cfg(test)]

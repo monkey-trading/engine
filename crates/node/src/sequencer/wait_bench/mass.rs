@@ -210,10 +210,7 @@ fn sequencer(
         ..sequencer_config(&dir, watch::channel(Manifest::default()).0)
     };
     let mut seq = Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), stream, withdrawals).unwrap();
-    seq.next_seq = engine.last_seq().map_or(0, |seq| seq + 1);
-    seq.last_ts = engine.now();
-    seq.last_checkpoint = engine.last_seq();
-    seq.engine = engine;
+    seq.take_over(engine);
     seq.track_stats(stats());
     seq.trust(sample_around(&clock.inner)).unwrap();
     seq.pipeline_log_syncs().unwrap();

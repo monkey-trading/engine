@@ -54,6 +54,9 @@ mod tee;
 #[cfg(test)]
 #[path = "../../core/tests/common/mod.rs"]
 mod common;
+// The load test of a running node on the launch book, and the load generator it starts.
+#[cfg(test)]
+mod load_scenario;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]

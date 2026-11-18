@@ -568,6 +568,276 @@
       }
     },
     {
+      "type": "timeseries",
+      "id": 24,
+      "title": "Price to stamp",
+      "description": "From a venue quote's receipt at its venue task to its stamp: the wait behind other commands. The launch bar is p50 1 ms, p99 10 ms, p999 50 ms.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(engine_price_to_stamp_seconds_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(engine_price_to_stamp_seconds_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.999, sum by (le) (rate(engine_price_to_stamp_seconds_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "p999",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 25,
+      "title": "Signed request to reply",
+      "description": "From the API admitting a signed request past its client's rate to its reply, screening included.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(engine_api_request_seconds_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(engine_api_request_seconds_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.999, sum by (le) (rate(engine_api_request_seconds_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "p999",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 26,
+      "title": "Stamp to stream publication",
+      "description": "From a command's stamp to its publication to stream subscribers, once its batch is durable.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(engine_stream_lag_seconds_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(engine_stream_lag_seconds_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.999, sum by (le) (rate(engine_stream_lag_seconds_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "p999",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 27,
+      "title": "Sequencer busy share",
+      "description": "The share of the time the sequencer's thread spends sequencing and releasing batches. The launch bar is 50% at ten times launch flow.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "rate(engine_sequencer_busy_seconds_total{instance=~\"$instance\"}[5m])",
+          "legendFormat": "busy",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
       "type": "row",
       "id": 10,
       "title": "Feeds",
@@ -576,7 +846,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 21
+        "y": 37
       },
       "panels": []
     },
@@ -593,7 +863,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 22
+        "y": 38
       },
       "targets": [
         {
@@ -667,7 +937,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 22
+        "y": 38
       },
       "targets": [
         {
@@ -766,7 +1036,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 46
       },
       "targets": [
         {
@@ -816,7 +1086,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 54
       },
       "panels": []
     },
@@ -833,7 +1103,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 55
       },
       "targets": [
         {
@@ -887,7 +1157,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 55
       },
       "targets": [
         {
@@ -937,7 +1207,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 63
       },
       "panels": []
     },
@@ -954,7 +1224,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 48
+        "y": 64
       },
       "targets": [
         {
@@ -1008,7 +1278,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 48
+        "y": 64
       },
       "targets": [
         {
@@ -1062,7 +1332,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 48
+        "y": 64
       },
       "targets": [
         {
@@ -1112,7 +1382,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 56
+        "y": 72
       },
       "panels": []
     },
@@ -1129,7 +1399,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 57
+        "y": 73
       },
       "targets": [
         {
@@ -1201,7 +1471,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 57
+        "y": 73
       },
       "targets": [
         {

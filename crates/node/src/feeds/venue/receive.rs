@@ -24,7 +24,7 @@ impl VenueFeed {
         text: &str,
         buffered: &mut BTreeMap<String, Pending>,
     ) -> anyhow::Result<()> {
-        let now = now_ms();
+        let (now, received) = (now_ms(), std::time::Instant::now());
         let books = match adapter.read(text, now) {
             Ok(Frame::Books(books)) => books,
             Ok(Frame::PartlyRefused { books, refused }) => {
@@ -62,6 +62,7 @@ impl VenueFeed {
                 Ok((symbol, quote)) => match self.take_book(&symbol, quote, now, buffered) {
                     Ok(ts) => {
                         self.delay.note_read(&symbol, ts, self.timing.max_delay);
+                        buffered.entry(symbol).or_default().note_received(received);
                     }
                     Err(lead_ms) => self.clock_ahead(self.instruments[&symbol].market, lead_ms),
                 },

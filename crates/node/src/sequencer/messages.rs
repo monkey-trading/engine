@@ -51,10 +51,12 @@ pub enum Request {
         reply: Option<oneshot::Sender<Vec<Event>>>,
     },
     /// A venue's quote, sequenced only while the monotonic clock has not passed `not_after`, by when
-    /// its connection's pings stop bounding its age.
+    /// its connection's pings stop bounding its age. `received` is when its venue task read it, which
+    /// its wait to its stamp is measured from.
     Quote {
         cmd: Command,
         not_after: Instant,
+        received: Instant,
     },
     Query(Query),
     /// The cumulative command prefix after the command at `seq`, while the sequencer retains it.
@@ -214,6 +216,10 @@ pub struct StreamMsg {
     /// The message's stream encoding, made by the first subscriber that sends it and shared by the rest.
     #[serde(skip)]
     encoded: OnceLock<Result<Encoded, String>>,
+    /// The monotonic time the sequencer stamped the message's command at, which its stream lag is
+    /// measured from; none for any other message, or one read back from the log.
+    #[serde(skip)]
+    stamped: Option<Instant>,
 }
 
 /// A stream message's JSON, and what a signed frame needs of it: the SHA-256 its signature covers and
@@ -271,7 +277,17 @@ pub struct SignedWithdrawal {
 impl StreamMsg {
     /// A message of `body` at `offset`.
     pub fn from_body(offset: Offset, body: StreamBody) -> Self {
-        Self { offset, body, encoded: OnceLock::new() }
+        Self { offset, body, encoded: OnceLock::new(), stamped: None }
+    }
+
+    /// This message, its command stamped at monotonic time `at`.
+    pub(crate) fn stamped_at(self, at: Instant) -> Self {
+        Self { stamped: Some(at), ..self }
+    }
+
+    /// The monotonic time the sequencer stamped the message's command at, if it did.
+    pub(crate) fn stamped(&self) -> Option<Instant> {
+        self.stamped
     }
 
     /// The message's JSON, encoded once however many subscribers send it.

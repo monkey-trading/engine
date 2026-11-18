@@ -420,6 +420,8 @@ impl Replay {
     }
 }
 
+#[cfg(test)]
+pub(crate) use paths::replay_path_from;
 pub(crate) use paths::replay_path_with_authorities;
 pub use paths::{
     replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust, replay_with_signer,

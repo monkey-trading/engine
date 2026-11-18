@@ -341,7 +341,7 @@ fn sequenced(rx: &mut mpsc::Receiver<Request>) -> Option<SourceQuote> {
 /// The next sequenced quote and the delay bound it carries, if one went.
 fn sequenced_with_bound(rx: &mut mpsc::Receiver<Request>) -> Option<(SourceQuote, std::time::Instant)> {
     match rx.try_recv() {
-        Ok(Request::Quote { cmd: Command::Prices { mut quotes, .. }, not_after }) => {
+        Ok(Request::Quote { cmd: Command::Prices { mut quotes, .. }, not_after, .. }) => {
             quotes.pop().map(|quote| (quote, not_after))
         }
         Ok(_) => panic!("expected a price command"),
