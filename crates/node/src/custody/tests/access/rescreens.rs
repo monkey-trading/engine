@@ -58,7 +58,8 @@ pub(super) async fn moded_source() -> (AccessSection, Arc<AtomicU8>, Arc<AtomicU
     }
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config: AccessSection = toml::from_str(&format!(
-        "source='{}'\nendpoint='http://{}'\ntimeout='2s'\nmax_age='60s'\nmax_response_bytes=4096\nmax_in_flight=2",
+        "source='{}'\nendpoint='http://{}'\ntimeout='2s'\nmax_age='60s'\nmax_response_bytes=4096\nmax_in_flight=2\n\
+         max_in_flight_per_account=2\nmax_in_flight_per_client=2\nreserved_in_flight=0",
         eip712::address(source_key().verifying_key()),
         listener.local_addr().unwrap()
     ))

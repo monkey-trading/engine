@@ -171,7 +171,8 @@ mod tests {
             let mut cfg = attested(&own_operator_key());
             cfg.access = Some(
                 toml::from_str(&format!(
-                    "source='{source}'\nendpoint='{endpoint}'\ntimeout='1s'\nmax_age='30s'\nmax_response_bytes=4096\nmax_in_flight=2"
+                    "source='{source}'\nendpoint='{endpoint}'\ntimeout='1s'\nmax_age='30s'\nmax_response_bytes=4096\nmax_in_flight=2\n\
+                     max_in_flight_per_account=2\nmax_in_flight_per_client=2\nreserved_in_flight=0"
                 ))
                 .unwrap(),
             );

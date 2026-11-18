@@ -78,7 +78,7 @@ async fn a_declaration_in_flight_holds_its_slot_and_leaves_orders_theirs() {
     node.onboard(&trader).await;
     // The source holds the first wallet's screening, so its declaration stays in flight.
     let gate = Arc::new(Semaphore::new(0));
-    node.source.lock().unwrap().hold = Some((eip712::address(first.verifying_key()), gate.clone()));
+    node.source.lock().unwrap().hold = Some((vec![eip712::address(first.verifying_key())], gate.clone()));
     let queries = node.source.lock().unwrap().requests.len();
     let in_flight = node.post("/v1/eligibility", declaration(&first, 0));
     tokio::pin!(in_flight);
@@ -123,8 +123,7 @@ async fn exhausted_screening_capacity_neither_calls_the_source_nor_spends_a_clie
     let client = key(1);
     let account = eip712::address(client.verifying_key());
     node.onboard(&client).await;
-    let slots = &node.state.access.as_ref().unwrap().api_slots;
-    let occupied = slots.acquire_many(2).await.unwrap();
+    let occupied = node.state.access.as_ref().unwrap().api_slots.fill();
     let (entries, queries) = (settled_entries(&node).await, node.source.lock().unwrap().requests.len());
     assert_eq!(node.post("/v1/orders", order(&client, 1)).await.0, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(settled_entries(&node).await, entries);

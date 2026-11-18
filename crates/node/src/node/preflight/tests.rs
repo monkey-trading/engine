@@ -241,7 +241,7 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         let mut cfg = dev_config();
         cfg.node.log_dir = root.join("log");
         cfg.history.dir = root.join("history");
-        cfg.access = Some(toml::from_str(&format!("source='{}'\nendpoint='http://127.0.0.1:9'\ntimeout='1s'\nmax_age='60s'\nmax_response_bytes=4096\nmax_in_flight=2", access::policy().source)).unwrap());
+        cfg.access = Some(toml::from_str(&format!("source='{}'\nendpoint='http://127.0.0.1:9'\ntimeout='1s'\nmax_age='60s'\nmax_response_bytes=4096\nmax_in_flight=2\nmax_in_flight_per_account=2\nmax_in_flight_per_client=2\nreserved_in_flight=0", access::policy().source)).unwrap());
         let (work, mut queued) = mpsc::channel(64);
         let seq_cfg = SequencerConfig {
             access_policy: Some(access::policy()),

@@ -24,6 +24,9 @@ timeout = "2s"
 max_age = "30s"
 max_response_bytes = 4096
 max_in_flight = 8
+max_in_flight_per_account = 2
+max_in_flight_per_client = 4
+reserved_in_flight = 2
 ```
 
 The durations and concurrency limit above are examples for local testing. Select production bounds
@@ -186,11 +189,22 @@ while a retry turn's screening fails or its evidence does not verify, and resolv
 that does not fail. Refusal counters include `eligibility_rejected`
 and `deposit_held` in `engine_rejections_total`; API policy reasons appear under `reason="access"`.
 Use the public event for the exact reason. API screening has bounded concurrency; custody retains
-independent bounded screening capacity for ingestion and retries. Declarations hold at most half the
-API's screening slots, rounded up, so however many arrive, orders keep a slot; `access.max_in_flight`
-must be at least 2 for that to hold. A declaration past that gets 503
-`declaration screening is at capacity` with `Retry-After`, and uses no nonce, and
-`api_declaration_slots_full` is a Warning raised at most once a minute while this lasts.
+independent bounded screening capacity for ingestion and retries. A request holds one of the API's
+`access.max_in_flight` screening slots while the source answers. One account's requests, its session
+keys' included, hold at most `access.max_in_flight_per_account` of them, and one client's at most
+`access.max_in_flight_per_client`, an IPv6 client counted by its /64; a request past its share gets
+429 with `Retry-After`. A copy of a signed request still being screened gets 409
+`the same request is already being screened` and takes no slot. `access.reserved_in_flight` of the
+slots are kept for closes (reduce-only orders), close-alls, withdrawals and payout reissues, which may
+take any free slot; other orders and declarations take only the rest. A request that finds every slot
+it may take held gets 503 `screening is at capacity` with `Retry-After`, uses no nonce, and
+`api_screening_slots_full` is a Warning raised at most once a minute while this lasts. Declarations
+hold at most half the slots, rounded up, and the reserve must be below half of them, rounded down, so
+however many declarations arrive, orders keep a slot; `access.max_in_flight` must be at least 2 for
+that to hold. A declaration past that gets 503 `declaration screening is at capacity` with
+`Retry-After`, and uses no nonce, and `api_declaration_slots_full` is a Warning raised at most once a
+minute while this lasts. A production build refuses a share above 2 per account or 4 per client, and
+a reserve below 2.
 
 A declaration or session-key request from a never-credited account takes one token from its client's
 share, `api.fresh_accounts.per_client`, and one from a budget all clients share,

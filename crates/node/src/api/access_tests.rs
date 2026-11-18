@@ -10,6 +10,7 @@ mod portfolio_margin;
 mod pre_deposit;
 mod pre_deposit_budgets;
 mod reissue;
+mod screening_slots;
 mod session_keys;
 mod source;
 mod spreads;
@@ -200,7 +201,8 @@ async fn concurrent_signed_orders_cannot_fill_twice_from_one_nonce() {
     let mut fills = 0;
     for (status, events) in [first, second] {
         if status == StatusCode::CONFLICT {
-            assert_eq!(events, json!({"error":"invalid nonce","expected":2}));
+            let copy = json!({"error":"the same request is already being screened"});
+            assert!(events == json!({"error":"invalid nonce","expected":2}) || events == copy, "{events}");
         } else {
             assert_eq!(status, StatusCode::OK);
             for event in events.as_array().unwrap() {
@@ -263,9 +265,11 @@ impl Node {
             requests: Vec::new(),
             hold: None,
             observed_at: NOW,
+            address: listener.local_addr().unwrap(),
         }));
         let config: AccessSection = toml::from_str(&format!(
-            "source='{}'\nendpoint='http://{}'\ntimeout='2s'\nmax_age='1s'\nmax_response_bytes=4096\nmax_in_flight=2",
+            "source='{}'\nendpoint='http://{}'\ntimeout='2s'\nmax_age='1s'\nmax_response_bytes=4096\nmax_in_flight=2\n\
+             max_in_flight_per_account=2\nmax_in_flight_per_client=2\nreserved_in_flight=0",
             eip712::address(key(0x77).verifying_key()),
             listener.local_addr().unwrap()
         ))

@@ -15,7 +15,8 @@ pub(super) async fn start(domain: CheckpointDomain) -> (Arc<crate::access::Acces
     use engine_core::eip712::{self, Signature};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let cfg: crate::config::AccessSection = toml::from_str(&format!(
-        "source='{}'\nendpoint='http://{}'\ntimeout='2s'\nmax_age='60s'\nmax_response_bytes=4096\nmax_in_flight=2",
+        "source='{}'\nendpoint='http://{}'\ntimeout='2s'\nmax_age='60s'\nmax_response_bytes=4096\nmax_in_flight=2\n\
+         max_in_flight_per_account=2\nmax_in_flight_per_client=2\nreserved_in_flight=0",
         access::policy().source,
         listener.local_addr().unwrap()
     ))

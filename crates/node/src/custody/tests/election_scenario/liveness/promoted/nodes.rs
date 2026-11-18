@@ -244,6 +244,7 @@ fn write_config(
             "source": engine_core::eip712::address(crate::test_support::access::key(0x77).verifying_key()).to_string(),
             "endpoint": services.access, "timeout": "2s", "max_age": "30s",
             "max_response_bytes": 4096, "max_in_flight": 8,
+            "max_in_flight_per_account": 8, "max_in_flight_per_client": 8, "reserved_in_flight": 0,
         }),
     );
     cfg["operator"]["rotation_enabled"] = true.into();

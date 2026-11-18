@@ -408,7 +408,8 @@ async fn a_start_holds_for_a_screening_key_and_sets_it_on_its_endpoint() {
         toml::from_str(
             "source = '0x0000000000000000000000000000000000000001'\n\
              endpoint = 'https://source.example/v1/{screening_key}'\ntimeout = '2s'\nmax_age = '30s'\n\
-             max_response_bytes = 4096\nmax_in_flight = 8\n",
+             max_response_bytes = 4096\nmax_in_flight = 8\nmax_in_flight_per_account = 2\n\
+             max_in_flight_per_client = 4\nreserved_in_flight = 2\n",
         )
         .unwrap(),
     );

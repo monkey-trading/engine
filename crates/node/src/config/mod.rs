@@ -338,7 +338,9 @@ impl NodeConfig {
     /// - this is a production build and a TEE, custody, or feed provider is `mock`, an allowed
     ///   origin is not `https`, `[api.tls.acme]` is missing, a trusted proxy range is loopback or too
     ///   wide, `api.fresh_accounts` is above the production values (see `ApiSection::refuse_dev_fresh_budgets`),
-    ///   `api.request_bursts` is above them (see `ApiSection::refuse_dev_request_bursts`),
+    ///   `api.request_bursts` is above them (see `ApiSection::refuse_dev_request_bursts`), the
+    ///   access screening shares are above them or the reserve below it (see
+    ///   `AccessSection::refuse_dev_screening_shares`),
     ///   a genesis market is quoted by fewer venues than its `min_sources` (see
     ///   `refuse_unmet_min_sources`), or a field reads a secret from the environment (see
     ///   `refuse_environment_secrets`)
@@ -357,6 +359,11 @@ impl NodeConfig {
         cfg.api
             .refuse_dev_request_bursts(PRODUCTION_BUILD)
             .with_context(|| format!("validating {}", path.display()))?;
+        if let Some(access) = &cfg.access {
+            access
+                .refuse_dev_screening_shares(PRODUCTION_BUILD)
+                .with_context(|| format!("validating {}", path.display()))?;
+        }
         cfg.refuse_environment_secrets_at_load(PRODUCTION_BUILD)
             .with_context(|| format!("validating {}", path.display()))?;
         cfg.file_sha256 = Sha256::digest(text.as_bytes()).into();

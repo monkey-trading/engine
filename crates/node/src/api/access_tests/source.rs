@@ -1,6 +1,7 @@
 //! The mock screening source the access tests answer with.
 
 use std::collections::BTreeSet;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use axum::Json;
@@ -18,10 +19,12 @@ pub(super) struct Source {
     pub(super) sanctioned: BTreeSet<AccountId>,
     pub(super) forged: bool,
     pub(super) requests: Vec<Value>,
-    /// An account whose screening waits for a permit, so its request stays in flight.
-    pub(super) hold: Option<(AccountId, Arc<Semaphore>)>,
+    /// Accounts whose screenings wait for a permit, so their requests stay in flight.
+    pub(super) hold: Option<(Vec<AccountId>, Arc<Semaphore>)>,
     /// The time each answer is observed at.
     pub(super) observed_at: Millis,
+    /// Where the node asks it.
+    pub(super) address: SocketAddr,
 }
 
 pub(super) async fn answer(State(source): State<Arc<Mutex<Source>>>, Json(request): Json<Value>) -> Json<Screening> {
@@ -30,7 +33,7 @@ pub(super) async fn answer(State(source): State<Arc<Mutex<Source>>>, Json(reques
     let hold = {
         let mut source = source.lock().unwrap();
         source.requests.push(request.clone());
-        source.hold.clone().filter(|(held, _)| account == Some(*held))
+        source.hold.clone().filter(|(held, _)| account.is_some_and(|account| held.contains(&account)))
     };
     if let Some((_, gate)) = hold {
         let _permit = gate.acquire().await.unwrap();

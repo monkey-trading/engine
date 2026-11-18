@@ -3,6 +3,9 @@
 //! TODO: bind source configuration into enclave attestation. A provider's classifications are trusted;
 //! replay proves the decisions from logged inputs, not the correctness of the provider's database.
 
+mod slots;
+pub(crate) use slots::{Claim, ScreeningSlot, SlotKind, SlotRefusal};
+
 use std::net::IpAddr;
 
 use anyhow::Context;
@@ -11,11 +14,10 @@ use engine_core::eip712::B256;
 use engine_core::types::AccountId;
 use reqwest::{Certificate, Client, Url, redirect};
 use serde::Serialize;
-use tokio::sync::Semaphore;
 use tracing::warn;
 
+use crate::access::slots::ScreeningSlots;
 use crate::config::AccessSection;
-use crate::limits::{SHARED_CAP_FULL, ThrottledAlert};
 
 /// The source receives the real transport peer only for API actions; it is never logged.
 #[derive(Serialize)]
@@ -30,11 +32,8 @@ pub(crate) struct AccessClient {
     http: Client,
     endpoint: Url,
     max_response_bytes: usize,
-    pub(crate) api_slots: Semaphore,
-    /// How many of `api_slots` declarations may hold at once: half, rounded up.
-    pub(crate) declaration_slots: Semaphore,
-    /// Raised while declarations are refused for want of those slots.
-    pub(crate) declaration_slots_full: ThrottledAlert,
+    /// The API's requests waiting on the source; custody's screenings take none.
+    pub(crate) api_slots: ScreeningSlots,
 }
 
 impl AccessClient {
@@ -62,9 +61,7 @@ impl AccessClient {
             http,
             endpoint: config.endpoint.expose()?,
             max_response_bytes: config.max_response_bytes,
-            api_slots: Semaphore::new(config.max_in_flight.get()),
-            declaration_slots: Semaphore::new(config.max_in_flight.get().div_ceil(2)),
-            declaration_slots_full: ThrottledAlert::new("api_declaration_slots_full", SHARED_CAP_FULL),
+            api_slots: ScreeningSlots::new(config),
         })
     }
 

@@ -414,7 +414,7 @@ pub async fn run_retain(limits: Arc<ApiLimits>) -> anyhow::Result<()> {
 
 /// The address a client is counted under: IPv4 as is, also when mapped into IPv6, and IPv6 by its
 /// /64.
-fn client_key(ip: IpAddr) -> IpAddr {
+pub(crate) fn client_key(ip: IpAddr) -> IpAddr {
     match ip.to_canonical() {
         IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from_bits(v6.to_bits() & !u128::from(u64::MAX))),
         v4 => v4,

@@ -403,6 +403,9 @@ pub(super) fn write_config(
         "max_age": "30s",
         "max_response_bytes": 4096,
         "max_in_flight": 8,
+        "max_in_flight_per_account": 8,
+        "max_in_flight_per_client": 8,
+        "reserved_in_flight": 0,
     });
     edit(&mut cfg)?;
     std::fs::write(path, toml::to_string(&toml::Value::try_from(cfg)?)?)?;
