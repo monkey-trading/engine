@@ -19,9 +19,9 @@ not upgradeable. None of the contracts has been deployed to a public network yet
 | `StateTree` | A library of `ExitVerifier`, which checks the vault's proofs | Checks a proof against the engine's state root, a sparse Merkle tree hashed with keccak-256 |
 | `MonkeyToken` | Arbitrum | The capped MONKEY ERC-20 token, which only the vault mints |
 | `Staking` | Arbitrum | Holds staked MONKEY, lets stakers delegate votes to operator candidates, enforces the unstaking cooldown and locks candidates' self-bonds |
-| `OperatorRegistry` | Arbitrum | Registers operator candidates and names the operator by election, by promotion or by daily turns. It deploys `Staking`. |
+| `OperatorRegistry` | Arbitrum | Registers operator candidates, chooses the rotation set at each close, and names the operator by election, by promotion or by daily turns. It deploys `Staking`. |
 | `RegistryLens` | Arbitrum | A read-only, paged view of the registry, which the server reads for `/v1/operators` |
-| `OperatorSchedule` | Arbitrum | Draws daily turns from stake-weighted rotation sets, and runs the liveness rule, skips, promotions and standby keys |
+| `OperatorSchedule` | Arbitrum | Records the rotation sets, draws daily turns from them by stake, and runs the liveness rule, skips, promotions and standby keys |
 | `SeedSchedule` | The base of `SeedRelay`, `SeedReceiver` and `OperatorSchedule` | The shared timetable of turn boundaries, draw deadlines and seed epochs |
 | `SeedRelay` | Ethereum | Proves an epoch's RANDAO value from a beacon block root and sends it to Arbitrum |
 | `SeedReceiver` | Arbitrum | Records the relayed seeds and answers each turn's seed, with a fallback when none arrived |
@@ -31,6 +31,14 @@ not upgradeable. None of the contracts has been deployed to a public network yet
 | `ArbSys` | An interface | The interface to Arbitrum's system contract at address `0x64` |
 
 Each contract's NatSpec comments document its rules, its events and the reasons it reverts.
+
+While operator rotation is on, each close of a staking epoch adopts a rotation set, which takes
+effect seven days and a finality margin later. The quorum for a close counts only the votes of the
+eligible candidates that hold a promotable standby key. With a quorum, the set holds those
+candidates weighted by their votes. A member of the previous set that is between standby keys, as
+it is while it moves to a new release, is carried into the new set for about one epoch, at no more
+than its current votes. Without a quorum, the close keeps the previous set, less the members that
+are no longer eligible. The schedule draws each daily turn from the set in effect.
 
 A timelock with a nonzero delay governs the vault and the registry, with the deployment's multisig
 as its proposer. The timelock rotates the signing key, approves releases, pauses deposits or

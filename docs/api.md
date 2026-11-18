@@ -138,6 +138,7 @@ maximum `limit`.
 | GET | `/v1/accounts/{address}/nonce` | A signing key's next nonce |
 | GET | `/v1/accounts/{address}/eligibility` | The eligibility class an account has declared |
 | GET | `/v1/accounts/{address}/history` | An account's events, newest first |
+| GET | `/v1/accounts/{address}/financing/{seq}` | An account's financing charges at the rollovers of one command, with their proof |
 | GET | `/v1/accounts/{address}/proof` | A proof of an account's balance and positions |
 | POST | `/v1/orders` | Places an order |
 | POST | `/v1/orders/cancel` | Cancels one working order |
@@ -701,6 +702,7 @@ use.
 | GET | `/v1/accounts/{address}/nonce` | A signing key's next nonce |
 | GET | `/v1/accounts/{address}/eligibility` | The eligibility class an account has declared |
 | GET | `/v1/accounts/{address}/history` | An account's events, newest first |
+| GET | `/v1/accounts/{address}/financing/{seq}` | An account's financing charges at the rollovers of one command, with their proof |
 | GET | `/v1/accounts/{address}/proof` | A proof of an account's balance and positions |
 
 Account data is public, as the log it comes from is public. None of these routes needs a signature.
@@ -789,9 +791,44 @@ event's own fields.
 `staking_rejected`, `distribution_allocated`, `operator_share_allocated` and
 `operator_share_withheld`.
 
+Each daily rollover logs a single `financing_applied` event that covers every position it charges,
+and a rollover that charges nothing logs none. That event names the time the rollover charged for,
+the number of positions and accounts it charged, the net amount they paid, and the root of a Merkle
+tree over each account's charges. The history still lists
+each position's charge as a `financing` event. The server derives those events from the rollover
+rather than reading them from the log, and gives each one an index past every event the command
+logged, so its cursor sorts after them.
+
 The index keeps events for the period that `history.retention` sets, counted back from the newest
 command, and the log keeps every event. While the index is still taking the commands that the log
 held when the server started, the route answers 503 `history is catching up with the log`.
+
+### Financing charges
+
+`GET /v1/accounts/{address}/financing/{seq}` returns the account's financing charges at each
+rollover that the command at `seq` ran. Each charge comes with a proof, so a client can check it
+against the public log without seeing any other account's charges. The answer holds `seq` and
+`rollovers`, one entry for each rollover:
+
+| Field | Meaning |
+| --- | --- |
+| `event` | Where the rollover's `financing_applied` event sits in the log, written `<seq>:<index>`. |
+| `at` | The time the rollover charged for. |
+| `root` | The root that `financing_applied` logs over every account's charges. |
+| `proof` | The account's charges and their path to `root`, or `null` when the rollover charged the account nothing. |
+
+A proof holds the `account`, its `charges` in market order, each a `market` and an `amount` that is
+positive when the account pays, the leaf's `index` among the charged accounts in ascending order,
+their `count`, and the `siblings` from the leaf up. `FinancingProof::verify` in `engine-core` checks
+a proof against a root, and
+[`crates/core/src/financing/commitment.rs`](../crates/core/src/financing/commitment.rs) defines the
+leaf and node hashes.
+
+The route answers only once the command is durable in the log. The server keeps the charges of the
+newest eight commands that ran a rollover, which is a week of rollovers, and stores older ones for
+the period that `history.retention` sets. It answers 404 for a command that is not yet durable, that
+charged nothing, or whose charges it no longer holds. A replay of the public log derives those
+charges again.
 
 ### Proof of an account
 

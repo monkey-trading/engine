@@ -67,7 +67,7 @@ server against a root without trusting the server.
 | Orders and charges | `execution/`, `spread_tier/`, `close_spread`, `stress`, `holding_fee/`, `volume_tier/`, `levels/` | Order placement and execution, spread bands, the closing spread cap, stress levels, the profit fee, volume tiers, and take profit and stop loss |
 | Risk | `closeout`, `closeout_index/`, `weekend/`, `portfolio/`, `house_loss/`, `hot_indexes/` | Margin and close-out, weekend margin, the portfolio margin read, the house loss trigger, and the indexes that find the accounts and orders a price affects |
 | Toxicity | `markouts`, `toxicity/` | Markouts after each trade and the toxicity score built from them |
-| Funds and access | `funds`, `deposits/`, `withdrawal`, `access/`, `auth`, `eip712`, `session_keys` | Deposits, withdrawals and their queue, eligibility and screening, signed requests and session keys |
+| Funds and access | `funds`, `financing/`, `deposits/`, `withdrawal`, `access/`, `auth`, `eip712`, `session_keys` | Deposits, overnight financing and the root over each account's charges, withdrawals and their queue, eligibility and screening, signed requests and session keys |
 | Operator and governance | `admin/`, `operator_bounds/`, `listing_bounds/`, `notice/`, `governance/`, `election`, `turns/`, `operator_faults`, `protocol/` | Operator instructions and the bounds on them, notices, votes, the elected operator, daily turns, fault penalties and protocol versions |
 | MONKEY | `emissions`, `staking/` | MONKEY emissions and the USDC distributions to stakers |
 | State tree | `merkle/`, `tracked`, `fixed/` | The state tree, its proofs, change tracking for the root, and fixed-point arithmetic |

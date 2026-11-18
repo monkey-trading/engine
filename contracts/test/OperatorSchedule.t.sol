@@ -956,6 +956,9 @@ contract OperatorScheduleTest is ScheduleTest {
     /// adopting the most members a set can hold, the candidate cap's limit plus the operator's place
     /// beyond it, the closes after it, which check each member of that set for a carry: with the quorum,
     /// with it while all but one member are between standby keys, and below it; and a draw from them.
+    /// Measured at 101 members, each with a standby key: the adopting close about 11.1M gas, the closes
+    /// after it about 13.4M with the quorum, 15.0M with it while 100 are between standby keys and 13.2M
+    /// below it, and the draw, which records its assignment, about 460k.
     function test_GasOfAnAdoptionAndADrawAtTheMemberLimit() public {
         OperatorRegistry.Parameters memory wide = _parameters();
         wide.maxCandidates = uint16(registry.CANDIDATE_LIMIT());
