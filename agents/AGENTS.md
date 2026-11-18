@@ -114,13 +114,13 @@ an index: load only the rule whose hint matches the current action.
   `sequencer::wait_bench::mass` times what a price waits behind two of them.
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
-  `tests/invariants/` holds the property tests. Its `README.md` lists every file.
+  `tests/invariants/` holds the property tests.
 - **crates/wire/** — `engine-wire`: the signed answers the node and its clients share. The
   digests the enclave key signs over each API response (`engine.response.v1`) and stream frame
   (`engine.frame.v1`), `verify_response`, `verify_received` (a response from its header values as
   received), `FrameVerifier` (`verify_text` for a frame's JSON), the `SignedFrame` envelope, and
   known-answer vectors (`tests/vectors.json`) the browser verifier replays. No IO and no runtime.
-  Its `README.md` lists every file.
+ 
 - **crates/verify/** — `engine-verify`: SEV-SNP attestation verification against a list of release
   manifests, each of which must launch with Secure TSC (`guest_features`), with the attestation,
   collateral, extra root, and time passed in (no IO, no clock, no
@@ -128,11 +128,11 @@ an index: load only the rule whose hint matches the current action.
   checked. Signatures on RustCrypto (`p384`, `rsa`: RSASSA-PSS/SHA-384 and ECDSA P-384/SHA-384
   only). Holds the attestation and bundle types the node builds, the relayed collateral document,
   the pinned vendor roots, and, behind `test-fixtures`, the stand-in vendor chain the node's tests
-  and `examples/verifier_fixtures.rs` use. Its `README.md` lists every file.
+  and `examples/verifier_fixtures.rs` use.
 - **crates/verify-wasm/** — `engine-verify-wasm`: `engine-verify` and `engine-wire` built for
   browsers with wasm-bindgen (`verifyAttestation`, the development-only `verifyMockAttestation`,
   `ExpectedSigner`, `verifyResponse`, `FrameVerifier`); `scripts/build-wasm-verifier.sh` packages
-  it as an npm package. Its `README.md` lists every file.
+  it as an npm package.
 - **crates/node/** — `engine-node`, binary `engine` (`main.rs` over `lib.rs`). Contains delivered
   secrets (`secrets/`, `tee/secrets.rs`, `node/secrets.rs`, `config/secrets.rs`, `admin/secrets.rs`,
   `handover/secrets.rs`: RPC provider keys, vendor keys and webhook URLs the attested config names and
@@ -376,8 +376,7 @@ an index: load only the rule whose hint matches the current action.
   `sequencer/legacy/tests/activated.rs` checks custody recovery, approval funding prefixes and restart;
   `api/benchmark_tests/retention.rs` checks failed publisher refreshes across restart/calendar changes;
   `api/benchmark_tests/schedule.rs` checks changed schedules and in-flight worker nonce fencing. `tests/reference/` holds the node-format reference log
-  per protocol version, with events, written once by `examples/reference_log.rs`. Its `README.md`
-  lists every file.
+  per protocol version, with events, written once by `examples/reference_log.rs`.
 - **contracts/** — Foundry project for the custody vault. `src/Vault.sol` records each deposit's actual
   funding caller in its event and takes USDC deposits of
   10 to 1e9 USDC for the caller's trading account (`deposit`), for a named one (`depositFor`), or
@@ -1338,4 +1337,5 @@ skills: section 14 of [development-checklist](rules/development-checklist.md) fo
 - [skills/agent-review-pr/SKILL.md](skills/agent-review-pr/SKILL.md) — review or re-review a GitHub PR via `agent-code-review` (multi-agent on request) and post its in-scope findings — Low confidence rechecked or dropped, points already in the discussion skipped or added as replies — as a PENDING review only after a yes to "Push the draft comments?"; a re-review runs the same flow and also rechecks your earlier threads; never submits; load for "review PR" / "draft review" / "review the PR but don't submit" / "re-check my review".
 - [skills/agent-address-pr-comments/SKILL.md](skills/agent-address-pr-comments/SKILL.md) — answer a PR's open threads and actionable comments: verify, agree the triage with the user, fix what is true and in scope, update the PR description, and post the approved replies as one `COMMENT` review; never approves, requests changes, or resolves; load for "address the PR comments" / "address review feedback" / "reply to the review".
 - [skills/agent-create-worktree/SKILL.md](skills/agent-create-worktree/SKILL.md) — create a worktree under the sibling `<repo>-worktrees/`, named after the branch, clearing a new branch's leftover fix notes; detached at the head SHA to review a PR; load for "create a worktree" / "spin up a working tree".
+- [skills/readme-writing/SKILL.md](skills/readme-writing/SKILL.md) — write or edit any README, modelled on go-ethereum's: one line of identity, status, how it works today, getting it, what you get, running it case by case with commands run from a fresh clone, talking to it, contributing and licence; crate READMEs of 40–150 lines with a module table, never a file inventory; no version history, accretion, issue numbers, project process or unbacked claims; load before writing or editing any README.
 - [skills/agent-security-fix/SKILL.md](skills/agent-security-fix/SKILL.md) — fix, land or record a confirmed security finding: a draft repository security advisory only after an independent reproduction, every artefact kept private (no fix branch on `origin` and no public PR, issue or comment before the fix is ready to land, files only in your own worktree and read back before a `gh` write, one `private-<GHSA prefix>` remote per fork), the fix built in the advisory's private fork with one open PR per advisory, exploit tests kept as regression tests, local checks and review, then the coordinator alone lands it through the public merge queue with full CI and the owner's `merge-approved`, never the advisory's merge button or a bypass (before launch once the fix is ready, the private CI mirror optional; after launch once its release is live, the owner having contained the live system first and the timelock approved the release, with a public tag of the release's commit at activation), with disclosure once the release is current; load when fixing, landing or recording a security finding that must not be public before its fix lands.
