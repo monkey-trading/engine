@@ -284,8 +284,11 @@ cargo run -p engine-node -- verify-response \
   --challenge $CHALLENGE --path /v1/markets --headers headers --body body
 ```
 
-The final command prints `verified: status 200, signed by 0x…`. If a single byte of the body has
-changed, the command reports `the signature is not the attested key's over these bytes` instead.
+The final command prints `verified: status 200, signed by 0x… at <time> ms, log head seq <seq>`.
+The time is the server's clock when it answered, in milliseconds since the Unix epoch. The last
+number is the sequence number of the latest instruction the server had recorded in its log. If a
+single byte of the body has changed, the command reports
+`the signature is not the attested key's over these bytes` instead.
 Against a live server, take the `--signer` address from an attestation you have verified, not from
 the server.
 

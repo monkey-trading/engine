@@ -287,7 +287,7 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
 
     // 7. A re-election: fresh stake delegates to A; a close elects it; past the notice A takes the
     //    keys back from B, and B exits.
-    // The re-election's delegation must beat B's by the margin yet keep the total minted under the
+    // The re-election's delegation must give A more votes than B yet keep the total minted under the
     // cap: 30_000 to A against B's 20_000.
     let accounts: Vec<Address> = node.chain.request("eth_accounts", json!([])).await?;
     let extra = accounts[5];

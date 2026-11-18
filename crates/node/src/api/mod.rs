@@ -131,8 +131,8 @@ pub struct ApiState {
     pub(crate) access: Option<Arc<crate::access::AccessClient>>,
     /// The operator the log records, whose signature every admin request needs.
     pub operator: Operator,
-    /// Mock custody credits dev deposits and pays withdrawals by logging them; EVM custody does
-    /// neither until it pays withdrawals on-chain.
+    /// Whether custody is the mock provider, the only one under which `POST /v1/dev/deposit` credits
+    /// an account without a chain deposit.
     pub mock_custody: bool,
     /// Mock payouts or EVM custody with the finalized checkpoint gate configured.
     pub payouts_enabled: bool,

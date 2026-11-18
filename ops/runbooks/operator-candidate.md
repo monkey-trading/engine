@@ -171,8 +171,11 @@ After an election, the sequence is fixed by the contracts. Times are the registr
 
 1. Someone calls `closeEpoch()` after the epoch ends (anyone may; it is a plain transaction):
    `cast send $REGISTRY 'closeEpoch()' --rpc-url $RPC --account <any>`. It elects only when rotation is
-   on, no election is pending, the quorum is delegated, the incumbent has served its minimum term, and
-   the winner's votes beat the incumbent's by the margin. Errors: `EpochNotEnded(<time>)`. **Changes
+   on, the registry names no schedule, and no election is pending. It then elects the eligible
+   candidate with the most votes, the earlier registration on a tie, when that candidate is not the
+   operator in effect and the listed candidates' votes reach the quorum. The operator in effect
+   serves no minimum term, and keeps the role on a tie only when it registered first. Errors:
+   `EpochNotEnded(<time>)`. **Changes
    the live system.** Needs the owner's approval to send it.
 2. The election takes effect after the notice (7 days) plus the finality margin (1 day).
    `cast call $REGISTRY 'pendingElection()((uint64,address,address,bytes32,uint64,bool))' --rpc-url $RPC` shows it:
