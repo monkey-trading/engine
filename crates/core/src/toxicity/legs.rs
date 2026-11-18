@@ -51,6 +51,11 @@ impl MarkoutLegs {
         }
     }
 
+    /// Forgets every markout of `market`, whose quantities a split zeroed.
+    fn forget_market(&mut self, market: MarketId) {
+        self.0.retain(|(_, held, _, _), _| *held != market);
+    }
+
     /// Forgets the markout at queue index `at` as it leaves the queue, the oldest it can hold.
     fn retire(&mut self, markout: &Markout, at: u64) {
         for leg in [Leg::Open, Leg::Closed] {
@@ -76,6 +81,13 @@ impl Engine {
         match self.markouts.back().filter(|_| newest) {
             Some(markout) => indexes.markout_legs.add(markout, base + self.markouts.len() as u64 - 1),
             None => indexes.markout_legs = MarkoutLegs::of_queue(&self.markouts, base),
+        }
+    }
+
+    /// Forgets the markouts of `market`, whose quantities a split zeroed.
+    pub(crate) fn forget_markout_legs(&mut self, market: MarketId) {
+        if let Some(indexes) = self.hot_indexes.as_mut() {
+            indexes.markout_legs.forget_market(market);
         }
     }
 

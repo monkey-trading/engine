@@ -117,6 +117,24 @@ fn split_normalizes_limit_stop_and_hot_trigger_indexes_before_an_opening_quote()
 }
 
 #[test]
+fn a_splits_re_indexing_of_its_market_equals_a_full_rebuild() {
+    for (new, old) in [(4, 1), (1, 3), (3, 2)] {
+        let mut h = held("2", "1");
+        h.order(acct(1), AAPL, Side::Buy, "1", OrderKind::Limit { price: f("64") });
+        h.order(acct(1), AAPL, Side::Sell, "1", OrderKind::Limit { price: f("96") });
+        h.order(acct(1), AAPL, Side::Buy, "1", OrderKind::Stop { price: f("128") });
+        h.order(acct(2), AAPL, Side::Sell, "1", OrderKind::Stop { price: f("40") });
+        h.order(acct(2), AAPL, Side::Buy, "1", OrderKind::Limit { price: f("60") });
+        assert!(h.engine.indexes_match_restore());
+        accepted(&schedule(&mut h, split("index", new, old)));
+        h.advance_to(open());
+        let events = h.cmd(Command::Tick);
+        assert!(events.iter().any(|e| matches!(e, Event::CorporateSplit { .. })), "{events:?}");
+        assert!(h.engine.indexes_match_restore(), "{new}:{old}");
+    }
+}
+
+#[test]
 fn old_timestamped_quotes_are_rejected_and_no_new_quote_order_uses_adjusted_units() {
     let mut h = held("2", "0");
     let pre_split = h.ts;
