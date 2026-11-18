@@ -13,6 +13,8 @@ Read [reference.md](reference.md) first, for `$ENGINE`, `$API`, `$PIN` and the c
 - It does not close anything. Open positions stay open, keep accruing financing, and are closed out
   by the usual margin rule.
 - It does not touch deposits, withdrawals, checkpoints or corporate actions.
+- It does not tell users. Post the status notice with it ([incident-response.md](incident-response.md),
+  "Tell users"), and clear the notice when you lift reduce-only.
 - There are two independent switches. A market is reduce-only if **its own** flag is set **or** the
   **global** flag is. `set-reduce-only false` without `--market` clears only the global flag. A
   market you set earlier stays reduce-only until you clear it by its id.

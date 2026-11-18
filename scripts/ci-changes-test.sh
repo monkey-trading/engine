@@ -77,7 +77,7 @@ case_ pull_request "rust image attestation_verifier wasm_verifier signed_api ct_
 case_ pull_request "rust scenario_tests dashboard_data metrics_alerts snapshot_restart engine_build" \
   crates/node/src/stats/mod.rs crates/node/src/monitor/mod.rs
 case_ pull_request "rust metrics_alerts alert_outbox ct_watch production_secrets engine_build" crates/node/src/alerts/mod.rs
-case_ pull_request "rust scenario_tests dashboard_data production_secrets vault_deposits ct_watch engine_build" \
+case_ pull_request "rust scenario_tests dashboard_data production_secrets vault_deposits ct_watch signed_api engine_build" \
   crates/node/src/admin/mod.rs
 case_ pull_request "rust $anvil $feeds scenario_tests attestation_verifier" crates/node/src/test_support/mod.rs
 case_ pull_request "rust $anvil" crates/node/src/custody/tests/election_scenario.rs crates/node/src/log_check/tests.rs
@@ -99,6 +99,7 @@ case_ pull_request "contracts" contracts/test/Vault.t.sol
 case_ pull_request "rust contracts" contracts/test/fixtures/withdrawal.json
 case_ pull_request "rust image $node" config/dev.toml
 case_ pull_request "toxicity" scripts/dev-toxicity.sh
+case_ pull_request "signed_api engine_build" scripts/dev-status-notice.sh
 case_ pull_request "venue_load" scripts/dev-venue-load.sh
 case_ pull_request "share_feeds" scripts/dev-share-feeds.sh
 case_ pull_request "scenario_tests" scripts/dev-holding-fee.sh

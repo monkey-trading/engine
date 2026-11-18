@@ -659,6 +659,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   under `[portfolio_margin]` its portfolio requirement
 - `src/api/reads.rs` — `GET /v1/markets`: every market with its live state, how it is priced
   (`pricing.rs`), and from `V60` its weekend margin window
+- `src/api/notice.rs` — `GET /v1/notice`: the operator's status notice and the time it was set, or `null`;
+  `src/api/stream/notice.rs` carries it as `notice` frames
 - `src/api/operating.rs` — `GET /v1/status`: the server's operating state (`src/status.rs`: what holds
   the sequencer, trusted time, each venue connection's symbols, the open markets with no price);
   `src/api/stream/status.rs` carries it as `status` frames; `src/feeds/status.rs` and
@@ -736,6 +738,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/stream/mod.rs` — the WebSocket stream: backfill from disk, then live, under the
   subscriber cap, reading what the subscriber sends
 - `src/api/stream/tests.rs` — feed, backfill, and subscriber tests
+- `src/api/stream/notice.rs`, `src/api/stream/notice_tests.rs` — a connection's `notice` frames, and their tests against a real sequencer on the latest protocol: the notice at the start and on each change, signed and verified
 - `src/api/stream/signed.rs` — signed stream connections: numbered frames chained under the
   client's challenge and the opening request, and heartbeats naming the log head
 - `src/api/stream/quotes/mod.rs` — a connection's quote subscription: the `quotes` op, one bounded
@@ -1389,7 +1392,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/admin_tests/launch_values.rs` — the admin route's refusals of an emission budget or a staking epoch and cooldown that are not the contracts', and of `InitStaking` while the contract cannot be read
 - `src/api/admin_tests/launch_scenario.rs` — the launch values dev scenario on isolated Anvil: the contracts deploy from `ops/runbooks/production-deployment.toml` and the node's checks accept them
 - `src/api/admin_tests/queued_payouts.rs` — `engine admin` failing on a refused command whose answer carries the withdrawals the queue pays after the outcome
-- `src/api/admin_tests/notice.rs` — the V49 dev scenario: stress parameters and a market's markup refused with no notice and before its time, applied at it through `engine admin` and TLS, and replayed
+- `src/api/admin_tests/status_notice.rs` — the V78 status notice through the signed admin route and `engine admin`: set, replaced, cleared, served at `/v1/notice`, refused text, and a replay
+- `src/api/admin_tests/notice.rs` — the V49 parameter-notice dev scenario: stress parameters and a market's markup refused with no notice and before its time, applied at it through `engine admin` and TLS, and replayed
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
   commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
   empty ones, are authenticated by `StakingProgress` and the host cursor cannot advance them; from V65
@@ -1724,6 +1728,9 @@ cargo run -p engine-node -- verify-response ... --method POST --path /v1/orders 
 # Run the signed API dev scenario: verified responses and frames, refused tampering, replay and gaps
 ./scripts/dev-signed-api.sh
 
+# Run the status notice dev scenario: set, stream, restart, clear, every answer verified
+./scripts/dev-status-notice.sh
+
 # Sign and submit admin commands as the operator, over TLS pinned to the attested key: the PIN (hex)
 # the bundle check above sets. The key is read from --key-file, OPERATOR_KEY_FILE, or OPERATOR_KEY;
 # config/dev.toml names the public key of the local test key 0x4242…42 (32 bytes of 0x42). A market
@@ -1733,6 +1740,8 @@ export OPERATOR_KEY=0x4242424242424242424242424242424242424242424242424242424242
 cargo run -p engine-node -- admin --pin $PIN set-reduce-only true             # every market
 cargo run -p engine-node -- admin --pin $PIN set-reduce-only false --market 2
 cargo run -p engine-node -- admin --pin $PIN set-stress-floor 1 --market 1
+cargo run -p engine-node -- admin --pin $PIN set-notice "Security maintenance: withdrawals are paused."
+cargo run -p engine-node -- admin --pin $PIN clear-notice
 # From protocol V46 a rate moves at most 300 bps a day from the applied rates next to its date.
 cargo run -p engine-node -- admin --pin $PIN set-benchmark-rate SOFR 430
 cargo run -p engine-node -- admin --pin $PIN upsert-market market.toml        # no table header
@@ -2136,7 +2145,7 @@ approval limited to finalised headroom, approval after finality, and one reorg d
 The EVM HTTP withdrawal route remains disabled until #23; this scenario proves approval eligibility
 at the sequencer/core boundary and does not perform a physical payout or HTTP cash-out.
 
-Endpoints: `GET /v1/health`, `GET /v1/status`, `GET /v1/attestation`, `GET /v1/attestation/collateral`,
+Endpoints: `GET /v1/health`, `GET /v1/status`, `GET /v1/notice`, `GET /v1/attestation`, `GET /v1/attestation/collateral`,
 `GET /v1/markets`, `GET /v1/markets/{id}/marks`, `GET /v1/house`, `GET /v1/house/state`, `GET /v1/house/positions`,
 `GET /v1/monkey`, `GET /v1/monkey/activity`, `GET /v1/monkey/distributions`, `GET /v1/stats/series`, `GET /v1/operator`, `GET /v1/operators`,
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
@@ -2742,6 +2751,17 @@ and a market's `pricing` names the source once, `down` only while every connecti
 time's sample, the log-sync gauge, the poster's rollback latch), each connection's task publishes its
 symbols once a check interval, and every `status=1` connection shares one read of the API's copy of the
 engine an interval.
+
+`GET /v1/notice` answers the operator's status notice, signed like every other read, as `{"notice":
+{"text": "...", "set_at_ms": 1792504800000}}`, or `{"notice": null}` when none is in force. From protocol
+`V78` the notice is engine state: the operator sets it with `engine admin set-notice "<text>"` and removes it with
+`clear-notice`, each a signed command in the public log, so every node serves the same notice, a replay,
+restart or handover keeps it, and it needs no vote. The text is 1 to 280 characters of plain text, with no
+markup (`<`, `>`, `&`, `[`, `]`), link (`://`, `www.`, `mailto:`; a bare domain is allowed, so a client must not turn the text into links), control or invisible character (line and paragraph separators, zero-width and bidirectional marks) or
+leading or trailing space; `engine admin` refuses anything else before it signs, and the engine refuses it too. A
+`signed=1&notice=1&challenge=` stream connection also gets the same body, with `"type":"notice"`, as a signed frame at the
+start and each time the notice changes, checked every `api.quote_interval` against the API's copy of the engine,
+which applies only durable batches.
 
 While trusted time does not bound the host clock (`held` or `starting`), the node signs no answer: a
 `/v1/status` read goes out with no `X-Engine-Signature`, and a signed stream closes. A client takes an

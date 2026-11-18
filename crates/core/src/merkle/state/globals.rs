@@ -16,6 +16,7 @@ use crate::engine::Engine;
 use crate::governance::Governance;
 use crate::house_loss::HouseLoss;
 use crate::merkle::state::is_zero;
+use crate::notice::Notice;
 use crate::operator_bounds::OperatorBounds;
 use crate::operator_faults::OperatorFaults;
 use crate::params::ProtocolParams;
@@ -79,6 +80,9 @@ pub(super) struct Globals<'a> {
     /// From `V70`; omitted until the fault proof contract is recorded, so earlier roots stand.
     #[serde(skip_serializing_if = "OperatorFaults::is_default")]
     operator_faults: &'a OperatorFaults,
+    /// From `V78`; omitted until a notice is set, so earlier roots stand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notice: &'a Option<Notice>,
 }
 
 impl Engine {
@@ -130,6 +134,7 @@ impl Engine {
             daily_turns,
             governance,
             operator_faults,
+            notice,
             close_spread_ceilings,
             pending_ceiling,
             session_keys: _,
@@ -175,6 +180,7 @@ impl Engine {
             pending_ceiling,
             house_loss,
             operator_faults,
+            notice,
         }
     }
 }

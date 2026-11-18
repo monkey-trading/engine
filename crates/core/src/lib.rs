@@ -111,6 +111,7 @@ pub mod market;
 mod markouts;
 mod marks;
 pub mod merkle;
+pub mod notice;
 pub mod operator_bounds;
 pub mod operator_faults;
 pub mod params;

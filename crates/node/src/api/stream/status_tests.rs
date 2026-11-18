@@ -132,9 +132,10 @@ async fn a_status_subscription_holds_no_sequencer_sender_between_reads() {
     let node = TestSequencer::start_legacy(&dir, 1024);
     let cfg = dev_config();
     let app = state(&node, &dir, &cfg.api);
-    let held = app.tx.strong_count();
+    let (held, streams) = (app.tx.strong_count(), app.stream.strong_count());
     let mut feed = StatusFeed::new(&app, Duration::from_millis(20));
     assert_eq!(app.tx.strong_count(), held, "a subscription's state carries no sender of its own");
+    assert_eq!(app.stream.strong_count(), streams, "nor a live log sender, which would hold the stream open");
     // A read in flight holds one, and the first message is the state.
     assert_eq!(feed.next().await.len(), 1);
     assert_eq!(app.tx.strong_count(), held, "nor does it keep one once the read is done");

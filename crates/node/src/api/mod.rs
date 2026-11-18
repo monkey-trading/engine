@@ -28,6 +28,7 @@ pub(crate) mod reissue;
 mod signing;
 mod standby;
 pub(crate) use signing::Signing;
+mod notice;
 mod operating;
 mod payouts;
 pub(crate) mod pricing;
@@ -274,6 +275,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/attestation/collateral", get(attestation::attestation_collateral))
         .route("/v1/markets", get(markets))
         .route("/v1/status", get(operating::status))
+        .route("/v1/notice", get(notice::notice))
         .route("/v1/markets/{id}/marks", get(marks::marks))
         .route("/v1/benchmarks", get(benchmarks))
         .route("/v1/benchmarks/schedule", get(benchmark_schedule::schedule))

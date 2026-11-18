@@ -38,6 +38,7 @@ use crate::governance::Governance;
 use crate::house_loss::HouseLoss;
 pub(crate) use crate::markouts::Markout;
 use crate::merkle::state::{Changed, StateTree, is_zero};
+use crate::notice::Notice;
 use crate::operator_bounds::OperatorBounds;
 use crate::operator_faults::OperatorFaults;
 use crate::params::ProtocolParams;
@@ -179,6 +180,9 @@ pub struct Engine {
     /// From `V70`, the fault proof contract, its penalty, and each penalised member's haircut.
     #[serde(default, skip_serializing_if = "OperatorFaults::is_default")]
     pub(crate) operator_faults: OperatorFaults,
+    /// From `V78`, the operator's status notice, absent until one is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) notice: Option<Notice>,
     /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once
     /// (genesis, or one signed install) and changed only by a signed adoption, so `UpsertMarket`
     /// can neither replace nor raise an entry. Absent until installed.

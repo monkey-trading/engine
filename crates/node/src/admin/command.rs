@@ -9,6 +9,7 @@ use engine_core::corporate::CorporateAction;
 use engine_core::emissions::EmissionSchedule;
 use engine_core::listing_bounds::ListingNotice;
 use engine_core::market::MarketSpec;
+use engine_core::notice::check_notice_text;
 use engine_core::operator_bounds::{ParamsNotice, StressSettings};
 use engine_core::params::ProtocolParams;
 use engine_core::protocol::ProtocolVersion;
@@ -20,6 +21,7 @@ impl AdminAction {
     /// The admin command this action sends.
     /// Error cases:
     /// - a spec or parameters file cannot be read, does not parse, or fails validation
+    /// - notice text `check_notice_text` refuses
     pub(super) fn command(self) -> anyhow::Result<AdminCommand> {
         Ok(match self {
             AdminAction::ScheduleCorporateAction { file } => {
@@ -34,6 +36,11 @@ impl AdminAction {
             }
             AdminAction::SyncBenchmarks { .. } => bail!("publisher sync is asynchronous"),
             AdminAction::DeliverSecrets(_) | AdminAction::SecretsStatus(_) => bail!("secrets take no admin command"),
+            AdminAction::SetNotice { text } => {
+                check_notice_text(&text).map_err(anyhow::Error::msg)?;
+                AdminCommand::SetNotice { text }
+            }
+            AdminAction::ClearNotice => AdminCommand::ClearNotice,
             AdminAction::SetStressFloor { level, market } => AdminCommand::SetStressFloor { market, level },
             AdminAction::SetReduceOnly { reduce_only, market } => AdminCommand::SetReduceOnly { market, reduce_only },
             AdminAction::AnnounceParams {

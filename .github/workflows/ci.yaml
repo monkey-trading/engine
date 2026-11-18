@@ -216,7 +216,7 @@ jobs:
                   areas+=" rust metrics_alerts alert_outbox ct_watch production_secrets" ;;
                 # The operator's signing client and the benchmark publishers' worker and client.
                 crates/node/src/admin/* | crates/node/src/benchmarks/*)
-                  areas+=" rust scenario_tests dashboard_data production_secrets vault_deposits ct_watch" ;;
+                  areas+=" rust scenario_tests dashboard_data production_secrets vault_deposits ct_watch signed_api" ;;
                 # The browser verifier's package.
                 crates/verify-wasm/*) areas+=" rust wasm_verifier" ;;
                 # Attestation verification, which the node's CLI and the CT watcher run.
@@ -279,7 +279,7 @@ jobs:
                 scripts/dev-batch-orders.sh) areas+=" batch_orders" ;;
                 scripts/dev-ct-watch.sh | scripts/dev-ct-log.py) areas+=" ct_watch" ;;
                 scripts/dev-snapshot-restart.sh) areas+=" snapshot_restart" ;;
-                scripts/dev-signed-api.sh) areas+=" signed_api" ;;
+                scripts/dev-signed-api.sh | scripts/dev-status-notice.sh) areas+=" signed_api" ;;
                 scripts/dev-production-secrets.sh) areas+=" production_secrets" ;;
                 scripts/dev-log-heads.sh) areas+=" log_heads" ;;
                 scripts/dev-acme.sh) areas+=" acme" ;;
@@ -1039,6 +1039,10 @@ jobs:
         env:
           ENGINE_PREBUILT: "1"
         run: ./scripts/dev-signed-api.sh
+      - name: Run the status notice dev scenario
+        env:
+          ENGINE_PREBUILT: "1"
+        run: ./scripts/dev-status-notice.sh
 
   dev-production-secrets:
     needs: [changes, engine-build]

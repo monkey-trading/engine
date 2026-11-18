@@ -488,4 +488,6 @@ pub enum ProtocolVersion {
     /// deposit records match, and refunds the deposit at an id whose credited, pending or held receipt
     /// they do not match.
     V77,
+    /// The operator's status notice (`notice`), set and cleared by its signed `SetNotice` and `ClearNotice`.
+    V78,
 }

@@ -483,6 +483,8 @@ mod house_loss;
 mod limits;
 #[path = "parameter_votes/listing.rs"]
 mod listing;
+#[path = "parameter_votes/notice.rs"]
+mod notice;
 #[path = "parameter_votes/operator_bounds.rs"]
 mod operator_bounds;
 #[path = "parameter_votes/rotation.rs"]
