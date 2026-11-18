@@ -264,6 +264,19 @@ pub fn frame_digest(
     time_ms: u64,
     msg: &str,
 ) -> [u8; 32] {
+    frame_digest_of_hash(deployment, connection, previous, n, time_ms, &Sha256::digest(msg.as_bytes()).into())
+}
+
+/// `frame_digest` for a message whose SHA-256 the caller already has, so one message framed on
+/// many connections is hashed once.
+pub fn frame_digest_of_hash(
+    deployment: &Deployment,
+    connection: &Connection,
+    previous: &[u8; 32],
+    n: u64,
+    time_ms: u64,
+    msg_sha256: &[u8; 32],
+) -> [u8; 32] {
     let mut h = Keccak256::new();
     h.update(FRAME_TAG);
     h.update(deployment.chain_id.to_be_bytes());
@@ -273,7 +286,7 @@ pub fn frame_digest(
     h.update(previous);
     h.update(n.to_be_bytes());
     h.update(time_ms.to_be_bytes());
-    h.update(Sha256::digest(msg.as_bytes()));
+    h.update(msg_sha256);
     h.finalize().into()
 }
 

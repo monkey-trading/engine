@@ -2,9 +2,12 @@ use super::*;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use crate::log::Manifest;
+use crate::sequencer::StreamMsg;
 use engine_core::types::AccountId;
-use engine_wire::{Connection, Deployment, Error, FrameVerifier};
+use engine_wire::{Connection, Deployment, Error, FRAME_VERSION, FrameVerifier, SignedFrame};
 use futures_util::StreamExt;
+use sha2::Digest;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -264,4 +267,81 @@ fn opened(query: &str) -> Connection {
 fn deployment() -> Deployment {
     let cfg = dev_config();
     Deployment { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse::<AccountId>().unwrap().0 }
+}
+
+/// A frame the way every connection made it before the message's parts were shared.
+fn reference_frame(
+    signing: &Signing,
+    connection: &Connection,
+    previous: &[u8; 32],
+    n: u64,
+    msg: &str,
+) -> (String, [u8; 32]) {
+    let time = signing.time_ms().unwrap();
+    let (digest, sig) = signing.sign_frame(connection, previous, n, time, msg);
+    let frame = SignedFrame { v: FRAME_VERSION, n, time, msg: msg.to_owned(), sig };
+    (serde_json::to_string(&frame).unwrap(), digest)
+}
+
+#[tokio::test]
+async fn a_frame_from_shared_parts_is_the_frame_serde_writes() {
+    let signing = crate::test_support::signing();
+    let connection = opened("signed=1");
+    let (_, manifest) = watch::channel(Manifest::default());
+    let mut framing = Framing::new(signing.clone(), connection, manifest, false);
+    let big = "\u{1F412} \"quoted\" \\ \n\t\u{0}\u{1f} <&> é".repeat(1000);
+    let mut previous = [0; 32];
+    for (n, msg) in ["", "{}", r#"{"a":"b\"c"}"#, big.as_str()].into_iter().enumerate() {
+        let (expected, digest) = reference_frame(&signing, &connection, &previous, n as u64, msg);
+        let escaped = serde_json::to_string(msg).unwrap();
+        let sha256: [u8; 32] = sha2::Sha256::digest(msg.as_bytes()).into();
+        // Signing is deterministic, so the whole frame, signature included, matches byte for byte.
+        assert_eq!(framing.frame_parts(&sha256, &escaped).unwrap(), expected, "message {n}");
+        previous = digest;
+    }
+}
+
+#[tokio::test]
+async fn many_signed_subscribers_get_the_messages_byte_for_byte_from_one_encoding() {
+    let dir = scratch_dir("signed-many");
+    let node = TestSequencer::start_legacy(&dir, 1024);
+    for n in 0..5 {
+        node.submit(deposit(1, &format!("dep-{n}"))).await;
+    }
+    let addr = serve(&node, &dir, Duration::from_secs(5)).await;
+    let expected = log_messages(&dir, Offset::start_of(0));
+    let query = format!("from=0&signed=1&challenge={CHALLENGE}");
+    let unsigned = connect(addr, "from=0").await;
+    let mut subscribers = [connect(addr, &query).await, connect(addr, &query).await, connect(addr, &query).await];
+    let mut unsigned = unsigned;
+    for ws in subscribers.iter_mut() {
+        let mut verifier = FrameVerifier::new(signer(), deployment(), opened(&query));
+        let mut messages = Vec::new();
+        while messages.len() < expected.len() {
+            let frame: SignedFrame = serde_json::from_str(&next_text(ws).await).unwrap();
+            assert_eq!(verifier.verify(&frame), Ok(()), "frame {}", frame.n);
+            if !is_heartbeat(&frame) {
+                messages.push(frame.msg);
+            }
+        }
+        assert_eq!(messages, expected);
+    }
+    for message in &expected {
+        assert_eq!(&next_text(&mut unsigned).await, message);
+    }
+}
+
+#[tokio::test]
+async fn a_message_is_encoded_once_however_many_read_it() {
+    let (offset, entry) = {
+        let dir = scratch_dir("signed-once");
+        let _node = TestSequencer::start_legacy(&dir, 16);
+        let message = log_messages(&dir, Offset::start_of(0)).remove(0);
+        let msg: StreamMsg = serde_json::from_str(&message).unwrap();
+        (msg.offset, msg.body)
+    };
+    let msg = StreamMsg::from_body(offset, entry);
+    assert_eq!(msg.json().unwrap().as_ptr(), msg.json().unwrap().as_ptr());
+    assert!(std::ptr::eq(msg.framed().unwrap(), msg.framed().unwrap()));
+    assert_eq!(msg.json().unwrap(), serde_json::to_string(&msg).unwrap());
 }

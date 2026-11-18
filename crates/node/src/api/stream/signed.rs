@@ -5,10 +5,12 @@
 //! client can tell a quiet log from a held-back one. A frame is signed only at a time trusted time
 //! bounds; with none, the connection closes, and the client can resume it.
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
-use engine_wire::{Connection, FRAME_VERSION, SignedFrame};
+use engine_wire::{Connection, FRAME_VERSION};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tokio::sync::watch;
 use tokio::time::{Interval, MissedTickBehavior, interval};
 
@@ -71,11 +73,23 @@ impl Framing {
     /// connection, and the frame before it; `None`, leaving the place unused, while trusted time
     /// does not bound the host clock.
     pub(super) fn frame(&mut self, msg: String) -> Option<String> {
+        let escaped = serde_json::to_string(&msg).expect("a string encodes");
+        self.frame_parts(&Sha256::digest(msg.as_bytes()).into(), &escaped)
+    }
+
+    /// `frame` for a message already hashed and escaped, as `StreamMsg::framed` holds them once for
+    /// every connection: only the place, time, chain and signature are this connection's.
+    pub(super) fn frame_parts(&mut self, sha256: &[u8; 32], escaped: &str) -> Option<String> {
         let time = self.signing.time_ms()?;
-        let (digest, sig) = self.signing.sign_frame(&self.connection, &self.previous, self.n, time, &msg);
-        let frame = SignedFrame { v: FRAME_VERSION, n: self.n, time, msg, sig };
+        let (digest, sig) = self.signing.sign_frame_of_hash(&self.connection, &self.previous, self.n, time, sha256);
+        // The bytes `serde_json` writes for a `SignedFrame`, which the frame tests hold it to.
+        let sig = serde_json::to_string(&sig).expect("a string encodes");
+        let mut frame = String::with_capacity(escaped.len() + sig.len() + 64);
+        let _ = write!(frame, r#"{{"v":{FRAME_VERSION},"n":{},"time":{time},"msg":"#, self.n);
+        frame.push_str(escaped);
+        let _ = write!(frame, r#","sig":{sig}}}"#);
         (self.previous, self.n) = (digest, self.n + 1);
-        Some(serde_json::to_string(&frame).expect("a frame of numbers and strings encodes"))
+        Some(frame)
     }
 
     /// The next heartbeat frame, once it is due, or `None` as `frame`, or the next signed head the
@@ -126,5 +140,7 @@ async fn changed(heads: &mut Option<watch::Receiver<Option<SignedHead>>>) -> Opt
     }
 }
 
+#[cfg(test)]
+mod bench;
 #[cfg(test)]
 mod tests;
