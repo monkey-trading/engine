@@ -1,9 +1,10 @@
 //! A rotation-set member's standby key (#595): a secp256k1 signing key, and the TLS key it would serve
 //! with, which the member's enclave generates for its current release and seals under that release
 //! apart from the turn's keys, in a file of its own kind that never opens as them
-//! (`tee::release_file`). Another enclave vouches for it once its attestation verifies (`vouch`), and
-//! the candidate registers it with the schedule, which promotes it to the vault's signer, in a new
-//! signer epoch, once the operator in effect misses its heartbeats.
+//! (`tee::release_file`), with the ACME account its standby certificate is ordered under once
+//! registered, so every start orders under that account. Another enclave vouches for it once its
+//! attestation verifies (`vouch`), and the candidate registers it with the schedule, which promotes it
+//! to the vault's signer, in a new signer epoch, once the operator in effect misses its heartbeats.
 //!
 //! The seal opens only while the schedule, read at the latest block a strict majority of the custody
 //! providers agrees on (`chain`), lists the key as the candidate's promotable standby key, or as the
@@ -11,9 +12,10 @@
 //! member's next drawn turn, under the signer epoch it started and the generation it reserved, until
 //! the key is resealed as the turn's keys under that generation. In every other state the key holds
 //! no authority, and a start seals a new one in its
-//! place, which the candidate registers. On promotion the node keeps the key in memory and reseals it
-//! as the turn's keys (`KeyStore`) under the promotion's generation, so a restart opens it as those;
-//! the standby seal is deleted only once that file is durable.
+//! place, which the candidate registers. On promotion the node keeps the key in memory and reseals it,
+//! with its account, as the turn's keys (`KeyStore`) under the promotion's generation, so a restart
+//! opens it as those and renews under the same account; the standby seal is deleted only once that
+//! file is durable.
 //!
 //! The host holds the file and bounds what each thing it can do with it achieves:
 //! - deleting it, or restarting the enclave before its registration lands, gives a new key, which the
@@ -28,7 +30,7 @@
 use std::fmt;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::{Context, ensure};
 use engine_core::eip712::Signature;
@@ -38,7 +40,7 @@ use sha2::{Digest as _, Sha256};
 use tracing::info;
 
 use crate::tee::EnclaveKey;
-use crate::tee::keys::KeySet;
+use crate::tee::keys::{AccountSeal, AcmeAccount, KeySet};
 use crate::tee::release_file::{Kind, ReleaseFile, file_for};
 use crate::tee::sealing::{KeyStore, Platform, Release, Sealer};
 
@@ -69,8 +71,8 @@ pub(crate) struct StandbyKeys {
     dir: PathBuf,
     sealer: Arc<dyn Sealer>,
     platform: Platform,
-    /// The signing key and the TLS key, as the reseal seals them as the turn's keys.
-    keys: KeySet,
+    /// The signing key, the TLS key and its ACME account, as the reseal seals them as the turn's keys.
+    keys: Mutex<KeySet>,
     signing: EnclaveKey,
     tls_public_key_sha256: [u8; 32],
 }
@@ -98,6 +100,26 @@ impl fmt::Debug for StandbyKeys {
     /// The key's address, without its secrets.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StandbyKeys").field("address", &self.address()).finish_non_exhaustive()
+    }
+}
+
+impl AccountSeal for StandbyKeys {
+    /// The account sealed with the standby keys.
+    fn account(&self) -> Option<AcmeAccount> {
+        self.lock().acme_account.clone()
+    }
+
+    /// Seals `account` with the standby keys over the standby seal; on failure the seal and the keys
+    /// keep what they held.
+    /// Error cases:
+    /// - encryption, the write, a sync, or the rename fails
+    fn seal_account(&self, account: Option<AcmeAccount>) -> anyhow::Result<()> {
+        let mut keys = self.lock();
+        let mut changed = keys.clone();
+        changed.acme_account = account;
+        self.write(&changed)?;
+        *keys = changed;
+        Ok(())
     }
 }
 
@@ -163,7 +185,7 @@ impl StandbyKeys {
     /// Error cases:
     /// - the sealed key does not load
     pub(crate) fn tls_key(&self) -> anyhow::Result<rcgen::KeyPair> {
-        self.keys.tls_key()
+        self.lock().tls_key()
     }
 
     /// The SHA-256 of the TLS key's DER SubjectPublicKeyInfo, which the attestation binds.
@@ -196,7 +218,7 @@ impl StandbyKeys {
                 self.sealer.as_ref(),
                 self.release().config_sha256,
                 generation,
-                self.keys.clone(),
+                self.lock().clone(),
             )?,
         };
         let path = file_for(&self.dir, &self.release(), &STANDBY);
@@ -242,14 +264,27 @@ impl StandbyKeys {
     ) -> anyhow::Result<Self> {
         let signing = keys.enclave_key()?;
         let tls_public_key_sha256 = Sha256::digest(keys.tls_key()?.subject_public_key_info()).into();
-        Ok(Self { file, dir, sealer, platform, keys, signing, tls_public_key_sha256 })
+        Ok(Self { file, dir, sealer, platform, keys: Mutex::new(keys), signing, tls_public_key_sha256 })
     }
 
     /// Seals the keys over the standby seal.
     /// Error cases:
     /// - encryption, the write, a sync, or the rename fails
     fn seal(&self) -> anyhow::Result<()> {
-        self.file.write(serde_json::to_vec(&self.keys).context("encoding the standby keys")?)
+        self.write(&self.lock())
+    }
+
+    /// Seals `keys` over the standby seal.
+    /// Error cases:
+    /// - encryption, the write, a sync, or the rename fails
+    fn write(&self, keys: &KeySet) -> anyhow::Result<()> {
+        self.file.write(serde_json::to_vec(keys).context("encoding the standby keys")?)
+    }
+
+    /// The keys, whether or not a panic interrupted an earlier holder: `seal_account` replaces them
+    /// whole.
+    fn lock(&self) -> MutexGuard<'_, KeySet> {
+        self.keys.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -262,7 +297,7 @@ impl StandbyKeys {
 
     /// The signing key, for tests that sign as the member's link does.
     pub(crate) fn signing_for_test(&self) -> EnclaveKey {
-        self.keys.enclave_key().unwrap()
+        self.lock().enclave_key().unwrap()
     }
 
     /// New standby keys sealed in `dir` for the release of `launch_digest` and a config file hashing
@@ -275,6 +310,16 @@ impl StandbyKeys {
         let keys = Self::new(file, dir.to_owned(), sealer, platform, KeySet::generate().unwrap()).unwrap();
         keys.seal().unwrap();
         keys
+    }
+
+    /// The standby keys sealed in `dir` for the release of `launch_digest` and `config_sha256`, as a
+    /// restart under the mock TEE opens them while the schedule lists them as promotable.
+    pub(crate) fn reopened_for_test(dir: &Path, launch_digest: [u8; 48], config_sha256: [u8; 32]) -> Self {
+        let sealer: Arc<dyn Sealer> = Arc::new(crate::tee::sealing::MockSealer { launch_digest });
+        let platform = sealer.platform().unwrap();
+        let file = ReleaseFile::new(dir, STANDBY, Box::new(Shared(sealer.clone())), config_sha256).unwrap();
+        let held = serde_json::from_slice(&file.read().unwrap().expect("sealed standby keys")).unwrap();
+        Self::new(file, dir.to_owned(), sealer, platform, held).unwrap()
     }
 }
 

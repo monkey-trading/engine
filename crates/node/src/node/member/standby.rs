@@ -37,7 +37,7 @@ use crate::standby_key::{StandbyKeys, StandbyStart};
 use crate::tee::Attestor;
 use crate::tee::certificates::CertificateStore;
 use crate::tls::TlsIdentity;
-use crate::tls::acme::{CertificateTask, Sealed};
+use crate::tls::acme::CertificateTask;
 use crate::trusted_time::{Sample, TrustedClock};
 
 /// How long before a written registration's vouch expires a new one is asked for.
@@ -192,7 +192,7 @@ impl Standby {
         if let Some((certificates, metrics)) = &self.certificates {
             let identity = TlsIdentity::new(self.keys.tls_key()?)?;
             let trusted = TrustedClock::new(Arc::new(crate::clock::SystemClock), samples.clone(), cfg.time.max_drift);
-            let sealed = Sealed { store: None, certificates: certificates.clone(), trusted };
+            let sealed = certificate::sealed(&self.keys, certificates, trusted);
             if let Some(task) = CertificateTask::configured(&cfg.api, identity.key, metrics, Some(sealed))? {
                 let (listen, api) = (cfg.node.listen, cfg.api.clone());
                 self.tasks.spawn(async move {

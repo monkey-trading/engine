@@ -3,12 +3,12 @@
 //! `[api.tls.acme].domain`, answers the CA's TLS-ALPN-01 challenge on the API's own listener, and
 //! finalizes the order with a request signed by the API's key, so the issued certificate is for the
 //! key the attestation names. It installs the certificate without a restart, and renews it the
-//! same way. Neither key is logged. With `[tee.sealing]` the account is sealed with the API's key,
-//! so a CAA `accounturi` can bind issuance to the enclave's account, and each certificate is sealed
-//! in this member's own store (`tee::certificates`) for the domain and the API's key: a restart, or
-//! the member's next daily turn under the same key, serves the certificate it holds and orders
-//! nothing until renewal, and a certificate for another domain or key is never served. Without it, a
-//! restart makes both keys again and orders a new certificate.
+//! same way. Neither key is logged. With `[tee.sealing]` the account is sealed with the key it orders
+//! for, the API's or a member's standby key, so a CAA `accounturi` can bind issuance to the enclave's
+//! accounts, and each certificate is sealed in this member's own store (`tee::certificates`) for the
+//! domain and the API's key: a restart, or the member's next daily turn under the same key, serves
+//! the certificate it holds and orders nothing until renewal, and a certificate for another domain or
+//! key is never served. Without it, a restart makes both keys again and orders a new certificate.
 //!
 //! The sequencer never waits for it. Until the first certificate the API serves its self-signed
 //! one, under `certificate_pending`; a failed renewal keeps serving the current one and retries
@@ -45,8 +45,7 @@ use x509_parser::prelude::FromDer;
 use crate::config::ApiSection;
 use crate::metrics::{FloatGauge, Metrics};
 use crate::tee::certificates::CertificateStore;
-use crate::tee::keys::AcmeAccount;
-use crate::tee::sealing::KeyStore;
+use crate::tee::keys::{AccountSeal, AcmeAccount};
 use crate::tls::TlsKey;
 use crate::tls::certificates::Answer;
 use crate::trusted_time::TrustedClock;
@@ -85,11 +84,11 @@ pub struct CertificateTask<H = AcmeHttp> {
     restored: Option<Restored>,
 }
 
-/// The sealed keys the task keeps its account in, the member's own store it keeps its certificate
-/// in, and the trusted time a restored certificate's age is read at. A standby key's task (#595) keeps
-/// no account: its keys are sealed apart from the turn's, so each of its starts registers one.
-pub struct Sealed {
-    pub store: Option<Arc<KeyStore>>,
+/// The sealed keys the task keeps its account in: the turn's for the API's key, or a member's standby
+/// keys for its standby key (#595). With them, the member's own store it keeps its certificate in, and
+/// the trusted time a restored certificate's age is read at.
+pub struct Sealed<S: ?Sized = dyn AccountSeal> {
+    pub store: Option<Arc<S>>,
     pub certificates: Arc<CertificateStore>,
     pub trusted: TrustedClock,
 }
@@ -131,11 +130,11 @@ impl CertificateTask {
     /// A sealed certificate for the domain is served from now on.
     /// Error cases:
     /// - the ACME HTTP client cannot be built (see `AcmeHttp::new`)
-    pub fn configured(
+    pub fn configured<S: AccountSeal + 'static>(
         api: &ApiSection,
         key: TlsKey,
         metrics: &Metrics,
-        sealed: Option<Sealed>,
+        sealed: Option<Sealed<S>>,
     ) -> anyhow::Result<Option<Self>> {
         let Some(tls) = &api.tls else { return Ok(None) };
         let cfg = &tls.acme;
@@ -148,11 +147,19 @@ impl CertificateTask {
             key,
             not_after: metrics.tls_certificate_not_after.clone(),
             pending: metrics.tls_certificate_pending.clone(),
-            sealed,
+            sealed: sealed.map(Sealed::erased),
             restored: None,
         };
         task.restored = task.restore();
         Ok(Some(task))
+    }
+}
+
+impl<S: AccountSeal + 'static> Sealed<S> {
+    /// The same, its account kept behind `dyn AccountSeal`.
+    pub(crate) fn erased(self) -> Sealed {
+        let Self { store, certificates, trusted } = self;
+        Sealed { store: store.map(|store| store as Arc<dyn AccountSeal>), certificates, trusted }
     }
 }
 
@@ -240,7 +247,7 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
                     if problem.r#type.as_deref() == Some("urn:ietf:params:acme:error:accountDoesNotExist") =>
                 {
                     *progress = Progress { sealed_forgotten: true, ..Progress::default() };
-                    self.seal("dropping the account the CA no longer knows", |keys| keys.acme_account = None);
+                    self.seal("dropping the account the CA no longer knows", None);
                 }
                 Some(problem) if ends_order(problem) => (progress.order, progress.finalized) = (None, None),
                 _ => {}
@@ -374,7 +381,7 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
     async fn register(&self, use_sealed: bool) -> anyhow::Result<Account> {
         let builder = Account::builder_with_http(Box::new(self.http.clone()));
         let store = self.sealed.as_ref().and_then(|sealed| sealed.store.as_ref());
-        let sealed = store.filter(|_| use_sealed).and_then(|store| store.keys().acme_account);
+        let sealed = store.filter(|_| use_sealed).and_then(|store| store.account());
         if let Some(sealed) = sealed.filter(|account| account.directory_url == self.directory_url) {
             let credentials: AccountCredentials =
                 serde_json::from_value(sealed.credentials).context("the sealed ACME credentials do not parse")?;
@@ -392,7 +399,7 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
             directory_url: self.directory_url.clone(),
             credentials: serde_json::to_value(&credentials).context("encoding the ACME credentials")?,
         };
-        self.seal("the ACME account", |keys| keys.acme_account = Some(account_keys));
+        self.seal("the ACME account", Some(account_keys));
         Ok(account)
     }
 
@@ -409,11 +416,11 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
         }
     }
 
-    /// Seals `change` into the keys, if they are sealed. A failure keeps what this process holds,
-    /// with a Warning: the next start registers again.
-    fn seal(&self, what: &str, change: impl FnOnce(&mut crate::tee::keys::KeySet)) {
+    /// Seals `account` in place of the sealed one, if the keys are sealed. A failure keeps what this
+    /// process holds, with a Warning: the next start registers again.
+    fn seal(&self, what: &str, account: Option<AcmeAccount>) {
         let Some(store) = self.sealed.as_ref().and_then(|sealed| sealed.store.as_ref()) else { return };
-        if let Err(e) = store.update(change) {
+        if let Err(e) = store.seal_account(account) {
             warn!(alert = "sealed_keys_write_failed", "{what} is not sealed, so a restart obtains it again: {e:#}");
         }
     }

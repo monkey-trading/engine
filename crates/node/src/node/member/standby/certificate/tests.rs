@@ -57,7 +57,7 @@ async fn a_following_member_serves_its_standby_key_on_the_apis_listener() {
     let identity = TlsIdentity::generate().unwrap();
     let standby_key = identity.public_key_sha256;
     let sealed = crate::tls::acme::Sealed {
-        store: None,
+        store: None::<Arc<crate::standby_key::StandbyKeys>>,
         certificates: store(&cfg, &start).unwrap(),
         trusted: crate::trusted_time::TrustedClock::new(
             Arc::new(crate::clock::SystemClock),

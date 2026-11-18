@@ -216,6 +216,28 @@ async fn a_crash_before_the_reseal_reopens_the_key_and_the_reseal_makes_it_the_t
     assert_resealed_once(&dir, key);
 }
 
+/// The ACME account the standby certificate is ordered under is sealed with the keys: a restart opens
+/// it with them, and a promotion's reseal takes it into the turn's keys.
+#[tokio::test]
+async fn the_standby_account_opens_with_the_keys_and_a_promotion_reseals_it_as_the_turns() {
+    let dir = scratch_dir("standby-account");
+    let chain = FakeChain::new();
+    let first = fresh_in(&dir).await;
+    assert!(first.account().is_none(), "new standby keys hold an account");
+    let account =
+        AcmeAccount { directory_url: "https://ca.test/dir".into(), credentials: serde_json::json!({ "id": "acct" }) };
+    first.seal_account(Some(account.clone())).unwrap();
+
+    chain.list_promotable(CANDIDATE, first.address());
+    let (reopened, generated) = standby(start(&dir, &chain).await.unwrap());
+    assert!(!generated, "a promotable key was replaced");
+    assert!(reopened.account() == Some(account.clone()), "the account did not open with the keys");
+
+    chain.promote(CANDIDATE, first.address());
+    let store = promoted(start(&dir, &chain).await.unwrap()).reseal(PROMOTION.generation).unwrap();
+    assert!(store.account() == Some(account), "the reseal left the account behind");
+}
+
 /// The schedule carries a promotion into its member's next drawn turn (`_carryNext`), and each later
 /// draw of the member keeps that generation (`_generation`): past one boundary or several, the key is
 /// still the vault's signer in the promotion's generation, so a crash before the reseal reopens it as
@@ -313,7 +335,7 @@ async fn a_crash_after_the_reseal_retires_the_standby_seal_without_opening_it() 
     // The reseal's file is durable, and the crash came before the standby seal was deleted.
     let keys = promoted(start(&dir, &chain).await.unwrap());
     let mock = MockSealer { launch_digest: LAUNCH };
-    KeyStore::create(&dir, &mock, CONFIG, PROMOTION.generation, keys.keys.clone()).unwrap();
+    KeyStore::create(&dir, &mock, CONFIG, PROMOTION.generation, keys.lock().clone()).unwrap();
     drop(keys);
     let (fresh, generated) = standby(start(&dir, &chain).await.unwrap());
     assert!(generated && fresh.address() != key, "the standby seal opened after its reseal was durable");
@@ -328,7 +350,7 @@ async fn a_reseal_left_after_its_write_finishes_by_deleting_the_standby_seal() {
     chain.promote(CANDIDATE, key);
     let keys = promoted(start(&dir, &chain).await.unwrap());
     let mock = MockSealer { launch_digest: LAUNCH };
-    KeyStore::create(&dir, &mock, CONFIG, PROMOTION.generation, keys.keys.clone()).unwrap();
+    KeyStore::create(&dir, &mock, CONFIG, PROMOTION.generation, keys.lock().clone()).unwrap();
     let store = keys.reseal(PROMOTION.generation).unwrap();
     assert_eq!(AccountId(store.keys().enclave_key().unwrap().address()), key);
     assert!(!file_for(&dir, &release(), &STANDBY).exists(), "the standby seal outlived its reseal");

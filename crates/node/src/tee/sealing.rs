@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use sha3::{Digest as _, Keccak256};
 
-use crate::tee::keys::KeySet;
+use crate::tee::keys::{AccountSeal, AcmeAccount, KeySet};
 
 /// The sealed file layout this build writes and reads.
 const FORMAT: u32 = 1;
@@ -129,6 +129,20 @@ impl Sealer for MockSealer {
         hash.update(self.launch_digest);
         hash.update(tcb.to_be_bytes());
         Ok(hash.finalize().into())
+    }
+}
+
+impl AccountSeal for KeyStore {
+    /// The account sealed with the keys.
+    fn account(&self) -> Option<AcmeAccount> {
+        self.lock().keys.acme_account.clone()
+    }
+
+    /// Seals `account` with the keys (see `update`).
+    /// Error cases:
+    /// - the file cannot be written and synced
+    fn seal_account(&self, account: Option<AcmeAccount>) -> anyhow::Result<()> {
+        self.update(|keys| keys.acme_account = account)
     }
 }
 
