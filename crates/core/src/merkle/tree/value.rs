@@ -72,23 +72,24 @@ pub(crate) struct ExitTotals {
 
 /// An exit leaf the index finds by the account it names: a queued request by its account, and a
 /// receipt-backed pending deposit or unfinalised credit by its beneficiary, the house's under
-/// `None`; and every receipt-backed held deposit.
+/// `None`, a credit with its receipt's deposit id; and every receipt-backed held deposit.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Association {
     Queued(AccountId, u64),
     Pending(Option<AccountId>, String),
     Held(String),
-    Credit(Option<AccountId>, String),
+    Credit(Option<AccountId>, u64, String),
 }
 
 /// The exit's leaves by the account they name, in every version kept and the working one: a read
-/// of one version keeps those its leaves still name.
+/// of one version keeps those its leaves still name. Credits are kept by deposit id, then reference,
+/// the order an exit proof lists them in.
 #[derive(Debug, Default)]
 pub(crate) struct ExitIndex {
     pub(crate) queued: BTreeMap<AccountId, BTreeSet<u64>>,
     pub(crate) pending: BTreeMap<Option<AccountId>, BTreeSet<String>>,
     pub(crate) held: BTreeSet<String>,
-    pub(crate) credits: BTreeMap<Option<AccountId>, BTreeSet<String>>,
+    pub(crate) credits: BTreeMap<Option<AccountId>, BTreeSet<(u64, String)>>,
 }
 
 impl LeafUpdate {
@@ -118,7 +119,9 @@ impl LeafValue {
                 Some(Association::Pending(receipt.account, reference.clone()))
             }
             Self::Held { reference, receipt: Some(_), .. } => Some(Association::Held(reference.clone())),
-            Self::Credit { reference, receipt } => Some(Association::Credit(receipt.account, reference.clone())),
+            Self::Credit { reference, receipt } => {
+                Some(Association::Credit(receipt.account, receipt.deposit_id, reference.clone()))
+            }
             _ => None,
         }
     }
@@ -144,7 +147,7 @@ impl Association {
             Self::Queued(_, seq) => withdrawal_queue_key(*seq),
             Self::Pending(_, reference) => pending_deposit_key(reference),
             Self::Held(reference) => held_deposit_key(reference),
-            Self::Credit(_, reference) => unfinalised_credit_key(reference),
+            Self::Credit(_, _, reference) => unfinalised_credit_key(reference),
         }
     }
 }
@@ -156,7 +159,9 @@ impl ExitIndex {
             Association::Queued(account, seq) => _ = self.queued.entry(account).or_default().insert(seq),
             Association::Pending(account, reference) => _ = self.pending.entry(account).or_default().insert(reference),
             Association::Held(reference) => _ = self.held.insert(reference),
-            Association::Credit(account, reference) => _ = self.credits.entry(account).or_default().insert(reference),
+            Association::Credit(account, id, reference) => {
+                _ = self.credits.entry(account).or_default().insert((id, reference))
+            }
         }
     }
 
@@ -166,7 +171,9 @@ impl ExitIndex {
             Association::Queued(account, seq) => unindex(&mut self.queued, *account, seq),
             Association::Pending(account, reference) => unindex(&mut self.pending, *account, reference),
             Association::Held(reference) => _ = self.held.remove(reference),
-            Association::Credit(account, reference) => unindex(&mut self.credits, *account, reference),
+            Association::Credit(account, id, reference) => {
+                unindex(&mut self.credits, *account, &(*id, reference.clone()))
+            }
         }
     }
 }
