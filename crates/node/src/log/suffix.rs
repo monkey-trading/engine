@@ -402,7 +402,9 @@ fn same_checkpoints(catalog: &LazyCatalogView, locators: &[CheckpointLocator]) -
     Ok(())
 }
 
-/// Decodes one physical segment and hashes exactly those bytes; the boundary prefix is withheld.
+/// Decodes one physical segment and hashes exactly those bytes; the boundary prefix is withheld. An
+/// unlisted segment's last line with no break, which a crash while appending leaves, is left out, as
+/// `Segment::read` leaves it.
 /// Error cases:
 /// - IO, exact prefix framing/hash, completed descriptors, or replay validation fails
 fn recover_segment(
@@ -426,7 +428,11 @@ fn recover_segment(
         if input.read_until(b'\n', &mut line)? == 0 {
             break;
         }
-        ensure!(line.ends_with(b"\n"), "suffix segment ends mid-line");
+        if !line.ends_with(b"\n") {
+            ensure!(listed.is_none(), "suffix segment ends mid-line");
+            segment.torn = line.len() as u64;
+            break;
+        }
         let start = segment.bytes;
         let entry = parse_line(0, &line)?;
         if let Some(entry) = &entry {

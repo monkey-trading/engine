@@ -238,7 +238,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   at the resume checkpoint, stream resumption at the copy's last command, and a follow that stops at a
   cut-back operator or a heartbeat behind the copy with the copy unchanged; `src/standby/tests/durable.rs`
   the durable head a stint records for the member link; `src/standby/tests/connect.rs` a stint whose
-  `until` passes while it still connects, which ends then with the copy unchanged
+  `until` passes while it still connects, which ends then with the copy unchanged; `src/standby/tests/torn.rs`
+  a copy whose last line a crash cut short, which opens without it and resumes at its last whole command
 - `src/standby/follow.rs` — one follow stint: the signed stream at the copy's last command, each frame
   verified against the followed enclave, each new entry applied to a replica, when there is one,
   before the copy takes it (`ReplicaRefused` otherwise); with a member link, the copy synced every
@@ -649,6 +650,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   commit, and recovering from a crash before the seal as a crash mid-rotation does
 - `src/log/tests/reader.rs` — reader tests: offsets, following the writer, flushed entries only,
   and the checks on what it reads
+- `src/log/tests/torn.rs` — a last line a crash cut short: left out of the open segment and dropped
+  before the next append, and refused in a completed segment
 - `src/api/mod.rs` — REST routes, read handlers and the request span
 - `src/api/account.rs` — `GET /v1/accounts/{address}`: an account's balance, equity, margin, initial
   and maintenance requirements, withdrawable cash, each market's maximum leverage, positions, orders,

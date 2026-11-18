@@ -363,22 +363,19 @@ pub(super) fn rotation_and_staking(
 }
 
 /// Whether the copy in `dir` holds the checkpoint at `seq` with `root`. B appends to the copy while this
-/// reads it, so a last line still between its bytes and its newline reads as not held yet: the poll
-/// asks again, and a line that stays torn runs the poll out of time.
+/// reads it, as `SegmentedLog::open_while_writing` allows: a last line still being written is left out,
+/// and the poll asks again.
 /// Error cases:
-/// - the copy cannot be read, other than for a last line still being written
+/// - the copy cannot be read
 fn copy_holds_checkpoint(dir: &Path, seq: u64, root: B256) -> anyhow::Result<bool> {
     let mut found = false;
-    let opened = SegmentedLog::open(dir, |entry| {
+    SegmentedLog::open_while_writing(dir, |entry| {
         if let LogEntry::Checkpoint(checkpoint) = &entry {
             found |= checkpoint.seq == seq && checkpoint.root == format!("0x{}", hex::encode(root.0));
         }
         Ok(())
-    });
-    match opened {
-        Err(e) if format!("{e:#}").contains("ends mid-line") => Ok(found),
-        other => other.map(|_| found),
-    }
+    })?;
+    Ok(found)
 }
 
 /// Spawns B as a child: the standby, or its normal start with `keys`.
