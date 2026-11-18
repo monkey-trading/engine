@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use prometheus_client::metrics::counter::Counter;
 use serde_json::{Value, json};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpSocket};
 use tracing::field::Empty;
 use tracing::subscriber::{set_default, with_default};
 use tracing::{error, info, info_span, warn};
@@ -205,8 +205,12 @@ async fn posts_carry_a_user_agent() {
 
 #[tokio::test]
 async fn an_unreachable_webhook_is_given_up_counted_and_its_error_omits_the_url() {
-    // Bound, then closed: nothing listens on the port.
-    let port = TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap().port();
+    // Bound and never listened on, and held to the test's end: the port refuses connections, and
+    // no receiver another test starts can be given it and take this test's posts.
+    let unreachable = TcpSocket::new_v4().unwrap();
+    unreachable.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let port = unreachable.local_addr().unwrap().port();
+    assert!(TcpListener::bind(("127.0.0.1", port)).await.is_err(), "a receiver could be given the port");
     let url = format!("http://127.0.0.1:{port}/hook/secret-token");
     let err =
         webhook::post(&client().unwrap(), &secret(&url), &page(), GIVE_UP_SOON, &Counter::default()).await.unwrap_err();
