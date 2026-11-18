@@ -66,3 +66,15 @@ impl LatencyMetrics {
         );
     }
 }
+
+/// How many observations `histogram` holds and their sum, as its encoding gives them.
+#[cfg(test)]
+pub fn observed(histogram: &Histogram) -> (u64, f64) {
+    let mut registry = Registry::default();
+    registry.register("observed", "", histogram.clone());
+    let mut text = String::new();
+    prometheus_client::encoding::text::encode(&mut text, &registry).expect("a histogram encodes");
+    let value = |name: &str| text.lines().find_map(|line| line.strip_prefix(name)).map(str::trim);
+    let count = value("observed_count ").and_then(|count| count.parse().ok()).unwrap_or(0);
+    (count, value("observed_sum ").and_then(|sum| sum.parse().ok()).unwrap_or(0.0))
+}

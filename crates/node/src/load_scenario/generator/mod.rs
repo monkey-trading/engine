@@ -239,7 +239,7 @@ impl Scheduler {
         let slot = &mut self.slots[slot];
         slot.free_at = due.max(slot.free_at) + Duration::from_secs_f64(1.0 / ACCOUNT_RATE);
         self.in_flight.fetch_add(1, Ordering::AcqRel);
-        let job = Job { trader: slot.trader, kind, market, side, due };
+        let job = Job { trader: slot.trader, kind, market, side, due, dispatched: Instant::now().max(due) };
         if self.jobs[slot.client].send(job).is_err() {
             self.in_flight.fetch_sub(1, Ordering::AcqRel);
         }
@@ -287,5 +287,54 @@ impl Scheduler {
         }
         let soonest = (0..count).min_by_key(|at| self.slots[*at].free_at).expect("a trader");
         (soonest, Kind::Market)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_trader_gets_only_what_it_can_act_on_and_no_more_than_its_rate() {
+        // Two clients of two traders each; only the second client's first trader rests an order.
+        let holdings: Vec<Arc<std::sync::Mutex<Holding>>> = (0..4).map(|_| Arc::default()).collect();
+        holdings[2].lock().unwrap().resting.push(7);
+        let start = Instant::now();
+        let slots = (0..4)
+            .map(|at| Slot { client: at / 2, trader: at % 2, holding: holdings[at].clone(), free_at: start })
+            .collect();
+        let (channels, mut received): (Vec<_>, Vec<_>) = (0..2).map(|_| mpsc::unbounded_channel()).unzip();
+        let in_flight = Arc::new(AtomicU64::new(0));
+        let weights = vec![(2, 1)];
+        let mut scheduler = Scheduler { rng: Rng::new(1), slots, cursor: 0, weights, jobs: channels, in_flight };
+        // Five requests a second among four traders, each free to send one every 1 / ACCOUNT_RATE.
+        for step in 0..200 {
+            scheduler.dispatch(start + Duration::from_millis(200 * step));
+        }
+        assert_eq!(scheduler.in_flight.load(Ordering::Acquire), 200);
+        let mut last: BTreeMap<(usize, usize), Instant> = BTreeMap::new();
+        let (mut cancels, mut markets) = (0, 0);
+        for (client, jobs) in received.iter_mut().enumerate() {
+            while let Ok(job) = jobs.try_recv() {
+                if let Some(before) = last.insert((client, job.trader), job.due) {
+                    let spacing = job.due.duration_since(before).as_secs_f64();
+                    assert!(
+                        spacing >= 1.0 / ACCOUNT_RATE - 1e-9,
+                        "trader {client}/{} sent {spacing}s apart",
+                        job.trader
+                    );
+                }
+                match job.kind {
+                    Kind::Cancel | Kind::CancelAll => {
+                        cancels += 1;
+                        assert_eq!((client, job.trader), (1, 0), "only the trader resting an order cancels");
+                    }
+                    Kind::CloseAll => panic!("no trader holds a position to close"),
+                    Kind::Market => markets += 1,
+                    Kind::Limit => {}
+                }
+            }
+        }
+        assert!(cancels > 0 && markets > 0, "{cancels} cancels, {markets} market orders");
     }
 }

@@ -61,6 +61,8 @@ pub struct CmeStandIn {
 pub struct StandIn {
     /// How the token endpoint answers.
     pub answer: Answer,
+    /// The periods the stream lists for every product, `LISTED` unless set.
+    pub listed: Option<Vec<String>>,
     /// Each token issued, with when it expires.
     pub issued: Vec<(String, Instant)>,
     /// Each token request: its `Authorization` and `Content-Type` headers and its body.
@@ -222,13 +224,15 @@ async fn session(tcp: TcpStream, state: Arc<Mutex<StandIn>>, prices: Prices) {
         return;
     }
     let Some(subscription) = next_json(&mut ws).await else { return };
+    let listed = state.lock().expect("stand-in").listed.clone();
+    let listed = listed.unwrap_or_else(|| LISTED.map(str::to_owned).to_vec());
     let symbols: Vec<(String, String)> = subscription["payload"]["subscriptions"]
         .as_array()
         .expect("subscriptions")
         .iter()
         .flat_map(|entry| {
             let product = entry["productCode"].as_str().expect("a product").to_owned();
-            LISTED.map(|period| (product.clone(), period.to_owned()))
+            listed.iter().map(move |period| (product.clone(), period.clone()))
         })
         .collect();
     let (later, subscribe_delay, keep_expired, binary) = {

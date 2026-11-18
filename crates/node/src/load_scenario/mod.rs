@@ -12,8 +12,9 @@
 //! `engine replay` cannot start from it.
 //!
 //! The launch and ten-times legs pass only within the bar, under the tolerance for a loaded runner
-//! that `sequencer::wait_bench::price_wait_budget` grants (`report::tolerate`), and only with no
-//! request refused for its rate, so every account stays within its tier's request rate.
+//! that `sequencer::wait_bench::price_wait_budget` grants (`report::tolerate`), and only with every
+//! request answered 200: none refused for its rate, so every account stays within its tier's request
+//! rate, none refused for want of a screening slot, and none failed.
 //!
 //! Run by `scripts/dev-load.sh`; its variables size the run: `LOAD_ACCOUNTS` (100,000), `LOAD_TRADERS`
 //! (2,000), `LOAD_SUBSCRIBERS` (`api.max_subscribers`), `LOAD_LEG_SECS` (120), `LOAD_CRYPTO_RATE`
@@ -151,11 +152,23 @@ async fn run() {
 async fn wait_priced(tx: &mpsc::Sender<Request>) {
     let started = std::time::Instant::now();
     loop {
-        let (reply, unpriced) = oneshot::channel();
+        let (reply, unpriced) = oneshot::channel::<Vec<(MarketId, String)>>();
         let read = move |engine: &engine_core::Engine| {
             let now = now_ms().max(engine.now());
-            let unpriced: Vec<MarketId> =
-                engine.markets().iter().filter(|(_, market)| market.index(now).is_err()).map(|(id, _)| *id).collect();
+            // Each market with no price, why, and the age of each quote it holds.
+            let unpriced: Vec<(MarketId, String)> = engine
+                .markets()
+                .iter()
+                .filter_map(|(id, market)| {
+                    let refused = market.index(now).err()?;
+                    let held: Vec<String> = market
+                        .quotes
+                        .iter()
+                        .map(|(source, quote)| format!("{source} {:?} {} ms", quote.contract, now - quote.ts))
+                        .collect();
+                    Some((*id, format!("{refused:?}, holding {held:?}")))
+                })
+                .collect();
             let _ = reply.send(unpriced);
         };
         tx.send(Request::Query(Box::new(read))).await.expect("the sequencer");
@@ -217,12 +230,7 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
                 let node_figures = Snapshot::take(&node.metrics).since(&start);
                 let breaches = judge(&figures, &node_figures);
                 print(&leg, multiple, &figures, &node_figures, resident.reset(), &breaches);
-                let refused = figures
-                    .replies
-                    .iter()
-                    .filter(|(kind, _)| kind.ends_with("_429") || kind.ends_with("_failed"))
-                    .map(|(_, n)| n)
-                    .sum();
+                let refused = figures.refused;
                 let ramping = leg.starts_with("ramp_");
                 let stop = ramping && !breaches.is_empty();
                 runs.push(Run { leg, multiple, breaches, windows: std::mem::take(&mut windows), refused });
@@ -236,7 +244,7 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
 }
 
 /// Prints the ramp's breaking point, and fails a measured leg outside the bar or with a request
-/// refused for its rate.
+/// answered with other than 200.
 fn conclude(runs: &[Run]) {
     let ramp: Vec<&Run> = runs.iter().filter(|run| run.leg.starts_with("ramp_")).collect();
     match ramp.iter().find(|run| !run.breaches.is_empty()) {
@@ -254,7 +262,7 @@ fn conclude(runs: &[Run]) {
     let measured: Vec<&Run> = runs.iter().filter(|run| !run.leg.starts_with("ramp_")).collect();
     assert_eq!(measured.len(), 2, "both measured legs ran");
     for run in measured {
-        assert_eq!(run.refused, 0, "{}: requests refused for their rate, or failed", run.leg);
+        assert_eq!(run.refused, 0, "{}: requests answered with other than 200, or failed", run.leg);
         let failed = tolerate(&run.windows, MISSES);
         assert!(failed.is_empty(), "{} broke the launch bar: {failed:?}", run.leg);
     }

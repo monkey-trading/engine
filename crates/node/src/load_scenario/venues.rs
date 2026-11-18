@@ -95,11 +95,13 @@ pub(super) fn template() -> toml::Value {
 }
 
 /// `market`'s mid at `ts` when it moves `per_second` times a second: the mark, and `MOVE` off it in
-/// turn, up in an odd market and down in an even one.
+/// turn, up in an odd market and down in an even one. Each market moves at its own phase of the
+/// period, so the markets' prices do not reach the sequencer all at once.
 pub(super) fn mid(market: MarketId, per_second: f64, ts: Millis) -> Fixed {
     let mark = Fixed::from_int(100);
-    let period_ms = (1_000.0 / per_second.max(0.001)) as Millis;
-    if (ts / period_ms.max(1)) % 2 == 0 {
+    let period_ms = ((1_000.0 / per_second.max(0.001)) as Millis).max(1);
+    let phase = Millis::from(market) * 7_919 % period_ms;
+    if (ts + phase) / period_ms % 2 == 0 {
         return mark;
     }
     let moved: Fixed = MOVE.parse().expect("a decimal");
@@ -144,6 +146,15 @@ pub(super) async fn start(moves: Moves) -> Venues {
     let (tradermade, tradermade_url) = listen().await;
     tasks.push(serve_tradermade(tradermade, prices(Venue::Tradermade)).abort_handle());
     let cme = CmeStandIn::start(&tls, TOKEN_LIFE_SECS, prices(Venue::Cme)).await;
+    // Every period the template names for a product, as CME lists each contract a listing rolls through.
+    let periods: std::collections::BTreeSet<String> = symbols
+        .get(&Venue::Cme)
+        .into_iter()
+        .flat_map(|quoted| {
+            quoted.keys().filter_map(|symbol| symbol.split_once(':').map(|(_, period)| period.to_owned()))
+        })
+        .collect();
+    cme.state.lock().expect("the CME stand-in").listed = Some(periods.into_iter().collect());
     let alpaca = AlpacaStandIn::start(&tls, prices(Venue::Alpaca)).await;
     let connections = venues
         .connections
@@ -250,12 +261,19 @@ mod tests {
     #[test]
     fn a_mid_moves_away_from_the_books_in_band_orders_at_its_rate() {
         let (mark, moved) = (Fixed::from_int(100), "0.005".parse::<Fixed>().unwrap());
-        // Four moves a second: 250 ms at the mark, then 250 ms off it.
-        assert_eq!(mid(1, 4.0, 1_000), mark);
-        assert_eq!(mid(1, 4.0, 1_250), mark + moved, "up in an odd market, away from its in-band buys");
-        assert_eq!(mid(2, 4.0, 1_250), mark - moved, "down in an even one, away from its in-band sells");
-        assert_eq!(mid(2, 4.0, 1_500), mark);
-        let (bid, ask) = book(3, 4.0, 1_250);
-        assert_eq!((bid, ask), ("99.995".parse().unwrap(), "100.015".parse().unwrap()));
+        for market in [1, 2, 31, 32] {
+            let mids: Vec<Fixed> = (0..1_000).map(|ms| mid(market, 4.0, 1_794_841_200_000 + ms)).collect();
+            let changes = mids.windows(2).filter(|pair| pair[0] != pair[1]).count();
+            assert!((3..=4).contains(&changes), "market {market} moved {changes} times in a second");
+            // Up in an odd market, away from its in-band buys; down in an even one, away from its sells.
+            let away = if market % 2 == 1 { mark + moved } else { mark - moved };
+            assert!(mids.iter().all(|at| *at == mark || *at == away), "market {market}");
+        }
+        let first_move = |market| {
+            (0..250).find(|ms| mid(market, 4.0, 1_794_841_200_000 + ms) != mid(market, 4.0, 1_794_841_200_000))
+        };
+        assert_ne!(first_move(1), first_move(2), "markets move at their own phases");
+        let (bid, ask) = book(3, 4.0, 0);
+        assert_eq!(ask - bid, "0.02".parse::<Fixed>().unwrap());
     }
 }

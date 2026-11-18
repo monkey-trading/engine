@@ -344,11 +344,11 @@ async fn each_signed_request_admitted_is_timed_to_its_reply_and_nothing_else_is(
         let response = app.clone().oneshot(request(method, path)).await.unwrap();
         assert_eq!(response.status(), axum::http::StatusCode::OK, "{method} {path}");
     }
-    assert_eq!(seconds.count(), 1, "only the POST is a signed request");
+    assert_eq!(crate::metrics::latency::observed(&seconds).0, 1, "only the POST is a signed request");
     // The client's burst of 2 is spent: a POST refused for its rate never reaches a reply's timing.
     let refused = app.oneshot(request("POST", "/signed")).await.unwrap();
     assert_eq!(refused.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(seconds.count(), 1);
+    assert_eq!(crate::metrics::latency::observed(&seconds).0, 1);
 }
 
 // ── Helpers ──

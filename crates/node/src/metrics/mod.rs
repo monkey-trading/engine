@@ -6,7 +6,7 @@
 
 use std::sync::atomic::AtomicU64;
 
-mod latency;
+pub(crate) mod latency;
 mod listener;
 mod roots;
 pub use latency::{LATENCY_BUCKETS, LatencyMetrics};

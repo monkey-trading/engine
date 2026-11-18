@@ -146,13 +146,14 @@ fn a_stamped_quote_times_its_wait_from_its_receipt_and_a_dropped_one_times_nothi
     let received = clock.instant();
     clock.advance(Duration::from_millis(3));
     assert!(seq.sequence_quote(prices(clock.now_ms()), clock.instant() + MAX_DELAY, received).unwrap().is_some());
-    assert_eq!(waited.count(), 1);
-    assert!((waited.sum() - 0.003).abs() < 1e-9, "{}", waited.sum());
+    let (count, sum) = crate::metrics::latency::observed(&waited);
+    assert_eq!(count, 1);
+    assert!((sum - 0.003).abs() < 1e-9, "{sum}");
     // Past its delay bound it is dropped: nothing is stamped, so nothing is timed.
     let past = clock.instant();
     clock.advance(STEP);
     assert!(seq.sequence_quote(prices(clock.now_ms()), past, clock.instant()).unwrap().is_none());
-    assert_eq!(waited.count(), 1);
+    assert_eq!(crate::metrics::latency::observed(&waited).0, 1);
 }
 
 #[test]

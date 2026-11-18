@@ -92,17 +92,20 @@ pub(super) struct Figures {
     pub sent: BTreeMap<String, u64>,
     pub replies: BTreeMap<String, u64>,
     pub fills: u64,
-    /// A market order's schedule to its filled reply, at the client, in microseconds.
+    /// A market order from its hand-out to its client to its filled reply, at the client, less the
+    /// client's signing, in microseconds.
     pub order_to_fill_us: Quantiles,
-    /// Every request's schedule to its reply, in microseconds.
+    /// Every request from its hand-out to its reply, less the client's signing, in microseconds.
     pub request_us: Quantiles,
     /// A command frame's arrival at a subscriber after its stamp, in milliseconds.
     pub stream_lag_ms: Quantiles,
     pub frames: u64,
     pub quote_frames: u64,
     pub disconnects: u64,
-    /// Requests that went over a millisecond after their schedule, the generator falling behind.
+    /// Requests the scheduler handed out over two milliseconds after their schedule.
     pub late: u64,
+    /// Requests the node answered with anything but 200, or that failed on the connection.
+    pub refused: u64,
 }
 
 /// A distribution's size and quantiles.

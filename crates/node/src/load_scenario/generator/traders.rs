@@ -33,10 +33,13 @@ const SESSION_LIFE_MS: Millis = 6 * 60 * 60 * 1_000;
 /// Where a limit order rests, away from the mark of 100 so no price reaches it.
 const LIMIT_BUY: i64 = 90;
 const LIMIT_SELL: i64 = 110;
-/// The quoted price of a market order and of each close: the mark.
+/// The quoted price of a market order and of each close: the mark, with a slippage bound wide enough
+/// that no order of the mix is declined for the stand-ins' moves or a market's spread.
 const QUOTED: i64 = 100;
-/// A request sent later than this after its schedule counts as late: the client fell behind it.
-const LATE: Duration = Duration::from_millis(1);
+const SLIPPAGE_BPS: i64 = 1_000;
+/// A request the scheduler hands out later than this after its schedule counts as late: the
+/// generator fell behind it, past its timer's millisecond.
+const LATE: Duration = Duration::from_millis(2);
 
 /// A request kind of the mix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +81,8 @@ pub(super) struct Job {
     pub market: MarketId,
     pub side: Side,
     pub due: Instant,
+    /// When the scheduler handed it out, at or a timer's tick after `due`.
+    pub dispatched: Instant,
 }
 
 /// One trader: its account and session keys, the session key's next nonce, and what it holds.
@@ -141,7 +146,9 @@ impl Trader {
         match job.kind {
             Kind::Market | Kind::Limit => {
                 let kind = match (job.kind, job.side) {
-                    (Kind::Market, _) => OrderKind::Market { quoted: Fixed::from_int(QUOTED), max_slippage_bps: None },
+                    (Kind::Market, _) => {
+                        OrderKind::Market { quoted: Fixed::from_int(QUOTED), max_slippage_bps: Some(SLIPPAGE_BPS) }
+                    }
                     (_, Side::Buy) => OrderKind::Limit { price: Fixed::from_int(LIMIT_BUY) },
                     (_, Side::Sell) => OrderKind::Limit { price: Fixed::from_int(LIMIT_SELL) },
                 };
@@ -177,8 +184,12 @@ impl Trader {
                     .positions
                     .iter()
                     .map(|market| CloseEntry { market: *market, quoted: Fixed::from_int(QUOTED) });
-                let mut request =
-                    CloseAllRequest { account, closes: closes.collect(), max_slippage_bps: None, auth: None };
+                let mut request = CloseAllRequest {
+                    account,
+                    closes: closes.collect(),
+                    max_slippage_bps: Some(SLIPPAGE_BPS),
+                    auth: None,
+                };
                 request.auth = Some(sign(eip712::close_all_hash(&domain(), &request, nonce, expires_at)));
                 ("/v1/positions/close-all", json!(request).to_string())
             }
@@ -314,29 +325,34 @@ impl Client {
         }
     }
 
-    /// Sends one job and records its reply.
+    /// Sends one job and records its reply. Its time runs from when the scheduler handed it out to
+    /// its reply, less the time the client took to sign it: a wait behind the client's previous
+    /// request counts, the generator's own timer and signing do not.
     async fn send(&mut self, http: &mut Http, job: Job) {
         let trader = &mut self.traders[job.trader];
+        let late = job.dispatched.duration_since(job.due) > LATE;
+        let signing = Instant::now();
         let (path, body) = trader.request(&job, &self.units);
-        let late = job.due.elapsed() > LATE;
+        let signed_in = signing.elapsed();
         let sent = http.send(Method::POST, path, body).await;
-        let waited = job.due.elapsed().as_micros() as u64;
-        let (outcome, fills) = match sent {
+        let waited = job.dispatched.elapsed().saturating_sub(signed_in).as_micros() as u64;
+        let (outcome, fills, refused) = match sent {
             Ok((status, reply)) => {
                 let reply: Value = serde_json::from_slice(&reply).unwrap_or_default();
                 let (fills, rejected) = trader.take(status, &reply);
                 let outcome = rejected.map_or_else(|| status.to_string(), |kind| format!("{status}_rejected_{kind}"));
-                (outcome, fills)
+                (outcome, fills, status != 200)
             }
             Err(_) => {
                 *http = self.connect().await;
-                ("failed".to_owned(), 0)
+                ("failed".to_owned(), 0, true)
             }
         };
         let mut samples = self.recorder.lock().expect("a recorder");
         *samples.sent.entry(job.kind.name().to_owned()).or_default() += 1;
         *samples.replies.entry(format!("{}_{outcome}", job.kind.name())).or_default() += 1;
         samples.late += u64::from(late);
+        samples.refused += u64::from(refused);
         samples.request_us.push(waited);
         samples.fills += fills;
         if job.kind == Kind::Market && fills > 0 {

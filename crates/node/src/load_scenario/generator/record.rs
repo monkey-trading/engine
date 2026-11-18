@@ -19,6 +19,7 @@ pub(super) struct Samples {
     pub quote_frames: u64,
     pub disconnects: u64,
     pub late: u64,
+    pub refused: u64,
 }
 
 /// One task's samples, shared with the window's end.
@@ -41,6 +42,7 @@ impl Samples {
         self.quote_frames += other.quote_frames;
         self.disconnects += other.disconnects;
         self.late += other.late;
+        self.refused += other.refused;
     }
 
     /// What the samples show.
@@ -56,6 +58,7 @@ impl Samples {
             quote_frames: self.quote_frames,
             disconnects: self.disconnects,
             late: self.late,
+            refused: self.refused,
         }
     }
 }
@@ -70,14 +73,16 @@ pub(super) fn take_all(recorders: &[Recorder]) -> Samples {
     all
 }
 
-/// The stamp of the command a stream frame carries, from its `sequenced` object's `ts`, whether the
-/// frame is the message itself or a signed frame carrying it as an escaped string; none for any
+/// The stamp of the command a stream frame carries, the `ts` after its `"type":"command"`, whether
+/// the frame is the message itself or a signed frame carrying it as an escaped string; none for any
 /// other frame.
 pub(super) fn stamp_of(frame: &str) -> Option<i64> {
-    let after = frame.find("sequenced")?;
-    let rest = &frame[after..];
-    let at = rest.find(r#""ts":"#).map(|at| at + 5).or_else(|| rest.find(r#"\"ts\":"#).map(|at| at + 7))?;
-    let digits: &str = &rest[at..];
+    let (command, ts) = match frame.find(r#""type":"command""#) {
+        Some(at) => (at, r#""ts":"#),
+        None => (frame.find(r#"\"type\":\"command\""#)?, r#"\"ts\":"#),
+    };
+    let rest = &frame[command..];
+    let digits = &rest[rest.find(ts)? + ts.len()..];
     let end = digits.find(|c: char| !c.is_ascii_digit()).unwrap_or(digits.len());
     digits[..end].parse().ok()
 }
@@ -88,17 +93,21 @@ mod tests {
 
     #[test]
     fn a_frames_stamp_is_read_from_the_message_or_from_a_signed_frame_carrying_it() {
-        let message = r#"{"offset":{"seq":7,"index":0},"type":"command","sequenced":{"seq":7,"ts":1794841200123,"cmd":{"type":"tick"}},"events":[]}"#;
-        assert_eq!(stamp_of(message), Some(1_794_841_200_123));
-        let signed = format!(
-            r#"{{"v":1,"n":3,"time":1794841200200,"msg":{},"sig":"0x00"}}"#,
-            serde_json::to_string(message).unwrap()
-        );
+        use engine_core::command::{Command, Sequenced};
+
+        use crate::log::{CommandEntry, LogEntry, Offset};
+        use crate::sequencer::StreamMsg;
+
+        let sequenced = Sequenced { seq: 7, ts: 1_794_841_200_123, cmd: Command::Tick };
+        let entry = LogEntry::Command(CommandEntry { sequenced, events: Some(Vec::new()), seal: None });
+        let msg = StreamMsg::new(Offset::start_of(7), entry);
+        let message = msg.json().unwrap();
+        assert_eq!(stamp_of(message), Some(1_794_841_200_123), "{message}");
+        let escaped = &msg.framed().unwrap().escaped;
+        let signed = format!(r#"{{"v":1,"n":3,"time":1794841200200,"msg":{escaped},"sig":"0x00"}}"#);
         assert_eq!(stamp_of(&signed), Some(1_794_841_200_123), "{signed}");
-        assert_eq!(
-            stamp_of(r#"{"v":1,"n":4,"time":1,"msg":"{\"type\":\"heartbeat\",\"head\":null}","sig":"0x"}"#),
-            None
-        );
+        let heartbeat = r#"{"v":1,"n":4,"time":1,"msg":"{\"type\":\"heartbeat\",\"head\":null}","sig":"0x"}"#;
+        assert_eq!(stamp_of(heartbeat), None);
         assert_eq!(stamp_of(r#"{"offset":{"seq":7,"index":1},"type":"checkpoint","seq":7}"#), None);
     }
 

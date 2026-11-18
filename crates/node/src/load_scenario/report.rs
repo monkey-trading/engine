@@ -133,25 +133,31 @@ impl Snapshot {
 }
 
 /// Every histogram and every counter in `text`, the registry's encoding, each counter summed over
-/// its labels.
+/// its labels. A histogram is a family its `# TYPE` line names one, whose sum and count come before
+/// its buckets.
 fn parse(text: &str) -> (BTreeMap<String, Histogram>, BTreeMap<String, f64>) {
     let (mut histograms, mut counters) = (BTreeMap::<String, Histogram>::new(), BTreeMap::new());
-    for line in text.lines().filter(|line| !line.starts_with('#')) {
-        let Some((series, value)) = line.rsplit_once(' ') else { continue };
+    for line in text.lines() {
+        if let Some(family) = line.strip_prefix("# TYPE ").and_then(|rest| rest.strip_suffix(" histogram")) {
+            histograms.insert(family.to_owned(), Histogram::default());
+            continue;
+        }
+        let Some((series, value)) = line.rsplit_once(' ').filter(|_| !line.starts_with('#')) else { continue };
         let Ok(value) = value.parse::<f64>() else { continue };
         let (name, labels) = series.split_once('{').unwrap_or((series, ""));
-        if let Some(family) = name.strip_suffix("_bucket") {
+        let part = |suffix: &str| name.strip_suffix(suffix).filter(|family| histograms.contains_key(*family));
+        if let Some(family) = part("_bucket") {
             let bound = labels.split("le=\"").nth(1).and_then(|rest| rest.split('"').next());
             let bound = match bound {
                 Some("+Inf") => f64::INFINITY,
                 Some(bound) => bound.parse().unwrap_or(f64::NAN),
                 None => continue,
             };
-            histograms.entry(family.to_owned()).or_default().buckets.push((bound, value as u64));
-        } else if let Some(family) = name.strip_suffix("_sum").filter(|family| histograms.contains_key(*family)) {
-            histograms.entry(family.to_owned()).or_default().sum = value;
-        } else if let Some(family) = name.strip_suffix("_count").filter(|family| histograms.contains_key(*family)) {
-            histograms.entry(family.to_owned()).or_default().count = value as u64;
+            histograms.get_mut(family).expect("a histogram").buckets.push((bound, value as u64));
+        } else if let Some(family) = part("_sum") {
+            histograms.get_mut(family).expect("a histogram").sum = value;
+        } else if let Some(family) = part("_count") {
+            histograms.get_mut(family).expect("a histogram").count = value as u64;
         } else if name.ends_with("_total") {
             *counters.entry(name.to_owned()).or_default() += value;
         }
@@ -276,11 +282,13 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
     };
     let replies: Vec<String> = figures.replies.iter().map(|(kind, count)| format!("{kind}={count}")).collect();
     println!(
-        "LOAD leg={leg} multiple={multiple} secs={:.0} requests={} fills={} late={} commands_per_second={:.0} replies[{}]",
+        "LOAD leg={leg} multiple={multiple} secs={:.0} requests={} fills={} late={} refused={} commands_per_second={:.0} \
+         replies[{}]",
         node.secs,
         figures.sent.values().sum::<u64>(),
         figures.fills,
         figures.late,
+        figures.refused,
         node.commands / node.secs,
         replies.join(" ")
     );
@@ -310,30 +318,31 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
 mod tests {
     use super::*;
 
-    const TEXT: &str = "# TYPE engine_price_to_stamp_seconds histogram\n\
-        engine_price_to_stamp_seconds_sum 0.5\n\
-        engine_price_to_stamp_seconds_count 100\n\
-        engine_price_to_stamp_seconds_bucket{le=\"0.001\"} 50\n\
-        engine_price_to_stamp_seconds_bucket{le=\"0.01\"} 99\n\
-        engine_price_to_stamp_seconds_bucket{le=\"+Inf\"} 100\n\
-        # TYPE engine_fills counter\n\
-        engine_fills_total{market=\"1\"} 3\n\
-        engine_fills_total{market=\"2\"} 4\n";
-
     #[test]
-    fn a_histogram_is_read_and_judged_at_its_bounds() {
-        let (histograms, counters) = parse(TEXT);
+    fn a_histogram_is_read_from_the_nodes_encoding_and_judged_at_its_bounds() {
+        let metrics = Metrics::new();
+        let waited = &metrics.latency.price_to_stamp;
+        (0..50).for_each(|_| waited.observe(0.000_5));
+        (0..49).for_each(|_| waited.observe(0.005));
+        waited.observe(0.5);
+        metrics.fills.get_or_create(&crate::metrics::MarketLabel { market: 1 }).inc_by(3);
+        metrics.fills.get_or_create(&crate::metrics::MarketLabel { market: 2 }).inc_by(4);
+        let (histograms, counters) = parse(&metrics.encode());
         let h = &histograms[PRICE_TO_STAMP];
-        assert_eq!((h.count, h.sum, h.buckets.len()), (100, 0.5, 3));
+        assert_eq!((h.count, h.buckets.len()), (100, 17), "{h:?}");
+        assert!((h.sum - 0.770).abs() < 1e-9, "{}", h.sum);
         assert_eq!(counters["engine_fills_total"], 7.0, "a counter sums over its labels");
         assert!(h.within(0.5, 0.001), "50 of 100 within a millisecond holds the median there");
         assert!(!h.within(0.51, 0.001));
         assert!(h.within(0.99, 0.01) && !h.within(0.999, 0.01));
-        assert!((h.quantile(0.5) - 0.001).abs() < 1e-12, "{}", h.quantile(0.5));
-        assert_eq!(h.quantile(0.999), 0.01, "past the last finite bound, the bound");
-        let earlier = Histogram { buckets: vec![(0.001, 40), (0.01, 40), (f64::INFINITY, 40)], sum: 0.1, count: 40 };
-        let since = h.since(&earlier);
-        assert_eq!((since.count, since.buckets[0].1, since.buckets[1].1), (60, 10, 59));
+        // The 50th of 100 observations is the last in the bucket up to half a millisecond.
+        assert!((h.quantile(0.5) - 0.000_5).abs() < 1e-12, "{}", h.quantile(0.5));
+        assert!((h.quantile(0.995) - 0.375).abs() < 1e-9, "halfway into the bucket from 0.25 s to 0.5 s");
+        let earlier = h.clone();
+        waited.observe(0.000_5);
+        let (histograms, _) = parse(&metrics.encode());
+        let since = histograms[PRICE_TO_STAMP].since(&earlier);
+        assert_eq!((since.count, since.buckets[4].1, since.buckets[3].1), (1, 1, 1), "{since:?}");
     }
 
     #[test]
