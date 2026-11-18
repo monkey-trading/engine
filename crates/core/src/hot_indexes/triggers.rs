@@ -44,6 +44,13 @@ impl HotIndexes {
         orders
     }
 
+    /// Each market's trigger book that holds an order, as text: a market no order ever rested in may or
+    /// may not have an empty book.
+    pub(super) fn keyed_triggers(&self) -> Vec<(MarketId, String)> {
+        let occupied = self.triggers.iter().filter(|(_, book)| !book.keys.is_empty());
+        occupied.map(|(market, book)| (*market, format!("{book:?}"))).collect()
+    }
+
     /// Re-keys `market`'s limits at `rate` from `orders`, its whole resting book, unless they are keyed
     /// at it already.
     pub(super) fn key_triggers<'a>(
@@ -52,11 +59,20 @@ impl HotIndexes {
         rate: i64,
         orders: impl Iterator<Item = (AccountId, &'a RestingOrder)>,
     ) {
-        let book = self.triggers.entry(market).or_default();
-        if book.rate == rate {
+        if self.triggers.entry(market).or_default().rate == rate {
             return;
         }
-        *book = Triggers { rate, ..Triggers::default() };
+        self.rekey(market, rate, orders);
+    }
+
+    /// Rebuilds `market`'s trigger book at `rate` from `orders`, its whole resting book, keyed or not.
+    pub(super) fn rekey<'a>(
+        &mut self,
+        market: MarketId,
+        rate: i64,
+        orders: impl Iterator<Item = (AccountId, &'a RestingOrder)>,
+    ) {
+        self.triggers.insert(market, Triggers { rate, ..Triggers::default() });
         orders.for_each(|(account, order)| self.order(account, order, true));
     }
 
@@ -99,6 +115,15 @@ impl Engine {
     /// Re-keys `market`'s resting limits when the least fill rate in force is not the one they are
     /// keyed at: its bands or its close-spread ceiling moved, or the protocol version did.
     pub(crate) fn key_triggers(&mut self, market: MarketId) {
+        self.key_market_triggers(market, false);
+    }
+
+    /// Rebuilds `market`'s trigger book from its resting orders, as after a split moved their prices.
+    pub(crate) fn rekey_triggers(&mut self, market: MarketId) {
+        self.key_market_triggers(market, true);
+    }
+
+    fn key_market_triggers(&mut self, market: MarketId, always: bool) {
         let rate = self.least_fill_rate(market);
         let Some(indexes) = self.hot_indexes.as_mut() else { return };
         let accounts = &self.accounts;
@@ -106,7 +131,11 @@ impl Engine {
             // The resting book and the accounts' orders change together (`Engine::remove_order`).
             (*account, accounts[account].orders.get(order_id).expect("a resting book entry is its account's order"))
         });
-        indexes.key_triggers(market, rate, orders);
+        if always {
+            indexes.rekey(market, rate, orders);
+        } else {
+            indexes.key_triggers(market, rate, orders);
+        }
     }
 
     /// The least share of the index mid any fill in `market` pays from `V74`, in tenths of a bp: the

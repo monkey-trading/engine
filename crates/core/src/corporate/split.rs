@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use crate::Fixed;
-use crate::account::{Account, Position};
+use crate::account::Position;
 use crate::command::OrderKind;
 use crate::corporate::CorporateAction;
 use crate::corporate::cash::{usd_down, valuation_fx};
@@ -17,13 +17,17 @@ const BOUND: &str = "split quantity exceeds the input bound";
 /// Why a split fails when a scaled value leaves the representable range.
 const OVERFLOW: &str = "split quantity or price overflows";
 
-/// One account's books after a split, with what the split settles and cancels for it.
+/// One account's changes from a split, computed before any is applied.
 struct ScaledAccount {
     account: AccountId,
-    state: Account,
+    /// The position's scaled books, `None` when it was rounded away; unset when the account held none.
+    position: Option<Option<Position>>,
+    /// The balance after the cash in lieu, when one was settled.
+    balance: Option<Fixed>,
     /// Signed USD realised on the fraction rounded off the position, when one was rounded off.
     in_lieu: Option<Fixed>,
-    cancelled: Vec<OrderId>,
+    /// Each resting order in the market, with its scaled kind and quantity, or `None` to cancel it.
+    orders: Vec<(OrderId, Option<(OrderKind, Fixed)>)>,
 }
 
 impl Engine {
@@ -76,8 +80,8 @@ impl Engine {
         let mut house = self.house_cash.raw();
         let mut scaled = Vec::with_capacity(affected.len());
         for account in affected {
-            let mut state = self.accounts[&account].clone();
-            let mut in_lieu = None;
+            let state = &self.accounts[&account];
+            let (mut position_change, mut balance, mut in_lieu) = (None, None, None);
             if let Some(position) = state.positions.get(&action.market).copied() {
                 let (qty, remainder) = scale_quantity(position.qty, new, old)?;
                 if qty.abs() > Fixed::MAX_INPUT {
@@ -92,22 +96,17 @@ impl Engine {
                         .checked_mul_div(Fixed::from_raw(remainder), Fixed::from_int(old.into()), Rounding::Down)
                         .ok_or(OVERFLOW)?;
                     let amount = usd_down(market.spec.quote_currency, pnl, fx.clone()?)?;
-                    state.balance = Fixed::from_raw(state.balance.raw().checked_add(amount.raw()).ok_or(OVERFLOW)?);
+                    balance = Some(Fixed::from_raw(state.balance.raw().checked_add(amount.raw()).ok_or(OVERFLOW)?));
                     house = house.checked_sub(amount.raw()).ok_or(OVERFLOW)?;
                     in_lieu = Some(amount);
                 }
                 let rounded = Position { qty, entry };
                 market.client_qty = market.client_qty - position.qty + qty;
                 market.client_cost = market.client_cost - position.cost() + rounded.cost();
-                if qty.is_zero() {
-                    state.positions.remove(&action.market);
-                    state.opened_at.remove(&action.market);
-                } else {
-                    state.positions.insert(action.market, rounded);
-                }
+                position_change = Some((!qty.is_zero()).then_some(rounded));
             }
-            let mut cancelled = Vec::new();
-            for order in state.orders.values_mut().filter(|o| o.market == action.market) {
+            let mut orders = Vec::new();
+            for order in state.orders.values().filter(|o| o.market == action.market) {
                 // A client chooses its order's size and price, so an order that leaves the input
                 // bound, rounds to zero or overflows is cancelled rather than failing the split.
                 let (limit, stop) = match order.side {
@@ -124,21 +123,18 @@ impl Engine {
                     OrderKind::Market { .. } => unreachable!("only limit and stop orders rest"),
                 };
                 // A resting quantity was within the input bound, so its product with a `u32` fits.
-                order.qty = scale_quantity(order.qty, new, old)?.0;
+                let qty = scale_quantity(order.qty, new, old)?.0;
                 match scaled {
-                    Some((kind, price))
-                        if price.is_positive() && !order.qty.is_zero() && order.qty <= Fixed::MAX_INPUT =>
-                    {
-                        order.kind = kind;
+                    Some((kind, price)) if price.is_positive() && !qty.is_zero() && qty <= Fixed::MAX_INPUT => {
+                        orders.push((order.order_id, Some((kind, qty))));
                     }
-                    _ => cancelled.push(order.order_id),
+                    _ => {
+                        market.resting.remove(&order.order_id);
+                        orders.push((order.order_id, None));
+                    }
                 }
             }
-            for order_id in &cancelled {
-                state.orders.remove(order_id);
-                market.resting.remove(order_id);
-            }
-            scaled.push(ScaledAccount { account, state, in_lieu, cancelled });
+            scaled.push(ScaledAccount { account, position: position_change, balance, in_lieu, orders });
         }
         let markouts = self
             .markouts
@@ -157,16 +153,42 @@ impl Engine {
             new_units: new,
             old_units: old,
         });
-        for ScaledAccount { account, state, in_lieu, cancelled } in scaled {
-            let orders: Vec<_> =
+        for ScaledAccount { account, position, balance, in_lieu, orders } in scaled {
+            let state = self.accounts.get_mut(&account).expect("a scaled account exists");
+            let held = state.positions.contains_key(&action.market);
+            match position {
+                Some(Some(rounded)) => {
+                    state.positions.insert(action.market, rounded);
+                }
+                Some(None) => {
+                    state.positions.remove(&action.market);
+                    state.opened_at.remove(&action.market);
+                }
+                None => {}
+            }
+            if let Some(balance) = balance {
+                state.balance = balance;
+            }
+            let mut cancelled = Vec::new();
+            for (order_id, change) in orders {
+                match change {
+                    Some((kind, qty)) => {
+                        let order = state.orders.get_mut(&order_id).expect("a scaled order rests");
+                        (order.kind, order.qty) = (kind, qty);
+                    }
+                    None => {
+                        state.orders.remove(&order_id);
+                        cancelled.push(order_id);
+                    }
+                }
+            }
+            let resting: Vec<_> =
                 state.orders.values().filter(|o| o.market == action.market).map(|o| o.order_id).collect();
-            let held = self.accounts[&account].positions.contains_key(&action.market);
-            self.accounts.insert(account, state);
             self.scale_volume_lots(account, action.market, new, old);
             if held {
                 self.record_position(account, action.market);
             }
-            for order_id in orders.into_iter().chain(cancelled.iter().copied()) {
+            for order_id in resting.into_iter().chain(cancelled.iter().copied()) {
                 self.record_order(account, order_id);
             }
             if let Some(amount) = in_lieu {
@@ -195,8 +217,10 @@ impl Engine {
             (self.markouts[offset].open, self.markouts[offset].closed) = (Fixed::ZERO, Fixed::ZERO);
             self.record_markout_change(offset);
         }
-        self.hot_indexes = None;
-        self.ensure_hot_indexes();
+        // Only the split market's derived indexes depend on what changed: its holders follow
+        // `record_position`, and its triggers and markout legs are rebuilt here.
+        self.forget_markout_legs(action.market);
+        self.rekey_triggers(action.market);
         Ok(())
     }
 }

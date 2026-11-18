@@ -297,9 +297,30 @@ impl Engine {
 
     /// Restores transient indexes from authoritative state once after construction or recovery.
     pub(crate) fn ensure_hot_indexes(&mut self) {
-        if self.hot_indexes.is_some() {
-            return;
+        if self.hot_indexes.is_none() {
+            self.hot_indexes = Some(self.build_hot_indexes());
         }
+    }
+
+    /// Whether the position, trigger and markout-leg indexes equal what `restore_indexes` would
+    /// rebuild from state: a check for tests, which cannot reach the indexes.
+    #[doc(hidden)]
+    pub fn indexes_match_restore(&self) -> bool {
+        let (Some(kept), rebuilt) = (self.hot_indexes.as_ref(), self.build_hot_indexes()) else { return false };
+        let held = |indexes: &HotIndexes| {
+            indexes
+                .holders
+                .iter()
+                .filter(|(_, held)| !held.is_empty())
+                .map(|(m, h)| (*m, h.clone()))
+                .collect::<Vec<_>>()
+        };
+        held(kept) == held(&rebuilt)
+            && kept.keyed_triggers() == rebuilt.keyed_triggers()
+            && kept.markout_legs == rebuilt.markout_legs
+    }
+
+    fn build_hot_indexes(&self) -> HotIndexes {
         let mut indexes = HotIndexes::default();
         // Every id below the finalised base settled at the vault, so coverage starts there: a
         // lone receipt just past a large frontier would otherwise open the settled span below it
@@ -374,7 +395,7 @@ impl Engine {
         if self.protocol_version >= ProtocolVersion::V54 {
             indexes.markout_legs = MarkoutLegs::of_queue(&self.markouts, self.markout_base);
         }
-        self.hot_indexes = Some(indexes);
+        indexes
     }
 
     /// Records a reference entering (`insert`) or leaving the pending set, at the same boundary as
