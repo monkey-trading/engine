@@ -1,4 +1,5 @@
-//! Signed quotes through the API against a real sequencer.
+//! Signed quotes through the API against a real sequencer: they fill at their price until the index
+//! moves.
 
 use std::net::SocketAddr;
 use std::sync::Arc;

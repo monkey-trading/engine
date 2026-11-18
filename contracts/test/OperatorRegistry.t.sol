@@ -8,6 +8,7 @@ import {Staking} from "../src/Staking.sol";
 import {RegistryTest} from "./helpers/RegistryTest.sol";
 
 /// Candidacy, release approval, the election close, and the rotation switch.
+/// Also the close's boundaries, the cancellation a switch-off makes, and the timelock-only installation.
 contract OperatorRegistryTest is RegistryTest {
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");

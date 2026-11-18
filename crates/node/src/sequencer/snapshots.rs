@@ -54,6 +54,10 @@ impl Sequencer {
 
     /// Captures a checkpoint with the recovery facts it had when it was written, which custody
     /// status may have moved on since; with a capture in flight, keeps it for shutdown instead.
+    /// Nothing is captured once the engine holds a withdrawal approval: a cache does not carry the
+    /// order approvals are paid in, which only full replay validates. The caches written before the
+    /// first approval stay, so such a node restarts from the newest of them, or by full replay when
+    /// none is left, and its restart time grows with the log written since.
     /// Error cases:
     /// - the authoritative log cannot be synced
     pub(super) fn capture(&mut self, deferred: Deferred) -> anyhow::Result<()> {

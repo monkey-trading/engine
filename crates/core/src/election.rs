@@ -218,7 +218,8 @@ impl Engine {
     /// Mirrors the registry's `Elected` event: records the election, and a pending rotation to its
     /// key when that is not the key in effect, replacing any pending rotation. An election the
     /// successor supersedes before it took effect is kept as `prior`, restored if the successor is
-    /// cancelled before it takes effect.
+    /// cancelled before it takes effect. From `V51` an election is refused once the log holds a
+    /// rotation set (`turns`).
     pub(crate) fn elect_operator(&mut self, election: &RegistryElection, events: &mut Vec<Event>) {
         let RegistryElection { epoch, candidate, admin_key, effective_at, block, ref chain_ref } = *election;
         let reason = self.registry_mirror_refusal(chain_ref).or_else(|| {

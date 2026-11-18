@@ -5,6 +5,9 @@ import {Vault} from "../src/Vault.sol";
 import {LogHeads} from "../src/LogHeads.sol";
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 
+/// `engine.log-head.v1` anchors: the signature vector, the newest head per epoch, the parent fence, fuzzed
+/// stale and replayed seqs, a forged signer and modified fields, another vault or chain, rotation into a
+/// new epoch, and a vault without a registry refusing v2 heads.
 contract LogHeadsTest is GovernanceTest {
     Vault private vault;
     LogHeads private heads;

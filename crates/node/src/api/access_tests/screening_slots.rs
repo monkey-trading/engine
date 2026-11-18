@@ -1,7 +1,8 @@
 //! The API's screening slots under load: one wallet's requests hold at most its share of them, a
 //! client's at most its own, a copy of a signed request or a declared wallet's repeat declaration
 //! holds none, new orders leave closes and withdrawals the reserve, and a request refused for want of a
-//! slot is told when to retry while the operator hears of it.
+//! slot is told when to retry while the operator hears of it. A position's stop loss takes the reserve
+//! as a close does; the refusal carries `Retry-After` and raises `api_screening_slots_full`.
 
 use std::future::Future;
 use std::num::NonZeroU32;

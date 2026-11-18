@@ -1,3 +1,6 @@
+//! The repeat rule: when a repeat waits, goes or is dropped, and the engine's index against one handed
+//! every update, under sequencer delays inside and past the refresh margin.
+
 use std::collections::VecDeque;
 
 use engine_core::command::Command;

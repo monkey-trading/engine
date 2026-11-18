@@ -1,4 +1,6 @@
-//! Local Anvil scenario over the real sequencer, vault RPC, checkpoint worker, and deposit adapter.
+//! Local Anvil scenario over the real sequencer, vault RPC, checkpoint worker, and deposit adapter:
+//! posting, credited and held reconciliation, tampering, truncation, surplus booking, shortfall and
+//! reorg checks. `scripts/dev-checkpoints.sh` runs it.
 
 use crate::checkpoints::Health;
 mod anvil;

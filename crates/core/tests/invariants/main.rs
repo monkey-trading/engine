@@ -51,7 +51,8 @@ use session::{Session, command, session};
 
 /// Seed for every run, so CI and local runs check the same sessions.
 const SEED: u64 = 0x5eed_0021;
-/// Sessions per run: enough to find edge-of-range panics, few enough to run in a few seconds.
+/// Sessions per run: enough to find edge-of-range panics, few enough to run in a few seconds. Raise it,
+/// or change `SEED`, to search further.
 const CASES: u32 = 1_024;
 /// The coverage path of a resting order filled by a command that carries neither prices nor an
 /// order, as only an index changed without a price update can fill it.

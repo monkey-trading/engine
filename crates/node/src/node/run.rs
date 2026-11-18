@@ -1,5 +1,8 @@
 //! Running the node for the process: its delivered secrets, its alert routing, and, for a
-//! rotation-set member, the wait for each holding between runs (`member`).
+//! rotation-set member, the wait for each holding between runs (`member`). Beside them run the
+//! process's own tasks, one each for its life, while a member follows as well as while it holds a
+//! turn: the metrics listener, bound once, and the seed relayer with `[seed_relay]`; any of them
+//! stopping ends the process.
 
 use std::sync::Arc;
 

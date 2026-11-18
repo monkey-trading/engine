@@ -1,4 +1,12 @@
 //! On-chain checkpoint commitments, replay protection, and collateral reconciliation.
+//!
+//! While the vault's signer is retired the vault takes no checkpoint, so the sequencer signs none
+//! (`checkpoint_withheld`, cause `signer_retired`), no uncredited deposit's catch-up deadline starts,
+//! and sequencing goes on. Once the timelock installs this enclave's key again, a new signer epoch
+//! begins, the next checkpoint carries the whole state, so the retirement leaves no backlog, and each
+//! unpaid authorization still usable is signed again in that epoch (`sequencer::payouts`); another key
+//! stops the node with `checkpoint_conflict`. A node does not start while the signer is retired
+//! (`setup`).
 
 pub(crate) mod accounting;
 pub(crate) mod emission_budget;
@@ -108,6 +116,12 @@ impl Work {
     }
 
     /// Refuses restored signatures that could become an irreconcilable finalized checkpoint.
+    /// Writable recovery runs it on the finalized anchor and on every outstanding recovered signature
+    /// before the log opens for append or history is created or repaired, rather than serving
+    /// permanently paused: a later scan cannot prove an older immutable root's prefix. Read-only
+    /// `engine replay` still audits such a log. Resuming it needs a fresh deployment or a separately
+    /// verified operator migration: deleting the log does not reset the vault's accepted checkpoint,
+    /// and the node infers no migration proof.
     /// Error cases:
     /// - a nonempty modern checkpoint lacks its original canonical receipt coverage
     pub(crate) fn validate_recovery_prefix(&self) -> anyhow::Result<()> {

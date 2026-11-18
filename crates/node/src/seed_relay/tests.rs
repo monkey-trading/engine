@@ -1,3 +1,6 @@
+//! The relayer's decisions over fake chains: what it relays and when, the sends it replaces, and the
+//! alerts it raises. `tests/scenario.rs` is the two-Anvil dev scenario.
+
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 

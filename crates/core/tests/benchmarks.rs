@@ -1,4 +1,5 @@
-//! Dated financing and replay at the V18 protocol boundary.
+//! Dated financing and replay at the V18 protocol boundary: each missed rollover's rate in catch-up,
+//! signed snapshots and their bounds, missing, stale and undated rates, and the rollover's local date.
 
 mod common;
 

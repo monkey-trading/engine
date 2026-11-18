@@ -12,7 +12,9 @@ import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 /// `FaultProof.prove`: two heads of one signer epoch, turn, position and release that disagree at one
 /// seq name the assignment's member once; every other pair, and a pair across a promotion's signer
-/// change, proves nothing.
+/// change, proves nothing. Covers a proof against a head `LogHeads` accepted, each refusal, a revision
+/// index past the last or of another generation, a proof's gas after 300 release moves, the outgoing
+/// epoch's fault proven after a promotion, and fuzzes which pairs prove.
 contract FaultProofTest is LivenessTest {
     FaultProof internal faults;
     address internal anyone = makeAddr("anyone");
@@ -126,6 +128,7 @@ contract FaultProofTest is LivenessTest {
         faults.prove(epoch, first, second);
     }
 
+    /// A proof costs about 120k gas, held here under 150k after 300 revisions.
     function test_AProofCostsTheSameHoweverManyRevisionsTheMemberAdds() public {
         // The member moves to its own release again and again, each move a revision of the turn.
         for (uint256 i = 0; i < 300; ++i) {

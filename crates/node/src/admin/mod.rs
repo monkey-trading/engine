@@ -3,6 +3,9 @@
 //! (`secrets`). The key comes from a file or the `OPERATOR_KEY` environment variable, never the
 //! command line, where other users of the machine could read it, and it never leaves this process:
 //! the node holds only the operator's public key.
+//!
+//! A market spec file holds the keys of a `[[genesis.markets]]` entry, and a parameters file those of
+//! `[genesis.params]`, at its top level with no table header.
 
 mod benchmark_feed;
 mod benchmark_watch;

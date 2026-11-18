@@ -1,3 +1,6 @@
+//! The harness itself: the time refresher's one sample a second and its end with the queue, and
+//! when a scratch directory is removed or kept.
+
 use super::*;
 
 #[tokio::test(start_paused = true)]

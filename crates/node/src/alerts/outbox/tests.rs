@@ -1,3 +1,5 @@
+//! The outbox across a restart, its bounds, a corrupt file, and storage failures.
+
 use super::*;
 
 use crate::alerts::{AlertLine, Status};

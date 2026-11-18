@@ -8,6 +8,24 @@
 //! each account to a lower volume tier, which re-keys every level, are each measured and printed, as is
 //! the first price after an hour, when every account holding levels whose toxicity score holds the
 //! fills a tier needs has its add-on read again for decay. The index's rebuild from state is printed too.
+//!
+//! Measured on 18 November 2026 on a Mac17,9 with 15 logical CPUs and 24 GiB RAM, with other workspace
+//! builds running, each sample on the book with levels and on the same book without, in turn. With a
+//! stop loss inside BTC's 20bp ceiling of the index and out of its closing price's reach, a price took
+//! 1 / 5 us p50 / p99, against 1 / 2 us without levels; with both levels out of reach, 1 / 26 us against
+//! 1 / 32 us. Pricing each in-band level instead would add about 58 ms, at 0.58 us a level. One price
+//! firing all 100k stop losses took 399 ms; the first price after the operator's stress floor moved BTC
+//! to level 1, re-keying every level, 684 ms; and the first after the UTC midnight that dropped every
+//! account from tier 1 to tier 0, reading each account's tier and re-keying its level, 895 ms. Rebuilding
+//! the index from state, as recovery and an activation do, took 0.11 to 1.08 s; a split re-keys only its
+//! own market's levels. With 100k accounts whose scores hold 20 decayed fills and sit below every tier,
+//! the first price after the hour took 48 ms against 13 us for the price after it.
+//!
+//! The level path alone took 4 / 5 us p50 / p99 in band, 3 / 6 us out of band, and 4 / 5 us in DE40
+//! out of reach while EUR-USD moved. A market converting at another's index keys its levels without that
+//! index, so a DE40 stop loss within its 25bp ceiling of the index is priced on every DE40 price: 100k
+//! of them took 70 / 74 ms, inside the 250 ms of a price in a market every account holds, and that case
+//! is printed, not held.
 
 use super::*;
 use engine_core::Fixed;

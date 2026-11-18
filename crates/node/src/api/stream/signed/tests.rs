@@ -1,3 +1,7 @@
+//! Signed frames from offset zero bound to their opening request, quiet-log heartbeats, a backfill
+//! read never cut short by a heartbeat, a connection closed while trusted time does not bound the
+//! host clock, and refused parameters.
+
 use super::*;
 use std::net::SocketAddr;
 use std::time::Duration;

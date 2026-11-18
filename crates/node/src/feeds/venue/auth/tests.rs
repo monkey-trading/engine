@@ -1,3 +1,6 @@
+//! Tokens and credentials against a loopback stand-in for CME's token endpoint: the grant, the
+//! rollover, the alert, and redaction.
+
 use super::*;
 
 use std::sync::Arc;

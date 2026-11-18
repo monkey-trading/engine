@@ -41,7 +41,7 @@ import {OperatorRegistry} from "./OperatorRegistry.sol";
 /// deployment's multisig controls signer rotation and pauses through its timelock, and as the
 /// guardian may pause withdrawals for a week or retire the signer without the timelock's delay;
 /// the timelock also names the enclave release that holds the signer's key. This contract is not
-/// upgradeable.
+/// upgradeable. Every entry point that moves tokens is non-reentrant.
 contract Vault is ReentrancyGuardTransient, EIP712 {
     using SafeERC20 for IERC20;
 
@@ -119,6 +119,9 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
 
     /// @notice Deposits accepted so far, trader and house alike; the next deposit's id.
     uint256 public depositCount;
+    /// @notice USDC base units paid by signed withdrawals so far. It moves with the nonce, the
+    /// transfer and `WithdrawalPaid`, never on a reverted claim; the node's checkpoint reconciliation
+    /// reads it with the balance and the nonces at one finalized block.
     uint256 public totalWithdrawn;
     /// @notice USDC base units received across every deposit, house deposits and booked surpluses
     /// included.
@@ -158,6 +161,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     TimelockController public immutable governance;
     /// @notice The deployment's multisig, which may pause withdrawals and retire the signer without
     /// the timelock's delay, and nothing else.
+    /// @dev Neither the guardian's pause nor its retirement touches deposits or `bookSurplus`.
     address public immutable guardian;
     bool public depositsPaused;
     /// @notice Unix seconds from which withdrawals are no longer paused: `type(uint256).max` while
@@ -168,10 +172,18 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     bool public hasCheckpoint;
     uint64 public latestSeq;
     bytes32 public latestRoot;
+    /// @notice Every accepted root, kept for good: a claim may prove against an older one, so an
+    /// approval still unpaid after later checkpoints remove or change its leaf stays payable, while a
+    /// root the parent fence refused never becomes claimable. Nothing evicts them, since nothing on
+    /// chain can tell that every approval in a root is paid; each checkpoint adds a bounded few words.
     mapping(uint64 seq => bytes32 root) public checkpointRoots;
     mapping(uint64 seq => bool accepted) public hasCheckpointAt;
+    /// @notice The signer and epoch that accepted checkpoint `seq`, unchanged by later rotations.
     mapping(uint64 seq => address signer) public checkpointSignerAt;
     mapping(uint64 seq => uint64 epoch) public checkpointEpochAt;
+    /// @notice Whether an account's approval nonce is used: paid, or registered in the exit. It
+    /// survives every signer change, so an account and nonce pay once across checkpoints, reissues
+    /// and signer epochs.
     mapping(address account => mapping(uint64 nonce => bool paid)) public usedNonces;
 
     /// @notice Seconds without a posted checkpoint after which anyone may start the exit.
@@ -234,6 +246,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     uint256 public houseRemainder;
 
     event CheckpointPosted(uint64 indexed seq, bytes32 root, bytes signature);
+    /// @notice The approval's full identity, for the node's reconciliation.
     event WithdrawalPaid(address indexed account, uint256 amount, uint64 indexed nonce, uint64 approvedSeq);
     event SignerChanged(address indexed previousSigner, address indexed signer, uint64 signerEpoch);
     event PausesChanged(bool depositsPaused, bool withdrawalsPaused);
@@ -249,6 +262,8 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
 
     /// @notice `amount` USDC base units deposited to trader account `account` by `from`, the caller
     /// whose tokens the vault pulled.
+    /// @dev `amount` is what the vault received, less than the call named for a token with a fee on
+    /// incoming transfers; the same holds for `HouseDeposited`.
     event Deposited(uint256 indexed id, address indexed account, address indexed from, uint256 amount);
 
     /// @notice `amount` USDC base units added to house capital by `from`.
@@ -397,6 +412,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// a new signer epoch, as `setSigner` does but with no timelock: only the schedule calls it, and
     /// only for a vouched standby key. Refused once the exit has started and while the guardian has
     /// retired the signer.
+    /// @dev No registered-enclave check applies, as `setSigner`'s does while rotation is on.
     function promoteSigner(address signer) external {
         if (msg.sender != address(registry.schedule())) revert UnauthorizedSchedule();
         if (exitStartedAt != 0) revert ExitActive();
@@ -479,6 +495,8 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// running release hands them to it, and no copy sealed in an earlier generation opens. Applies
     /// only while rotation is off; while it is on, the registry's operator names the release, and
     /// the operator in effect upgrades by moving to a release the timelock approved for it.
+    /// @dev Raises the generation even for the release already current. Changes no signer or epoch, so
+    /// outstanding withdrawal authorizations stay valid across an upgrade or a config change.
     function setCurrentRelease(bytes calldata launchDigest, bytes32 configHash) external onlyGovernance {
         if (launchDigest.length != 48) revert InvalidLaunchDigest();
         (bool rotation,,,) = _rotation();
@@ -503,6 +521,8 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
 
     /// @notice Independently pauses deposits (including house capital) and withdrawal claims. A
     /// withdrawal pause holds until the timelock lifts it, which also ends a guardian pause.
+    /// @dev The deposit pause covers `bookSurplus` too. A paused withdrawal uses no nonce, and
+    /// checkpoints post under either pause.
     function setPauses(bool depositsPaused_, bool withdrawalsPaused_) external onlyGovernance {
         depositsPaused = depositsPaused_;
         withdrawalsPausedUntil = withdrawalsPaused_ ? type(uint256).max : 0;
@@ -521,6 +541,8 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// @notice Clears the signer, so no withdrawal signed in the current epoch, checkpoint, or claim on
     /// a root of this epoch is accepted again; installing a signer through the timelock starts the
     /// next epoch.
+    /// @dev The retirement never expires. It leaves `signerEpoch` and `signerAtEpoch` as they were,
+    /// and reverts `NoSigner` once retired.
     function retireSigner() external onlyGuardian {
         address retired = checkpointSigner;
         if (retired == address(0)) revert NoSigner();
@@ -575,6 +597,9 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// @notice Mints to `account` the MONKEY its cumulative entitlement `entitled` adds to what it
     /// was already minted, once `siblings` prove that entitlement against the root of checkpoint
     /// `checkpointSeq` (see `_claimRoot`). Anyone may relay a claim; the tokens always go to `account`.
+    /// @dev No pause stops it, nor the exit: it stays open on any recorded root of the signer epoch in
+    /// force while the signer is not retired, and pays no USDC. Once the exit has started no signer
+    /// can post again, so MONKEY not minted when its signer was replaced or retired stays unminted.
     /// @return amount The base units minted.
     function claimEmissions(address account, uint256 entitled, uint64 checkpointSeq, bytes32[] calldata siblings)
         external
@@ -593,6 +618,14 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     }
 
     /// @notice Pays a signed approval included in an accepted checkpoint, once per account and nonce.
+    /// @dev Anyone may relay it; the USDC, in whole base units as approved, always goes to
+    /// `withdrawal.account`, which may be neither zero nor this vault, and a zero amount is refused.
+    /// The signature must recover the current signer and `signerEpoch` be the current epoch, so a
+    /// rotation ends every earlier epoch's authorizations at once; a reissue keeps the account,
+    /// amount, nonce and `approvedSeq` its leaf binds. `expiresAt` is exactly `WITHDRAWAL_LIFETIME`
+    /// after `issuedAt`, which may not be in the future, and must be after the block's time.
+    /// `checkpointSeq` must be accepted and at least `approvedSeq`. The nonce is spent before the
+    /// transfer, and an inexact transfer reverts both.
     function withdraw(
         Withdrawal calldata withdrawal,
         uint64 checkpointSeq,

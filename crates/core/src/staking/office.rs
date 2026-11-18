@@ -9,7 +9,10 @@
 //! initialisation under it, to the command that closes it, skipped epochs included, as that close
 //! pays the excess they built up. The close splits `floor(excess / 5)` by that time: each account
 //! earns `floor(share · served / counted)`, where `counted` is all the time the open epoch counted,
-//! so the time rotation was off, which no one served, and the rounding go to stakers.
+//! so the time rotation was off, which no one served, and the rounding go to stakers. The count
+//! restarts at every close, one that distributes nothing included. A close the activating command
+//! runs before `V50` applies pays under the rules it leaves, and an activation from before `V47`
+//! first seats the candidate of an election already in effect, which those rules never recorded.
 //!
 //! From `V51`, once a daily turn has applied, the account in office is the turn's member from its
 //! `TurnTaken` to the end of its turn (`turns`), so the time before a member takes its turn, and an

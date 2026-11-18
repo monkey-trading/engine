@@ -49,6 +49,24 @@ Check, before relying on the relay:
   draw deadline before the next seed lands, and `engine_seed_relayer_balance_eth` is above
   `seed_relay.min_balance`. A node running as a standby serves no metrics: read its relayer's alerts.
 
+## Deploy the relay and receiver
+
+Once per deployment. **Changes the live system.** Needs the owner's approval of each deployment.
+
+1. Deploy `SeedReceiver` on Arbitrum first, naming the address the relay will have: the deployer's
+   next nonce on Ethereum (`cast compute-address <deployer> --nonce $(cast nonce <deployer> --rpc-url
+   $L1_RPC)`).
+2. Deploy `SeedRelay` on Ethereum from that nonce, naming Arbitrum's inbox and the receiver. Give
+   both the network's beacon genesis time (`1606824023` on mainnet) and the same turn length (`86400`
+   in production). Give the relay the fork versions whose states it reads, each one whose
+   `BeaconState` keeps the Electra-onward layout, its fields filling a 64-leaf tree: on mainnet,
+   `0x05000000` (Electra) and `0x06000000` (Fulu). A later fork needs a node release whose relayer reads its state and, unless
+   its version was listed here because its specification keeps the layout, a new relay and receiver.
+3. Deploy the operator schedule with this receiver, which it reads its seeds, genesis time and turn
+   length from.
+
+Check: the relay landed at the address the receiver names, and the checks above pass.
+
 ## When `seed_relay_failed` fires
 
 This node's relayer could not relay a turn the receiver lacks. Another member's may still have, and

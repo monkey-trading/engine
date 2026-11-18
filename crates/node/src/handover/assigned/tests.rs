@@ -1,3 +1,5 @@
+//! The assignment read from a scripted block, and the fake assignment reader other tests use.
+
 use super::*;
 
 use std::collections::{BTreeMap, VecDeque};

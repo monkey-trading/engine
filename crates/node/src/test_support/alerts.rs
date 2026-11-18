@@ -1,3 +1,5 @@
+//! The capture of alerts, and of the lines that resolve them, for the tests that assert them.
+
 use std::fmt::Debug;
 
 use tokio::sync::mpsc;

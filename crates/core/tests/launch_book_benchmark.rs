@@ -5,7 +5,28 @@
 //! the case's cost per holder or per order where it scales. Run in a quiet CPU window:
 //! `cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1 launch_book_latency`;
 //! `launch_book_price_attribution` and `launch_book_price_walk` run apart, and the close-out index's
-//! memory is `launch_book_memory`'s.
+//! memory is `launch_book_memory`'s. `LAUNCH_BOOK_ACCOUNTS` runs a smaller book, and a case of fewer
+//! than a thousand samples reports its largest as its p999.
+//!
+//! `launch_book_latency`'s cases and budgets:
+//! - a price in BTC-USD, in EUR-USD inside its session and in US 500, priced from futures, with its
+//!   cost per holder and the prices a second the market could take: p99 10 ms;
+//! - one price in every market in turn, with the rounds a second the thread could take and each
+//!   market's slowest price: 250 ms each;
+//! - a signed order that opens a position, and one that adds to an account holding all 34 markets:
+//!   p99 2 ms;
+//! - a price of ETH-USD that closes out an account holding all 34 markets, 30 accounts one to a step:
+//!   500 ms;
+//! - the slowest of four daily rollovers financing every position, ending before the weekend's gap, each
+//!   with every open market quoted just before it: a 500 ms bar and a 2 s guard;
+//! - the state root after the last rollover, which hashes each account it changed and no other leaf: a
+//!   500 ms bar and a 3 s guard;
+//! - unbudgeted: the state root after 1k, 10k and all other accounts are credited, the book's first
+//!   root, an account proof of an account holding all 34 markets, and the snapshot encoding's time and
+//!   bytes and its recovery (decoding, `restore_indexes` and the first command).
+//!
+//! `launch_book_price_walk`, which CI runs beside `launch_book_latency`, prints the accounts each walk
+//! closes out.
 
 #[path = "launch_book_benchmark/cases.rs"]
 mod cases;

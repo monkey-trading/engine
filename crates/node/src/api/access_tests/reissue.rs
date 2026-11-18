@@ -1,5 +1,6 @@
 //! A reissue request is screened like a new withdrawal, by account and transport peer, and a refusal
-//! is a 403 that leaves the log untouched.
+//! is a 403 that leaves the log untouched. A request for an approval that does not exist is a 404
+//! before any screening call.
 
 use super::*;
 

@@ -1,3 +1,6 @@
+//! Saved headers in curl's layout, each alteration a check refuses, and a frame removed from a
+//! capture.
+
 use super::*;
 use engine_wire::{FRAME_VERSION, Response, SignedFrame};
 

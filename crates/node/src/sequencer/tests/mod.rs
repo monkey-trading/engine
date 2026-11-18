@@ -1,3 +1,6 @@
+//! The sequencer, activation, recovery and replay: withdrawals and checkpoints in the log, client
+//! auth and protocol activation on a fresh log and a restart, and what replay refuses.
+
 use super::*;
 use crate::sequencer::fixture_tests::{finished_genesis, replay_trusted as replay};
 use std::fs;

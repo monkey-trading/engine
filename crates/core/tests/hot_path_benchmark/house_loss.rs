@@ -3,6 +3,13 @@
 //! loss threshold at level 2 and a full day of slots in the window, and the state root after them.
 //! The loss is read from house NAV, which the stress check already sums over the markets, so it adds
 //! no scan of the accounts.
+//!
+//! Measured on 15 November 2026 on a Mac17,9 with 15 logical CPUs and 24 GiB RAM, with other workspace
+//! builds running, each of 100k accounts holding 0.01 BTC and level 2 carrying a threshold of zero: a
+//! BTC price, which visits every holder, took 22,037 / 22,845 us p50 / p99 against 21,942 / 25,308 for
+//! `V61`, and a signed fill 406 / 440 us against 409 / 459. The loss adds a slot's record and a search
+//! of at most 98 slots per market, so the price's budget is twice `V61`'s p99 plus 200 us, which a scan
+//! of the accounts would exceed.
 
 use super::common::close_spread::trade;
 use super::toxicity::scored_fixture;

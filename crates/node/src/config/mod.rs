@@ -86,7 +86,9 @@ pub(crate) const MIN_QUOTE_INTERVAL: Duration = Duration::from_millis(100);
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
     /// Trusts the `account` field on requests. Local development only: it needs the mock TEE and
-    /// mock custody.
+    /// mock custody. Under rules with access screening (`ProtocolVersion::supports_access`: `V24`,
+    /// and `V26` on) the engine still requires the account's signature on every client action and
+    /// eligibility declaration, so the field alone acts for an account only under rules without it.
     None,
     /// Requests must carry an EIP-712 signature from the account's key.
     Eip712,
@@ -276,9 +278,17 @@ pub struct HistorySection {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotSection {
+    /// The cache directory, apart from the log. The account history index and the segment catalog
+    /// live here too, as authenticated databases (`authenticated-<generation>.sqlite`), in place of
+    /// the SQLite index in `history.dir`; the marks cache stays in `history.dir`.
     pub dir: PathBuf,
+    /// How many caches are kept; older ones are pruned as each new one is published.
     pub retain: NonZeroUsize,
+    /// The largest signed cache file written or read.
     pub max_bytes: NonZeroUsize,
+    /// Enclave addresses verified through their attestation; recovery uses only a cache one of them
+    /// signed. Empty, caches are written but every start replays the whole log. Snapshots never
+    /// permit deleting a segment, and `engine replay` still audits the whole log.
     pub trusted_signers: Vec<AccountId>,
 }
 

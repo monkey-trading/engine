@@ -1,9 +1,9 @@
 //! A file sealed to a release alone, not to the vault's generation of it, which the delivered secrets
-//! (`tee::secrets`) and the member's certificates (`tee::certificates`) are kept in: one file per
-//! release and kind, encrypted with AES-256-GCM under the key the platform derives from the
-//! measurement (`Sealer`), with the kind's tag, the measurement, the config hash, and the TCB the key
-//! was derived at bound to the ciphertext. Only the same code under the same config on the same
-//! platform opens it, and only as the kind it was sealed as.
+//! (`tee::secrets`), the member's certificates (`tee::certificates`) and the standby keys
+//! (`standby_key`) are kept in: one file per release and kind, encrypted with AES-256-GCM under the
+//! key the platform derives from the measurement (`Sealer`), with the kind's tag, the measurement,
+//! the config hash, and the TCB the key was derived at bound to the ciphertext. Only the same code
+//! under the same config on the same platform opens it, and only as the kind it was sealed as.
 
 use std::path::{Path, PathBuf};
 

@@ -10,11 +10,18 @@ use serde::{Deserialize, Deserializer};
 use crate::config::{CustodyProvider, NodeConfig, SecretUrl, TeeProvider};
 
 /// The RPC endpoint signs and funds relayer transactions; it has no authority over vault funds.
+/// Required with EVM custody under real attestation, refused with mock custody.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckpointSection {
+    /// The endpoint must answer `eth_sendTransaction` for the relayer, `eth_getTransactionByHash`,
+    /// `eth_getTransactionCount` at `latest`, `pending` and past blocks, and whole blocks with their
+    /// transactions; without that history a reserved nonce stays reserved.
     pub rpc_url: SecretUrl,
+    /// A funded account no other sender uses: posting pauses on pending transactions or a nonce
+    /// consumer that are not this log's (`checkpoints::rpc::submission`).
     pub relayer: Address,
+    /// A failed post retries after this, raising `checkpoint_post_failed`.
     #[serde(with = "humantime_serde")]
     pub retry_interval: Duration,
     #[serde(with = "humantime_serde")]

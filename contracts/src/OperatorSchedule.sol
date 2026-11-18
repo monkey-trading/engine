@@ -321,9 +321,12 @@ contract OperatorSchedule is SeedSchedule {
     /// @param takeWindow_ The take window in force and its bounds, whose minimum exceeds the switch
     /// budget plus one interval plus a head's inclusion, which `headTolerance` bounds, at every interval
     /// and tolerance the heartbeat rule's bounds allow, and whose value leaves a skip's member a take
-    /// before the untaken-turn promotion under `liveness_` (`_skipsFirst`).
+    /// before the untaken-turn promotion under `liveness_` (`_skipsFirst`): in full, a nonzero minimum
+    /// with `(minimum - 1) * minimums_.heartbeatInterval > switchBudget_ + maximums_.headTolerance`,
+    /// and a maximum spanning at most a turn at the shortest interval.
     /// @param switchBudget_ The handover's asserted switch budget, in seconds.
     /// @param blockMillis_ The pinned Arbitrum block time, in milliseconds.
+    /// @dev Takes its beacon genesis time and turn length from `receiver_`.
     constructor(
         OperatorRegistry registry_,
         SeedReceiver receiver_,
@@ -378,6 +381,8 @@ contract OperatorSchedule is SeedSchedule {
     /// each distinct, with the admin keys they hold and positive `weights`. It takes effect at
     /// `effectiveAt`, or when the latest adopted set does if that is later, so sets take effect in the
     /// order adopted. An empty set is adopted only after a set with members.
+    /// @dev A set holds at most the registry's `CANDIDATE_LIMIT` plus one members, 101: it comes from the
+    /// registry's list, which the named operator's place beyond the cap bounds.
     function adopt(
         uint64 epoch,
         uint64 effectiveAt,
@@ -419,6 +424,7 @@ contract OperatorSchedule is SeedSchedule {
     /// deadline until the turn's boundary, while the registry's rotation switch is on. For a turn with
     /// no relayed seed, a call before the receiver has fixed its fallback's block hash moves that on
     /// and draws no one: call again from a later block.
+    /// @dev A position from `MAX_DRAW_POSITIONS` on is the scan's, at most 164 for a set of 101 members.
     /// @return candidate The member drawn, or zero when the call only moved the fallback on.
     function draw(uint64 turn) external returns (address candidate) {
         if (!registry.rotationSwitch()) revert RotationOff();
@@ -529,6 +535,8 @@ contract OperatorSchedule is SeedSchedule {
     /// (`NoTurn`), before `promotionDueAt` (`PromotionNotDue`), when no position qualifies
     /// (`NoQualifiedPosition`), and by the vault once its exit has started or while the guardian has
     /// retired the signer.
+    /// @dev On the missed-head path a head included before it in the same block restarts the count, so
+    /// it reverts `PromotionNotDue`; one included after it is signed for the old epoch and fails.
     /// @return turn The turn promoted in.
     /// @return position The promoted assignment's position.
     function promote() external returns (uint64 turn, uint16 position) {
@@ -744,6 +752,11 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @notice The next set to take effect, the earliest of those waiting, zero when none waits.
+    /// @dev Each close ends an epoch at least one epoch length after the last close's, and only a late
+    /// close lets the next follow at once, so with epochs of at least a day at most
+    /// `ceil((7 days + finality margin) / 1 day) + 1` sets wait at once, counting the largest margin in
+    /// force over that time: 9 with a margin up to a day. Each change of the epoch length by the
+    /// timelock can let one more close follow at once.
     function pendingSetId() external view returns (uint32) {
         uint32 next = currentSetId() + 1;
         return next <= setCount ? next : 0;
@@ -808,7 +821,8 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @notice The operator the registry named when `turn` was drawn, which hands its member the keys;
-    /// zero when it was not drawn.
+    /// zero when it was not drawn. That is the member of the turn drawn before it, or, for the first
+    /// turn and the first after an installation, the operator the registry named itself.
     function sourceOf(uint64 turn) external view returns (address) {
         return turns[turn].source;
     }
@@ -1044,6 +1058,9 @@ contract OperatorSchedule is SeedSchedule {
     /// @dev Reverts unless each of `rule`'s values is within the deployment's bounds and together they
     /// keep detection within ten minutes and above the switch budget, the tolerance under one
     /// interval, and the held-head block window within `arbBlockHash`'s reach and under one interval.
+    /// In full: `heartbeatMisses >= 2`, `(heartbeatMisses + 1) * heartbeatInterval + headTolerance <= 600`,
+    /// `headTolerance < heartbeatInterval`, `headBlocks <= 256`, `headBlocks * blockMillis <
+    /// heartbeatInterval * 1000` and `heartbeatMisses * heartbeatInterval > switchBudget`.
     function _checkLiveness(Liveness memory rule) private view {
         Liveness memory lo = livenessMinimums;
         Liveness memory hi = livenessMaximums;

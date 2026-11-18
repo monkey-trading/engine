@@ -3,7 +3,9 @@
 //! and an adoption for a market not yet listed binds the listing that market's first listing must be;
 //! no adoption goes below the charge a market launched with, and `V52` does not activate over a
 //! lower ceiling. The genesis harness's launch close charge is 10bps: a 5bp stress minimum and a 3bp
-//! add-on, plus the first band's 1bp at level 1's 2x.
+//! add-on, plus the first band's 1bp at level 1's 2x. From `V58` an adoption binds only a listing that
+//! names a markout floor, and the activation floors the listings adoptions bind and is refused across
+//! `V54` over one below its converted close charge.
 
 mod common;
 

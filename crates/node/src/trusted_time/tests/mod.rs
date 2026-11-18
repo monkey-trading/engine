@@ -1,3 +1,6 @@
+//! How replies make a sample: agreement among the servers, the quorum, the drift bound and back-off.
+//! The task's rounds, the gate, the alert keys and the offline dev scenario are in the modules below.
+
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 use tokio::task::JoinHandle;

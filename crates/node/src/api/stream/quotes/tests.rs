@@ -1,3 +1,6 @@
+//! The quote subscription against a stand-in sequencer under paused time: pacing, replacement,
+//! refusals, a full queue, a stopped log, and the ladder's size search.
+
 use super::*;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

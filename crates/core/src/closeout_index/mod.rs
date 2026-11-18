@@ -1,6 +1,7 @@
 //! The close-out index: which accounts a close-out check must call `close_out` on, found without
 //! valuing every account it covers. Derived from state, never encoded, and built at recovery and at
-//! an activation, so it moves no root.
+//! an activation, so it moves no root or event, and it serves every check site under every protocol
+//! version.
 //!
 //! Every account with positions is keyed or unkeyed. A keyed account has a range per position
 //! (`key`) inside which it provably stays at or above its close-out level, and its markets hold it by

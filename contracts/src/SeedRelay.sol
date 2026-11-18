@@ -42,7 +42,8 @@ interface IInbox {
 ///   refused, and the turn draws from `SeedReceiver`'s fallback.
 /// - At least one relayer: nothing here runs by itself.
 /// The ticket's beneficiary is the receiver, which cannot cancel a ticket, so a ticket whose
-/// automatic redemption fails stays redeemable by anyone until it expires.
+/// automatic redemption fails stays redeemable by anyone until it expires. No key administers this
+/// contract.
 contract SeedRelay is SeedSchedule {
     /// @notice The EIP-4788 beacon block root contract, at the same address on every network that has it.
     address public constant BEACON_ROOTS = 0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02;
@@ -126,6 +127,7 @@ contract SeedRelay is SeedSchedule {
     }
 
     /// @notice Proves turn `turn`'s seed and sends it to the receiver; `msg.value` pays the ticket.
+    /// @dev A turn may be relayed again; the receiver records only the first delivery (`AlreadyRelayed`).
     /// @return ticket The retryable ticket's number in the Inbox.
     function relay(uint64 turn, Witness calldata witness, Fees calldata fees)
         external

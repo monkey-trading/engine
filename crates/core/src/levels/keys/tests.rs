@@ -1,3 +1,5 @@
+//! Keys against brute force over every mid within the ceiling's reach.
+
 use super::*;
 use proptest::prelude::*;
 

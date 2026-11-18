@@ -81,7 +81,7 @@ Nothing here touches a live system.
 ## 2. First deployment
 
 Prerequisites, each done and checked before step 1 of this list: the contracts deployed and wired
-(`contracts/README.md`, "Governance and deployment") with the constructor values in
+("Deploy the contracts", at the end of this section) with the constructor values in
 [production-deployment.toml](production-deployment.toml) (the timelock's `min_delay`; the vault's
 `period_budget`, `exit_period`, `claim_window` and `stale_after`; the registry's staking `cooldown` and
 `epoch`, which deploy `Staking`), with the vault's signer a placeholder and its
@@ -180,6 +180,27 @@ the first certificate"); a Critical alert receiver; and the companion processes 
    live system.** Needs the owner's approval of the amount; the launch decision is none (#614).
    The production genesis sets every launch market's house cap floor and a $61M total floor (#696),
    so trading opens from a zero house.
+
+### Deploy the contracts
+
+Once, before the prerequisites above are checked. **Changes the live system.** Needs the owner's
+approval of each deployment.
+
+1. **The timelock.** Deploy an OpenZeppelin `TimelockController` with `[timelock] min_delay` from
+   [production-deployment.toml](production-deployment.toml), which must not be zero, and the
+   deployment's multisig as proposer. Grant the executor and administrator roles deliberately, and
+   leave the timelock administering itself once set up. The vault checks only that the timelock has
+   code and a nonzero delay, which cannot show it is the intended OpenZeppelin implementation or that
+   its roles belong to the intended multisig: verify both. Later changes to the delay or the roles go
+   through the timelock's own governance; keep the intended delay and proposer policy.
+2. **The vault.** Deploy `Vault` with, in order: USDC, the signer (a placeholder until step 4 above),
+   the timelock, the multisig as guardian, and the `[vault]` values `period_budget`, `exit_period`,
+   `claim_window` and `stale_after`. The vault deploys the MONKEY token and its exit verifier itself.
+   The constructor refuses a timelock with no code or no delay (`InvalidGovernance`), and an exit
+   period no longer than the delay, a zero claim window or staleness, or a staleness past the exit
+   period (`InvalidExitSchedule`). A new vault starts empty: no balance, accepted root or used nonce
+   carries over from another, and the node reads its signer epoch and reconciles against it before
+   it releases any authorization.
 
 ## 3. Upgrade to a new release
 
@@ -288,6 +309,15 @@ These run outside the enclave. None holds the enclave's keys.
   creatable, writable by the worker's user and persistent on the worker's own host. If it is not, the
   worker exits with an error naming the path, signs nothing, and a restarted node sequences no
   ordinary commands until a snapshot arrives.
+
+  With `--watch` it fetches and signs every `benchmarks.interval` (hourly in the template, so a failed
+  fetch retries and a late publication lands before the rollover), again before each rollover, and at
+  once when the node's rollover schedule changes; a failed or refused submission retries within 10
+  seconds. Without `--watch` it signs one snapshot and exits. An admin command signed while it fetches
+  takes its nonce, so that attempt is refused and the next one goes through. After a long outage a
+  snapshot carries every missed day, up to 16,384 observations: if the node refuses it as too large
+  (413), a node waiting for one stays held until `api.max_body_bytes` is raised, which is a new
+  release.
 - **Certificate Transparency watcher**, on a host independent of the node's:
   `$ENGINE ct-watch --config ct-watch.toml` (template: `config/ct-watch.toml`). Start it before the
   first certificate is issued. See [unattested-certificate.md](unattested-certificate.md).

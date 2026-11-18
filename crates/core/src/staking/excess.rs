@@ -15,7 +15,16 @@ impl Engine {
         Some(self.excess_over(self.staking.as_ref()?.config.liquidity_floor))
     }
 
-    /// The excess over `floor` that an epoch close distributes.
+    /// The excess over `floor` that an epoch close distributes. From `V28` it is
+    /// `min(NAV', cash') - floor`, clamped at zero: `cash'` is house cash less the reversible principal
+    /// `P`, the house's and every client's unfinalised deposits, and the clients' negative cash `C`;
+    /// `NAV'` is house NAV less, from `V29`, the clients' negative marked equity `D`, which counts a
+    /// positive-cash account whose losing positions cannot close now, and from `V30` less `P` too, so
+    /// `min(NAV - P - D, cash - P - C)` and cash debt is not deducted twice. From `V31` `cash'` is also
+    /// at most the unapproved withdrawal capacity, from which each allocation, paid or not, is reserved;
+    /// `V31`'s activation reserves every earlier allocation once, and a negative gap it leaves blocks
+    /// approvals until funded. From `V75` the clients' parts are what their reversals would leave the
+    /// house to bear (`reversal_shortfalls`). A close's work is `O(accounts + open positions + stakers)`.
     pub(super) fn excess_over(&self, floor: Fixed) -> Fixed {
         let nav = self.house_nav();
         // The floor stays as house liquidity, and every principal still able to reverse stays

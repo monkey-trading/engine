@@ -1,4 +1,5 @@
-//! The API served on its own, for tests that need only its history or its signed stream.
+//! The API served on its own, for tests that need only its history or its signed stream: the
+//! liveness scenario's followers connect to an operator's signed stream served this way.
 
 use std::net::SocketAddr;
 use std::num::NonZeroU32;

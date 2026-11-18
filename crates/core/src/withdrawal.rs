@@ -111,7 +111,8 @@ impl Engine {
     }
 
     /// Conserved unapproved physical cash, or `None` before V22. Only its positive whole-USDC
-    /// portion is payable; a negative legacy gap must be covered before further approvals.
+    /// portion is payable; a negative legacy gap must be covered before further approvals. It grows
+    /// only with deposit principal once final (a legacy or mock credit at once) and house capital.
     pub fn withdrawal_cash(&self) -> Option<Fixed> {
         self.withdrawal_cash
     }

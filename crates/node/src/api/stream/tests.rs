@@ -1,3 +1,5 @@
+//! The stream's feed, backfill from disk and subscribers.
+
 use super::*;
 use std::collections::VecDeque;
 use std::fs;

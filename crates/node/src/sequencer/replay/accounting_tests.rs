@@ -1,3 +1,6 @@
+//! Replay's custody accounting against a full recomputation over every historical fixture, and its
+//! refusal of forged events before the accounting moves.
+
 use super::*;
 
 use std::collections::BTreeSet;

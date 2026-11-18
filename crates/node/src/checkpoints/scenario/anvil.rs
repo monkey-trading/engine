@@ -1,3 +1,5 @@
+//! The scenario's local Anvil child process, killed on drop.
+
 use std::process::Child;
 
 pub(crate) struct Anvil(pub Child);

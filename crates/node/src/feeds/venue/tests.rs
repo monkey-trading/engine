@@ -1,3 +1,6 @@
+//! The venue task's parts: alert throttling and silence windows on paused time, held quotes against
+//! the engine's rule, kept books for unsubscribed symbols, the freshness rule, and backoff.
+
 use engine_core::price::{MAX_QUOTE_LEAD_MS, SourceQuote};
 
 use super::*;

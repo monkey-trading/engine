@@ -1,3 +1,6 @@
+//! A node's start: the history index it resumes, discards, or stops on before writing, a genesis
+//! cut short or one the engine rejects, and the secrets configs a start refuses.
+
 use super::*;
 use crate::history::HistoryPlan;
 use crate::sequencer::ReplayedLog;

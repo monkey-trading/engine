@@ -1,3 +1,6 @@
+//! The `[api]` heartbeat, quote and stats scan intervals' defaults and minimums, the `[stats]`
+//! section's defaults and bounds, and the fresh-account budgets' check.
+
 use super::*;
 
 use crate::test_support::DEV_CONFIG as DEV;

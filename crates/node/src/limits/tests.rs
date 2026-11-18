@@ -1,3 +1,6 @@
+//! The limiters' buckets, the connection and subscriber caps, the tier buckets, and the alert
+//! throttle.
+
 use super::*;
 use crate::config::{FreshAccountBudgets, RequestBursts};
 use std::net::Ipv4Addr;

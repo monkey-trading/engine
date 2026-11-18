@@ -9,8 +9,9 @@
 //! time, with a light one (totals only) every `api.stats_light_interval` between, so the same log gives the same snapshots whenever it is replayed. A running node takes it
 //! on a worker thread that applies the same commands to a copy of the engine (`background`), so no
 //! scan holds the sequencer; a replay, and a node whose worker stopped, scan on the replaying or
-//! sequencing thread. Reads run on the sequencer's thread, between batches, and so see only commands
-//! the log already holds durably.
+//! sequencing thread. Reads run on the sequencer's thread, between batches, and may see a batch the
+//! log has not yet synced; each answer waits until the log holds what it read
+//! (`ApiState::query_durable`).
 
 mod activity;
 pub(crate) mod background;

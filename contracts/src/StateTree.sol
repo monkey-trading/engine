@@ -8,7 +8,7 @@ library StateTree {
     /// @dev Whether `siblings`, from the root down, lead from the leaf at `key` with `valueHash` to
     /// `root` in the engine's sparse Merkle tree: a leaf hashes as `0x00 ‖ key ‖ valueHash`, a node as
     /// `0x01 ‖ left ‖ right`, and bit `d` of the key, most significant first, is the leaf's side at
-    /// depth `d + 1`.
+    /// depth `d + 1`. At most 256 siblings; a single-leaf root takes none.
     function proves(bytes32 root, bytes32 key, bytes32 valueHash, bytes32[] calldata siblings)
         internal
         pure

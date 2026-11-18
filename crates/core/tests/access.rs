@@ -1,4 +1,8 @@
-//! Access decisions through signed, sequenced commands and public replay.
+//! Access decisions through signed, sequenced commands and public replay: signed declarations, source
+//! evidence, policy refusals, holds, resting orders covered by their placement screening, durable
+//! retries of curable refusals with exactly-once credit (`access/pending.rs`), independent wallet
+//! vectors for both declarations and source evidence (`fixtures/access-eip712.json`), and the `V24`
+//! reference session with its assertions.
 
 mod common;
 #[path = "access/declarations.rs"]

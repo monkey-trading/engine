@@ -1,3 +1,6 @@
+//! The kept book against recorded Kraken messages: verified tops, and the resync a failed checksum or
+//! a missed update causes.
+
 use super::*;
 
 // Recorded from wss://ws.kraken.com/v2: an ETH/USD snapshot and the seven updates that followed it.

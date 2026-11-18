@@ -1,4 +1,11 @@
-//! Derived indexes over positions, triggers and custody receipt coverage, excluded from state.
+//! Derived indexes over positions, triggers and custody receipt coverage, excluded from state and
+//! rebuilt from it after recovery: each market's holders, the trigger books, the pending receipts and
+//! the live receipts above the finalised frontier with the deposit ids none holds.
+//!
+//! They serve every protocol version without changing its events or roots: a price visits the holders
+//! of its market rather than every account, and its triggered orders keep order-id priority, a limit
+//! the spread keeps from filling included. They take memory in proportion to the positions and resting
+//! orders, and their rebuild at recovery costs in proportion to that state.
 
 use std::collections::{BTreeMap, BTreeSet};
 

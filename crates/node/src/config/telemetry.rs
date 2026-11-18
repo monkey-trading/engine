@@ -39,12 +39,26 @@ pub struct AlertsSection {
 }
 
 /// Durable private pages; this directory must be beside, never inside, the public log.
+///
+/// The database file is capped at `ceil(max_bytes / page_size) + 8 * max_pages + 16` SQLite pages,
+/// indexes and freed pages included; its rollback journal needs room for at most as many pages
+/// again, plus record headers. An exclusive lock keeps one node per outbox. Back it up and restore
+/// it with the log. A page refused for capacity leaves the older pages, counts on
+/// `engine_alert_outbox_overflows_total`, and forgets its episode, so a repeat can try again.
+/// Corrupt data, bounds that would exclude retained rows, or a route removed while it has pending
+/// pages refuse startup without discarding a page: keep the route and bounds until those pages
+/// drain. Storage errors stop the node.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutboxSection {
+    /// A sibling of `node.log_dir` on the private data disk.
     pub dir: PathBuf,
+    /// Most pages kept, across both routes.
     pub max_pages: u64,
+    /// Most serialized payload bytes kept, across both routes; one row is also capped at 64 KiB.
     pub max_bytes: u64,
+    /// The oldest a page may be, queueing and time across restarts included, by the host clock; a
+    /// row dated in the future is refused.
     #[serde(with = "humantime_serde")]
     pub max_age: Duration,
 }

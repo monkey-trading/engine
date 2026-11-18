@@ -1,3 +1,6 @@
+//! The sequencer's metrics and alert lines: what it counts and times, and how its alerts key, page
+//! and resolve.
+
 use super::*;
 use crate::log::{Checkpoint, CommandEntry};
 

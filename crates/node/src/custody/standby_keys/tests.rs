@@ -1,3 +1,6 @@
+//! The standby key's reads: the agreed block and its time, and a minority, split or wrong-chain
+//! answer.
+
 use std::sync::{Arc, Mutex as StdMutex};
 
 use alloy::primitives::{B256, U256};

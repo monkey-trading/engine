@@ -1,3 +1,5 @@
+//! The sources a turn's member takes the keys from (`sources`), walked in the order it tries them.
+
 use super::*;
 
 use std::collections::BTreeMap;

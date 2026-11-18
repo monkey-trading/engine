@@ -1,4 +1,14 @@
 //! Delivery state derived from durable approvals and authenticated finalized custody evidence.
+//!
+//! An approval's 24-hour authorization is signed only once the approval is synced and covered by
+//! the finalized checkpoint the vault accepted, while collateral reconciles and the vault halts no
+//! withdrawal claim, and, while the boundary's log check applies, once a check covers it. A logged
+//! signature is delivery, not payment: the vault's used nonce is. A new signer epoch (a rotation, or
+//! the timelock installing this key again after a retirement) signs again, with no request, each
+//! unpaid approval never signed or whose authorization is still usable; an expired one waits for its
+//! account's screened request. A restart signs nothing again whose latest logged authorization is of
+//! the epoch in force. A holder's queued request lives in memory, so a restart forgets it; the same
+//! signed body stays good until an authorization replaces the one it names.
 
 use std::collections::BTreeMap;
 

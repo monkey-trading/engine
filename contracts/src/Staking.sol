@@ -165,8 +165,9 @@ contract Staking is ReentrancyGuardTransient {
     /// and this event mirrors, so it keeps earning through the cooldown. A locked self-bond stays
     /// staked.
     /// @dev An unstake no larger than the undelegated stake reads no delegation. A larger one costs
-    /// gas for each delegation (the forge gas test reports it), so a staker with many delegations
-    /// can undelegate first to keep the unstake within the block gas limit.
+    /// gas for each delegation it reduces, more for each it empties (`test_GasOfAnUnstakePerDelegation`
+    /// reports both), so a staker with many delegations can undelegate first, each call touching one
+    /// or two, to keep the unstake within the block gas limit.
     function startUnstake(uint256 amount) external nonReentrant {
         uint256 staked = stakes[msg.sender];
         if (amount == 0 || amount > staked) revert InsufficientStake(staked, amount);

@@ -1,3 +1,5 @@
+//! The client over replies recorded from the public servers and replies a local server signs.
+
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde::Deserialize;

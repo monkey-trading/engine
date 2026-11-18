@@ -1,6 +1,14 @@
 //! The toxicity score's cost from `V54` at 100k accounts, each against `V52` running the same
 //! commands: a fill, the scoring of due markouts and the state root after it, with every launch
 //! market holding a full hour of markout-spread history; and one price triggering 20k stops.
+//! Budgets: the fill's p50 as `hold_fill` holds it, scoring 50 ms, the root after it 100 ms, and the
+//! triggered fills twice `V52`'s plus 10 ms.
+//!
+//! CI's `test` job measured it on 13 November 2026, beside the other benchmarks, on accounts scored an
+//! hour before with 2,000 markouts within the horizon: a fill took 1,045 / 1,095 us p50 / p99 against
+//! 1,565 / 1,652 for `V52`, which runs first in the same process; scoring 2,200 due markouts 2.0 ms
+//! against 0.8 ms, about 0.5 us a markout, and the state root after it 50 ms against 47 ms; and one
+//! price triggering 20,001 stops 227 ms against 236 ms, so the score adds nothing to a triggered fill.
 
 use super::common::close_spread::trade;
 use super::common::session_keys::funded_at;

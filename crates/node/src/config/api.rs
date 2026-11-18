@@ -29,7 +29,9 @@ pub struct ApiSection {
     #[serde(with = "humantime_serde")]
     pub read_timeout: Duration,
     /// Largest request body, which gets 413 when larger, and largest message a stream subscriber
-    /// may send, which ends its stream when larger.
+    /// may send, which ends its stream when larger. A benchmark snapshot after a long outage carries
+    /// its whole history (up to 16,384 observations), and one refused for size leaves startup
+    /// synchronization pending.
     pub max_body_bytes: NonZeroUsize,
     /// Requests from one client, and requests that act for one account; excess requests get 429. From
     /// protocol `V66` a credited account whose volume tier names a request rate is held to that rate
@@ -40,7 +42,8 @@ pub struct ApiSection {
     /// New connections from one client; one over it is closed before its TLS handshake. Set it
     /// above `per_ip`, so a client that opens a connection per request gets 429 first.
     pub per_ip_connections: RateLimit,
-    /// Open WebSocket stream subscriptions; one more gets 503.
+    /// Open WebSocket stream subscriptions, and the benchmark worker's schedule watches; one more
+    /// gets 503.
     pub max_subscribers: NonZeroUsize,
     /// A client that takes longer than this to take a response, or a stream subscriber one
     /// message, is disconnected.

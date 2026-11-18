@@ -8,7 +8,7 @@ import {Vault} from "../src/Vault.sol";
 import {ExitTest} from "./helpers/ExitTest.sol";
 
 /// The exit against the last posted root: when it may start, what it stops, and how claims,
-/// refunds and the house remainder are paid.
+/// refunds and the house remainder are paid. Roots are trees `test/helpers/TreeBuilder.sol` builds.
 contract ExitTestCases is ExitTest {
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");

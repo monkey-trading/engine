@@ -1,3 +1,5 @@
+//! The history index: pages, filters, retention, following the log, and restarts.
+
 use super::*;
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};

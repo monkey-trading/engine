@@ -3,8 +3,8 @@
 A dividend or a split on a share, or an index dividend point, is scheduled by a signed admin
 command before the market's previous close. The engine captures each account's holdings at that
 close and applies the adjustment at the ex-date open, before any opening fill. How the engine
-treats the money is in [the node README](../../crates/node/README.md#corporate-actions-operator-runbook);
-this runbook is the sequence to follow. Read [reference.md](reference.md) first.
+treats the money and the books is in [What the engine does](#what-the-engine-does); sections 1 to 6
+are the sequence to follow. Read [reference.md](reference.md) first.
 
 An accepted instruction cannot be cancelled or replaced. A mistake in one is repaired by the owner
 deciding the remedy, not by sending another instruction: take your time over the inputs.
@@ -151,15 +151,16 @@ Aim to submit at least one full session earlier than that, so a rejection can be
 
 Replay verifies these events and the roots they produce: `engine replay --log archive` after the
 open ends in `verified:`. A boundary that falls while the node is down is processed before the first
-command the node sequences after it returns. The split's effect on resting orders and prices is
-described in the node README.
+command the node sequences after it returns. The split's effect on positions, resting orders and
+quotes is in [What the engine does](#what-the-engine-does).
 
 The local rehearsal, with a mock operator key and time, is `./scripts/dev-corporate-actions.sh`.
 
 ## 6. When an action fails
 
 A failed action emits the event `corporate_action_failed` and the Critical alert of the same name
-(`action`, `market` in its fields). No partial change is committed.
+(`action`, `market` in its fields). No partial change is committed, and other markets keep their
+normal rules.
 
 - **A split failed** (a price or entry rounds to zero, a value overflows, a position would exceed the
   input bound, or the rounded-off fraction has no mark or usable FX valuation): the market stops
@@ -171,3 +172,51 @@ A failed action emits the event `corporate_action_failed` and the Critical alert
   and the market keeps dealing. If the cause was a missing FX mark, check the FX market's feeds
   ([feed-and-custody-failures.md](feed-and-custody-failures.md)); the owner decides whether the
   holders are made whole outside the protocol.
+
+## What the engine does
+
+`engine admin` signs the whole instruction, with its nonce and expiry, and sends it over the pinned
+TLS channel. The public log records the signature, `admin_applied` or `admin_rejected`, and the
+events of the close and the open, which replay verifies.
+
+**At `previous_close`** the engine records each holder's quantity before any command stamped at that
+time, and keeps it across restarts.
+
+**At `ex_open`**, before any opening fill or margin check:
+
+- Corporate boundaries and missed financing rollovers run in time order. At one instant the captures
+  come first, then the openings: dividends pay the holdings captured before any split, then splits
+  apply, each in market and id order. An opening quote that arrives with the command is stored in the
+  new units before anything executes or is margin-checked, and a rollover at that instant follows.
+- A dividend credits a long the gross amount less `withholding_rate`, and debits a short the gross.
+  Every step rounds against the account (a credit down, a debit up), and the house takes the exact
+  opposite of each transfer. A non-USD amount converts to USD at the market's recorded FX valuation
+  mark, the one financing values at, even a stale one; with no usable mark the dividend fails
+  (section 6). A dividend does not count toward MONKEY emission weight.
+- A split checks every scaled value and cash transfer before it changes anything, then scales
+  positions and their entry prices, resting orders, stored quotes, marks and indices, aggregates,
+  stress price references and pending markouts. Each scaled price rounds once, at nine decimals:
+  - an entry against its holder: up for a long, down for a short;
+  - a resting limit or stop price so it never executes sooner than the client asked: a buy limit and
+    a sell stop down, a sell limit and a buy stop up;
+  - marks, quotes, indices, stress references and markout prices toward zero.
+
+  Quantities round toward zero. A position's take profit scales as the limit that would close it and
+  its stop loss as the stop, so neither fires sooner; a level that rounds to zero or leaves the input
+  bound is removed (`position_levels_removed`, reason `split`).
+- The fraction rounded off a position closes at the post-split mark. Its P&L against the rounded
+  entry, rounded down and converted at the FX valuation mark, moves between the account and the house
+  as `corporate_cash_in_lieu`, with no profit fee, and counts toward the account's MONKEY emission
+  weight as a fill's realised P&L does.
+- A resting order whose quantity or price rounds to zero, or whose quantity would pass the input
+  bound of 1,000,000,000, is cancelled with reason `split`.
+- An account the split leaves with no position writes off any negative balance against the house, as
+  a close-out does.
+- A split leaves unchanged the amounts of pending dividends, USD risk limits, historical fill
+  notionals, and the age of each stored quote.
+
+**Quotes around a split.** While a split is pending, the market rejects every quote from its
+previous close on, and any quote stamped at or after its opening, since a venue may already publish
+the new units during the closure. Once it applies, a quote stamped before the opening is rejected, and
+the first quote at the opening is taken in the new units. After a failed split the market rejects
+every quote (section 6).

@@ -9,9 +9,16 @@
 //! grows with the days from it, a real move lands once enough days have passed; only a rate measured
 //! from an undated rate, which a log from before `V18` can hold, keeps one day's limit, and binds only
 //! while the benchmark has no dated observation, so a backdated observation equal to it frees the next
-//! rate (`tests/benchmark_cap.rs`; the README says why `V46` keeps that). The operator's
-//! worker removes what the cap refuses before it signs (`split_by_cap`), so one refusal does not hold
-//! back the other benchmarks or a rollover waiting for a snapshot.
+//! rate (`tests/benchmark_cap.rs`). The operator's worker removes what the cap refuses before it signs
+//! (`split_by_cap`), so one refusal does not hold back the other benchmarks or a rollover waiting for a
+//! snapshot.
+//!
+//! `V46` keeps that gap, through which a snapshot, or two in turn, dates the undated rate's own value
+//! far back and then moves today's rate from it, because a log written under `V46` replays under the
+//! rules it was written under, and the gap needs a log that set a rate before `V18` and none since: a
+//! fresh node activates the latest version before genesis, so its genesis rates are dated. A market with no
+//! positions may move to another benchmark, and a retired benchmark's holders stay on its name,
+//! whose rates can still be signed within the cap.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -178,7 +185,8 @@ impl Engine {
         self.benchmark_history.get(name)?.range(..=date).next_back().map(|(day, rate)| (*day, *rate))
     }
 
-    /// Records missing and stale observations, and their recovery, for every required benchmark.
+    /// Records missing and stale observations, and their recovery, for every required benchmark. An
+    /// observation more than five weekdays before the rollover's local date is stale, and still applies.
     pub(crate) fn benchmark_status(&self, date: NaiveDate, events: &mut Vec<Event>) {
         let mut markets = BTreeMap::<&str, Vec<MarketId>>::new();
         for (id, market) in self.markets.iter() {

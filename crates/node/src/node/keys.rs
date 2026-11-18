@@ -5,7 +5,8 @@
 //! `[checkpoints]`, the vault's current release must be this one before it opens or seals keys,
 //! which it does in the vault's generation of the release, and the predecessor checks the same
 //! before it hands them over; a release governance names again takes them afresh. A mock
-//! configuration without sealing uses a fresh key, or the published one, for this process only.
+//! configuration without sealing uses a fresh key, or the published one, for this process only, and
+//! one with sealing but without `[checkpoints]` reads no vault and seals in generation 0.
 
 use std::path::Path;
 use std::sync::Arc;

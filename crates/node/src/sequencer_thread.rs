@@ -1,4 +1,22 @@
 //! The sequencer owns its OS thread; Linux workers exclude its reserved CPU.
+//!
+//! `run_dedicated`, which `engine run` uses but for `--standby`, reserves the last CPU of the
+//! process's initial Linux affinity mask before it builds the Tokio runtime, so the main thread and
+//! the runtime's workers and blocking threads inherit a mask without it, and the sequencer alone pins
+//! back to it on its own thread. It needs at least two allowed CPUs, refuses a mask it cannot read or
+//! set, and restores the calling thread's mask after the runtime shuts down. Other platforms keep the
+//! dedicated thread and log that pinning needs Linux. `node::run`, for callers that supply their own
+//! runtime, reserves nothing away from that runtime's workers.
+//!
+//! Excluding the node's own threads does not keep the host's other processes or kernel work off the
+//! CPU: production scheduler or cgroup isolation must, and a macOS measurement says nothing about it.
+//!
+//! The thread reports its result through a supervised channel, and dropping its `Worker` cancels it
+//! at an async boundary, on startup errors and drain timeouts included. Being no blocking-pool thread,
+//! its affinity never leaks into Tokio's reused blocking threads. After the node's and alerts' drain
+//! the runtime shuts down without waiting, so a storage syscall the host blocks cannot stretch the
+//! drain deadline; on a fatal drain error the CLI exits, ending any thread left. An embedded caller
+//! must likewise end its process after a drain failure it cannot cancel, not restart beside it.
 
 use std::future::Future;
 

@@ -3,6 +3,10 @@
 //! signature on each approved withdrawal. Checkpoint entries carry the state root after a given seq,
 //! signed by the enclave key. The same entries stream live over `/v1/stream`, each at an
 //! [`Offset`].
+//!
+//! Every segment is kept, for audit, fallback recovery and rebuilding history. A log written as one
+//! file before segments existed continues as the first segment once moved to
+//! `<log_dir>/00000000000000000000.jsonl`.
 
 mod append_integrity;
 pub(crate) mod command_seal;
