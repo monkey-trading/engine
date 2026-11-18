@@ -3,7 +3,8 @@
 //! real `run` loop, and every second a burst of `BURST` reads at once (production's
 //! `api.max_connections`), alternating account and exit proofs. The reads reach the worker by way of
 //! the sequencer's request channel (`forward_read`). Prints the cost of one forward on the
-//! sequencer's thread, then the price waits without and with bursts, and the reads' answer latency.
+//! sequencer's thread, then the price waits without and with bursts, and the reads' answer latency,
+//! and holds the longest price wait with bursts to #904's single-command bar.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -11,7 +12,7 @@ use std::time::{Duration, Instant};
 use engine_core::types::AccountId;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use super::{PRICES, SPACING, sequencer, stream_market};
+use super::{BAR_US, PRICES, SPACING, sequencer, stream_market};
 use crate::clock::test_clock::TestClock;
 use crate::common::launch_book::{Mix, NamedCounts, build, price_command};
 use crate::sequencer::wait_bench::{StampClock, report, time};
@@ -139,9 +140,11 @@ pub(super) fn run() {
         })
         .collect();
     let split = phase_end[0];
+    let longest = waits[split..].iter().copied().max().expect("prices sent with bursts");
     report("proof_burst_prices_without_bursts", waits[..split].to_vec());
     report("proof_burst_prices_with_bursts", waits[split..].to_vec());
     let queueing: Vec<u128> = bursts.iter().map(|(from, queued)| queued.duration_since(*from).as_micros()).collect();
     println!("WAIT proof_burst bursts={} reads={} queueing_each_us={queueing:?}", bursts.len(), BURST * bursts.len());
     report("proof_burst_read_answer_latency", latencies.lock().unwrap().clone());
+    assert!(longest <= BAR_US, "a price waited {longest}us beside the bursts of reads");
 }
