@@ -302,13 +302,16 @@ These run outside the enclave. None holds the enclave's keys.
   Start it before the node does, or as soon as the node serves its attestation: it retries until
   the node answers. Restart it after every node restart that changes the pin. Alerts:
   `benchmark_sync_failed`, `benchmark_fetch_failed`, `benchmark_sync_pending`,
-  `benchmark_rate_refused`. It posts its own alerts through the config's `[alerts]` webhooks, so set
-  their environment variables here too, and it keeps its own outbox beside the node's, in the outbox
-  directory's name with `-benchmark-worker` added (`/data/alerts-benchmark-worker` for the production
-  template's `/data/alerts`). The worker opens it before it signs anything, so that path must be
-  creatable, writable by the worker's user and persistent on the worker's own host. If it is not, the
-  worker exits with an error naming the path, signs nothing, and a restarted node sequences no
-  ordinary commands until a snapshot arrives.
+  `benchmark_rate_refused`. The worker reads a webhook URL only from an environment variable the
+  config names (`url_env`), never from a delivered secret. The production template's `[alerts]`
+  routes are delivered secrets (`url_secret`), and a production build refuses `url_env` in the
+  node's config, so under a production config the worker posts no alert: its alerts appear only in
+  its own log. It keeps its own outbox beside the node's, in the outbox directory's name with
+  `-benchmark-worker` added (`/data/alerts-benchmark-worker` for the production template's
+  `/data/alerts`). The worker opens it before it signs anything, so that path must be creatable,
+  writable by the worker's user and persistent on the worker's own host. If it is not, the worker
+  exits with an error naming the path, signs nothing, and a restarted node sequences no ordinary
+  commands until a snapshot arrives.
 
   With `--watch` it fetches and signs every `benchmarks.interval` (hourly in the template, so a failed
   fetch retries and a late publication lands before the rollover), again before each rollover, and at

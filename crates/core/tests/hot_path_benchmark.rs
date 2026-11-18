@@ -69,7 +69,7 @@ use serde_json::json;
 
 const SAMPLES: usize = 100;
 const HALTED: MarketId = 9;
-/// The markets the production genesis lists, which a close-all across every market names.
+/// The markets a close-all across every market names here, three more than the production genesis's 34.
 const LAUNCH_MARKETS: usize = 37;
 /// The p99 bar for a signed command at 100k accounts, printed with its verdict and held by
 /// `P50_GUARD_US`. The 200 us of the unsigned commands above cannot hold for any signed one, whose

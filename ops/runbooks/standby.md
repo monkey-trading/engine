@@ -246,9 +246,10 @@ shortened:
 7. **Before turning rotation back on**, the timelock withdraws every release approved for the failed
    operator (`setReleaseApproval(<failed candidate>, <digest>, <config hash>, false)` for each,
    pattern in reference.md), which delists it. The installation leaves its candidacy listed and
-   approved, and delegations stay with it: the first `closeEpoch` past the installed operator's
-   minimum term would elect the failed operator, whose lost key becomes the admin key seven days
-   later, and a liveness promotion would pick it as the top eligible standby. Check, for
+   approved, and delegations stay with it. The installed operator serves no minimum term, so the
+   next `closeEpoch` would elect the failed operator if it holds the most votes, and its lost key
+   would become the admin key seven days later. A liveness promotion would pick it as the top
+   eligible standby. Check, for
    each release the failed candidate held: `cast call $REGISTRY 'releaseApproved(bytes32)(bool)'
    $(cast keccak $(cast abi-encode 'f(address,bytes32)' <failed candidate> <release id>))` prints
    `false`, and `candidateList(i)` no longer names it. Then the release check in

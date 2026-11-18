@@ -113,7 +113,7 @@ pub struct CheckpointDomain {
 }
 
 /// Where a message sits in the log: its seq, and its index among that seq's entries (the command
-/// is 0, then its withdrawals, then any checkpoint). Written `<seq>:<index>`.
+/// is 0, then any checkpoint and withdrawals in the order they were written). Written `<seq>:<index>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Offset {
     pub seq: u64,

@@ -63,11 +63,13 @@ contract ExitVerifier {
         bytes32[] siblings;
     }
 
-    /// @notice The exit terms leaf: one past the highest vault deposit id the root holds, the pending
-    /// and held principal, the principal of the ids below the cursor the root does not hold (the
-    /// named gaps included, which the exit reserves and of which it refunds only the named), and the
-    /// lowest 64 of those ids, in increasing order, which only a reorganisation the engine was still
-    /// applying leaves.
+    /// @notice The exit terms leaf: one past the highest vault deposit id the root holds; the
+    /// finalised custody frontier's deposit count, below which every deposit has settled, so the exit
+    /// attributes only the ids from it to the cursor; the pending and held principal; the principal of
+    /// the ids below the cursor that the root does not hold and the gaps do not name, which the exit
+    /// reserves and keeps; the principal of the live receipts the root holds; and the gaps, the lowest
+    /// 64 ids below the cursor the root does not hold, in increasing order, which only a
+    /// reorganisation the engine was still applying leaves and which the exit refunds.
     struct ExitTerms {
         uint64 depositCursor;
         uint64 depositBase;
