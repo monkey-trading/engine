@@ -111,6 +111,9 @@ impl VenueFeed {
         };
         let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
         info!(venue, feed, symbols = ?names, "resubscribing silent or stale symbols alone");
+        // Unsubscribed, the venue sends no change to their books, so a pong no longer shows them
+        // unchanged (see `standing`).
+        symbols.iter().for_each(|symbol| self.standing.forget(symbol));
         timeout(self.timing.timeout, link.send_all(messages))
             .await
             .context("resubscribe timed out")?

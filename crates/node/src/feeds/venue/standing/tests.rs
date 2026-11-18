@@ -3,15 +3,18 @@ use std::sync::Arc;
 use engine_core::Fixed;
 use engine_core::command::Command;
 use tokio::sync::mpsc;
+use tokio_tungstenite::accept_async;
 
 use super::*;
 use crate::clock::now_ms;
 use crate::config::{VenueConnection, VenueSymbol};
-use crate::feeds::tests::fake::{FakeEngine, WAIT, fast};
+use crate::feeds::coinbase::resubscriptions;
+use crate::feeds::tests::fake::{FakeEngine, WAIT, fast, listen, next_text};
 use crate::feeds::tests::rwa_support::around_the_clock;
 use crate::feeds::venue::Credentials;
 use crate::feeds::venue::adapter::Adapter;
 use crate::feeds::venue::setup::tls_config;
+use crate::feeds::venue::transport;
 
 const MS: Duration = Duration::from_millis(1);
 /// A host clock far past every stamp below, so it caps none.
@@ -136,6 +139,60 @@ fn a_book_read_after_a_given_stamp_is_raised_to_it_unless_a_closure_lies_between
     assert_eq!(feed.after_given("BTC", quote("100", T + 2_400)), quote("100", T + 2_400));
     feed.standing.given.remove("BTC");
     assert_eq!(feed.after_given("BTC", quote("100", T + 1_500)), quote("100", T + 1_500));
+}
+
+#[test]
+fn a_book_is_raised_only_to_a_given_stamp_its_own_would_still_count_at() {
+    const T: Millis = 1_793_000_000_000;
+    let mut feed = feed(Venue::Kraken, &[(1, "BTC")]);
+    feed.standing.given.insert("BTC".into(), T);
+    // Until the engine confirms the market's `max_age_ms`, a quote counts for `stale_after`, 1 s.
+    assert_eq!(feed.after_given("BTC", quote("100", T - 1_000)), quote("100", T));
+    assert_eq!(feed.after_given("BTC", quote("100", T - 1_001)), quote("100", T - 1_001));
+    // A shorter `max_age_ms` bounds it once confirmed.
+    feed.max_age.insert(1, 500);
+    assert_eq!(feed.after_given("BTC", quote("100", T - 500)), quote("100", T));
+    assert_eq!(feed.after_given("BTC", quote("100", T - 501)), quote("100", T - 501));
+    // A book a venue sends from ten minutes behind keeps its own stamp.
+    assert_eq!(feed.after_given("BTC", quote("100", T - 600_000)), quote("100", T - 600_000));
+}
+
+#[test]
+fn a_book_stamped_before_one_the_connection_already_read_for_its_symbol_is_not_raised() {
+    const T: Millis = 1_793_000_000_000;
+    let mut feed = feed(Venue::Kraken, &[(1, "BTC"), (2, "ETH")]);
+    feed.standing.given.insert("BTC".into(), T);
+    feed.standing.given.insert("ETH".into(), T);
+    let mut buffered = BTreeMap::new();
+    let mut take = |feed: &mut VenueFeed, symbol: &str, ts| feed.take_book(symbol, quote("100", ts), T, &mut buffered);
+    assert_eq!(take(&mut feed, "BTC", T - 200), Ok(T));
+    // Stamped before the book just read for BTC: it goes at its own stamp.
+    assert_eq!(take(&mut feed, "BTC", T - 300), Ok(T - 300));
+    // At the newest stamp read, or for a symbol with none read: raised.
+    assert_eq!(take(&mut feed, "BTC", T - 200), Ok(T));
+    assert_eq!(take(&mut feed, "ETH", T - 300), Ok(T));
+    // A new connection has read nothing yet.
+    feed.standing.connected(true);
+    assert_eq!(take(&mut feed, "BTC", T - 300), Ok(T));
+}
+
+#[tokio::test]
+async fn resubscribing_symbols_alone_forgets_their_standing_books() {
+    let (listener, url) = listen().await;
+    let mut feed = feed(Venue::Coinbase, &[(1, "BTC-USD"), (2, "ETH-USD")]);
+    feed.conn.url = url;
+    let venue = async { accept_async(listener.accept().await.expect("accept").0).await.expect("handshake") };
+    let (link, mut venue) = tokio::join!(transport::connect(&feed.conn, None, feed.tls.clone()), venue);
+    let mut link = link.expect("connected");
+    let adapter = Adapter::new(&feed.conn, &Credentials::Public, &["BTC-USD", "ETH-USD"]);
+    let at = Instant::now();
+    feed.standing.hold_at("BTC-USD", quote("100", 1_000), 1_000, at, at, 0);
+    feed.standing.hold_at("ETH-USD", quote("10", 1_000), 1_000, at, at, 0);
+    feed.resubscribe(&adapter, &mut link, &["ETH-USD".to_owned()]).await.expect("resubscribed alone");
+    assert_eq!(next_text(&mut venue).await, resubscriptions(&["ETH-USD"])[0]);
+    // The venue sends no change to ETH's book until its new snapshot, so no answer may re-date it.
+    assert!(!feed.standing.books.contains_key("ETH-USD"), "ETH's book is held");
+    assert!(feed.standing.books.contains_key("BTC-USD"), "BTC's book is forgotten");
 }
 
 #[test]

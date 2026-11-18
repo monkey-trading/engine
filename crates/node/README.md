@@ -1493,7 +1493,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   after each resubscription, and ends at a book young enough
 - `src/feeds/venue/resubscribe.rs` — resubscribing silent and stale symbols, again each time one
   shows it since the last attempt, with backoff: alone on the connection where the venue takes that
-  (Coinbase), replacing the connection only for a symbol still stale after its own alone attempt
+  (Coinbase), forgetting their standing books, and replacing the connection only for a symbol still
+  stale after its own alone attempt
 - `src/feeds/venue/silence_tests.rs` — silent and stale symbols on paused time: a stale run's alert
   and resolution, a market's tighter age limit, when a resubscription is due, and the info log of an
   outage's failed reconnects
@@ -1510,9 +1511,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   bound runs out; its tests are in `src/feeds/venue/delay/tests.rs`
 - `src/feeds/venue/standing.rs` — the book each symbol last showed on a connection, re-dated by a
   ping's answer for up to 5 s after the ping answered before it was read, and a later book stamped
-  no earlier than a re-dated one unless that stamp would lead the highest host time read by more
-  than the engine allows, and not re-dated into the session before a closure its venue stamp lies
-  in; its tests are in `src/feeds/venue/standing/tests.rs`
+  no earlier than a re-dated one unless it is from behind (its own stamp would not count at the
+  re-dated one's, or is before one the connection already read for its symbol) or that stamp would
+  lead the highest host time read by more than the engine allows, and not re-dated into the session
+  before a closure its venue stamp lies in; its tests are in `src/feeds/venue/standing/tests.rs`
 - `src/feeds/venue/validation.rs` — the checks every venue's books pass before they are sequenced
 - `src/feeds/venue/confirm.rs` — confirming every symbol with the engine each tick: which the
   venue is quoting, which markets it does not list, which contracts the listing does not name or
@@ -1597,6 +1599,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   a changed book dropped while the stream is behind, and emptied books; and, through the real
   sequencer, a market kept priced until the venue stops answering and a book not re-dated past its
   market's closure
+- `src/feeds/tests/behind.rs` — books a venue sends from behind its own time once a ping's answer
+  has re-dated the symbol, never counting: a stream of them on each venue's adapter, a Coinbase
+  product until it is resubscribed alone, a new connection's first book, and one of Kraken's two
+  connections; and, through the real sequencer, the market losing the venue rather than pricing or
+  filling at its old book
 - `src/feeds/tests/hostile.rs` — a host clock at the edge of the drift bound with frames held back
   to match, through the real sequencer: the market goes unpriced once the delay passes the bound
 - `src/feeds/tests/late.rs` — venue tasks against a sequencer that answers late: when a quote
