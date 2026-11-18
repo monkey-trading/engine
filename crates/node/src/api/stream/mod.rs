@@ -344,27 +344,32 @@ async fn send_feed<S: Sink<Message> + Unpin>(
             }
         };
         // Closing rather than skipping keeps the subscriber's view gap-free; it can resume.
-        let json = match serde_json::to_string(&*msg) {
-            Ok(json) => json,
-            Err(e) => {
-                error!(alert = "stream_encode_failed", "encoding the message at {}: {e}", msg.offset);
-                return;
-            }
-        };
+        // The encoding, hash and escaping are made once by the first subscriber to send the message.
         let text = match framing.as_mut() {
-            Some(framing) => match framing.frame(json) {
-                Some(frame) => frame,
-                None => {
-                    log_unbounded_time(Some(msg.offset));
-                    return;
-                }
+            Some(framing) => match msg.framed() {
+                Ok(framed) => match framing.frame_parts(&framed.sha256, &framed.escaped) {
+                    Some(frame) => frame,
+                    None => {
+                        log_unbounded_time(Some(msg.offset));
+                        return;
+                    }
+                },
+                Err(e) => return encode_failed(&msg, e),
             },
-            None => json,
+            None => match msg.json() {
+                Ok(json) => json.to_owned(),
+                Err(e) => return encode_failed(&msg, e),
+            },
         };
         if !send_text(sink, text, send_timeout, Some(msg.offset)).await {
             return;
         }
     }
+}
+
+/// Logs a message that did not encode; the subscriber closes rather than skip it, and can resume.
+fn encode_failed(msg: &StreamMsg, e: &str) {
+    error!(alert = "stream_encode_failed", "encoding the message at {}: {e}", msg.offset);
 }
 
 /// Logs the close of a signed connection whose next frame, the message at `offset` or a heartbeat,

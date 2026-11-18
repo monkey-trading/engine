@@ -1,5 +1,6 @@
 //! Sequencer requests and public log stream messages.
 
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use engine_core::access::{AccessEvidence, AccessReject};
@@ -10,6 +11,7 @@ use engine_core::merkle::{DistributionProof, EntitlementProof};
 use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::{oneshot, watch};
 
 use crate::benchmarks::BenchmarkSchedule;
@@ -193,6 +195,26 @@ pub struct StreamMsg {
     pub offset: Offset,
     #[serde(flatten)]
     pub body: StreamBody,
+    /// The message's stream encoding, made by the first subscriber that sends it and shared by the rest.
+    #[serde(skip)]
+    encoded: OnceLock<Result<Encoded, String>>,
+}
+
+/// A stream message's JSON, and what a signed frame needs of it: the SHA-256 its signature covers and
+/// the text escaped as the frame's `msg` string.
+#[derive(Clone, Debug)]
+struct Encoded {
+    json: String,
+    framed: OnceLock<Framed>,
+}
+
+/// The parts of a signed frame that depend only on its message.
+#[derive(Clone, Debug)]
+pub struct Framed {
+    /// SHA-256 of the message's JSON.
+    pub sha256: [u8; 32],
+    /// The message's JSON as a quoted, escaped JSON string.
+    pub escaped: String,
 }
 
 // Unboxed on purpose, like `Request`.
@@ -231,6 +253,39 @@ pub struct SignedWithdrawal {
 }
 
 impl StreamMsg {
+    /// A message of `body` at `offset`.
+    pub fn from_body(offset: Offset, body: StreamBody) -> Self {
+        Self { offset, body, encoded: OnceLock::new() }
+    }
+
+    /// The message's JSON, encoded once however many subscribers send it.
+    /// Error cases:
+    /// - the message does not encode
+    pub fn json(&self) -> Result<&str, &str> {
+        self.encoded().map(|e| e.json.as_str()).map_err(String::as_str)
+    }
+
+    /// What a signed frame carries of the message, made once however many connections frame it.
+    /// Error cases:
+    /// - as `json`
+    pub fn framed(&self) -> Result<&Framed, &str> {
+        let e = self.encoded().map_err(String::as_str)?;
+        Ok(e.framed.get_or_init(|| Framed {
+            sha256: Sha256::digest(e.json.as_bytes()).into(),
+            escaped: serde_json::to_string(&e.json).expect("a string encodes"),
+        }))
+    }
+
+    fn encoded(&self) -> Result<&Encoded, &String> {
+        self.encoded
+            .get_or_init(|| {
+                serde_json::to_string(self)
+                    .map(|json| Encoded { json, framed: OnceLock::new() })
+                    .map_err(|e| e.to_string())
+            })
+            .as_ref()
+    }
+
     /// The stream form of the log entry at `offset`.
     pub fn new(offset: Offset, entry: LogEntry) -> Self {
         let body = match entry {
@@ -238,6 +293,6 @@ impl StreamMsg {
             LogEntry::Checkpoint(cp) => StreamBody::Checkpoint(cp),
             LogEntry::Withdrawal(w) => StreamBody::Withdrawal(w),
         };
-        Self { offset, body }
+        Self::from_body(offset, body)
     }
 }

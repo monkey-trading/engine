@@ -36,10 +36,7 @@ fn valid_history_resumes_without_alert_or_byte_changes_for_absent_empty_and_comm
             writer
                 .as_mut()
                 .unwrap()
-                .write(&[Arc::new(StreamMsg {
-                    offset: Offset::start_of(seq),
-                    body: StreamBody::Command(entry.clone()),
-                })])
+                .write(&[Arc::new(StreamMsg::from_body(Offset::start_of(seq), StreamBody::Command(entry.clone())))])
                 .unwrap();
             entries.push(entry);
         }

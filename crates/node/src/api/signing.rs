@@ -25,8 +25,8 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use engine_core::types::AccountId;
 use engine_wire::{
-    CHALLENGE_HEADER, Connection, Deployment, SEQ_HEADER, SIGNATURE_HEADER, TIME_HEADER, frame_digest, parse_challenge,
-    response_digest,
+    CHALLENGE_HEADER, Connection, Deployment, SEQ_HEADER, SIGNATURE_HEADER, TIME_HEADER, frame_digest_of_hash,
+    parse_challenge, response_digest,
 };
 use tracing::{debug, error};
 
@@ -124,6 +124,7 @@ impl Signing {
 
     /// The digest of frame `n` of `connection`, chained to `previous`, and the enclave key's
     /// signature over it.
+    #[cfg(test)]
     pub(crate) fn sign_frame(
         &self,
         connection: &Connection,
@@ -132,7 +133,20 @@ impl Signing {
         time_ms: u64,
         msg: &str,
     ) -> ([u8; 32], String) {
-        let digest = frame_digest(&self.deployment, connection, previous, n, time_ms, msg);
+        use sha2::{Digest, Sha256};
+        self.sign_frame_of_hash(connection, previous, n, time_ms, &Sha256::digest(msg.as_bytes()).into())
+    }
+
+    /// `sign_frame` for a message whose SHA-256 is already known.
+    pub(crate) fn sign_frame_of_hash(
+        &self,
+        connection: &Connection,
+        previous: &[u8; 32],
+        n: u64,
+        time_ms: u64,
+        msg_sha256: &[u8; 32],
+    ) -> ([u8; 32], String) {
+        let digest = frame_digest_of_hash(&self.deployment, connection, previous, n, time_ms, msg_sha256);
         (digest, self.key.sign_digest(digest))
     }
 }

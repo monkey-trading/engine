@@ -104,13 +104,13 @@ pub(super) struct Latest {
 impl Latest {
     /// The checkpoint a recovery replay ended on, with its place in the log.
     pub(super) fn recovered(checkpoint: Option<(Offset, Checkpoint)>) -> Self {
-        let checkpoint = checkpoint.map(|(offset, cp)| StreamMsg { offset, body: StreamBody::Checkpoint(cp) });
+        let checkpoint = checkpoint.map(|(offset, cp)| StreamMsg::from_body(offset, StreamBody::Checkpoint(cp)));
         Self { checkpoint, waiting: Vec::new() }
     }
 
     /// Notes the checkpoint just logged at `offset`.
     pub(super) fn checkpointed(&mut self, offset: Offset, checkpoint: &Checkpoint) {
-        self.checkpoint = Some(StreamMsg { offset, body: StreamBody::Checkpoint(checkpoint.clone()) });
+        self.checkpoint = Some(StreamMsg::from_body(offset, StreamBody::Checkpoint(checkpoint.clone())));
     }
 
     /// Holds a read until the batch is flushed, so no answer shows what a crash could take back.
