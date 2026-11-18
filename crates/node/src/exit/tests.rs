@@ -190,8 +190,8 @@ async fn a_torn_suffix_past_the_checkpoint_still_gives_exit_proofs() {
         .collect();
     segments.sort();
     assert!(!segments.is_empty());
-    // A whole-log read breaks on the torn write: the suffix is exactly what must not
-    // block proofs the complete prefix supports.
+    // A whole-file read breaks on the torn write, which must not block proofs the complete
+    // prefix supports; the segmented log leaves its open segment's cut line out.
     let torn = b"{\"type\":\"command\",\"sequenced\":{\"seq\":";
     let mut single = segments.iter().flat_map(|path| fs::read(path).unwrap()).collect::<Vec<_>>();
     single.extend_from_slice(torn);
@@ -199,7 +199,7 @@ async fn a_torn_suffix_past_the_checkpoint_still_gives_exit_proofs() {
     fs::write(&single_path, &single).unwrap();
     use std::io::Write;
     fs::OpenOptions::new().append(true).open(segments.last().unwrap()).unwrap().write_all(torn).unwrap();
-    assert!(SegmentedLog::open(&dir, |_| Ok(())).is_err(), "the torn suffix breaks a whole-log read");
+    assert!(log::read_file(&single_path, |_| Ok(())).is_err(), "the torn suffix breaks a whole-file read");
     let from_dir = exit_bundle(&dir, checkpoint, ExitSubject::House).unwrap();
     let from_file = exit_bundle(&single_path, checkpoint, ExitSubject::House).unwrap();
     assert_eq!(from_dir.root, from_file.root, "the same prefix, whatever its suffix");

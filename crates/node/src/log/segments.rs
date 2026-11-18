@@ -125,6 +125,8 @@ pub(super) struct Segment {
     pub(super) bytes: u64,
     pub(super) hasher: Sha256,
     pub(super) checkpoints: Vec<CheckpointLocator>,
+    /// The length of an unterminated last line read and left out: a write under way, or cut short.
+    pub(super) torn: u64,
 }
 
 impl Manifest {
@@ -168,11 +170,12 @@ impl Manifest {
 impl SegmentedLog {
     /// Reads every segment in `dir` in order, a line at a time, handing each entry to `visit`. A
     /// completed segment is checked against its manifest listing before any of it reaches `visit`;
-    /// the segment still being written has no listing. A missing directory is an empty log.
+    /// the segment still being written has no listing, and a last line of it with no line break,
+    /// which a crash while appending leaves, is left out. A missing directory is an empty log.
     /// Error cases:
     /// - the directory, the manifest, or a segment cannot be read
-    /// - a segment ends mid-line, holds an invalid entry, or does not start with the command for
-    ///   the seq it is named for
+    /// - a completed segment ends mid-line, or a segment holds an invalid entry, or does not start
+    ///   with the command for the seq it is named for
     /// - the manifest lists a missing segment, or one whose seq range, size, or hash differs
     /// - a segment other than the last is missing from the manifest, or an empty last segment is
     ///   not named for the next seq
@@ -270,8 +273,9 @@ impl SegmentedLog {
     /// A writer that appends to the last segment, or starts a new one at the next command if the
     /// manifest lists the last one. It publishes the manifest on `manifest`, starting now, with
     /// everything read counted as flushed. An earlier process may have died before syncing what it
-    /// wrote, so the last segment and the directory are synced first, and the open segment starts
-    /// marked unsynced, so a flush with no new append still syncs it before publishing a cursor.
+    /// wrote, so a last line it left torn is dropped, the last segment and the directory are synced
+    /// first, and the open segment starts marked unsynced, so a flush with no new append still syncs
+    /// it before publishing a cursor.
     /// Error cases:
     /// - the directory cannot be created, opened, or synced
     /// - the manifest cannot be trimmed to its whole lines, or opened for appending
@@ -351,15 +355,20 @@ impl SegmentedLog {
 impl Segment {
     /// A new, empty segment for `first_seq`.
     pub(super) fn empty(first_seq: u64) -> Self {
-        Self { first_seq, last_seq: first_seq, commands: 0, bytes: 0, hasher: Sha256::new(), checkpoints: Vec::new() }
+        let (hasher, checkpoints) = (Sha256::new(), Vec::new());
+        Self { first_seq, last_seq: first_seq, commands: 0, bytes: 0, hasher, checkpoints, torn: 0 }
     }
 
     /// Reads the segment named for `first_seq` at `path` a line at a time, handing each entry to
     /// `visit`. A completed segment, `listed` in the manifest, is checked against its listing in one
     /// pass first, then read in chunks checked against that pass, since the host can rewrite it in
     /// between. `last` is the offset of the entry before the segment, and ends at its last entry.
+    /// The writer appends whole lines and syncs a line only once its break is written, so a last line
+    /// with no break, in a segment not yet listed, is a write still under way or cut short by a crash,
+    /// never durable: it is left out, as the manifest's is, and `into_writer` drops it. A listed
+    /// segment was synced whole.
     /// Error cases:
-    /// - the file cannot be read, or ends mid-line, which a torn write leaves
+    /// - the file cannot be read, or is listed and ends mid-line
     /// - a listed segment's size or hash differs from its listing
     /// - a non-blank line is not a valid entry, or the first entry is not the command for
     ///   `first_seq`
@@ -377,7 +386,11 @@ impl Segment {
         };
         let mut segment = Self::empty(first_seq);
         read_lines(input, |n, line| {
-            ensure!(line.ends_with(b"\n"), "ends mid-line");
+            if !line.ends_with(b"\n") {
+                ensure!(listed.is_none(), "ends mid-line");
+                segment.torn = line.len() as u64;
+                return Ok(());
+            }
             let entry = parse_line(n, line)?;
             if let Some(entry) = &entry
                 && segment.commands == 0

@@ -272,3 +272,32 @@ fn body_time_active_verification_still_checks_actual_chunks_after_t_adoption() {
     fs::write(path, changed).expect("host changes a not-yet-read body chunk");
     assert!(body.read_to_end(&mut Vec::new()).is_err(), "no successful body containing the changed active bytes");
 }
+
+#[test]
+fn a_suffix_whose_last_line_a_crash_cut_short_recovers_without_it() {
+    let mut f = fixture("catalog-suffix-torn-line", 16);
+    for seq in 0..6 {
+        f.writer.append(&command(seq)).expect("initial");
+    }
+    let c = boundary(&mut f, 5);
+    for seq in 6..27 {
+        f.writer.append(&command(seq)).expect("suffix");
+    }
+    f.writer.sync().expect("actual bytes durable");
+    f.writer.flush_catalog().expect("T covers completed segment zero");
+    let t = latest(&f.heads);
+    drop(f.writer);
+    // The next command's line, cut short as a process killed mid-write leaves it.
+    let path = f.dir.join("00000000000000000016.jsonl");
+    let whole = fs::metadata(&path).expect("active segment").len();
+    let next = line(&command(27));
+    host_append(&path, &next[..next.len() / 2]);
+    let mut seen = Vec::new();
+    let log = SegmentedLog::open_suffix(&f.dir, f.read.clone(), &c, Some(&t), |entry| {
+        seen.push(entry);
+        Ok(())
+    })
+    .expect("the suffix without the cut line");
+    assert_eq!((seen, log.last_seq()), ((6..27).map(command).collect::<Vec<_>>(), Some(26)));
+    assert_eq!(log.manifest_view().active.expect("the active prefix").info.bytes, whole);
+}

@@ -14,6 +14,7 @@ use crate::test_support::{every_event, file_entries, log_entries, scratch_dir};
 
 mod durability;
 mod reader;
+mod torn;
 
 const SEG_0: &str = "00000000000000000000.jsonl";
 const SEG_2: &str = "00000000000000000002.jsonl";
@@ -202,18 +203,12 @@ fn opening_refuses_an_unlisted_segment_that_is_not_the_last() {
 }
 
 #[test]
-fn opening_refuses_a_segment_named_for_another_seq_or_ending_mid_line() {
+fn opening_refuses_a_segment_named_for_another_seq() {
     let dir = scratch_dir("misnamed");
     write(&dir, 2, &[cmd(0), cmd(1), cmd(2)]);
     fs::rename(dir.join(SEG_2), dir.join("00000000000000000003.jsonl")).unwrap();
     let err = SegmentedLog::open(&dir, |_| Ok(())).err().unwrap();
     assert!(format!("{err:#}").contains("does not start with the command for seq 3"), "{err:#}");
-
-    let dir = scratch_dir("torn");
-    write(&dir, 2, &[cmd(0)]);
-    append(&dir.join(SEG_0), b"{\"entry\":");
-    let err = SegmentedLog::open(&dir, |_| Ok(())).err().unwrap();
-    assert!(format!("{err:#}").contains("ends mid-line"), "{err:#}");
 }
 
 #[test]

@@ -6,12 +6,15 @@ use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
+use tracing::warn;
 
 use crate::log::segments::{Segment, segment_name};
 
-/// Refuses late host changes before any recovered log mutation or writable catalog preparation.
+/// Refuses late host changes before any recovered log mutation or writable catalog preparation. A
+/// last line the read left out as torn is dropped first, so the next entry starts on its own line.
 /// Error cases:
 /// - opening, exact length, actual prefix hash or same-descriptor IO validation fails
+/// - the torn line cannot be dropped
 pub(super) fn open_active(directory: &Path, segment: &Segment) -> Result<BufWriter<std::fs::File>> {
     let path = directory.join(segment_name(segment.first_seq));
     let file = OpenOptions::new()
@@ -19,6 +22,12 @@ pub(super) fn open_active(directory: &Path, segment: &Segment) -> Result<BufWrit
         .append(true)
         .open(&path)
         .with_context(|| format!("opening recovered active log {}", path.display()))?;
+    if segment.torn > 0 {
+        let read = segment.bytes + segment.torn;
+        ensure!(file.metadata()?.len() == read, "recovered active log length changed before append");
+        file.set_len(segment.bytes).with_context(|| format!("dropping the torn last line of {}", path.display()))?;
+        warn!(segment = %path.display(), bytes = segment.torn, "dropped a log line a crash cut short: it was never synced");
+    }
     ensure!(file.metadata()?.len() == segment.bytes, "recovered active log length changed before append");
     let mut input = file.try_clone()?;
     input.seek(SeekFrom::Start(0))?;
