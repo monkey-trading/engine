@@ -8,7 +8,6 @@ use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 use tracing::{error, info};
 
-use crate::sequencer::pipeline::MAX_IN_FLIGHT;
 use crate::sequencer::{Request, Sequencer};
 
 /// How long the oldest batch may wait for its sync before the sequencer stops taking requests and
@@ -75,8 +74,9 @@ impl Sequencer {
         Ok(())
     }
 
-    /// The next request, releasing batches as their syncs finish meanwhile. With `MAX_IN_FLIGHT`
-    /// batches pending, or the oldest one's sync held past `MAX_SYNC_HOLD`, it takes no request
+    /// The next request, releasing batches as their syncs finish meanwhile. With the batches pending
+    /// charged their bound (`MAX_IN_FLIGHT_BYTES`), or the oldest one's sync held past
+    /// `MAX_SYNC_HOLD`, it takes no request
     /// until a sync is done, and it wakes at the deadline with nothing arriving, so a hold pages on
     /// a quiet node too. A request received past the deadline, before the timer fired, is kept and
     /// handed out once it is admitted against the oldest batch's deadline at hand-out.
@@ -95,7 +95,7 @@ impl Sequencer {
                 });
             };
             let pipeline = self.pipeline.as_mut().expect("check_hold found a batch in flight");
-            if held || pipeline.in_flight.len() >= MAX_IN_FLIGHT {
+            if held || pipeline.charged >= pipeline.bound {
                 self.await_sync(deadline, held).await?;
                 continue;
             }

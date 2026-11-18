@@ -93,6 +93,10 @@ pub struct LogWriter {
     pub(super) appended: u64,
     /// `appended` when `begin_sync` last took the open segment's entries, if it has.
     pub(super) begun: Option<u64>,
+    /// Bytes of the entries appended since the writer opened, and their count at the last
+    /// `begin_sync`: what each sync job carries.
+    pub(super) appended_bytes: u64,
+    pub(super) begun_bytes: u64,
     /// The catalog could not take a completed segment; its warning has been raised once.
     pub(super) catalog_failing: bool,
     pub(super) catalog_owner: Option<CatalogOwner>,
@@ -333,6 +337,8 @@ impl SegmentedLog {
             rotation_failing,
             unsynced,
             appended: 0,
+            appended_bytes: 0,
+            begun_bytes: 0,
             begun: None,
             catalog_failing: false,
             catalog_owner: self.catalog_owner,

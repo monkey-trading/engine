@@ -13,9 +13,9 @@ use tokio::time::timeout;
 use tracing_subscriber::layer::SubscriberExt;
 
 use crate::log::Manifest;
+use crate::sequencer::pipeline::Batch;
 use crate::sequencer::pipeline::hold::MAX_SYNC_HOLD;
 use crate::sequencer::pipeline::tests::Verdict;
-use crate::sequencer::pipeline::{Batch, MAX_IN_FLIGHT};
 use crate::sequencer::{Request, Sequencer};
 use crate::test_support::{capture_alerts_and_resolutions, dev_config, sample_around, scratch_dir, sequencer_config};
 
@@ -71,10 +71,15 @@ async fn a_sync_held_past_the_bound_pages_once_and_stamps_nothing_until_it_finis
 async fn a_quiet_node_pages_a_hold_at_the_deadline() {
     // Nothing arrives: the wait itself wakes at the bound, with one batch pending and with the
     // pipeline full.
-    for (label, batches) in [("pipeline-quiet-one", 1), ("pipeline-quiet-full", MAX_IN_FLIGHT)] {
+    for (label, batches) in [("pipeline-quiet-one", 1), ("pipeline-quiet-full", 64)] {
         let (mut seq, _permits, _entered) = held_sequencer(label);
         let (_guard, mut alerts, _resolved) = capture_alerts_and_resolutions();
         stage_ticks(&mut seq, batches);
+        if batches > 1 {
+            // The pipeline full: the batches waiting charged to its bound.
+            let pipeline = seq.pipeline.as_mut().unwrap();
+            pipeline.bound = pipeline.charged;
+        }
         let (_tx, mut rx) = mpsc::channel(4);
         let before = timeout(MAX_SYNC_HOLD - Duration::from_millis(1), seq.next_request(&mut rx)).await;
         assert!(before.is_err() && alerts.try_recv().is_err(), "{batches} pending: no page before the bound");

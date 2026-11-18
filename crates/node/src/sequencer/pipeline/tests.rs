@@ -261,9 +261,10 @@ async fn a_failed_sync_releases_nothing_and_stops_the_sequencer() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_full_pipeline_takes_no_request_until_a_sync_is_done() {
     let (mut seq, permits, entered) = crate::sequencer::pipeline::hold_tests::held_sequencer("pipeline-bounded");
-    // One batch per tick, each waiting on the held sync, as `run` would stage them. The rest are staged
-    // once the thread is inside the first's sync, so one verdict finishes that sync on its own.
-    for staged in 0..MAX_IN_FLIGHT {
+    // One batch per tick, each waiting on the held sync, as `run` would stage them: far more batches
+    // than a slow sync leaves at 2 ms a price. The rest are staged once the thread is inside the
+    // first's sync, so one verdict finishes that sync on its own.
+    for staged in 0..256 {
         seq.sequence(Command::Tick).unwrap().unwrap();
         let release = seq.stage(Batch::default()).unwrap();
         seq.submit(release).unwrap();
@@ -271,13 +272,28 @@ async fn a_full_pipeline_takes_no_request_until_a_sync_is_done() {
             entered.recv_timeout(Duration::from_secs(10)).expect("the thread starts the first batch's sync");
         }
     }
+    // Their bytes are far inside the bound, so the sequencer still takes requests.
     let (tx, mut rx) = mpsc::channel(4);
     tx.send(Request::Query(Box::new(|_| {}))).await.unwrap();
+    let taken = timeout(Duration::from_millis(200), seq.next_request(&mut rx)).await.expect("inside the bound");
+    assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
+    // Charged to the bound, the pipeline takes no request until a sync is done.
+    let pipeline = seq.pipeline.as_mut().unwrap();
+    assert!(pipeline.charged >= 256 * BATCH_CHARGE, "each batch is charged: {}", pipeline.charged);
+    pipeline.bound = pipeline.charged;
+    tx.send(Request::Query(Box::new(|_| {}))).await.unwrap();
     let held = timeout(Duration::from_millis(200), seq.next_request(&mut rx)).await;
-    assert!(held.is_err(), "with {MAX_IN_FLIGHT} batches waiting, the next request waits too");
+    assert!(held.is_err(), "with the batches waiting charged to the bound, the next request waits too");
     permits.send(Verdict::Pass).unwrap();
     let taken = timeout(Duration::from_secs(10), seq.next_request(&mut rx)).await.expect("a finished sync frees it");
     assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
+    // Once every sync is done, nothing is charged. A batch that rotated a segment or signed a
+    // checkpoint has a sync of its own, so each may take a verdict.
+    for _ in 0..256 {
+        permits.send(Verdict::Pass).unwrap();
+    }
+    seq.settle().unwrap();
+    assert_eq!(seq.pipeline.as_ref().unwrap().charged, 0, "a released batch's charge is returned");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -332,9 +348,9 @@ async fn batches_that_only_answer_reads_take_no_pipeline_slot() {
     let first = node.tick().await;
     node.applied().await;
     node.sync_started();
-    // More read-only batches than the pipeline holds, all waiting on the one held sync.
+    // Many read-only batches, all waiting on the one held sync.
     let mut answers = Vec::new();
-    for _ in 0..=MAX_IN_FLIGHT {
+    for _ in 0..=64 {
         let (reply, answer) = oneshot::channel();
         node.tx.send(Request::HouseState(reply)).await.unwrap();
         timeout(Duration::from_secs(10), node.applied()).await.expect("the sequencer still takes requests");

@@ -27,6 +27,8 @@ pub(crate) struct SyncJob {
     file: Option<fs::File>,
     dir: Option<fs::File>,
     epoch: u64,
+    /// Bytes of the entries appended since the job before this one was taken.
+    appended_bytes: u64,
     segment: Option<u64>,
     last: Option<Offset>,
     active: Option<ActivePrefix>,
@@ -34,6 +36,11 @@ pub(crate) struct SyncJob {
 }
 
 impl SyncJob {
+    /// Bytes of the entries the batch appended.
+    pub(crate) fn appended_bytes(&self) -> u64 {
+        self.appended_bytes
+    }
+
     /// Whether the job has nothing to sync: no bytes were appended since the last sync and no
     /// segment seal waits on it.
     pub(crate) fn is_empty(&self) -> bool {
@@ -198,6 +205,7 @@ impl LogWriter {
         // Set first: the buffer may reach the file before `flush`, and those bytes need syncing too.
         self.unsynced = true;
         self.appended += 1;
+        self.appended_bytes += line.len() as u64;
         out.write_all(&line).context("writing log entry")?;
         if let LogEntry::Checkpoint(checkpoint) = entry {
             segment.checkpoints.push(CheckpointLocator {
@@ -282,7 +290,9 @@ impl LogWriter {
             .and_then(|segment| last.map(|last| ActivePrefix { info: segment.info(), last }));
         let seals = std::mem::take(&mut self.pending_seals);
         self.taken_seals += seals.len() as u64;
-        Ok(SyncJob { file, dir, epoch: self.appended, segment: segment.map(|s| s.first_seq), last, active, seals })
+        let appended_bytes = self.appended_bytes - std::mem::replace(&mut self.begun_bytes, self.appended_bytes);
+        let segment = segment.map(|s| s.first_seq);
+        Ok(SyncJob { file, dir, epoch: self.appended, appended_bytes, segment, last, active, seals })
     }
 
     /// Takes `job`, which has run, as done: its entries are durable, so the writer no longer counts

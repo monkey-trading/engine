@@ -37,10 +37,17 @@ use crate::sequencer::house::HouseState;
 use crate::sequencer::{Request, Sequencer, StreamBody, StreamMsg};
 use crate::stats::background::Job as StatsJob;
 
-/// Batches whose sync may be pending at once. A disk that stalls longer than that many batches
-/// takes the sequencer's next request down with it, rather than letting what cannot be released
-/// pile up.
-const MAX_IN_FLIGHT: usize = 64;
+/// What the batches whose sync is pending may hold at once: their entries' bytes and
+/// `BATCH_CHARGE` each. Past it the sequencer takes no request until a sync is done, so what cannot
+/// be released stops piling up in memory; inside it, only `MAX_SYNC_HOLD` stops a slow sync. At the
+/// sequencer's ceiling of about 5,000 commands a second (a signed command costs at least 180 us on
+/// CI, #904), each its own batch, at the reference log's average entry of about 2.2 KB (`v75`), a
+/// 5 s hold accumulates about 68 MB with the charges, so 96 MiB holds it with room.
+pub(super) const MAX_IN_FLIGHT_BYTES: u64 = 96 * 1024 * 1024;
+
+/// What each batch in flight is charged beyond its entries: its release's own bookkeeping, and the
+/// replies of the read-only batches it carries.
+pub(super) const BATCH_CHARGE: u64 = 512;
 
 /// The requests of a batch that wait for its entries to be durable.
 #[derive(Default)]
@@ -61,6 +68,8 @@ pub(super) struct Release {
     last_seq: Option<u64>,
     /// When the batch was staged: the hold bound runs from here.
     staged: tokio::time::Instant,
+    /// What the batch counts against `MAX_IN_FLIGHT_BYTES`.
+    charge: u64,
     /// The log head this batch made durable, captured at stage: the sync thread may finish an
     /// earlier batch after a later one is staged, so the link at finish is not this batch's.
     head: crate::log_heads::Head,
@@ -133,6 +142,9 @@ pub(super) struct Pipeline {
     jobs: Sender<Arc<SyncJob>>,
     shared: Arc<Shared>,
     in_flight: VecDeque<Release>,
+    /// The charges of the batches in flight, and the most they may reach (`MAX_IN_FLIGHT_BYTES`).
+    charged: u64,
+    bound: u64,
     /// Whether the oldest batch's sync is held past `MAX_SYNC_HOLD`: one `log_sync_held` episode.
     /// It starts set, so the first check with no hold past the bound resolves an episode an earlier
     /// run left open; the router discards a resolution with no open episode.
@@ -163,7 +175,8 @@ impl Pipeline {
         });
         let worker = shared.clone();
         std::thread::Builder::new().name("log-sync".into()).spawn(move || run_syncs(&queue, &worker, sync))?;
-        Ok(Self { jobs, shared, in_flight: VecDeque::new(), held: true, kept: None })
+        let (in_flight, charged, bound) = (VecDeque::new(), 0, MAX_IN_FLIGHT_BYTES);
+        Ok(Self { jobs, shared, in_flight, charged, bound, held: true, kept: None })
     }
 }
 
@@ -209,7 +222,8 @@ impl Release {
     /// Takes the answers of `other`, a batch that wrote nothing, to go out with this one: the writes
     /// before it are what it waited for, and this release's sync covers them.
     fn absorb(&mut self, other: Release) {
-        let Release { batch, outbox, marks, house, schedule, stats, after, .. } = other;
+        let Release { batch, outbox, marks, house, schedule, stats, after, charge, .. } = other;
+        self.charge += charge;
         self.batch.replies.extend(batch.replies);
         self.batch.watches.extend(batch.watches);
         self.batch.later.extend(batch.later);
@@ -277,6 +291,7 @@ impl Sequencer {
         let withdrawals = self.outbox.iter().any(|msg| matches!(msg.body, StreamBody::Withdrawal(_)));
         let directory = withdrawals || !batch.syncs.is_empty() || !self.after_sync.is_empty();
         let job = Arc::new(self.log.begin_sync(directory)?);
+        let charge = job.appended_bytes() + BATCH_CHARGE;
         let schedule =
             std::mem::take(&mut self.benchmark_schedule_dirty).then(|| BenchmarkSchedule::from_engine(&self.engine));
         Ok(Release {
@@ -284,6 +299,7 @@ impl Sequencer {
             batch,
             last_seq: self.engine.last_seq(),
             staged: tokio::time::Instant::now(),
+            charge,
             head: crate::log_heads::Head { seq: self.engine.last_seq().unwrap_or(0), link: self.command_prefix.into() },
             stamp: self.engine.now(),
             outbox: std::mem::take(&mut self.outbox),
@@ -301,8 +317,21 @@ impl Sequencer {
     /// Error cases:
     /// - a checkpoint cannot be posted
     fn finish(&mut self, release: Release) -> anyhow::Result<()> {
-        let Release { job, batch, last_seq, staged: _, head, stamp, outbox, marks, house, schedule, stats, after } =
-            release;
+        let Release {
+            job,
+            batch,
+            last_seq,
+            staged: _,
+            charge: _,
+            head,
+            stamp,
+            outbox,
+            marks,
+            house,
+            schedule,
+            stats,
+            after,
+        } = release;
         self.marks.deliver_stats(stats);
         self.log.finish_sync(&job);
         if let Some(publisher) = &self.log_heads
@@ -369,6 +398,7 @@ impl Sequencer {
         }
         let pipeline = self.pipeline.as_mut().expect("checked above");
         // A batch that wrote nothing needs no sync of its own: it goes out with the one before it.
+        pipeline.charged += release.charge;
         if release.job.is_empty()
             && let Some(last) = pipeline.in_flight.back_mut()
         {
@@ -384,8 +414,9 @@ impl Sequencer {
     /// Error cases:
     /// - the sync failed: the node must stop rather than acknowledge undurable commands
     fn complete(&mut self, done: anyhow::Result<()>) -> anyhow::Result<()> {
-        let release = self.pipeline.as_mut().and_then(|pipeline| pipeline.in_flight.pop_front());
-        let release = release.context("a log sync finished with no batch in flight")?;
+        let pipeline = self.pipeline.as_mut().context("a log sync finished with no pipeline")?;
+        let release = pipeline.in_flight.pop_front().context("a log sync finished with no batch in flight")?;
+        pipeline.charged -= release.charge;
         done.context("syncing the log")?;
         self.finish(release)
     }
