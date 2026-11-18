@@ -7,7 +7,7 @@
 //! call records the block it lands in, and any later one, from a later block, records that block's hash,
 //! well within the 256 blocks `ArbSys` answers for. So a member that sees the hash cannot keep the turn
 //! from being drawn by leaving it unrecorded: not one taking a turn at the boundary, while the holder
-//! still sequences, either. Arbitrum's sequencer, which orders every call, still can (`SECURITY.md`).
+//! still sequences, either. Arbitrum's sequencer, which orders every call, still can (`docs/security-model.md`).
 //!
 //! It reads through a custody reader of its own, which holds a read session for each pinned block, so
 //! no other read waits on it or delays it, and it sends one call at a time with the member's liveness

@@ -296,7 +296,7 @@ contract FaultProofTest is LivenessTest {
     }
 }
 
-/// Pairs one member's own actions put out of the proof's reach, as `SECURITY.md` states it: a proof needs
+/// Pairs one member's own actions put out of the proof's reach, as `docs/security-model.md` states it: a proof needs
 /// two heads binding the same turn, position and release, and heads of different assignments prove
 /// nothing. Both pairs below are one member's, under one signer epoch.
 contract FaultProofLimitsTest is LivenessTest {

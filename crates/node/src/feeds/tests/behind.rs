@@ -64,7 +64,7 @@ const LATER: (&str, &str, &str) = ("100.5", "100.8", "100.65");
 /// connection is not replaced before the book that follows it.
 const STANDING: Timing = Timing { timeout: Duration::from_secs(30), ..PRODUCTION };
 /// The longest a fill's price may be old under production's values with a stalled book
-/// (`SECURITY.md`: 5 s plus `max_delay` plus `max_age_ms`).
+/// (`docs/security-model.md`: 5 s plus `max_delay` plus `max_age_ms`).
 const STATED_BOUND: Duration = Duration::from_secs(8);
 
 /// A venue's book message for BTC-USD: its number on the connection, bid, ask and venue time.
