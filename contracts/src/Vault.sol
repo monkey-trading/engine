@@ -9,10 +9,9 @@ import {EIP712} from "@openzeppelin-contracts/utils/cryptography/EIP712.sol";
 import {TimelockController} from "@openzeppelin-contracts/governance/TimelockController.sol";
 import {Math} from "@openzeppelin-contracts/utils/math/Math.sol";
 
-import {ExitVerifier} from "./ExitVerifier.sol";
+import {ExitVerifier, HELD_DEPOSIT_LEAF, PENDING_DEPOSIT_LEAF} from "./ExitVerifier.sol";
 import {MonkeyToken} from "./MonkeyToken.sol";
 import {OperatorRegistry} from "./OperatorRegistry.sol";
-import {StateTree} from "./StateTree.sol";
 
 /// @title Vault
 /// @notice Holds the engine's USDC collateral. The chain handles custody only: the engine credits
@@ -96,7 +95,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     int256 private constant USDC_UNIT = 1e3;
 
     /// @notice A deposit's funding caller and the USDC base units it brought in; a booked surplus
-    /// has none.
+    /// has no caller.
     struct DepositRecord {
         address payer;
         uint96 amount;
@@ -181,13 +180,17 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     uint64 public immutable claimWindow;
     /// @notice Seconds without a posted checkpoint after which deposits are refused.
     uint64 public immutable staleAfter;
-    /// @notice The stateless checker of the leaves the exit pays against.
+    /// @notice The checker of the leaves the exit pays against, which also records, for this vault
+    /// alone, each registered account's equity and the credits counted into it.
     ExitVerifier public immutable exitVerifier;
     /// @notice When the latest checkpoint was posted, or, before the first, when the vault was
     /// deployed.
     uint64 public lastCheckpointAt;
     /// @notice Each deposit's payer and amount, by id, for the exit's refunds.
     mapping(uint256 id => DepositRecord record) public depositRecords;
+    /// @notice Each trader deposit's beneficiary, by id, the zero address for the house's, which the
+    /// exit matches a receipt the root holds against.
+    mapping(uint256 id => address account) public depositAccounts;
     /// @notice USDC base units every payer-funded deposit brought in so far, booked surpluses aside.
     uint256 public totalRefundable;
     /// @notice `totalRefundable` just after deposit `id`.
@@ -205,13 +208,18 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     uint256 public exitRefundReserve;
     /// @notice USDC base units of held principal the exit never pays.
     uint256 public exitHeldReserve;
+    /// @dev The canonical principal from the finalised frontier to the cursor less what the exit terms
+    /// attribute, which may be negative, and the terms' `unheld`: the reserve holds the greater of
+    /// `unheld` and the positive part for the deposits no term names, and an unmatched receipt's
+    /// refund moves the first as its id comes to be named.
+    int256 private exitUnattributed;
+    uint256 private exitUnheld;
     /// @notice Each account's registered claim on its equity, approvals and queued requests.
     mapping(address account => uint256 claim) public exitClaims;
     uint256 public totalExitClaims;
     /// @notice Each account's registered claim on its unpaid distribution, ranked behind `exitClaims`.
     mapping(address account => uint256 claim) public exitDistributionClaims;
     uint256 public totalExitDistributionClaims;
-    mapping(address account => bool registered) public exitAccountRegistered;
     mapping(address account => bool registered) public exitDistributionRegistered;
     mapping(uint64 requestedSeq => bool registered) public exitQueuedRegistered;
     mapping(uint256 id => bool refunded) public depositRefunded;
@@ -311,7 +319,6 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     error NoExitClaim();
     error NoHouseRemainder();
     error NotRefundable(uint256 id);
-    error PendingDepositMismatch();
     error RegistryAlreadySet(address registry);
     error RotationActive();
     error NotTheRegisteredEnclave(address signer, address enclave);
@@ -636,7 +643,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// `root`.
     function _verifyApproval(Withdrawal calldata withdrawal, bytes32 root, bytes32[] calldata siblings)
         private
-        pure
+        view
         returns (bool)
     {
         bytes32 key = keccak256(abi.encodePacked(APPROVAL_LEAF, withdrawal.account, withdrawal.nonce));
@@ -736,17 +743,18 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         // Every refundable deposit below the cursor is one the root holds for a trader, a named
         // gap, or an unnamed one: attribute them and reserve the greater of the engine's estimate
         // and the canonical remainder, so no unnamed deposit's principal reaches the pools.
-        uint256 attributed = _usdcCeil(terms.heldReceipts) + named;
-        uint256 canonicalUnnamed = below > attributed ? below - attributed : 0;
+        exitUnattributed = int256(below) - int256(_usdcCeil(terms.heldReceipts) + named);
+        exitUnheld = unheld;
         exitStartedAt = uint64(block.timestamp);
         exitDepositCursor = cursor;
-        exitRefundReserve = refunds + pending + named + (unheld > canonicalUnnamed ? unheld : canonicalUnnamed);
+        exitRefundReserve = refunds + pending + named + _unnamedReserve();
         exitHeldReserve = held;
         emit ExitStarted(latestSeq, latestRoot, cursor, exitRefundReserve, held);
     }
 
-    /// @notice Registers `account`'s equity at the exit root's marks as its claim, once. Anyone may
-    /// register for any account; the claim is always the account's. See `ExitVerifier.accountClaim`.
+    /// @notice Registers `account`'s equity at the exit root's marks, less its unfinalised principal,
+    /// as its claim, once (`ExitVerifier.exitRegistered`). Anyone may register for any account; the
+    /// claim is always the account's. See `ExitVerifier.accountClaim`.
     function registerExit(
         address account,
         ExitVerifier.AccountState calldata state,
@@ -754,9 +762,15 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         ExitVerifier.MarketState[] calldata markets
     ) external {
         _requireClaimWindow();
-        if (exitAccountRegistered[account]) revert AlreadyRegistered();
-        exitAccountRegistered[account] = true;
         _addExitClaim(account, exitVerifier.accountClaim(latestRoot, account, state, positions, markets));
+    }
+
+    /// @notice Adds to the registered `account`'s claim the principal of its unfinalised `credits`
+    /// whose deposits this vault's records match, each credit once, in any batches. Anyone may submit
+    /// them; a credit only ever adds to its own account. See `ExitVerifier.creditClaim`.
+    function registerExitCredits(address account, ExitVerifier.ReceiptLeaf[] calldata credits) external {
+        _requireClaimWindow();
+        _addExitClaim(account, exitVerifier.creditClaim(latestRoot, account, credits));
     }
 
     /// @notice Registers an approval the exit root holds and the vault has not paid, whose amount the
@@ -822,21 +836,48 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         _refund(id);
     }
 
-    /// @notice Refunds a deposit the exit root holds pending a declaration or screening to the address
-    /// that paid it, once the exit has started. `chainRef` is its receipt's reference, which keys the
-    /// leaf `siblings` prove.
-    function refundPendingDeposit(
-        bytes calldata chainRef,
-        ExitVerifier.PendingDeposit calldata pending,
-        bytes32[] calldata siblings
-    ) external nonReentrant {
+    /// @notice Refunds the deposit at `leaf.depositId` to the address that paid it, from the receipt
+    /// the exit root holds at that id, a leaf of kind `kind` (see `ExitVerifier.provesReceipt`). A
+    /// pending receipt whose payer, amount and beneficiary the vault's records have is refunded from
+    /// the pending reserve, at any time after the start. A held, pending or credited receipt the
+    /// records do not match names an id whose deposit no claim pays: one a reorganisation moved, or
+    /// one that took an orphaned receipt's id. Like a named gap, it lies from the finalised frontier
+    /// on, since the engine holds no live receipt below its frontier that the vault's records do not
+    /// match. That deposit is refunded too, ranking ahead of claims as a gap's refund does, so it is
+    /// reserved and paid only while claims register; at an id the vault never assigned there is no
+    /// deposit, and only the receipt's pending or held share of its reserve is released.
+    function refundReceipt(ExitVerifier.ReceiptLeaf calldata leaf, uint8 kind) external nonReentrant {
         if (exitStartedAt == 0) revert ExitNotStarted();
-        if (!exitVerifier.provesPending(latestRoot, chainRef, pending, siblings)) revert InvalidExitProof();
-        DepositRecord memory record = depositRecords[pending.depositId];
-        if (record.payer != pending.payer || int256(uint256(record.amount)) * USDC_UNIT != pending.amount) {
-            revert PendingDepositMismatch();
+        uint64 id = leaf.depositId;
+        (bool proven, bool matched) = exitVerifier.provesReceipt(latestRoot, leaf, kind);
+        if (!proven) revert InvalidExitProof();
+        if (!matched) {
+            _requireClaimWindow();
+            if (depositRefunded[id]) revert NotRefundable(id);
+            // The id comes to be named: the terms attributed the receipt's principal there, and the
+            // vault's refundable deposit takes its place, reserved to be refunded, as is the pending
+            // or held reserve's share the receipt held, since nothing draws it now. At an id the vault
+            // never assigned, past its count, or booked as a surplus, which no refund and no attributed
+            // span counts, there is no deposit to refund: the receipt's share is released and the id
+            // marked done.
+            DepositRecord memory record = depositRecords[id];
+            uint256 refundable = record.payer == address(0) ? 0 : record.amount;
+            uint256 attributed = _usdcCeil(leaf.amount);
+            uint256 unnamed = _unnamedReserve();
+            exitUnattributed += int256(attributed) - int256(refundable);
+            exitRefundReserve = exitRefundReserve + refundable + _unnamedReserve() - unnamed
+                - (kind == PENDING_DEPOSIT_LEAF ? attributed : 0);
+            if (kind == HELD_DEPOSIT_LEAF) exitHeldReserve -= attributed;
+            if (record.payer == address(0)) {
+                depositRefunded[id] = true;
+                return;
+            }
+        } else if (kind != PENDING_DEPOSIT_LEAF) {
+            // A credited receipt the vault holds is its account's claim, and a held one's principal
+            // stays held.
+            revert NotRefundable(id);
         }
-        _refund(pending.depositId);
+        _refund(id);
     }
 
     /// @notice Releases to `to` what the exit leaves once the claim window has closed: house capital
@@ -896,32 +937,32 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     function _deposit(address account, uint256 amount) private returns (uint256 id) {
         uint256 received = _pull(amount);
         id = _record(received, msg.sender);
+        depositAccounts[id] = account;
         emit Deposited(id, account, msg.sender, received);
     }
 
     /// @dev Whether `siblings`, from the root down, lead from the leaf at `key` with `valueHash` to
-    /// `root` in the engine's sparse Merkle tree: a leaf hashes as `0x00 ‖ key ‖ valueHash`, a node as
-    /// `0x01 ‖ left ‖ right`, and bit `d` of the key, most significant first, is the leaf's side at
-    /// depth `d + 1`.
+    /// `root` in the engine's sparse Merkle tree (`StateTree`), checked by the verifier, which holds
+    /// that code so this contract stays within EIP-170's size limit.
     function _proves(bytes32 root, bytes32 key, bytes32 valueHash, bytes32[] calldata siblings)
         private
-        pure
+        view
         returns (bool)
     {
-        return StateTree.proves(root, key, valueHash, siblings);
+        return exitVerifier.provesLeaf(root, key, valueHash, siblings);
     }
 
-    /// @dev Assigns the next deposit id to `amount` from `payer`, none for a booked surplus, and
-    /// records the running totals through it. `amount` is at most `MAX_DEPOSIT`, so it fits a
+    /// @dev Assigns the next deposit id to `amount` from `payer`, none for a booked surplus, records
+    /// both, and the running totals through it. `amount` is at most `MAX_DEPOSIT`, so it fits a
     /// `uint96`.
     function _record(uint256 amount, address payer) private returns (uint256 id) {
         id = depositCount++;
         totalDeposited += amount;
         depositedThrough[id] = totalDeposited;
-        if (payer != address(0)) {
-            depositRecords[id] = DepositRecord(payer, uint96(amount));
-            totalRefundable += amount;
-        }
+        // A booked surplus is recorded too, with no payer, so a held receipt the root keeps for it
+        // matches it; it is never refundable.
+        depositRecords[id] = DepositRecord(payer, uint96(amount));
+        if (payer != address(0)) totalRefundable += amount;
         refundableThrough[id] = totalRefundable;
     }
 
@@ -949,6 +990,14 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
             exitRefundableGap[id] = true;
             refundable += refundableThrough[id] - (id == 0 ? 0 : refundableThrough[id - 1]);
         }
+    }
+
+    /// @dev What the exit reserves for the deposits below the cursor no term names: the greater of the
+    /// engine's estimate and the canonical principal the terms leave unattributed, so none reaches the
+    /// pools.
+    function _unnamedReserve() private view returns (uint256) {
+        uint256 canonical = exitUnattributed > 0 ? uint256(exitUnattributed) : 0;
+        return exitUnheld > canonical ? exitUnheld : canonical;
     }
 
     /// @dev Refuses a registration outside the claim window, or with no root to prove against.

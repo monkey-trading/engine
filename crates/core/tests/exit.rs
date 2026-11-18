@@ -6,6 +6,8 @@
 #[path = "access/support.rs"]
 mod access_support;
 mod common;
+#[path = "exit/credits.rs"]
+mod credits;
 #[path = "exit/custody.rs"]
 mod custody;
 #[path = "exit/fixture.rs"]

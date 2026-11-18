@@ -1,13 +1,16 @@
 //! The exit vectors the vault's tests register and refund with (`contracts/test/ExitVector.t.sol`):
-//! `fixtures/exit.json` must be exactly what the engine proves for these sessions, with every amount
-//! as the raw integer the vault takes, and each claim the engine's own valuation in USDC base units.
+//! `fixtures/exit.json` must be exactly what the engine proves for these sessions, the custody one
+//! under `V77` with its unfinalised credit and held receipt, with every amount as the raw integer the
+//! vault takes, and each claim the engine's own valuation in USDC base units, its unfinalised
+//! principal included.
 
 use engine_core::Fixed;
-use engine_core::merkle::{AccountProof, ExitProof, ExitTermsProof, PendingDepositProof};
+use engine_core::merkle::{AccountProof, ExitProof, ExitTermsProof, PendingReceipt};
+use engine_core::protocol::ProtocolVersion;
 use engine_core::withdrawal::usdc_amount;
 use serde_json::{Value, json};
 
-use crate::custody::custody;
+use crate::custody::custody_at;
 use crate::support::trading;
 
 const FIXTURE: &str = include_str!("../fixtures/exit.json");
@@ -21,14 +24,18 @@ fn the_vault_test_vectors_are_the_engines_exit_proofs() {
     assert_eq!(exit.account.as_ref().unwrap().equity(), Some(equity));
     let trading = session(&exit, equity);
 
-    let (mut h, [client, newcomer, _], _) = custody();
+    let (mut h, [client, newcomer, _], _) = custody_at(ProtocolVersion::V77);
     h.engine.state_root();
     let credited = h.engine.exit_proof(client).unwrap();
     let pending = h.engine.exit_proof(newcomer).unwrap();
     let house = h.engine.house_pending_deposit_proofs().unwrap();
     let mut custody = session(&credited, h.equity_and_margin(client).0);
-    custody["pending"] = pending_deposit(&pending.pending_deposits[0]);
-    custody["house"] = pending_deposit(&house[0]);
+    let receipt_leaf =
+        |proof: &engine_core::merkle::PendingDepositProof| receipt(&proof.chain_ref, &proof.deposit, &proof.siblings);
+    custody["pending"] = receipt_leaf(&pending.pending_deposits[0]);
+    custody["house"] = receipt_leaf(&house[0]);
+    let held = h.engine.receipt_proof(2).expect("the sanctioned payer's held receipt");
+    custody["held"] = receipt(&held.chain_ref, &held.deposit, &held.siblings);
 
     let computed = json!({ "trading": trading, "custody": custody });
     let pretty = serde_json::to_string_pretty(&computed).unwrap();
@@ -85,6 +92,9 @@ fn session(exit: &ExitProof, equity: Fixed) -> Value {
             "siblings": approval.siblings,
         });
     }
+    if let Some(credit) = exit.unfinalised_credits.first() {
+        session["credit"] = receipt(&credit.chain_ref, &credit.deposit, &credit.siblings);
+    }
     if let Some(queued) = exit.queued.first() {
         let q = &queued.queued;
         session["queued"] = json!({
@@ -130,17 +140,16 @@ fn account_leaf(proof: &AccountProof) -> Value {
     })
 }
 
-/// A pending deposit's vector.
-fn pending_deposit(proof: &PendingDepositProof) -> Value {
-    let d = &proof.deposit;
+/// A receipt leaf's vector, a pending deposit's or an unfinalised credit's.
+fn receipt(chain_ref: &str, d: &PendingReceipt, siblings: &[alloy_primitives::B256]) -> Value {
     let zero = engine_core::types::AccountId([0; 20]);
     json!({
-        "chainRef": proof.chain_ref,
+        "chainRef": chain_ref,
         "depositId": d.deposit_id.to_string(),
         "account": d.account.unwrap_or(zero),
         "payer": d.payer.unwrap_or(zero),
         "amount": raw(d.amount),
-        "siblings": proof.siblings,
+        "siblings": siblings,
     })
 }
 

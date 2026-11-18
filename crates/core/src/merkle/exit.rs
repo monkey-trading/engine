@@ -1,6 +1,6 @@
 //! What the vault's exit against the last posted root checks, from `V38`: the exit terms leaf, the
 //! ABI leaves of receipt-backed pending deposits, an account proof's equity at the root's marks, and
-//! the proofs an account exits with.
+//! the proofs an account exits with, from `V77` its unfinalised credits (`credits.rs`) among them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,9 +13,10 @@ use crate::access::{AccessDeposit, HeldDeposit};
 use crate::deposits::RecordedDeposit;
 use crate::engine::Engine;
 use crate::fixed::Rounding;
+use crate::merkle::credits::CreditLeaves;
 use crate::merkle::{
-    AccountProof, DistributionProof, QueuedWithdrawalProof, WithdrawalApprovalProof, json_hash, keccak,
-    pending_deposit_key, verify, withdrawal_queue_key,
+    AccountProof, DistributionProof, QueuedWithdrawalProof, UnfinalisedCreditProof, WithdrawalApprovalProof, json_hash,
+    keccak, pending_deposit_key, verify, withdrawal_queue_key,
 };
 use crate::protocol::ProtocolVersion;
 use crate::types::AccountId;
@@ -93,7 +94,7 @@ pub struct PendingReceipt {
 
 /// Every proof an account exits with against one root: the exit terms, the account with its
 /// positions and their markets, each approval it holds, each of its queued requests, its
-/// distribution, and the pending deposits for it.
+/// distribution, the pending deposits for it, and from `V77` its unfinalised credits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExitProof {
@@ -106,10 +107,14 @@ pub struct ExitProof {
     pub queued: Vec<QueuedWithdrawalProof>,
     pub distribution: Option<DistributionProof>,
     pub pending_deposits: Vec<PendingDepositProof>,
+    /// The account's unfinalised credits, in increasing deposit id, through which alone the vault
+    /// pays its unfinalised principal.
+    pub unfinalised_credits: Vec<UnfinalisedCreditProof>,
 }
 
-/// The leaves the exit proves, as of the last root: committed copies of the queue and of the
-/// pending and held deposits, so proofs and totals follow the root rather than the live state.
+/// The leaves the exit proves, as of the last root: committed copies of the queue, of the pending
+/// and held deposits, and from `V77` of the unfinalised credits, so proofs and totals follow the root
+/// rather than the live state.
 #[derive(Debug, Default)]
 pub(crate) struct ExitLeaves {
     queued: BTreeMap<u64, QueuedWithdrawal>,
@@ -118,10 +123,13 @@ pub(crate) struct ExitLeaves {
     pending: BTreeMap<String, (Fixed, Option<PendingReceipt>)>,
     /// The committed receipt-backed pending references, by beneficiary; the house's under `None`.
     pending_by_account: BTreeMap<Option<AccountId>, BTreeSet<String>>,
-    held: BTreeMap<String, Fixed>,
+    /// The committed held deposits, with each receipt-backed one's vault deposit id, beneficiary,
+    /// payer and amount, which its leaf binds from `V77`.
+    held: BTreeMap<String, (Fixed, Option<PendingReceipt>)>,
     pending_total: Fixed,
     held_total: Fixed,
-    terms: Option<ExitTerms>,
+    pub(super) terms: Option<ExitTerms>,
+    pub(super) credits: CreditLeaves,
 }
 
 impl ExitTermsProof {
@@ -211,15 +219,39 @@ impl ExitLeaves {
     }
 
     /// Brings the committed held deposits and their total up to `held` at `changed`, the references
-    /// changed since the last root.
-    pub(super) fn update_held(&mut self, held: &BTreeMap<String, HeldDeposit>, changed: &BTreeSet<String>) {
+    /// changed since the last root, with each one's vault deposit id from `receipts`.
+    pub(super) fn update_held(
+        &mut self,
+        held: &BTreeMap<String, HeldDeposit>,
+        receipts: &BTreeMap<String, RecordedDeposit>,
+        changed: &BTreeSet<String>,
+    ) {
         for reference in changed {
-            let new = held.get(reference).map(|hold| hold.deposit.amount);
+            let new = held.get(reference).map(|hold| {
+                let deposit = &hold.deposit;
+                // Bound to the receipt's own authenticated vault caller, which a replacement records
+                // apart from the terminal hold it keeps, screened for the orphan's caller; a booked
+                // surplus has none, by the receipt and by its screening alike. A receipt that records
+                // none while its hold names one, from before `V26` or a payerless replacement under a
+                // terminal hold, has no caller to bind: it keeps its JSON leaf, which the exit cannot
+                // prove unmatched, and stays held.
+                let receipt = receipts
+                    .get(reference)
+                    .filter(|recorded| recorded.payer.is_some() || deposit.payer.is_none())
+                    .map(|recorded| PendingReceipt {
+                        deposit_id: recorded.receipt.deposit_id,
+                        account: deposit.account,
+                        payer: recorded.payer,
+                        amount: deposit.amount,
+                    });
+                (deposit.amount, receipt)
+            });
             let old = match new {
-                Some(amount) => self.held.insert(reference.clone(), amount),
+                Some(entry) => self.held.insert(reference.clone(), entry),
                 None => self.held.remove(reference),
             };
-            self.held_total = self.held_total - old.unwrap_or(Fixed::ZERO) + new.unwrap_or(Fixed::ZERO);
+            let amount = |entry: Option<(Fixed, _)>| entry.map_or(Fixed::ZERO, |(amount, _)| amount);
+            self.held_total = self.held_total - amount(old) + amount(new);
         }
     }
 
@@ -250,6 +282,26 @@ impl ExitLeaves {
             let (_, receipt) = &self.pending[reference];
             (reference, receipt.expect("only receipt-backed pending deposits are indexed"))
         })
+    }
+
+    /// The committed receipt-backed pending deposit at vault deposit id `deposit_id`, if any.
+    pub(super) fn pending_at(&self, deposit_id: u64) -> Option<(&String, PendingReceipt)> {
+        receipt_at(&self.pending, deposit_id)
+    }
+
+    /// The committed receipt-backed held deposit at vault deposit id `deposit_id`, if any.
+    pub(super) fn held_at(&self, deposit_id: u64) -> Option<(&String, PendingReceipt)> {
+        receipt_at(&self.held, deposit_id)
+    }
+
+    /// The value hash of the held leaf at `reference`, as the last update committed it: from `V77` the
+    /// ABI leaf of a receipt-backed deposit whose receipt binds its payer, or its absence, as a pending
+    /// one's, and otherwise the keccak-256 of `hold`'s JSON.
+    pub(super) fn held_hash(&self, reference: &str, hold: &HeldDeposit, version: ProtocolVersion) -> B256 {
+        match self.held.get(reference) {
+            Some((_, Some(receipt))) if version >= ProtocolVersion::V77 => pending_receipt_hash(receipt),
+            _ => json_hash(hold),
+        }
     }
 
     /// The value hash of the pending leaf at `reference`, as the last update committed it: from
@@ -304,7 +356,8 @@ impl Engine {
 
     /// Every proof `account` exits with against the last root, or `None` before the first root
     /// under `V38`. The work is bounded by what the account itself holds: one approval for each of
-    /// its withdrawal nonces, its queued requests, and the pending deposits for it.
+    /// its withdrawal nonces, its queued requests, and the pending deposits and unfinalised credits
+    /// for it.
     pub fn exit_proof(&self, account: AccountId) -> Option<ExitProof> {
         let state = self.tree.as_ref()?;
         let exit = &state.exit;
@@ -345,6 +398,7 @@ impl Engine {
             queued,
             distribution: self.distribution_proof(account),
             pending_deposits,
+            unfinalised_credits: self.unfinalised_credit_proofs(account),
         })
     }
 
@@ -406,8 +460,18 @@ pub fn pending_receipt_hash(deposit: &PendingReceipt) -> B256 {
     )
 }
 
+/// The committed receipt in `leaves` at vault deposit id `deposit_id`, if any.
+fn receipt_at(
+    leaves: &BTreeMap<String, (Fixed, Option<PendingReceipt>)>,
+    deposit_id: u64,
+) -> Option<(&String, PendingReceipt)> {
+    leaves.iter().find_map(|(reference, (_, receipt))| {
+        receipt.filter(|receipt| receipt.deposit_id == deposit_id).map(|receipt| (reference, receipt))
+    })
+}
+
 /// Removes `item` from `key`'s set in `index`, and the set once it is empty.
-fn unindex<K: Ord, T: Ord>(index: &mut BTreeMap<K, BTreeSet<T>>, key: K, item: &T) {
+pub(super) fn unindex<K: Ord, T: Ord>(index: &mut BTreeMap<K, BTreeSet<T>>, key: K, item: &T) {
     if let Some(items) = index.get_mut(&key) {
         items.remove(item);
         if items.is_empty() {

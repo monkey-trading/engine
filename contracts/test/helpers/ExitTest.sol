@@ -15,6 +15,10 @@ abstract contract ExitTest is GovernanceTest {
     uint64 internal constant WINDOW = 3 days;
     uint64 internal constant STALE = 1 days;
     int128 internal constant UNIT = 1e3;
+    /// @dev The leaf kinds of a held deposit, a pending deposit and an unfinalised credit.
+    uint8 internal constant HELD = 33;
+    uint8 internal constant PENDING = 34;
+    uint8 internal constant CREDIT = 35;
 
     MockUSDC internal usdc;
     Vault internal vault;
@@ -96,12 +100,47 @@ abstract contract ExitTest is GovernanceTest {
         _leaf(keccak256(abi.encodePacked(uint8(13), account)), keccak256(abi.encode(entitled)));
     }
 
+    /// @dev A receipt-backed pending deposit's leaf, without siblings until `_proven` adds them.
     function _addPending(bytes memory chainRef, uint64 id, address account, address payer, int128 amount)
         internal
-        returns (ExitVerifier.PendingDeposit memory pending)
+        returns (ExitVerifier.ReceiptLeaf memory)
     {
-        pending = ExitVerifier.PendingDeposit(id, account, payer, amount);
-        _leaf(keccak256(abi.encodePacked(uint8(34), chainRef)), keccak256(abi.encode(id, account, payer, amount)));
+        return _addReceipt(PENDING, chainRef, id, account, payer, amount);
+    }
+
+    /// @dev A receipt-backed held deposit's leaf, as the engine commits it from `V77`, without siblings
+    /// until `_proven` adds them.
+    function _addHeld(bytes memory chainRef, uint64 id, address account, address payer, int128 amount)
+        internal
+        returns (ExitVerifier.ReceiptLeaf memory)
+    {
+        return _addReceipt(HELD, chainRef, id, account, payer, amount);
+    }
+
+    /// @dev An unfinalised credit's leaf, without siblings until `_proven` adds them.
+    function _addCredit(bytes memory chainRef, uint64 id, address account, address payer, int128 amount)
+        internal
+        returns (ExitVerifier.ReceiptLeaf memory)
+    {
+        return _addReceipt(CREDIT, chainRef, id, account, payer, amount);
+    }
+
+    function _addReceipt(uint8 kind, bytes memory chainRef, uint64 id, address account, address payer, int128 amount)
+        private
+        returns (ExitVerifier.ReceiptLeaf memory leaf)
+    {
+        leaf = ExitVerifier.ReceiptLeaf(chainRef, id, account, payer, amount, new bytes32[](0));
+        _leaf(keccak256(abi.encodePacked(kind, chainRef)), keccak256(abi.encode(id, account, payer, amount)));
+    }
+
+    /// @dev `leaf`, a leaf of kind `kind`, given its siblings in the tree as it stands, in place.
+    function _proven(ExitVerifier.ReceiptLeaf memory leaf, uint8 kind)
+        internal
+        view
+        returns (ExitVerifier.ReceiptLeaf memory)
+    {
+        leaf.siblings = _siblings(keccak256(abi.encodePacked(kind, leaf.chainRef)));
+        return leaf;
     }
 
     /// @dev Posts the tree as the next checkpoint and returns its root.
@@ -172,5 +211,15 @@ abstract contract ExitTest is GovernanceTest {
     {
         positions = new ExitVerifier.PositionState[](0);
         markets = new ExitVerifier.MarketState[](0);
+    }
+
+    /// @dev `leaf` alone, as a batch of credits.
+    function _one(ExitVerifier.ReceiptLeaf memory leaf)
+        internal
+        pure
+        returns (ExitVerifier.ReceiptLeaf[] memory leaves)
+    {
+        leaves = new ExitVerifier.ReceiptLeaf[](1);
+        leaves[0] = leaf;
     }
 }

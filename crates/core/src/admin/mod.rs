@@ -390,6 +390,11 @@ impl Engine {
                 if self.protocol_version < ProtocolVersion::V46 && *version >= ProtocolVersion::V46 {
                     self.bound_stress_floors(events);
                 }
+                // Each credited receipt still awaiting finality, and each held receipt, takes its exit
+                // leaf at the next root.
+                if self.protocol_version < ProtocolVersion::V77 && *version >= ProtocolVersion::V77 {
+                    self.touch_exit_receipts();
+                }
                 self.start_rule_sets(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
                 self.protocol_version = *version;

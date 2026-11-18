@@ -24,7 +24,9 @@
 //!   vault's exit (`exit.rs`). From `V54`, kind 25 is an account's toxicity score (`address`) and
 //!   kind 26 a market's markout spread history (`uint32`) (`toxicity.rs`). From `V55`, kind 27 is a
 //!   position's open time (`address` account, `uint32` market) (`open_time.rs`). From `V59`, kind 28 is
-//!   an account's volume book (`address`) (`volume.rs`).
+//!   an account's volume book (`address`) (`volume.rs`). From `V77`, kind 35 is an unfinalised credit
+//!   (its receipt's UTF-8 reference), ABI-encoded as a pending deposit's leaf is, as a receipt-backed
+//!   held deposit's leaf (33) is too (`credits.rs`).
 //! - **Paths.** The key's bits, most significant first, are the path from the root: bit `d`,
 //!   `(uint256(key) >> (255 - d)) & 1`, picks the child at depth `d + 1`, 0 left and 1 right.
 //! - **Leaves.** `keccak256(abi.encodePacked(bytes1(0x00), key, valueHash))`; each kind's
@@ -55,6 +57,8 @@ mod withdrawal;
 pub use withdrawal::*;
 mod exit;
 pub use exit::*;
+mod credits;
+pub use credits::{ReceiptKind, ReceiptProof, UnfinalisedCreditProof, unfinalised_credit_key};
 mod open_time;
 pub use open_time::{open_time_hash, open_time_key};
 mod toxicity;

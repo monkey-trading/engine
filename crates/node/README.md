@@ -142,8 +142,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   its proof, for the vault's `claimDistribution`; checkpoint
   reconciliation counts the USDC the vault has paid in distributions against the ledger
 - The exit against the last posted root from protocol `V38`: `GET /v1/accounts/{address}/exit`
-  serves every proof an account exits the vault with against the last checkpoint's root, and
-  `engine exit-proof` builds the same from a published log alone, with each vault call ABI-encoded
+  serves every proof an account exits the vault with against the last checkpoint's root, from
+  `V77` its unfinalised credits among them, and `engine exit-proof` builds the same from a published
+  log alone, with each vault call ABI-encoded, or with `--deposit <id>` the refund of the vault's
+  deposit at an id through the credited, pending or held receipt the root holds there
 - Close-spread ceilings from protocol `V40`: genesis adopts the most each market's closes may pay,
   whatever the parameters do, and `engine admin adopt-close-spread-ceiling` adopts a new market's
   ceiling — or lowers one — from seven days after it is logged; `SetParams` is never refused for a
@@ -711,8 +713,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof, at the
   checkpoint the vault accepted when one is retained, for the vault's `claimDistribution`
 - `src/api/exit.rs` — every proof an account exits the vault with, against the last checkpoint's root
-- `src/exit.rs` — `engine exit-proof`: a published log's commands applied through one checkpoint,
-  the exit proofs against its root, and the vault calls that carry them, ABI-encoded
+- `src/exit/mod.rs` — `engine exit-proof`: a published log's commands applied through one checkpoint,
+  the exit proofs against its root, or the receipt it holds at a deposit id, and the vault calls that
+  carry them, ABI-encoded
+- `src/exit/tests.rs` — the calls an account, its credits in batches, a staker and a deposit id are
+  given, and the root a published log's prefix reproduces
 - `src/api/benchmark_schedule.rs` — capped, bounded watches of the durable rollover schedule
 - `src/api/benchmark_tests.rs` — deterministic publisher/TLS/API restart and financing dev scenario
 - `src/api/benchmark_tests/operator_bounds.rs` — the operator bounds dev scenario: rates inside and outside the cap, the worker signing around a refusal, the stress floor's limit and lapse, restart and replay
@@ -1689,7 +1694,8 @@ cargo run -p engine-node -- replay --log data/dev/log
 # The proofs an account exits the vault with, from the log alone, at the vault's latestSeq, with
 # each vault call ABI-encoded to send in order (cast send <vault> <calldata>), skipping a call the
 # vault refuses for the reason its description names; --house builds the refunds of the house's
-# pending deposits. The log's commands must reproduce that checkpoint's root; signatures are not
+# pending deposits, and --deposit <id> the refund of the vault's deposit at that id through the
+# receipt the root holds there. The log's commands must reproduce that checkpoint's root; signatures are not
 # checked, since the vault checks every proof against the root it accepted.
 cargo run -p engine-node -- exit-proof --log data/dev/log --seq <latestSeq> --account <address>
 
@@ -2991,8 +2997,10 @@ and from `V50` each operator's part of it by time in office is in its own.
 against the state root of the last checkpoint: `terms` (the vault deposit cursor and the pending and
 held principal the exit reserves), `account` (its leaf, positions and their markets, as
 `/v1/accounts/{address}/proof` serves them), `approvals` (every approval it holds; the vault's
-`usedNonces` says which are unpaid), `queued`, `distribution`, and `pending_deposits` (deposits for
-it pending a declaration or screening, refunded to their payer). Amounts are the engine's decimal
+`usedNonces` says which are unpaid), `queued`, `distribution`, `pending_deposits` (deposits for
+it pending a declaration or screening, refunded to their payer), and from `V77`
+`unfinalised_credits` (its credited receipts still awaiting finality, in increasing deposit id,
+which `registerExitCredits` adds back to its claim where the vault's records match them). Amounts are the engine's decimal
 strings. The vault checks them against its latest posted root, so they serve the exit once the
 vault's `latestSeq` is the proof's `seq`. The route gets 404 until the first checkpoint under `V38`.
 `engine exit-proof` builds the same bundle from the public log after the node is gone.

@@ -2,13 +2,15 @@
 pragma solidity 0.8.36;
 
 import {ExitVerifier} from "../src/ExitVerifier.sol";
+import {Vault} from "../src/Vault.sol";
 import {ExitTest} from "./helpers/ExitTest.sol";
 
 /// The exit against roots the engine computed. `crates/core/tests/fixtures/exit.json` holds the
 /// engine's exit proofs for a trading session (positions in a USD, a euro and a yen market, an
-/// approval, and a queued remainder) and a custody session (credited, pending, held and house
-/// receipts); `crates/core/tests/exit/fixture.rs` checks it against the engine, including that each
-/// claim is the engine's own equity.
+/// approval, and a queued remainder) and a `V77` custody session (credited, pending, held and house
+/// receipts, the credited one with its unfinalised credit leaf and the held one with its ABI leaf);
+/// `crates/core/tests/exit/fixture.rs` checks it against the engine, including that each claim is the
+/// engine's own equity.
 contract ExitVectorTest is ExitTest {
     string private fixture;
 
@@ -55,7 +57,7 @@ contract ExitVectorTest is ExitTest {
         // The vault's deposits 0 to 3, as the engine's receipts name them.
         _deposit(client, client, 100e6);
         _deposit(payer, vm.parseJsonAddress(fixture, ".custody.pending.account"), 40e6);
-        _deposit(makeAddr("sanctioned"), client, 30e6);
+        _deposit(vm.parseJsonAddress(fixture, ".custody.held.payer"), client, 30e6);
         usdc.mint(payer, 12e6);
         vm.startPrank(payer);
         usdc.approve(address(vault), 12e6);
@@ -67,9 +69,15 @@ contract ExitVectorTest is ExitTest {
         assertEq(vault.exitRefundReserve(), 52e6);
         assertEq(vault.exitHeldReserve(), 30e6);
 
+        // The client's unfinalised principal joins its claim through its credit.
         vault.registerExit(client, _account(".custody"), _positions(".custody"), _markets(".custody"));
+        assertEq(vault.exitClaims(client), 0);
+        vault.registerExitCredits(client, _one(_receipt(".custody.credit")));
         assertEq(vault.exitClaims(client), vm.parseJsonUint(fixture, ".custody.claimUsdc"));
-        assertEq(vault.exitClaims(client), 100e6, "unfinalised principal is the account's");
+        assertEq(vault.exitClaims(client), 100e6, "unfinalised principal the vault holds is the account's");
+        // The held receipt proves, and the vault holds its deposit, so it stays held.
+        vm.expectRevert(abi.encodeWithSelector(Vault.NotRefundable.selector, 2));
+        vault.refundReceipt(_receipt(".custody.held"), HELD);
         _refundPending(".custody.pending");
         _refundPending(".custody.house");
         assertEq(usdc.balanceOf(payer), 52e6);
@@ -152,15 +160,16 @@ contract ExitVectorTest is ExitTest {
     }
 
     function _refundPending(string memory path) private {
-        ExitVerifier.PendingDeposit memory pending = ExitVerifier.PendingDeposit(
+        vault.refundReceipt(_receipt(path), PENDING);
+    }
+
+    function _receipt(string memory path) private view returns (ExitVerifier.ReceiptLeaf memory) {
+        return ExitVerifier.ReceiptLeaf(
+            bytes(vm.parseJsonString(fixture, string.concat(path, ".chainRef"))),
             uint64(vm.parseJsonUint(fixture, string.concat(path, ".depositId"))),
             vm.parseJsonAddress(fixture, string.concat(path, ".account")),
             vm.parseJsonAddress(fixture, string.concat(path, ".payer")),
-            _int128(string.concat(path, ".amount"))
-        );
-        vault.refundPendingDeposit(
-            bytes(vm.parseJsonString(fixture, string.concat(path, ".chainRef"))),
-            pending,
+            _int128(string.concat(path, ".amount")),
             vm.parseJsonBytes32Array(fixture, string.concat(path, ".siblings"))
         );
     }

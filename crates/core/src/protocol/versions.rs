@@ -478,4 +478,14 @@ pub enum ProtocolVersion {
     /// (`listing_bounds`). A corporate action stays within `corporate::CorporateBounds` and, while votes
     /// govern, needs a passed vote.
     V76,
+    /// The state root commits each credited receipt whose principal still awaits finality, the house's
+    /// included, as an unfinalised credit leaf binding its vault deposit id, beneficiary, payer and
+    /// amount (`merkle::credits`), from when it is credited, or rescreened into credit, until it
+    /// finalises, reverses or is replaced, and a held deposit's leaf binds the same, as a pending one's
+    /// does, where its receipt binds its payer or, for a booked surplus, its absence; activation
+    /// commits every such receipt already credited or held. The vault's exit adds an account's
+    /// unfinalised principal to its claim only through these leaves, credit by credit, where its own
+    /// deposit records match, and refunds the deposit at an id whose credited, pending or held receipt
+    /// they do not match.
+    V77,
 }

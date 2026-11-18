@@ -598,7 +598,11 @@ its token, provider endpoints and finality tag from the
 host-supplied configuration, which only a verifier holding a published copy of it can check against
 the attested config hash. From V20, deposits trade on sequencer confirmation (`latest`, less
 configured confirmations), while principal can be withdrawn only after Ethereum finality (`finalized`).
-Hardware-TEE validation refuses a different tag pair. Exact receipts, unfinalised principal and
+Hardware-TEE validation refuses a different tag pair. From V77 the exit against the last posted root
+adds such principal to a claim only where the vault's own deposit records match the credit that root
+commits for it, in payer, amount and beneficiary, and refunds the vault's deposit at an id whose
+credited, pending or held receipt in the root they do not match, so a receipt a reorganisation removed
+is not paid from other clients' funds. Exact receipts, unfinalised principal and
 finalised scan progress are deterministic sequenced state. Legacy EVM credits gain no finality from
 their old tag, credit status, host cursor or a config change: activation records their verified credit
 ledger and locks unresolved principal without another cash credit. Exact canonical receipt proof
