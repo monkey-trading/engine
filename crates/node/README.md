@@ -134,12 +134,14 @@ quiet machine. `sequencer::wait_bench` and `stats::launch_bench` give their comm
 module documentation.
 
 The load test runs a node on a launch-scale book of 100,000 accounts and loads it through its API,
-its stream and its feeds. Two thousand signed clients send orders, cancels and close-alls, every
-stream subscriber the API allows reads the stream, and loopback stand-ins quote every launch market.
-It runs at launch flow and at ten times launch flow, two minutes each, and prints each run's
-latencies, the sequencer's busy share, and the server's CPU and memory against the launch bar. The
-`--ramp` option then raises the load until a budget breaks. At full size it takes several gigabytes
-of memory and most of a machine's cores, so run it in a quiet window:
+its stream and its feeds. Two thousand traders behind 100 client addresses send signed orders,
+cancels and close-alls, every stream subscriber the API allows reads the stream, and loopback
+stand-ins quote every launch market. It runs at launch flow and at ten times launch flow, two
+minutes each, and prints each run's latencies and the sequencer's busy share against the launch bar.
+It also prints the CPU and memory of the test's process, which holds the server, the stand-ins and
+the screening source. The clients run in a second process. The `--ramp` option then doubles the load
+each minute and prints the load at which each budget first breaks. At full size the test takes
+several gigabytes of memory and most of a machine's cores, so run it in a quiet window:
 
 ```shell
 nice ./scripts/dev-load.sh

@@ -807,9 +807,9 @@ an index: load only the rule whose hint matches the current action.
   stand-ins for every connection the production template opens, under the template's `[api]` limits and screening
   slots, driven by a load generator in a second process, the test binary started again
   (`load_scenario/generator/`): 2,000 traders under session keys sending an open-loop Poisson mix of signed market and
-  limit orders, cancels, cancel-alls and close-alls through the API's PROXY protocol peer from their own addresses, and
+  limit orders, cancels, cancel-alls and close-alls through the API's PROXY protocol peer from 100 client addresses, and
   every stream subscriber the template allows, half signed and some quoting; launch flow and ten times it, with
-  `--ramp` a doubling ramp to the first broken budget, each leg's figures against #904's bar, failing outside it under
+  `--ramp` a doubling ramp printing the load at which each budget first breaks, each leg's figures against #904's bar, failing outside it under
   a loaded runner's tolerance, then the log replayed from the rebuilt book (`replay::replay_path_from`);
   `dev-loss-trigger.sh`, the house loss
   trigger's dev scenario from `V62` against the same stand-ins (`feeds/tests/loss_trigger.rs`, production's zero threshold

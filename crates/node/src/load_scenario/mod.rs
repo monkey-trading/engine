@@ -4,22 +4,24 @@
 //! for every connection the production template opens (`venues`), driven through its TLS API and
 //! WebSocket stream by the load generator, a process of its own (`generator`). Each leg runs at a
 //! multiple of launch flow (`plan`): launch flow, ten times it, and with `LOAD_RAMP=1` a ramp from
-//! twenty times, doubling each step, until a budget breaks. Each leg prints order-to-fill and
+//! twenty times, doubling each step, until every budget has broken, the sequencer's thread is busy
+//! `SATURATED` of the time, a request is refused, or the traders reach their rate. Each leg prints order-to-fill and
 //! price-to-stamp at p50, p99 and p999, the sequencer's batch time, stream lag, the sequencer's busy
 //! share, and the process's CPU and resident memory, judged against #904's launch bar (`report`),
-//! and the ramp the first multiple at which a budget broke. The log the run wrote then replays to its
+//! and the ramp the first multiple at which each budget broke. The log the run wrote then replays to its
 //! roots from the same book, rebuilt (`sequencer::replay::replay_path_from`): the book is no log, so
 //! `engine replay` cannot start from it.
 //!
 //! The launch and ten-times legs pass only within the bar, under the tolerance for a loaded runner
-//! that `sequencer::wait_bench::price_wait_budget` grants (`report::tolerate`), and only with every
-//! request answered 200: none refused for its rate, so every account stays within its tier's request
-//! rate, none refused for want of a screening slot, and none failed.
+//! that `sequencer::wait_bench::price_wait_budget` grants (`report::tolerate`), and only if they
+//! measured what they claim (`report::unmeasured`): every request answered 200 with no rejection, so
+//! every account stays within its tier's request rate and no request lacks a screening slot, every
+//! answer in, a market order filled, every subscriber taking frames, and prices stamped.
 //!
 //! Run by `scripts/dev-load.sh`; its variables size the run: `LOAD_ACCOUNTS` (100,000), `LOAD_TRADERS`
 //! (2,000), `LOAD_SUBSCRIBERS` (`api.max_subscribers`), `LOAD_LEG_SECS` (120), `LOAD_CRYPTO_RATE`
-//! (each crypto market's price commands a second) and `LOAD_RWA_MOVES` (each other market's mid moves
-//! a second on each of its connections).
+//! (every crypto market's price commands a second, in place of each one's measured rate) and
+//! `LOAD_RWA_MOVES` (each other market's mid moves a second on each of its connections).
 
 mod generator;
 mod node;
@@ -27,6 +29,7 @@ mod plan;
 mod report;
 mod venues;
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -38,7 +41,7 @@ use crate::clock::now_ms;
 use crate::common::launch_book::{Mix, NamedCounts, build};
 use crate::load_scenario::node::Node;
 use crate::load_scenario::plan::{Leg, Line, Plan, Ramp};
-use crate::load_scenario::report::{Breach, Resident, Snapshot, judge, print, tolerate};
+use crate::load_scenario::report::{BUDGETS, Breach, Resident, Snapshot, judge, print, tolerate, unmeasured};
 use crate::load_scenario::venues::Moves;
 use crate::sequencer::Request;
 use crate::test_support::scratch_dir;
@@ -57,9 +60,10 @@ const WINDOWS: u32 = 5;
 const MISSES: usize = 2;
 /// The ramp: from twenty times launch flow, doubling, a minute a step.
 const RAMP: Ramp = Ramp { from: 20.0, factor: 2.0, step_secs: 60, max: f64::MAX };
-/// Each crypto market's price commands a second from the live venues, the median `scripts/dev-venue-load.sh
-/// --soak` printed, which its four connections share.
-const CRYPTO_RATE: f64 = 40.0;
+/// Each crypto market's price commands a second from the live venues: BTC-USD's, ETH-USD's and
+/// SOL-USD's median seconds in six minutes of `scripts/dev-venue-load.sh --soak` on 18 November 2026,
+/// whose busiest seconds were 116, 74 and 30. Each market's four connections share its rate.
+const CRYPTO_RATES: [(MarketId, f64); 3] = [(1, 11.0), (2, 15.0), (3, 10.0)];
 const CRYPTO_CONNECTIONS: f64 = 4.0;
 /// How often each other market's mid moves on each of its two connections [proposal]: no vendor's rate
 /// is measured, and CME Group's stand-in quotes twice a second.
@@ -67,6 +71,10 @@ const RWA_MOVES: f64 = 2.0;
 /// How far before the wall clock the book's clock is, so the node's first stamp comes after its
 /// last, which the book's own commands run some 75 seconds past it.
 const BOOK_LEAD_MS: Millis = 10 * 60 * 1_000;
+/// The busy share at which the ramp stops: past it, the sequencer's queue only grows.
+const SATURATED: f64 = 0.9;
+/// How long the generator may go without a line: a leg, its drain and its subscribers' start.
+const LINE_WITHIN: Duration = Duration::from_secs(10 * 60);
 /// How long every market has to be priced once the feeds start.
 const PRICED_WITHIN: Duration = Duration::from_secs(90);
 
@@ -76,7 +84,8 @@ struct Run {
     multiple: f64,
     breaches: Vec<Breach>,
     windows: Vec<Vec<Breach>>,
-    refused: u64,
+    /// What the leg failed to measure (`report::unmeasured`).
+    gaps: Vec<String>,
 }
 
 /// `name`'s value in the environment, or `default`.
@@ -108,7 +117,10 @@ async fn run() {
     let engine = std::mem::take(&mut book.h.engine);
     drop(book);
 
-    let crypto = env("LOAD_CRYPTO_RATE", CRYPTO_RATE) / CRYPTO_CONNECTIONS;
+    // `LOAD_CRYPTO_RATE` sets every crypto market's rate in place of its measured one.
+    let rate = |measured: f64| std::env::var("LOAD_CRYPTO_RATE").map_or(measured, |rate| rate.parse().expect("a rate"));
+    let crypto =
+        CRYPTO_RATES.iter().map(|(market, measured)| (*market, rate(*measured) / CRYPTO_CONNECTIONS)).collect();
     let mut venues = venues::start(Moves { crypto, rwa: env("LOAD_RWA_MOVES", RWA_MOVES) }).await;
     let dir = scratch_dir("load");
     let (listener, api) = node::listen().await;
@@ -174,12 +186,25 @@ async fn wait_priced(tx: &mpsc::Sender<Request>) {
         tx.send(Request::Query(Box::new(read))).await.expect("the sequencer");
         let unpriced = unpriced.await.expect("an answer");
         if unpriced.is_empty() {
-            println!("LOAD priced every market after {:?}", started.elapsed());
+            println!("LOAD priced every market after {:?}, stress levels {:?}", started.elapsed(), stress(tx).await);
             return;
         }
         assert!(started.elapsed() < PRICED_WITHIN, "markets {unpriced:?} unpriced after {PRICED_WITHIN:?}");
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
+}
+
+/// How many markets stand at each stress level, which sets their spreads: from `V62` the house's loss
+/// over the trailing day raises every market to level 2 while the house is behind.
+async fn stress(tx: &mpsc::Sender<Request>) -> BTreeMap<usize, usize> {
+    let (reply, levels) = oneshot::channel();
+    let read = move |engine: &engine_core::Engine| {
+        let mut levels = BTreeMap::new();
+        engine.markets().values().for_each(|market| *levels.entry(market.stress.level).or_default() += 1);
+        let _ = reply.send(levels);
+    };
+    tx.send(Request::Query(Box::new(read))).await.expect("the sequencer");
+    levels.await.expect("an answer")
 }
 
 /// Starts the generator, judges each leg it reports, and stops the ramp at the first that breaks a
@@ -206,7 +231,12 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
     let (mut start, mut window) = (Snapshot::take(&node.metrics), Snapshot::take(&node.metrics));
     let mut windows: Vec<Vec<Breach>> = Vec::new();
     let mut runs = Vec::new();
-    while let Some(line) = lines.recv().await {
+    // The first multiple each budget broke at, over the ramp and the legs before it.
+    let mut broken: BTreeMap<(&str, &str), f64> = BTreeMap::new();
+    while let Some(line) = tokio::time::timeout(LINE_WITHIN, lines.recv())
+        .await
+        .unwrap_or_else(|_| panic!("the load generator sent nothing for {LINE_WITHIN:?}"))
+    {
         match line {
             Line::Ready { traders, subscribers } => {
                 println!("LOAD generator ready traders={traders} subscribers={subscribers}")
@@ -230,10 +260,18 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
                 let node_figures = Snapshot::take(&node.metrics).since(&start);
                 let breaches = judge(&figures, &node_figures);
                 print(&leg, multiple, &figures, &node_figures, resident.reset(), &breaches);
-                let refused = figures.refused;
-                let ramping = leg.starts_with("ramp_");
-                let stop = ramping && !breaches.is_empty();
-                runs.push(Run { leg, multiple, breaches, windows: std::mem::take(&mut windows), refused });
+                println!("LOAD leg={leg} stress_levels {:?}", stress(&node.tx).await);
+                let gaps = unmeasured(&figures, &node_figures);
+                if !gaps.is_empty() {
+                    println!("LOAD leg={leg} unmeasured {gaps:?}");
+                }
+                for breach in &breaches {
+                    broken.entry((breach.budget, breach.quantile)).or_insert(multiple);
+                }
+                let exhausted =
+                    broken.len() == BUDGETS.len() || !gaps.is_empty() || node_figures.busy_share >= SATURATED;
+                let stop = leg.starts_with("ramp_") && exhausted;
+                runs.push(Run { leg, multiple, breaches, windows: std::mem::take(&mut windows), gaps });
                 writeln!(answers, "{}", if stop { "stop" } else { "next" }).expect("the generator reads");
             }
         }
@@ -243,26 +281,25 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
     runs
 }
 
-/// Prints the ramp's breaking point, and fails a measured leg outside the bar or with a request
-/// answered with other than 200.
+/// Prints the first multiple of launch flow each budget broke at, and fails a measured leg outside
+/// the bar or that did not measure what it claims.
 fn conclude(runs: &[Run]) {
-    let ramp: Vec<&Run> = runs.iter().filter(|run| run.leg.starts_with("ramp_")).collect();
-    match ramp.iter().find(|run| !run.breaches.is_empty()) {
-        Some(broke) => println!(
-            "LOAD ramp first broke at {}x launch flow ({:.0} requests a second): {:?}",
-            broke.multiple,
-            plan::requests_per_second(broke.multiple),
-            broke.breaches
-        ),
-        None if !ramp.is_empty() => {
-            println!("LOAD ramp held through {}x launch flow", ramp.last().map_or(0.0, |run| run.multiple))
+    let last = runs.last().map_or(0.0, |run| run.multiple);
+    for (budget, quantile) in BUDGETS {
+        let first = runs.iter().find(|run| run.breaches.iter().any(|b| (b.budget, b.quantile) == (budget, quantile)));
+        match first {
+            Some(run) => println!(
+                "LOAD first broke {budget} {quantile} at {}x launch flow ({:.0} requests a second)",
+                run.multiple,
+                plan::requests_per_second(run.multiple)
+            ),
+            None => println!("LOAD held {budget} {quantile} through {last}x launch flow"),
         }
-        None => {}
     }
     let measured: Vec<&Run> = runs.iter().filter(|run| !run.leg.starts_with("ramp_")).collect();
     assert_eq!(measured.len(), 2, "both measured legs ran");
     for run in measured {
-        assert_eq!(run.refused, 0, "{}: requests answered with other than 200, or failed", run.leg);
+        assert!(run.gaps.is_empty(), "{} did not measure what it claims: {:?}", run.leg, run.gaps);
         let failed = tolerate(&run.windows, MISSES);
         assert!(failed.is_empty(), "{} broke the launch bar: {failed:?}", run.leg);
     }

@@ -5,11 +5,14 @@
 # second process: signed market and limit orders, cancels, cancel-alls and close-alls from 2,000
 # traders under session keys, through the API's trusted PROXY protocol peer, and every stream
 # subscriber the template allows, half signed. It runs launch flow, then ten times it, two minutes
-# each, and with --ramp a ramp from twenty times launch flow, doubling each minute, until a budget
-# breaks. Each leg prints order-to-fill and price-to-stamp at p50, p99 and p999, the sequencer's
+# each, and with --ramp a ramp from twenty times launch flow, doubling each minute, until every budget
+# has broken or the sequencer is saturated, then prints the load at which each budget first broke.
+# Each leg prints order-to-fill and price-to-stamp at p50, p99 and p999, the sequencer's
 # batch time, stream lag, the sequencer's busy share, and the process's CPU and resident memory,
 # against the launch bar; the run's log then replays to its roots. It fails if either measured leg
-# breaks the bar, with a loaded runner's tolerance, or a request is refused for its rate.
+# breaks the bar, with a loaded runner's tolerance, or did not measure what it claims: a request
+# refused, rejected or unanswered, a subscriber that took no frame or lost its connection, or no
+# fill or stamped price.
 #
 # Needs only Cargo: the venues and the screening source are loopback stand-ins, on free ports, with
 # private temporary data. The environment sizes the run: LOAD_ACCOUNTS (100000), LOAD_TRADERS (2000),

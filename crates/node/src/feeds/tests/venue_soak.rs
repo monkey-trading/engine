@@ -62,7 +62,7 @@ fn soak_genesis() -> Genesis {
     let eth = genesis.markets.iter().find(|market| market.id == 2).expect("ETH-USD is listed").clone();
     genesis.markets.push(MarketSpec { id: 3, symbol: "SOL-USD".into(), ..eth });
     genesis.markets.sort_by_key(|market| market.id);
-    let ceiling = genesis.close_spread_ceilings.iter().find(|c| c.market == 2).expect("ETH-USD's ceiling").clone();
+    let ceiling = *genesis.close_spread_ceilings.iter().find(|c| c.market == 2).expect("ETH-USD's ceiling");
     genesis.close_spread_ceilings.push(CloseSpreadCeiling { market: 3, ..ceiling });
     genesis.close_spread_ceilings.sort_by_key(|ceiling| ceiling.market);
     genesis

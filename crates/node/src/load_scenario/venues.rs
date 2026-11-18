@@ -56,10 +56,11 @@ const TOKEN_LIFE_SECS: u64 = 1_799;
 /// ping.
 const UNPROBED: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// How often each connection's mids move, in moves a second.
-#[derive(Clone, Copy, Debug)]
+/// How often each connection's mids move, in moves a second: each crypto market's, and every other
+/// market's.
+#[derive(Clone, Debug)]
 pub(super) struct Moves {
-    pub crypto: f64,
+    pub crypto: BTreeMap<MarketId, f64>,
     pub rwa: f64,
 }
 
@@ -130,15 +131,17 @@ pub(super) async fn start(moves: Moves) -> Venues {
         let quoted = symbols.entry(conn.venue).or_default();
         quoted.extend(conn.symbols.iter().map(|symbol| (symbol.symbol.clone(), symbol.market)));
     }
+    let rwa = moves.rwa;
     let prices = |venue: Venue| -> Prices {
         let quoted = symbols.get(&venue).cloned().unwrap_or_default();
-        Arc::new(move |symbol: &str, ts: Millis| Some(book(*quoted.get(symbol)?, moves.rwa, ts)))
+        Arc::new(move |symbol: &str, ts: Millis| Some(book(*quoted.get(symbol)?, rwa, ts)))
     };
     let mut urls: BTreeMap<Venue, String> = BTreeMap::new();
     for venue in [Venue::Coinbase, Venue::CoinbaseExchange, Venue::Kraken] {
         let (listener, url) = listen().await;
         let quoted = symbols.get(&venue).cloned().unwrap_or_default();
-        tasks.push(tokio::spawn(serve_crypto(listener, venue, quoted, moves.crypto)).abort_handle());
+        let quoted = quoted.into_iter().map(|(symbol, market)| (symbol, (market, moves.crypto[&market]))).collect();
+        tasks.push(tokio::spawn(serve_crypto(listener, venue, quoted)).abort_handle());
         urls.insert(venue, url);
     }
     let (massive, massive_url) = listen().await;
@@ -183,11 +186,12 @@ pub(super) async fn start(moves: Moves) -> Venues {
     Venues { connections, access, tasks, cme, _alpaca: alpaca }
 }
 
-/// Serves `venue`'s books of `symbols` to every connection a feed opens, each until it closes: every
-/// symbol's whole book `CRYPTO_UPDATES` times a second, or twice as often as its mid moves if that is
-/// more, so each move is sent.
-async fn serve_crypto(listener: TcpListener, venue: Venue, symbols: BTreeMap<String, MarketId>, moves: f64) {
-    let every = Duration::from_secs_f64(1.0 / CRYPTO_UPDATES.max(2.0 * moves));
+/// Serves `venue`'s books of `symbols`, each with its market and its moves a second, to every
+/// connection a feed opens, each until it closes: every symbol's whole book `CRYPTO_UPDATES` times a
+/// second, or twice as often as the fastest mid moves if that is more, so each move is sent.
+async fn serve_crypto(listener: TcpListener, venue: Venue, symbols: BTreeMap<String, (MarketId, f64)>) {
+    let fastest = symbols.values().map(|(_, moves)| *moves).fold(0.0, f64::max);
+    let every = Duration::from_secs_f64(1.0 / CRYPTO_UPDATES.max(2.0 * fastest));
     while let Ok((tcp, _)) = listener.accept().await {
         let symbols = symbols.clone();
         tokio::spawn(async move {
@@ -201,8 +205,8 @@ async fn serve_crypto(listener: TcpListener, venue: Venue, symbols: BTreeMap<Str
                     read = ws.next() => if !matches!(read, Some(Ok(_))) { return },
                     _ = ticks.tick() => {
                         let ts = now_ms();
-                        for (symbol, market) in &symbols {
-                            let (bid, ask) = book(*market, moves, ts);
+                        for (symbol, (market, moves)) in &symbols {
+                            let (bid, ask) = book(*market, *moves, ts);
                             let (bid, ask) = (bid.to_string(), ask.to_string());
                             let text = match venue {
                                 Venue::Coinbase => coinbase_levels(sequence, true, symbol, &bid, &ask, ts),

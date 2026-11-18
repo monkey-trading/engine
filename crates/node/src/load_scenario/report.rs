@@ -1,6 +1,7 @@
 //! The node's side of each leg's figures: its metrics read before and after, as an operator's
-//! Prometheus reads them, the process's CPU and resident memory, and the leg judged against #904's
-//! launch bar together with what the generator saw.
+//! Prometheus reads them, the CPU and resident memory of the process, which holds the node, the venue
+//! stand-ins and the screening source, and the leg judged against #904's launch bar together with
+//! what the generator saw.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -17,6 +18,17 @@ const PRICE_TO_STAMP: &str = "engine_price_to_stamp_seconds";
 const REQUEST: &str = "engine_api_request_seconds";
 const STREAM_LAG: &str = "engine_stream_lag_seconds";
 const BATCH: &str = "engine_sequencer_batch_seconds";
+/// Every budget of the launch bar `judge` holds a leg to, by name and quantile.
+pub(super) const BUDGETS: [(&str, &str); 8] = [
+    ("order_to_fill_us", "p50"),
+    ("order_to_fill_us", "p99"),
+    ("order_to_fill_us", "p999"),
+    ("price_to_stamp_us", "p50"),
+    ("price_to_stamp_us", "p99"),
+    ("price_to_stamp_us", "p999"),
+    ("stream_lag_ms", "p99"),
+    ("sequencer_busy_share", "mean"),
+];
 /// The counters it reads.
 const BUSY: &str = "engine_sequencer_busy_seconds_total";
 const COMMANDS: &str = "engine_commands_total";
@@ -205,9 +217,9 @@ impl Resident {
         Resident { peak, stop }
     }
 
-    /// The highest sampled since the last reset, and a new start from now.
+    /// The highest sampled since the last reset; the next second's sample starts the next peak.
     pub(super) fn reset(&self) -> u64 {
-        self.peak.swap(process().1, Ordering::Relaxed)
+        self.peak.swap(0, Ordering::Relaxed)
     }
 }
 
@@ -234,8 +246,9 @@ pub(super) fn judge(figures: &Figures, node: &Delta) -> Vec<Breach> {
             breaches.push(Breach { budget: "price_to_stamp_us", quantile, figure, bar: bar * 1e6 });
         }
     }
-    if figures.stream_lag_ms.p99 > STREAM_LAG_P99_MS {
-        let (figure, bar) = (figures.stream_lag_ms.p99 as f64, STREAM_LAG_P99_MS as f64);
+    // The bar holds every subscriber: a frame reaches each within it, at its own p99.
+    if figures.slowest_subscriber_p99_ms > STREAM_LAG_P99_MS {
+        let (figure, bar) = (figures.slowest_subscriber_p99_ms as f64, STREAM_LAG_P99_MS as f64);
         breaches.push(Breach { budget: "stream_lag_ms", quantile: "p99", figure, bar });
     }
     if node.busy_share > BUSY_SHARE {
@@ -247,6 +260,21 @@ pub(super) fn judge(figures: &Figures, node: &Delta) -> Vec<Breach> {
         });
     }
     breaches
+}
+
+/// What keeps a leg from measuring what it claims, which no budget can show: a request refused,
+/// rejected or unanswered, no market order filled, a subscriber that took no frame or lost its
+/// connection, or no price stamped.
+pub(super) fn unmeasured(figures: &Figures, node: &Delta) -> Vec<String> {
+    let gaps = [
+        (figures.refused > 0, format!("{} requests refused, rejected or failed", figures.refused)),
+        (figures.unanswered > 0, format!("{} requests unanswered at the drain's end", figures.unanswered)),
+        (figures.order_to_fill_us.count == 0, "no market order filled".to_owned()),
+        (figures.silent_subscribers > 0, format!("{} subscribers took no frame", figures.silent_subscribers)),
+        (figures.disconnects > 0, format!("{} subscriber connections ended", figures.disconnects)),
+        (node.price_to_stamp.count == 0, "no price stamped".to_owned()),
+    ];
+    gaps.into_iter().filter(|(gap, _)| *gap).map(|(_, why)| why).collect()
 }
 
 /// A loaded runner's tolerance, as `sequencer::wait_bench::price_wait_budget` grants one: a budget at
@@ -282,13 +310,14 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
     };
     let replies: Vec<String> = figures.replies.iter().map(|(kind, count)| format!("{kind}={count}")).collect();
     println!(
-        "LOAD leg={leg} multiple={multiple} secs={:.0} requests={} fills={} late={} refused={} commands_per_second={:.0} \
-         replies[{}]",
+        "LOAD leg={leg} multiple={multiple} secs={:.0} requests={} fills={} late={} refused={} unanswered={} \
+         commands_per_second={:.0} replies[{}]",
         node.secs,
         figures.sent.values().sum::<u64>(),
         figures.fills,
         figures.late,
         figures.refused,
+        figures.unanswered,
         node.commands / node.secs,
         replies.join(" ")
     );
@@ -298,8 +327,11 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
     let bar: Vec<u64> = PRICE_TO_STAMP_S.iter().map(|s| (s * 1e6) as u64).collect();
     println!("LOAD leg={leg} price_to_stamp_us {} bar={bar:?}", node_us(&node.price_to_stamp));
     println!(
-        "LOAD leg={leg} stream_lag_ms(client) {} frames={} quote_frames={} disconnects={} bar_p99={STREAM_LAG_P99_MS}",
+        "LOAD leg={leg} stream_lag_ms(client) {} slowest_subscriber_p99={} silent={} frames={} quote_frames={} \
+         disconnects={} bar_p99={STREAM_LAG_P99_MS}",
         us(&figures.stream_lag_ms),
+        figures.slowest_subscriber_p99_ms,
+        figures.silent_subscribers,
         figures.frames,
         figures.quote_frames,
         figures.disconnects
@@ -307,7 +339,7 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
     println!("LOAD leg={leg} stream_publish_us(node) {}", node_us(&node.stream_lag));
     println!("LOAD leg={leg} sequencer_batch_us {}", node_us(&node.batch));
     println!(
-        "LOAD leg={leg} sequencer_busy_share={:.3} bar={BUSY_SHARE} cpu_cores={:.2} resident_mib={rss_mib}",
+        "LOAD leg={leg} sequencer_busy_share={:.3} bar={BUSY_SHARE} process_cpu_cores={:.2} process_resident_mib={rss_mib}",
         node.busy_share, node.cpu_cores
     );
     let verdict = if breaches.is_empty() { "within".to_owned() } else { format!("OVER {breaches:?}") };
@@ -343,6 +375,29 @@ mod tests {
         let (histograms, _) = parse(&metrics.encode());
         let since = histograms[PRICE_TO_STAMP].since(&earlier);
         assert_eq!((since.count, since.buckets[4].1, since.buckets[3].1), (1, 1, 1), "{since:?}");
+    }
+
+    #[test]
+    fn a_leg_that_measured_nothing_or_was_refused_is_named_unmeasured() {
+        let metrics = Metrics::new();
+        let before = Snapshot::take(&metrics);
+        metrics.latency.price_to_stamp.observe(0.000_1);
+        let node = Snapshot::take(&metrics).since(&before);
+        let filled = Quantiles { count: 1, p50: 1, p99: 1, p999: 1, max: 1 };
+        let clean = Figures { order_to_fill_us: filled, ..Figures::default() };
+        assert!(unmeasured(&clean, &node).is_empty());
+        for (gap, figures) in [
+            ("refused", Figures { refused: 1, ..clean.clone() }),
+            ("unanswered", Figures { unanswered: 1, ..clean.clone() }),
+            ("filled", Figures { order_to_fill_us: Quantiles::default(), ..clean.clone() }),
+            ("took no frame", Figures { silent_subscribers: 1, ..clean.clone() }),
+            ("ended", Figures { disconnects: 1, ..clean.clone() }),
+        ] {
+            let gaps = unmeasured(&figures, &node);
+            assert!(gaps.len() == 1 && gaps[0].contains(gap), "{gap}: {gaps:?}");
+        }
+        let idle = Snapshot::take(&metrics);
+        assert_eq!(unmeasured(&clean, &idle.since(&idle)), ["no price stamped"]);
     }
 
     #[test]

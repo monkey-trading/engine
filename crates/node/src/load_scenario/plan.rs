@@ -97,15 +97,22 @@ pub(super) struct Figures {
     pub order_to_fill_us: Quantiles,
     /// Every request from its hand-out to its reply, less the client's signing, in microseconds.
     pub request_us: Quantiles,
-    /// A command frame's arrival at a subscriber after its stamp, in milliseconds.
+    /// A command frame's arrival at a subscriber after its stamp, in milliseconds, over every frame;
+    /// the highest of the subscribers' own p99s, which the launch bar holds each to; and the
+    /// subscribers that took no frame.
     pub stream_lag_ms: Quantiles,
+    pub slowest_subscriber_p99_ms: u64,
+    pub silent_subscribers: u64,
     pub frames: u64,
     pub quote_frames: u64,
     pub disconnects: u64,
     /// Requests the scheduler handed out over two milliseconds after their schedule.
     pub late: u64,
-    /// Requests the node answered with anything but 200, or that failed on the connection.
+    /// Requests the node answered with anything but 200, or with a rejection, or that failed on the
+    /// connection or its timeout.
     pub refused: u64,
+    /// Requests with no reply once the leg's drain ended.
+    pub unanswered: u64,
 }
 
 /// A distribution's size and quantiles.

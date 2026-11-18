@@ -7,6 +7,7 @@
 //! run, and nothing posts checkpoints to a chain: the sequencer writes one every 1,000 commands, as
 //! the template sets, its root taken on the root worker.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -109,7 +110,7 @@ impl Node {
 
         let (samples_tx, samples) = watch::channel(Some(trusted_now()));
         let mut tasks = vec![keep_time(tx.clone(), samples_tx), tick(tx.clone())];
-        let mut sources: std::collections::BTreeMap<MarketId, std::collections::BTreeSet<String>> = Default::default();
+        let mut sources: BTreeMap<MarketId, BTreeSet<String>> = BTreeMap::new();
         for (conn, credentials, tls, timing) in std::mem::take(&mut venues.connections) {
             for symbol in &conn.symbols {
                 sources.entry(symbol.market).or_default().insert(conn.venue.name().to_owned());

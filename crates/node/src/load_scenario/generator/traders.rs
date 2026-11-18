@@ -2,24 +2,25 @@
 //! requests the scheduler hands its client, one at a time over the client's connection, and keeping
 //! what the replies say it holds.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, ensure};
+use anyhow::{Context, anyhow, ensure};
 use engine_core::Fixed;
 use engine_core::auth::RequestAuth;
 use engine_core::command::{CancelAllRequest, CancelRequest, CloseAllRequest, CloseEntry, OrderKind, OrderRequest};
 use engine_core::eip712::{self, Eip712Domain};
+use engine_core::market::QuoteCurrency;
 use engine_core::types::{AccountId, MarketId, Millis, Side};
 use hyper::Method;
 use k256::ecdsa::SigningKey;
 use rustls::ClientConfig;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 
 use crate::clock::now_ms;
 use crate::common::launch_book::named_key;
@@ -33,13 +34,15 @@ const SESSION_LIFE_MS: Millis = 6 * 60 * 60 * 1_000;
 /// Where a limit order rests, away from the mark of 100 so no price reaches it.
 const LIMIT_BUY: i64 = 90;
 const LIMIT_SELL: i64 = 110;
-/// The quoted price of a market order and of each close: the mark, with a slippage bound wide enough
-/// that no order of the mix is declined for the stand-ins' moves or a market's spread.
-const QUOTED: i64 = 100;
-const SLIPPAGE_BPS: i64 = 1_000;
+/// The book's mark in every market (`common::launch_book::MARK`).
+const MARK: i64 = 100;
 /// A request the scheduler hands out later than this after its schedule counts as late: the
-/// generator fell behind it, past its timer's millisecond.
-const LATE: Duration = Duration::from_millis(2);
+/// generator fell behind it.
+const LATE: Duration = Duration::from_millis(1);
+/// How long a request may wait for its reply, and a client for its connection, before it counts as
+/// failed and the client gives up.
+const REPLY_WITHIN: Duration = Duration::from_secs(30);
+const CONNECT_WITHIN: Duration = Duration::from_secs(60);
 
 /// A request kind of the mix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,7 +72,8 @@ impl Kind {
 #[derive(Debug, Default)]
 pub(super) struct Holding {
     pub resting: Vec<u64>,
-    pub positions: BTreeSet<MarketId>,
+    /// Each market the trader holds a position in, and the side that closes it.
+    pub positions: BTreeMap<MarketId, Side>,
 }
 
 /// One request the scheduler hands a client: which of its traders sends it, what it is, and when it
@@ -93,6 +97,8 @@ pub(super) struct Trader {
     nonce: u64,
     pub holding: Arc<Mutex<Holding>>,
     next_client_id: u64,
+    /// Whether a rejection of this trader's has been written out.
+    rejection_said: bool,
 }
 
 impl Trader {
@@ -104,7 +110,7 @@ impl Trader {
         scalar[28..].copy_from_slice(&number.to_be_bytes());
         let session = SigningKey::from_slice(&scalar).expect("a valid scalar");
         let account = eip712::address(key.verifying_key());
-        Trader { account, key, session, nonce: 0, holding: Arc::default(), next_client_id: 1 }
+        Trader { account, key, session, nonce: 0, holding: Arc::default(), next_client_id: 1, rejection_said: false }
     }
 
     /// Registers the session key with the account's signature at its next nonce.
@@ -146,9 +152,7 @@ impl Trader {
         match job.kind {
             Kind::Market | Kind::Limit => {
                 let kind = match (job.kind, job.side) {
-                    (Kind::Market, _) => {
-                        OrderKind::Market { quoted: Fixed::from_int(QUOTED), max_slippage_bps: Some(SLIPPAGE_BPS) }
-                    }
+                    (Kind::Market, _) => OrderKind::Market { quoted: quoted(job.side), max_slippage_bps: None },
                     (_, Side::Buy) => OrderKind::Limit { price: Fixed::from_int(LIMIT_BUY) },
                     (_, Side::Sell) => OrderKind::Limit { price: Fixed::from_int(LIMIT_SELL) },
                 };
@@ -183,13 +187,9 @@ impl Trader {
                 let closes = holding
                     .positions
                     .iter()
-                    .map(|market| CloseEntry { market: *market, quoted: Fixed::from_int(QUOTED) });
-                let mut request = CloseAllRequest {
-                    account,
-                    closes: closes.collect(),
-                    max_slippage_bps: Some(SLIPPAGE_BPS),
-                    auth: None,
-                };
+                    .map(|(market, side)| CloseEntry { market: *market, quoted: quoted(*side) });
+                let mut request =
+                    CloseAllRequest { account, closes: closes.collect(), max_slippage_bps: None, auth: None };
                 request.auth = Some(sign(eip712::close_all_hash(&domain(), &request, nonce, expires_at)));
                 ("/v1/positions/close-all", json!(request).to_string())
             }
@@ -225,16 +225,25 @@ impl Trader {
                     let (market, position) = (event["market"].as_u64(), event["position"].as_str());
                     if let (Some(market), Some(position)) = (market, position) {
                         let market = MarketId::try_from(market).expect("a market id");
-                        match position.parse::<Fixed>().is_ok_and(|qty| qty.is_zero()) {
-                            true => holding.positions.remove(&market),
-                            false => holding.positions.insert(market),
-                        };
+                        match position.parse::<Fixed>() {
+                            Ok(qty) if qty.is_zero() => drop(holding.positions.remove(&market)),
+                            Ok(qty) => drop(
+                                holding
+                                    .positions
+                                    .insert(market, if qty.is_negative() { Side::Buy } else { Side::Sell }),
+                            ),
+                            Err(_) => {}
+                        }
                     }
                     if let Some(id) = event["order_id"].as_u64() {
                         holding.resting.retain(|order| *order != id);
                     }
                 }
                 Some("order_rejected") => {
+                    // Said once per trader, so a rejection the figures only count can be read.
+                    if rejected.is_none() && !std::mem::replace(&mut self.rejection_said, true) {
+                        eprintln!("load generator: {} had an order rejected: {event}", self.account);
+                    }
                     rejected = rejected.or_else(|| event["reason"]["kind"].as_str().map(str::to_owned));
                 }
                 _ => {}
@@ -251,8 +260,7 @@ fn domain() -> Eip712Domain {
 
 /// Each market's units worth the book's position of $5,000 at its mark of 100: a euro or a pound is
 /// 100 dollars and a dollar 100 yen in the book (`common::launch_book`).
-pub(super) fn units(markets: &BTreeMap<MarketId, engine_core::market::QuoteCurrency>) -> BTreeMap<MarketId, Fixed> {
-    use engine_core::market::QuoteCurrency;
+pub(super) fn units(markets: &BTreeMap<MarketId, QuoteCurrency>) -> BTreeMap<MarketId, Fixed> {
     markets
         .iter()
         .map(|(id, currency)| {
@@ -264,6 +272,14 @@ pub(super) fn units(markets: &BTreeMap<MarketId, engine_core::market::QuoteCurre
             (*id, Fixed::from_int(5_000).div_int(per_unit))
         })
         .collect()
+}
+
+/// The price an order to `side` quotes: twice the mark to buy and half it to sell, which no fill is
+/// worse than, so no spread declines it. The house's stress levels widen a spread past a market's
+/// slippage bound, and the generator measures the node's latency, not its slippage guard.
+fn quoted(side: Side) -> Fixed {
+    let mark = Fixed::from_int(MARK);
+    if side == Side::Buy { mark.mul_int(2) } else { mark.div_int(2) }
 }
 
 /// A client: the address its connection names, its traders, and the jobs the scheduler hands it.
@@ -278,12 +294,17 @@ pub(super) struct Client {
 
 impl Client {
     /// Opens the client's connection, retrying until the node takes it.
+    /// Panics if the node takes none within `CONNECT_WITHIN`, which ends the generator.
     async fn connect(&self) -> Http {
+        let started = Instant::now();
         loop {
-            match Http::open(self.api, self.address, &self.tls).await {
-                Ok(http) => return http,
-                Err(_) => sleep(Duration::from_millis(100)).await,
-            }
+            let failure = match timeout(REPLY_WITHIN, Http::open(self.api, self.address, &self.tls)).await {
+                Ok(Ok(http)) => return http,
+                Ok(Err(e)) => format!("{e:#}"),
+                Err(_) => "the handshake timed out".to_owned(),
+            };
+            assert!(started.elapsed() < CONNECT_WITHIN, "client {} cannot connect: {failure}", self.address);
+            sleep(Duration::from_millis(100)).await;
         }
     }
 
@@ -325,23 +346,27 @@ impl Client {
         }
     }
 
-    /// Sends one job and records its reply. Its time runs from when the scheduler handed it out to
-    /// its reply, less the time the client took to sign it: a wait behind the client's previous
-    /// request counts, the generator's own timer and signing do not.
+    /// Sends one job and records its reply. Its time runs from when it was due to its reply, less the
+    /// time the client took to sign it: a wait behind the client's previous request counts, and so
+    /// does the scheduler's lateness, which `late` counts; the client's own signing does not. A
+    /// reply with a rejection in it is refused, as one with any status but 200 is.
     async fn send(&mut self, http: &mut Http, job: Job) {
         let trader = &mut self.traders[job.trader];
         let late = job.dispatched.duration_since(job.due) > LATE;
         let signing = Instant::now();
         let (path, body) = trader.request(&job, &self.units);
         let signed_in = signing.elapsed();
-        let sent = http.send(Method::POST, path, body).await;
-        let waited = job.dispatched.elapsed().saturating_sub(signed_in).as_micros() as u64;
+        let sent = timeout(REPLY_WITHIN, http.send(Method::POST, path, body))
+            .await
+            .unwrap_or_else(|_| Err(anyhow!("no reply")));
+        let waited = job.due.elapsed().saturating_sub(signed_in).as_micros() as u64;
         let (outcome, fills, refused) = match sent {
             Ok((status, reply)) => {
                 let reply: Value = serde_json::from_slice(&reply).unwrap_or_default();
                 let (fills, rejected) = trader.take(status, &reply);
+                let refused = status != 200 || rejected.is_some();
                 let outcome = rejected.map_or_else(|| status.to_string(), |kind| format!("{status}_rejected_{kind}"));
-                (outcome, fills, status != 200)
+                (outcome, fills, refused)
             }
             Err(_) => {
                 *http = self.connect().await;

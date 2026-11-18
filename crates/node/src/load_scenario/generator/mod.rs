@@ -5,10 +5,12 @@
 //!
 //! Each trader is an account of the book with a session key it registers first. Traders share client
 //! addresses, a connection each, which the node takes through its trusted PROXY protocol peer, so its
-//! per-client limits count each address. The schedule is open-loop: requests arrive as a Poisson
-//! process at the leg's rate, each handed to a trader free to send it, whether or not earlier replies
-//! have come, and a request's time is counted from when it was due, so a stalled node shows as
-//! latency, not as a lower rate. No trader sends more than `plan::ACCOUNT_RATE` requests a second.
+//! per-client limits count each address; consecutive requests go to traders of different clients.
+//! The schedule is open-loop: requests arrive as a Poisson process at the leg's rate, each handed to
+//! a trader free to send it, whether or not earlier replies have come, and a request's time is
+//! counted from when it was due, less its client's signing, so a stalled node shows as latency, not
+//! as a lower rate. While a trader is free, none is handed more than `plan::ACCOUNT_RATE` requests a
+//! second, and the ramp stops below the rate at which none would be (`Plan::ceiling`).
 
 mod client;
 mod record;
@@ -29,13 +31,13 @@ use tokio::task::JoinSet;
 use tokio::time::sleep_until;
 
 use crate::common::launch_book::{Rng, market_weights, production_harness};
+use crate::load_scenario::generator::record::{Recorder, Samples, take_all};
+use crate::load_scenario::generator::streams::Subscription;
+use crate::load_scenario::generator::traders::{Client, Holding, Job, Kind, Trader, units};
 use crate::load_scenario::plan::{
     ACCOUNT_RATE, CANCELS, LAUNCH_BTC_FILLS_PER_SECOND, LAUNCH_FILLS_PER_SECOND, LIMIT_ORDERS, Leg, Line,
     MARKET_ORDERS, Plan, requests_per_second,
 };
-use record::{Recorder, Samples, take_all};
-use streams::Subscription;
-use traders::{Client, Holding, Job, Kind, Trader, units};
 
 /// The generator's runtime threads.
 const WORKERS: usize = 4;
@@ -43,6 +45,11 @@ const WORKERS: usize = 4;
 const BTC: MarketId = 1;
 /// How long a leg's replies may take to come in after its last request.
 const DRAIN: Duration = Duration::from_secs(60);
+/// How long every subscriber has to take its first frame.
+const SUBSCRIBED_WITHIN: Duration = Duration::from_secs(60);
+/// How far ahead of a request's due time the scheduler stops sleeping and yields until it is due,
+/// past the timer's millisecond.
+const TIMER_SLACK: Duration = Duration::from_millis(2);
 
 /// A trader the scheduler can hand a request: its client, its place there, what it holds, and when
 /// it may next send.
@@ -62,6 +69,9 @@ struct Scheduler {
     weights: Vec<(MarketId, u64)>,
     jobs: Vec<UnboundedSender<Job>>,
     in_flight: Arc<AtomicU64>,
+    /// Every client's recorder, and every subscriber's.
+    clients: Vec<Recorder>,
+    subscribers: Vec<Recorder>,
 }
 
 #[test]
@@ -147,29 +157,50 @@ async fn run(plan: Plan) {
 
     // Each client sends what the scheduler hands it.
     let in_flight = Arc::new(AtomicU64::new(0));
-    let mut slots = Vec::new();
+    // Trader-major: each client's first trader, then each one's second, so consecutive requests go to
+    // different clients' connections.
+    let most = clients.iter().map(|client| client.traders.len()).max().unwrap_or(0);
+    let slots = (0..most)
+        .flat_map(|trader| {
+            clients
+                .iter()
+                .enumerate()
+                .filter(move |(_, client)| trader < client.traders.len())
+                .map(move |(at, _)| (at, trader))
+        })
+        .map(|(at, trader)| Slot {
+            client: at,
+            trader,
+            holding: clients[at].traders[trader].holding.clone(),
+            free_at: Instant::now(),
+        })
+        .collect();
     let mut jobs = Vec::new();
     let mut client_recorders = Vec::new();
-    for (index, client) in clients.into_iter().enumerate() {
-        for (trader, held) in client.traders.iter().enumerate() {
-            slots.push(Slot { client: index, trader, holding: held.holding.clone(), free_at: Instant::now() });
-        }
+    for client in clients {
         client_recorders.push(client.recorder.clone());
         let (tx, rx) = mpsc::unbounded_channel();
         jobs.push(tx);
         tokio::spawn(client.run(rx, in_flight.clone()));
     }
-    let mut scheduler = Scheduler { rng: Rng::new(906), slots, cursor: 0, weights, jobs, in_flight };
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    take_all(&client_recorders);
-    take_all(&stream_recorders);
+    wait_subscribed(&stream_recorders).await;
+    take_all(&client_recorders, &stream_recorders);
+    let mut scheduler = Scheduler {
+        rng: Rng::new(906),
+        slots,
+        cursor: 0,
+        weights,
+        jobs,
+        in_flight,
+        clients: client_recorders,
+        subscribers: stream_recorders,
+    };
     report(&Line::Ready { traders: plan.traders, subscribers: plan.subscribers });
 
-    let recorders: Vec<Recorder> = client_recorders.into_iter().chain(stream_recorders).collect();
     let mut stdin = std::io::stdin().lock().lines();
     for leg in plan.steps() {
         report(&Line::Start { leg: leg.name.clone(), multiple: leg.multiple });
-        let figures = scheduler.drive(&leg, plan.windows, &recorders).await;
+        let figures = scheduler.drive(&leg, plan.windows).await;
         report(&Line::End { leg: leg.name.clone(), multiple: leg.multiple, figures: figures.figures() });
         match stdin.next() {
             Some(Ok(answer)) if answer.trim() == "next" => {}
@@ -178,25 +209,41 @@ async fn run(plan: Plan) {
     }
 }
 
+/// Waits for every subscriber to take a frame.
+/// Panics if one has none within `SUBSCRIBED_WITHIN`.
+async fn wait_subscribed(subscribers: &[Recorder]) {
+    let started = Instant::now();
+    loop {
+        let silent: Vec<usize> =
+            (0..subscribers.len()).filter(|at| subscribers[*at].lock().expect("a recorder").frames == 0).collect();
+        if silent.is_empty() {
+            return;
+        }
+        assert!(started.elapsed() < SUBSCRIBED_WITHIN, "subscribers {silent:?} took no frame in {SUBSCRIBED_WITHIN:?}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 impl Scheduler {
     /// Runs `leg`'s schedule, reporting each of its `windows` as it ends, and returns the leg's
-    /// samples once its replies are in, or `DRAIN` has passed.
-    async fn drive(&mut self, leg: &Leg, windows: u32, recorders: &[Recorder]) -> Samples {
+    /// samples once its replies are in, or `DRAIN` has passed, with the requests still unanswered.
+    async fn drive(&mut self, leg: &Leg, windows: u32) -> Samples {
         let rate = requests_per_second(leg.multiple);
         let start = Instant::now();
         let end = start + Duration::from_secs(leg.secs);
         let window = Duration::from_secs(leg.secs) / windows.max(1);
         let (mut due, mut index, mut next_window) = (start, 0, start + window);
         let mut all = Samples::default();
-        let close = |index: u32, all: &mut Samples| {
-            let samples = take_all(recorders);
+        let (clients, subscribers) = (self.clients.clone(), self.subscribers.clone());
+        let close = |index: u32, all: &mut Samples, unanswered: u64| {
+            let samples = Samples { unanswered, ..take_all(&clients, &subscribers) };
             report(&Line::Window { leg: leg.name.clone(), index, figures: samples.figures() });
             all.merge(samples);
         };
         loop {
             let now = Instant::now();
             if now >= next_window && index + 1 < windows {
-                close(index, &mut all);
+                close(index, &mut all, 0);
                 (index, next_window) = (index + 1, next_window + window);
                 continue;
             }
@@ -208,13 +255,20 @@ impl Scheduler {
             if now >= end && due >= end {
                 break;
             }
-            sleep_until(due.min(next_window).min(end).into()).await;
+            // The timer wakes on a millisecond's tick: it sleeps to just short of the next event,
+            // then yields until the event is due.
+            let window_ends = if index + 1 < windows { next_window } else { end };
+            let wake = due.min(window_ends).min(end);
+            match wake.checked_sub(TIMER_SLACK).filter(|early| *early > now) {
+                Some(early) => sleep_until(early.into()).await,
+                None => tokio::task::yield_now().await,
+            }
         }
         let drained = Instant::now() + DRAIN;
         while self.in_flight.load(Ordering::Acquire) > 0 && Instant::now() < drained {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        close(index, &mut all);
+        close(index, &mut all, self.in_flight.load(Ordering::Acquire));
         all
     }
 
@@ -306,7 +360,9 @@ mod tests {
         let (channels, mut received): (Vec<_>, Vec<_>) = (0..2).map(|_| mpsc::unbounded_channel()).unzip();
         let in_flight = Arc::new(AtomicU64::new(0));
         let weights = vec![(2, 1)];
-        let mut scheduler = Scheduler { rng: Rng::new(1), slots, cursor: 0, weights, jobs: channels, in_flight };
+        let (clients, subscribers) = (Vec::new(), Vec::new());
+        let mut scheduler =
+            Scheduler { rng: Rng::new(1), slots, cursor: 0, weights, jobs: channels, in_flight, clients, subscribers };
         // Five requests a second among four traders, each free to send one every 1 / ACCOUNT_RATE.
         for step in 0..200 {
             scheduler.dispatch(start + Duration::from_millis(200 * step));

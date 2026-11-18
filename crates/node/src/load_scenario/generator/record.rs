@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::load_scenario::plan::{Figures, Quantiles};
 
-/// One task's samples since the last window ended.
+/// One task's samples since the last window ended, or every task's once taken.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Samples {
     pub sent: BTreeMap<String, u64>,
@@ -14,12 +14,17 @@ pub(super) struct Samples {
     pub fills: u64,
     pub order_to_fill_us: Vec<u64>,
     pub request_us: Vec<u64>,
+    /// One subscriber's frame lags; once taken, each subscriber's, by its place.
     pub stream_lag_ms: Vec<u64>,
+    pub by_subscriber: BTreeMap<usize, Vec<u64>>,
+    /// The subscribers the samples were taken from.
+    pub subscribers: usize,
     pub frames: u64,
     pub quote_frames: u64,
     pub disconnects: u64,
     pub late: u64,
     pub refused: u64,
+    pub unanswered: u64,
 }
 
 /// One task's samples, shared with the window's end.
@@ -34,6 +39,10 @@ impl Samples {
         for (kind, count) in other.replies {
             *self.replies.entry(kind).or_default() += count;
         }
+        for (subscriber, lags) in other.by_subscriber {
+            self.by_subscriber.entry(subscriber).or_default().extend(lags);
+        }
+        self.subscribers = self.subscribers.max(other.subscribers);
         self.fills += other.fills;
         self.order_to_fill_us.extend(other.order_to_fill_us);
         self.request_us.extend(other.request_us);
@@ -43,10 +52,14 @@ impl Samples {
         self.disconnects += other.disconnects;
         self.late += other.late;
         self.refused += other.refused;
+        self.unanswered += other.unanswered;
     }
 
-    /// What the samples show.
+    /// What the samples show: the stream's lag over every frame, and the slowest subscriber's p99,
+    /// which the launch bar holds every subscriber to.
     pub(super) fn figures(&self) -> Figures {
+        let slowest = self.by_subscriber.values().map(|lags| Quantiles::of(&mut lags.clone()).p99).max();
+        let silent = (0..self.subscribers).filter(|at| self.by_subscriber.get(at).is_none_or(Vec::is_empty)).count();
         Figures {
             sent: self.sent.clone(),
             replies: self.replies.clone(),
@@ -54,20 +67,28 @@ impl Samples {
             order_to_fill_us: Quantiles::of(&mut self.order_to_fill_us.clone()),
             request_us: Quantiles::of(&mut self.request_us.clone()),
             stream_lag_ms: Quantiles::of(&mut self.stream_lag_ms.clone()),
+            slowest_subscriber_p99_ms: slowest.unwrap_or(0),
+            silent_subscribers: silent as u64,
             frames: self.frames,
             quote_frames: self.quote_frames,
             disconnects: self.disconnects,
             late: self.late,
             refused: self.refused,
+            unanswered: self.unanswered,
         }
     }
 }
 
-/// Every recorder's samples, each recorder emptied.
-pub(super) fn take_all(recorders: &[Recorder]) -> Samples {
-    let mut all = Samples::default();
-    for recorder in recorders {
+/// Every client's and every subscriber's samples, each recorder emptied, with each subscriber's frame
+/// lags kept apart by its place.
+pub(super) fn take_all(clients: &[Recorder], subscribers: &[Recorder]) -> Samples {
+    let mut all = Samples { subscribers: subscribers.len(), ..Samples::default() };
+    for recorder in clients {
+        all.merge(std::mem::take(&mut *recorder.lock().expect("a recorder")));
+    }
+    for (at, recorder) in subscribers.iter().enumerate() {
         let taken = std::mem::take(&mut *recorder.lock().expect("a recorder"));
+        all.by_subscriber.insert(at, taken.stream_lag_ms.clone());
         all.merge(taken);
     }
     all
@@ -113,7 +134,6 @@ mod tests {
 
     #[test]
     fn merged_samples_add_their_counts_and_keep_every_sample() {
-        let mut all = Samples::default();
         let one = Samples {
             fills: 2,
             order_to_fill_us: vec![5, 1],
@@ -122,13 +142,27 @@ mod tests {
         };
         let two =
             Samples { fills: 1, order_to_fill_us: vec![3], sent: [("market".into(), 1)].into(), ..Samples::default() };
-        all.merge(one);
-        all.merge(two);
+        let all = take_all(&[Recorder::new(one.into()), Recorder::new(two.into())], &[]);
         let figures = all.figures();
         assert_eq!((figures.fills, figures.sent["market"]), (3, 3));
         assert_eq!(
             (figures.order_to_fill_us.count, figures.order_to_fill_us.p50, figures.order_to_fill_us.max),
             (3, 3, 5)
         );
+    }
+
+    #[test]
+    fn the_slowest_subscriber_sets_the_stream_figure_and_a_silent_one_is_counted() {
+        let fast = Samples { stream_lag_ms: vec![1; 1_000], frames: 1_000, ..Samples::default() };
+        let slow = Samples { stream_lag_ms: vec![150; 3], frames: 3, ..Samples::default() };
+        let subscribers = [Recorder::new(fast.into()), Recorder::new(slow.into()), Recorder::default()];
+        let mut leg = take_all(&[], &subscribers);
+        // Pooled, the slow subscriber's frames are under 1% of the stream; alone, its p99 is 150 ms.
+        assert_eq!(leg.figures().stream_lag_ms.p99, 1);
+        assert_eq!((leg.figures().slowest_subscriber_p99_ms, leg.figures().silent_subscribers), (150, 1));
+        let later = take_all(&[], &[Recorder::new(Samples { stream_lag_ms: vec![2], ..Samples::default() }.into())]);
+        leg.merge(later);
+        assert_eq!(leg.by_subscriber[&0].len(), 1_001, "a subscriber's lags across windows are its own");
+        assert!(subscribers.iter().all(|recorder| recorder.lock().unwrap().frames == 0), "each recorder is emptied");
     }
 }
