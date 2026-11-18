@@ -16,6 +16,7 @@ use engine_core::staking::StakingConfig;
 use engine_core::types::{MarketId, Millis};
 use serde::Deserialize;
 
+use crate::common::launch_book::mix::Origin;
 use crate::common::{CHAIN_ID, Harness, VAULT, operator};
 
 const PRODUCTION_GENESIS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/production-genesis.toml");
@@ -78,12 +79,18 @@ fn load() -> File {
 /// initialisations at the launch deployment's values, whose time origin is still ahead. The clock is
 /// at `BOOK_TIME`.
 pub fn production_harness() -> Harness {
+    production_harness_at(ProtocolVersion::LATEST, None)
+}
+
+/// `production_harness` at `version`, with emissions' period 0 and staking's epoch 0 at `origin` (its
+/// start after `BOOK_TIME` and its epoch length) in place of the deployment's.
+pub fn production_harness_at(version: ProtocolVersion, origin: Option<Origin>) -> Harness {
     let genesis = load().genesis;
     let mut h = Harness::empty();
     h.ts = BOOK_TIME;
     h.admin(AdminCommand::SetClientAuth(ClientAuth::Eip712 { chain_id: CHAIN_ID, vault: VAULT }));
     h.admin(AdminCommand::SetOperator(operator()));
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST });
+    h.admin(AdminCommand::ActivateProtocol { version });
     h.admin(AdminCommand::SetParams(genesis.params));
     for market in genesis.markets {
         h.admin(AdminCommand::UpsertMarket(market));
@@ -92,7 +99,7 @@ pub fn production_harness() -> Harness {
     let events = h.cmd(Command::HouseCapital { amount: genesis.house_capital, chain_ref: "genesis".into() });
     let text = std::fs::read_to_string(DEPLOYMENT).expect("ops/runbooks/production-deployment.toml");
     let deployment: Deployment = toml::from_str(&text).expect("the deployment's inputs parse");
-    let start_ms = deployment.start.timestamp_millis();
+    let start_ms = origin.map_or(deployment.start.timestamp_millis(), |origin| BOOK_TIME + origin.start_after);
     let period_budget = deployment.vault.period_budget.parse().expect("a budget in base units");
     h.operator_admin(AdminCommand::InitEmissions(EmissionSchedule {
         start_ms,
@@ -100,7 +107,7 @@ pub fn production_harness() -> Harness {
     }));
     h.operator_admin(AdminCommand::InitStaking(StakingConfig {
         liquidity_floor: deployment.init_staking.liquidity_floor,
-        epoch_ms: deployment.staking.epoch * 1_000,
+        epoch_ms: origin.map_or(deployment.staking.epoch * 1_000, |origin| origin.epoch_ms),
         start_ms,
         cooldown_ms: deployment.staking.cooldown * 1_000,
     }));

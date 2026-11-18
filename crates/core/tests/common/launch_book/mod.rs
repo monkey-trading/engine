@@ -1,4 +1,4 @@
-//! A launch-scale book (#905): `Mix::accounts` accounts at `ProtocolVersion::LATEST` on the
+//! A launch-scale book (#905): `Mix::accounts` accounts at `Mix::version` (the latest by default) on the
 //! production genesis's 34 markets, each holding positions, resting orders up to its volume tier's
 //! limit, a volume book, a toxicity score and session keys, dealt out as `Mix` says.
 //!
@@ -9,6 +9,7 @@
 //! several gigabytes.
 
 mod build;
+mod counts;
 mod genesis;
 mod mix;
 
@@ -18,4 +19,4 @@ pub use build::{Book, CLOSEOUT_MARKET, MARK, NamedCounts, build, closeout_mark};
 #[allow(unused_imports)]
 pub use genesis::*;
 #[allow(unused_imports)]
-pub use mix::Mix;
+pub use mix::{Mix, Origin, Weak, WeakKind};

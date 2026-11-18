@@ -104,7 +104,9 @@ an index: load only the rule whose hint matches the current action.
   durable outage retries and uncredited custody holds in `access/`. Unit tests sit
   inline; protocol tests are in `tests/` by area, with the shared harness in `tests/common/`.
   `tests/common/launch_book/` builds a launch-scale book for the benchmarks (`tests/launch_book_benchmark.rs`, with
-  `engine-node`'s `stats::launch_bench`) and `tests/launch_book.rs` holds it to its mix.
+  `engine-node`'s `stats::launch_bench`) and `tests/launch_book.rs` holds it to its mix; `tests/mass_events_benchmark.rs`
+  runs the commands that act on every holder of a market, or every account, on it (#907), and `engine-node`'s
+  `sequencer::wait_bench::mass` times what a price waits behind two of them.
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
   `tests/invariants/` holds the property tests. Its `README.md` lists every file.
@@ -924,6 +926,13 @@ Run from the repo root:
   parts taken away), and its stats scans and worker copy:
   `cargo test -p engine-node --lib stats::launch_bench -- --ignored --nocapture --test-threads=1`; the builder's own
   test: `cargo test -p engine-core --test launch_book`
+- Mass-event latency (#907: the weekend gap's start, a crash, a stress level change, a split and a dividend, the MONKEY
+  period close and the staking epoch close, an activation and V74's re-key, each on a launch-scale book of its own; an
+  activation and the first price after a relisting are only reported against #904's 500 ms bar,
+  and every case over it prints `OVER`): `cargo test -p engine-core --test
+  mass_events_benchmark --locked -- --ignored --nocapture --test-threads=1 mass_` (`MASS_ACCOUNTS` and `MASS_ORDERS`
+  scale it down), and what a price waits behind the weekend close-out and the crash through the sequencer:
+  `cargo test -p engine-node --lib sequencer::wait_bench::mass -- --ignored --nocapture --test-threads=1`
 - Property tests: `cargo test -p engine-core --test invariants`
 - Production genesis and its calendars: `cargo test -p engine-node --test production_genesis`
 - Production node template: `cargo test -p engine-node --test production_node_template`
