@@ -28,18 +28,19 @@ const PIECE_TIME: Duration = Duration::from_millis(1);
 const PIECE_ENTRIES: usize = 128;
 /// The root work a paced checkpoint's commit may wait for, in leaf writes on the worker:
 /// `launch_book_benchmark`'s `root_commit` cases put a wait at this bound at about 25 ms on CI.
-pub(super) const ROOT_BOUND: u64 = 4_000;
+const ROOT_BOUND: u64 = 4_000;
 /// What a commit waits for beside its leaf writes, in leaf writes: hashing the branches nearly every
 /// write shares, which only a commit hashes, and the commit's bookkeeping.
 const ROOT_RESERVE: u64 = 1_000;
 /// What an entry still in the engine's record costs a commit, in leaf writes: it is copied out on the
 /// sequencer and written on the worker within the wait.
 const TOUCHED_WEIGHT: u64 = 2;
-/// The engine's record, in entries, above which the sequencer copies writes out between checkpoints.
-const EXTRACT_FLOOR: u64 = ROOT_BOUND / (2 * TOUCHED_WEIGHT);
-/// Leaf writes waiting on the worker above which the sequencer sends no more, so the engine's record
-/// holds them, and a key changed again is copied once.
-const QUEUE_MAX: u64 = 8 * ROOT_BOUND;
+/// The engine's record, in entries, above which the sequencer copies writes out between checkpoints is
+/// the bound over this, half of what the bound allows it.
+const EXTRACT_SHARE: u64 = 2 * TOUCHED_WEIGHT;
+/// Leaf writes waiting on the worker above which the sequencer sends no more is the bound times this,
+/// so the engine's record holds the rest, and a key changed again is copied once.
+const QUEUE_SHARE: u64 = 8;
 /// How long a paced checkpoint waits for its root work before it is taken in full.
 pub(super) const ROOT_DEFER_MAX: Duration = Duration::from_secs(30);
 
@@ -61,6 +62,9 @@ pub(super) struct Roots {
     held: bool,
     /// The versions of checkpoints written in the batch being taken, released once it is durable.
     pub(super) releases: Vec<(u64, B256)>,
+    /// `ROOT_BOUND` and `ROOT_DEFER_MAX`, which tests set lower.
+    bound: u64,
+    defer_max: Duration,
 }
 
 impl Roots {
@@ -77,6 +81,8 @@ impl Roots {
             reached: 0,
             held: false,
             releases: Vec::new(),
+            bound: ROOT_BOUND,
+            defer_max: ROOT_DEFER_MAX,
         })
     }
 
@@ -92,7 +98,13 @@ impl Roots {
 
     /// When a deferred checkpoint is taken whatever its root work.
     pub(super) fn deadline(&self) -> Option<TokioInstant> {
-        self.deferred.map(|since| since + ROOT_DEFER_MAX)
+        self.deferred.map(|since| since + self.defer_max)
+    }
+
+    /// A lower bound and deferral limit, for tests that reach them with a small book.
+    #[cfg(test)]
+    pub(super) fn set_bounds(&mut self, bound: u64, defer_max: Duration) {
+        (self.bound, self.defer_max) = (bound, defer_max);
     }
 }
 
@@ -135,12 +147,12 @@ impl Sequencer {
     pub(super) fn defers_for_root_work(&mut self, seq: u64, paced: bool) -> bool {
         self.roots.reached += 1;
         let wait = self.root_wait();
-        if !paced || !self.roots.detached || wait <= ROOT_BOUND {
+        if !paced || !self.roots.detached || wait <= self.roots.bound {
             return false;
         }
         let now = TokioInstant::now();
         let since = *self.roots.deferred.get_or_insert(now);
-        if now.duration_since(since) < ROOT_DEFER_MAX {
+        if now.duration_since(since) < self.roots.defer_max {
             debug!(seq, wait, "a paced checkpoint waits for root work");
             return true;
         }
@@ -149,7 +161,7 @@ impl Sequencer {
             warn!(
                 alert = "root_backlog_held",
                 "a paced checkpoint waited {}s for root work; taking it in full at seq {seq} ({wait} leaf writes)",
-                ROOT_DEFER_MAX.as_secs()
+                self.roots.defer_max.as_secs()
             );
         }
         false
@@ -203,7 +215,7 @@ impl Sequencer {
     }
 
     /// Copies leaf writes out of the engine to the worker for up to `PIECE_TIME`, while the record
-    /// is above `EXTRACT_FLOOR` and the worker has room.
+    /// is above half what the bound allows it and the worker has room.
     /// Error cases:
     /// - the worker has stopped
     pub(super) fn copy_root_work(&mut self) -> anyhow::Result<()> {
@@ -226,14 +238,15 @@ impl Sequencer {
 
     /// Whether there are leaf writes to copy out and room on the worker for them.
     fn root_copy_due(&self) -> bool {
-        self.engine.root_backlog() as u64 > EXTRACT_FLOOR && self.roots.worker.pending() < QUEUE_MAX
+        let (bound, record) = (self.roots.bound, self.engine.root_backlog() as u64);
+        record > bound / EXTRACT_SHARE && self.roots.worker.pending() < QUEUE_SHARE * bound
     }
 
     /// Whether the sequencer has root work to do now rather than wait for a request: writes to copy
     /// out, or a deferred checkpoint whose wait is within the bound or whose time is up.
     pub(super) fn root_work_due(&self) -> bool {
         let deferred_ready = self.roots.deferred.is_some_and(|since| {
-            self.root_wait() <= ROOT_BOUND || TokioInstant::now().duration_since(since) >= ROOT_DEFER_MAX
+            self.root_wait() <= self.roots.bound || TokioInstant::now().duration_since(since) >= self.roots.defer_max
         });
         self.roots.detached && (self.root_copy_due() || deferred_ready)
     }
@@ -247,7 +260,8 @@ impl Sequencer {
         self.take_root_outcomes()?;
         self.copy_root_work()?;
         let Some(since) = self.roots.deferred else { return Ok(()) };
-        if self.root_wait() <= ROOT_BOUND || TokioInstant::now().duration_since(since) >= ROOT_DEFER_MAX {
+        let deadline = TokioInstant::now().duration_since(since) >= self.roots.defer_max;
+        if self.root_wait() <= self.roots.bound || deadline {
             let reached = self.roots.reached;
             self.paced_checkpoint()?;
             if self.roots.reached == reached {
@@ -258,7 +272,7 @@ impl Sequencer {
             return Ok(());
         }
         let touched = self.engine.root_backlog() as u64 * TOUCHED_WEIGHT + ROOT_RESERVE;
-        if let Some(pending) = ROOT_BOUND.checked_sub(touched)
+        if let Some(pending) = self.roots.bound.checked_sub(touched)
             && self.roots.worker.wake_at_pending(pending)
         {
             // Reached since the check above: the next wake-up takes it.

@@ -395,7 +395,7 @@ pub fn encoding_and_recovery(book: &mut Book) {
     );
 }
 
-/// The node's `EXTRACT_FLOOR` (`ROOT_BOUND / (2 * TOUCHED_WEIGHT)`): the record's size above which the
+/// The node's copy floor (`ROOT_BOUND / (2 * TOUCHED_WEIGHT)`, `sequencer/roots.rs`): the record's size above which the
 /// sequencer copies leaf writes out between checkpoints.
 const EXTRACT_FLOOR: usize = 1_000;
 /// The entries the sequencer copies between looks at the clock, and the time of one piece.
