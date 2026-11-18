@@ -285,15 +285,17 @@ import grouping.
 
 ### Docs and verification
 
-- Sync [agents/AGENTS.md](../../AGENTS.md) structure bullets and any crate `README.md` to the new
-  paths; describe each file exactly once.
+- Sync [agents/AGENTS.md](../../AGENTS.md) structure bullets and the moved modules' docs (`//!`) to
+  the new paths. A crate `README.md` changes only if its layout table names a moved directory.
 - Before pushing: run `scripts/check-file-loc.sh` (all files under cap), and verify the split was
   pure motion — diff the removed vs re-added lines; residuals must be only rewrapping, visibility,
   and imports.
 
 ## Crate README
 
-Every crate has a `README.md` with these sections, in order: H1 title (crate name), `## Overview`, `## Features` (bullets, no trailing period per item), `## Repository Structure`, `## Usage`, `## Configuration` (env vars only, `` `ENV_VAR_NAME` ``: {description}; no CLI flags; omit the section if none), `## Testing`, `## Authors` (single line: The monkeytrading contributors), `## License` (single line: Licensed under the Apache License, Version 2.0; see `LICENSE`.). Deviate only when asked or clearly justified — ask first.
+Write and edit a crate's `README.md` by [readme-writing](../readme-writing/SKILL.md): what the crate is
+for, its entry points, a table of its top-level modules (never one row per file), its configuration,
+how to test it, and its licence. A module's internals go in its own `//!` docs.
 
 ## Cargo profiles
 
