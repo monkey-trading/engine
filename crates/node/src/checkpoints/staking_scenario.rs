@@ -244,6 +244,8 @@ impl Scenario {
                     kind: OrderKind::Market { quoted: mid.parse().unwrap(), max_slippage_bps: None },
                     reduce_only: false,
                     auth: None,
+                    take_profit: None,
+                    stop_loss: None,
                 };
                 let key = access::client_key(*account);
                 let account = *account;

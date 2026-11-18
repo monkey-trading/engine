@@ -82,6 +82,7 @@ impl AdminAction {
                 markup_bps,
                 weekend_margin_bps,
                 price_rules_from,
+                min_level_distance_bps,
                 effective_at,
             } => {
                 let notice = ListingNotice {
@@ -96,6 +97,7 @@ impl AdminAction {
                     price_rules: price_rules_from
                         .map(|file| read_spec(&file).map(|spec| spec.price_rules))
                         .transpose()?,
+                    min_level_distance_bps,
                     effective_at: effective_at.timestamp_millis(),
                 };
                 AdminCommand::AnnounceListing { market, notice }
@@ -151,3 +153,7 @@ fn read_params(file: &Path) -> anyhow::Result<ProtocolParams> {
         .with_context(|| file.display().to_string())?;
     Ok(params)
 }
+
+#[cfg(test)]
+#[path = "level_tests.rs"]
+mod level_tests;

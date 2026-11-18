@@ -11,6 +11,7 @@ pub mod close_spread;
 pub mod emissions;
 pub mod house_loss;
 pub mod launch_book;
+pub mod levels;
 pub mod reference;
 pub mod session_keys;
 pub mod spreads;
@@ -273,6 +274,8 @@ impl Harness {
             kind,
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         }))
     }
 
@@ -391,6 +394,7 @@ pub fn market(id: MarketId, symbol: &str, class: AssetClass, schedule: Schedule,
         contracts: vec![],
         markout_floor_bps: None,
         weekend_margin_bps: 0,
+        min_level_distance_bps: None,
     }
 }
 

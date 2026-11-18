@@ -321,7 +321,18 @@ fn dust_limit(h: &mut Harness, account: AccountId, market: MarketId) -> Vec<Even
 
 /// An unsigned reduce-only sell with client id 7.
 fn reducing(account: AccountId, market: MarketId, qty: &str, kind: OrderKind) -> OrderRequest {
-    OrderRequest { account, client_id: 7, market, side: Side::Sell, qty: f(qty), kind, reduce_only: true, auth: None }
+    OrderRequest {
+        account,
+        client_id: 7,
+        market,
+        side: Side::Sell,
+        qty: f(qty),
+        kind,
+        reduce_only: true,
+        auth: None,
+        take_profit: None,
+        stop_loss: None,
+    }
 }
 
 /// The order id an `OrderAccepted` among `events` carries; panics if there is none.

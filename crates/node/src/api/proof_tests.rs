@@ -129,6 +129,8 @@ async fn dev_scenario_checkpoint_work_follows_changes_a_proof_verifies_and_old_l
         kind: OrderKind::Market { quoted: "100000".parse().unwrap(), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     assert_eq!(node.post("/v1/orders", serde_json::to_value(order).unwrap()).await.0, StatusCode::OK);
     node.checkpoint().await;
@@ -221,6 +223,8 @@ async fn an_entitlement_is_provable_from_the_first_checkpoint_after_its_period()
             kind: OrderKind::Market { quoted: mid.parse().unwrap(), max_slippage_bps: None },
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         };
         assert_eq!(node.post("/v1/orders", serde_json::to_value(order).unwrap()).await.0, StatusCode::OK);
     }

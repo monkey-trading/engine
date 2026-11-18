@@ -358,6 +358,8 @@ fn session_order_at(account: &SigningKey, key: &SigningKey, nonce: u64, expires_
         kind: OrderKind::Market { quoted: Fixed::from_int(100000), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let hash = eip712::order_hash(&eip712::domain(31_337, VAULT), &request, nonce, expires_at);
     request.auth = Some(RequestAuth { nonce, expires_at, signature: eip712::sign(key, &hash) });

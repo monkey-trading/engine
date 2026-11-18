@@ -23,6 +23,8 @@ pub(super) fn reducing(account: AccountId, market: MarketId, side: Side, qty: &s
         kind: OrderKind::Market { quoted: f(quoted), max_slippage_bps: None },
         reduce_only: true,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     }
 }
 
@@ -37,6 +39,8 @@ pub(super) fn small_buy(account: AccountId) -> OrderRequest {
         kind: OrderKind::Market { quoted: f("100000.123456789"), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     }
 }
 

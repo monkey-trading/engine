@@ -342,6 +342,35 @@ fn a_genesis_set_before_v52_resumes_under_the_bands_and_multipliers_v52_converts
 }
 
 #[test]
+fn a_genesis_listed_before_v79_resumes_with_each_market_at_its_close_spread_ceiling() {
+    // A log from before `V79` listed its markets with no minimum level distance, which config load
+    // under the latest protocol refuses: its genesis compares as `V79`'s activation leaves its listings,
+    // each at its close-spread ceiling, as the dev config names them, and the genesis as written is
+    // refused, as is a config naming another distance.
+    let dir = scratch_dir("genesis-v79-distances");
+    let genesis = dev_config().genesis;
+    let ceilings: Vec<_> = genesis.close_spread_ceilings.iter().map(|c| (c.market, c.max_close_spread_bps)).collect();
+    let distances: Vec<_> =
+        genesis.markets.iter().map(|spec| (spec.id, spec.min_level_distance_bps.unwrap())).collect();
+    assert_eq!(distances, ceilings);
+    let mut written = genesis_commands(&genesis);
+    for cmd in &mut written {
+        if let Command::Admin(AdminCommand::UpsertMarket(spec)) = cmd {
+            spec.min_level_distance_bps = None;
+        }
+    }
+    old_genesis_log(&dir, &signed(31_337), ProtocolVersion::V74, written.clone(), Vec::new());
+
+    let err = recover_with(&dir, &signed(31_337), written).err().unwrap();
+    assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{err:#}");
+    let mut other = dev_config().genesis;
+    other.markets[0].min_level_distance_bps = Some(31);
+    let err = recover_with(&dir, &signed(31_337), genesis_commands(&other)).err().unwrap();
+    assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{err:#}");
+    recover_with(&dir, &signed(31_337), genesis_commands(&genesis)).unwrap();
+}
+
+#[test]
 fn a_genesis_no_current_config_can_name_is_refused_and_a_fresh_log_advised() {
     // An older protocol applied each genesis, and config load under the latest refuses it, so no
     // config can name it: recovery refuses whatever genesis the config gives, and writes nothing.

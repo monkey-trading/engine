@@ -88,8 +88,27 @@ pub(crate) fn copy_fixture(source: &str, target: impl AsRef<Path>) {
 
 /// The genesis `entries` ran, as the config of a dev node that resumes the log gives it.
 pub(crate) fn finished_genesis(entries: &[LogEntry]) -> Vec<engine_core::command::Command> {
-    let notional = crate::test_support::dev_config().genesis.params.toxicity.notional;
-    replay_trusted(entries).expect("the log replays").genesis.as_config(notional)
+    finished_genesis_under(entries, &dev_config().genesis.close_spread_ceilings)
+}
+
+/// `finished_genesis` for a dev node whose config adopts `ceilings`, which a log from before `V40`
+/// takes its listings' minimum level distances from.
+pub(crate) fn finished_genesis_under(entries: &[LogEntry], ceilings: &[CloseSpreadCeiling]) -> Vec<Command> {
+    let notional = dev_config().genesis.params.toxicity.notional;
+    replay_trusted(entries).expect("the log replays").genesis.as_config(notional, ceilings)
+}
+
+/// The dev config's close-spread ceilings, with 30 bps for each market `entries` list that it never
+/// ceilinged, so a log from before `V40` that lists them can be resumed and upgraded.
+pub(crate) fn ceilings_for(entries: &[LogEntry]) -> Vec<CloseSpreadCeiling> {
+    let mut ceilings = dev_config().genesis.close_spread_ceilings;
+    let listed: Vec<_> = replay_trusted(entries).expect("the log replays").engine.markets().keys().copied().collect();
+    for market in listed {
+        if !ceilings.iter().any(|ceiling| ceiling.market == market) {
+            ceilings.push(CloseSpreadCeiling { market, max_close_spread_bps: 30 });
+        }
+    }
+    ceilings
 }
 
 /// Replays harness output against the explicit fixture authority, never a log-named signer.

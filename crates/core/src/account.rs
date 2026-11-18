@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::Fixed;
 use crate::command::OrderKind;
 use crate::fixed::Rounding;
+use crate::levels::PositionLevels;
 use crate::params::NotionalWeighting;
 use crate::protocol::ProtocolVersion;
 use crate::types::{MarketId, Millis, OrderId, Side};
@@ -91,6 +92,14 @@ pub struct RestingOrder {
     pub qty: Fixed,
     pub kind: OrderKind,
     pub reduce_only: bool,
+    /// From `V79`, the take profit an entry order's fill attaches to its position; left out of the
+    /// encoding while absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub take_profit: Option<Fixed>,
+    /// From `V79`, the stop loss an entry order's fill attaches to its position; left out of the
+    /// encoding while absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_loss: Option<Fixed>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -106,6 +115,10 @@ pub struct Account {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub opened_at: BTreeMap<MarketId, Millis>,
     pub orders: BTreeMap<OrderId, RestingOrder>,
+    /// From `V79`, each position's take profit and stop loss, by market (`levels`). Left out of the
+    /// encoding while empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub levels: BTreeMap<MarketId, PositionLevels>,
     /// EWMA of fill markouts in whole bps; see `ToxicityParams`. From `V11` it is the score rounded
     /// down, and `toxicity_fraction` holds the rest.
     pub toxicity_bps: i64,

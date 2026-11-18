@@ -200,6 +200,8 @@ mod tests {
                 kind: OrderKind::Market { quoted: Fixed::from_int(price), max_slippage_bps: None },
                 reduce_only: false,
                 auth: None,
+                take_profit: None,
+                stop_loss: None,
             }),
         );
         assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");

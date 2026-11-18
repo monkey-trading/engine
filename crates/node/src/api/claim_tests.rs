@@ -39,6 +39,8 @@ async fn earn(node: &Node, trader: AccountId, first: bool) {
             kind: OrderKind::Market { quoted: mid.parse().unwrap(), max_slippage_bps: None },
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         };
         assert_eq!(node.post("/v1/orders", serde_json::to_value(order).unwrap()).await.0, StatusCode::OK);
     }

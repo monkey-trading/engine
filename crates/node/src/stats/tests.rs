@@ -125,6 +125,8 @@ impl Rig {
             kind: OrderKind::Market { quoted: self.engine.markets()[&market].mark.unwrap(), max_slippage_bps: None },
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         };
         self.apply(ts, Command::PlaceOrder(order))
     }

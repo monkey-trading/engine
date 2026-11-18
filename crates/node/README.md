@@ -215,6 +215,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   cooldown through the config's custody providers, and its refusal before signing; its `staking/tests.rs`
   runs it against a loopback JSON-RPC stand-in
 - `src/admin/tests.rs` — `engine admin` tests: key sources, commands, signing, and pins
+- `src/admin/level_tests.rs` — `engine admin`'s minimum level distance flag (from `V79`)
 - `src/ct_watch/mod.rs` — `engine ct-watch`: the poll loop over the node's attestation and the logs
 - `src/ct_watch/config.rs` — the watcher's config: domain, node, logs, and alert routing
 - `src/ct_watch/attestation.rs` — polling `/v1/attestation` and verifying it, or a mock one for dev
@@ -593,7 +594,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   wait for trusted time
 - `src/sequencer/catch_up.rs` — the `Tick`s that finish a V33 catch-up before a command
 - `src/sequencer/genesis.rs` — the genesis commands, the check that the engine accepts every one
-  before any is written, and how far a replayed log got through genesis and which genesis it ran
+  before any is written, and how far a replayed log got through genesis and which genesis it ran, a
+  genesis from before `V79` compared with each market at its close-spread ceiling for a minimum level
+  distance
 - `src/sequencer/alerts.rs` — the alerts the sequencer raises: engine rejections an operator must
   look at, benchmarks with no rate, and house NAV below zero
 - `src/sequencer/alerts/loss.rs` — from `V62`, `house_loss_stress`: one page while the house loss trigger's level is above zero, resolved once it has stayed at zero for a minute
@@ -657,10 +660,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/mod.rs` — REST routes, read handlers and the request span
 - `src/api/account.rs` — `GET /v1/accounts/{address}`: an account's balance, equity, margin, initial
   and maintenance requirements, withdrawable cash, each market's maximum leverage, positions, orders,
-  toxicity, close-outs, close fees, from `V59` its volume tier, from `V60` its weekend margins, and
-  under `[portfolio_margin]` its portfolio requirement
+  toxicity, close-outs, close fees, from `V59` its volume tier, from `V60` its weekend margins, from
+  `V79` each position's take profit and stop loss, and under `[portfolio_margin]` its portfolio
+  requirement
 - `src/api/reads.rs` — `GET /v1/markets`: every market with its live state, how it is priced
-  (`pricing.rs`), and from `V60` its weekend margin window
+  (`pricing.rs`), from `V60` its weekend margin window, and from `V79` its minimum level distance
 - `src/api/notice.rs` — `GET /v1/notice`: the operator's status notice and the time it was set, or `null`;
   `src/api/stream/notice.rs` carries it as `notice` frames
 - `src/api/operating.rs` — `GET /v1/status`: the server's operating state (`src/status.rs`: what holds
@@ -669,18 +673,36 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `src/feeds/venue/status.rs` are what each connection's task publishes
 - `src/api/state.rs` — request authentication, nonce checks, the session-key admission a
   registered key's request falls back to, and durable sequencer round trips
-- `src/api/actions.rs` — signed client actions, session-key registration and revocation, and
-  real-peer access screening
+- `src/api/actions.rs` — signed client actions, from `V79` the request that sets, moves and removes a
+  position's take profit and stop loss, session-key registration and revocation, and real-peer access
+  screening
+- `src/api/vector_tests.rs` — the published signing vectors as bodies the API takes
 - `src/api/access.rs` — reads of one custody hold, one pending deposit, and an account's signed eligibility
 - `src/api/access_tests.rs` — a declaration crediting its pending deposit, peer provenance and public access refusals
 - `src/api/access_tests/admission.rs` — admission before sequencing: never-credited signers declare within per-client and shared budgets; declarations leave orders a screening slot; expired requests and exhausted screening capacity refuse without a nonce
 - `src/api/access_tests/batch.rs` — `POST /v1/orders/cancel-all` and `/v1/positions/close-all`: one screening request, one log entry and one nonce each, refusals for a stale nonce, a forged or altered request and a stranger, and a session key signing both forms until revoked
+- `src/api/access_tests/bodies.rs` — the signed order and withdrawal bodies the access tests post
+- `src/api/access_tests/levels.rs` — `V79` levels through the API: an order signed over the levels it
+  names and its position showing them in the account read, `POST /v1/positions/levels` as one screened
+  log entry on one nonce, a level inside the minimum distance refused naming the distance and the closing
+  price, a session key moving them, refusals before the log for a stale nonce, a forged or altered
+  request and a stranger, a refusal by screening that uses its nonce and sets nothing, and each market's
+  minimum distance in the market read
+- `src/api/access_tests/levels_scenario.rs` — the `V79` dev scenario: a long opened naming both levels,
+  and a stop loss too close or on the wrong side refused naming 30 bps and the closing price; the levels
+  kept through an add, a partial close and Cancel all; a gap through the stop loss filling the whole
+  position at its closing price; a stop loss just inside the band firing on a stress floor raised over TLS
+  with the index unchanged; a take profit filling once the closing price reaches it; a resting buy
+  limit's levels attaching to its long; a stop loss above the close-out level filling with no close-out;
+  levels removed by a reversal and a close-out; a tier-0 wallet's levels taking its 25th order slot and
+  refused at the next; a WTI stop loss filling at the first price after the weekend reopening; the
+  history by kind, replay and a restart
 - `src/api/access_tests/cancel.rs` — a client cancels its resting order while geo access is excluded, with no screening call
 - `src/api/access_tests/declarations.rs` — a declaration screened like an order: public refusals that leave its deposit pending until an allowed one is recorded
 - `src/api/access_tests/pre_deposit.rs` — a wallet's setup before its first deposit: the order of its declaration and session keys, what stays refused until a deposit credits it, both deposit orders, engine refusals, and the reads and scans it meets
 - `src/api/access_tests/pre_deposit_budgets.rs` — what those requests spend: a token from the client's share and the shared budget, nothing when refused before the log, what a refused wallet sees, and a pending-deposit wallet's declaration past an empty budget
 - `src/api/access_tests/reissue.rs` — a reissue request screened like a withdrawal, by account and peer, refused with 403 before the log, and a request for an approval that does not exist refused with 404 before any screening call
-- `src/api/access_tests/screening_slots.rs` — the screening slots under load: one wallet's burst holds only its share, a client its own, a copy of a signed request or a repeat declaration holds none, new orders leave closes and withdrawals the reserve, and a request refused for want of a slot gets `Retry-After` and raises `api_screening_slots_full`
+- `src/api/access_tests/screening_slots.rs` — the screening slots under load: one wallet's burst holds only its share, a client its own, a copy of a signed request or a repeat declaration holds none, new orders leave stop losses, closes and withdrawals the reserve, and a request refused for want of a slot gets `Retry-After` and raises `api_screening_slots_full`
 - `src/api/access_tests/session_keys.rs` — a registered session key trades for its account without the wallet until revoked, a withdrawal it signs refuses as out of scope in the log, an expired, mis-scoped, or rate-flooding key is refused before sequencing, and a never-credited account registers one only after declaring, with its cancels, stale nonces, and missing signatures
 - `src/api/access_tests/source.rs` — the mock screening source the access tests answer with
 - `src/api/access_tests/spreads.rs` — the `V52` dev scenario: fills paying their bands on the open
@@ -2153,7 +2175,7 @@ Endpoints: `GET /v1/health`, `GET /v1/status`, `GET /v1/notice`, `GET /v1/attest
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
 `GET /v1/accounts/{address}/history`, `GET /v1/accounts/{address}/proof`,
 `GET /v1/accounts/{address}/emissions`, `POST /v1/orders`, `POST /v1/orders/cancel`,
-`POST /v1/orders/cancel-all`, `POST /v1/positions/close-all`,
+`POST /v1/orders/cancel-all`, `POST /v1/positions/close-all`, `POST /v1/positions/levels`,
 `POST /v1/withdrawals` (mock custody only until withdrawals are paid on-chain), `POST /v1/admin`
 (the operator's), `POST /v1/dev/deposit` (mock custody only), `GET /v1/stream` (WebSocket), and
 `GET /v1/archive/{file}` (`manifest.jsonl` or a segment it lists).
@@ -2169,6 +2191,20 @@ whole request, and so is one naming more markets than are listed, which the API 
 before the signature is checked. Each is one signed request (`CancelAllRequest`,
 `CloseAllRequest` in `engine-core`'s EIP-712 types, `closes` signed in order), one nonce, one
 rate-limit count, and one screening; the account key or a registered session key may sign either.
+From `V79`, `POST /v1/orders` takes optional `take_profit` and `stop_loss`, signed as `OrderWithLevels`
+when the order names either (an order naming neither signs `OrderRequest` as before). The position the
+fill leaves on the order's side takes each in place of its own, keeping a level the order leaves out, and
+a resting order holds them until it fills.
+`POST /v1/positions/levels` takes `{ "account", "market", "take_profit", "stop_loss", "auth" }`, each
+level optional, and sets the position's levels to exactly those it names; a level left out is removed.
+It is one signed request (`PositionLevelsRequest`, signed as `SetPositionLevels`), one nonce, one
+rate-limit count and one screening, and the account key or a registered session key may sign it. Its
+answer holds `position_levels_set`, or an `order_rejected` with `client_id` 0, among them
+`level_too_close` naming the `level`, the market's `min_distance_bps` and the `reference` closing
+price; `tier_order_limit`, or `too_many_orders` where the tier table names no limit, when a first level
+on a position finds no free order slot; and `invalid_order` for no position, a level out of range, no
+price to measure from or a market with no distance. Like any command's answer, it also holds the other
+events the engine emits at the command's stamp, before or after it.
 
 A client over its rate gets 429 with `Retry-After`, a body over `api.max_body_bytes` gets 413, a
 body not received within `api.read_timeout` gets 408, and a subscriber over `api.max_subscribers`
@@ -2642,6 +2678,11 @@ the gap, every position at its mark now and each market whose kept weekend windo
 start, or now once it has started, at its weekend margin. A market that has not yet reopened from its
 current gap counts at its normal margin there until it reopens and keeps its next window, so for the
 few hours a week one market has reopened and another not, the first one's figure can be low.
+From `V79` the read adds `levels`, keyed by market, `{"take_profit", "stop_loss"}`, each left out while
+unset and the field left out while the account holds none; each resting order carries the levels it
+names. `GET /v1/markets` gives each market's `min_level_distance_bps`, `/v1/house/state` a pending listing
+notice's, and the history index serves `position_levels_set`, `position_level_triggered` and
+`position_levels_removed` under `kind`.
 Beside `margin`, the requirement at the markets' own bands, the read gives `initial_margin`, what a
 fill that adds risk and a withdrawal must leave equity at or above: from `V64` each margin band
 charged at least the account's volume tier's `margin_floor_bps`, and from `V60` each position in a

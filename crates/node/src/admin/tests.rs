@@ -477,7 +477,7 @@ fn corporate_action_file_requires_explicit_withholding_and_validates_its_range()
 // ── Helpers ──
 
 /// The action `engine admin <args>` parses to.
-fn action(args: &[&str]) -> AdminAction {
+pub(super) fn action(args: &[&str]) -> AdminAction {
     let argv = ["engine", "--pin", ZERO_PIN].into_iter().chain(args.iter().copied());
     Cli::try_parse_from(argv).unwrap_or_else(|e| panic!("{args:?}: {e}")).args.action
 }

@@ -195,8 +195,8 @@ keys' included, hold at most `access.max_in_flight_per_account` of them, and one
 `access.max_in_flight_per_client`, an IPv6 client counted by its /64; a request past its share gets
 429 with `Retry-After`. A copy of a signed request still being screened gets 409
 `the same request is already being screened` and takes no slot. `access.reserved_in_flight` of the
-slots are kept for closes (reduce-only orders), close-alls, withdrawals and payout reissues, which may
-take any free slot; other orders and declarations take only the rest. A request that finds every slot
+slots are kept for closes (reduce-only orders), close-alls, a position's take-profit and stop-loss
+requests, withdrawals and payout reissues, which may take any free slot; other orders and declarations take only the rest. A request that finds every slot
 it may take held gets 503 `screening is at capacity` with `Retry-After`, uses no nonce, and
 `api_screening_slots_full` is a Warning raised at most once a minute while this lasts. Declarations
 hold at most half the slots, rounded up, and the reserve must be below half of them, rounded down, so

@@ -9,10 +9,11 @@
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::hex;
 use engine_core::command::{
-    AdminCommand, CancelAllRequest, CancelRequest, CloseAllRequest, OrderKind, OrderRequest, WithdrawalRequest,
+    AdminCommand, CancelAllRequest, CancelRequest, CloseAllRequest, OrderKind, OrderRequest, PositionLevelsRequest,
+    WithdrawalRequest,
 };
 use engine_core::eip712::{
-    self, Signature, admin_hash, cancel_all_hash, cancel_hash, close_all_hash, order_hash,
+    self, Signature, admin_hash, cancel_all_hash, cancel_hash, close_all_hash, order_hash, position_levels_hash,
     session_key_registration_hash, session_key_revocation_hash, withdrawal_hash,
 };
 use engine_core::types::{AccountId, Millis};
@@ -74,7 +75,35 @@ fn the_engine_reproduces_each_vector_signature_from_its_request_body() {
                     "hasMaxSlippage": max_slippage_bps.is_some(), "maxSlippageBps": max_slippage_bps.unwrap_or(0),
                     "reduceOnly": req.reduce_only,
                 });
+                // From `V79` an order naming a level signs `OrderWithLevels`: the same fields, then the levels.
+                let levels = req.levels().map(|levels| {
+                    json!({
+                        "hasTakeProfit": levels.take_profit.is_some(),
+                        "takeProfit": levels.take_profit.unwrap_or_default().raw().to_string(),
+                        "hasStopLoss": levels.stop_loss.is_some(),
+                        "stopLoss": levels.stop_loss.unwrap_or_default().raw().to_string(),
+                    })
+                });
+                let message = match levels {
+                    Some(Value::Object(levels)) => {
+                        let mut message = message;
+                        message.as_object_mut().expect("an object").extend(levels);
+                        message
+                    }
+                    _ => message,
+                };
                 (order_hash(&domain, &req, nonce, expires_at), message)
+            }
+            "position_levels" => {
+                let req: PositionLevelsRequest = serde_json::from_value(vector.body.clone()).unwrap();
+                let message = json!({
+                    "account": req.account.to_string(), "nonce": nonce, "expiresAt": expires_at,
+                    "market": req.market, "hasTakeProfit": req.take_profit.is_some(),
+                    "takeProfit": req.take_profit.unwrap_or_default().raw().to_string(),
+                    "hasStopLoss": req.stop_loss.is_some(),
+                    "stopLoss": req.stop_loss.unwrap_or_default().raw().to_string(),
+                });
+                (position_levels_hash(&domain, &req, nonce, expires_at), message)
             }
             "cancel" => {
                 let body: CancelRequest = serde_json::from_value(vector.body.clone()).unwrap();

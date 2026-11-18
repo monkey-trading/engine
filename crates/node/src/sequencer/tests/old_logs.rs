@@ -6,6 +6,8 @@ use super::*;
 use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::params::StressTrigger;
 
+use crate::sequencer::fixture_tests::finished_genesis_under;
+
 #[test]
 fn an_existing_v1_log_activates_at_its_next_seq_and_still_verifies() {
     let dir = scratch_dir("activation-v1");
@@ -84,7 +86,7 @@ fn a_v3_log_takes_the_state_tree_at_its_next_seq_and_still_verifies() {
         vault: operator.vault,
         operator,
         clock: stamps.clone(),
-        genesis: finished_genesis(&logged),
+        genesis: finished_genesis_under(&logged, &ceilings),
         close_spread_ceilings: ceilings,
         ..sequencer_config(&dir, manifest)
     };

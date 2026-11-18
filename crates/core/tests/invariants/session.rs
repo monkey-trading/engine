@@ -174,6 +174,8 @@ pub(crate) fn command(action: &Action, engine: &Engine, now: Millis) -> Command 
                 kind,
                 reduce_only: order.reduce_only,
                 auth: None,
+                take_profit: None,
+                stop_loss: None,
             })
         }
         Action::Cancel { account, order_id } => {

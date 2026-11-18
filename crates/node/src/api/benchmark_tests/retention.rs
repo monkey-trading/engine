@@ -115,6 +115,8 @@ endpoint = "{publisher}/estr"
                 kind: OrderKind::Market { quoted: fixed("100000"), max_slippage_bps: None },
                 reduce_only: false,
                 auth: None,
+                take_profit: None,
+                stop_loss: None,
             }))
             .await;
         ensure!(events.iter().any(|event| matches!(event, Event::Fill(_))), "retention position must fill");

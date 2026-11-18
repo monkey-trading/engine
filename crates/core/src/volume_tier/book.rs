@@ -330,6 +330,8 @@ impl Engine {
         if volume.is_empty() {
             self.volumes.remove(&exec.account);
         }
+        // From `V79` the book's change may move the account's tier, which its levels' keys read.
+        self.refresh_level_inputs(exec.account);
     }
 
     /// At `V59`'s activation, gives each held position an opening lot of the whole position that matures

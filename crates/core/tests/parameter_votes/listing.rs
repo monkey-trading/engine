@@ -60,6 +60,7 @@ fn the_operators_listing_notice_waits_for_rotation_to_end() {
         weekend_margin_bps: None,
         price_rules: None,
         effective_at: h.ts + NOTICE_MS,
+        min_level_distance_bps: None,
     };
     let announce = AdminCommand::AnnounceListing { market: BTC, notice };
     rejected(&h.operate(announce.clone()), "only a passed vote changes this");

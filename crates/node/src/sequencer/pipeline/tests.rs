@@ -427,6 +427,8 @@ async fn refused_signed_and_admin_requests_wait_for_their_batchs_sync() {
         kind: OrderKind::Market { quoted: "100000".parse().unwrap(), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let domain = eip712::domain(31337, AccountId([0; 20]));
     let signature = eip712::sign(&stranger, &order_hash(&domain, &order, 0, expires_at));

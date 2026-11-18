@@ -26,7 +26,8 @@
 //!   position's open time (`address` account, `uint32` market) (`open_time.rs`). From `V59`, kind 28 is
 //!   an account's volume book (`address`) (`volume.rs`). From `V77`, kind 35 is an unfinalised credit
 //!   (its receipt's UTF-8 reference), ABI-encoded as a pending deposit's leaf is, as a receipt-backed
-//!   held deposit's leaf (33) is too (`credits.rs`).
+//!   held deposit's leaf (33) is too (`credits.rs`). From `V79`, kind 29 is a position's take profit
+//!   and stop loss (`address` account, `uint32` market) (`levels.rs`).
 //! - **Paths.** The key's bits, most significant first, are the path from the root: bit `d`,
 //!   `(uint256(key) >> (255 - d)) & 1`, picks the child at depth `d + 1`, 0 left and 1 right.
 //! - **Leaves.** `keccak256(abi.encodePacked(bytes1(0x00), key, valueHash))`; each kind's
@@ -59,6 +60,8 @@ mod exit;
 pub use exit::*;
 mod credits;
 pub use credits::{ReceiptKind, ReceiptProof, UnfinalisedCreditProof, unfinalised_credit_key};
+mod levels;
+pub use levels::{levels_hash, levels_key};
 mod open_time;
 pub use open_time::{open_time_hash, open_time_key};
 mod toxicity;

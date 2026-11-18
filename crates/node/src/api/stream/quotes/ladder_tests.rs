@@ -62,6 +62,8 @@ fn order(account: AccountId, market: MarketId, side: Side, qty: Fixed, quoted: F
         kind: OrderKind::Market { quoted, max_slippage_bps: Some(bps) },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     })
 }
 

@@ -725,6 +725,222 @@
         }
       },
       "signature": "0x0c5f5885ab1dec69b0e90d6a2343c2e3d3bf72a9b415b35593266844f409ef685a647c4c7186c26f593c735f15141609b9be4083339ab2512d8bd8094bf6453c1c"
+    },
+    {
+      "kind": "order",
+      "nonce": 9,
+      "expires_at": 1792540800000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "client_id": 3,
+        "market": 1,
+        "side": "buy",
+        "qty": "0.25",
+        "kind": {
+          "kind": "limit",
+          "price": "99000"
+        },
+        "take_profit": "102000",
+        "stop_loss": "97500.5"
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "OrderWithLevels": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "clientId",
+              "type": "uint64"
+            },
+            {
+              "name": "market",
+              "type": "uint32"
+            },
+            {
+              "name": "side",
+              "type": "string"
+            },
+            {
+              "name": "qty",
+              "type": "int128"
+            },
+            {
+              "name": "kind",
+              "type": "string"
+            },
+            {
+              "name": "price",
+              "type": "int128"
+            },
+            {
+              "name": "hasMaxSlippage",
+              "type": "bool"
+            },
+            {
+              "name": "maxSlippageBps",
+              "type": "int64"
+            },
+            {
+              "name": "reduceOnly",
+              "type": "bool"
+            },
+            {
+              "name": "hasTakeProfit",
+              "type": "bool"
+            },
+            {
+              "name": "takeProfit",
+              "type": "int128"
+            },
+            {
+              "name": "hasStopLoss",
+              "type": "bool"
+            },
+            {
+              "name": "stopLoss",
+              "type": "int128"
+            }
+          ]
+        },
+        "primaryType": "OrderWithLevels",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 9,
+          "expiresAt": 1792540800000,
+          "clientId": 3,
+          "market": 1,
+          "side": "buy",
+          "qty": "250000000",
+          "kind": "limit",
+          "price": "99000000000000",
+          "hasMaxSlippage": false,
+          "maxSlippageBps": 0,
+          "reduceOnly": false,
+          "hasTakeProfit": true,
+          "takeProfit": "102000000000000",
+          "hasStopLoss": true,
+          "stopLoss": "97500500000000"
+        }
+      },
+      "signature": "0xafe7a6ab3b3a89e72ceee51ca117bb122af74c3452db53b6065fa91b3d0525274b9bde71c147f1046d85a6b19625c91ef24da818252b0bf755e91c6c4a0bf5731b"
+    },
+    {
+      "kind": "position_levels",
+      "nonce": 10,
+      "expires_at": 1792540800000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "market": 1,
+        "stop_loss": "98000"
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "SetPositionLevels": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "market",
+              "type": "uint32"
+            },
+            {
+              "name": "hasTakeProfit",
+              "type": "bool"
+            },
+            {
+              "name": "takeProfit",
+              "type": "int128"
+            },
+            {
+              "name": "hasStopLoss",
+              "type": "bool"
+            },
+            {
+              "name": "stopLoss",
+              "type": "int128"
+            }
+          ]
+        },
+        "primaryType": "SetPositionLevels",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 10,
+          "expiresAt": 1792540800000,
+          "market": 1,
+          "hasTakeProfit": false,
+          "takeProfit": "0",
+          "hasStopLoss": true,
+          "stopLoss": "98000000000000"
+        }
+      },
+      "signature": "0x6a1625e7965489f78fb58361b5e76fbdd174a61270dabeef84c3eb73006577150b8569a82a51165ba62824a6912c3375079b69f6f1c0f19d8143d48a0cd1db8e1c"
     }
   ]
 }

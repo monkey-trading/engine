@@ -218,6 +218,8 @@ fn order(book: &Book, client: &Client, qty: &str) -> Command {
         kind: OrderKind::Market { quoted: f(&MARK.to_string()), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     trade_cmd(&book.h, client, book.h.engine.next_request_nonce(client.account), request)
 }

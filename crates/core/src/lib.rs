@@ -80,6 +80,13 @@
 //!   `V59` takes `launch_volume_tiers` as the launch table the bounds measure from, and a closing lot
 //!   joins another only when the order of their units does not matter.
 
+// The protocol tests' harness names the crate `engine_core`; the level index's exactness test runs it.
+#[cfg(test)]
+extern crate self as engine_core;
+#[cfg(test)]
+#[path = "../tests/common/mod.rs"]
+mod common;
+
 pub mod access;
 pub mod account;
 mod admin;
@@ -109,6 +116,7 @@ pub mod governance;
 pub mod holding_fee;
 mod hot_indexes;
 pub mod house_loss;
+pub mod levels;
 pub mod listing_bounds;
 pub mod market;
 mod markouts;

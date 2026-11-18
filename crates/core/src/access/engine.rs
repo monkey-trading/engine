@@ -26,6 +26,9 @@ impl Engine {
             }
             Command::AccessOrder { request, evidence } => self.place_order(request, Some(evidence), events),
             Command::AccessCloseAll { request, evidence } => self.close_all(request, evidence, events),
+            Command::AccessSetPositionLevels { request, evidence } => {
+                self.set_position_levels(request, evidence, events)
+            }
             Command::AccessWithdraw { request, evidence, payout_available } => self.withdraw(
                 request.account,
                 request.amount,

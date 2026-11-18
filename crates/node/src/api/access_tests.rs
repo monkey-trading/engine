@@ -2,10 +2,13 @@
 
 mod admission;
 mod batch;
+mod bodies;
 mod cancel;
 mod declarations;
 mod earned_leverage;
 mod holding_fee;
+mod levels;
+mod levels_scenario;
 mod portfolio_margin;
 mod pre_deposit;
 mod pre_deposit_budgets;
@@ -58,6 +61,8 @@ use crate::log::{LogEntry, Manifest};
 use crate::sequencer::{self, Sequencer, SignedWithdrawal, replay, replay_with_signer};
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
+
+use bodies::{order, withdrawal};
 
 const NOW: i64 = 1_792_504_800_000;
 const VAULT: AccountId = AccountId([0xaa; 20]);
@@ -469,32 +474,4 @@ fn declaration(client: &SigningKey, nonce: u64) -> Value {
 
 fn key(seed: u8) -> SigningKey {
     SigningKey::from_slice(&[seed; 32]).unwrap()
-}
-
-fn order(key: &SigningKey, nonce: u64) -> Value {
-    let account = eip712::address(key.verifying_key());
-    let mut request = OrderRequest {
-        account,
-        client_id: 1,
-        market: 1,
-        side: Side::Buy,
-        qty: "0.01".parse().unwrap(),
-        kind: OrderKind::Market { quoted: Fixed::from_int(100000), max_slippage_bps: None },
-        reduce_only: false,
-        auth: None,
-    };
-    let hash = eip712::order_hash(&eip712::domain(31_337, VAULT), &request, nonce, NOW + 60_000);
-    request.auth = Some(RequestAuth { nonce, expires_at: NOW + 60_000, signature: eip712::sign(key, &hash) });
-    json!(request)
-}
-
-fn withdrawal(key: &SigningKey, nonce: u64) -> Value {
-    let account = eip712::address(key.verifying_key());
-    let amount = Fixed::from_int(10);
-    let hash = eip712::withdrawal_hash(&eip712::domain(31_337, VAULT), account, amount, nonce, NOW + 60_000);
-    json!(WithdrawalRequest {
-        account,
-        amount,
-        auth: Some(RequestAuth { nonce, expires_at: NOW + 60_000, signature: eip712::sign(key, &hash) })
-    })
 }

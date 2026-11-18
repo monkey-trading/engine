@@ -123,6 +123,7 @@ impl Node {
         seq_cfg.segment_commands = cfg.node.segment_commands;
         seq_cfg.checkpoint_every = cfg.node.checkpoint_every;
         seq_cfg.clock = clock.clone();
+        seq_cfg.close_spread_ceilings = cfg.genesis.close_spread_ceilings.clone();
         if let Some(genesis) = genesis {
             seq_cfg.genesis = genesis;
         }

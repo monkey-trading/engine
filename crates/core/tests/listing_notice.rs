@@ -33,6 +33,7 @@ fn notice(spread: Option<Vec<SpreadTier>>, margin: Option<Vec<Tier>>, markup: Op
         weekend_margin_bps: None,
         price_rules: None,
         effective_at: at,
+        min_level_distance_bps: None,
     }
 }
 

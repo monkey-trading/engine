@@ -490,4 +490,11 @@ pub enum ProtocolVersion {
     V77,
     /// The operator's status notice (`notice`), set and cleared by its signed `SetNotice` and `ClearNotice`.
     V78,
+    /// Take-profit and stop-loss levels on a position (`levels`), named on an order or set by a screened
+    /// request, each new or moved one at least its market's minimum distance beyond the closing price it
+    /// triggers on, or an entry's own price. Each closes the whole position once the account's closing
+    /// price reaches it, on a price or an entry's fill: a stop loss at that price, a take profit at its
+    /// level or better. Levels use one order slot per market; full closes and reversals remove them. The
+    /// distance moves by notice or vote, launch to twice it; activation gives an unset one the ceiling.
+    V79,
 }

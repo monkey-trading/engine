@@ -309,6 +309,8 @@ fn order(
         kind,
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let hash = eip712::order_hash(&key.domain, &request, nonce, key.expires_at);
     request.auth = Some(RequestAuth { nonce, expires_at: key.expires_at, signature: eip712::sign(&key.key, &hash) });
@@ -336,6 +338,8 @@ fn order_at(
         kind,
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let hash = eip712::order_hash(&key.domain, &request, nonce, expires_at);
     request.auth = Some(RequestAuth { nonce, expires_at, signature: eip712::sign(&key.key, &hash) });

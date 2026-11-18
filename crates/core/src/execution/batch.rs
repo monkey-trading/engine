@@ -17,6 +17,7 @@ use crate::command::{CloseAllRequest, CloseEntry, OrderKind, OrderRequest};
 use crate::eip712::close_all_hash;
 use crate::engine::Engine;
 use crate::event::{Event, Reject};
+use crate::levels::FillCause;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, Side};
 
@@ -58,7 +59,7 @@ impl Engine {
         for (index, entry) in req.closes.iter().enumerate() {
             let order = self.closing_order(account, index, entry, req.max_slippage_bps);
             match self.validate_order(&order) {
-                Ok(()) => self.place_validated(&order, events),
+                Ok(()) => self.place_validated(&order, FillCause::CloseAll, events),
                 Err(reason) => events.push(Event::OrderRejected { account, client_id: order.client_id, reason }),
             }
         }
@@ -117,6 +118,8 @@ impl Engine {
             qty,
             kind: OrderKind::Market { quoted: entry.quoted, max_slippage_bps },
             reduce_only: true,
+            take_profit: None,
+            stop_loss: None,
             auth: None,
         }
     }

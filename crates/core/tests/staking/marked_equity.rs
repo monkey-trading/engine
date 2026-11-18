@@ -149,6 +149,8 @@ pub(super) fn settle_positions(h: &mut Harness, losing: AccountId, winning: Acco
         kind: OrderKind::Market { quoted: f("100"), max_slippage_bps: None },
         reduce_only: true,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let Command::PlaceOrder(request) = client.order(h.engine.next_request_nonce(winning), request) else {
         unreachable!()

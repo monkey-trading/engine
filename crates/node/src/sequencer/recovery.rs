@@ -128,7 +128,7 @@ impl ReplayedLog {
         }
         genesis.ensure_closed()?;
         // So is one naming another genesis: the node would attest rules its engine does not run.
-        genesis.ensure_matches(&cfg.genesis, &cfg.client_auth, cfg.operator)?;
+        genesis.ensure_matches(&cfg.genesis, &cfg.close_spread_ceilings, &cfg.client_auth, cfg.operator)?;
         if (*requires_checkpoint_gate || !deferred.is_empty()) && cfg.checkpoints.is_none() {
             bail!("checkpoint-gated withdrawals require the checkpoint service");
         }

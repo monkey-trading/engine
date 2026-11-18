@@ -119,6 +119,8 @@ impl DevNode {
             kind,
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         };
         let events = self.apply(access::order(&self.engine, 1, req));
         events

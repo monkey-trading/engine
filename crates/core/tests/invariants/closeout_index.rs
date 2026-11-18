@@ -397,6 +397,8 @@ impl Run {
             qty,
             kind: OrderKind::Market { quoted: mid, max_slippage_bps: None },
             reduce_only: close.is_some(),
+            take_profit: None,
+            stop_loss: None,
             auth: None,
         };
         self.sign(account, request)

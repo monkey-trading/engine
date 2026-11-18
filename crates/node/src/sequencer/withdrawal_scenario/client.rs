@@ -202,6 +202,8 @@ impl Client {
             kind: OrderKind::Market { quoted: self.mark().await?, max_slippage_bps: None },
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         };
         let expires_at = now_ms() + 120_000;
         let hash = eip712::order_hash(&self.domain, &order, nonce, expires_at);

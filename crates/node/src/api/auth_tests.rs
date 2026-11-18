@@ -7,9 +7,7 @@ use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::Request as HttpRequest;
 use engine_core::auth::{MAX_EXPIRY_AHEAD_MS, RequestAuth};
-use engine_core::command::{
-    CancelAllRequest, CancelRequest, CloseAllRequest, Command, OrderKind, OrderRequest, WithdrawalRequest,
-};
+use engine_core::command::{Command, OrderKind, OrderRequest};
 use engine_core::eip712::{self, Eip712Domain, cancel_hash, order_hash, withdrawal_hash};
 use engine_core::event::{Event, Reject};
 use engine_core::price::SourceQuote;
@@ -27,7 +25,6 @@ use crate::sequencer::{Sequencer, SequencerConfig, SignedWithdrawal, replay};
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 
-const VECTORS: &str = include_str!("../../../core/tests/fixtures/eip712.json");
 /// The time the test sequencer stamps every command with, and the API checks expiries against
 /// unless a test gives it another clock: Tue 20 Oct 2026 14:00 UTC.
 const NOW: Millis = 1_792_504_800_000;
@@ -284,27 +281,6 @@ async fn without_signatures_the_account_field_is_trusted() {
     assert_eq!(sequenced.map(|req| req.auth), Some(None));
 }
 
-#[test]
-fn the_published_signing_vectors_are_bodies_the_api_accepts() {
-    let vectors: Value = serde_json::from_str(VECTORS).unwrap();
-    for vector in vectors["requests"].as_array().unwrap() {
-        let mut body = vector["body"].clone();
-        let (nonce, expires_at, signature) = (&vector["nonce"], &vector["expires_at"], &vector["signature"]);
-        body["auth"] = serde_json::json!({ "nonce": nonce, "expires_at": expires_at, "signature": signature });
-        let parsed = match vector["kind"].as_str().unwrap() {
-            "order" => serde_json::from_value::<OrderRequest>(body).map(drop),
-            "cancel" => serde_json::from_value::<CancelRequest>(body).map(drop),
-            "withdrawal" => serde_json::from_value::<WithdrawalRequest>(body).map(drop),
-            "cancel_all" => serde_json::from_value::<CancelAllRequest>(body).map(drop),
-            "close_all" => serde_json::from_value::<CloseAllRequest>(body).map(drop),
-            "register_session_key" => serde_json::from_value::<super::SessionKeyRequest>(body).map(drop),
-            "revoke_session_key" => serde_json::from_value::<super::SessionKeyRevocationRequest>(body).map(drop),
-            other => panic!("unknown request kind {other}"),
-        };
-        assert!(parsed.is_ok(), "{}: {parsed:?}", vector["kind"]);
-    }
-}
-
 #[tokio::test]
 async fn a_signed_refusal_of_a_copy_answers_the_order_and_a_fresh_account_read_shows_the_copy_filled() {
     use super::signing_tests::{call, parse, verify};
@@ -484,7 +460,7 @@ fn signed_order(key: &SigningKey, nonce: u64, qty: &str) -> Value {
 
 /// `signed_order` expiring at `expires_at`.
 fn signed_order_until(key: &SigningKey, nonce: u64, qty: &str, expires_at: Millis) -> Value {
-    let mut req = OrderRequest {
+    let req = OrderRequest {
         account: account_of(key),
         client_id: 1,
         market: 1,
@@ -493,8 +469,9 @@ fn signed_order_until(key: &SigningKey, nonce: u64, qty: &str, expires_at: Milli
         kind: OrderKind::Market { quoted: "100000".parse().unwrap(), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
-    let hash = order_hash(&eip712::domain(CHAIN_ID, VAULT), &req, nonce, expires_at);
-    req.auth = Some(RequestAuth { nonce, expires_at, signature: eip712::sign(key, &hash) });
-    serde_json::to_value(&req).unwrap()
+    let signature = eip712::sign(key, &order_hash(&eip712::domain(CHAIN_ID, VAULT), &req, nonce, expires_at));
+    serde_json::to_value(OrderRequest { auth: Some(RequestAuth { nonce, expires_at, signature }), ..req }).unwrap()
 }

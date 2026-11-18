@@ -417,6 +417,8 @@ impl Scenario {
                     kind: OrderKind::Market { quoted: mid.parse().unwrap(), max_slippage_bps: None },
                     reduce_only: false,
                     auth: None,
+                    take_profit: None,
+                    stop_loss: None,
                 };
                 let (status, events) = self.post("/v1/orders", serde_json::to_value(order).unwrap()).await;
                 assert!(status == StatusCode::OK && events.to_string().contains("\"fill\""), "{events}");

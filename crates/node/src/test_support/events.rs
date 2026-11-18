@@ -7,6 +7,7 @@ use engine_core::corporate::{Adjustment, CorporateAction};
 use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositReject, DepositStatus};
 use engine_core::emissions::TokenUnits;
 use engine_core::event::{CancelReason, Event, Fill, Reject};
+use engine_core::levels::{LevelKind, LevelsRemoved};
 use engine_core::price::PriceError;
 use engine_core::types::{AccountId, Side};
 
@@ -52,6 +53,8 @@ pub fn every_event() -> Vec<Event> {
         Reject::SessionKeyUnsupported,
         Reject::TooManySessionKeys { max: 10 },
         Reject::BatchUnsupported,
+        Reject::LevelTooClose { level: amount, min_distance_bps: 30, reference: amount },
+        Reject::LevelsUnsupported,
     ];
     for reason in &reasons {
         match reason {
@@ -89,7 +92,9 @@ pub fn every_event() -> Vec<Event> {
             | Reject::Expired { .. }
             | Reject::ExpiryTooFar { .. }
             | Reject::StakingNotInitialised
-            | Reject::InsufficientStake => {}
+            | Reject::InsufficientStake
+            | Reject::LevelTooClose { .. }
+            | Reject::LevelsUnsupported => {}
         }
     }
     let fill = Fill {
@@ -271,6 +276,15 @@ pub fn every_event() -> Vec<Event> {
         Event::SessionKeyRegistered { account, session_key: account, expires_at: 1_500 },
         Event::SessionKeyRevoked { account, session_key: account },
         Event::SessionKeyRejected { account, session_key: account, reason: Reject::SessionKeyScope },
+        Event::PositionLevelsSet { account, market, take_profit: Some(amount), stop_loss: None },
+        Event::PositionLevelTriggered { account, market, level: LevelKind::StopLoss, price: amount, order_id: 9 },
+        Event::PositionLevelsRemoved {
+            account,
+            market,
+            take_profit: Some(amount),
+            stop_loss: Some(amount),
+            reason: LevelsRemoved::StopLoss,
+        },
     ]);
     for event in &events {
         match event {
@@ -341,6 +355,9 @@ pub fn every_event() -> Vec<Event> {
             | Event::SessionKeyRegistered { .. }
             | Event::SessionKeyRevoked { .. }
             | Event::SessionKeyRejected { .. }
+            | Event::PositionLevelsSet { .. }
+            | Event::PositionLevelTriggered { .. }
+            | Event::PositionLevelsRemoved { .. }
             | Event::CatchUpDeferred { .. } => {}
         }
     }

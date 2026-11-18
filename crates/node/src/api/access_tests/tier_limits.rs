@@ -148,6 +148,8 @@ async fn bid(node: &Node, client: &SigningKey) -> (StatusCode, Value) {
         kind: OrderKind::Limit { price: Fixed::from_int(50_000) },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let hash = eip712::order_hash(&eip712::domain(31_337, VAULT), &request, nonce, expires_at);
     request.auth = Some(RequestAuth { nonce, expires_at, signature: eip712::sign(client, &hash) });

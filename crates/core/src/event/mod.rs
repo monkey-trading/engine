@@ -8,6 +8,7 @@ use crate::corporate::CorporateAction;
 use crate::deposits::{DepositReceipt, DepositReject, DepositStatus};
 use crate::eip712::B256;
 use crate::emissions::TokenUnits;
+use crate::levels::{LevelKind, LevelsRemoved};
 use crate::staking::UsdcUnits;
 use crate::turns::TurnReason;
 use crate::types::{AccountId, MarketId, Millis, OrderId};
@@ -156,6 +157,36 @@ pub enum Event {
         reason: CancelReason,
     },
     Fill(Fill),
+    /// From `V79`, the levels a request, or the order whose fill left the position on its side, set on
+    /// the account's position in `market`; neither, when a request removed them.
+    PositionLevelsSet {
+        account: AccountId,
+        market: MarketId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        take_profit: Option<Fixed>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_loss: Option<Fixed>,
+    },
+    /// From `V79`, a level the position's closing price reached, which closes it as `order_id`'s fill:
+    /// `price` is the level, and the price the position closed at is that fill's.
+    PositionLevelTriggered {
+        account: AccountId,
+        market: MarketId,
+        level: LevelKind,
+        price: Fixed,
+        order_id: OrderId,
+    },
+    /// From `V79`, the levels removed from the account's position in `market`, or that an order named
+    /// for a position its fill did not leave, and why.
+    PositionLevelsRemoved {
+        account: AccountId,
+        market: MarketId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        take_profit: Option<Fixed>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_loss: Option<Fixed>,
+        reason: LevelsRemoved,
+    },
     CloseOut {
         account: AccountId,
         equity: Fixed,

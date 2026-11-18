@@ -16,9 +16,9 @@ approval; an approval for one step is not one for the next.
   ([key-recovery.md](key-recovery.md)).
 - **A new release may not be able to go back.** The node activates the newest protocol version when
   it starts. A log that has activated a version cannot be replayed by a build that predates it.
-  Compare `ProtocolVersion::LATEST` in `crates/core/src/protocol.rs` between the running tag and the
-  new one (`git diff <old tag> <new tag> -- crates/core/src/protocol.rs`). If it changed, the upgrade
-  cannot be rolled back to the old image: fix forward.
+  Compare `ProtocolVersion::LATEST` between the running tag and the new one
+  (`git grep -h "const LATEST" <tag> -- crates/core/src/protocol.rs crates/core/src/protocol/` for each
+  tag). If it changed, the upgrade cannot be rolled back to the old image: fix forward.
 - **While operator rotation is on, `setCurrentRelease` reverts** (`RotationActive`): the release the
   vault names is then the operator in effect's. Naming a release is instead the timelock's approval
   of it for the operator's candidacy and the candidacy's move to it

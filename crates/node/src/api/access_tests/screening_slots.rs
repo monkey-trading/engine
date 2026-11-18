@@ -11,6 +11,7 @@ use axum::http::Method;
 use futures_util::future::join_all;
 
 use super::batch::close_all;
+use super::levels::{levels, levels_body, of_type};
 use super::pre_deposit::{address, next_nonce, screened};
 use super::pre_deposit_budgets::send;
 use super::session_keys::registration;
@@ -64,9 +65,10 @@ async fn one_wallets_burst_holds_only_its_share_of_the_screening_slots() {
 
 /// Three wallets' new orders from two clients hold every slot outside the reserve: the first client
 /// holds its share of four for two wallets, so the third wallet's is refused there and it sends from
-/// another. Then a new order is told to retry, while a close and a withdrawal take the reserve.
+/// another. Then a new order is told to retry, while a stop loss, a close and a withdrawal take the
+/// reserve.
 #[tokio::test]
-async fn new_orders_leave_closes_and_withdrawals_the_reserved_slots() {
+async fn new_orders_leave_stop_losses_closes_and_withdrawals_the_reserved_slots() {
     let (logs, _guard) = Logs::capture();
     let mut node = Node::start("screening-slot-reserve", true).await;
     production_slots(&mut node);
@@ -99,10 +101,14 @@ async fn new_orders_leave_closes_and_withdrawals_the_reserved_slots() {
         (status, body["error"].as_str(), retry_after),
         (StatusCode::SERVICE_UNAVAILABLE, Some("screening is at capacity"), Some(5))
     );
+    let stop = levels_body(&trader, &trader, 2, NOW + 60_000, 1, levels(None, Some("99000")));
+    let (status, events, _) = send(&node, 3, Method::POST, "/v1/positions/levels", stop).await;
+    let set = of_type(&events, "position_levels_set").len();
+    assert_eq!((status, set), (StatusCode::OK, 1), "the stop loss takes a reserved slot: {events}");
     let (status, events, _) =
-        send(&node, 3, Method::POST, "/v1/orders", signed_order(&trader, &trader, 2, 2, true)).await;
+        send(&node, 3, Method::POST, "/v1/orders", signed_order(&trader, &trader, 3, 2, true)).await;
     assert!(status == StatusCode::OK && fills(&events), "the close takes a reserved slot: {events}");
-    let (status, events, _) = send(&node, 3, Method::POST, "/v1/withdrawals", withdrawal(&trader, 3)).await;
+    let (status, events, _) = send(&node, 3, Method::POST, "/v1/withdrawals", withdrawal(&trader, 4)).await;
     assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("withdrawal_queued")), "{events}");
     assert_eq!(logs.warnings("api_screening_slots_full"), 1, "the operator hears of the refused order");
 

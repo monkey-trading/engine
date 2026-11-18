@@ -146,6 +146,8 @@ fn reduce_only_orders_and_markets_never_add_risk() {
             kind: OrderKind::Market { quoted: f("100000"), max_slippage_bps: None },
             reduce_only: true,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         })
     };
     assert_eq!(rejection(&h.cmd(reduce(Side::Sell, "0.1"))), &Reject::ReduceOnly);

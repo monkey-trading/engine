@@ -64,6 +64,7 @@ fn source_health(engine: &Engine, cmd: &Command, events: &[Event]) -> Option<Sou
     events.iter().find_map(|event| match event {
         Event::EligibilityAttested { .. }
         | Event::OrderAccepted { .. }
+        | Event::PositionLevelsSet { .. }
         | Event::WithdrawalQueued { .. }
         | Event::Deposited { .. }
         | Event::HouseCapitalMoved { .. } => Some(SourceHealth::Verified),
@@ -91,6 +92,7 @@ fn source_health(engine: &Engine, cmd: &Command, events: &[Event]) -> Option<Sou
             | Reject::SessionKeyScope
             | Reject::SessionKeyUnsupported
             | Reject::BatchUnsupported
+            | Reject::LevelsUnsupported
             | Reject::TooManySessionKeys { .. } => None,
             _ => Some(SourceHealth::Verified),
         },
@@ -132,6 +134,7 @@ pub(super) fn is_access_command(cmd: &Command) -> bool {
         Command::AttestEligibility { .. }
             | Command::AccessOrder { .. }
             | Command::AccessCloseAll { .. }
+            | Command::AccessSetPositionLevels { .. }
             | Command::AccessWithdraw { .. }
             | Command::AccessDeposit { .. }
             | Command::AccessCustodyDeposit { .. }
@@ -311,6 +314,41 @@ mod tests {
             &[Event::OrderCancelled { account: ACCOUNT, order_id: 1, reason: CancelReason::Client }],
         );
         assert!(state.failed);
+    }
+
+    #[test]
+    fn a_levels_request_drives_the_source_episode_by_its_own_screening() {
+        use engine_core::command::PositionLevelsRequest;
+        let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
+        let levels = Command::AccessSetPositionLevels {
+            request: PositionLevelsRequest {
+                account: ACCOUNT,
+                market: 1,
+                take_profit: None,
+                stop_loss: Some(Fixed::ONE),
+                auth: None,
+            },
+            evidence: AccessEvidence::Failed { reason: SourceFailure::Unavailable },
+        };
+        let rejected = |reason| Event::OrderRejected { account: ACCOUNT, client_id: 0, reason };
+        let note = |state: &mut AccessAlerts, events: &[Event]| state.note(&Engine::default(), &levels, events);
+
+        let mut state = AccessAlerts::default();
+        note(&mut state, &[rejected(Reject::Access { reason: AccessReject::SourceUnavailable })]);
+        assert!(state.failed, "a refused levels request opens the episode");
+        assert_eq!(logs.count("alert=\"access_source_failed\""), 1);
+        // Before `V79` the request reads no evidence, so it says nothing about the source.
+        note(&mut state, &[rejected(Reject::LevelsUnsupported)]);
+        assert!(state.failed);
+        // Every outcome after a passed screening resolves it: a level refused, and levels set.
+        let too_close = Reject::LevelTooClose { level: Fixed::ONE, min_distance_bps: 30, reference: Fixed::ONE };
+        let set = Event::PositionLevelsSet { account: ACCOUNT, market: 1, take_profit: None, stop_loss: None };
+        for (resolved, outcome) in (1..).zip([rejected(too_close), set]) {
+            state.failed = true;
+            note(&mut state, &[outcome]);
+            assert!(!state.failed);
+            assert_eq!(logs.count("alert_resolved=\"access_source_failed\""), resolved);
+        }
     }
 
     #[test]

@@ -161,6 +161,8 @@ fn operator_session_key(h: &mut Harness) {
         qty: f("0.001"),
         kind: OrderKind::Limit { price: f("1") },
         reduce_only: false,
+        take_profit: None,
+        stop_loss: None,
         auth: None,
     };
     let events = h.cmd(trade_cmd_expiring(h, &key, admin_nonce, order, key.expires_at));

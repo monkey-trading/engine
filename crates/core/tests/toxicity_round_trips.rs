@@ -136,6 +136,7 @@ fn a_close_out_takes_open_quantity_but_matches_none() {
         weekend_margin_bps: None,
         price_rules: None,
         effective_at,
+        min_level_distance_bps: None,
     };
     h.operator_admin(AdminCommand::AnnounceListing { market: BTC, notice });
     h.advance_to(effective_at - 1_000);

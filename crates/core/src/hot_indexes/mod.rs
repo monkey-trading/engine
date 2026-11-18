@@ -10,8 +10,11 @@ use crate::protocol::ProtocolVersion;
 use crate::toxicity::MarkoutLegs;
 use crate::types::{AccountId, MarketId};
 
+mod levels;
+pub(crate) use levels::{AccountInputs, AccountLevels, LevelIndex, MarketInputs, MarketLevels};
 mod triggers;
 use triggers::Triggers;
+pub(crate) use triggers::reach;
 
 #[derive(Debug, Default)]
 pub(crate) struct HotIndexes {
@@ -52,6 +55,8 @@ pub(crate) struct HotIndexes {
     pub(crate) retryable: BTreeSet<String>,
     /// From `V54`, the markouts a new fill may match (`toxicity::legs`).
     pub(crate) markout_legs: MarkoutLegs,
+    /// From `V79`, the take-profit and stop-loss levels by key (`levels`).
+    pub(crate) levels: LevelIndex,
     /// Test-only: run insertions and extensions, bounding the rebuild's index work.
     #[cfg(test)]
     pub(crate) run_insertions: usize,
@@ -301,6 +306,7 @@ impl Engine {
     pub(crate) fn ensure_hot_indexes(&mut self) {
         if self.hot_indexes.is_none() {
             self.hot_indexes = Some(self.build_hot_indexes());
+            self.index_all_levels();
         }
     }
 

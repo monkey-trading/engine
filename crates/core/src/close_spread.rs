@@ -31,16 +31,14 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
-use crate::account::RestingOrder;
 use crate::engine::Engine;
-use crate::event::{CancelReason, Event, Reject};
-use crate::execution::{Exec, PriceGuard};
+use crate::event::Reject;
 use crate::market::MarketSpec;
 use crate::operator_bounds::NOTICE_MS;
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
 use crate::spread_tier::check_spread_tiers;
-use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis, OrderId, Side};
+use crate::types::{MAX_STAMP_MS, MarketId, Millis, Side};
 
 /// The most a close-spread ceiling may be: 9,999 bps, an arithmetic limit, not an economic range.
 pub const MAX_CLOSE_SPREAD_BPS: i64 = 9_999;
@@ -256,6 +254,7 @@ impl Engine {
                 // From `V58` the listing names a markout floor, as a first listing from `V54` does.
                 if self.protocol_version >= ProtocolVersion::V58 {
                     self.check_markout_floor(spec)?;
+                    self.check_level_distance_listing(spec)?;
                 }
                 self.check_adopted_tiered_listing(market, &spec.spread_tiers)?;
                 spec
@@ -460,40 +459,5 @@ impl Engine {
         }
         let bound = mid.raw() * i128::from(ceiling) / 10_000;
         Ok(charge.min(Fixed::from_raw(bound)))
-    }
-
-    /// Fills the closing slice of a triggered order a reversal refusal stopped, then cancels the
-    /// order: a triggered order has no client at hand to send the reduce-only close the refusal
-    /// asks for. The closing slice is a pure close, so it fills at its clamped charge; if even it
-    /// cannot fill, the order cancels as unfillable and the position stays open.
-    pub(crate) fn fill_closing_slice(
-        &mut self,
-        account: AccountId,
-        order_id: OrderId,
-        order: &RestingOrder,
-        guard: PriceGuard,
-        events: &mut Vec<Event>,
-    ) {
-        let pos_qty = self.accounts.get(&account).map(|acct| acct.position(order.market).qty.abs()).unwrap_or_default();
-        let fill = if pos_qty.is_zero() {
-            None
-        } else {
-            let exec = Exec {
-                account,
-                order_id,
-                market: order.market,
-                side: order.side,
-                qty: pos_qty.min(order.qty),
-                reduce_only: true,
-                guard,
-                liquidation: false,
-            };
-            self.execute(exec, events).ok()
-        };
-        self.remove_order(account, order_id);
-        if let Some(fill) = fill {
-            self.after_fill(fill, events);
-        }
-        events.push(Event::OrderCancelled { account, order_id, reason: CancelReason::Unfillable });
     }
 }

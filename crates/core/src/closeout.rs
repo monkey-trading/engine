@@ -20,6 +20,7 @@ use crate::engine::Engine;
 use crate::event::Event;
 use crate::execution::{Exec, PriceGuard};
 use crate::fixed::Rounding;
+use crate::levels::FillCause;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId, Side};
 
@@ -94,7 +95,7 @@ impl Engine {
                 liquidation: true,
             };
             match self.execute(exec, events) {
-                Ok(fill) => self.after_fill(fill, events),
+                Ok(fill) => self.after_fill(fill, FillCause::CloseOut, events),
                 Err(_) => break,
             }
         }

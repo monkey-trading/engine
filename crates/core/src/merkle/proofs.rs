@@ -2,8 +2,8 @@
 
 use crate::engine::Engine;
 use crate::merkle::{
-    AccountProof, EntitlementProof, MarketProof, PositionProof, WithdrawalApprovalProof, account_key, entitlement_key,
-    market_key, position_key, withdrawal_approval_key,
+    AccountProof, EntitlementProof, LevelsProof, MarketProof, PositionProof, WithdrawalApprovalProof, account_key,
+    entitlement_key, levels_key, market_key, position_key, withdrawal_approval_key,
 };
 use crate::types::{AccountId, MarketId};
 
@@ -28,7 +28,16 @@ impl Engine {
             })
             .unzip();
         let siblings = proof(account_key(account));
-        Some(AccountProof { seq: state.seq, root: state.root, account, leaf, siblings, positions, markets })
+        let levels = state
+            .levels
+            .range((account, MarketId::MIN)..=(account, MarketId::MAX))
+            .map(|((_, market), levels)| LevelsProof {
+                market: *market,
+                levels: *levels,
+                siblings: proof(levels_key(account, *market)),
+            })
+            .collect();
+        Some(AccountProof { seq: state.seq, root: state.root, account, leaf, siblings, positions, markets, levels })
     }
 
     /// The proof of `account`'s cumulative MONKEY entitlement against the last state root computed.

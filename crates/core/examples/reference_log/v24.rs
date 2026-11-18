@@ -219,6 +219,8 @@ impl Session {
             kind,
             reduce_only: false,
             auth: None,
+            take_profit: None,
+            stop_loss: None,
         };
         let Command::PlaceOrder(request) = client.order(nonce, request) else { unreachable!("a signed order") };
         let hash = eip712::order_hash(&client.domain, &request, nonce, client.expires_at);

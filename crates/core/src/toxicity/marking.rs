@@ -123,6 +123,8 @@ impl Engine {
             let score = self.toxicity_scores.entry(markout.account).or_default();
             *score = score.decayed_to(now);
             score.fold(notional, share, errors);
+            // From `V79` the score may move the account's add-on, which its levels' keys read.
+            self.refresh_level_inputs(markout.account);
         }
         // Back at the front in due order, to try again at the next command.
         waiting.into_iter().rev().for_each(|markout| self.requeue_markout(markout));

@@ -229,6 +229,15 @@ this crate and reproduce the signed state roots exactly.
   close-out calls `weekend_close_out` only on the holders the keys do not show meeting the requirement
   with every weekend margin. The index is derived, built at recovery and inside an activation, and moves
   no root or event
+- From protocol `V79`, take-profit and stop-loss levels on a position (`src/levels/`): an order names them,
+  signed under `OrderWithLevels`, or a screened request sets, moves or removes them, each at least the
+  market's minimum distance (`MarketSpec::min_level_distance_bps`) beyond the closing price it triggers
+  on; a level fires on a price in its market when the account's own closing price reaches it, the stop
+  loss at that price, gap included, the take profit at its level or better, and every full close, a
+  reversal and a split to zero remove both; a market's levels use one resting-order slot. A derived
+  index (`src/hot_indexes/levels.rs`) keys each level at the mid where its closing price can first reach
+  it, so a price visits only the levels it reaches, and recomputes a key whenever an input to the closing
+  price moves
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -351,6 +360,28 @@ this crate and reproduce the signed state roots exactly.
 - `src/hot_indexes/triggers.rs` — the trigger index: each market's resting orders by the mid at which a price
   first reaches them, from `V74` a limit at the mid where its market's least fill rate first lets it fill,
   re-keyed when that rate moves, and each order's key kept for its removal
+- `src/hot_indexes/levels.rs` — the level index, from `V79`: each market's levels by key, per side, with the
+  market's and each account's inputs their keys were computed at, and when each account's inputs may
+  next move by time alone
+- `src/levels/mod.rs` — take-profit and stop-loss levels, from `V79`: the types and the rules
+- `src/levels/request.rs` — the signed levels request, an order's levels, the minimum distance and slot
+  checks, attaching levels to the position a fill leaves, and removing them when a fill closes or turns it
+- `src/levels/closing.rs` — the closing price a level triggers on and is measured from
+- `src/levels/keys.rs` — a level's key: an exact search over the closing price, which for a long proves
+  no mid past the key reaches the level though the price can step back where its rounded spread jumps
+- `src/levels/keys/tests.rs` — keys against brute force over every mid within the ceiling's reach
+- `src/levels/index.rs` — keeping the level index exact: re-keying a position on a fill or a level change,
+  an account on its fills and markouts and when its volume book or score could next move by time, a
+  market whenever its stress level, spread, bands or ceiling moved, and all on new tier tables
+- `src/levels/trigger.rs` — firing the levels a price reaches, in account order, and those an entry's fill
+  attaches
+- `src/levels/bounds.rs` — the minimum distance's activation and listing rules
+- `src/levels/tests.rs` — the level index against pricing every level: random sessions in a USD market and
+  markets converting at their own and at another's index, compared event for event and root for root;
+  doubled bands and a lowered ceiling each firing a level at a mid the new inputs reach and the old do not;
+  and the level path's cost at 100k levels
+- `src/merkle/levels.rs` — the levels leaves (kind 29)
+- `src/execution/trigger.rs` — resting orders a price reaches, and a triggered reversal's closing slice
 - `src/marks.rs` — venue prices, and marking a market and the markets that convert at its index
 - `src/corporate/` — authenticated instruction types and scheduling (`mod.rs`), the `V76` corporate
   bounds (`bounds.rs`), actual venue boundary validation and the trading days before an action
@@ -474,6 +505,21 @@ this crate and reproduce the signed state roots exactly.
 - `tests/resting_reach/least_rate.rs` — `V74`: no fill paying less of its index than its market's least
   fill rate, through opens, adds, closes and reversals at two stress levels, with and without a toxicity
   tier, at volume tiers 0 and 3, under bands below the ceiling and bands raised above it
+- `tests/levels.rs` — `V79`: an order's levels and the request setting, moving and removing them; the
+  minimum distance from the closing price, an entry's price and the position a market order leaves; a
+  stop loss filling at the closing price, gap included, a take profit at its level or better, a short's
+  mirrored; a raised stress level firing a level at the same index; nothing firing, and no level set
+  from the last mark, while an open market is unpriced; firing in a reduce-only market and before the
+  close-out on the same price
+- `tests/levels/lifecycle.rs` — `V79`: an add and a partial close keeping levels, an add keeping a level
+  it does not name and measuring only those it moves, a reversal removing them unless its order names new
+  ones, a client close, a close-all, a close-out, a weekend close-out and a split to zero each removing
+  them saying why, a level set from the last mark over a weekend, a split scaling them, an entry order's
+  levels waiting, attaching, dropping and firing at once
+- `tests/levels/tiers.rs` — `V79`: a toxicity tier reached and a volume tier lost each firing a level with
+  the index unchanged
+- `tests/levels/bounds.rs` — `V79`: a market's levels using one order slot, activation giving each market
+  its ceiling as its distance, and the distance moving only by notice within its launch value to twice it
 - `tests/tier_limit_bounds.rs` — a table's limits held named, at or below launch's and never falling
   with the tier, a lower limit noticed, and the refusal of a limit before V66
 - `tests/tier_benefits.rs` — the fee a tier pays at a hold, the markup a rollover charges, the weight a
@@ -766,7 +812,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V77` parts (`v15.rs` to `v77.rs`), and its `V78` part (`v78.rs`)
+  `V15` to `V79` parts (`v15.rs` to `v79.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1492,6 +1538,32 @@ leading or trailing space, and a refused one is an `AdminRejected` with its reas
 force. It moves no value, so the operator in office sets it while rotation is on, and no vote carries it. A notice
 before V78 is refused. Its log is `v78.jsonl`, and its session is in `examples/reference_log/v78.rs`.
 
+Protocol V79 adds take-profit and stop-loss levels on a position. An order may name a take profit and a
+stop loss, signed under `OrderWithLevels`, and the position its fill leaves on its side takes each in
+place of its own, keeping a level the order leaves out; a resting entry order holds them until it
+fills, and a reduce-only order may name none. A screened `AccessSetPositionLevels` request, signed as
+`SetPositionLevels`, sets, moves or removes them on one nonce. Each level lies at least its market's
+`min_level_distance_bps` beyond the closing price it triggers on: the whole position's close now (at
+the last mark only while the market is shut), the close of the position a market order leaves at its
+fill's index, or a resting entry's own price; only a new or moved level is measured, when it is set,
+so an add naming a level the position already holds leaves it unmeasured.
+A level fires when the account's own closing price for the whole position reaches it, on a price in its
+market after its resting orders and before its close-outs, or when an entry's fill attaches it: a stop
+loss fills at that price, gap included, and a take profit at its level or better. A fill that moves the
+market's stress level starts the round of levels a price fires again from the first account. Every
+full close, a reversal and a split to zero remove both levels, each with its reason; an add or a
+partial close keeps them, and a split scales them as it scales working orders. A market's levels use
+one slot of the resting-order limit, and Cancel all leaves them. The levels are a leaf of the state tree
+(kind 29) and part of the account proof. A derived index keys each level at the mid where its closing
+price can first reach it and recomputes the key whenever its position, its account's toxicity add-on or
+best-price share, or its market's stress level, spread, bands or ceiling moves; it changes no root. A
+market converting at another market's index keys each level by bounds that need no FX index, its ceiling
+and its least fill rate, so an FX move re-keys nothing and a price prices each of its levels within the
+ceiling's reach of the index. Activation gives each market listed without a minimum distance its
+close-spread ceiling, and the distance moves only by a listing notice or a vote, from its launch value
+to twice it. Its log is
+`v79.jsonl`, and its session is in `examples/reference_log/v79.rs`.
+
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
 is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
@@ -1538,8 +1610,8 @@ logs replay to. It ships as a new protocol version, and the committed logs of ea
 keep passing unchanged. `v1.jsonl` holds the original rules, and `v2.jsonl` adds two: a venue quote
 stamped more than `MAX_QUOTE_LEAD_MS` after the sequenced time is refused, and any quote replaces a
 stored one stamped after the sequenced time. Both predate activation, so every log starts under
-their combined rules, which `src/protocol/versions.rs` names `V2`; `v1.jsonl` still replays because none of
-its quotes is stamped ahead. `V3` adds signed client requests and activates at a recorded seq; its
+their combined rules, which `src/protocol/versions.rs` names `V2`; `v1.jsonl` still replays because none
+of its quotes is stamped ahead. `V3` adds signed client requests and activates at a recorded seq; its
 log is `v3.jsonl`. `V4` lets schedules carry dated closures and special sessions, and lets a zero
 house capital move record its reference; it activates the same way, and its log is `v4.jsonl`. `V5`
 rounds position accounting in the house's favour; its log is `v5.jsonl`. `V6` adds dollar floors
@@ -1628,6 +1700,8 @@ command-processing regression guards, not an end-to-end service latency promise.
 | Every account holds the repriced market | 100,000 | 250 ms |
 | Dormant resting orders in the repriced market | 100,000 | 200 us |
 | From `V74`, a limit per account that every price passes and the first band keeps out of reach, against `V73` | 100,000 | 200 us |
+| From `V79`, the level path of a price (`Engine::trigger_levels` alone) with a stop loss per account inside the ceiling's reach of the index or levels out of it, in a USD market and in one converting at another's moving index out of reach | 100,000 | 200 us |
+| From `V79`, the same stop losses end to end, a price with every level in its market | 100,000 | 200 us |
 | Daily rollover with financing on every position | 100,000 | 500 ms |
 | Finalising a MONKEY emission period in which every account lost (one sample) | 100,000 | 500 ms |
 | A signed empty cancel-all, the floor of a signed command (one sample per account) | 100,000 | bar 2 ms, guard p50 2.5 ms |
@@ -1698,6 +1772,25 @@ workspace builds running: each of 100,000 accounts rests a limit buy of 0.01 BTC
 price at 100,000 or 100,001 passes and BTC's 1bp first band keeps out of reach. A price took 48,436 /
 51,335 us p50 / p99 under `V73`, which prices every one of those limits, and 0 / 2 us under `V74`, which
 visits none. The budget is the resting case's 200 us p99.
+
+Levels from `V79` (`tests/hot_path_benchmark/levels.rs`), measured on 18 November 2026 on the machine
+above with other workspace builds running: each of 100,000 accounts holds a 0.0001 BTC long, and each
+sample is taken on the book with levels and on the same book without, in turn. With a stop loss inside
+BTC's 20bp ceiling of the index and out of its closing price's reach, a price took 1 / 5 us p50 / p99,
+against 1 / 2 us without levels: nothing added at the median. With both levels out of reach it took
+1 / 26 us against 1 / 32 us. Pricing each in-band level again instead would add about 58 ms (#700's
+0.58 us a level). One price firing all 100,000 stop losses took 399 ms. The first price after the
+operator's stress floor moved BTC to level 1, which re-keys every level, took 684 ms, and the first price
+after the UTC midnight that dropped every account from tier 1 to tier 0, which reads each account's tier
+again and re-keys its level, took 895 ms. Rebuilding the index from state, as recovery and an activation
+do, took 0.11 to 1.08 s; a split re-keys only its own market's levels. The level path alone (`levels::tests::the_level_path`, in the
+crate) took 4 / 5 us p50 / p99 in band, 3 / 6 us out of band, and 4 / 5 us in DE40 out of reach while
+EUR-USD moved. A market converting at another's index keys its levels without that index, so a DE40
+stop loss within its 25bp ceiling of the index is priced on every DE40 price: 100,000 of them took
+70 / 74 ms, inside the 250 ms of a price in a market every account holds, and is printed, not held.
+Each hour every account holding levels whose toxicity score holds 20 decayed fills has its add-on read
+again for decay: with 100,000 such accounts below every tier, the first price after the hour took 48 ms
+against 13 us for the price after it.
 
 Portfolio requirement cost (`tests/portfolio_margin_benchmark.rs`, ignored; run it with
 `cargo test -p engine-core --test portfolio_margin_benchmark --locked -- --ignored --nocapture --test-threads=1`),

@@ -286,7 +286,7 @@ jobs:
                 scripts/dev-corporate-actions.sh | scripts/dev-operator-bounds.sh | scripts/dev-params-notice.sh \
                   | scripts/dev-holding-fee.sh | scripts/dev-volume-tiers.sh | scripts/dev-weekend-margin.sh \
                   | scripts/dev-earned-leverage.sh | scripts/dev-tier-limits.sh | scripts/dev-volume-benefits.sh \
-                  | scripts/dev-spreads.sh | scripts/dev-portfolio-margin.sh)
+                  | scripts/dev-spreads.sh | scripts/dev-portfolio-margin.sh | scripts/dev-position-levels.sh)
                   areas+=" scenario_tests" ;;
                 scripts/dev-toxicity.sh) areas+=" toxicity" ;;
                 scripts/dev-venue-load.sh) areas+=" venue_load" ;;
@@ -834,6 +834,8 @@ jobs:
         run: ./scripts/dev-volume-benefits.sh
       - name: Run the portfolio margin dev scenario
         run: ./scripts/dev-portfolio-margin.sh
+      - name: Run the position levels dev scenario
+        run: ./scripts/dev-position-levels.sh
       - name: Run the spreads dev scenario
         run: ./scripts/dev-spreads.sh
       - name: Check the wait from a price entering the sequencer's channel to its stamp at 100k accounts
@@ -848,6 +850,8 @@ jobs:
         run: cargo test -p engine-node --lib --locked sequencer::wait_bench::mass -- --ignored --nocapture --test-threads=1
       - name: Check a walk of BTC-USD on launch-scale books with accounts near their close-out level
         run: cargo test -p engine-core --test launch_book_benchmark --locked -- --ignored --nocapture --test-threads=1 launch_book_price_walk
+      - name: Check the level path of a price at 100k take-profit and stop-loss levels
+        run: cargo test -p engine-core --lib --locked levels::tests::the_level_path -- --ignored --nocapture --test-threads=1
       - name: Check the stats record's cost on a launch-scale book at 100k accounts
         run: cargo test -p engine-node --lib --locked stats::launch_bench -- --ignored --nocapture --test-threads=1
 

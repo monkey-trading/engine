@@ -24,7 +24,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::Fixed;
 use crate::access::{AccessDeposit, EligibilityClass, Screening};
-use crate::command::{AdminCommand, CloseAllRequest, CloseEntry, OrderKind, OrderRequest};
+use crate::command::{AdminCommand, CloseAllRequest, CloseEntry, OrderKind, OrderRequest, PositionLevelsRequest};
 use crate::types::{AccountId, Millis, OrderId, Side};
 
 /// The domain name every request is signed under.
@@ -56,6 +56,41 @@ mod typed {
             bool hasMaxSlippage;
             int64 maxSlippageBps;
             bool reduceOnly;
+        }
+
+        /// `Command::PlaceOrder` naming a take profit or a stop loss, from `V79`: `OrderRequest`'s
+        /// fields, then each level with whether it is named. An order naming neither signs
+        /// `OrderRequest`.
+        struct OrderWithLevels {
+            address account;
+            uint64 nonce;
+            int64 expiresAt;
+            uint64 clientId;
+            uint32 market;
+            string side;
+            int128 qty;
+            string kind;
+            int128 price;
+            bool hasMaxSlippage;
+            int64 maxSlippageBps;
+            bool reduceOnly;
+            bool hasTakeProfit;
+            int128 takeProfit;
+            bool hasStopLoss;
+            int128 stopLoss;
+        }
+
+        /// `Command::AccessSetPositionLevels`, from `V79`: the levels the position in `market` takes,
+        /// each with whether it is named; a level not named is removed.
+        struct SetPositionLevels {
+            address account;
+            uint64 nonce;
+            int64 expiresAt;
+            uint32 market;
+            bool hasTakeProfit;
+            int128 takeProfit;
+            bool hasStopLoss;
+            int128 stopLoss;
         }
 
         /// `Command::CancelOrder`.
@@ -150,34 +185,83 @@ pub fn domain(chain_id: u64, vault: AccountId) -> Eip712Domain {
     )
 }
 
-/// The digest a client signs to place `req` with `nonce`, until `expires_at`.
+/// The digest a client signs to place `req` with `nonce`, until `expires_at`: `OrderRequest`, or from
+/// `V79` `OrderWithLevels` when the order names a take profit or a stop loss.
 pub fn order_hash(domain: &Eip712Domain, req: &OrderRequest, nonce: u64, expires_at: Millis) -> B256 {
     // Every field is named, so a field added to `OrderRequest` fails to compile until it is signed.
-    let OrderRequest { account, client_id, market, side, qty, kind, reduce_only, auth: _ } = req;
+    let OrderRequest { account, client_id, market, side, qty, kind, reduce_only, take_profit, stop_loss, auth: _ } =
+        req;
     let (kind, price, max_slippage_bps) = match *kind {
         OrderKind::Market { quoted, max_slippage_bps } => ("market", quoted, max_slippage_bps),
         OrderKind::Limit { price } => ("limit", price, None),
         OrderKind::Stop { price } => ("stop", price, None),
     };
-    let side = match side {
-        Side::Buy => "buy",
-        Side::Sell => "sell",
-    };
-    typed::OrderRequest {
+    let order = typed::OrderRequest {
         account: Address::from(account.0),
         nonce,
         expiresAt: expires_at,
         clientId: *client_id,
         market: *market,
-        side: side.into(),
+        side: side_name(*side).into(),
         qty: qty.raw(),
         kind: kind.into(),
         price: price.raw(),
         hasMaxSlippage: max_slippage_bps.is_some(),
         maxSlippageBps: max_slippage_bps.unwrap_or(0),
         reduceOnly: *reduce_only,
+    };
+    if take_profit.is_none() && stop_loss.is_none() {
+        return order.eip712_signing_hash(domain);
+    }
+    typed::OrderWithLevels {
+        account: order.account,
+        nonce,
+        expiresAt: expires_at,
+        clientId: order.clientId,
+        market: order.market,
+        side: order.side,
+        qty: order.qty,
+        kind: order.kind,
+        price: order.price,
+        hasMaxSlippage: order.hasMaxSlippage,
+        maxSlippageBps: order.maxSlippageBps,
+        reduceOnly: order.reduceOnly,
+        hasTakeProfit: take_profit.is_some(),
+        takeProfit: take_profit.unwrap_or_default().raw(),
+        hasStopLoss: stop_loss.is_some(),
+        stopLoss: stop_loss.unwrap_or_default().raw(),
     }
     .eip712_signing_hash(domain)
+}
+
+/// The digest a client signs to set the levels `req` names with `nonce`, until `expires_at`.
+pub fn position_levels_hash(
+    domain: &Eip712Domain,
+    req: &PositionLevelsRequest,
+    nonce: u64,
+    expires_at: Millis,
+) -> B256 {
+    // Every field is named, so a field added to the request fails to compile until it is signed.
+    let PositionLevelsRequest { account, market, take_profit, stop_loss, auth: _ } = req;
+    typed::SetPositionLevels {
+        account: Address::from(account.0),
+        nonce,
+        expiresAt: expires_at,
+        market: *market,
+        hasTakeProfit: take_profit.is_some(),
+        takeProfit: take_profit.unwrap_or_default().raw(),
+        hasStopLoss: stop_loss.is_some(),
+        stopLoss: stop_loss.unwrap_or_default().raw(),
+    }
+    .eip712_signing_hash(domain)
+}
+
+/// A side's name in a signed struct: its JSON name.
+fn side_name(side: Side) -> &'static str {
+    match side {
+        Side::Buy => "buy",
+        Side::Sell => "sell",
+    }
 }
 
 /// The digest a client signs to cancel `order_id` with `nonce`, until `expires_at`.

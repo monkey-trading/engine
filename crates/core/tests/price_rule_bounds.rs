@@ -63,6 +63,7 @@ fn rules_notice(market: MarketId, price_rules: PriceRules, effective_at: Millis)
         markup_bps: None,
         weekend_margin_bps: None,
         price_rules: Some(price_rules),
+        min_level_distance_bps: None,
         effective_at,
     };
     AdminCommand::AnnounceListing { market, notice }

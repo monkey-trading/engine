@@ -19,7 +19,9 @@ use engine_core::volume_tier::{VolumeTier, launch_volume_tiers};
 use crate::common::close_spread::{attest, ceilings, evidence, fund, source_key};
 use crate::common::spreads::tenths;
 use crate::common::toxicity::v54_params;
-use crate::common::{AAPL, BTC, CHAIN_ID, Client, ETH, Harness, USDJPY, VAULT, f, market, operator, us_equities};
+use crate::common::{
+    AAPL, BTC, CHAIN_ID, CLOSE_SPREAD_CEILINGS, Client, ETH, Harness, USDJPY, VAULT, f, market, operator, us_equities,
+};
 
 /// The oil market, listed with WTI's id.
 pub const OIL: MarketId = 32;
@@ -124,6 +126,13 @@ pub fn genesis_with_params(
     h.admin(AdminCommand::ActivateProtocol { version });
     h.admin(AdminCommand::SetParams(params));
     h.admin(AdminCommand::SetBenchmarkRate { benchmark: "SOFR".into(), annual_bps: 430 });
+    // From `V79` every listing names a minimum level distance: each market's close-spread ceiling.
+    let ceiling =
+        |id: MarketId| CLOSE_SPREAD_CEILINGS.iter().find(|(market, _)| *market == id).map_or(25, |(_, bps)| *bps);
+    let listed = |spec: MarketSpec| MarketSpec {
+        min_level_distance_bps: (version >= ProtocolVersion::V79).then(|| ceiling(spec.id)),
+        ..spec
+    };
     for (id, symbol, class, schedule, margin) in [
         (BTC, "BTC-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000),
         (ETH, "ETH-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000),
@@ -132,10 +141,10 @@ pub fn genesis_with_params(
         let spread_tiers = tenths(&[(Some(1_000_000), 10), (Some(5_000_000), 20), (None, 50)]);
         let markout_floor_bps = Some(f("1"));
         let spec = MarketSpec { spread_tiers, markout_floor_bps, ..market(id, symbol, class, schedule, margin) };
-        h.admin(AdminCommand::UpsertMarket(spec));
+        h.admin(AdminCommand::UpsertMarket(listed(spec)));
     }
-    h.admin(AdminCommand::UpsertMarket(commodity(OIL, "WTI", schedule, oil_weekend_bps)));
-    h.admin(AdminCommand::UpsertMarket(commodity(GOLD, "XAU-USD", globex(vec![]), gold_weekend_bps)));
+    h.admin(AdminCommand::UpsertMarket(listed(commodity(OIL, "WTI", schedule, oil_weekend_bps))));
+    h.admin(AdminCommand::UpsertMarket(listed(commodity(GOLD, "XAU-USD", globex(vec![]), gold_weekend_bps))));
     let yen = QuoteCurrency::Jpy { fx_market: USDJPY };
     let usdjpy = MarketSpec {
         quote_currency: yen,
@@ -143,9 +152,10 @@ pub fn genesis_with_params(
         markout_floor_bps: Some(f("1")),
         ..market(USDJPY, "USD-JPY", AssetClass::Fx, Schedule::AlwaysOpen, 200)
     };
-    h.admin(AdminCommand::UpsertMarket(usdjpy));
+    h.admin(AdminCommand::UpsertMarket(listed(usdjpy)));
     let nikkei = commodity(NIKKEI, "JP225", globex(vec![]), NIKKEI_WEEKEND_BPS);
-    h.admin(AdminCommand::UpsertMarket(MarketSpec { quote_currency: yen, asset_class: AssetClass::Index, ..nikkei }));
+    let nikkei = MarketSpec { quote_currency: yen, asset_class: AssetClass::Index, ..nikkei };
+    h.admin(AdminCommand::UpsertMarket(listed(nikkei)));
     h.cmd(Command::HouseCapital { amount: h.house_capital, chain_ref: "genesis".into() });
     let mut entries = ceilings();
     entries.extend([OIL, GOLD, USDJPY, NIKKEI].map(|market| CloseSpreadCeiling { market, max_close_spread_bps: 25 }));

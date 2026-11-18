@@ -329,6 +329,8 @@ pub(super) async fn fill(tx: &mpsc::Sender<Request>, seed: u8, side: Side, qty: 
         kind: OrderKind::Market { quoted: index, max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let started = Instant::now();
     loop {
@@ -411,6 +413,8 @@ async fn a_fill_waits_for_the_feeds_to_price_the_market() {
             qty: "0.01".parse().unwrap(),
             kind: OrderKind::Market { quoted: Fixed::from_int(80_000), max_slippage_bps: None },
             reduce_only: false,
+            take_profit: None,
+            stop_loss: None,
             auth: None,
         };
         order(engine, TOXIC, request)

@@ -39,6 +39,7 @@ use crate::types::{AccountId, Millis};
 mod bounds;
 pub use bounds::default_markout_floor_bps;
 mod decay;
+pub(crate) use decay::{STEP_MS, step_of};
 mod legs;
 pub(crate) use legs::MarkoutLegs;
 mod marking;
@@ -159,7 +160,7 @@ fn saturating(a: Fixed, b: Fixed) -> Fixed {
 
 impl ToxicityScore {
     /// The sums decayed to the step `ts` falls in.
-    fn decayed_to(&self, ts: Millis) -> ToxicityScore {
+    pub(crate) fn decayed_to(&self, ts: Millis) -> ToxicityScore {
         let step = decay::step_of(ts);
         let steps = step - self.step;
         ToxicityScore {
@@ -264,7 +265,7 @@ impl Engine {
     }
 
     /// The score tiers in force; none before parameters are set.
-    fn score_tiers(&self) -> &[ScoreTier] {
+    pub(crate) fn score_tiers(&self) -> &[ScoreTier] {
         self.params.as_ref().map_or(&[], |params| &params.toxicity.score_tiers)
     }
 }

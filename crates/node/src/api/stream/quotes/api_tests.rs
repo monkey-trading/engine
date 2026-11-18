@@ -149,5 +149,7 @@ fn order(side: Side, qty: Fixed, quoted: Fixed, max_slippage_bps: i64) -> Comman
         kind: OrderKind::Market { quoted, max_slippage_bps: Some(max_slippage_bps) },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     })
 }

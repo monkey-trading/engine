@@ -86,6 +86,8 @@ async fn anvil_confirmation_finality_scenario() {
         kind: OrderKind::Market { quoted: usdc("100"), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     };
     let (nonce, expires_at) = node.read(move |e| (e.next_request_nonce(trader), e.now() + 60_000)).await;
     order.auth = Some(RequestAuth {

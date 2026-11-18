@@ -310,5 +310,7 @@ fn buy(account: AccountId) -> OrderRequest {
         kind: OrderKind::Market { quoted: f("100000"), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     }
 }

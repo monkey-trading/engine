@@ -179,5 +179,7 @@ fn buy(qty: &str) -> Command {
         kind: OrderKind::Market { quoted: usdc("100"), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
+        take_profit: None,
+        stop_loss: None,
     })
 }

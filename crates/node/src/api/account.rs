@@ -1,7 +1,8 @@
 //! `GET /v1/accounts/{address}`: one account's balance, equity, margin, initial and maintenance
 //! requirements, withdrawable cash and maximum leverage in each market, positions, orders, toxicity,
 //! each position's close-out and close fee, from `V59` its volume tier, from `V60` the weekend
-//! margin each position needs, and under a `[portfolio_margin]` grid its portfolio requirement.
+//! margin each position needs, from `V79` each position's take profit and stop loss, and under a
+//! `[portfolio_margin]` grid its portfolio requirement.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -9,6 +10,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use axum::Json;
 use axum::extract::{Path, State};
 use engine_core::account::{Position, RestingOrder};
+use engine_core::levels::PositionLevels;
 use engine_core::portfolio::{PortfolioGrid, PortfolioStanding};
 use engine_core::types::{AccountId, MarketId, OrderId};
 use engine_core::{Engine, Fixed};
@@ -49,6 +51,9 @@ pub(crate) struct AccountView {
     /// margin requirement the account must meet when its weekend gap starts, at its marks now.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     weekend_margins: BTreeMap<MarketId, engine_core::weekend::WeekendRequirement>,
+    /// From `V79`, each position's take profit and stop loss, by market, each left out while unset.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    levels: BTreeMap<MarketId, PositionLevels>,
     /// Under the configured grid, the portfolio requirement at the market's bands and at initial
     /// bands, the close-out level's share of it, and each offset group's part; nothing decides on it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -121,8 +126,8 @@ impl PortfolioMargin {
 
 /// One account's balance, equity, margin, initial and maintenance requirements, withdrawable cash,
 /// maximum leverage in each market, positions, orders, each position's close-out and close fee, its
-/// volume tier, the weekend margin each position needs, and its portfolio requirement under the
-/// configured grid. A grid that does not fit the listings gives none and raises Warning
+/// volume tier, the weekend margin each position needs, each position's levels, and its portfolio
+/// requirement under the configured grid. A grid that does not fit the listings gives none and raises Warning
 /// `portfolio_grid_mismatch` until a read it fits.
 /// Error cases:
 /// - the address is malformed
@@ -166,6 +171,7 @@ pub(crate) fn account_view(e: &Engine, id: AccountId, grid: Option<&PortfolioGri
         close_fees: e.close_fees(id),
         volume: e.volume_standing(id),
         weekend_margins: e.weekend_requirements(id),
+        levels: acct.levels.clone(),
         portfolio_margin,
         portfolio_refusal,
         seq: e.last_seq(),

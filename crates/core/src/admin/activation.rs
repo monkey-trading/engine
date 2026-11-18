@@ -21,5 +21,6 @@ impl Engine {
         self.start_price_rule_bounds(version);
         self.start_corporate_bounds(version);
         self.start_rollover_spans(version);
+        self.start_levels(version);
     }
 }
