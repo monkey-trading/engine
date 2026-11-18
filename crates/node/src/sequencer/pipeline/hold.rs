@@ -91,7 +91,7 @@ impl Sequencer {
                 let kept = self.pipeline.as_mut().and_then(|pipeline| pipeline.kept.take());
                 return Ok(match kept {
                     Some(request) => Some(request),
-                    None => rx.recv().await,
+                    None => self.receive(rx).await,
                 });
             };
             let pipeline = self.pipeline.as_mut().expect("check_hold found a batch in flight");
@@ -108,6 +108,7 @@ impl Sequencer {
                 }
             }
             let shared = pipeline.shared.clone();
+            let (root, root_deadline, root_due) = (self.roots.shared(), self.roots.deadline(), self.root_work_due());
             tokio::select! {
                 biased;
                 done = shared.next() => self.complete(done)?,
@@ -120,7 +121,28 @@ impl Sequencer {
                     }
                     None => return Ok(None),
                 },
+                () = root.woken.notified() => return Ok(Some(Request::RootWake)),
+                () = sleep_until(root_deadline.unwrap_or(deadline)), if root_deadline.is_some() => {
+                    return Ok(Some(Request::RootWake));
+                }
+                () = std::future::ready(()), if root_due => return Ok(Some(Request::RootWake)),
             }
+        }
+    }
+
+    /// The next request with no batch in flight: one that waits, or else root work, if the sequencer
+    /// has some to do now, or the root worker's wake-up or a deferred checkpoint's deadline, whichever
+    /// comes first.
+    async fn receive(&mut self, rx: &mut mpsc::Receiver<Request>) -> Option<Request> {
+        let (root, root_deadline, root_due) = (self.roots.shared(), self.roots.deadline(), self.root_work_due());
+        tokio::select! {
+            biased;
+            request = rx.recv() => request,
+            () = root.woken.notified() => Some(Request::RootWake),
+            () = sleep_until(root_deadline.unwrap_or_else(Instant::now)), if root_deadline.is_some() => {
+                Some(Request::RootWake)
+            }
+            () = std::future::ready(()), if root_due => Some(Request::RootWake),
         }
     }
 

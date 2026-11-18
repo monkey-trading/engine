@@ -60,10 +60,13 @@ async fn the_cursor_moves_only_after_the_log_is_synced_past_the_credits() {
                 Request::LogChecked { .. } => unreachable!("only the operator's log check gives one"),
                 Request::ReissueWithdrawal { .. } => unreachable!("only the API asks for a reissue"),
                 Request::AccountPayouts { .. }
+                | Request::AccountProof { .. }
+                | Request::ExitProof { .. }
                 | Request::EntitlementClaim { .. }
                 | Request::DistributionClaim { .. } => {
-                    unreachable!("only the API asks for payouts and claims")
+                    unreachable!("only the API asks for payouts, proofs and claims")
                 }
+                Request::RootWake => unreachable!("only the sequencer makes a root wake-up"),
                 Request::FinalCheckpoint(_) | Request::PrefixAt { .. } => {
                     unreachable!("only a handover asks for the final checkpoint or a tip")
                 }

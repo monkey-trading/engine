@@ -114,6 +114,9 @@ pub struct Metrics {
     pub commands: Counter,
     pub full_replays: Counter,
     pub batch_seconds: Histogram,
+    pub state_root_backlog: Gauge,
+    pub state_root_piece_seconds: Histogram,
+    pub state_root_commit_seconds: Histogram,
     pub queue_depth: Gauge,
     pub access_pending_deposits: Gauge,
     pub withdrawals_paused: Gauge,
@@ -154,6 +157,10 @@ impl Metrics {
             full_replays: Counter::default(),
             // 50µs to about 1.6s.
             batch_seconds: Histogram::new(exponential_buckets(0.000_05, 2.0, 16)),
+            state_root_backlog: Gauge::default(),
+            // 50µs to about 1.6s.
+            state_root_piece_seconds: Histogram::new(exponential_buckets(0.000_05, 2.0, 16)),
+            state_root_commit_seconds: Histogram::new(exponential_buckets(0.000_05, 2.0, 16)),
             queue_depth: Gauge::default(),
             access_pending_deposits: Gauge::default(),
             withdrawals_paused: Gauge::default(),
@@ -200,6 +207,22 @@ impl Metrics {
             metrics.batch_seconds.clone(),
         );
         r.register("sequencer_queue_depth", "Requests waiting for the sequencer", metrics.queue_depth.clone());
+        r.register(
+            "state_root_backlog",
+            "What a checkpoint's state root would wait for now, in leaf writes on the root worker: those sent and \
+             not yet written, those the engine has yet to copy out, and the commit's own work",
+            metrics.state_root_backlog.clone(),
+        );
+        r.register(
+            "state_root_piece_seconds",
+            "Time the sequencer spends copying one piece of leaf writes out of its engine for the root worker",
+            metrics.state_root_piece_seconds.clone(),
+        );
+        r.register(
+            "state_root_commit_seconds",
+            "Time the sequencer waits for the root worker's commit of a checkpoint's state root",
+            metrics.state_root_commit_seconds.clone(),
+        );
         r.register(
             "access_pending_deposits",
             "Deposits awaiting automatic source screening retry",

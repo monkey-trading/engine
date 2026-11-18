@@ -31,6 +31,7 @@ mod monitor;
 mod node;
 pub use node::{KeyStart, parse_launch_digest, run};
 mod replay_audit;
+mod root_worker;
 mod roughtime;
 pub use replay_audit::replay_path_with_custody;
 mod secrets;

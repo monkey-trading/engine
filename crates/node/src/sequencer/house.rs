@@ -108,6 +108,14 @@ impl Latest {
         Self { checkpoint, waiting: Vec::new() }
     }
 
+    /// The latest checkpoint the log holds, if any.
+    pub(super) fn latest_checkpoint(&self) -> Option<&Checkpoint> {
+        match &self.checkpoint.as_ref()?.body {
+            StreamBody::Checkpoint(checkpoint) => Some(checkpoint),
+            _ => None,
+        }
+    }
+
     /// Notes the checkpoint just logged at `offset`.
     pub(super) fn checkpointed(&mut self, offset: Offset, checkpoint: &Checkpoint) {
         self.checkpoint = Some(StreamMsg::from_body(offset, StreamBody::Checkpoint(checkpoint.clone())));

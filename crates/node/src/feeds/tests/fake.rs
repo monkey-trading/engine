@@ -202,9 +202,12 @@ pub fn fake_sequencer() -> (mpsc::Sender<Request>, mpsc::Receiver<Request>) {
                     Some(Request::ReissueWithdrawal { .. }) => unreachable!("only the API asks for a reissue"),
                     Some(
                         Request::AccountPayouts { .. }
+                        | Request::AccountProof { .. }
+                        | Request::ExitProof { .. }
                         | Request::EntitlementClaim { .. }
                         | Request::DistributionClaim { .. },
-                    ) => unreachable!("only the API asks for payouts and claims"),
+                    ) => unreachable!("only the API asks for payouts, proofs and claims"),
+                    Some(Request::RootWake) => unreachable!("only the sequencer makes a root wake-up"),
                     Some(Request::FinalCheckpoint(_) | Request::PrefixAt { .. }) => {
                         unreachable!("only a handover asks for the final checkpoint or a tip")
                     }

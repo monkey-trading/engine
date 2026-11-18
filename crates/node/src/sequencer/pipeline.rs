@@ -83,6 +83,9 @@ pub(super) struct Release {
     schedule: Option<BenchmarkSchedule>,
     stats: Vec<StatsJob>,
     after: Vec<After>,
+    /// The state tree versions of the batch's checkpoints, which the root worker serves proofs from
+    /// once the batch is durable.
+    roots: Vec<(u64, engine_core::eip712::B256)>,
 }
 
 /// The sync thread's results, in the order its jobs were queued.
@@ -222,7 +225,7 @@ impl Release {
     /// Takes the answers of `other`, a batch that wrote nothing, to go out with this one: the writes
     /// before it are what it waited for, and this release's sync covers them.
     fn absorb(&mut self, other: Release) {
-        let Release { batch, outbox, marks, house, schedule, stats, after, charge, .. } = other;
+        let Release { batch, outbox, marks, house, schedule, stats, after, charge, roots, .. } = other;
         self.charge += charge;
         self.batch.replies.extend(batch.replies);
         self.batch.watches.extend(batch.watches);
@@ -231,6 +234,7 @@ impl Release {
         self.marks.extend(marks);
         self.stats.extend(stats);
         self.after.extend(after);
+        self.roots.extend(roots);
         self.schedule = schedule.or(self.schedule.take());
         self.house = match (self.house.take(), house) {
             (Some((mut waiting, state)), Some((more, _))) => {
@@ -251,6 +255,7 @@ impl Release {
             && self.schedule.is_none()
             && self.stats.is_empty()
             && self.after.is_empty()
+            && self.roots.is_empty()
             && self.batch.replies.is_empty()
             && self.batch.syncs.is_empty()
             && self.batch.watches.is_empty()
@@ -308,6 +313,7 @@ impl Sequencer {
             schedule,
             stats: self.marks.stage_stats(),
             after: std::mem::take(&mut self.after_sync),
+            roots: std::mem::take(&mut self.roots.releases),
         })
     }
 
@@ -331,9 +337,13 @@ impl Sequencer {
             schedule,
             stats,
             after,
+            roots,
         } = release;
         self.marks.deliver_stats(stats);
         self.log.finish_sync(&job);
+        for (seq, root) in roots {
+            self.roots.worker.release(seq, root)?;
+        }
         if let Some(publisher) = &self.log_heads
             && *publisher.tx.borrow() != head
         {

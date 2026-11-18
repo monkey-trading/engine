@@ -80,6 +80,8 @@ engine-verify = { workspace = true, features = ["test-fixtures"] }
 
 chrono.workspace = true
 chrono-tz.workspace = true
+loom.workspace = true
+proptest.workspace = true
 tokio = { workspace = true, features = ["io-util", "process", "test-util"] }
 tower.workspace = true
 # ring-backed signature checks of the certificate requests the ACME tests receive; the verifier

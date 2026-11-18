@@ -7,7 +7,7 @@ use engine_core::access::{AccessEvidence, AccessReject};
 use engine_core::command::Command;
 use engine_core::eip712::B256;
 use engine_core::event::Event;
-use engine_core::merkle::{DistributionProof, EntitlementProof};
+use engine_core::merkle::{AccountProof, DistributionProof, EntitlementProof, ExitProof};
 use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 use serde::{Deserialize, Serialize};
@@ -108,6 +108,18 @@ pub enum Request {
         limit: usize,
         reply: oneshot::Sender<AccountPayouts>,
     },
+    /// An account's proof against the newest checkpoint the log holds durably, read on the root
+    /// worker.
+    AccountProof {
+        account: AccountId,
+        reply: oneshot::Sender<Option<AccountProof>>,
+    },
+    /// Every proof an account exits with against the newest checkpoint the log holds durably, read on
+    /// the root worker.
+    ExitProof {
+        account: AccountId,
+        reply: oneshot::Sender<Option<ExitProof>>,
+    },
     /// An account's MONKEY entitlement proof, at the accepted checkpoint when one is retained for it.
     EntitlementClaim {
         account: AccountId,
@@ -128,6 +140,10 @@ pub enum Request {
     /// queued behind the detection is refused without waiting for the queue; the request remains
     /// as the marker that orders the drain. Sent by the log-head poster before the node stops.
     Freeze,
+    /// Root work to do: the root worker reached a wake-up or reported, a deferred checkpoint's time
+    /// is up, or the sequencer has leaf writes to copy out while no request waits. The sequencer
+    /// makes this itself (`next_request`); nothing sends it.
+    RootWake,
 }
 
 /// The source's evidence for a signed reissue request, and the request's digest it must name.

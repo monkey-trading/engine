@@ -1,18 +1,18 @@
 //! MONKEY and USDC claim proofs at the checkpoint the vault has recorded.
 //!
 //! The vault checks a claim against the root of the checkpoint it names, once that checkpoint is
-//! recorded in the signer epoch in force, and the engine's tree is only ever at the newest
-//! checkpoint, which runs ahead of the vault while posting lags. So the sequencer keeps, for the
-//! accounts that asked for a proof lately, the proof each new checkpoint gives them, until the vault
-//! has accepted a later one. An account is watched from its first request, so that first answer is
+//! recorded in the signer epoch in force, and the tree keeps only the newest released checkpoint,
+//! which runs ahead of the vault while posting lags. So the root worker keeps, for the accounts that
+//! asked for a proof lately, the proof each new checkpoint gives them, until the vault has accepted a
+//! later one. An account is watched from its first request, so that first answer is
 //! the newest proof and not yet claimable. A proof served at an accepted checkpoint stays good while
 //! later ones post; a change of signer ends it, and the next signer's first checkpoint proves at
 //! least as much.
 
 use std::collections::BTreeMap;
 
-use engine_core::Engine;
 use engine_core::emissions::TokenUnits;
+use engine_core::merkle::tree::{StateTree, Version};
 use engine_core::merkle::{DistributionProof, EntitlementProof};
 use engine_core::staking::UsdcUnits;
 use engine_core::types::AccountId;
@@ -81,7 +81,7 @@ type Held<P> = BTreeMap<(u64, AccountId), P>;
 
 /// The watched accounts and the proofs retained for them.
 #[derive(Default)]
-pub(super) struct Claims {
+pub(crate) struct Claims {
     watched: BTreeMap<AccountId, u64>,
     asked: u64,
     accepted: Option<u64>,
@@ -104,30 +104,41 @@ impl Claims {
         self.distributions = self.distributions.split_off(&(accepted, AccountId([0; 20])));
     }
 
-    /// Keeps each watched account's proofs at the checkpoint just created.
-    pub(super) fn capture(&mut self, engine: &Engine) {
-        for &account in self.watched.keys() {
-            Self::keep(&mut self.entitlements, engine.entitlement_proof(account), account);
-            Self::keep(&mut self.distributions, engine.distribution_proof(account), account);
-        }
+    /// The watched accounts, whose proofs each new checkpoint's version is captured for.
+    pub(super) fn watched(&self) -> Vec<AccountId> {
+        self.watched.keys().copied().collect()
     }
 
-    /// The account's MONKEY proof, at the accepted checkpoint when one is retained for it.
-    pub(super) fn entitlement(&mut self, engine: &Engine, account: AccountId) -> Option<ClaimAnswer<EntitlementProof>> {
+    /// Keeps `account`'s proofs at `version`, a checkpoint just committed.
+    pub(super) fn capture(&mut self, tree: &StateTree, version: &Version, account: AccountId) {
+        Self::keep(&mut self.entitlements, tree.entitlement_proof(version, account), account);
+        Self::keep(&mut self.distributions, tree.distribution_proof(version, account), account);
+    }
+
+    /// The account's MONKEY proof, at the accepted checkpoint when one is retained for it, and
+    /// otherwise at `newest`, the newest released checkpoint.
+    pub(super) fn entitlement(
+        &mut self,
+        tree: &StateTree,
+        newest: &Version,
+        account: AccountId,
+    ) -> Option<ClaimAnswer<EntitlementProof>> {
         self.watch(account);
-        let newest = engine.entitlement_proof(account)?;
+        let newest = tree.entitlement_proof(newest, account)?;
         Self::keep(&mut self.entitlements, Some(newest.clone()), account);
         Some(Self::answer(&self.entitlements, self.accepted, account, newest))
     }
 
-    /// The account's USDC distribution proof, at the accepted checkpoint when one is retained for it.
+    /// The account's USDC distribution proof, at the accepted checkpoint when one is retained for it,
+    /// and otherwise at `newest`, the newest released checkpoint.
     pub(super) fn distribution(
         &mut self,
-        engine: &Engine,
+        tree: &StateTree,
+        newest: &Version,
         account: AccountId,
     ) -> Option<ClaimAnswer<DistributionProof>> {
         self.watch(account);
-        let newest = engine.distribution_proof(account)?;
+        let newest = tree.distribution_proof(newest, account)?;
         Self::keep(&mut self.distributions, Some(newest.clone()), account);
         Some(Self::answer(&self.distributions, self.accepted, account, newest))
     }

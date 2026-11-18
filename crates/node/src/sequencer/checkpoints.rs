@@ -295,6 +295,11 @@ impl Sequencer {
         {
             return Ok(());
         }
+        // Root work defers a paced checkpoint before a member's confirmation is asked for, so a
+        // deferral never stops stamping.
+        if self.defers_for_root_work(seq, paced) {
+            return Ok(());
+        }
         if self.checkpoint_waits_for(seq, paced) {
             return Ok(());
         }
@@ -307,10 +312,7 @@ impl Sequencer {
             gate.note_queue_full(seq);
             return Ok(());
         }
-        let (started, root) = (Instant::now(), self.engine.state_root());
-        let (elapsed_us, work) = (started.elapsed().as_micros(), self.engine.last_root_work());
-        debug!(seq, elapsed_us, leaves = work.map(|w| w.leaves), nodes = work.map(|w| w.nodes), "state root computed");
-        self.claims.capture(&self.engine);
+        let root: [u8; 32] = self.checkpoint_root(seq)?.0;
         let cp = Checkpoint {
             parent: self.gate.as_ref().map(|gate| gate.parent),
             seq,
@@ -326,8 +328,11 @@ impl Sequencer {
         };
         let offset = self.record(LogEntry::Checkpoint(cp.clone()))?;
         self.house.checkpointed(offset, &cp);
+        if self.roots.detached() {
+            self.roots.releases.push((seq, root.into()));
+        }
         self.command_link = crate::log::command_seal::checkpoint_link(&cp)?;
-        self.capture_payout_proofs();
+        self.capture_payout_proofs(seq)?;
         if self.gate.is_some() {
             self.publish_checkpoint(&cp)?;
             if let Some(gate) = &mut self.gate {
