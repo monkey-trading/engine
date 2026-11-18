@@ -5,18 +5,19 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use anyhow::{Context, ensure};
+use anyhow::Context;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
+mod append;
 pub(super) mod output;
 pub(super) mod seal;
 
 use crate::log::catalog::{CheckpointLocator, LazyCatalogView};
-use crate::log::segments::{Segment, command_seq, segment_name};
+use crate::log::segments::{Segment, segment_name};
 use crate::log::writer::output::Output;
 use crate::log::writer::seal::SealWork;
-use crate::log::{ActivePrefix, CatalogBoundary, LogEntry, LogWriter, Manifest, Offset, offset_of};
+use crate::log::{ActivePrefix, CatalogBoundary, LogWriter, Manifest, Offset};
 
 /// Catalog garbage collection runs once per checkpoint on the sequencer thread; each turn consumes
 /// whole receipts, so a few turns drain what one checkpoint's folds retire.
@@ -203,41 +204,6 @@ impl LogWriter {
         let next = Arc::new(view.fold(owner, locator)?);
         self.manifest.send_modify(|m| m.catalog = Some(next.clone()));
         Ok(next)
-    }
-
-    /// Buffers one entry as a JSON line, and returns its offset. A command first completes the
-    /// current segment if it is full.
-    /// Error cases:
-    /// - completing the current segment or starting a new one fails
-    /// - a withdrawal or checkpoint comes before any command in this segment
-    /// - the entry cannot be encoded
-    pub fn append(&mut self, entry: &LogEntry) -> anyhow::Result<Offset> {
-        ensure!(!self.listing_unsettled, "the open segment's listing may be durable, so nothing is appended to it");
-        let offset = offset_of(self.last, entry)?;
-        if let Some(seq) = command_seq(entry)
-            && self.open.as_ref().is_none_or(|(segment, _)| segment.commands >= self.segment_commands)
-        {
-            self.start_segment(seq)?;
-        }
-        let (segment, out) = self.open.as_mut().context("log entry before the first command of its segment")?;
-        let mut line = serde_json::to_vec(entry).context("encoding log entry")?;
-        line.push(b'\n');
-        self.unsynced = true;
-        self.appended += 1;
-        self.appended_bytes += line.len() as u64;
-        out.push(&line);
-        if let LogEntry::Checkpoint(checkpoint) = entry {
-            segment.checkpoints.push(CheckpointLocator {
-                segment_first_seq: segment.first_seq,
-                offset,
-                start: segment.bytes,
-                end: segment.bytes + line.len() as u64,
-                checkpoint: checkpoint.clone(),
-            });
-        }
-        segment.record(&line, Some(entry));
-        self.last = Some(offset);
-        Ok(offset)
     }
 
     /// Writes buffered entries to the open segment and syncs it to the disk, unless the segment is

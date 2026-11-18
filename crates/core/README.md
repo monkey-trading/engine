@@ -87,6 +87,12 @@ this crate and reproduce the signed state roots exactly.
   reorganisation orphaned or moved is never paid out of other clients' funds.
   `ExitProof::unfinalised_credits` proves an account's, and `Engine::receipt_proof` the credited,
   pending or held receipt the last root holds at a deposit id
+- From protocol `V80`, a rollover logs one `financing_applied` in place of a `financing` event per
+  position (`src/financing/`): the rollover, the time it charged for, the positions and accounts it
+  charged, the net they paid, and a keccak Merkle root over each account's charges. The per-position
+  rows are the command's derived output (`Engine::take_derived`), at the amounts and in the order the
+  events held before it; balances, house cash and state roots are as before. `ChargesTree` proves an
+  account's charges against the logged root (`FinancingProof`)
 - From protocol `V37`, the operator key follows the operator registry's elections (`src/election.rs`).
   The registry's finalised `RotationChanged` and `Elected` events arrive as `switch_rotation` and
   `elect_operator` commands on the staking mirror, credited once under their chain references and
@@ -355,6 +361,8 @@ this crate and reproduce the signed state roots exactly.
   each market's maximum leverage
 - `src/engine/market.rs` — per-market state: quotes, marks, positions, resting orders, and futures
   roll position
+- `src/engine/reads.rs` — the engine's read accessors: its last seq and time, its protocol, and its
+  markets and accounts
 - `src/hot_indexes/mod.rs` — derived holder, trigger, pending-receipt and above-frontier coverage indexes, rebuilt after recovery
 - `src/hot_indexes/tests.rs` — the rebuild's coverage: the finalised base, whole skipped spans, and the runs a span merges
 - `src/hot_indexes/triggers.rs` — the trigger index: each market's resting orders by the mid at which a price
@@ -411,6 +419,11 @@ this crate and reproduce the signed state roots exactly.
   from `V46`, the cap on a signed rate (`split_by_cap`), which `check_held_benchmark` in
   `src/operator_bounds/` keeps a relisting from going around
 - `src/funds.rs` — legacy and mock deposits, withdrawals, house capital, and overnight financing
+  before `V18`
+- `src/financing/mod.rs` — the rollover's financing from `V18`: each market's terms read once, each
+  account's balance written once, and from `V80` the aggregate event, with the rows derived
+  (`Engine::take_derived`); `commitment.rs` the root over each account's charges, the tree and its
+  proofs; `tests.rs` the commitment's proofs and the markup discount
 - `src/deposits.rs` — exact custody receipts, sequencer-confirmed principal locks, finality,
   canonical reversals, and atomic moves of reincluded deposits to their replacement receipts
 - `src/deposits/replacement.rs` — atomic canonical replacements and V26 payer screening with retained terminal holds
@@ -582,6 +595,10 @@ this crate and reproduce the signed state roots exactly.
 - `tests/rollover_bounds.rs` — `V76`: a rollover moved every minute charging nothing more, a noticed move
   that keeps the due rollover and the shorter day it then charges, the activation's first span over a
   daylight saving day, and the rules before `V76`
+- `tests/financing_aggregate.rs` — `V80`: on twin launch books, one at V79, every rollover's derived
+  rows are the `Financing` events V79 logs, in order and amount, every other event is the same, each
+  aggregate's counts, net and root are its rows', and balances and house cash end equal, through a
+  catch-up of two rollovers in one command
 - `tests/price_rule_bounds.rs` — `V76`: loosened price rules refused without a notice, so a held-back
   price fills nothing, tighter rules at once, noticed rules within launch's, the rules before `V76`,
   and the activation's launch rules and corporate bounds
@@ -1564,6 +1581,19 @@ close-spread ceiling, and the distance moves only by a listing notice or a vote,
 to twice it. Its log is
 `v79.jsonl`, and its session is in `examples/reference_log/v79.rs`.
 
+Protocol V80 logs a rollover's financing as one aggregate (`Event::FinancingApplied`) in place of an
+`Event::Financing` per position: the rollover, the time it charged for, the positions charged and the
+accounts holding them, the net the accounts paid the house, and the root of a binary keccak Merkle tree
+over the charged accounts in ascending order. A leaf is `keccak("engine.financing.v1" ‖ account ‖ n ‖
+(market ‖ amount) × n)`, the account's charges in market order, `n` and each market as 4 big-endian bytes
+and each amount as `Fixed`'s 16; a node is `keccak("engine.financing.node.v1" ‖ left ‖ right)`, and a
+level's odd last node carries up. A rollover that charges nothing logs none. The per-position rows are
+the command's derived output (`Engine::take_derived`), at the amounts and in the order the events held
+before V80, after each aggregate in turn; each apply drops any a caller did not take, and replay derives
+them again. Balances, house cash and every state root are as before. `tests/financing_aggregate.rs` holds
+the rows to the events V79 logs on twin launch books. Its log is `v80.jsonl`, and its session is in
+`examples/reference_log/v80.rs`.
+
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
 is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
@@ -1892,5 +1922,8 @@ accounts; a tier's limit at 100k accounts costs its limit over 25 times the figu
 
 `engine-node`'s `sequencer::wait_bench::mass` runs the weekend close-out and the crash through the sequencer's
 `run` loop on the same book, with a price every 2 ms in a market no account holds, and prints the longest wait a
-price had behind each as `WAIT mass_<case> ...`, holding the longest wait to a guard of 10 s.
+price had behind each as `WAIT mass_<case> ...`, holding the longest wait to a guard of 10 s;
+`sequencer::wait_bench::rollover` does the same for a weekday's rollover and the MONKEY period close, whose time on
+the thread includes their log entries, and prints the rollover's apply and each part of its entry
+(`PARTS rollover ...`) at the latest version and the one before it (#933).
 

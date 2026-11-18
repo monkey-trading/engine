@@ -32,7 +32,7 @@ fn a_rotated_key_signs_once_its_notice_has_run_and_the_log_recovers_under_the_or
         let key = SigningKey::from_slice(&[seed; 32]).unwrap();
         let nonce = seq.engine.next_request_nonce(eip712::address(key.verifying_key()));
         let signed = sign(&key, &seq.operator, command, nonce, clock.now_ms() + 150_000);
-        let mut events = seq.sequence(Command::SignedAdmin(Box::new(signed))).unwrap().expect("admitted");
+        let mut events = seq.sequence(Command::SignedAdmin(Box::new(signed))).unwrap().expect("admitted").to_vec();
         // A week's rollovers precede the command that follows the advance; its outcome is last.
         events.drain(..events.len() - 1).for_each(drop);
         events

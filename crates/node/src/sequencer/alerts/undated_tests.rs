@@ -298,7 +298,7 @@ fn recover(log_dir: &Path, clock: Arc<TestClock>) -> anyhow::Result<Sequencer> {
 fn submit(seq: &mut Sequencer, clock: &TestClock, at: i64, command: Command) -> anyhow::Result<Vec<Event>> {
     clock.advance(Duration::from_millis(u64::try_from(at - clock.true_ms())?));
     seq.trust(sample_around(clock))?;
-    seq.sequence(command)?.context("fresh trusted time admits the command")
+    Ok(seq.sequence(command)?.context("fresh trusted time admits the command")?.to_vec())
 }
 
 fn signed(seq: &Sequencer, command: AdminCommand, at: i64) -> Command {

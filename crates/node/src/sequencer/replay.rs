@@ -12,6 +12,7 @@ use engine_core::{Engine, Fixed};
 
 use crate::checkpoints::Work;
 use crate::checkpoints::accounting::Accounting;
+use crate::history::derived::Derived;
 use crate::log::{self, CheckpointDomain, LogEntry};
 use crate::sequencer::{GenesisProgress, SignedWithdrawal};
 use crate::snapshot::RecoveryBase;
@@ -85,6 +86,8 @@ pub(super) struct Replay {
     /// The last `crate::log::PrefixRing::CAPACITY` (seq, cumulative-prefix) pairs: the poster's
     /// adoption evidence, seeded before its first tick.
     prefix_ring: crate::log::PrefixRing,
+    /// The newest commands' derived rows, which the sequencer keeps from where the replay ends.
+    derived: crate::history::derived::DerivedRows,
 }
 
 impl Replay {
@@ -134,6 +137,11 @@ impl Replay {
         self.capture_link_at = Some(seq);
     }
 
+    /// The derived rows of the command at `seq`, while the replay keeps them (`DerivedRows`).
+    pub(super) fn derived_at(&self, seq: u64) -> Option<crate::history::derived::Rows> {
+        self.derived.get(seq).map(|derived| derived.rows.clone())
+    }
+
     /// Applies the log's next entry.
     /// Error cases:
     /// - a command out of sequence, with time running backwards, or stamped past the range the
@@ -169,6 +177,9 @@ impl Replay {
                 }
                 if c.events.as_ref().is_some_and(|logged| *logged != events) {
                     bail!("events logged at seq {seq} differ from the events replay gives");
+                }
+                if let Some(derived) = Derived::of(seq, &events, engine.take_derived())? {
+                    self.derived.keep(seq, derived);
                 }
                 marks::sample_marks(&mut self.marks, &mut self.last_marks, engine, c.sequenced.ts);
                 if let Some(stats) = &self.stats {
@@ -402,6 +413,7 @@ impl Replay {
             ts_at: self.captured_ts,
             anchor_ts: self.recovery_anchor_ts,
             prefix_ring: self.prefix_ring,
+            derived: self.derived,
             takings: self.takings,
             checkpoint_roots: self.payout_checkpoints,
         }

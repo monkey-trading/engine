@@ -416,7 +416,7 @@ impl Fixture {
     }
 
     pub(super) fn submit(&mut self, cmd: Command) -> Vec<Event> {
-        self.seq.sequence(cmd).unwrap().expect("time and publisher synchronization admit this command")
+        self.seq.sequence(cmd).unwrap().expect("time and publisher synchronization admit this command").to_vec()
     }
 
     pub(super) fn balance(&self) -> Fixed {

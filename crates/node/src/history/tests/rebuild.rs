@@ -48,7 +48,7 @@ async fn an_index_a_power_loss_left_ahead_of_the_log_is_rebuilt_before_it_serves
         // Pages wait for the rebuild: following has not started, so nothing is served yet.
         let query = || PageQuery { account: TRADER, kind: None, before: None, after: None, limit: 200 };
         assert_eq!(reader.page(query()).await.unwrap(), None, "{case}: pages wait for the rebuild");
-        let task = tokio::spawn(history.run(feed));
+        let task = tokio::spawn(history.run(feed, Deriver::none()));
         node.stop().await;
         timeout(Duration::from_secs(10), task)
             .await
@@ -232,7 +232,7 @@ async fn assert_rebuilt(log: &Path, index: &Path, retention: Duration, cause: &s
 }
 
 /// Opens the index in `index` against the log `node` writes in `dir`, letting readers in once it
-/// has taken `tip`, but does not follow the log: the caller spawns `history.run(feed)` to catch
+/// has taken `tip`, but does not follow the log: the caller spawns `history.run(feed, deriver)` to catch
 /// up, so the test can assert what readers see before the index has taken anything.
 fn open_unstarted(node: &TestSequencer, dir: &Path, index: &Path, tip: Option<u64>) -> (History, Reader, Offset, Feed) {
     let cfg = HistorySection { dir: index.to_owned(), retention: RETENTION, marks: None };

@@ -50,6 +50,7 @@ use recovery::Recovered;
 use recovery::read_log_and_history_authorities;
 mod registration;
 mod signer_history;
+use crate::history::derived::{Deriver, RowsStore};
 use crate::limits::{ApiLimits, run_retain};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
@@ -258,6 +259,7 @@ async fn serve_node(
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // Before activation and genesis sequence, so the record sees every command the log will hold.
     seq.track_stats(stats.clone());
+    let derived = seq.derived_rows();
     seq.pipeline_log_syncs().context("starting the log sync thread")?;
     if cfg.benchmarks.is_some() {
         seq.wait_for_benchmarks()
@@ -392,7 +394,8 @@ async fn serve_node(
     tasks.spawn(async move { ("custody", custody.run(withdrawals_rx, custody_tx).await) });
 
     let backfills = Arc::new(Semaphore::new(MAX_BACKFILLS));
-    let history_reader = history.reader();
+    let rows = Arc::new(RowsStore::new(&cfg.history.dir, cfg.history.retention_ms()?));
+    let history_reader = history.reader().with_derived(derived.clone(), Some(rows.clone()));
     let history_feed = Feed::new(
         stream_tx.subscribe(),
         cfg.node.log_dir.clone(),
@@ -400,11 +403,9 @@ async fn serve_node(
         backfills.clone(),
         Some(history.resume_at()),
     );
-    // History runs outside `tasks`: on shutdown it outlives the sequencer, so it can take the final checkpoint's
-    // capture, and stops at the end of the stream. Its own set still aborts it if this function returns early.
-    let history_stopper = history.stopper();
-    let mut history_task = JoinSet::new();
-    history_task.spawn(history.run(history_feed));
+    let deriver = Deriver::new(derived.clone(), Some((cfg.node.log_dir.clone(), manifest_rx.clone())))
+        .storing(rows, metrics.full_replays.clone());
+    let (history_task, history_stopper) = shutdown::spawn_history(history, history_feed, deriver);
     let history_finished = false;
     let handing_over = None;
 

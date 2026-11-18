@@ -20,6 +20,7 @@
 mod preflight;
 pub(crate) use preflight::HistoryPlan;
 pub(crate) mod authenticated;
+pub(crate) mod derived;
 mod reader;
 mod store;
 pub use reader::Reader;
@@ -42,6 +43,7 @@ use tracing::{info, warn};
 
 use crate::api::Feed;
 use crate::config::HistorySection;
+use crate::history::derived::{Deriver, StopOnDrop};
 use crate::history::store::{Writer, discard};
 use crate::log::{CommandEntry, LogEntry, Offset};
 use crate::sequencer::StreamBody;
@@ -135,7 +137,7 @@ pub struct History {
 }
 
 enum Backend {
-    Legacy(LegacyHistory),
+    Legacy(Box<LegacyHistory>),
     Authenticated(Box<runtime::Runtime>),
 }
 
@@ -215,13 +217,15 @@ impl History {
         }
     }
 
-    /// Runs the supervised history owner and its feed until shutdown.
+    /// Runs the supervised history owner and its feed until shutdown, each command's derived rows
+    /// from `deriver`.
     /// Error cases:
     /// - authenticated source IO, proof, required update, repair or worker supervision fails
-    pub async fn run(self, feed: Feed) -> anyhow::Result<()> {
+    /// - a command's derived rows cannot be found (`Deriver::rows`)
+    pub(crate) async fn run(self, feed: Feed, deriver: Deriver) -> anyhow::Result<()> {
         match self.backend {
-            Backend::Legacy(history) => history.run(feed).await,
-            Backend::Authenticated(history) => (*history).run(feed).await,
+            Backend::Legacy(history) => (*history).run(feed, deriver).await,
+            Backend::Authenticated(history) => (*history).run(feed, deriver).await,
         }
     }
 }
@@ -253,11 +257,14 @@ impl LegacyHistory {
     /// meanwhile, the feed reads from the log on disk.
     /// Error cases:
     /// - the feed fails (see `Feed::next`)
-    /// - the writer fails (see `Writer::write`) or panics
-    pub async fn run(self, mut feed: Feed) -> anyhow::Result<()> {
+    /// - the writer fails (see `Writer::run`) or panics
+    pub(crate) async fn run(self, mut feed: Feed, deriver: Deriver) -> anyhow::Result<()> {
+        // An aborted task drops this, which stops a replay the writer runs for derived rows.
+        let stop = StopOnDrop(Default::default());
+        let deriver = deriver.stopped_by(stop.0.clone());
         let (tx, rx) = mpsc::channel(QUEUE);
         let (writer, ready, ready_at) = (self.writer, self.ready, self.ready_at);
-        let mut written = spawn_blocking(move || writer.run(rx, ready, ready_at));
+        let mut written = spawn_blocking(move || writer.run(rx, deriver, ready, ready_at));
         let forward = async move {
             while let Some(msg) = feed.next().await? {
                 // A closed queue means the writer stopped; its result says why.
@@ -274,7 +281,9 @@ impl LegacyHistory {
                 bail!("history writer stopped");
             }
         }
-        written.await.context("history writer panicked")?
+        let written = written.await.context("history writer panicked")?;
+        drop(stop);
+        written
     }
 }
 
@@ -359,13 +368,13 @@ impl HistoryCheck {
         info!(dir = %self.dir.display(), from = %resume_at, "history index opened");
         let (ready, ready_rx) = watch::channel(false);
         Ok(History {
-            backend: Backend::Legacy(LegacyHistory {
+            backend: Backend::Legacy(Box::new(LegacyHistory {
                 writer,
                 reader: Reader::new(path, ready_rx),
                 ready,
                 ready_at: None,
                 resume_at,
-            }),
+            })),
         })
     }
 }
@@ -416,6 +425,7 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::CorporateSplit { .. }
         | Event::CorporateActionApplied { .. }
         | Event::CorporateActionFailed { .. }
+        | Event::FinancingApplied { .. }
         | Event::BenchmarkRateMissing { .. }
         | Event::BenchmarkRateObserved { .. }
         | Event::BenchmarkRateUndated { .. }

@@ -26,6 +26,7 @@ use crate::tee::EnclaveKey;
 use crate::test_support::{dev_config, empty_custody_frontier, sample_around, scratch_dir, sequencer_config};
 
 mod mass;
+mod rollover;
 mod tail;
 
 pub(super) const ACCOUNTS: u32 = 100_000;

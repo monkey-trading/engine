@@ -286,7 +286,7 @@ async fn follow_to_end(history: History, dir: &Path) {
     drop(live);
     let (manifest, backfills) = (published_manifest(dir), Arc::new(Semaphore::new(MAX_BACKFILLS)));
     let feed = Feed::new(subscriber, dir.to_owned(), manifest, backfills, Some(history.resume_at()));
-    timeout(Duration::from_secs(10), history.run(feed)).await.unwrap().unwrap();
+    timeout(Duration::from_secs(10), history.run(feed, Deriver::none())).await.unwrap().unwrap();
 }
 
 /// Empties the segment the log in `dir` is still writing, which a power loss does to whatever the

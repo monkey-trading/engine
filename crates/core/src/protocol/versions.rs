@@ -336,20 +336,18 @@ pub enum ProtocolVersion {
     /// parameters that name no table the launch table, starts every account at tier 0 with no counted
     /// volume, and holds every position held then pending, counting nothing, for its first 60 s.
     V59,
-    /// A market may carry a weekend margin (`weekend`): a rate each of its margin bands charges at
-    /// least over its weekend gap, any closure of at least 40 hours by its calendar. From two hours
-    /// before such a gap starts until the market reopens, the account's margin requirement counts each
-    /// position in the market at its weekend margin for a fill that adds risk in any market, which is
-    /// refused below it, and for a withdrawal. When the gap starts, each account holding the market
-    /// whose equity at its marks is below that requirement is closed out on the markets whose gaps
-    /// start then, largest loser first, at their marks, until it meets it; a relisting that puts the
-    /// market in a gap it has not closed out closes it out then. A listed market's weekend margin moves
-    /// only as a listing notice of at least seven days names it, or while rotation is on as a passed
-    /// vote does, to a rate from none to 10000 bps; a calendar change that is not a vote may not
-    /// narrow or remove a weekend gap within seven days, nor add or bring forward a held market's gap
-    /// within seven days. Before it a listing's weekend margin does nothing; activation starts each
-    /// listed market that names one, holding a gap it is in, or one starting within two hours, with
-    /// no close-out.
+    /// A market may carry a weekend margin (`weekend`): a rate each of its margin bands charges at least over its
+    /// weekend gap, any closure of at least 40 hours by its calendar. From two hours before such a gap starts until the
+    /// market reopens, the account's margin requirement counts each position in the market at its weekend margin for a
+    /// fill that adds risk in any market, which is refused below it, and for a withdrawal. When the gap starts, each
+    /// account holding the market whose equity at its marks is below that requirement is closed out on the markets
+    /// whose gaps start then, largest loser first, at their marks, until it meets it; a relisting that puts the market
+    /// in a gap it has not closed out closes it out then. A listed market's weekend margin moves only as a listing
+    /// notice of at least seven days names it, or while rotation is on as a passed vote does, to a rate from none to
+    /// 10000 bps; a calendar change that is not a vote may not narrow or remove a weekend gap within seven days, nor
+    /// add or bring forward a held market's gap within seven days. Before it a listing's weekend margin does nothing;
+    /// activation starts each listed market that names one, holding a gap it is in, or one starting within two hours,
+    /// with no close-out.
     V60,
     /// Volume tier fixes. An activation over parameters set before `V59` records `launch_volume_tiers` as
     /// the launch table the table's bounds measure from, rather than the table those parameters name,
@@ -359,18 +357,16 @@ pub enum ProtocolVersion {
     /// when its leg's matured and pending units cannot be told apart in the order the toxicity score
     /// takes them: either leg empty, both only matured, or both only pending.
     V61,
-    /// A stress trigger on the house's marked loss to its clients over the trailing day (`house_loss`):
-    /// the fall in house NAV, which counts clients' unrealised PnL at the marks, less the house capital
-    /// credited in net, so net of fees, spreads and financing, from activation and never below the loss
-    /// over the day, with a dividend paid ahead of its market's next mark counted without it. A stress
-    /// level's trigger may name a loss threshold, met when the loss is above it; every market's
-    /// automatic level then rises to that level, re-read before every fill and after every command, and
-    /// steps down after the cooldown once the loss is back at or below it. Each change of the level the
-    /// loss sets is an event. A change to the stress parameters, by notice or by vote, keeps each
-    /// launch threshold at its level or above, at most its launch value. Before it a threshold the
-    /// parameters name reads nothing; activation keeps it, gives level 2's trigger a threshold of zero
-    /// where the parameters have a level 2 and name none, and takes the thresholds in force as
-    /// launch's.
+    /// A stress trigger on the house's marked loss to its clients over the trailing day (`house_loss`): the fall in
+    /// house NAV, which counts clients' unrealised PnL at the marks, less the house capital credited in net, so net of
+    /// fees, spreads and financing, from activation and never below the loss over the day, with a dividend paid ahead
+    /// of its market's next mark counted without it. A stress level's trigger may name a loss threshold, met when the
+    /// loss is above it; every market's automatic level then rises to that level, re-read before every fill and after
+    /// every command, and steps down after the cooldown once the loss is back at or below it. Each change of the level
+    /// the loss sets is an event. A change to the stress parameters, by notice or by vote, keeps each launch threshold
+    /// at its level or above, at most its launch value. Before it a threshold the parameters name reads nothing;
+    /// activation keeps it, gives level 2's trigger a threshold of zero where the parameters have a level 2 and name
+    /// none, and takes the thresholds in force as launch's.
     V62,
     /// An activation that carries the log from before this version to it ends every market's open
     /// markout-spread interval, since the activation command sampled under the earlier rules, which
@@ -478,15 +474,13 @@ pub enum ProtocolVersion {
     /// (`listing_bounds`). A corporate action stays within `corporate::CorporateBounds` and, while votes
     /// govern, needs a passed vote.
     V76,
-    /// The state root commits each credited receipt whose principal still awaits finality, the house's
-    /// included, as an unfinalised credit leaf binding its vault deposit id, beneficiary, payer and
-    /// amount (`merkle::credits`), from when it is credited, or rescreened into credit, until it
-    /// finalises, reverses or is replaced, and a held deposit's leaf binds the same, as a pending one's
-    /// does, where its receipt binds its payer or, for a booked surplus, its absence; activation
-    /// commits every such receipt already credited or held. The vault's exit adds an account's
-    /// unfinalised principal to its claim only through these leaves, credit by credit, where its own
-    /// deposit records match, and refunds the deposit at an id whose credited, pending or held receipt
-    /// they do not match.
+    /// The state root commits each credited receipt whose principal still awaits finality, the house's included, as an
+    /// unfinalised credit leaf binding its vault deposit id, beneficiary, payer and amount (`merkle::credits`), from
+    /// when it is credited, or rescreened into credit, until it finalises, reverses or is replaced, and a held
+    /// deposit's leaf binds the same, as a pending one's does, where its receipt binds its payer or, for a booked
+    /// surplus, its absence; activation commits every such receipt already credited or held. The vault's exit adds an
+    /// account's unfinalised principal to its claim only through these leaves, credit by credit, where its own deposit
+    /// records match, and refunds the deposit at an id whose credited, pending or held receipt they do not match.
     V77,
     /// The operator's status notice (`notice`), set and cleared by its signed `SetNotice` and `ClearNotice`.
     V78,
@@ -497,4 +491,9 @@ pub enum ProtocolVersion {
     /// level or better. Levels use one order slot per market; full closes and reversals remove them. The
     /// distance moves by notice or vote, launch to twice it; activation gives an unset one the ceiling.
     V79,
+    /// A rollover logs one `Event::FinancingApplied` in place of an `Event::Financing` per position:
+    /// the positions and accounts charged, the net, and the root over each account's charges
+    /// (`financing`). The per-position rows are derived output (`Engine::take_derived`), at the same
+    /// amounts and in the same order; balances, house cash and state roots are as before.
+    V80,
 }

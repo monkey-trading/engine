@@ -56,10 +56,12 @@ fn dev_scenario_financing_closes_out_and_a_stale_market_counts_at_its_last_mark(
     move_to(&mut seq, rollover + 100);
     let events = sequenced(&mut seq, Command::Tick);
     let financing = Fixed::from_raw(2_336_547_946);
-    assert!(
-        events.contains(&Event::Financing { account: access::account(1), market: BTC, amount: financing }),
-        "{events:?}"
-    );
+    // From `V80` the rollover logs its aggregate, and its row is the command's derived output.
+    assert!(events.iter().any(|e| matches!(e, Event::FinancingApplied { positions: 1, .. })), "{events:?}");
+    let at = seq.engine.last_seq().expect("the rollover's command");
+    let rows = seq.derived.borrow().get(at).map(|derived| derived.rows.to_vec());
+    let row = engine_core::financing::FinancingRow { account: access::account(1), market: BTC, amount: financing };
+    assert_eq!(rows, Some(vec![row]));
     let equity = fixed("48") - financing;
     assert!(
         events.contains(&Event::CloseOut { account: access::account(1), equity, margin: fixed("94.76") }),
@@ -161,7 +163,7 @@ fn recover_at(
 
 /// The events `cmd` produced; panics if trusted time refused its stamp.
 pub(super) fn sequenced(seq: &mut Sequencer, cmd: Command) -> Vec<Event> {
-    seq.sequence(cmd).unwrap().expect("trusted time admits the stamp")
+    seq.sequence(cmd).unwrap().expect("trusted time admits the stamp").to_vec()
 }
 
 /// What `f` returns, and the log lines it wrote.

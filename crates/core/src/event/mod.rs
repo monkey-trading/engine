@@ -203,6 +203,18 @@ pub enum Event {
         market: MarketId,
         amount: Fixed,
     },
+    /// From `V80`, a rollover's financing in place of a `Financing` event per position: the rollover,
+    /// the time it charged for, the positions charged and the accounts holding them, what the accounts
+    /// paid the house net of what it credited them, and the root over each account's charges
+    /// (`financing`). The per-position rows are the command's derived output (`Engine::take_derived`).
+    FinancingApplied {
+        at: Millis,
+        span: Millis,
+        positions: u64,
+        accounts: u64,
+        net: Fixed,
+        root: B256,
+    },
     /// At a rollover from `V14`, a benchmark with no rate and the markets that use it, which accrue no
     /// financing for that day.
     BenchmarkRateMissing {

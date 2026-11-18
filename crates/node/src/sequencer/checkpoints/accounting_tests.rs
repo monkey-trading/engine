@@ -354,7 +354,7 @@ fn apply(
     assert_eq!(work.len(), 1, "every applied command forces exactly one checkpoint");
     // Final at once, so the next command gets its own checkpoint.
     seq.checkpoint_status(seq.last_seq(), None).unwrap();
-    (events, work)
+    (events.to_vec(), work)
 }
 
 /// Advances both the host clock and its trusted sample.

@@ -11,7 +11,7 @@ use engine_core::event::Event;
 use engine_core::types::Millis;
 use tracing::info;
 
-use crate::sequencer::Sequencer;
+use crate::sequencer::{Sequencer, Stamped};
 
 impl Sequencer {
     /// Stamps and sequences `cmd` at `ts`, after the catch-up the engine owes before `ts`.
@@ -22,7 +22,7 @@ impl Sequencer {
     /// - as `stamp_once`
     /// - the engine defers a command although the catch-up was drained, which means the engine's
     ///   deferral and `Engine::catch_up_pending` disagree
-    pub(super) fn stamp(&mut self, ts: Millis, cmd: Command) -> Result<Option<Vec<Event>>> {
+    pub(super) fn stamp(&mut self, ts: Millis, cmd: Command) -> Result<Option<Stamped>> {
         if self.stopped() {
             return Ok(None);
         }

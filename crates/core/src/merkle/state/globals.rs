@@ -150,6 +150,8 @@ impl Engine {
             command_ms: _,
             hot_indexes: _,
             closeout_index: _,
+            // Derived output, which no state holds.
+            derived: _,
         } = self;
         Globals {
             params,

@@ -216,6 +216,7 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         | Event::CorporateSplit { .. }
         | Event::CorporateActionApplied { .. }
         | Event::CorporateActionFailed { .. }
+        | Event::FinancingApplied { .. }
         | Event::BenchmarkRateMissing { .. }
         | Event::BenchmarkRateObserved { .. }
         | Event::BenchmarkRateUndated { .. }

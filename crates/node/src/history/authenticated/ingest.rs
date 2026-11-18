@@ -11,24 +11,36 @@ use crate::history::authenticated::model::{Payload, Queued, Row, event_kind, que
 use crate::history::authenticated::overlay::Overlay;
 use crate::history::authenticated::staging::{StageInfo, Staged};
 use crate::history::authenticated::state::{CommandId, State, checked_state};
-use crate::log::{CommandEntry, Offset, extend_command_prefix};
+use crate::history::derived::{Taken, indexed};
+use crate::log::{Offset, extend_command_prefix};
 
 impl Index {
     /// Ingests parent-authenticated same-prefix input; no pending root is exposed or sealable.
     /// Error cases:
     /// - invalid order/retry, failed proof/stage/durability, or a writer requiring fresh generation
     #[cfg(test)]
-    pub fn ingest(&mut self, command: CommandEntry) -> Result<()> {
+    pub fn ingest(&mut self, command: crate::log::CommandEntry) -> Result<()> {
         self.ingest_batch(std::slice::from_ref(&command))
     }
 
+    /// `ingest_taken` for commands that derive no rows.
+    /// Error cases:
+    /// - as `ingest_taken`
+    #[cfg(test)]
+    pub fn ingest_batch(&mut self, commands: &[crate::log::CommandEntry]) -> Result<()> {
+        let taken: Vec<Taken> =
+            commands.iter().map(|command| Taken { command: command.clone(), derived: None }).collect();
+        self.ingest_taken(&taken)
+    }
+
     /// Ingests consecutive commands as one published update, so a batch costs one durable commit
-    /// plus one per full private stage, instead of one per command. Commands the head already
-    /// covers are skipped; a retry of the head's command must match it exactly.
+    /// plus one per full private stage, instead of one per command. Each command's derived rows are
+    /// stored after its logged events. Commands the head already covers are skipped; a retry of the
+    /// head's command must match it exactly.
     /// Error cases:
     /// - invalid order/retry, failed proof/stage/durability, or a writer requiring fresh generation,
     ///   for any command in the batch; the published head is unchanged on error
-    pub fn ingest_batch(&mut self, commands: &[CommandEntry]) -> Result<()> {
+    pub(crate) fn ingest_taken(&mut self, commands: &[Taken]) -> Result<()> {
         self.ingest_with(commands, &mut |_, _, _| Ok(()))
     }
 
@@ -37,7 +49,7 @@ impl Index {
     /// - the same validation/write failures as ingest, or the private test observer
     fn ingest_with(
         &mut self,
-        commands: &[CommandEntry],
+        commands: &[Taken],
         observe: &mut impl FnMut(&Index, &Root, StageInfo) -> Result<()>,
     ) -> Result<()> {
         ensure!(!self.requires_rebuild, "history writer requires a fresh verified generation");
@@ -50,7 +62,8 @@ impl Index {
         };
         let mut last = state.last_command;
         let mut fresh = Vec::with_capacity(commands.len());
-        for command in commands {
+        for taken in commands {
+            let command = &taken.command;
             if last.is_some_and(|last| command.sequenced.seq < last.seq) {
                 // The parent has already authenticated the same exact prefix; expired payloads are not replay authority.
                 continue;
@@ -68,7 +81,7 @@ impl Index {
             }
             ensure!(identity.ts >= 0, "negative history command time");
             last = Some(identity);
-            fresh.push((command, identity));
+            fresh.push((taken, identity));
         }
         if fresh.is_empty() {
             return Ok(());
@@ -100,10 +113,10 @@ impl Index {
     #[cfg(test)]
     pub(super) fn ingest_observed(
         &mut self,
-        command: CommandEntry,
+        command: crate::log::CommandEntry,
         mut observe: impl FnMut(&Index, &Root, StageInfo) -> Result<()>,
     ) -> Result<()> {
-        self.ingest_with(std::slice::from_ref(&command), &mut observe)
+        self.ingest_with(&[Taken { command, derived: None }], &mut observe)
     }
 }
 
@@ -113,24 +126,24 @@ impl Index {
 /// - identity/counter representation, serialization, proof, private stage or final durability failure
 fn stage_commands(
     index: &Index,
-    commands: &[(&CommandEntry, CommandId)],
+    commands: &[(&Taken, CommandId)],
     old: State,
     observe: &mut impl FnMut(&Index, &Root, StageInfo) -> Result<()>,
 ) -> Result<(Root, State)> {
     let mut stage = Staged::new(&index.store, &index.head.root, old)?;
     let mut notify = |root: &Root, info: StageInfo| observe(index, root, info);
-    for (command, identity) in commands {
+    for (taken, identity) in commands {
         let before = stage.state.clone();
         stage.state.last_command = Some(*identity);
         stage.state.command_prefix = extend_command_prefix(before.command_prefix, identity.digest);
         expire(&mut stage, &before, &mut notify)?;
-        for (ordinal, event) in command.events.iter().flatten().enumerate() {
-            let Some(account) = account_of(event) else {
+        for (ordinal, event) in indexed(&taken.command, taken.derived.as_ref()).enumerate() {
+            let Some(account) = account_of(&event) else {
                 continue;
             };
             let mut value = Row {
                 account,
-                kind: event_kind(event)?,
+                kind: event_kind(&event)?,
                 cursor: Offset {
                     seq: identity.seq,
                     index: u32::try_from(ordinal).context("history event cursor overflow")?,
@@ -138,7 +151,7 @@ fn stage_commands(
                 ts: identity.ts,
                 payload: Payload { length: 0, chunks: 0 },
             };
-            value.payload = write_event(&mut stage, &value, event, &mut notify)?;
+            value.payload = write_event(&mut stage, &value, &event, &mut notify)?;
             let all = append(&mut stage.overlay, value.all_list(), &value, &mut stage.state)?;
             let kind = append(&mut stage.overlay, value.kind_list(), &value, &mut stage.state)?;
             let key = queue_key(stage.state.queue_hi);

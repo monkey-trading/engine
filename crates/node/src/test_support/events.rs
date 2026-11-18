@@ -172,6 +172,14 @@ pub fn every_event() -> Vec<Event> {
         Event::CloseOut { account, equity: amount, margin: amount },
         Event::BadDebt { account, amount },
         Event::Financing { account, market, amount: -amount },
+        Event::FinancingApplied {
+            at: 1_792_000_000_000,
+            span: 86_400_000,
+            positions: 2,
+            accounts: 1,
+            net: amount,
+            root: B256::repeat_byte(0x80),
+        },
         Event::BenchmarkRateMissing { benchmark: "SOFR".into(), markets: vec![market] },
         Event::BenchmarkRateUndated { benchmark: "SOFR".into() },
         Event::BenchmarkRateObserved {
@@ -315,6 +323,7 @@ pub fn every_event() -> Vec<Event> {
             | Event::CloseOut { .. }
             | Event::BadDebt { .. }
             | Event::Financing { .. }
+            | Event::FinancingApplied { .. }
             | Event::BenchmarkRateMissing { .. }
             | Event::BenchmarkRateObserved { .. }
             | Event::BenchmarkRateUndated { .. }

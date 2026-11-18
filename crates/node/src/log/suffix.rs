@@ -453,7 +453,7 @@ fn recover_segment(
                 });
             }
         }
-        segment.record(&line, entry.as_ref());
+        segment.record(&line, entry.as_ref().and_then(command_seq));
         if !boundary_seen {
             let boundary = boundary.expect("a withheld prefix has a boundary");
             ensure!(segment.bytes <= boundary.checkpoint.end, "checkpoint boundary is not a physical line end");

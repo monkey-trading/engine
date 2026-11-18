@@ -416,7 +416,7 @@ impl Segment {
                     checkpoint: checkpoint.clone(),
                 });
             }
-            segment.record(line, entry.as_ref());
+            segment.record(line, entry.as_ref().and_then(command_seq));
             let Some(entry) = entry else {
                 return Ok(());
             };
@@ -426,11 +426,11 @@ impl Segment {
         Ok(segment)
     }
 
-    /// Accounts for one line, and the entry on it unless it is blank.
-    pub(super) fn record(&mut self, line: &[u8], entry: Option<&LogEntry>) {
+    /// Accounts for one line, and for the command on it, at `command`, if it holds one.
+    pub(super) fn record(&mut self, line: &[u8], command: Option<u64>) {
         self.hasher.update(line);
         self.bytes += line.len() as u64;
-        if let Some(seq) = entry.and_then(command_seq) {
+        if let Some(seq) = command {
             self.commands += 1;
             self.last_seq = seq;
         }

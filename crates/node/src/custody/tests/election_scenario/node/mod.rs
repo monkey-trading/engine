@@ -295,7 +295,8 @@ impl Node {
             Some(history.resume_at()),
         );
         let history_reader = history.reader();
-        let history_task = tokio::spawn(history.run(feed));
+        let deriver = crate::history::derived::Deriver::new(seq.derived_rows(), Some((dir.clone(), manifest.clone())));
+        let history_task = tokio::spawn(history.run(feed, deriver));
         let (tx, rx) = mpsc::channel(1024);
         let recovery = seq.take_recovery_checkpoints();
         let sequencer = tokio::spawn(seq.run(rx));

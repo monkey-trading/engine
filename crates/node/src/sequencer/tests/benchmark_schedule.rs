@@ -244,7 +244,7 @@ impl Fixture {
     }
 
     fn submit(&mut self, command: Command) -> Vec<Event> {
-        let events = self.seq.sequence(command).unwrap().expect("command admitted");
+        let events = self.seq.sequence(command).unwrap().expect("command admitted").to_vec();
         self.seq.flush().unwrap();
         events
     }

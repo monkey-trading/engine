@@ -81,13 +81,13 @@ async fn dev_scenario_a_higher_tier_pays_less_fee_and_financing_and_earns_more_e
         fill_event(&node, client, BTC, Side::Buy, "0.1", "100000").await;
     }
     let rollover = node.state.query(|engine| engine.next_rollover().expect("scheduled")).await.unwrap();
+    // From `V80` the rollover logs one aggregate, and each position's charge is its derived row.
     let events = tick_at(&node, rollover).await;
-    let financing = |wallet: AccountId| {
-        events.iter().find_map(|event| match event {
-            Event::Financing { account, market, amount } if *account == wallet && *market == BTC => Some(*amount),
-            _ => None,
-        })
-    };
+    assert!(events.iter().any(|event| matches!(event, Event::FinancingApplied { .. })), "{events:?}");
+    let seq = node.state.query(|engine| engine.last_seq().expect("the rollover's command")).await.unwrap();
+    let rows = node.state.history.derived().borrow().get(seq).map(|derived| derived.rows.clone()).expect("kept");
+    let financing =
+        |wallet: AccountId| rows.iter().find(|row| row.account == wallet && row.market == BTC).map(|row| row.amount);
     assert_eq!(financing(wallet_a), Some("2.328767124".parse().unwrap()), "{events:?}");
     assert_eq!(financing(wallet_b), Some("2.465753425".parse().unwrap()), "{events:?}");
     price(&node, BTC, "100000").await;

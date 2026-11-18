@@ -11,16 +11,21 @@ use tokio::task::spawn_blocking;
 
 use crate::authenticated::{Lease, Store};
 use crate::history::authenticated::{Head, Index};
+use crate::history::derived::{DerivedRows, RowsStore};
 use crate::history::{Page, PageQuery, store};
 use crate::snapshot::head::StoreId;
 
 /// Matches the legacy reader's per-node blocking-IO admission bound.
 const MAX_READS: usize = 16;
 
-/// Either the legacy SQL index or the authenticated actor's latest complete immutable version.
+/// Either the legacy SQL index or the authenticated actor's latest complete immutable version, and
+/// the newest commands' derived rows and the stored ones, which the financing read proves an
+/// account's rows from.
 #[derive(Clone)]
 pub struct Reader {
     backend: Backend,
+    derived: watch::Receiver<DerivedRows>,
+    stored: Option<Arc<RowsStore>>,
 }
 
 #[derive(Clone)]
@@ -83,7 +88,7 @@ impl Published {
 impl Reader {
     /// Preserves the legacy reader's public constructor and eager legacy-integrity contract.
     pub fn new(path: PathBuf, ready: watch::Receiver<bool>) -> Self {
-        Self { backend: Backend::Legacy(store::Reader::new(path, ready)) }
+        Self { backend: Backend::Legacy(store::Reader::new(path, ready)), derived: no_rows(), stored: None }
     }
 
     /// Connects the single storage owner's complete-head publication and bounded repair queue.
@@ -99,7 +104,24 @@ impl Reader {
                 repair,
                 permits: Arc::new(Semaphore::new(MAX_READS)),
             }),
+            derived: no_rows(),
+            stored: None,
         }
+    }
+
+    /// This reader, with the derived rows `derived` publishes and those `stored` holds.
+    pub(crate) fn with_derived(self, derived: watch::Receiver<DerivedRows>, stored: Option<Arc<RowsStore>>) -> Self {
+        Self { derived, stored, ..self }
+    }
+
+    /// The newest commands' derived rows (`history::derived`).
+    pub(crate) fn derived(&self) -> &watch::Receiver<DerivedRows> {
+        &self.derived
+    }
+
+    /// The derived rows the history stored, for its retention (`RowsStore`).
+    pub(crate) fn stored(&self) -> Option<&Arc<RowsStore>> {
+        self.stored.as_ref()
     }
 
     /// Returns an exact page, or CatchingUp while startup/repair has not reached its required tip.
@@ -164,6 +186,11 @@ pub(crate) fn transient(error: &anyhow::Error) -> bool {
                 ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked | ErrorCode::CannotOpen | ErrorCode::OutOfMemory
             ))
     })
+}
+
+/// A receiver of no derived rows, for a reader no sequencer publishes them to.
+fn no_rows() -> watch::Receiver<DerivedRows> {
+    watch::channel(DerivedRows::default()).1
 }
 
 #[cfg(test)]
