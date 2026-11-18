@@ -347,8 +347,8 @@ impl Sequencer {
             log_check,
             governance: cfg.governance,
             fault_proof: cfg.fault_proof,
+            roots: roots::Roots::start(cfg.metrics.state_root.reads_refused.clone())?,
             metrics: cfg.metrics,
-            roots: roots::Roots::start()?,
             gate: cfg.checkpoints.map(|sink| {
                 let mut gate = Gate::new(sink, cfg.checkpoint_parent);
                 gate.registry = cfg.checkpoint_registry;
