@@ -70,11 +70,10 @@ scripts/build-wasm-verifier.sh out/verifier
 The first command runs the exports natively. The second builds the package into `out/verifier`,
 and needs rustup with Rust 1.99.1 and its `wasm32-unknown-unknown` target, and wasm-bindgen-cli
 0.2.129. It fails if the module and its JavaScript together exceed 1.5 MB gzipped. The third runs
-the package under Node 18 or later against every attestation fixture and signed-answer vector, and
-compares its verdicts with those of the `engine` command-line tools. The check has passed when it
-prints `PASS: wasm and native verdicts match on <n> fixtures`.
+the package under Node.js 18 or later against every attestation fixture and signed-answer vector,
+and compares its verdicts with those of the `engine` command-line tools. The check has passed when
+it prints `PASS: wasm and native verdicts match on <n> fixtures`.
 
 ## License
 
-Licensed under the Apache License, Version 2.0. The licence text is in
-[`LICENSE`](../../LICENSE).
+Licensed under the Apache License, Version 2.0, whose text is in [LICENSE](../../LICENSE).

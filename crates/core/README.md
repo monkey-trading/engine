@@ -83,7 +83,7 @@ from `SIGNER_KEY`. The crate has two features:
 
 - `short-turns` makes an operator's turn five minutes long instead of a day, for development
   stacks. A log written under this feature replays only under it, and a production build of the
-  node refuses it.
+  trading server refuses it.
 - `closeout-oracle` adds test hooks to the close-out index. The crate's own tests turn it on.
 
 ## Testing
@@ -115,8 +115,9 @@ cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --noca
 A change to the engine's state, to how the state is serialised, or to what a command does changes
 the state roots that existing logs replay to. Such a change ships as a new protocol version, and the
 reference log of every earlier version must still replay unchanged. A change to the events that a
-command emits is also a protocol change, even when the state roots stay the same, because the
-node's replay refuses events that differ from those its reference logs carry.
+command emits is also a protocol change, even when the state roots stay the same.
+`engine-node`'s reference logs carry each command's events, and `engine replay` refuses a log whose
+events differ from those the engine emits.
 
 To add a version:
 
@@ -133,7 +134,7 @@ To add a version:
    cargo run -p engine-core --example reference_log -- crates/core/tests/reference/v<N>.jsonl
    ```
 
-4. Write the node's reference log from it, which adds the events each command emits:
+4. Write `engine-node`'s reference log from it, which adds the events each command emits:
 
    ```shell
    cargo run -p engine-node --example reference_log -- \
@@ -146,5 +147,4 @@ Every log starts under `V2`, so `v1.jsonl` and `v2.jsonl` both replay under it.
 
 ## License
 
-Licensed under the Apache License, Version 2.0. The licence text is in
-[`LICENSE`](../../LICENSE).
+Licensed under the Apache License, Version 2.0, whose text is in [LICENSE](../../LICENSE).

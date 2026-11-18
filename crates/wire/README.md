@@ -74,10 +74,9 @@ so a signed time is accurate to within that bound. Without trusted time, the ser
 cargo test -p engine-wire
 ```
 
-The browser verifier's scenario replays the same vectors under Node, as its
+The browser verifier's scenario replays the same vectors under Node.js, as its
 [README](../verify-wasm/README.md#testing) describes.
 
 ## License
 
-Licensed under the Apache License, Version 2.0. The licence text is in
-[`LICENSE`](../../LICENSE).
+Licensed under the Apache License, Version 2.0, whose text is in [LICENSE](../../LICENSE).

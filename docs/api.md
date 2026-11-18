@@ -26,7 +26,8 @@ run one on your own machine.
 ### Connecting
 
 The server listens on the address that `node.listen` sets, which is `127.0.0.1:8080` in
-`config/dev.toml`. It accepts HTTP/1.1 over TLS 1.3 and nothing else. TLS ends inside the enclave,
+`config/dev.toml`. Configuration keys and commands call a running trading server a node, as this
+key does. It accepts HTTP/1.1 over TLS 1.3 and nothing else. TLS ends inside the enclave,
 the confidential virtual machine in which the server runs and whose memory the host machine can
 neither read nor alter. The enclave generates the TLS key itself, and the key never leaves it. Every
 `GET` route also answers `HEAD`, with the same status and headers and no body.

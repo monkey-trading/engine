@@ -83,5 +83,4 @@ cargo test -p engine-verify
 
 ## License
 
-Licensed under the Apache License, Version 2.0. The licence text is in
-[`LICENSE`](../../LICENSE).
+Licensed under the Apache License, Version 2.0, whose text is in [LICENSE](../../LICENSE).

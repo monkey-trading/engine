@@ -38,7 +38,8 @@ cargo run -p engine-node -- run --config config/dev.toml
 
 The server serves the API at `https://127.0.0.1:8080` with a self-signed certificate, and metrics
 at `http://127.0.0.1:9464/metrics`. It writes the log to `data/dev/log`. `node.listen`,
-`metrics.listen` and `node.log_dir` in the configuration file change these. The server processes
+`metrics.listen` and `node.log_dir` in the configuration file change these. Configuration keys
+and commands call a running trading server a node, as these keys do. The server processes
 nothing until two of three public Roughtime servers agree on the time, and then logs
 `first trusted time sample: sequencing started`. The [root README](../../README.md#running-it)
 walks through this case and the others.
@@ -114,7 +115,7 @@ cargo test -p engine-node --features production --lib production_build
 ```
 
 The first command runs the unit tests and the integration tests in `tests/`, which replay the
-node's reference logs and check the production configuration templates. The second runs the tests
+crate's reference logs and check the production configuration templates. The second runs the tests
 that hold only for a production build, which refuses the development configuration that the other
 tests load.
 
@@ -126,5 +127,4 @@ module documentation.
 
 ## License
 
-Licensed under the Apache License, Version 2.0. The licence text is in
-[`LICENSE`](../../LICENSE).
+Licensed under the Apache License, Version 2.0, whose text is in [LICENSE](../../LICENSE).

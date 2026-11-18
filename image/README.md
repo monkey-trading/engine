@@ -106,7 +106,8 @@ The launch flags must match `measurement.json`. `cbitpos` is 51 on Milan and lat
 KVM sets the guest's TSC frequency to the host's unless `tsc-frequency` names another. The guest
 kernel refuses virtio devices without `iommu_platform=on`.
 
-The data disk holds the configuration as `config.toml`. In that configuration:
+The data disk holds the configuration as `config.toml`. Configuration keys call a running trading
+server a node, as the first one below does. In that configuration:
 
 - `node.listen` is `0.0.0.0:8080` and `tee.provider` is `"configfs_tsm"`;
 - `tee.processor` names the host's processor generation, such as `"Genoa"`, and the server refuses

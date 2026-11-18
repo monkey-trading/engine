@@ -97,5 +97,4 @@ and drive them with the trading server.
 
 ## License
 
-Licensed under the Apache License, Version 2.0. The licence text is in
-[`LICENSE`](../LICENSE).
+Licensed under the Apache License, Version 2.0, whose text is in [LICENSE](../LICENSE).

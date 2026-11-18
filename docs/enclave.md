@@ -8,7 +8,8 @@ trusted for.
 
 ## What the guest takes from the host
 
-The engine takes input from the host through the following paths:
+The engine takes input from the host through the following paths. Configuration keys call a
+running trading server a node, as the first one below does.
 
 - **The API port**, `node.listen`, which serves TLS with a key generated inside the enclave. It also
   answers the ACME authority's TLS-ALPN-01 validations, so the host forwards port 443 to it.
