@@ -197,6 +197,8 @@ impl WorkerState {
             Work::Accept(_) => unreachable!("`take` applies the vault's checkpoint as it arrives"),
             #[cfg(test)]
             Work::Panic => panic!("a test panicked the state root worker"),
+            #[cfg(test)]
+            Work::Hold(release) => _ = release.recv(),
         }
         0
     }
