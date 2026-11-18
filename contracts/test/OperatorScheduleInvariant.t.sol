@@ -11,10 +11,10 @@ import {Staking} from "../src/Staking.sol";
 import {Vault} from "../src/Vault.sol";
 import {ScheduleTest} from "./helpers/ScheduleTest.sol";
 
-/// @notice Random stake, closes, draws, relays, receiver swaps, release moves, approvals, eligibility
-/// and margin changes, rotation switches, installations, syncs, timelock releases and clock moves
-/// over four candidates, recording every generation handed out and every naming the vault puts in
-/// effect.
+/// @notice Random stake, undelegations, standby keys, closes, draws, relays, receiver swaps, release
+/// moves, approvals, eligibility and margin changes, rotation switches, installations, syncs, timelock
+/// releases and clock moves over four candidates, recording every generation handed out, every naming
+/// the vault puts in effect and every set a close adopts.
 contract ScheduleHandler is Test {
     bytes32 internal constant CONFIG = keccak256("candidate config");
 
@@ -27,6 +27,8 @@ contract ScheduleHandler is Test {
     address[] internal actors;
     uint256 internal releases = 100;
     uint256 internal receivers;
+    uint256 internal immutable signerKey;
+    uint256 internal standbyKeys;
 
     /// @notice Generations a fold, a draw or a release move handed out.
     mapping(uint64 generation => bool) public handedOut;
@@ -47,9 +49,25 @@ contract ScheduleHandler is Test {
     uint64[] public drawnTurns;
     uint64 public highestDrawn;
     uint256 public lastDrawnFell;
+    /// @notice Set members adopted with a weight of zero or above their votes at the close.
+    uint256 public overweighted;
+    /// @notice Sets adopted with the quorum whose keyed members' weights fall short of it, or naming a
+    /// member with no promotable standby key that the set before did not name.
+    uint256 public unbackedQuorums;
+    /// @notice Members a set adopted with the quorum named with no promotable standby key when the sets
+    /// before it had named them with none since an epoch length ago or longer, with no key held since.
+    uint256 public repeatedCarries;
+    /// @notice The last set that named each member with no promotable standby key, and when the run of
+    /// sets naming it with none that it ends began.
+    mapping(address member => uint32 setId) public keylessIn;
+    mapping(address member => uint256 since) public keylessSince;
+    /// @notice Sets adopted below the quorum, and those with members.
+    uint256 public carriedSets;
+    uint256 public adoptedSets;
 
-    constructor(OperatorSchedule schedule_, Vault vault_, address[] memory actors_) {
+    constructor(OperatorSchedule schedule_, Vault vault_, address[] memory actors_, uint256 signerKey_) {
         schedule = schedule_;
+        signerKey = signerKey_;
         registry = schedule_.registry();
         vault = vault_;
         staking = registry.staking();
@@ -79,6 +97,32 @@ contract ScheduleHandler is Test {
         staking.stake(amount);
         staking.delegate(account, amount);
         vm.stopPrank();
+    }
+
+    /// @dev Takes back part of an actor's delegation to itself, so closes fall under the quorum and
+    /// carried weights exceed votes.
+    function undelegate(uint256 actorSeed, uint256 amount) external observed {
+        address account = actors[actorSeed % actors.length];
+        uint256 delegation = staking.delegatedTo(account, account);
+        if (delegation == 0) return;
+        vm.prank(account);
+        staking.undelegate(account, bound(amount, 1, delegation));
+    }
+
+    /// @dev Registers a fresh standby key for an actor on its current release, vouched by the vault's
+    /// signer, as its node does after a release move.
+    function registerStandby(uint256 actorSeed) external observed {
+        address account = actors[actorSeed % actors.length];
+        uint256 secret = uint256(keccak256(abi.encode("handler standby key", standbyKeys++)));
+        uint64 expiry = uint64(block.timestamp + 1 days);
+        bytes32 release = registry.candidateOf(account).release;
+        bytes32 digest = schedule.vouchDigest(account, vm.addr(secret), release, 1, expiry);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, digest);
+        vm.prank(account);
+        // A key registered ends the account's run of carries with no key.
+        try schedule.registerStandby(vm.addr(secret), 1, expiry, abi.encodePacked(r, s, v)) {
+            keylessIn[account] = 0;
+        } catch {}
     }
 
     function close() external observed {
@@ -132,6 +176,7 @@ contract ScheduleHandler is Test {
         registry.setReleaseApproval(account, digest, CONFIG, true);
         vm.prank(account);
         registry.setRelease(digest, CONFIG);
+        if (schedule.promotable(account) != address(0)) keylessIn[account] = 0;
     }
 
     /// @dev Withdraws or restores the approval of the release an actor holds, delisting or
@@ -146,6 +191,7 @@ contract ScheduleHandler is Test {
         if (!found) return;
         vm.prank(governance);
         registry.setReleaseApproval(account, digest, CONFIG, !approved);
+        if (schedule.promotable(account) != address(0)) keylessIn[account] = 0;
     }
 
     /// @dev Raises the eligibility share past every candidate's, so closes adopt empty sets, or
@@ -237,7 +283,10 @@ contract ScheduleHandler is Test {
         for (uint256 i = 0; i < logs.length; ++i) {
             bytes32 topic = logs[i].topics[0];
             uint64 generation;
-            if (logs[i].emitter == address(schedule) && topic == OperatorSchedule.TurnGenerationMoved.selector) {
+            if (logs[i].emitter == address(schedule) && topic == OperatorSchedule.RotationSetAdopted.selector) {
+                _checkSet(uint32(uint256(logs[i].topics[1])), logs[i].data);
+                continue;
+            } else if (logs[i].emitter == address(schedule) && topic == OperatorSchedule.TurnGenerationMoved.selector) {
                 generation = abi.decode(logs[i].data, (uint64));
             } else if (logs[i].emitter == address(vault) && topic == Vault.ReleaseSynced.selector) {
                 generation = abi.decode(logs[i].data, (uint64));
@@ -255,6 +304,36 @@ contract ScheduleHandler is Test {
             fresh[count++] = generation;
             _handOut(generation);
         }
+    }
+
+    /// @dev Checks a set the call's close adopted against the votes, keys and stake at that close.
+    function _checkSet(uint32 setId, bytes memory data) internal {
+        (, bool quorum, address[] memory members,, uint256[] memory weights) =
+            abi.decode(data, (uint64, bool, address[], address[], uint256[]));
+        if (members.length != 0) adoptedSets++;
+        if (!quorum) carriedSets++;
+        (,, address[] memory before,) = schedule.setOf(setId - 1);
+        uint256 weighed = 0;
+        for (uint256 i = 0; i < members.length; ++i) {
+            if (weights[i] == 0 || weights[i] > staking.votes(members[i])) overweighted++;
+            if (schedule.promotable(members[i]) != address(0)) {
+                weighed += weights[i];
+                continue;
+            }
+            if (keylessIn[members[i]] == 0 || keylessIn[members[i]] != setId - 1) {
+                keylessSince[members[i]] = block.timestamp;
+            }
+            (uint64 epochLength,,,,,,) = registry.parameters();
+            if (quorum && block.timestamp >= keylessSince[members[i]] + epochLength) repeatedCarries++;
+            keylessIn[members[i]] = setId;
+            bool carried = false;
+            for (uint256 j = 0; j < before.length; ++j) {
+                carried = carried || before[j] == members[i];
+            }
+            if (quorum && !carried) unbackedQuorums++;
+        }
+        (,,, uint16 quorumBps,,,) = registry.parameters();
+        if (quorum && weighed * 10_000 < uint256(quorumBps) * staking.totalStaked()) unbackedQuorums++;
     }
 
     function _handOut(uint64 generation) internal {
@@ -315,7 +394,7 @@ contract OperatorScheduleInvariantTest is ScheduleTest {
         uint64 first = _nextTurn() + 1;
         _relay(first, keccak256("first seed"));
         vm.warp(schedule.drawDeadline(first));
-        handler = new ScheduleHandler(schedule, vault, actors);
+        handler = new ScheduleHandler(schedule, vault, actors, privateKeyOf[vault.checkpointSigner()]);
         targetContract(address(handler));
     }
 
@@ -364,6 +443,16 @@ contract OperatorScheduleInvariantTest is ScheduleTest {
             assertGe(effectiveAt, previous);
             previous = effectiveAt;
         }
+    }
+
+    /// @notice A set weighs each member above zero and at most its votes at the close; a set adopted
+    /// with the quorum names a member with no promotable standby key only if the set before named it,
+    /// and not when sets have named it with none for an epoch length, and its members holding one make
+    /// the quorum.
+    function invariant_ASetWeighsItsMembersByTheirVotesAtItsClose() public view {
+        assertEq(handler.overweighted(), 0);
+        assertEq(handler.unbackedQuorums(), 0);
+        assertEq(handler.repeatedCarries(), 0);
     }
 
     /// @notice The last drawn turn only increases.

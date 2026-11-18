@@ -641,6 +641,11 @@ contract SkipScheduleTest is SkipTest {
         assertLe(address(schedule).code.length, 24_576, "EIP-170");
     }
 
+    function test_TheRegistryFitsEip170() public view {
+        console.log("OperatorRegistry, bytes:", address(registry).code.length);
+        assertLe(address(registry).code.length, 24_576, "EIP-170");
+    }
+
     /// @dev Starts `turn` for alice, draws `turn + 1` for carol while alice is named, so alice is its
     /// source, skips `turn` to bob, and posts bob's first head, which latches the skip's assignment.
     function _skipAfterTheNextDraw() internal {

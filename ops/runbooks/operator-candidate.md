@@ -297,9 +297,15 @@ moves no longer reach the vault.
 
 With a schedule named, each election close while rotation is on adopts every eligible candidate as
 the rotation set, weighted by delegated stake, seven days plus the finality margin before the set
-takes effect; each close's set waits out its own notice, however many wait. Without a quorum the
-latest set stands, less the members no longer eligible. Anyone draws turn `n`, which starts at 22:30 UTC on day `n` of the Unix
-epoch, from a day before that boundary until it: `cast send $SCHEDULE 'draw(uint64)' $n`. Turns are
+takes effect; each close's set waits out its own notice, however many wait. The quorum counts only
+the votes of the eligible candidates holding a promotable standby key, the ones the set adopts by
+votes. A member of the latest set between standby keys at a close, as while it moves to a new
+release, keeps its place for that close and any within an epoch length after it: register the new
+release's standby key within an epoch, or the next close with the quorum leaves the member out. Each
+key registered starts that epoch afresh for the next move. Without a quorum the latest set stands, less the
+members no longer eligible. Each carried member is weighted by no more than its votes at the close.
+Anyone draws turn `n`, which starts at 22:30 UTC on day `n` of the Unix epoch, from a day before that
+boundary until it: `cast send $SCHEDULE 'draw(uint64)' $n`. Turns are
 a day long: `cast call $SCHEDULE 'turnLength()(uint64)'` answers 86400, and a production node refuses
 a schedule that answers anything else (`custody_chain_inconsistent`). Shorter turns exist only in
 development builds (the `short-turns` feature), which a production build refuses to compile. Draw each
@@ -453,8 +459,10 @@ misses it is promoted at once.
   the timelock turns rotation on: start your member node with its rotation config while the switch is
   still off, and it prepares the key and asks the deployment's operator to vouch, then waits for the
   switch. A candidate
-  with no promotable key at an election close is not adopted into the set; a `setRelease` voids the key,
-  and the node registers a new one for the new release.
+  with no promotable key at an election close is not adopted by its votes and its votes do not count
+  toward the quorum; a member of the latest set keeps its place without one for about an epoch (see
+  Daily turns). A `setRelease` voids the key, and the node registers a new one for the new release, so
+  move releases early enough in an epoch for the new key to register before its close.
 - **A promotion.** Once `heartbeatMisses` witnessed slots (5 by default) pass with no head, anyone's
   `promote()` names the next qualified member, and the vault moves its signer to that member's standby
   key in a new signer epoch. It prefers a member that held nothing of the turn, then one drawn or
