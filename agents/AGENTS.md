@@ -89,7 +89,9 @@ an index: load only the rule whose hint matches the current action.
   anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), from `V70` cut by a proven fault's haircut, which starts at the recorded penalty and falls linearly to nothing, the withheld part going to stakers (`operator_faults.rs`), from `V75` a client's unfinalised deposit counted as its own cash, reserving only what its reversal would leave unpaid, and an epoch closed only once the mirror's finalised frontier has passed its end, within a day of it, `tests/staking/unfinalised_deposits.rs` and `tests/staking/mirror_frontier.rs`, cumulative distributions proven on chain; `Engine::distributable_excess` in `staking/excess.rs` reads what a close would distribute),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
-  `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks). It does no IO and uses no clocks,
+  `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks, and from `V77` `merkle/credits.rs`
+  each credited receipt still awaiting finality, through which alone the exit adds that principal back where the vault's
+  own deposit records match, and receipt-backed held deposits in the same form, `tests/exit/credits.rs`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
   with house NAV and exposure caps in `engine/house.rs`, per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,
@@ -136,7 +138,8 @@ an index: load only the rule whose hint matches the current action.
   an election moves none), the
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads),
   sequencer (a batch's data sync runs on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches), the public log with signed checkpoints (segmented, with a public archive), `engine
-  replay`, `engine exit-proof` (`exit.rs`: the exit's proofs and vault calls from a published log),
+  replay`, `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published log, or with `--deposit` the
+  refund of the vault's deposit at an id through the receipt the root holds there),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
   `/v1/session-keys` registration and revocation a session key trades under (from `V41`), admission before a first deposit (`api/state.rs`: a never-credited account may declare, then manage its session keys, each within the fresh-account budgets in `limits/`, set by `[api.fresh_accounts]` apart from `api.per_ip` and `api.per_account` and capped in a production build (`config/fresh_accounts.rs`), with a declaration from an account with a pending deposit exempt from both, and nothing else; declarations hold at most half the API's screening slots), from `V66` a credited account's per-account and session-key buckets at its volume tier's request rate, read from the API's engine copy (`ApiState::read`), the bursts set in `[api.request_bursts]` as seconds of that rate and capped in a production build (`config/request_bursts.rs`), and a 429 naming the tier and its rate (`limits/`), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
@@ -415,8 +418,10 @@ an index: load only the rule whose hint matches the current action.
   has been posted for the exit period, anyone starts the permanent exit against the last posted
   root, which ends signed withdrawals, checkpoints and distribution claims, registers claims proven
   against that root through `src/ExitVerifier.sol` for the claim window (account equity at its
-  marks, unpaid approvals and queued remainders, then distributions), pays them pro rata, refunds
-  deposits the root does not hold or holds pending to their payers, and releases the remainder
+  marks less its unfinalised principal, which `registerExitCredits` adds back credit by credit where the vault's deposit
+  records (payer, amount, beneficiary) match, unpaid approvals and queued remainders, then distributions), pays them pro
+  rata, refunds deposits the root does not hold or holds pending to their payers, and, while claims register, one at an
+  id whose held, pending or credited receipt in the root its records do not match, and releases the remainder
   through the timelock; `src/StateTree.sol` is the shared proof check. `src/RegistryLens.sol` is a
   stateless read-only view over the registry and its staking contract, outside custody: the registry's switch,
   parameters and operators, and every listed candidate's registration, votes, eligibility and role, in pages,
@@ -1171,7 +1176,7 @@ Run from the repo root:
   this one, and the mock TEE also needs `--mock-launch-digest <hex>`
 - Exit dev scenario: `./scripts/dev-exit.sh` (the withdrawal scenario's requirements)
 - Exit proofs from a published log: `cargo run -p engine-node -- exit-proof --log <path> --seq
-  <the vault's latestSeq> --account <address>` (or `--house`), printing the proofs and each vault
+  <the vault's latestSeq> --account <address>` (or `--house`, or `--deposit <id>`), printing the proofs and each vault
   call ABI-encoded; the log's commands must reproduce that checkpoint's root
 - Sign and submit an admin command as the operator: `cargo run -p engine-node -- admin --pin <the
   TLS key hash in the node's attested bundle> <command>`, with the key from `--key-file`,

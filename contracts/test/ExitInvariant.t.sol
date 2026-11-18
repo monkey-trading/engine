@@ -20,9 +20,13 @@ contract ExitHandler is ExitTest {
     ExitVerifier.Approval[3] private approvals;
     ExitVerifier.QueuedWithdrawal[3] private queue;
     uint256[3] private entitlements;
-    ExitVerifier.PendingDeposit private pending;
+    ExitVerifier.ReceiptLeaf private pending;
     bytes private chainRef;
     bool private hasPending;
+    /// @dev A credit of bob's, of any amount, at an id whose deposit is another's: a receipt a
+    /// reorganisation orphaned, which the vault's records never match.
+    ExitVerifier.ReceiptLeaf private orphan;
+    bool private hasOrphan;
     /// @dev The tree before the latest post, which a claim may still prove against.
     bytes32[] private olderKeys;
     bytes32[] private olderValues;
@@ -65,7 +69,8 @@ contract ExitHandler is ExitTest {
 
     /// @dev Posts a fresh root naming any balances, approvals, queued requests and distributions,
     /// a cursor at or past the vault's deposits, up to two ids below it the root does not hold,
-    /// one existing deposit pending, and held principal within what the vault holds.
+    /// one existing deposit pending, one other credited to bob that the vault's records do not match,
+    /// and held principal within what the vault holds.
     function post(uint256 seed) external {
         if (vault.exitStartedAt() != 0) return;
         olderKeys = keys;
@@ -84,41 +89,45 @@ contract ExitHandler is ExitTest {
             (address payer, uint96 amount) = vault.depositRecords(id);
             chainRef = abi.encodePacked("ref", seq, id);
             pendingAmount = int128(uint128(amount)) * UNIT;
-            pending = _addPending(chainRef, uint64(id), actors[0], payer, pendingAmount);
+            pending = _addPending(chainRef, uint64(id), vault.depositAccounts(id), payer, pendingAmount);
         }
         // Ids below the cursor the root does not hold, as a reorganisation in flight would leave them.
         uint256 refundable = vault.totalRefundable() - (covered == 0 ? 0 : vault.refundableThrough(covered - 1));
         uint64[] memory gaps = new uint64[](covered > 1 ? (seed >> 16) % 3 : 0);
-        uint256 pool = covered - (hasPending ? 1 : 0);
-        if (gaps.length > pool) gaps = new uint64[](pool);
-        uint256 taken;
-        for (uint256 id; id < covered && taken < gaps.length; ++id) {
-            if (hasPending && id == pending.depositId) continue;
-            gaps[taken++] = uint64(id);
+        uint256 free;
+        {
+            uint256 pool = covered - (hasPending ? 1 : 0);
+            if (gaps.length > pool) gaps = new uint64[](pool);
+            uint256 taken;
+            for (uint256 id; id < covered && taken < gaps.length; ++id) {
+                if (hasPending && id == pending.depositId) continue;
+                gaps[taken++] = uint64(id);
+            }
+            free = taken == 0 ? 0 : gaps[taken - 1] + 1;
         }
         // The named gaps reserve their canonical vault amounts; the terms' `unheld` names none here.
         for (uint256 i; i < gaps.length; ++i) {
             uint256 id = gaps[i];
             refundable += vault.refundableThrough(id) - (id == 0 ? 0 : vault.refundableThrough(id - 1));
         }
+        (uint256 canonical, int128 orphanAmount) = _addOrphan(seed, covered, free);
         // Held principal is neither pending nor refundable, so it fits in what remains.
-        uint256 spare = usdc.balanceOf(address(vault)) - uint256(int256(pendingAmount / UNIT)) - refundable;
-        int128 held = int128(uint128(bound(seed >> 8, 0, spare))) * UNIT;
+        int128 held = int128(
+            uint128(
+                bound(
+                    seed >> 8,
+                    0,
+                    usdc.balanceOf(address(vault)) - uint256(int256(pendingAmount / UNIT)) - refundable - canonical
+                )
+            )
+        ) * UNIT;
         // Attribute every refundable deposit below the cursor: the trader receipts the root holds,
         // then the named gaps, so the exit reserves no canonical remainder.
-        int128 heldReceipts =
-            covered == 0 ? int128(0) : int128(uint128(vault.refundableThrough(covered - 1))) * int128(UNIT);
+        int128 heldReceipts = covered == 0
+            ? int128(0)
+            : int128(uint128(vault.refundableThrough(covered - 1) - canonical)) * UNIT + orphanAmount;
         terms = _addTerms(cursor, 0, pendingAmount, held, 0, heldReceipts, gaps);
-        for (uint256 i; i < actors.length; ++i) {
-            uint256 draw = uint256(keccak256(abi.encode(seed, i)));
-            states[i] = _addAccount(actors[i], int128(int256(bound(draw, 0, 200_000e6))) * UNIT - 100e6 * UNIT);
-            approvals[i] = _addApproval(actors[i], bound(draw >> 64, 1, 50_000e6), seq + 1);
-            queue[i] =
-                _addQueued(actors[i], int128(uint128(bound(draw >> 128, 0, 50_000e6))) * UNIT, seq * 3 + uint64(i));
-            // A cumulative distribution only grows.
-            entitlements[i] += bound(draw >> 192, 0, 20_000e6);
-            _addDistribution(actors[i], entitlements[i]);
-        }
+        _addActors(seed, orphanAmount);
         _post();
     }
 
@@ -169,8 +178,8 @@ contract ExitHandler is ExitTest {
         if (!_inWindow() || !vault.hasCheckpoint()) return;
         uint256 i = actorSeed % actors.length;
         address actor = actors[i];
-        kind %= 4;
-        if (kind == 0 && !vault.exitAccountRegistered(actor)) {
+        kind %= 5;
+        if (kind == 0 && !vault.exitVerifier().exitRegistered(actor)) {
             (ExitVerifier.PositionState[] memory positions, ExitVerifier.MarketState[] memory markets) = _none();
             vault.registerExit(actor, _withAccountProof(actor, states[i]), positions, markets);
         } else if (kind == 1 && !vault.usedNonces(actor, approvals[i].nonce)) {
@@ -182,6 +191,13 @@ contract ExitHandler is ExitTest {
         } else if (kind == 3 && !vault.exitDistributionRegistered(actor)) {
             bytes32 key = keccak256(abi.encodePacked(uint8(13), actor));
             vault.registerExitDistribution(actor, entitlements[i], _siblings(key));
+        } else if (
+            kind == 4 && hasOrphan && vault.exitVerifier().exitRegistered(actors[1])
+                && !vault.exitVerifier().creditCounted(orphan.depositId)
+        ) {
+            uint256 before = vault.exitClaims(actors[1]);
+            vault.registerExitCredits(actors[1], _one(_proven(orphan, CREDIT)));
+            assertEq(vault.exitClaims(actors[1]), before, "a credit the vault does not hold adds nothing");
         }
     }
 
@@ -193,8 +209,7 @@ contract ExitHandler is ExitTest {
         if (pendingRefund) {
             if (!hasPending || !vault.hasCheckpoint()) return;
             id = pending.depositId;
-            bytes32[] memory siblings = _siblings(keccak256(abi.encodePacked(uint8(34), chainRef)));
-            call = abi.encodeCall(Vault.refundPendingDeposit, (chainRef, pending, siblings));
+            call = abi.encodeCall(Vault.refundReceipt, (_proven(pending, PENDING), PENDING));
         } else {
             (address payer,) = vault.depositRecords(id);
             if ((id < vault.exitDepositCursor() && !vault.exitRefundableGap(id)) || payer == address(0)) return;
@@ -207,6 +222,63 @@ contract ExitHandler is ExitTest {
         (, uint96 amount) = vault.depositRecords(id);
         refunds[id]++;
         tokensOut += amount;
+    }
+
+    /// @dev Refunds the deposit at the orphaned credit's id while claims register, or attempts it again
+    /// once refunded, which the vault must refuse.
+    function refundOrphan() external {
+        if (!hasOrphan || !_inWindow()) return;
+        uint256 id = orphan.depositId;
+        bool repeat = vault.depositRefunded(id);
+        (bool ok,) = address(vault).call(abi.encodeCall(Vault.refundReceipt, (_proven(orphan, CREDIT), CREDIT)));
+        assertEq(ok, !repeat, "the orphan's id refunds exactly once");
+        if (!ok) return;
+        (, uint96 amount) = vault.depositRecords(id);
+        refunds[id]++;
+        tokensOut += amount;
+    }
+
+    /// @dev Each actor's account, approval, queued request and cumulative distribution leaves, bob's
+    /// account holding the orphan's `orphanAmount` as unfinalised principal.
+    function _addActors(uint256 seed, int128 orphanAmount) private {
+        for (uint256 i; i < actors.length; ++i) {
+            uint256 draw = uint256(keccak256(abi.encode(seed, i)));
+            int128 balance = int128(int256(bound(draw, 0, 200_000e6))) * UNIT - 100e6 * UNIT;
+            if (i == 1 && orphanAmount != 0) {
+                states[i].balance = balance;
+                states[i].unfinalisedDeposits = orphanAmount;
+                _leaf(_accountKey(actors[i]), _accountHash(states[i]));
+            } else {
+                states[i] = _addAccount(actors[i], balance);
+            }
+            approvals[i] = _addApproval(actors[i], bound(draw >> 64, 1, 50_000e6), seq + 1);
+            queue[i] =
+                _addQueued(actors[i], int128(uint128(bound(draw >> 128, 0, 50_000e6))) * UNIT, seq * 3 + uint64(i));
+            // A cumulative distribution only grows.
+            entitlements[i] += bound(draw >> 192, 0, 20_000e6);
+            _addDistribution(actors[i], entitlements[i]);
+        }
+    }
+
+    /// @dev The orphan, when `seed` asks for one: bob's credit, of any amount, at the highest id below
+    /// `covered` that is neither pending nor below `free`, past the gaps; and the vault's deposit there,
+    /// which the terms attribute the credit in place of.
+    function _addOrphan(uint256 seed, uint256 covered, uint256 free)
+        private
+        returns (uint256 canonical, int128 orphanAmount)
+    {
+        hasOrphan = false;
+        if ((seed >> 24) % 2 != 0) return (0, 0);
+        for (uint256 id = covered; id > free;) {
+            --id;
+            if (hasPending && id == pending.depositId) continue;
+            (, uint96 amount) = vault.depositRecords(id);
+            canonical = amount;
+            orphanAmount = int128(uint128(bound(seed >> 32, 10e6, 2 * canonical))) * UNIT;
+            orphan = _addCredit(abi.encodePacked("orphan", seq, id), uint64(id), actors[1], treasury, orphanAmount);
+            hasOrphan = true;
+            return (canonical, orphanAmount);
+        }
     }
 
     function closeWindow() external {
@@ -270,7 +342,7 @@ contract ExitInvariantTest is ExitTest {
     function setUp() public override {
         super.setUp();
         handler = new ExitHandler(usdc, vault, governance);
-        bytes4[] memory actions = new bytes4[](12);
+        bytes4[] memory actions = new bytes4[](13);
         actions[0] = ExitHandler.deposit.selector;
         actions[1] = ExitHandler.transferSurplus.selector;
         actions[2] = ExitHandler.post.selector;
@@ -283,6 +355,7 @@ contract ExitInvariantTest is ExitTest {
         actions[9] = ExitHandler.release.selector;
         actions[10] = ExitHandler.claimDistribution.selector;
         actions[11] = ExitHandler.claimDistributionAtOlderRoot.selector;
+        actions[12] = ExitHandler.refundOrphan.selector;
         targetContract(address(handler));
         targetSelector(FuzzSelector({addr: address(handler), selectors: actions}));
     }

@@ -76,6 +76,17 @@ this crate and reproduce the signed state roots exactly.
   its approvals, queued requests, distribution, and the pending deposits for it, against the last
   root, from committed copies, so a proof stays against its root after the state moves on, and
   `AccountProof::equity` values the account at the root's marks as `Engine::equity_and_margin` does
+- From protocol `V77`, the state root commits each credited receipt whose principal still awaits
+  finality, the house's included, as an unfinalised credit leaf (`src/merkle/credits.rs`) that binds
+  its vault deposit id, beneficiary, payer and amount as a pending deposit's leaf does, from its
+  credit, or rescreening into credit, until it finalises, reverses or is replaced, and a receipt-backed
+  held deposit's leaf binds the same; activation commits those already credited or held. The vault's
+  exit adds an account's unfinalised principal to its claim only through these leaves, credit by
+  credit, where its own deposit records match in payer, amount and beneficiary, and refunds the deposit
+  at an id whose credited, pending or held receipt there they do not match, so a receipt a
+  reorganisation orphaned or moved is never paid out of other clients' funds.
+  `ExitProof::unfinalised_credits` proves an account's, and `Engine::receipt_proof` the credited,
+  pending or held receipt the last root holds at a deposit id
 - From protocol `V37`, the operator key follows the operator registry's elections (`src/election.rs`).
   The registry's finalised `RotationChanged` and `Elected` events arrive as `switch_rotation` and
   `elect_operator` commands on the staking mirror, credited once under their chain references and
@@ -364,9 +375,13 @@ this crate and reproduce the signed state roots exactly.
 - `src/merkle/exit.rs` — the V38 exit terms and pending deposit leaves, the committed copies the exit
   proves from, account equity at the root's marks, `Engine::exit_proof`, and the V39 empty-index
   exclusion that names no unheld principal past the cursor
+- `src/merkle/credits.rs` — the V77 unfinalised credit leaves, their committed copies and proofs,
+  `Engine::receipt_proof`, and the activation that commits the credits already credited and rehashes
+  held deposits
 - `tests/exit.rs` — the exit leaves against `cast`, equity in every quote currency, proofs against
   the committing root, and the V38 rebuild; `tests/exit/custody.rs` the cursor and the pending and
-  held totals over receipts, and the V39 sole reversed id-0 exclusion from `unheld`; `tests/exit/fixture.rs` the vault's vectors
+  held totals over receipts, and the V39 sole reversed id-0 exclusion from `unheld`; `tests/exit/credits.rs` the V77
+  unfinalised credit and held leaves through each receipt transition and the activation; `tests/exit/fixture.rs` the vault's vectors
 - `tests/withdrawal_minimum.rs` — the V34 minimum request and the waiting of sub-minimum parts, against V33
 - `tests/withdrawal_queue.rs` — reservations, partial FIFO, cash conservation, precision, and stale marks
 - `tests/withdrawal_commitment.rs` — approval ABI, tamper rejection, serialization/replay, and incremental roots
@@ -724,7 +739,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V76` parts (`v15.rs` to `v76.rs`)
+  `V15` to `V77` parts (`v15.rs` to `v77.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -1425,6 +1440,18 @@ adds to the calendar at once shorten nothing. The bounds move only by a notice o
 than launch's. While votes govern, only a passed vote schedules a corporate action. Instructions pending
 at the activation keep the rules they were scheduled under. Its log is `v76.jsonl`, and its session is in
 `examples/reference_log/v76.rs`.
+
+Protocol V77 commits each credited receipt whose principal still awaits finality as an unfinalised
+credit leaf, kind 35 keyed by its reference, valued as a pending deposit's leaf is: its deposit id,
+beneficiary (zero for the house), payer and amount, and a held deposit's leaf (kind 33) takes the same
+value where its receipt binds its payer or, for a booked surplus, its absence; a hold whose receipt
+records no payer while its screening named one keeps its JSON leaf and stays held. The leaf follows the receipt record, so a credit, a rescreening into credit, a
+finalisation, a reversal, a reinstatement and a replacement each make or remove it at the next root,
+and the activation records every unfinalised receipt and held deposit so the next root commits them.
+The vault's exit takes an account's unfinalised principal out of its claim and adds back, credit by
+credit, each one its own deposit records match in payer, amount and beneficiary, and refunds the
+deposit at an id whose credited, pending or held receipt there they do not match. Its log is
+`v77.jsonl`, and its session is in `examples/reference_log/v77.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

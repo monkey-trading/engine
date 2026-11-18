@@ -60,7 +60,9 @@ contract ExitFuzzTest is ExitTest {
         markets[0].siblings = _siblings(marketKey);
         ExitVerifier.PositionState[] memory positions = new ExitVerifier.PositionState[](1);
         positions[0] = ExitVerifier.PositionState(MARKET, c.qty, c.entry, _siblings(positionKey));
-        return vault.exitVerifier().accountClaim(root, trader, state, positions, markets);
+        ExitVerifier verifier = vault.exitVerifier();
+        vm.prank(address(vault));
+        return verifier.accountClaim(root, trader, state, positions, markets);
     }
 
     /// @dev The claim `c` should value at.

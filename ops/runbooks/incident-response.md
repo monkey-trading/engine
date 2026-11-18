@@ -167,14 +167,21 @@ withdrawals, checkpoints and distribution claims for good.
    normal calls), anyone starts it and anyone registers claims for the claim window (`claimWindow`).
    After the window, accounts are paid pro rata from what the vault holds; the house remainder goes out
    through the timelock. The vault values each account's equity at the root's marks.
-4. Build the calls from the log alone, for an account or the house:
+4. Build the calls from the log alone, for an account, the house, or a vault deposit id:
 
    ```sh
    SEQ=$(cast call $VAULT 'latestSeq()(uint64)' --rpc-url $RPC)
    $ENGINE exit-proof --log archive --seq $SEQ --account 0x<address> > exit-$SEQ.json
    $ENGINE exit-proof --log archive --seq $SEQ --house > exit-house-$SEQ.json
+   $ENGINE exit-proof --log archive --seq $SEQ --deposit <id> > exit-deposit-$SEQ.json
    jq -r '.calls[] | .what, .calldata' exit-$SEQ.json
    ```
+
+   An account's unfinalised principal joins its claim through the `registerExitCredits` calls that
+   follow its `registerExit`, only where the vault's own deposit records match the credits the root
+   holds for it. A deposit made after a reorganisation, at an id where the root holds another
+   receipt, is refunded to its payer through `--deposit <id>`'s `refundReceipt` call, sent while
+   claims register.
 
    The log's commands must reproduce the checkpoint's root; the vault checks every proof against the
    root it accepted. Send each call in the order listed, skipping a call whose description says the

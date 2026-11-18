@@ -3,10 +3,28 @@ pragma solidity 0.8.36;
 
 import {StateTree} from "./StateTree.sol";
 
+// The kind bytes of the receipt leaves the exit checks: a held deposit's from protocol `V77`, a
+// pending deposit's, and an unfinalised credit's. A held deposit shares its byte with the queue leaf,
+// and a caller may name any reference, an eight-byte one that reproduces a queue key included; what
+// keeps one leaf from proving as the other is the value, four ABI words for a receipt to five for a
+// queued request.
+uint8 constant HELD_DEPOSIT_LEAF = 33;
+uint8 constant PENDING_DEPOSIT_LEAF = 34;
+uint8 constant UNFINALISED_CREDIT_LEAF = 35;
+
+/// @notice The vault's record of each deposit's payer, amount and beneficiary, which a receipt the
+/// exit root holds is checked against.
+interface DepositRecords {
+    function depositRecords(uint256 id) external view returns (address payer, uint96 amount);
+    function depositAccounts(uint256 id) external view returns (address account);
+}
+
 /// @title ExitVerifier
 /// @notice Checks the engine's state tree leaves the vault's exit pays against, and values an
-/// account at the root's marks as the engine's equity does. It holds nothing; the vault deploys it.
-/// Amounts and prices are `int128` in the engine's nine-decimal raw units; the leaf layouts are those
+/// account at the root's marks as the engine's equity does, counting its unfinalised principal only
+/// where the deploying vault's own deposit records hold it. The vault deploys it, and alone records
+/// through it each registered account's running equity and the credits counted into it. Amounts and
+/// prices are `int128` in the engine's nine-decimal raw units; the leaf layouts are those
 /// `crates/core/src/merkle/` documents.
 contract ExitVerifier {
     /// @notice An account leaf's fields, with its root-to-leaf siblings.
@@ -69,12 +87,17 @@ contract ExitVerifier {
         uint64 ticket;
     }
 
-    /// @notice A receipt-backed pending deposit's leaf; `account` is zero for the house.
-    struct PendingDeposit {
+    /// @notice A receipt the root holds at a vault deposit id, as its leaf binds it: a receipt-backed
+    /// pending deposit's, and from protocol `V77` a held one's or a credited receipt's whose principal
+    /// still awaits finality; `account` is zero for the house. `chainRef` is the receipt's reference,
+    /// which keys the leaf, and `siblings` prove it.
+    struct ReceiptLeaf {
+        bytes chainRef;
         uint64 depositId;
         address account;
         address payer;
         int128 amount;
+        bytes32[] siblings;
     }
 
     /// @notice A withdrawal approval's leaf, as the vault's signed withdrawals prove it.
@@ -92,43 +115,102 @@ contract ExitVerifier {
     uint8 private constant EXIT_TERMS_LEAF = 24;
     uint8 private constant APPROVAL_LEAF = 32;
     uint8 private constant QUEUE_LEAF = 33;
-    uint8 private constant PENDING_DEPOSIT_LEAF = 34;
 
     /// @notice The engine's fixed-point scale.
     int256 private constant SCALE = 1e9;
     /// @notice One USDC base unit in the engine's raw units.
     int256 private constant USDC_UNIT = 1e3;
 
+    /// @notice The vault that deployed this verifier, whose deposit records receipts are checked
+    /// against, and which alone registers claims through it.
+    DepositRecords public immutable vault;
+
+    /// @notice Each registered account's equity at the exit root in raw units: its balance less its
+    /// unfinalised principal, its positions at their marks, and each counted credit's principal the
+    /// vault holds.
+    mapping(address account => int256 equity) public exitEquity;
+    /// @notice The USDC base units of each registered account's equity already returned as its claim.
+    mapping(address account => uint256 claimed) public exitClaimed;
+    /// @notice Whether the vault has registered each account's equity, which its credits wait for.
+    mapping(address account => bool registered) public exitRegistered;
+    /// @notice The unfinalised credits counted into a claim, by vault deposit id, each once.
+    mapping(uint64 depositId => bool counted) public creditCounted;
+
     error InvalidAccountProof();
+    error AlreadyRegistered();
+    error NotVault();
+    error UnregisteredAccount(address account);
     /// @notice A market quoted in another currency has PnL and no FX mark to convert it at, which no
     /// engine state holds.
     error UnvaluedPosition(uint32 market);
 
-    /// @notice The USDC base units `account` exits with for its balance and positions at `root`: its
-    /// equity with each position valued at its market's mark, as the engine values it, floored at
-    /// zero and rounded down. The proof must carry exactly the account leaf's `openPositions`
-    /// positions, in strictly increasing markets, each with its market's leaf, so no position can be
-    /// left out.
-    /// Reverts with `InvalidAccountProof` when any leaf fails to prove or the positions are
-    /// incomplete or out of order, and with `UnvaluedPosition` for a market it cannot value.
+    constructor() {
+        vault = DepositRecords(msg.sender);
+    }
+
+    modifier onlyVault() {
+        if (msg.sender != address(vault)) revert NotVault();
+        _;
+    }
+
+    /// @notice Registers `account`'s equity at `root` for the vault and returns the USDC base units it
+    /// claims: its balance less its unfinalised principal, with each position valued at its market's
+    /// mark as the engine values it, floored at zero and rounded down. The proof must carry exactly
+    /// the account leaf's `openPositions` positions, in strictly increasing markets, each with its
+    /// market's leaf, so no position can be left out. The unfinalised principal joins the claim only
+    /// through `creditClaim`. Each account registers once.
+    /// Reverts with `NotVault` for any caller but the vault, `AlreadyRegistered` for an account
+    /// registered before, `InvalidAccountProof` when any leaf fails to prove or the positions are
+    /// incomplete or out of order, and `UnvaluedPosition` for a market it cannot value.
     function accountClaim(
         bytes32 root,
         address account,
         AccountState calldata state,
         PositionState[] calldata positions,
         MarketState[] calldata markets
-    ) external pure returns (uint256) {
+    ) external onlyVault returns (uint256) {
+        if (exitRegistered[account]) revert AlreadyRegistered();
         if (positions.length != state.openPositions || markets.length != positions.length) {
             revert InvalidAccountProof();
         }
         bytes32 key = keccak256(abi.encodePacked(ACCOUNT_LEAF, account));
         if (!StateTree.proves(root, key, _accountHash(state), state.siblings)) revert InvalidAccountProof();
-        int256 equity = state.balance;
+        int256 equity = int256(state.balance) - state.unfinalisedDeposits;
         for (uint256 i; i < positions.length; ++i) {
             if (i > 0 && positions[i].market <= positions[i - 1].market) revert InvalidAccountProof();
             equity += _provenPnl(root, account, positions[i], markets[i]);
         }
-        return equity > 0 ? uint256(equity / USDC_UNIT) : 0;
+        exitRegistered[account] = true;
+        return _claim(account, equity);
+    }
+
+    /// @notice Counts `credits`, unfinalised credit leaves of the registered `account` at `root`, each
+    /// once, into its equity for the vault, and returns the USDC base units its claim grows by: the
+    /// principal of each credit whose deposit the vault's records match in payer, amount and
+    /// beneficiary, recovering first any shortfall its equity had. A credit a reorganisation orphaned
+    /// or moved counts and adds nothing, and one already counted is passed over, so batches may
+    /// overlap. Credits register in any batches, so no list need fit one transaction, and anyone may
+    /// submit them, since a credit only ever adds to its own account.
+    /// Reverts with `NotVault` for any caller but the vault, `UnregisteredAccount` before the account's
+    /// equity is registered, and `InvalidAccountProof` for an uncounted credit that does not prove or
+    /// is another account's.
+    function creditClaim(bytes32 root, address account, ReceiptLeaf[] calldata credits)
+        external
+        onlyVault
+        returns (uint256)
+    {
+        if (!exitRegistered[account]) revert UnregisteredAccount(account);
+        int256 held;
+        for (uint256 i; i < credits.length; ++i) {
+            ReceiptLeaf calldata credit = credits[i];
+            if (creditCounted[credit.depositId]) continue;
+            if (credit.account != account || !_provesReceipt(root, credit, UNFINALISED_CREDIT_LEAF)) {
+                revert InvalidAccountProof();
+            }
+            creditCounted[credit.depositId] = true;
+            if (_recorded(credit)) held += credit.amount;
+        }
+        return _claim(account, held);
     }
 
     /// @notice Whether `siblings` prove the exit terms leaf `terms` against `root`.
@@ -164,17 +246,27 @@ contract ExitVerifier {
         return StateTree.proves(root, key, value, siblings);
     }
 
-    /// @notice Whether `siblings` prove the pending deposit `pending`, keyed by its receipt's
-    /// reference `chainRef`, against `root`.
-    function provesPending(
-        bytes32 root,
-        bytes calldata chainRef,
-        PendingDeposit calldata pending,
-        bytes32[] calldata siblings
-    ) external pure returns (bool) {
-        bytes32 key = keccak256(abi.encodePacked(PENDING_DEPOSIT_LEAF, chainRef));
-        bytes32 value = keccak256(abi.encode(pending.depositId, pending.account, pending.payer, pending.amount));
-        return StateTree.proves(root, key, value, siblings);
+    /// @notice Whether `leaf`, a receipt leaf of kind `kind` (`HELD_DEPOSIT_LEAF`,
+    /// `PENDING_DEPOSIT_LEAF` or `UNFINALISED_CREDIT_LEAF`), proves against `root`, and whether the
+    /// vault's records of its deposit id have its payer, amount and beneficiary, so the vault holds the
+    /// deposit the root does. Any other kind proves nothing.
+    function provesReceipt(bytes32 root, ReceiptLeaf calldata leaf, uint8 kind)
+        external
+        view
+        returns (bool proven, bool matched)
+    {
+        proven = kind >= HELD_DEPOSIT_LEAF && kind <= UNFINALISED_CREDIT_LEAF && _provesReceipt(root, leaf, kind);
+        matched = proven && _recorded(leaf);
+    }
+
+    /// @notice Whether `siblings` prove the leaf at `key` with `valueHash` against `root`, for the
+    /// vault's claims and withdrawals.
+    function provesLeaf(bytes32 root, bytes32 key, bytes32 valueHash, bytes32[] calldata siblings)
+        external
+        pure
+        returns (bool)
+    {
+        return StateTree.proves(root, key, valueHash, siblings);
     }
 
     /// @notice Whether `siblings` prove the withdrawal approval `approval` against `root`.
@@ -196,6 +288,32 @@ contract ExitVerifier {
     {
         bytes32 key = keccak256(abi.encodePacked(DISTRIBUTION_LEAF, account));
         return StateTree.proves(root, key, keccak256(abi.encode(entitled)), siblings);
+    }
+
+    /// @dev Adds `added` raw units to `account`'s equity and returns the USDC base units its claim
+    /// grows by: what its equity, floored at zero and rounded down, holds beyond what it was already
+    /// returned. Its equity only grows once registered, so neither ever falls.
+    function _claim(address account, int256 added) private returns (uint256 grown) {
+        int256 equity = exitEquity[account] + added;
+        exitEquity[account] = equity;
+        uint256 total = equity > 0 ? uint256(equity / USDC_UNIT) : 0;
+        grown = total - exitClaimed[account];
+        exitClaimed[account] = total;
+    }
+
+    /// @dev Whether `leaf` proves against `root` under the leaf kind `kind`, keyed by its reference.
+    function _provesReceipt(bytes32 root, ReceiptLeaf calldata leaf, uint8 kind) private pure returns (bool) {
+        bytes32 key = keccak256(abi.encodePacked(kind, leaf.chainRef));
+        bytes32 value = keccak256(abi.encode(leaf.depositId, leaf.account, leaf.payer, leaf.amount));
+        return StateTree.proves(root, key, value, leaf.siblings);
+    }
+
+    /// @dev Whether the vault's records of deposit `leaf.depositId` have `leaf`'s payer, amount and
+    /// beneficiary.
+    function _recorded(ReceiptLeaf calldata leaf) private view returns (bool) {
+        (address payer, uint96 amount) = vault.depositRecords(leaf.depositId);
+        return payer == leaf.payer && int256(uint256(amount)) * USDC_UNIT == leaf.amount
+            && vault.depositAccounts(leaf.depositId) == leaf.account;
     }
 
     /// @dev The USD PnL of `account`'s `position` at its `market`'s mark, once both leaves prove

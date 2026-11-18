@@ -13,15 +13,24 @@ use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 
 use crate::access_support::{attest, evidence, setup, sign_screening};
+use crate::common::close_spread::{ceilings, install_expect};
 use crate::common::{Client, Harness, f};
 
 /// A funded and declared client, an undeclared newcomer, and a sanctioned payer, under `V38`, with
 /// four receipts: one credited to the client, one pending the newcomer's declaration, one held for
 /// its sanctioned payer, and one for the house pending an unknown classification of its payer.
 pub fn custody() -> (Harness, [AccountId; 3], [DepositReceipt; 4]) {
+    custody_at(ProtocolVersion::V38)
+}
+
+/// `custody` under `version`, from `V40` with a close-spread ceiling for each listed market.
+pub fn custody_at(version: ProtocolVersion) -> (Harness, [AccountId; 3], [DepositReceipt; 4]) {
     let (mut h, client) = setup();
     attest(&mut h, &client);
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V38 });
+    if version >= ProtocolVersion::V40 {
+        install_expect(&mut h, ceilings());
+    }
+    h.admin(AdminCommand::ActivateProtocol { version });
     let newcomer = Client::new(2).account;
     let sanctioned = AccountId([0x5a; 20]);
     let receipts = [
@@ -399,7 +408,7 @@ pub(crate) fn retry(h: &mut Harness, receipt: &DepositReceipt, status: Sanctions
 }
 
 /// Fresh screening evidence for `receipt` giving `payer` the status `status`.
-fn screened(
+pub(crate) fn screened(
     h: &Harness,
     receipt: &DepositReceipt,
     payer: Option<AccountId>,

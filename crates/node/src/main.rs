@@ -81,8 +81,9 @@ enum Cmd {
         #[arg(long)]
         root: Option<PathBuf>,
     },
-    /// Build the proofs an account, or the house, exits the vault with, from a published log alone,
-    /// against the root of its checkpoint at `--seq`, which must be the vault's `latestSeq`. Prints
+    /// Build the proofs an account, or the house, exits the vault with, or the receipt the root holds
+    /// at a vault deposit id, from a published log alone, against the root of its checkpoint at
+    /// `--seq`, which must be the vault's `latestSeq`. Prints
     /// them as JSON with each vault call ABI-encoded, to send in the order listed, skipping a call
     /// the vault refuses for the reason its description names. The log's commands must reproduce
     /// that checkpoint's root; signatures are not checked, since the vault checks every proof against
@@ -94,11 +95,16 @@ enum Cmd {
         #[arg(long)]
         seq: u64,
         /// The account whose proofs to build.
-        #[arg(long, conflicts_with = "house", required_unless_present = "house")]
+        #[arg(long, conflicts_with_all = ["house", "deposit"], required_unless_present_any = ["house", "deposit"])]
         account: Option<AccountId>,
         /// Build the refunds of the house's pending deposits instead.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "deposit")]
         house: bool,
+        /// Build the refund of the vault's deposit at this id instead, through the receipt the root
+        /// holds there: paid while claims register when the vault's records do not match it, and from
+        /// the pending reserve for a pending receipt they match.
+        #[arg(long)]
+        deposit: Option<u64>,
     },
     /// Verify an attestation served by `/v1/attestation` against a release manifest: the quote's
     /// certificate chain up to a pinned vendor root, the launch measurement, guest policy, and
@@ -311,10 +317,14 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Cmd::ExitProof { log, seq, account, house: _ } => {
+        Cmd::ExitProof { log, seq, account, house: _, deposit } => {
             // The bundle is the output; only errors are logged.
             init_logging("error")?;
-            let subject = account.map_or(ExitSubject::House, ExitSubject::Account);
+            let subject = match (account, deposit) {
+                (Some(account), _) => ExitSubject::Account(account),
+                (None, Some(deposit_id)) => ExitSubject::Deposit(deposit_id),
+                (None, None) => ExitSubject::House,
+            };
             let bundle = exit_bundle(&log, seq, subject)?;
             println!("{}", serde_json::to_string_pretty(&bundle)?);
             Ok(())
@@ -456,14 +466,18 @@ mod replay_cli_tests {
     }
 
     #[test]
-    fn exit_proof_takes_an_account_or_the_house_but_not_both() {
+    fn exit_proof_takes_an_account_the_house_or_a_deposit_id_but_only_one() {
         let account = "0x1111111111111111111111111111111111111111";
         let base = ["engine", "exit-proof", "--log", "public", "--seq", "7"];
         assert!(Cli::try_parse_from(base).is_err(), "a subject is required");
         let cli = Cli::try_parse_from([&base[..], &["--account", account]].concat()).unwrap();
-        assert!(matches!(cli.cmd, Cmd::ExitProof { seq: 7, account: Some(_), house: false, .. }));
+        assert!(matches!(cli.cmd, Cmd::ExitProof { seq: 7, account: Some(_), house: false, deposit: None, .. }));
         assert!(Cli::try_parse_from([&base[..], &["--house"]].concat()).is_ok());
+        let cli = Cli::try_parse_from([&base[..], &["--deposit", "3"]].concat()).unwrap();
+        assert!(matches!(cli.cmd, Cmd::ExitProof { account: None, house: false, deposit: Some(3), .. }));
         assert!(Cli::try_parse_from([&base[..], &["--house", "--account", account]].concat()).is_err());
+        assert!(Cli::try_parse_from([&base[..], &["--deposit", "3", "--account", account]].concat()).is_err());
+        assert!(Cli::try_parse_from([&base[..], &["--deposit", "3", "--house"]].concat()).is_err());
     }
 
     #[test]

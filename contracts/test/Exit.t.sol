@@ -116,7 +116,7 @@ contract ExitTestCases is ExitTest {
         emit Vault.ExitClaimRegistered(alice, 250e6);
         vm.prank(makeAddr("relayer"));
         vault.registerExit(alice, state, positions, markets);
-        vm.expectRevert(Vault.AlreadyRegistered.selector);
+        vm.expectRevert(ExitVerifier.AlreadyRegistered.selector);
         vault.registerExit(alice, state, positions, markets);
 
         vm.expectRevert(abi.encodeWithSelector(Vault.ClaimWindowOpen.selector, block.timestamp + WINDOW));
@@ -148,7 +148,7 @@ contract ExitTestCases is ExitTest {
         state.openPositions = 1;
         vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
         vault.registerExit(alice, state, positions, markets);
-        assertFalse(vault.exitAccountRegistered(alice));
+        assertFalse(vault.exitVerifier().exitRegistered(alice));
     }
 
     function testEveryPositionMustBeProvenSoNoLosingOneCanBeLeftOut() public {
@@ -178,7 +178,8 @@ contract ExitTestCases is ExitTest {
             marks[i].siblings = _siblings(keccak256(abi.encodePacked(uint8(2), uint32(i + 1))));
         }
         ExitVerifier verifier = vault.exitVerifier();
-        assertEq(verifier.accountClaim(root, alice, state, both, marks), 70e6);
+        // The verifier registers claims for the vault alone.
+        vm.startPrank(address(vault));
 
         ExitVerifier.PositionState[] memory winner = new ExitVerifier.PositionState[](1);
         ExitVerifier.MarketState[] memory winnerMark = new ExitVerifier.MarketState[](1);
@@ -196,6 +197,7 @@ contract ExitTestCases is ExitTest {
         (twiceMarks[0], twiceMarks[1]) = (marks[0], marks[0]);
         vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
         verifier.accountClaim(root, alice, state, both, twiceMarks);
+        vm.stopPrank();
 
         _startExit(terms);
         vault.registerExit(alice, state, both, marks);
@@ -335,7 +337,7 @@ contract ExitTestCases is ExitTest {
         ExitVerifier.ExitTerms memory terms = _addTerms(3, 0, 20e6 * UNIT, 0, 0, 120e6 * UNIT, gaps);
         ExitVerifier.AccountState memory a = _addAccount(alice, 100e6 * UNIT);
         bytes memory chainRef = bytes("pending past the gap");
-        ExitVerifier.PendingDeposit memory pending = _addPending(chainRef, uint64(pendingId), bob, funder, 20e6 * UNIT);
+        ExitVerifier.ReceiptLeaf memory pending = _addPending(chainRef, uint64(pendingId), bob, funder, 20e6 * UNIT);
         _post();
         _startExit(terms);
         assertTrue(
@@ -347,7 +349,7 @@ contract ExitTestCases is ExitTest {
         vm.expectRevert(abi.encodeWithSelector(Vault.NotRefundable.selector, pendingId));
         vault.refundDeposit(pendingId);
         vault.refundDeposit(gap);
-        vault.refundPendingDeposit(chainRef, pending, _siblings(keccak256(abi.encodePacked(uint8(34), chainRef))));
+        vault.refundReceipt(_proven(pending, PENDING), PENDING);
         assertEq(usdc.balanceOf(funder), 60e6);
         (ExitVerifier.PositionState[] memory positions, ExitVerifier.MarketState[] memory markets) = _none();
         vault.registerExit(alice, _withAccountProof(alice, a), positions, markets);
@@ -656,35 +658,46 @@ contract ExitTestCases is ExitTest {
         uint256 pendingId = _deposit(funder, bob, 40e6);
         ExitVerifier.ExitTerms memory terms = _addTerms(2, 0, 40e6 * UNIT, 0, 0, 140e6 * UNIT, new uint64[](0));
         bytes memory chainRef = bytes("00000000000000000101:0xblock:0xtx:3");
-        ExitVerifier.PendingDeposit memory pending = _addPending(chainRef, uint64(pendingId), bob, funder, 40e6 * UNIT);
+        ExitVerifier.ReceiptLeaf memory pending = _addPending(chainRef, uint64(pendingId), bob, funder, 40e6 * UNIT);
         _post();
         _startExit(terms);
         assertEq(vault.exitRefundReserve(), 40e6);
-        bytes32[] memory proof = _siblings(keccak256(abi.encodePacked(uint8(34), chainRef)));
-        ExitVerifier.PendingDeposit memory other = ExitVerifier.PendingDeposit(uint64(pendingId), bob, bob, 40e6 * UNIT);
+        pending = _proven(pending, PENDING);
+        ExitVerifier.ReceiptLeaf memory other = ExitVerifier.ReceiptLeaf(
+            pending.chainRef, pending.depositId, pending.account, bob, pending.amount, pending.siblings
+        );
         vm.expectRevert(Vault.InvalidExitProof.selector);
-        vault.refundPendingDeposit(chainRef, other, proof);
+        vault.refundReceipt(other, PENDING);
+        vm.expectRevert(Vault.InvalidExitProof.selector);
+        vault.refundReceipt(pending, CREDIT);
         vm.expectRevert(abi.encodeWithSelector(Vault.NotRefundable.selector, pendingId));
         vault.refundDeposit(pendingId);
-        vault.refundPendingDeposit(chainRef, pending, proof);
+        vault.refundReceipt(pending, PENDING);
         assertEq(usdc.balanceOf(funder), 40e6);
         vm.expectRevert(abi.encodeWithSelector(Vault.NotRefundable.selector, pendingId));
-        vault.refundPendingDeposit(chainRef, pending, proof);
+        vault.refundReceipt(pending, PENDING);
     }
 
-    function testAPendingLeafWhoseAmountOrPayerDiffersFromTheVaultsRecordRefundsNothing() public {
+    function testAPendingLeafWhoseAmountOrPayerDiffersFromTheVaultsRecordRefundsTheVaultsDepositToItsPayerOnce()
+        public
+    {
+        // The root holds a pending receipt at id 0 the vault's record does not match, so no claim pays
+        // the vault's own deposit there: it goes back to its payer, once, beside the pending reserve.
         _deposit(funder, alice, 100e6);
-        ExitVerifier.ExitTerms memory terms = _addTerms(1, 141e6 * UNIT, 0);
-        (bytes memory amountRef, bytes memory payerRef) = (bytes("another amount"), bytes("another payer"));
-        ExitVerifier.PendingDeposit memory amount = _addPending(amountRef, 0, alice, funder, 41e6 * UNIT);
-        ExitVerifier.PendingDeposit memory payer = _addPending(payerRef, 0, alice, bob, 100e6 * UNIT);
+        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 141e6 * UNIT, 0, 0, 141e6 * UNIT, new uint64[](0));
+        ExitVerifier.ReceiptLeaf memory amount = _addPending(bytes("another amount"), 0, alice, funder, 41e6 * UNIT);
+        ExitVerifier.ReceiptLeaf memory payer = _addPending(bytes("another payer"), 0, alice, bob, 100e6 * UNIT);
         _post();
         _startExit(terms);
-        vm.expectRevert(Vault.PendingDepositMismatch.selector);
-        vault.refundPendingDeposit(amountRef, amount, _siblings(keccak256(abi.encodePacked(uint8(34), amountRef))));
-        vm.expectRevert(Vault.PendingDepositMismatch.selector);
-        vault.refundPendingDeposit(payerRef, payer, _siblings(keccak256(abi.encodePacked(uint8(34), payerRef))));
-        assertFalse(vault.depositRefunded(0));
+        assertEq(vault.exitRefundReserve(), 141e6);
+        vault.refundReceipt(_proven(amount, PENDING), PENDING);
+        assertEq(usdc.balanceOf(funder), 100e6);
+        assertEq(vault.exitRefundReserve(), 100e6, "the other receipt's pending reserve stays");
+        vm.expectRevert(abi.encodeWithSelector(Vault.NotRefundable.selector, 0));
+        vault.refundReceipt(_proven(payer, PENDING), PENDING);
+        vm.warp(block.timestamp + WINDOW);
+        vm.expectRevert(Vault.ClaimWindowClosed.selector);
+        vault.refundReceipt(_proven(payer, PENDING), PENDING);
     }
 
     function testHeldPrincipalAndRefundsStayOutOfThePoolsAndTheRemainder() public {
@@ -696,7 +709,7 @@ contract ExitTestCases is ExitTest {
             _addTerms(3, 0, 20e6 * UNIT, 30e6 * UNIT, 0, 150e6 * UNIT, new uint64[](0));
         ExitVerifier.AccountState memory a = _addAccount(alice, 60e6 * UNIT);
         bytes memory chainRef = bytes("pending");
-        ExitVerifier.PendingDeposit memory pending = _addPending(chainRef, uint64(pendingId), bob, funder, 20e6 * UNIT);
+        ExitVerifier.ReceiptLeaf memory pending = _addPending(chainRef, uint64(pendingId), bob, funder, 20e6 * UNIT);
         _post();
         uint256 late = _deposit(bob, bob, 10e6);
         _startExit(terms);
@@ -709,7 +722,7 @@ contract ExitTestCases is ExitTest {
         assertEq(vault.houseRemainder(), 40e6);
         _govern(address(vault), abi.encodeCall(Vault.releaseHouseRemainder, (makeAddr("treasury"))));
         vault.refundDeposit(late);
-        vault.refundPendingDeposit(chainRef, pending, _siblings(keccak256(abi.encodePacked(uint8(34), chainRef))));
+        vault.refundReceipt(_proven(pending, PENDING), PENDING);
         assertEq(usdc.balanceOf(address(vault)), 30e6, "only the held principal stays");
     }
 

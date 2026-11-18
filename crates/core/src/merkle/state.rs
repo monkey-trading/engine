@@ -37,6 +37,8 @@ pub(crate) struct StateTree {
     pub(super) tree: SparseMerkleTree,
     pub(super) root: B256,
     pub(super) seq: u64,
+    /// The protocol version the root was computed under, which sets each leaf's encoding.
+    pub(super) version: ProtocolVersion,
     pub(super) accounts: BTreeMap<AccountId, AccountLeaf>,
     pub(super) positions: BTreeMap<(AccountId, MarketId), Position>,
     pub(super) markets: BTreeMap<MarketId, MarketLeaf>,
@@ -102,7 +104,9 @@ impl Engine {
         let exit = &mut self.tree.get_or_insert_with(StateTree::default).exit;
         exit.update_queue(&self.withdrawal_queue, &withdrawal_queue);
         exit.update_pending(&self.pending_deposits, &self.deposits, &pending);
-        exit.update_held(&self.held_deposits, &holds);
+        exit.update_held(&self.held_deposits, &self.deposits, &holds);
+        let credit_leaves =
+            if version >= ProtocolVersion::V77 { exit.credits.update(&self.deposits, &deposits) } else { Vec::new() };
         if let Some(frontier) = deposit_frontier {
             changes.insert(
                 exit_terms_key(),
@@ -141,6 +145,7 @@ impl Engine {
         changes.extend(
             deposits.iter().map(|reference| (deposit_key(reference), self.deposits.get(reference).map(json_hash))),
         );
+        changes.extend(credit_leaves);
         changes.extend(deposit_transactions.iter().map(|reference| {
             (deposit_transaction_key(reference), self.deposit_transactions.get(reference).map(json_hash))
         }));
@@ -151,11 +156,10 @@ impl Engine {
         );
         changes
             .extend(eligibility.into_iter().map(|id| (eligibility_key(id), self.eligibility.get(&id).map(json_hash))));
-        changes.extend(
-            holds
-                .into_iter()
-                .map(|reference| (held_deposit_key(&reference), self.held_deposits.get(&reference).map(json_hash))),
-        );
+        changes.extend(holds.into_iter().map(|reference| {
+            let leaf = self.held_deposits.get(&reference).map(|hold| exit.held_hash(&reference, hold, version));
+            (held_deposit_key(&reference), leaf)
+        }));
         changes.extend(pending.into_iter().map(|reference| {
             let leaf =
                 self.pending_deposits.get(&reference).map(|deposit| exit.pending_hash(&reference, deposit, version));
@@ -252,6 +256,7 @@ impl Engine {
         }
         state.root = state.tree.root();
         state.seq = seq;
+        state.version = version;
         state.work = RootWork { leaves, nodes };
         state.root
     }

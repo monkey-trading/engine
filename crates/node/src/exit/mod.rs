@@ -1,6 +1,6 @@
 //! The exit against the last posted root, from a published log alone: the proofs an account or the
-//! house exits with at one checkpoint, and the vault calls that carry them, ABI-encoded for anyone
-//! to send (`engine exit-proof`).
+//! house exits with at one checkpoint, or the receipt the root holds at one vault deposit id, and the
+//! vault calls that carry them, ABI-encoded for anyone to send (`engine exit-proof`).
 
 use std::fs;
 use std::path::Path;
@@ -10,12 +10,18 @@ use alloy::sol;
 use alloy::sol_types::SolCall;
 use anyhow::{Context, bail, ensure};
 use engine_core::market::QuoteCurrency;
-use engine_core::merkle::{AccountProof, ExitProof, ExitTermsProof, PendingDepositProof};
+use engine_core::merkle::{
+    AccountProof, ExitProof, ExitTermsProof, PendingDepositProof, PendingReceipt, ReceiptKind, ReceiptProof,
+};
 use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 use serde::Serialize;
 
 use crate::log::{self, LogEntry, SegmentedLog};
+
+/// How many unfinalised credits one `registerExitCredits` call carries, so each call stays well
+/// within a transaction's size however many credits an account holds.
+const CREDITS_PER_CALL: usize = 32;
 
 // The vault's exit calls and the verifier's structs, as `contracts/src/Vault.sol` and
 // `contracts/src/ExitVerifier.sol` declare them.
@@ -46,16 +52,17 @@ sol! {
     }
     struct ExitTerms { uint64 depositCursor; uint64 depositBase; int128 pending; int128 held; int128 unheld; int128 heldReceipts; uint64[] gaps; }
     struct QueuedWithdrawal { address account; int128 amount; int128 remaining; uint64 requestedSeq; uint64 ticket; }
-    struct PendingDeposit { uint64 depositId; address account; address payer; int128 amount; }
+    struct ReceiptLeaf { bytes chainRef; uint64 depositId; address account; address payer; int128 amount; bytes32[] siblings; }
     struct Approval { address account; uint256 amount; uint64 nonce; uint64 approvedSeq; }
 
     function startExit(ExitTerms terms, bytes32[] siblings) external;
     function registerExit(address account, AccountState state, PositionState[] positions, MarketState[] markets) external;
+    function registerExitCredits(address account, ReceiptLeaf[] credits) external;
     function registerExitWithdrawal(Approval approval, bytes32[] siblings) external;
     function registerExitQueued(QueuedWithdrawal queued, bytes32[] siblings) external;
     function registerExitDistribution(address account, uint256 entitled, bytes32[] siblings) external;
     function claimExit(address account) external returns (uint256);
-    function refundPendingDeposit(bytes chainRef, PendingDeposit pending, bytes32[] siblings) external;
+    function refundReceipt(ReceiptLeaf leaf, uint8 kind) external;
 }
 
 /// What `engine exit-proof` prints: the proofs as the engine holds them, and each vault call that
@@ -68,6 +75,8 @@ pub struct ExitBundle {
     pub account: Option<ExitProof>,
     /// The house's pending deposits, refunded to their payers; empty for an account.
     pub house_pending_deposits: Vec<PendingDepositProof>,
+    /// The receipt the root holds at the deposit id asked for, if it holds one there.
+    pub receipt: Option<ReceiptProof>,
     pub calls: Vec<ExitCall>,
 }
 
@@ -84,6 +93,9 @@ pub struct ExitCall {
 pub enum ExitSubject {
     Account(AccountId),
     House,
+    /// The receipt the root holds at a vault deposit id, through which the vault refunds its own
+    /// deposit there when its record does not match.
+    Deposit(u64),
 }
 
 /// Applies the log at `path`'s commands through its checkpoint at `seq`, which must be the vault's
@@ -93,6 +105,7 @@ pub enum ExitSubject {
 /// - the log cannot be read, or holds no checkpoint at `seq` whose root its commands reproduce (see
 ///   `engine_at_checkpoint`)
 /// - the log's protocol at `seq` predates `V38`, so its root holds no exit terms
+/// - for a deposit id, the root holds no credited, pending or held receipt there
 pub fn exit_bundle(path: &Path, seq: u64, subject: ExitSubject) -> anyhow::Result<ExitBundle> {
     let engine = engine_at_checkpoint(path, seq)?;
     let missing = || format!("the root at seq {seq} holds no exit terms: its protocol predates V38");
@@ -101,14 +114,31 @@ pub fn exit_bundle(path: &Path, seq: u64, subject: ExitSubject) -> anyhow::Resul
             let proof = engine.exit_proof(account).with_context(missing)?;
             let calls = account_calls(account, &proof);
             let (seq, root) = (proof.seq, proof.root);
-            Ok(ExitBundle { seq, root, account: Some(proof), house_pending_deposits: Vec::new(), calls })
+            Ok(ExitBundle { seq, root, account: Some(proof), house_pending_deposits: Vec::new(), receipt: None, calls })
         }
         ExitSubject::House => {
             let pending = engine.house_pending_deposit_proofs().with_context(missing)?;
             let terms = engine.exit_terms_proof().with_context(missing)?;
             let mut calls = vec![start(&terms)];
             calls.extend(pending.iter().map(refund));
-            Ok(ExitBundle { seq: terms.seq, root: terms.root, account: None, house_pending_deposits: pending, calls })
+            let (seq, root) = (terms.seq, terms.root);
+            Ok(ExitBundle { seq, root, account: None, house_pending_deposits: pending, receipt: None, calls })
+        }
+        ExitSubject::Deposit(deposit_id) => {
+            let terms = engine.exit_terms_proof().with_context(missing)?;
+            let receipt = engine.receipt_proof(deposit_id).with_context(|| {
+                format!("the root at seq {seq} holds no credited, pending or held receipt at deposit id {deposit_id}")
+            })?;
+            let calls = vec![start(&terms), refund_at_id(&receipt)];
+            let (seq, root) = (terms.seq, terms.root);
+            Ok(ExitBundle {
+                seq,
+                root,
+                account: None,
+                house_pending_deposits: Vec::new(),
+                receipt: Some(receipt),
+                calls,
+            })
         }
     }
 }
@@ -169,7 +199,20 @@ pub fn account_calls(account: AccountId, proof: &ExitProof) -> Vec<ExitCall> {
     if let Some(held) = &proof.account {
         let (state, positions, markets) = account_state(held);
         let calldata = registerExitCall { account: address(held.account), state, positions, markets }.abi_encode();
-        calls.push(call("registerExit: the account's equity at the root's marks", calldata));
+        calls.push(call(
+            "registerExit: the account's equity at the root's marks, less its unfinalised principal",
+            calldata,
+        ));
+        for batch in proof.unfinalised_credits.chunks(CREDITS_PER_CALL) {
+            let credits = batch.iter().map(|c| receipt_leaf(&c.chain_ref, &c.deposit, &c.siblings)).collect();
+            let calldata = registerExitCreditsCall { account: address(held.account), credits }.abi_encode();
+            let ids = batch.iter().map(|c| c.deposit.deposit_id.to_string()).collect::<Vec<_>>().join(", ");
+            let what = format!(
+                "registerExitCredits: unfinalised credits at deposit ids {ids}, each adding its principal once where \
+                 the vault's deposit records match it; one anyone has already registered adds nothing again"
+            );
+            calls.push(call(&what, calldata));
+        }
     }
     for held in &proof.approvals {
         let a = &held.approval;
@@ -237,18 +280,39 @@ fn start(terms: &ExitTermsProof) -> ExitCall {
     )
 }
 
-/// `refundPendingDeposit` for one pending deposit.
+/// `refundReceipt` for one pending deposit.
 fn refund(proof: &PendingDepositProof) -> ExitCall {
-    let d = &proof.deposit;
-    let pending = PendingDeposit {
-        depositId: d.deposit_id,
-        account: d.account.map_or(Address::ZERO, address),
-        payer: d.payer.map_or(Address::ZERO, address),
-        amount: d.amount.raw(),
-    };
-    let chain_ref = Bytes::copy_from_slice(proof.chain_ref.as_bytes());
-    let calldata = refundPendingDepositCall { chainRef: chain_ref, pending, siblings: proof.siblings.clone() };
-    call(&format!("refundPendingDeposit: deposit {} to its payer", d.deposit_id), calldata.abi_encode())
+    let leaf = receipt_leaf(&proof.chain_ref, &proof.deposit, &proof.siblings);
+    let calldata = refundReceiptCall { leaf, kind: ReceiptKind::Pending.leaf_kind() }.abi_encode();
+    call(&format!("refundReceipt: pending deposit {} to its payer", proof.deposit.deposit_id), calldata)
+}
+
+/// `refundReceipt` for the receipt the root holds at a deposit id: the vault refunds its own deposit
+/// there to its payer when its records do not match the receipt, and a matched pending deposit from
+/// the pending reserve.
+fn refund_at_id(receipt: &ReceiptProof) -> ExitCall {
+    let leaf = receipt_leaf(&receipt.chain_ref, &receipt.deposit, &receipt.siblings);
+    let id = leaf.depositId;
+    let what = format!(
+        "refundReceipt: the vault's deposit {id} to its payer, while claims register when its records do not \
+         match the {:?} receipt the root holds there, and at any time after the start for a pending receipt they \
+         match; refused with NotRefundable for a credited or held receipt they match, or an id already \
+         refunded",
+        receipt.kind
+    );
+    call(&what, refundReceiptCall { leaf, kind: receipt.kind.leaf_kind() }.abi_encode())
+}
+
+/// The verifier's receipt leaf for the receipt at `chain_ref`.
+fn receipt_leaf(chain_ref: &str, deposit: &PendingReceipt, siblings: &[B256]) -> ReceiptLeaf {
+    ReceiptLeaf {
+        chainRef: Bytes::copy_from_slice(chain_ref.as_bytes()),
+        depositId: deposit.deposit_id,
+        account: deposit.account.map_or(Address::ZERO, address),
+        payer: deposit.payer.map_or(Address::ZERO, address),
+        amount: deposit.amount.raw(),
+        siblings: siblings.to_vec(),
+    }
 }
 
 /// The verifier's account, position and market structs from an account proof.
@@ -311,105 +375,4 @@ fn address(account: AccountId) -> Address {
 }
 
 #[cfg(test)]
-mod tests {
-    use engine_core::merkle::{DistributionProof, ExitTerms};
-    use engine_core::staking::UsdcUnits;
-
-    use super::*;
-
-    /// The node's reference log for the latest protocol: placeholder checkpoint signatures, and
-    /// signed withdrawals, which `engine replay` refuses without a trusted signer.
-    const REFERENCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v38.jsonl");
-
-    #[test]
-    fn a_staker_with_no_trading_account_is_given_its_claim_call() {
-        let staker = AccountId([5; 20]);
-        let terms = ExitTermsProof { seq: 9, root: B256::ZERO, terms: ExitTerms::default(), siblings: vec![] };
-        let distribution =
-            DistributionProof { seq: 9, root: B256::ZERO, account: staker, entitled: UsdcUnits(7), siblings: vec![] };
-        let proof = ExitProof {
-            seq: 9,
-            root: B256::ZERO,
-            terms,
-            account: None,
-            approvals: vec![],
-            queued: vec![],
-            distribution: Some(distribution),
-            pending_deposits: vec![],
-        };
-        let calls = account_calls(staker, &proof);
-        let selectors: Vec<[u8; 4]> = calls.iter().map(|call| call.calldata[..4].try_into().unwrap()).collect();
-        assert_eq!(
-            selectors,
-            [startExitCall::SELECTOR, registerExitDistributionCall::SELECTOR, claimExitCall::SELECTOR]
-        );
-        let claim = claimExitCall::abi_decode(&calls[2].calldata).unwrap();
-        assert_eq!(claim.account, address(staker));
-        let none = ExitProof { distribution: None, ..proof };
-        assert_eq!(account_calls(staker, &none).len(), 1, "nothing to register, nothing to claim");
-    }
-
-    #[test]
-    fn the_builder_reproduces_a_published_logs_root_whatever_signed_it() {
-        let mut checkpoints = Vec::new();
-        log::read_file(Path::new(REFERENCE), |entry| {
-            if let LogEntry::Checkpoint(cp) = entry {
-                checkpoints.push((cp.seq, cp.root));
-            }
-            Ok(())
-        })
-        .unwrap();
-        let (seq, root) = checkpoints.pop().expect("the reference log checkpoints");
-        let bundle = exit_bundle(Path::new(REFERENCE), seq, ExitSubject::House).unwrap();
-        assert_eq!(format!("{:#x}", bundle.root), root);
-        assert!(bundle.house_pending_deposits.iter().all(|pending| pending.verify(bundle.root)));
-        assert!(!bundle.house_pending_deposits.is_empty(), "the V38 session leaves a house deposit pending");
-        let error = exit_bundle(Path::new(REFERENCE), seq + 1, ExitSubject::House).unwrap_err();
-        assert!(error.to_string().contains("no checkpoint at seq"), "{error:#}");
-    }
-
-    #[tokio::test]
-    async fn a_torn_suffix_past_the_checkpoint_still_gives_exit_proofs() {
-        // Both log shapes: the segmented log the node writes, and a single file as a downloaded
-        // archive or copied segment arrives.
-        let dir = crate::test_support::scratch_dir("exit-proof-torn-suffix");
-        let node = crate::test_support::TestSequencer::start(&dir, 16);
-        node.submit(crate::test_support::deposit(100, "0xfeed:1")).await;
-        node.submit(crate::test_support::deposit(40, "0xfeed:2")).await;
-        node.stop().await;
-        let checkpoint = crate::test_support::log_entries(&dir)
-            .iter()
-            .filter_map(|entry| match entry {
-                LogEntry::Checkpoint(cp) => Some(cp.seq),
-                _ => None,
-            })
-            .max()
-            .expect("the shutdown checkpoint");
-        let mut segments: Vec<std::path::PathBuf> = fs::read_dir(&dir)
-            .unwrap()
-            .map(|item| item.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .and_then(|name| name.strip_suffix(".jsonl"))
-                    .is_some_and(|stem| stem.parse::<u64>().is_ok())
-            })
-            .collect();
-        segments.sort();
-        assert!(!segments.is_empty());
-        // A whole-log read breaks on the torn write: the suffix is exactly what must not
-        // block proofs the complete prefix supports.
-        let torn = b"{\"type\":\"command\",\"sequenced\":{\"seq\":";
-        let mut single = segments.iter().flat_map(|path| fs::read(path).unwrap()).collect::<Vec<_>>();
-        single.extend_from_slice(torn);
-        let single_path = dir.with_extension("whole.jsonl");
-        fs::write(&single_path, &single).unwrap();
-        use std::io::Write;
-        fs::OpenOptions::new().append(true).open(segments.last().unwrap()).unwrap().write_all(torn).unwrap();
-        assert!(SegmentedLog::open(&dir, |_| Ok(())).is_err(), "the torn suffix breaks a whole-log read");
-        let from_dir = exit_bundle(&dir, checkpoint, ExitSubject::House).unwrap();
-        let from_file = exit_bundle(&single_path, checkpoint, ExitSubject::House).unwrap();
-        assert_eq!(from_dir.root, from_file.root, "the same prefix, whatever its suffix");
-        assert!(from_dir.house_pending_deposits.iter().all(|pending| pending.verify(from_dir.root)));
-    }
-}
+mod tests;
