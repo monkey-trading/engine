@@ -81,6 +81,8 @@ fn launch_book_latency() {
     cases::close_outs(&mut book, SINGLE_COMMAND_US);
     cases::rollover(&mut book, ROLLOVER, ROOT);
     cases::encoding_and_recovery(&mut book);
+    // Last: it detaches the book's tree, after which the engine computes no root of its own.
+    cases::root_parts(&mut book, ROOT.bar_us, ROOT.guard_us);
     println!("LAUNCH resident_mib={}", rss_mib());
     let over = exceeded();
     assert!(over.is_empty(), "over budget: {over:?}");
