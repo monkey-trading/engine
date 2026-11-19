@@ -38,7 +38,8 @@ fn replay_bench() {
     for _ in 0..env("REPLAY_BENCH_RUNS", 1) {
         println!("BENCH replay_start pid={} seals={seals:?}", std::process::id());
         let cpu = cpu_secs();
-        let replayed = replay(&base, &dir.join("log"), signer, seals);
+        // The kept log's launch leg is not known: the whole log is timed.
+        let replayed = replay(&base, &dir.join("log"), signer, seals, u64::MAX);
         let cpu = cpu_secs() - cpu;
         println!(
             "BENCH replay commands={} checkpoints={} s={:.1} commands_per_s={:.0} cpu_s={cpu:.1} cpu_us_per_command={:.1}",

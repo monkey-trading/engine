@@ -112,9 +112,26 @@ pub(crate) fn replay_path_from(
     signer: AccountId,
     seals: SealChecks,
 ) -> anyhow::Result<Replayed> {
+    replay_path_from_observing(engine, path, signer, seals, |_| {})
+}
+
+/// `replay_path_from`, with `observe` seeing each entry before it is applied.
+/// Error cases:
+/// - as `replay_path_with_trust`
+#[cfg(test)]
+pub(crate) fn replay_path_from_observing(
+    engine: engine_core::Engine,
+    path: &Path,
+    signer: AccountId,
+    seals: SealChecks,
+    mut observe: impl FnMut(&LogEntry),
+) -> anyhow::Result<Replayed> {
     let mut replay = Replay::seeded(engine, None, signer);
     replay.check_ahead(path, seals);
-    let read = SegmentedLog::open_ahead(path, |entry| replay.apply(&entry));
+    let read = SegmentedLog::open_ahead(path, |entry| {
+        observe(&entry);
+        replay.apply(&entry)
+    });
     replay.settled(read)?;
     let replayed = replay.finish();
     replayed.origin.require_audit(signer)?;

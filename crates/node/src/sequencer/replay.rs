@@ -446,12 +446,12 @@ impl Replay {
     }
 }
 
-#[cfg(test)]
-pub(crate) use paths::replay_path_from;
 pub(crate) use paths::{replay_copy, replay_path_with_authorities};
 pub use paths::{
     replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust, replay_with_signer,
 };
+#[cfg(test)]
+pub(crate) use paths::{replay_path_from, replay_path_from_observing};
 
 /// Replays `entries`, a whole log held in memory (see `Replay`), its command seals checked at the end of
 /// each run (`SealChecks::RunEnds`).
