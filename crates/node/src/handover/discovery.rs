@@ -108,8 +108,9 @@ pub(crate) fn ordered(
 
 /// The members of `assigned`'s set at `block`, each with its registration and the position of its
 /// assignment of `assigned`'s turn, if it held one, in the set's order: each assignment's member is read
-/// at each position up to the current one, at most the draw's positions and the set's size, `MEMBER_READS`
-/// at a time, through `revisionOf`, whose cost does not grow with the assignment's revisions.
+/// at each position up to the current one, `MEMBER_READS` at a time, through `revisionOf`, whose cost does not
+/// grow with the assignment's revisions: at most the draw's positions and the set's size until the turn's
+/// assignments go round the scan, and `OperatorSchedule._next`'s bound after.
 /// Error cases:
 /// - a call fails or does not decode, or the vault names no schedule
 pub(crate) async fn members(

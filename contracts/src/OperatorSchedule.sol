@@ -46,14 +46,19 @@ import {Vault} from "./Vault.sol";
 /// all marked with no assignment of the turn latched, in a set of two or more members, `promote` may run
 /// even while heads post. The rule and the window in force always leave the first skip's member a take
 /// before that promotion (`_skipsFirst`).
-/// @notice The key holder is the candidate whose assignment, or naming as a draw's source, recorded the
-/// release that signed the signer epoch's newest head (`releaseCandidate`), which no release move of its
-/// own changes, or, before the epoch's first head, the member whose standby key a promotion made the
-/// signer. A skip never names it. A promotion
-/// prefers a member that held nothing of the turn, then one that held an assignment of it but never its
-/// keys, and names the key holder last, so a holder that withholds the keys cannot use the turn's members
-/// up and take the turn itself. Only a member that held the keys under an assignment of the turn is never
-/// named again in it.
+/// @notice The key holder is the candidate whose assignment, release move or naming as a draw's source
+/// recorded the release that signed the signer epoch's newest head (`releaseCandidate`), which no release
+/// move of its own changes. Before the epoch's first head no member has taken the keys in it, so the key
+/// holder is where the epoch found them: walking back from the turn in effect over turns that no head
+/// took and no promotion reached, the member of the latest turn one did, else the source of the earliest
+/// turn walked. The walk ends at a turn drawn while the registry named its own operator, as the first turn
+/// and the first after an installation are. A skip never names the key holder. A promotion names a member
+/// that never held the turn's keys, by position, whether or not it held an assignment of the turn, since
+/// whether an assignment's member took the keys is the key holder's choice, and names the key holder
+/// last, so a holder that withholds the keys can neither choose whom a promotion names nor take the turn
+/// itself. Only a member that held the keys under an assignment of the turn is never named again in it.
+/// Skips and promotions search past the current position through the whole scan, continued from its start
+/// past its end, so every member stays in reach and each assignment of a turn takes a later position.
 /// @notice Every assignment of a turn, drawn, skipped to or promoted, is kept by its position with its
 /// releases and generations, and `turns` follows the latest.
 /// @dev Seeds come from `seedReceiver`, which the registry's timelock replaces when an Ethereum fork
@@ -214,13 +219,14 @@ contract OperatorSchedule is SeedSchedule {
     /// it moves past (`_promotion`).
     mapping(uint64 turn => mapping(address candidate => uint8 held)) private held;
 
-    /// @notice The candidate whose assignment last recorded `release`, or the operator a draw found the
-    /// registry naming on it; zero for a release never recorded. Only the timelock approves a release
-    /// for a candidate, so no candidate moves another's entry.
+    /// @notice The candidate whose assignment or release move last recorded `release`, or the operator a
+    /// draw found the registry naming on it; zero for a release never recorded. Only the timelock approves
+    /// a release for a candidate, so no candidate moves another's entry.
     mapping(bytes32 release => address candidate) public releaseCandidate;
 
-    /// @dev The candidate whose standby key a promotion made the signer of each signer epoch it started.
-    mapping(uint64 epoch => address candidate) private promotedIn;
+    /// @dev Whether the registry named its own operator, with no turn naming one, when `turn` was drawn:
+    /// at the first turn and the first after an installation, whose source holds the keys from before.
+    mapping(uint64 turn => bool) private sourcedByRegistry;
 
     /// @notice Each candidate's standby key record; deleted when a promotion installs it.
     mapping(address candidate => Standby) public standbyOf;
@@ -445,13 +451,15 @@ contract OperatorSchedule is SeedSchedule {
         // The source holds the keys under the release the registry names it on, which no assignment
         // may have recorded.
         releaseCandidate[named.release] = named.candidate;
+        if (_noTurn()) sourcedByRegistry[turn] = true;
         uint64 generation = _generation(candidate, release, named);
         turns[turn] = Turn(candidate, position, DRAWN, setId, generation, lastDrawnTurn, seed, named.candidate);
         lastDrawnTurn = turn;
         _assign(turn, position, _drawn(member, setId), release, generation);
     }
 
-    /// @notice Gives the turn in effect, and the last drawn turn, a new generation where `candidate` is
+    /// @notice Records `candidate`'s new release as its own (`releaseCandidate`), whatever turn names it,
+    /// and gives the turn in effect, and the last drawn turn, a new generation where `candidate` is
     /// their latest assignment's member, recording it as a revision of that assignment with the
     /// candidate's new release: the registry calls it when the candidate's release moves. Both share
     /// one. A move that leaves the candidate a promotable standby key, back to the release it was
@@ -461,6 +469,7 @@ contract OperatorSchedule is SeedSchedule {
         (uint64 inEffect, Turn memory current) = turnAt(uint64(block.timestamp));
         uint64 last = lastDrawnTurn;
         bytes32 release = _releaseOf(candidate);
+        releaseCandidate[release] = candidate;
         uint64 generation = 0;
         if (inEffect != 0 && current.candidate == candidate) {
             generation = _reserve();
@@ -521,13 +530,13 @@ contract OperatorSchedule is SeedSchedule {
     /// @notice Moves the vault's signer to the standby key of the next member in the turn's order,
     /// once the operator has missed `heartbeatMisses` witnessed slots, or no member has taken the turn
     /// in `heartbeatMisses + 1` (see `promotionDueAt`): anyone may call. The member is
-    /// the first after the current assignment's position, in `memberAt`'s order, that the registry
-    /// lists under the admin key its set adopted, that holds a promotable standby key, and that did not
-    /// hold the turn's keys under an assignment of it, in this order of preference: one that held no
-    /// assignment of the turn; one that held an assignment but never the keys, as a drawn or skipped-to
-    /// member the key holder never handed them to; then the key holder, as `skip` defines it, holding no
-    /// assignment of the turn, or a holder an earlier promotion of the turn moved past, so its own standby
-    /// key fences its old key out only when no other member qualifies.
+    /// the first after the current assignment's position, in `memberAt`'s order through the whole scan,
+    /// that the registry lists under the admin key its set adopted, that holds a promotable standby key,
+    /// and that did not hold the turn's keys under an assignment of it, in this order of preference: one
+    /// that never held the turn's keys and is not the key holder, whether it held no assignment of the
+    /// turn or held one the key holder never handed them to; then the key holder, as `skip` defines it,
+    /// holding no assignment of the turn, or a holder an earlier promotion of the turn moved past, so its
+    /// own standby key fences its old key out only when no other member qualifies.
     /// The promotion records the key holder and the member it names as having held the turn's keys
     /// (`heldKeys`), becomes the turn's assignment in a new generation, fixing the outgoing epoch's
     /// latest head and the vault's latest accepted checkpoint, and consumes the standby record.
@@ -549,9 +558,8 @@ contract OperatorSchedule is SeedSchedule {
         Turn storage named = turns[turn];
         Member memory member;
         address key;
-        (position, member, key) = _promotion(turn, named, _holder(epoch));
+        (position, member, key) = _promotion(turn, named, _holder(epoch, turn, named));
         Assignment memory promoted = _promoted(vault, epoch, member, named.setId, key);
-        promotedIn[promoted.signerEpoch] = member.candidate;
         _reassign(turn, named, position, promoted, standbyOf[member.candidate].release);
         delete standbyOf[member.candidate];
         emit StandbyConsumed(member.candidate, key, promoted.signerEpoch);
@@ -592,11 +600,12 @@ contract OperatorSchedule is SeedSchedule {
 
     /// @notice Moves the turn in effect from its current assignment, which no head has latched, to the
     /// next member in its order, once `skipDueAt` has passed: anyone may call. The member is the first
-    /// after the current position, in `memberAt`'s order, that the registry lists under the admin key
-    /// its set adopted, that has held no assignment of the turn, and that is not the key holder: the
-    /// candidate whose assignment recorded the release that signed the signer epoch's newest head
-    /// (`LogHeads.headRelease`, `releaseCandidate`), or, before the epoch's first head, the member whose
-    /// standby key a promotion made the signer, which no release move of its own changes. The key holder
+    /// after the current position, in `memberAt`'s order through the whole scan, that the registry lists
+    /// under the admin key its set adopted, that has held no assignment of the turn, and that is not the
+    /// key holder: the candidate whose assignment, release move or naming as a draw's source recorded the
+    /// release that signed the signer epoch's newest head (`LogHeads.headRelease`, `releaseCandidate`),
+    /// which no release move of its own changes, or, before the epoch's first head, where the epoch found
+    /// the keys, as the contract's notice states. The key holder
     /// hands the skip's member the keys, in another generation; it needs no standby key, and the vault's
     /// signer stays. The skip
     /// becomes the turn's assignment in a new generation, and a turn drawn after it continues that
@@ -617,7 +626,7 @@ contract OperatorSchedule is SeedSchedule {
         if (block.timestamp < dueAt) revert SkipNotDue(dueAt);
         Member memory member;
         bool found;
-        (found, position, member,) = _next(turn, named, false, _holder(_vault().signerEpoch()), 0);
+        (found, position, member,) = _next(turn, named, false, _holder(_vault().signerEpoch(), turn, named), 1);
         if (!found) revert NoQualifiedPosition(turn);
         Assignment memory skipped = _drawn(member, named.setId);
         skipped.reason = SKIPPED;
@@ -881,52 +890,79 @@ contract OperatorSchedule is SeedSchedule {
     }
 
     /// @dev The first position after the turn's current assignment, in `_pick`'s order, whose member
-    /// the registry lists under the admin key the set adopted and has rank `rank`: its `held` flags plus
-    /// two when it is `holder`, the candidate whose enclave holds the keys (`_holder`). So 0 is a member
-    /// that held nothing of the turn; 1 one that held an assignment of it but not its keys; 2 `holder`
-    /// holding no assignment of the turn, or a holder a promotion moved past; and from 3 a member that
-    /// held the keys under an assignment of the turn, which never qualifies. With `standby`, for a
+    /// the registry lists under the admin key the set adopted and whose rank is one of `ranks`, a bit per
+    /// rank. A rank is the member's `held` flags plus two when it is `holder`, the candidate whose enclave
+    /// holds the keys (`_holder`): 0 for a member that held nothing of the turn; 1 for one that held an
+    /// assignment of it but not its keys; 2 for `holder` holding no assignment of the turn, or a holder a
+    /// promotion moved past; and from 3 for a member that held the keys under an assignment of the turn,
+    /// which no caller asks for. The search runs to one whole scan past the later of the weighted
+    /// positions and the current one, a scan position past the scan's end continuing it from its start, so
+    /// every member is in reach and each assignment of the turn takes a later position than the one before:
+    /// with at most `2 * count + 1` assignments of a turn, each at most `MAX_DRAW_POSITIONS + count`
+    /// positions on, positions fit a `uint16` for any set the registry adopts. With `standby`, for a
     /// promotion, the member holds a promotable standby key, returned with it. `found` is false when no
     /// position qualifies.
-    function _next(uint64 turn, Turn storage named, bool standby, address holder, uint256 rank)
+    function _next(uint64 turn, Turn storage named, bool standby, address holder, uint256 ranks)
         private
         view
         returns (bool found, uint16 position, Member memory member, address key)
     {
         Member[] storage members = sets[named.setId].members;
-        for (position = named.position + 1; position < MAX_DRAW_POSITIONS + members.length; ++position) {
-            member = members[_index(members, named.seed, turn, position)];
+        position = named.position;
+        uint256 last = (position < MAX_DRAW_POSITIONS ? MAX_DRAW_POSITIONS - 1 : position) + members.length;
+        while (position < last) {
+            member = members[_index(members, named.seed, turn, ++position)];
             address candidate = member.candidate;
-            if (held[turn][candidate] + (candidate == holder ? 2 : 0) != rank || !_listed(member)) continue;
+            if ((ranks >> (held[turn][candidate] + (candidate == holder ? 2 : 0))) & 1 == 0 || !_listed(member)) {
+                continue;
+            }
             if (!standby) return (true, position, member, key);
             key = promotable(candidate);
             if (key != address(0)) return (true, position, member, key);
         }
     }
 
-    /// @dev The member a promotion in `turn` names, the first of the lowest rank `_next` finds, with its
-    /// position and promotable standby key, recording it and `holder` as having held the turn's keys.
+    /// @dev The member a promotion in `turn` names, with its position and promotable standby key: the
+    /// first `_next` finds of ranks 0 and 1 together, a member that never held the turn's keys and is not
+    /// `holder`, whether or not it held an assignment, since whether an assignment's member took the keys
+    /// is the holder's choice; else of rank 2. Records it and `holder` as having held the turn's keys.
     /// Reverts `NoQualifiedPosition` when no position qualifies.
     function _promotion(uint64 turn, Turn storage named, address holder)
         private
         returns (uint16 position, Member memory member, address key)
     {
         bool found;
-        for (uint256 rank = 0; !found && rank < 3; ++rank) {
-            (found, position, member, key) = _next(turn, named, true, holder, rank);
-        }
+        (found, position, member, key) = _next(turn, named, true, holder, 3);
+        if (!found) (found, position, member, key) = _next(turn, named, true, holder, 4);
         if (!found) revert NoQualifiedPosition(turn);
-        if (holder != address(0)) held[turn][holder] |= KEYS;
-        held[turn][member.candidate] |= KEYS;
+        _recordKeys(turn, holder);
+        _recordKeys(turn, member.candidate);
     }
 
-    /// @dev The candidate whose enclave holds signer epoch `epoch`'s keys: the one whose assignment last
-    /// recorded the release that signed the epoch's newest head (`releaseCandidate`), or, before the
-    /// epoch's first head, the one whose standby key a promotion made the signer; zero when neither
-    /// names one.
-    function _holder(uint64 epoch) private view returns (address) {
+    /// @dev Records `candidate` as having held `turn`'s keys, unless it is zero, as `_holder` is for a head
+    /// whose release no candidate recorded.
+    function _recordKeys(uint64 turn, address candidate) private {
+        if (candidate != address(0)) held[turn][candidate] |= KEYS;
+    }
+
+    /// @dev The candidate whose enclave holds signer epoch `epoch`'s keys, with `turn` the turn in effect and
+    /// `named` its latest assignment: the one whose assignment, release move or naming as a draw's source
+    /// last recorded the release that signed the epoch's newest head (`releaseCandidate`). Before the
+    /// epoch's first head no member has taken the keys in it, so they are where the epoch found them:
+    /// walking back from `turn` over turns whose latest assignment no head latched and no promotion made,
+    /// the member of the first turn reached whose latest assignment one did; else the source of the last
+    /// turn walked, one drawn while the registry named its own operator (`sourcedByRegistry`), as the first
+    /// turn always is, so every walk ends. One step per turn run with no head.
+    function _holder(uint64 epoch, uint64 turn, Turn storage named) private view returns (address holder) {
         bytes32 release = logHeads.headRelease(epoch);
-        return release == 0 ? promotedIn[epoch] : releaseCandidate[release];
+        if (release != 0) return releaseCandidate[release];
+        while (named.reason != PROMOTED && !_latched(turn, named.position)) {
+            holder = named.source;
+            if (sourcedByRegistry[turn]) return holder;
+            turn = named.prior;
+            named = turns[turn];
+        }
+        return named.candidate;
     }
 
     /// @dev The release the registry records for `candidate`.
@@ -1168,7 +1204,6 @@ contract OperatorSchedule is SeedSchedule {
         Turn storage moved = turns[turn];
         moved.generation = generation;
         revisions[turn][moved.position].push(Revision(release, generation));
-        releaseCandidate[release] = moved.candidate;
         emit TurnGenerationMoved(turn, generation);
     }
 }

@@ -931,12 +931,23 @@ minutes at the proposed values, and at most 10 minutes under the deployment boun
 adds the promoted member's start, and each member in the order that fails to start adds one more
 detection window.
 
-A promotion names the first member in the order that has a promotable standby key and did not hold
-the keys under an assignment of the turn. It prefers a member that held nothing of the turn to one
-that was drawn or skipped to but never received the keys, and it names the key holder last. The key
-holder is the candidate whose assignment recorded the release that signed the signer epoch's newest
-head, which no release move of its own changes. A holder that withholds the keys therefore cannot
-use up the order and take the turn itself.
+A promotion names the first member in the order that has a promotable standby key and never held
+the keys of the turn, whether or not it was drawn or skipped to, and it names the key holder last.
+Whether a drawn or skipped-to member received the keys is the key holder's choice, so the holder's
+refusals never move one member ahead of another. The search runs from the current position through
+every member of the set, so a promotion is refused only when no member qualifies.
+
+The key holder is the candidate whose assignment, release move or naming as a turn's source recorded
+the release that signed the signer epoch's newest head, which no later release move of its own
+changes. Before the epoch's first head, no member has taken the keys in it, so they are where the
+epoch found them: with the member of the latest turn that a member took or a promotion reached, or
+else with the source of the earliest turn since, such as the operator in office when turns begin or
+after an installation. When the timelock installs a new signer during a turn whose member has not yet
+taken it, the schedule still takes that source for the key holder, although the timelock installed the
+member's registered enclave, so that member may later be promoted into its own turn. A holder that
+withholds the keys therefore cannot take the turn itself, and cannot choose whom a promotion names.
+It can still hand the keys to the member that a skip names next in the order, which the seed fixed:
+at the proposed values, two skips fall due before an untaken turn's promotion.
 
 **Skips.** A turn's member takes the turn with its first head under its assignment, which `LogHeads`
 latches. Once `takeWindow` witnessed slots pass with no latch, counted from the latest of the

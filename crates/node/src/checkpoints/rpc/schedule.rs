@@ -199,8 +199,9 @@ impl CheckpointRpc {
     }
 
     /// See `CheckpointChain::superseded_members`: the member of the schedule's assignment at each position
-    /// below the turn's latest (`member_at`), read only when its latest is not the draw, so at most the
-    /// draw's positions and the set's size, `ASSIGNMENT_READS` at a time.
+    /// below the turn's latest (`member_at`), read only when its latest is not the draw, `ASSIGNMENT_READS` at a
+    /// time: at most the draw's positions and the set's size until the turn's assignments go round the scan,
+    /// and `OperatorSchedule._next`'s bound after.
     /// Error cases:
     /// - the observation is not finalized and pinned, or a call or its decoding fails
     pub(super) async fn read_superseded_members(
